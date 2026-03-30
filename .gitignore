@@ -12,5 +12,5 @@ dist/
 *.egg-info/
 
 # Package-first public repo: local dogfood/runtime workspaces should stay untracked.
-agents/
-millrace.toml
+/agents/
+/millrace.toml

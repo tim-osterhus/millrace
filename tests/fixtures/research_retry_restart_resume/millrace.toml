@@ -1,0 +1,21 @@
+[engine]
+mode = "once"
+idle_mode = "watch"
+poll_interval_seconds = 1
+inter_task_delay_seconds = 0
+
+[paths]
+workspace = "."
+agents_dir = "agents"
+
+[execution]
+integration_mode = "never"
+quickfix_max_attempts = 2
+run_update_on_empty = false
+
+[research]
+mode = "auto"
+idle_mode = "poll"
+idle_poll_seconds = 2
+stage_retry_max = 1
+stage_retry_backoff_seconds = 5

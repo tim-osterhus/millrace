@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "completion-manifest-placeholder",
+  "configured": false,
+  "notes": [
+    "Generic baseline placeholder. Replace this file during project customization.",
+    "Keep configured=false until the required completion commands are project-specific and authoritative.",
+    "Research audit and objective-profile sync should fail closed while this placeholder remains uncustomized."
+  ],
+  "required_completion_commands": []
+}

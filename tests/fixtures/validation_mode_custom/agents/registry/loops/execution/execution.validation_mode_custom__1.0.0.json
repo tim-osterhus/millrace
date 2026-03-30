@@ -1,0 +1,114 @@
+{
+  "aliases": [
+    "validation-mode-custom"
+  ],
+  "created_at": "2026-03-23T00:00:00Z",
+  "extends": null,
+  "id": "execution.validation_mode_custom",
+  "kind": "loop_config",
+  "labels": [
+    "validation",
+    "execution",
+    "workspace"
+  ],
+  "payload": {
+    "edges": [
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "validation.builder.success.update",
+        "from_node_id": "builder",
+        "kind": "normal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": null,
+        "to_node_id": "update"
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "validation.update.success.idle",
+        "from_node_id": "update",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": "idle",
+        "to_node_id": null
+      }
+    ],
+    "entry_node_id": "builder",
+    "model_profile_ref": {
+      "id": "model.default",
+      "kind": "model_profile",
+      "version": "1.0.0"
+    },
+    "nodes": [
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.builder",
+        "node_id": "builder",
+        "overrides": {
+          "allow_search": null,
+          "effort": null,
+          "model": null,
+          "model_profile_ref": null,
+          "prompt_asset_ref": null,
+          "runner": null,
+          "timeout_seconds": null
+        }
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.update",
+        "node_id": "update",
+        "overrides": {
+          "allow_search": null,
+          "effort": null,
+          "model": null,
+          "model_profile_ref": null,
+          "prompt_asset_ref": null,
+          "runner": null,
+          "timeout_seconds": null
+        }
+      }
+    ],
+    "outline_policy": {
+      "mode": "hybrid",
+      "shard_glob": null
+    },
+    "plane": "execution",
+    "task_authoring_profile_ref": {
+      "id": "task_authoring.narrow",
+      "kind": "task_authoring_profile",
+      "version": "1.0.0"
+    },
+    "task_authoring_required": true,
+    "terminal_states": [
+      {
+        "emits_artifacts": [
+          "stage_summary"
+        ],
+        "ends_plane_run": true,
+        "terminal_class": "success",
+        "terminal_state_id": "idle",
+        "writes_status": "UPDATE_COMPLETE"
+      }
+    ]
+  },
+  "source": {
+    "kind": "workspace_defined",
+    "ref": "agents/registry/loops/execution/execution.validation_mode_custom__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Workspace-defined validation loop for fixture coverage.",
+  "tier": "ad_hoc",
+  "title": "Validation Mode Custom Execution Loop",
+  "updated_at": "2026-03-23T00:00:00Z",
+  "version": "1.0.0"
+}

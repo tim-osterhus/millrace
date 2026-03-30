@@ -1,0 +1,21 @@
+[engine]
+mode = "once"
+idle_mode = "watch"
+poll_interval_seconds = 60
+inter_task_delay_seconds = 0
+
+[paths]
+workspace = "."
+agents_dir = "agents"
+
+[execution]
+integration_mode = "never"
+quickfix_max_attempts = 2
+run_update_on_empty = false
+
+[research]
+mode = "stub"
+
+[watchers]
+debounce_seconds = 0.5
+roots = ["agents", "ideas_raw", "commands_incoming", "config_file"]

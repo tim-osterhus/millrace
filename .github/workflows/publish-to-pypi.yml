@@ -29,6 +29,15 @@ jobs:
       - name: Validate distribution metadata
         run: python -m twine check dist/*
 
+      - name: Smoke install built wheel
+        run: |
+          python -m venv .publish-smoke
+          .publish-smoke/bin/python -m pip install --upgrade pip
+          .publish-smoke/bin/python -m pip install dist/*.whl
+          .publish-smoke/bin/millrace --help
+          .publish-smoke/bin/millrace init /tmp/millrace-publish-smoke --json
+          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml health --json
+
       - name: Upload built distributions
         uses: actions/upload-artifact@v4
         with:
