@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/millrace-runtime-v1
+      url: https://pypi.org/p/millrace
     permissions:
       id-token: write
     steps:
