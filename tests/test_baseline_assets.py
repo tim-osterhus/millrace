@@ -26,9 +26,10 @@ REPO_LOCAL_MARKERS = (
 )
 REQUIRED_BUNDLE_PATHS = (
     "README.md",
-    "RUNTIME_DEEP_DIVE.md",
+    "docs/RUNTIME_DEEP_DIVE.md",
     "ADVISOR.md",
     "OPERATOR_GUIDE.md",
+    "docs/TUI_DOCUMENTATION.md",
     "millrace.toml",
     "agents/_goal_intake.md",
     "agents/_objective_profile_sync.md",
@@ -57,7 +58,7 @@ RUNTIME_DOC_PATHS = (
     "README.md",
     "ADVISOR.md",
     "OPERATOR_GUIDE.md",
-    "RUNTIME_DEEP_DIVE.md",
+    "docs/RUNTIME_DEEP_DIVE.md",
 )
 STALE_RUN06_DOC_MARKERS = (
     "workspace-local override resolution and precedence are not yet implemented",
@@ -66,11 +67,18 @@ STALE_RUN06_DOC_MARKERS = (
 )
 REQUIRED_RUNTIME_DOC_MARKERS = {
     "README.md": (
+        "autonomous",
+        "## How Millrace Is Different",
+        "## Design Philosophy",
+        "## Initialized Workspace Layout",
+        "they are not expected at the public repo root",
         "a Python CLI and a Textual TUI",
-        "python3 -m millrace_engine.tui --config millrace.toml",
+        "python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml",
         "OPERATOR_GUIDE.md",
     ),
     "ADVISOR.md": (
+        "This file is for agents acting as the operator shell",
+        "This prompt assumes you are operating inside an initialized Millrace workspace",
         "### Workspace Setup",
         "health --json",
         "run-provenance <run-id> --json",
@@ -81,7 +89,7 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "python3 -m millrace_engine.tui --config millrace.toml",
         "mailbox-safe daemon mutation rules",
     ),
-    "RUNTIME_DEEP_DIVE.md": (
+    "docs/RUNTIME_DEEP_DIVE.md": (
         "### 22.2 TUI Surface",
         "millrace_engine/tui/",
         "The TUI is an operator shell, not a second runtime engine.",

@@ -1199,7 +1199,7 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
         "missing workspace files are not yet scaffolded from the packaged bundle",
         "this run does not yet scaffold missing files or resolve workspace-local overrides over packaged defaults",
     )
-    for relative_path in ("README.md", "ADVISOR.md", "OPERATOR_GUIDE.md", "RUNTIME_DEEP_DIVE.md"):
+    for relative_path in ("README.md", "ADVISOR.md", "OPERATOR_GUIDE.md", "docs/RUNTIME_DEEP_DIVE.md"):
         contents = (destination / relative_path).read_text(encoding="utf-8")
         assert "/Users/timinator/Desktop/Millrace-2.0" not in contents
         for marker in stale_markers:
@@ -1211,7 +1211,7 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
         destination / "ADVISOR.md"
     ).read_text(encoding="utf-8")
     assert "packaged assets are the fallback when the workspace copy is absent" in (
-        destination / "RUNTIME_DEEP_DIVE.md"
+        destination / "docs" / "RUNTIME_DEEP_DIVE.md"
     ).read_text(encoding="utf-8")
 
 

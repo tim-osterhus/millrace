@@ -43,6 +43,7 @@ packages = [
 "millrace_engine.assets" = [
   "manifest.json",
   "*.md",
+  "docs/**/*.md",
   "*.toml",
   "agents/*.log",
   "agents/**/*.log",

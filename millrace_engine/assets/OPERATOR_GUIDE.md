@@ -1,16 +1,16 @@
 # Millrace Operator Guide
 
-This guide is the human operator workflow for a Millrace workspace.
+This guide is the human operator workflow for an initialized Millrace workspace. It assumes you are operating against a workspace created by `millrace init`, not browsing the package repo root.
 
 Use it with:
 
 - `README.md` for product overview and quick start
 - `ADVISOR.md` for the agent-facing control surface
-- `RUNTIME_DEEP_DIVE.md` for implementation details
+- `docs/RUNTIME_DEEP_DIVE.md` for implementation details
 
 ## Canonical Invocation
 
-Run commands from the workspace root that contains your active `millrace.toml`.
+Run commands from the workspace root that contains your active `millrace.toml`, or pass an absolute config path directly.
 
 CLI:
 
@@ -61,13 +61,14 @@ cd /absolute/path/to/millrace
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -e '.[dev]'
-python3 -m millrace_engine --config millrace.toml health --json
+python3 -m millrace_engine init /absolute/path/to/workspace
+python3 -m millrace_engine --config /absolute/path/to/workspace/millrace.toml health --json
 ```
 
-If you prefer an interactive shell, launch the TUI after the environment is ready:
+If you prefer an interactive shell, launch the TUI against that workspace after the environment is ready:
 
 ```bash
-python3 -m millrace_engine.tui --config millrace.toml
+python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml
 ```
 
 ## Initialize A New Workspace
@@ -88,7 +89,7 @@ Behavior to remember:
 Always run the preflight after creating or updating a workspace:
 
 ```bash
-python3 -m millrace_engine --config millrace.toml health --json
+python3 -m millrace_engine --config /absolute/path/to/new-workspace/millrace.toml health --json
 ```
 
 The TUI runs the same workspace health check automatically before entering the shell.

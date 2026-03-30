@@ -1,24 +1,63 @@
-# Millrace Runtime
+# Millrace
 
-Millrace is a local, file-backed automation runtime for software delivery workflows.
+Millrace is a local autonomous software-delivery runtime for long-running coding work. It runs governed execution and research loops inside a file-backed workspace with durable state, explicit recovery surfaces, per-run provenance, and publish controls.
+
+It is built for unattended or semi-attended work that needs more than a chat session or a thin agent wrapper. You get one engine, one control plane, and multiple operator surfaces over the same on-disk truth: CLI, TUI, and agent-guided operation.
 
 It gives you:
 
-- a Python CLI and a Textual TUI
+- a Python CLI and a Textual TUI, plus an agent-facing advisor surface
 - a single runtime engine
 - an execution plane for delivery work
-- a research plane for idea intake, audit, and related governed workflows
-- durable runtime state, event logs, provenance, and publish surfaces inside the workspace
+- a research plane for idea intake, audit, and governed handoff
+- durable runtime state, event logs, diagnostics, provenance, and publish surfaces inside the workspace
 
-For day-to-day operation, read `OPERATOR_GUIDE.md`. For the agent-facing operator prompt, read `ADVISOR.md`. For a deeper architecture walkthrough, read `RUNTIME_DEEP_DIVE.md`.
+Read next:
 
-## What Lives Here
+- `OPERATOR_GUIDE.md` for the human operator workflow
+- `ADVISOR.md` for the agent-facing operator prompt
+- `docs/RUNTIME_DEEP_DIVE.md` for architecture and failure-model detail
+
+## Why Millrace Exists
+
+Interactive coding tools are good at short sessions. They are weak at long-running governed work that needs queue discipline, durable state, recoverable execution, research-to-delivery handoff, and publish controls.
+
+Millrace exists to make those runtime concerns first-class instead of leaving them implicit in shell history, chat transcripts, or one-off wrapper scripts.
+
+## How Millrace Is Different
+
+- Runtime, not wrapper: Millrace owns lifecycle, queue mutation, watch surfaces, status, events, and publish flow.
+- File-backed truth: runs, queues, status, diagnostics, and provenance live in the workspace, not in opaque process memory.
+- Governed autonomy: execution and research share one engine but keep distinct state, reporting, and handoff surfaces.
+- Frozen per-run plans: each run resolves its effective mode and loop, then records the exact plan used for that run.
+- Multiple operator surfaces: CLI, TUI, and agent-guided operation all sit over the same control plane.
+
+## Design Philosophy
+
+- Local and inspectable: the workspace is the source of operational truth.
+- Honest failure over hidden magic: blocked work, partial progress, and degraded state should stay legible.
+- Explicit boundaries: lifecycle, runtime state, research, execution, and publish are separate product surfaces.
+- Recoverability matters: long-running systems need durable ledgers, diagnostics, and restart-safe state.
+
+## Repo Layout
+
+The public Millrace repo is package-first. Its main surfaces are:
 
 - `millrace_engine/`: the runtime package, CLI, control layer, and engine
-- `millrace.toml`: native runtime configuration
-- `agents/`: the live workspace surface for queues, runs, logs, prompts, and state
+- `docs/`: longer-form reference material, including the runtime deep dive and TUI reference
 - `tests/`: unit and integration tests
+- `pyproject.toml`: packaging metadata and console entrypoint
 - `millrace_engine/assets/`: the packaged baseline bundle used by `millrace init`
+
+`millrace.toml` and `agents/` are part of an initialized Millrace workspace. They are seeded by `millrace init`; they are not expected at the public repo root.
+
+## Initialized Workspace Layout
+
+An initialized workspace created by `millrace init /absolute/path/to/workspace` contains:
+
+- `millrace.toml`: the active workspace config
+- `agents/`: queues, runs, logs, prompts, state, and provenance
+- `docs/`: copied reference material that travels with the workspace
 
 ## Core Runtime Model
 
@@ -33,18 +72,22 @@ For day-to-day operation, read `OPERATOR_GUIDE.md`. For the agent-facing operato
 ## Quick Start
 
 ```bash
-cd millrace
+cd /absolute/path/to/millrace
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -e '.[dev]'
-python3 -m millrace_engine --config millrace.toml health --json
-python3 -m millrace_engine --config millrace.toml status --detail --json
-python3 -m millrace_engine.tui --config millrace.toml
+python3 -m millrace_engine init /absolute/path/to/workspace
+python3 -m millrace_engine --config /absolute/path/to/workspace/millrace.toml health --json
+python3 -m millrace_engine --config /absolute/path/to/workspace/millrace.toml status --detail --json
+python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml
 ```
+
+After init, you can `cd /absolute/path/to/workspace` and use the shorter `--config millrace.toml` form.
 
 Add work and execute one foreground cycle:
 
 ```bash
+cd /absolute/path/to/workspace
 python3 -m millrace_engine --config millrace.toml add-task "Example task"
 python3 -m millrace_engine --config millrace.toml start --once
 ```
@@ -53,7 +96,7 @@ If the package entrypoint is installed, `millrace --config millrace.toml ...` is
 
 ## TUI Shell
 
-The TUI is the fastest way to operate a local workspace when you want a dense control panel instead of a stream of CLI calls.
+The TUI is the fastest way to operate an initialized workspace when you want a dense control panel instead of a stream of CLI calls.
 
 Launch it with:
 
@@ -66,7 +109,7 @@ What it provides:
 - a startup health gate before the shell becomes interactive
 - a dual-mode shell with summary-first `operator` mode and detail-forward `debug` mode
 - one toggleable expanded stream mode that takes over the main content area while leaving the sidebar, status strip, and notices visible
-- a persistent shell with sidebar navigation, a compact status strip, and widget-composed overview/queue/runs/research/logs/config/publish panels built from cards, structured sections, and list rows
+- a persistent shell with sidebar navigation, a compact status strip, and widget-composed overview/queue/runs/research/logs/config/publish panels
 - explicit lifecycle signaling across the sidebar daemon badge, top status strip, and notices rail
 - guided task, idea, queue reorder, config edit, and publish confirmation flows
 - lifecycle actions for `start --once`, `start --daemon`, `pause`, `resume`, and `stop`
@@ -75,6 +118,8 @@ What it provides:
 - the same runtime semantics as the CLI, including mailbox-safe daemon mutations and the same file-backed truth surfaces
 
 Use the TUI for day-to-day observation and control. Use the CLI when you want scriptable, one-shot commands or JSON output.
+
+The repo also ships a dedicated TUI reference in its `docs/` directory for the full panel, control, and interaction map.
 
 Expanded stream behavior to know:
 
@@ -106,6 +151,8 @@ python3 -m millrace_engine --config /absolute/path/to/workspace/millrace.toml he
 ```
 
 ## Daily Operator Flow
+
+The rest of this section assumes you are operating inside an initialized workspace root that contains the active `millrace.toml`.
 
 1. Preflight the workspace:
 

@@ -11,7 +11,7 @@ It is intentionally implementation-oriented. It describes:
 - how status, queues, events, watchers, diagnostics, and tests fit together
 - what is intentionally deferred or scoped in v1
 
-For the operator-facing workflow, see `OPERATOR_GUIDE.md`. For the packaged CLI-agent prompt surface, see `ADVISOR.md`.
+For the operator-facing workflow, see `../OPERATOR_GUIDE.md`. For the packaged CLI-agent prompt surface, see `../ADVISOR.md`.
 
 ## 1. What This Runtime Is
 
@@ -37,23 +37,28 @@ It is not:
 
 The research side in v1 now includes a real supervisor path (`auto`, `goalspec`, `incident`, `audit`) plus a compatibility `stub` mode that records deferred breadcrumbs.
 
-## 2. Product Root
+## 2. Package Repo And Workspace
 
-`millrace/` is the implementation and delivery root for this runtime.
+The public `millrace/` repo is package-first, not a pre-seeded runtime workspace.
 
 Primary top-level contents:
 
 - `millrace_engine/`: the runtime package
-- `millrace.toml`: the default native config
-- `agents/`: the runtime workspace surface
+- `docs/`: longer-form reference material, including this document
 - `tests/`: the unit and integration suite
-- `README.md`: quick-start and operator-facing usage
+- `README.md`: product overview and quick start
 - `ADVISOR.md`: packaged CLI-based advisor artifact
-- `RUNTIME_DEEP_DIVE.md`: this document
+- `OPERATOR_GUIDE.md`: human operator guide
 
 Important note:
 
 - `millrace/.venv/` is a local development/runtime environment convenience when created; it is not part of the Millrace runtime contract itself.
+
+An initialized workspace created by `millrace init /absolute/path/to/workspace` contains the runtime-owned surfaces:
+
+- `millrace.toml`: the active workspace config
+- `agents/`: the runtime workspace surface
+- `docs/RUNTIME_DEEP_DIVE.md`: this document copied into the workspace docs tree
 
 ## 3. Runtime Package Map
 

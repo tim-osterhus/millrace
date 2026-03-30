@@ -46,7 +46,7 @@ def test_load_staging_manifest_uses_packaged_fallback_when_workspace_copy_is_abs
         "README.md",
         "ADVISOR.md",
         "OPERATOR_GUIDE.md",
-        "RUNTIME_DEEP_DIVE.md",
+        "docs/RUNTIME_DEEP_DIVE.md",
     )
 
 

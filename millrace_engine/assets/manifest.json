@@ -260,6 +260,11 @@
       "category": "directory",
       "family": "specs",
       "path": "agents/specs/templates"
+    },
+    {
+      "category": "directory",
+      "family": "docs",
+      "path": "docs"
     }
   ],
   "files": [
@@ -267,32 +272,24 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "17092a0ef24d4281db6f5cffa669b44551302f2219dd9a1f18f7fb6e9624f781",
-      "size_bytes": 6173,
+      "sha256": "64cc55a6750bd7ac0e1c604ab186cdb286cc37bd3ed9eb20a217d66732a7e204",
+      "size_bytes": 6569,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "3643dd078769b71aff528a1530356692b757799619a9d55f330cf97c3f3e33c4",
-      "size_bytes": 10057,
+      "sha256": "c6a3268a582c0c7eab96667eae265b4e4e3a540b756688a289926fa00d559128",
+      "size_bytes": 10401,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "7538950f962a3196db38e1a7df932f5fb507c2c378bb96d4e1a4cfddac140bd4",
-      "size_bytes": 8393,
-      "source": "runtime"
-    },
-    {
-      "category": "doc",
-      "family": "docs",
-      "path": "RUNTIME_DEEP_DIVE.md",
-      "sha256": "bdacd0614d2f15564ce8ca16a29ac9a50f52aec515a327eb7959ddf8c0170472",
-      "size_bytes": 46436,
+      "sha256": "28146753d05b34430f8eeb3b92ff8ef3d95b778f16b7a47ba0cebb2cc0172316",
+      "size_bytes": 11348,
       "source": "runtime"
     },
     {
@@ -579,8 +576,8 @@
       "category": "objective_contract",
       "family": "objective",
       "path": "agents/objective/contract.yaml",
-      "sha256": "2c7f2e0957ce229ca401029f092652070ab242e3e5f17f62f600b99578e79922",
-      "size_bytes": 1062,
+      "sha256": "1044e2402612540a13831024f5d40cbb053a39611345f06e72f0c2006e8b04cf",
+      "size_bytes": 1067,
       "source": "reference"
     },
     {
@@ -659,8 +656,8 @@
       "category": "workspace_seed",
       "family": "workspace",
       "path": "agents/outline.md",
-      "sha256": "fc11a03f858cf5e933d92614dc35b0564a340b439f8a8d49f5d4fd2d931524e7",
-      "size_bytes": 1403,
+      "sha256": "7797a2e7f57758a14d0b55b6a159c3027cbcfecebf50120a33ee1fbacf25ed9c",
+      "size_bytes": 1450,
       "source": "reference"
     },
     {
@@ -1307,8 +1304,8 @@
       "category": "manifest",
       "family": "workspace",
       "path": "agents/staging_manifest.yml",
-      "sha256": "1a339e9cfc61844e7bc8f83364387c32c410f1bf83ff58d6fae5b64ec973cd99",
-      "size_bytes": 105,
+      "sha256": "8b26d616d7529ee350213abde1086a903d7cb1ad0b380269db22cc87e907b582",
+      "size_bytes": 110,
       "source": "reference"
     },
     {
@@ -1318,6 +1315,22 @@
       "sha256": "8615dfd8d0610eab1edab6b2a2baff99430ed2194fcfd3c96736a7f2b5a73d5d",
       "size_bytes": 6604,
       "source": "reference"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/RUNTIME_DEEP_DIVE.md",
+      "sha256": "7a688e99423620062ddc0e6f44bceeb0eb80248c4eaa663674f7284a25e44f62",
+      "size_bytes": 46736,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/TUI_DOCUMENTATION.md",
+      "sha256": "8f6d3c729332065a252f33911b57d1d4a3f9c79151fdc0a0633ac3e6fe49d629",
+      "size_bytes": 23895,
+      "source": "runtime"
     },
     {
       "category": "config",
