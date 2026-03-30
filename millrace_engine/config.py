@@ -19,9 +19,12 @@ from .contracts import (
     RunnerKind,
     StageType,
 )
-from .legacy.model_loader import load_model_values
-from .legacy.policy_compat import LegacyPolicyCompatReport, build_legacy_policy_compatibility_report
-from .legacy.workflow_loader import load_workflow_values
+from .config_compat import (
+    LegacyPolicyCompatReport,
+    build_legacy_policy_compatibility_report,
+    load_model_values,
+    load_workflow_values,
+)
 from .paths import RuntimePaths
 
 

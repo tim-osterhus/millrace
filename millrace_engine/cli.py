@@ -23,7 +23,7 @@ from .control import (
     StatusReport,
     WorkspaceHealthReport,
 )
-from .legacy.policy_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
+from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .events import EventRecord, render_event_record_line
 from .publishing import PublishCommitReport, PublishPreflightReport, StagingSyncReport
 from .standard_runtime import RegistryObjectSelectionView, RuntimeSelectionView, StageExecutionBindingView

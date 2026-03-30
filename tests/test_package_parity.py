@@ -93,3 +93,18 @@ def test_packaged_tests_do_not_reference_repo_external_fixtures() -> None:
     for path in sorted((MILLRACE_ROOT / "tests").glob("test_*.py")):
         contents = path.read_text(encoding="utf-8")
         assert EXTERNAL_FIXTURE_PATH not in contents, path.name
+
+
+def test_setuptools_package_list_includes_shipped_runtime_subpackages() -> None:
+    pyproject_text = (MILLRACE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"millrace_engine.research"' in pyproject_text
+
+
+def test_shipped_runtime_package_does_not_import_dropped_legacy_package() -> None:
+    for path in sorted((MILLRACE_ROOT / "millrace_engine").rglob("*.py")):
+        if "build" in path.parts:
+            continue
+        contents = path.read_text(encoding="utf-8")
+        assert "from .legacy" not in contents, path.relative_to(MILLRACE_ROOT).as_posix()
+        assert "import .legacy" not in contents, path.relative_to(MILLRACE_ROOT).as_posix()
+        assert "from millrace_engine.legacy" not in contents, path.relative_to(MILLRACE_ROOT).as_posix()

@@ -13,7 +13,7 @@ from .assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKin
 from .baseline_assets import packaged_baseline_bundle_version
 from .config import LoadedConfig, build_runtime_paths, load_engine_config
 from .contracts import ContractModel
-from .legacy.policy_compat import LegacyPolicyCompatStatus
+from .config_compat import LegacyPolicyCompatStatus
 from .paths import RuntimePaths
 
 

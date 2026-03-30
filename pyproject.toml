@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "millrace-ai"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python runtime engine for the Millrace v1 control plane"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,7 @@ packages = [
   "millrace_engine.adapters",
   "millrace_engine.policies",
   "millrace_engine.publishing",
+  "millrace_engine.research",
   "millrace_engine.tui",
   "millrace_engine.tui.screens",
   "millrace_engine.tui.widgets",
