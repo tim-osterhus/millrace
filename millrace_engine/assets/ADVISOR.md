@@ -4,15 +4,19 @@ This file is for agents acting as the operator shell for a Millrace workspace. I
 
 You are the advisor agent for this Millrace runtime instance.
 
-This prompt assumes you are operating inside an initialized Millrace workspace. If you are starting from the package repo, first run `python3 -m millrace_engine init /absolute/path/to/workspace` and then operate from that workspace root.
+This prompt assumes you are operating inside an initialized Millrace workspace. If you are starting from the package repo, first install `millrace-ai`, then run `millrace init /absolute/path/to/workspace`, and then operate from that workspace root.
 
-Operate from the current workspace root. Prefer the module form below as the canonical command surface:
+Operate from the current workspace root. Prefer the installed CLI as the canonical command surface:
+
+```bash
+millrace --config millrace.toml ...
+```
+
+Module form:
 
 ```bash
 python3 -m millrace_engine --config millrace.toml ...
 ```
-
-If the package entrypoint is installed, `millrace --config millrace.toml ...` is equivalent.
 
 Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequence. Use `docs/RUNTIME_DEEP_DIVE.md` when you need architecture details.
 
@@ -29,60 +33,60 @@ Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequ
 ### Workspace Setup
 
 ```bash
-python3 -m millrace_engine init /absolute/path/to/workspace
-python3 -m millrace_engine init --force /absolute/path/to/workspace
-python3 -m millrace_engine init --json /absolute/path/to/workspace
+millrace init /absolute/path/to/workspace
+millrace init --force /absolute/path/to/workspace
+millrace init --json /absolute/path/to/workspace
 ```
 
 ### Lifecycle
 
 ```bash
-python3 -m millrace_engine --config millrace.toml start --once
-python3 -m millrace_engine --config millrace.toml start --daemon
-python3 -m millrace_engine --config millrace.toml pause
-python3 -m millrace_engine --config millrace.toml resume
-python3 -m millrace_engine --config millrace.toml stop
+millrace --config millrace.toml start --once
+millrace --config millrace.toml start --daemon
+millrace --config millrace.toml pause
+millrace --config millrace.toml resume
+millrace --config millrace.toml stop
 ```
 
 ### Inspection
 
 ```bash
-python3 -m millrace_engine --config millrace.toml health --json
-python3 -m millrace_engine --config millrace.toml status --detail --json
-python3 -m millrace_engine --config millrace.toml queue inspect --json
-python3 -m millrace_engine --config millrace.toml logs --tail 50 --json
-python3 -m millrace_engine --config millrace.toml logs --follow
-python3 -m millrace_engine --config millrace.toml research --json
-python3 -m millrace_engine --config millrace.toml research history --json
-python3 -m millrace_engine --config millrace.toml run-provenance <run-id> --json
-python3 -m millrace_engine --config millrace.toml config show --json
+millrace --config millrace.toml health --json
+millrace --config millrace.toml status --detail --json
+millrace --config millrace.toml queue inspect --json
+millrace --config millrace.toml logs --tail 50 --json
+millrace --config millrace.toml logs --follow
+millrace --config millrace.toml research --json
+millrace --config millrace.toml research history --json
+millrace --config millrace.toml run-provenance <run-id> --json
+millrace --config millrace.toml config show --json
 ```
 
 ### Work Intake
 
 ```bash
-python3 -m millrace_engine --config millrace.toml add-task "Example task"
-python3 -m millrace_engine --config millrace.toml add-task "Example task" --body "# Notes"
-python3 -m millrace_engine --config millrace.toml add-task "Example task" --spec-id "<spec-id>"
-python3 -m millrace_engine --config millrace.toml add-idea /absolute/path/to/idea.md
-python3 -m millrace_engine --config millrace.toml queue reorder <task-id> <task-id> ...
+millrace --config millrace.toml add-task "Example task"
+millrace --config millrace.toml add-task "Example task" --body "# Notes"
+millrace --config millrace.toml add-task "Example task" --spec-id "<spec-id>"
+millrace --config millrace.toml add-idea /absolute/path/to/idea.md
+millrace --config millrace.toml queue reorder <task-id> <task-id> ...
 ```
 
 ### Configuration
 
 ```bash
-python3 -m millrace_engine --config millrace.toml config show --json
-python3 -m millrace_engine --config millrace.toml config set <dotted.key> <value> --json
-python3 -m millrace_engine --config millrace.toml config reload --json
+millrace --config millrace.toml config show --json
+millrace --config millrace.toml config set <dotted.key> <value> --json
+millrace --config millrace.toml config reload --json
 ```
 
 ### Publish
 
 ```bash
-python3 -m millrace_engine --config millrace.toml publish sync --json
-python3 -m millrace_engine --config millrace.toml publish preflight --json
-python3 -m millrace_engine --config millrace.toml publish commit --no-push --json
-python3 -m millrace_engine --config millrace.toml publish commit --push --json
+millrace --config millrace.toml publish sync --json
+millrace --config millrace.toml publish preflight --json
+millrace --config millrace.toml publish commit --no-push --json
+millrace --config millrace.toml publish commit --push --json
 ```
 
 ## Runtime Rules
@@ -124,18 +128,18 @@ When the CLI does not expose a convenience command for a read-only view, read th
 
 ### Unknown Runtime State
 
-1. Run `python3 -m millrace_engine --config millrace.toml health --json`.
-2. Run `python3 -m millrace_engine --config millrace.toml status --detail --json`.
-3. Run `python3 -m millrace_engine --config millrace.toml config show --json`.
-4. Run `python3 -m millrace_engine --config millrace.toml queue inspect --json`.
-5. Run `python3 -m millrace_engine --config millrace.toml research --json`.
-6. Run `python3 -m millrace_engine --config millrace.toml logs --tail 100 --json`.
+1. Run `millrace --config millrace.toml health --json`.
+2. Run `millrace --config millrace.toml status --detail --json`.
+3. Run `millrace --config millrace.toml config show --json`.
+4. Run `millrace --config millrace.toml queue inspect --json`.
+5. Run `millrace --config millrace.toml research --json`.
+6. Run `millrace --config millrace.toml logs --tail 100 --json`.
 7. If more evidence is needed, read `agents/.runtime/state.json` and `agents/historylog.md`.
 
 ### Queue Or Task Confusion
 
-1. Run `python3 -m millrace_engine --config millrace.toml queue inspect --json`.
-2. If backlog order is wrong, use `python3 -m millrace_engine --config millrace.toml queue reorder <task-id> <task-id> ...`.
+1. Run `millrace --config millrace.toml queue inspect --json`.
+2. If backlog order is wrong, use `millrace --config millrace.toml queue reorder <task-id> <task-id> ...`.
 3. If needed, read `agents/tasks.md` and `agents/tasksbacklog.md`.
 
 ### Daemon Control

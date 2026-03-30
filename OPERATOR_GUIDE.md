@@ -15,10 +15,14 @@ Run commands from the workspace root that contains your active `millrace.toml`, 
 CLI:
 
 ```bash
-python3 -m millrace_engine --config millrace.toml ...
+millrace --config millrace.toml ...
 ```
 
-If installed, `millrace --config millrace.toml ...` is equivalent.
+Module form:
+
+```bash
+python3 -m millrace_engine --config millrace.toml ...
+```
 
 TUI:
 
@@ -28,7 +32,7 @@ python3 -m millrace_engine.tui --config millrace.toml
 
 ## Supported Operating Surface
 
-The supported control surfaces are the Python CLI and the Textual TUI.
+The supported control surfaces are the `millrace` CLI and the Textual TUI.
 
 Use the CLI commands:
 
@@ -56,13 +60,12 @@ Do not treat `bash agents/orchestrate_loop.sh ...` or `bash agents/research_loop
 
 ## First Setup
 
+Install the published package:
+
 ```bash
-cd /absolute/path/to/millrace
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e '.[dev]'
-python3 -m millrace_engine init /absolute/path/to/workspace
-python3 -m millrace_engine --config /absolute/path/to/workspace/millrace.toml health --json
+python3 -m pip install millrace-ai
+millrace init /absolute/path/to/workspace
+millrace --config /absolute/path/to/workspace/millrace.toml health --json
 ```
 
 If you prefer an interactive shell, launch the TUI against that workspace after the environment is ready:
@@ -71,13 +74,22 @@ If you prefer an interactive shell, launch the TUI against that workspace after 
 python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml
 ```
 
+If you are developing Millrace itself from a source checkout instead of using the published package:
+
+```bash
+cd /absolute/path/to/millrace
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e '.[dev]'
+```
+
 ## Initialize A New Workspace
 
 Use `init` when you want a fresh workspace without copying files manually:
 
 ```bash
-python3 -m millrace_engine init /absolute/path/to/new-workspace
-python3 -m millrace_engine init --force /absolute/path/to/new-workspace
+millrace init /absolute/path/to/new-workspace
+millrace init --force /absolute/path/to/new-workspace
 ```
 
 Behavior to remember:
@@ -89,7 +101,7 @@ Behavior to remember:
 Always run the preflight after creating or updating a workspace:
 
 ```bash
-python3 -m millrace_engine --config /absolute/path/to/new-workspace/millrace.toml health --json
+millrace --config /absolute/path/to/new-workspace/millrace.toml health --json
 ```
 
 The TUI runs the same workspace health check automatically before entering the shell.
@@ -126,7 +138,7 @@ In shipped operator mode, the major panels are rendered as composed cards and st
 Expanded mode follows the current display mode:
 
 - `operator expanded` gives you a narrated runtime feed intended for continuous human monitoring
-- `debug expanded` gives you the raw structured event stream, close to `python3 -m millrace_engine --config millrace.toml logs --follow`
+- `debug expanded` gives you the raw structured event stream, close to `millrace --config millrace.toml logs --follow`
 - if you scroll upward, the feed stays in scrollback while new lines continue to append off-screen until you jump live again
 
 ## Normal Workflow
@@ -134,7 +146,7 @@ Expanded mode follows the current display mode:
 ### 1. Preflight
 
 ```bash
-python3 -m millrace_engine --config millrace.toml health --json
+millrace --config millrace.toml health --json
 ```
 
 Do not move on if `health` fails. It is the supported bootstrap and cutover check.
@@ -142,11 +154,11 @@ Do not move on if `health` fails. It is the supported bootstrap and cutover chec
 ### 2. Inspect State
 
 ```bash
-python3 -m millrace_engine --config millrace.toml status --detail --json
-python3 -m millrace_engine --config millrace.toml queue inspect --json
-python3 -m millrace_engine --config millrace.toml research --json
-python3 -m millrace_engine --config millrace.toml config show --json
-python3 -m millrace_engine --config millrace.toml logs --tail 50 --json
+millrace --config millrace.toml status --detail --json
+millrace --config millrace.toml queue inspect --json
+millrace --config millrace.toml research --json
+millrace --config millrace.toml config show --json
+millrace --config millrace.toml logs --tail 50 --json
 ```
 
 Use these before touching files directly. In normal operation, the runtime is the authority for queue state, daemon state, status markers, and research state.
@@ -156,10 +168,10 @@ In the TUI, use the Overview, Queue, Research, Logs, Runs, Config, and Publish p
 ### 3. Add Work
 
 ```bash
-python3 -m millrace_engine --config millrace.toml add-task "Example task"
-python3 -m millrace_engine --config millrace.toml add-task "Example task" --body "# Notes"
-python3 -m millrace_engine --config millrace.toml add-idea /absolute/path/to/idea.md
-python3 -m millrace_engine --config millrace.toml queue reorder <task-id> <task-id> ...
+millrace --config millrace.toml add-task "Example task"
+millrace --config millrace.toml add-task "Example task" --body "# Notes"
+millrace --config millrace.toml add-idea /absolute/path/to/idea.md
+millrace --config millrace.toml queue reorder <task-id> <task-id> ...
 ```
 
 Use `add-task` for execution backlog work. Use `add-idea` to feed research-side intake through `agents/ideas/raw/`.
@@ -169,8 +181,8 @@ In the TUI, use the Add Task and Add Idea modals. Queue reorder is available fro
 ### 4. Execute
 
 ```bash
-python3 -m millrace_engine --config millrace.toml start --once
-python3 -m millrace_engine --config millrace.toml start --daemon
+millrace --config millrace.toml start --once
+millrace --config millrace.toml start --daemon
 ```
 
 `start --once` is the foreground single-cycle path. `start --daemon` is the long-running local runtime mode.
@@ -180,9 +192,9 @@ In the TUI, use the command palette or panel actions for the same lifecycle comm
 ### 5. Control A Daemon
 
 ```bash
-python3 -m millrace_engine --config millrace.toml pause
-python3 -m millrace_engine --config millrace.toml resume
-python3 -m millrace_engine --config millrace.toml stop
+millrace --config millrace.toml pause
+millrace --config millrace.toml resume
+millrace --config millrace.toml stop
 ```
 
 When the daemon is running, mutating commands become mailbox commands so the daemon stays the only live owner of runtime state.
@@ -192,9 +204,9 @@ The TUI follows the same rule. It does not mutate live daemon state directly.
 ### 6. Inspect Outcomes
 
 ```bash
-python3 -m millrace_engine --config millrace.toml logs --follow
-python3 -m millrace_engine --config millrace.toml run-provenance <run_id> --json
-python3 -m millrace_engine --config millrace.toml research history --json
+millrace --config millrace.toml logs --follow
+millrace --config millrace.toml run-provenance <run_id> --json
+millrace --config millrace.toml research history --json
 ```
 
 Use:
@@ -214,10 +226,10 @@ Use expanded mode when you want the live stream to dominate the shell body. Keep
 ### 7. Publish
 
 ```bash
-python3 -m millrace_engine --config millrace.toml publish sync --json
-python3 -m millrace_engine --config millrace.toml publish preflight --json
-python3 -m millrace_engine --config millrace.toml publish commit --no-push --json
-python3 -m millrace_engine --config millrace.toml publish commit --push --json
+millrace --config millrace.toml publish sync --json
+millrace --config millrace.toml publish preflight --json
+millrace --config millrace.toml publish commit --no-push --json
+millrace --config millrace.toml publish commit --push --json
 ```
 
 Publish behavior:
@@ -284,6 +296,6 @@ Manual file repair is outside the normal control path. Treat it as an exception,
 ```bash
 python3 -m compileall millrace_engine tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q tests
-python3 -m millrace_engine --config millrace.toml health --json
-python3 -m millrace_engine --config millrace.toml status --detail --json
+millrace --config millrace.toml health --json
+millrace --config millrace.toml status --detail --json
 ```

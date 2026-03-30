@@ -59,15 +59,17 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "## Design Philosophy" in readme
     assert "## Initialized Workspace Layout" in readme
     assert "they are not expected at the public repo root" in readme.lower()
-    assert "python3 -m millrace_engine init /absolute/path/to/workspace" in readme
+    assert "python3 -m pip install millrace-ai" in readme
+    assert "millrace init /absolute/path/to/workspace" in readme
     assert "OPERATOR_GUIDE.md" in readme
     assert "ADVISOR.md" in readme
-    assert "millrace_engine init" in readme
+    assert "millrace --config /absolute/path/to/workspace/millrace.toml health --json" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
     assert "This prompt assumes you are operating inside an initialized Millrace workspace" in advisor
-    assert "millrace_engine init" in advisor
+    assert "install `millrace-ai`" in advisor
+    assert "millrace init /absolute/path/to/workspace" in advisor
     assert "health --json" in advisor
     assert "publish preflight --json" in advisor
 
