@@ -1,0 +1,290 @@
+.panel-card {
+    height: 1fr;
+    background: #121214;
+    color: #e8e6ed;
+    border: round #252528;
+    padding: 1 2;
+}
+
+.panel-card:focus {
+    border: heavy #dc2626;
+}
+
+#overview-mode-switcher {
+    height: 1fr;
+}
+
+#queue-mode-switcher,
+#runs-mode-switcher,
+#research-mode-switcher,
+#logs-mode-switcher,
+#config-mode-switcher,
+#publish-mode-switcher {
+    height: 1fr;
+}
+
+#overview-operator {
+    height: auto;
+    min-height: 1fr;
+}
+
+.panel-mode-body {
+    height: auto;
+    min-height: 1fr;
+}
+
+.overview-metrics {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.panel-metrics {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.overview-stack {
+    height: auto;
+}
+
+.overview-card {
+    background: #17171a;
+    border: round #252528;
+    padding: 1 2;
+    margin-bottom: 1;
+}
+
+.overview-metric-card {
+    width: 1fr;
+    min-height: 7;
+    margin-right: 1;
+}
+
+.overview-metric-card:last-child {
+    margin-right: 0;
+}
+
+.overview-detail-card {
+    min-height: 5;
+}
+
+.panel-summary-card {
+    width: 1fr;
+    min-height: 7;
+    margin-right: 1;
+}
+
+.panel-summary-card:last-child {
+    margin-right: 0;
+}
+
+.panel-section-card {
+    min-height: 5;
+    margin-bottom: 1;
+}
+
+.panel-list-card {
+    height: auto;
+}
+
+.panel-item-stack {
+    height: auto;
+    margin-top: 1;
+}
+
+.panel-item-card {
+    background: #141417;
+    border: round #252528;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.panel-item-card.is-selected {
+    border: heavy #dc2626;
+}
+
+.panel-item-card.is-moved {
+    border: round #7c3aed;
+}
+
+.panel-item-card.state-ok .panel-item-title {
+    color: #4ade80;
+}
+
+.panel-item-card.state-warn .panel-item-title {
+    color: #f59e0b;
+}
+
+.panel-item-card.state-fail .panel-item-title {
+    color: #ef4444;
+}
+
+.panel-empty-card .panel-item-title {
+    color: #f0eef5;
+}
+
+.panel-item-title {
+    color: #f0eef5;
+    text-style: bold;
+}
+
+.panel-item-meta {
+    color: #a7a2b3;
+}
+
+.panel-item-alert {
+    color: #ef9a9a;
+}
+
+.overview-card-label {
+    color: #807e88;
+    text-style: bold;
+}
+
+.overview-card-value {
+    color: #f0eef5;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.overview-card-headline {
+    color: #f0eef5;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.overview-card-meta,
+.overview-card-detail {
+    color: #a7a2b3;
+}
+
+#overview-backlog-value {
+    color: #ef4444;
+}
+
+#overview-latest-card.state-ok .overview-card-headline {
+    color: #4ade80;
+}
+
+#overview-latest-card.state-warn .overview-card-headline {
+    color: #f59e0b;
+}
+
+#overview-latest-card.state-fail .overview-card-headline {
+    color: #ef4444;
+}
+
+#overview-attention-card.state-calm {
+    border: round #252528;
+}
+
+#overview-attention-card.state-notice {
+    border: round #3b3b45;
+}
+
+#overview-attention-card.state-warning {
+    border: round #7c2d12;
+}
+
+#overview-attention-card.state-failure {
+    border: round #991b1b;
+}
+
+#overview-debug {
+    min-height: 1fr;
+}
+
+.panel-debug-body {
+    min-height: 1fr;
+}
+
+ModalScreen {
+    align: center middle;
+    background: rgba(10, 10, 11, 0.88);
+}
+
+.modal-dialog {
+    width: 72;
+    max-width: 96;
+    height: auto;
+    background: #121214;
+    color: #f0eef5;
+    border: heavy #dc2626;
+    padding: 1 2;
+}
+
+.modal-form {
+    max-height: 34;
+}
+
+.modal-title {
+    color: #f0eef5;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.modal-copy {
+    color: #807e88;
+    margin-bottom: 1;
+}
+
+.modal-label {
+    color: #ef4444;
+    margin-top: 1;
+}
+
+.modal-help {
+    color: #807e88;
+    margin-top: 1;
+}
+
+.modal-error {
+    color: #ef4444;
+    min-height: 1;
+    margin-top: 1;
+}
+
+.modal-actions {
+    width: 1fr;
+    height: auto;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+.modal-actions Button {
+    margin-left: 1;
+}
+
+.modal-textarea {
+    height: 8;
+    margin-top: 1;
+}
+
+Button {
+    background: #121214;
+    color: #e8e6ed;
+    border: round #252528;
+    text-style: bold;
+}
+
+Button.-primary {
+    background: #dc2626;
+    color: #f0eef5;
+    border: round #ef4444;
+}
+
+Button:focus {
+    border: heavy #ef4444;
+}
+
+Input,
+TextArea {
+    background: #0f0f10;
+    color: #e8e6ed;
+    border: round #252528;
+}
+
+Input:focus,
+TextArea:focus {
+    border: heavy #dc2626;
+}

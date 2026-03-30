@@ -1,0 +1,42 @@
+{
+  "aliases": [
+    "default"
+  ],
+  "created_at": "2026-03-18T00:00:00Z",
+  "id": "model.default",
+  "kind": "model_profile",
+  "labels": [
+    "baseline",
+    "model"
+  ],
+  "payload": {
+    "default_binding": {
+      "allow_search": false,
+      "effort": "medium",
+      "model": "gpt-5.3-codex",
+      "runner": "codex"
+    },
+    "scoped_defaults": [],
+    "stage_overrides": [
+      {
+        "binding": {
+          "allow_search": true,
+          "effort": "high",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.builder"
+      }
+    ]
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/model_profiles/model.default__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged baseline model selection profile.",
+  "tier": "golden",
+  "title": "Default Model Profile",
+  "updated_at": "2026-03-18T00:00:00Z",
+  "version": "1.0.0"
+}

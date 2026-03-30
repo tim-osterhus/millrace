@@ -1,0 +1,288 @@
+# Millrace Operator Guide
+
+This guide is the human operator workflow for a Millrace workspace.
+
+Use it with:
+
+- `README.md` for product overview and quick start
+- `ADVISOR.md` for the agent-facing control surface
+- `RUNTIME_DEEP_DIVE.md` for implementation details
+
+## Canonical Invocation
+
+Run commands from the workspace root that contains your active `millrace.toml`.
+
+CLI:
+
+```bash
+python3 -m millrace_engine --config millrace.toml ...
+```
+
+If installed, `millrace --config millrace.toml ...` is equivalent.
+
+TUI:
+
+```bash
+python3 -m millrace_engine.tui --config millrace.toml
+```
+
+## Supported Operating Surface
+
+The supported control surfaces are the Python CLI and the Textual TUI.
+
+Use the CLI commands:
+
+- `init`
+- `health`
+- `status`
+- `queue`
+- `add-task`
+- `add-idea`
+- `start`
+- `pause`
+- `resume`
+- `stop`
+- `logs`
+- `research`
+- `run-provenance`
+- `publish`
+- `config`
+
+Or launch the TUI directly with:
+
+- `python3 -m millrace_engine.tui --config millrace.toml`
+
+Do not treat `bash agents/orchestrate_loop.sh ...` or `bash agents/research_loop.sh ...` as the supported operator entrypoints. Those shell assets are compatibility or reference material now, not the main runtime path.
+
+## First Setup
+
+```bash
+cd /absolute/path/to/millrace
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e '.[dev]'
+python3 -m millrace_engine --config millrace.toml health --json
+```
+
+If you prefer an interactive shell, launch the TUI after the environment is ready:
+
+```bash
+python3 -m millrace_engine.tui --config millrace.toml
+```
+
+## Initialize A New Workspace
+
+Use `init` when you want a fresh workspace without copying files manually:
+
+```bash
+python3 -m millrace_engine init /absolute/path/to/new-workspace
+python3 -m millrace_engine init --force /absolute/path/to/new-workspace
+```
+
+Behavior to remember:
+
+- Without `--force`, the destination must be absent or empty.
+- With `--force`, Millrace overwrites manifest-tracked baseline files in place. It does not clean the directory.
+- The new workspace still uses workspace-first asset resolution after init.
+
+Always run the preflight after creating or updating a workspace:
+
+```bash
+python3 -m millrace_engine --config millrace.toml health --json
+```
+
+The TUI runs the same workspace health check automatically before entering the shell.
+
+## TUI Workflow
+
+The TUI is a supported operator shell over the same control layer used by the CLI. It does not bypass the runtime contract.
+
+What the shell gives you:
+
+- a startup health gate with retry and local recovery context
+- a sidebar-driven shell with a top status strip, widget-composed Overview/Queue/Runs/Research/Logs/Config/Publish panels, and a notices rail for action feedback
+- dual display modes: `operator` for concise daily control and `debug` for denser diagnostics
+- one expanded stream mode that swaps the current panel body for a full-height live feed while keeping the rest of the shell frame visible
+- lifecycle state signals in multiple places: sidebar daemon badge, top status strip, and notices
+- a command palette for lifecycle, publish, config, and panel actions
+- guided modals for add-task, add-idea, queue reorder, config edits, run detail, and publish confirmations
+- the same mailbox-safe daemon mutation rules used by the CLI
+
+Useful TUI controls:
+
+- `1` through `7` switch panels
+- `s` focuses the sidebar and `c` focuses the active panel
+- `t` opens Add Task and `i` opens Add Idea
+- `Ctrl+P` opens the command palette
+- use the sidebar Mode toggle or command palette action to switch operator/debug views
+- `e` toggles expanded mode, `Escape` exits it, and `l` jumps back to the live tail
+- `?` opens keyboard help
+
+Use the TUI when you want an always-on control panel. Use the CLI when you want scriptable JSON output or one-shot commands.
+
+In shipped operator mode, the major panels are rendered as composed cards and structured lists rather than long pipe-delimited report text. Debug mode keeps the denser provenance-oriented detail.
+
+Expanded mode follows the current display mode:
+
+- `operator expanded` gives you a narrated runtime feed intended for continuous human monitoring
+- `debug expanded` gives you the raw structured event stream, close to `python3 -m millrace_engine --config millrace.toml logs --follow`
+- if you scroll upward, the feed stays in scrollback while new lines continue to append off-screen until you jump live again
+
+## Normal Workflow
+
+### 1. Preflight
+
+```bash
+python3 -m millrace_engine --config millrace.toml health --json
+```
+
+Do not move on if `health` fails. It is the supported bootstrap and cutover check.
+
+### 2. Inspect State
+
+```bash
+python3 -m millrace_engine --config millrace.toml status --detail --json
+python3 -m millrace_engine --config millrace.toml queue inspect --json
+python3 -m millrace_engine --config millrace.toml research --json
+python3 -m millrace_engine --config millrace.toml config show --json
+python3 -m millrace_engine --config millrace.toml logs --tail 50 --json
+```
+
+Use these before touching files directly. In normal operation, the runtime is the authority for queue state, daemon state, status markers, and research state.
+
+In the TUI, use the Overview, Queue, Research, Logs, Runs, Config, and Publish panels for the same visibility without leaving the shell.
+
+### 3. Add Work
+
+```bash
+python3 -m millrace_engine --config millrace.toml add-task "Example task"
+python3 -m millrace_engine --config millrace.toml add-task "Example task" --body "# Notes"
+python3 -m millrace_engine --config millrace.toml add-idea /absolute/path/to/idea.md
+python3 -m millrace_engine --config millrace.toml queue reorder <task-id> <task-id> ...
+```
+
+Use `add-task` for execution backlog work. Use `add-idea` to feed research-side intake through `agents/ideas/raw/`.
+
+In the TUI, use the Add Task and Add Idea modals. Queue reorder is available from the Queue panel.
+
+### 4. Execute
+
+```bash
+python3 -m millrace_engine --config millrace.toml start --once
+python3 -m millrace_engine --config millrace.toml start --daemon
+```
+
+`start --once` is the foreground single-cycle path. `start --daemon` is the long-running local runtime mode.
+
+In the TUI, use the command palette or panel actions for the same lifecycle commands.
+
+### 5. Control A Daemon
+
+```bash
+python3 -m millrace_engine --config millrace.toml pause
+python3 -m millrace_engine --config millrace.toml resume
+python3 -m millrace_engine --config millrace.toml stop
+```
+
+When the daemon is running, mutating commands become mailbox commands so the daemon stays the only live owner of runtime state.
+
+The TUI follows the same rule. It does not mutate live daemon state directly.
+
+### 6. Inspect Outcomes
+
+```bash
+python3 -m millrace_engine --config millrace.toml logs --follow
+python3 -m millrace_engine --config millrace.toml run-provenance <run_id> --json
+python3 -m millrace_engine --config millrace.toml research history --json
+```
+
+Use:
+
+- `logs` for the structured event stream
+- `run-provenance` for one execution run's frozen plan, transitions, and evidence
+- `research --json` and `research history` for research-side state and recent research events
+
+In the TUI:
+
+- the Logs panel tails and filters the event stream
+- the Runs panel opens concise run detail backed by `run-provenance`
+- the Research panel surfaces queue, status, governance, and recent activity snapshots
+
+Use expanded mode when you want the live stream to dominate the shell body. Keep using the compact Logs panel when filters, selection, and run-detail handoff matter more than full-height output.
+
+### 7. Publish
+
+```bash
+python3 -m millrace_engine --config millrace.toml publish sync --json
+python3 -m millrace_engine --config millrace.toml publish preflight --json
+python3 -m millrace_engine --config millrace.toml publish commit --no-push --json
+python3 -m millrace_engine --config millrace.toml publish commit --push --json
+```
+
+Publish behavior:
+
+- the staging repo defaults to `<workspace>/staging`
+- the manifest defaults to `agents/staging_manifest.yml`
+- `publish preflight` is read-only
+- `publish commit` only pushes when `--push` is supplied
+
+The TUI Publish panel exposes the same flow with explicit preflight refresh, sync, local commit, and higher-friction push confirmation.
+
+## Config Behavior
+
+Runtime config changes are validated first, then applied at one of four boundaries:
+
+- `live_immediate`
+- `stage_boundary`
+- `cycle_boundary`
+- `startup_only`
+
+The config file may be watched by the daemon, but watched edits still go through the same reload and boundary rules. A file save is not an uncontrolled live mutation.
+
+## Asset Resolution
+
+Asset lookup is workspace-first:
+
+- workspace files override packaged defaults when both exist
+- packaged assets are the fallback when the workspace copy is absent
+- additive families such as roles and skills can combine workspace and packaged entries
+- `status --detail --json` and `config show --json` expose the active bundle and resolved prompt provenance
+
+## Watched Inputs
+
+By default the daemon watches:
+
+- execution backlog and autonomy markers
+- raw ideas under `agents/ideas/raw/`
+- mailbox commands under `agents/.runtime/commands/incoming/`
+- the config file `millrace.toml`
+
+These roots and their debounce settings live under `[watchers]`.
+
+## Read-Only Diagnosis
+
+If the control surface is not enough, read these files without editing them manually:
+
+- `agents/.runtime/state.json`
+- `agents/engine_events.log`
+- `agents/historylog.md`
+- `agents/audit_history.md`
+- `agents/audit_summary.json`
+- `agents/tasks.md`
+- `agents/tasksbacklog.md`
+- `agents/tasksarchive.md`
+- `agents/tasksblocker.md`
+- `agents/tasksbackburner.md`
+- `agents/status.md`
+- `agents/research_status.md`
+
+Manual file repair is outside the normal control path. Treat it as an exception, not routine operation.
+
+## Verification
+
+```bash
+python3 -m compileall millrace_engine tests
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q tests
+python3 -m millrace_engine --config millrace.toml health --json
+python3 -m millrace_engine --config millrace.toml status --detail --json
+```

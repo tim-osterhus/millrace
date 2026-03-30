@@ -1,0 +1,99 @@
+{
+  "aliases": [
+    "complexity-involved",
+    "involved-routing"
+  ],
+  "created_at": "2026-03-19T00:00:00Z",
+  "id": "model.complexity.involved",
+  "kind": "model_profile",
+  "labels": [
+    "complexity",
+    "involved",
+    "model"
+  ],
+  "payload": {
+    "default_binding": {
+      "allow_search": false,
+      "effort": "medium",
+      "model": "gpt-5.3-codex",
+      "runner": "codex"
+    },
+    "scoped_defaults": [],
+    "stage_overrides": [
+      {
+        "binding": {
+          "effort": "high",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.builder"
+      },
+      {
+        "binding": {
+          "effort": "high",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.large-plan"
+      },
+      {
+        "binding": {
+          "effort": "high",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.large-execute"
+      },
+      {
+        "binding": {
+          "effort": "high",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.reassess"
+      },
+      {
+        "binding": {
+          "effort": "medium",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.refactor"
+      },
+      {
+        "binding": {
+          "effort": "xhigh",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.qa"
+      },
+      {
+        "binding": {
+          "effort": "medium",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.hotfix"
+      },
+      {
+        "binding": {
+          "effort": "high",
+          "model": "gpt-5.3-codex",
+          "runner": "codex"
+        },
+        "kind_id": "execution.doublecheck"
+      }
+    ]
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/model_profiles/model.complexity.involved__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged involved-band complexity-routing profile for LARGE-capable execution.",
+  "tier": "golden",
+  "title": "Involved Complexity Model Profile",
+  "updated_at": "2026-03-19T00:00:00Z",
+  "version": "1.0.0"
+}

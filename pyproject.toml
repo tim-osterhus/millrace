@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "millrace-runtime-v1"
+version = "0.1.0"
+description = "Python runtime engine for the Millrace v1 control plane"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2,<3",
+  "textual>=8,<9",
+  "tomlkit>=0.13,<1",
+  "typer>=0.12,<1",
+  "watchdog>=4,<7",
+]
+
+[project.scripts]
+millrace = "millrace_engine.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "pytest-textual-snapshot>=1,<2",
+]
+
+[tool.setuptools]
+packages = [
+  "millrace_engine",
+  "millrace_engine.assets",
+  "millrace_engine.planes",
+  "millrace_engine.stages",
+  "millrace_engine.adapters",
+  "millrace_engine.policies",
+  "millrace_engine.legacy",
+  "millrace_engine.publishing",
+  "millrace_engine.tui",
+  "millrace_engine.tui.screens",
+  "millrace_engine.tui.widgets",
+]
+
+[tool.setuptools.package-data]
+"millrace_engine.assets" = [
+  "manifest.json",
+  "*.md",
+  "*.toml",
+  "agents/*.log",
+  "agents/**/*.log",
+  "agents/**/*.json",
+  "agents/**/*.md",
+  "agents/**/*.ps1",
+  "agents/**/*.py",
+  "agents/**/*.sh",
+  "agents/**/*.yaml",
+  "agents/**/*.yml",
+  "registry/**/*.json",
+  "registry/**/*.md",
+]
+"millrace_engine.tui" = [
+  "styles/*.tcss",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

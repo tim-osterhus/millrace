@@ -1,0 +1,52 @@
+{
+  "aliases": [
+    "large",
+    "large-thorough",
+    "large-default"
+  ],
+  "created_at": "2026-03-19T00:00:00Z",
+  "extends": null,
+  "id": "mode.large",
+  "kind": "mode",
+  "labels": [
+    "large",
+    "mode",
+    "qa-verified",
+    "thorough-profile"
+  ],
+  "payload": {
+    "composition_rules": null,
+    "execution_loop_ref": {
+      "id": "execution.large",
+      "kind": "loop_config",
+      "version": "1.0.0"
+    },
+    "model_profile_ref": {
+      "id": "model.default",
+      "kind": "model_profile",
+      "version": "1.0.0"
+    },
+    "outline_policy": {
+      "mode": "hybrid",
+      "shard_glob": null
+    },
+    "policy_toggles": null,
+    "research_loop_ref": null,
+    "research_participation": "none",
+    "task_authoring_profile_ref": {
+      "id": "task_authoring.narrow",
+      "kind": "task_authoring_profile",
+      "version": "1.0.0"
+    }
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/modes/mode.large__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged default LARGE mode that selects the thorough QA-verified execution profile from registry data alone.",
+  "tier": "default",
+  "title": "Large Thorough Mode",
+  "updated_at": "2026-03-19T00:00:00Z",
+  "version": "1.0.0"
+}

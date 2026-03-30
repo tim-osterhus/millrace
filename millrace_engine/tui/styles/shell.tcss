@@ -1,0 +1,174 @@
+#shell-body {
+    height: 1fr;
+    layout: horizontal;
+}
+
+#shell-sidebar {
+    width: 26;
+    min-width: 22;
+    background: #0a0a0b;
+    border-right: solid #252528;
+    padding: 1 1;
+}
+
+#shell-main {
+    width: 1fr;
+    background: #0a0a0b;
+}
+
+#shell-status {
+    background: #0e0e10;
+    color: #f0eef5;
+    border-bottom: solid #252528;
+    padding: 0 1;
+    height: auto;
+}
+
+#shell-content {
+    height: 1fr;
+    padding: 1 2 0 2;
+}
+
+#shell-notices {
+    background: #0e0e10;
+    color: #807e88;
+    border-top: solid #252528;
+    padding: 0 1;
+    height: auto;
+}
+
+#shell-notices.notice-warning {
+    color: #eab308;
+}
+
+#shell-notices.notice-error {
+    color: #ef4444;
+}
+
+.sidebar-frame {
+    height: 1fr;
+}
+
+.sidebar-wordmark {
+    color: #dc2626;
+    text-style: bold;
+    margin-bottom: 0;
+    padding-left: 1;
+}
+
+.sidebar-kicker {
+    color: #807e88;
+    text-style: bold;
+    margin-bottom: 0;
+    padding-left: 1;
+}
+
+.sidebar-daemon-badge {
+    background: rgba(220, 38, 38, 0.12);
+    color: #d4d2dc;
+    border: round #4a4a4f;
+    text-style: bold;
+    padding: 0 1 0 1;
+    margin-bottom: 1;
+}
+
+.sidebar-daemon-badge.state-idle {
+    color: #807e88;
+    border: round #3a3a3e;
+}
+
+.sidebar-daemon-badge.state-launching-once {
+    color: #f59e0b;
+    border: round #f59e0b;
+}
+
+.sidebar-daemon-badge.state-launching-daemon {
+    color: #f59e0b;
+    border: round #f59e0b;
+}
+
+.sidebar-daemon-badge.state-running {
+    color: #4ade80;
+    border: round #4ade80;
+}
+
+.sidebar-daemon-badge.state-paused {
+    color: #eab308;
+    border: round #eab308;
+}
+
+.sidebar-daemon-badge.state-stop {
+    color: #f59e0b;
+    border: round #f59e0b;
+}
+
+.sidebar-daemon-badge.state-failure {
+    color: #ef4444;
+    border: round #ef4444;
+}
+
+.sidebar-title {
+    color: #807e88;
+    text-style: bold;
+    margin-bottom: 0;
+    padding-left: 1;
+}
+
+.sidebar-panels {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.sidebar-button {
+    width: 1fr;
+    margin-bottom: 0;
+    background: #121214;
+    color: #807e88;
+    border: round #252528;
+}
+
+.sidebar-button.active {
+    background: #dc2626;
+    color: #f0eef5;
+    border: round #ef4444;
+    text-style: bold;
+}
+
+.sidebar-mode-toggle {
+    width: 1fr;
+    margin-top: 0;
+    margin-bottom: 0;
+    background: #0a0a0b;
+    color: #807e88;
+    border: round #252528;
+}
+
+.sidebar-mode-toggle:hover {
+    color: #f0eef5;
+    border: round #dc2626;
+}
+
+.sidebar-expanded-toggle {
+    width: 1fr;
+    margin-top: 1;
+    margin-bottom: 0;
+    background: #121214;
+    color: #d4d2dc;
+    border: round #3b3b45;
+}
+
+.sidebar-expanded-toggle:hover {
+    color: #f0eef5;
+    border: round #ef4444;
+}
+
+.sidebar-help {
+    color: #807e88;
+    margin-top: 1;
+    padding-left: 1;
+}
+
+.expanded-stream-view {
+    height: 1fr;
+    overflow-y: auto;
+}

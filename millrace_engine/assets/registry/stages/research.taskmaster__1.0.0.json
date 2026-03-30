@@ -1,0 +1,88 @@
+{
+  "aliases": [
+    "taskmaster"
+  ],
+  "created_at": "2026-03-19T00:00:00Z",
+  "extends": null,
+  "id": "research.taskmaster",
+  "kind": "registered_stage_kind",
+  "labels": [
+    "baseline",
+    "goalspec",
+    "research"
+  ],
+  "payload": {
+    "allowed_overrides": [
+      "model_profile_ref",
+      "runner",
+      "model",
+      "effort",
+      "allow_search",
+      "prompt_asset_ref",
+      "timeout_seconds"
+    ],
+    "context_schema_ref": "research.taskmaster.context.v1",
+    "contract_version": "1.0.0",
+    "handler_ref": "millrace_engine.research.dispatcher:TaskmasterStage",
+    "idempotence_policy": "retry_safe_with_key",
+    "input_artifacts": [
+      {
+        "kind": "approved_spec",
+        "multiplicity": "one",
+        "name": "approved_spec",
+        "required": true
+      }
+    ],
+    "kind_id": "research.taskmaster",
+    "legal_predecessors": [
+      "research.spec-review"
+    ],
+    "legal_successors": [],
+    "output_artifacts": [
+      {
+        "kind": "task_plan",
+        "name": "task_plan",
+        "persistence": "runtime_bundle",
+        "required_on": []
+      },
+      {
+        "kind": "stage_summary",
+        "name": "stage_summary",
+        "persistence": "history",
+        "required_on": []
+      }
+    ],
+    "plane": "research",
+    "queue_mutation_policy": "runtime_only",
+    "result_schema_ref": "research.taskmaster.result.v1",
+    "retry_policy": {
+      "backoff_seconds": 5.0,
+      "exhausted_outcome": "terminal_failure",
+      "max_attempts": 1
+    },
+    "routing_outcomes": [
+      "success",
+      "blocked",
+      "terminal_failure"
+    ],
+    "running_status": "TASKMASTER_RUNNING",
+    "success_statuses": [
+      "IDLE"
+    ],
+    "terminal_statuses": [
+      "IDLE",
+      "BLOCKED",
+      "NET_WAIT"
+    ]
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/stages/research.taskmaster__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged scaffold for emitting execution-ready task plans from reviewed GoalSpec artifacts.",
+  "tier": "default",
+  "title": "Research Taskmaster",
+  "updated_at": "2026-03-19T00:00:00Z",
+  "version": "1.0.0"
+}

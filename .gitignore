@@ -1,0 +1,16 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Package-first public repo: local dogfood/runtime workspaces should stay untracked.
+agents/
+millrace.toml

@@ -1,0 +1,496 @@
+"""File-backed queue operations."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
+from typing import Sequence
+import fcntl
+import json
+import time
+
+from .contracts import BlockerEntry, ExecutionStatus, ResearchRecoveryLatch, TaskCard
+from .markdown import (
+    TaskStoreDocument,
+    append_markdown_block,
+    insert_after_preamble,
+    parse_task_store,
+    render_task_store,
+    write_text_atomic,
+)
+from .paths import RuntimePaths
+from .policies.sizing import SizeClass, adaptive_upscope_task_card
+
+
+DEFAULT_STORE_PREAMBLES = {
+    "tasks.md": "# Active Task",
+    "tasksbacklog.md": "# Task Backlog",
+    "tasksarchive.md": "# Task Archive",
+    "tasksbackburner.md": "# Task Backburner",
+    "tasksblocker.md": "# Task Blockers",
+    "taskspending.md": "# Tasks Pending",
+}
+
+DEFAULT_LOCK_TIMEOUT_SECONDS = 15.0
+LOCK_RETRY_SLEEP_SECONDS = 0.05
+
+
+class QueueError(RuntimeError):
+    """Base queue failure."""
+
+
+class QueueEmptyError(QueueError):
+    """Raised when a queue operation needs a card but none exists."""
+
+
+class QueueStateError(QueueError):
+    """Raised when visible queue files violate queue invariants."""
+
+
+class QueueLockTimeoutError(QueueError):
+    """Raised when queue.lock cannot be acquired in time."""
+
+
+class QueueMergeConflictError(QueueStateError):
+    """Raised when a prepared pending-family merge no longer matches live files."""
+
+
+def _sha256_text(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()
+
+
+def load_research_recovery_latch(path: Path) -> ResearchRecoveryLatch | None:
+    """Load a persisted recovery latch if present."""
+
+    if not path.exists():
+        return None
+    return ResearchRecoveryLatch.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+
+def write_research_recovery_latch(path: Path, latch: ResearchRecoveryLatch) -> None:
+    """Persist one recovery latch snapshot atomically."""
+
+    write_text_atomic(
+        path,
+        latch.model_dump_json(indent=2, exclude_none=True) + "\n",
+    )
+
+
+class TaskQueue:
+    """Visible Millrace task-store mutation layer."""
+
+    def __init__(self, paths: RuntimePaths, *, lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS) -> None:
+        self.paths = paths
+        self.lock_timeout_seconds = lock_timeout_seconds
+
+    @contextmanager
+    def _locked(self) -> None:
+        self.paths.queue_lock_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.paths.queue_lock_file.open("a+", encoding="utf-8") as handle:
+            deadline = time.monotonic() + self.lock_timeout_seconds
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise QueueLockTimeoutError("timed out waiting for queue.lock") from None
+                    time.sleep(LOCK_RETRY_SLEEP_SECONDS)
+                    continue
+                break
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _default_preamble(self, path: Path) -> str:
+        return DEFAULT_STORE_PREAMBLES.get(path.name, "")
+
+    def _read_text(self, path: Path) -> str:
+        if not path.exists():
+            preamble = self._default_preamble(path)
+            return (preamble + "\n") if preamble else ""
+        return path.read_text(encoding="utf-8")
+
+    def _read_store(self, path: Path) -> TaskStoreDocument:
+        document = parse_task_store(self._read_text(path), source_file=path)
+        if not document.preamble and self._default_preamble(path):
+            return TaskStoreDocument(preamble=self._default_preamble(path), cards=document.cards)
+        return document
+
+    def _write_store(self, path: Path, document: TaskStoreDocument) -> None:
+        preamble = document.preamble or self._default_preamble(path)
+        write_text_atomic(path, render_task_store(TaskStoreDocument(preamble=preamble, cards=document.cards)))
+
+    def _read_active_document(self) -> TaskStoreDocument:
+        document = self._read_store(self.paths.tasks_file)
+        if len(document.cards) > 1:
+            raise QueueStateError("agents/tasks.md may contain at most one active task card")
+        return document
+
+    def _active_task_fingerprint(self) -> str | None:
+        text = self._read_text(self.paths.tasks_file)
+        if not text.strip():
+            return None
+        return _sha256_text(text)
+
+    def _resolve_active_card(self, expected: TaskCard | None = None) -> TaskCard:
+        active = self._read_active_document().cards
+        if not active:
+            raise QueueEmptyError("no active task card is present")
+        current = active[0]
+        if expected is not None and current.task_id != expected.task_id:
+            raise QueueStateError(
+                f"active task mismatch: expected {expected.task_id}, found {current.task_id}"
+            )
+        return current
+
+    def _visible_recovery_cards(self, remediation_spec_id: str) -> tuple[TaskCard, ...]:
+        cards: list[TaskCard] = []
+        for store_path in (self.paths.tasks_file, self.paths.backlog_file, self.paths.taskspending_file):
+            cards.extend(card for card in self._read_store(store_path).cards if card.spec_id == remediation_spec_id)
+        return tuple(cards)
+
+    def backlog_empty(self) -> bool:
+        """Return True when the backlog file has no visible task cards."""
+
+        return not self._read_store(self.paths.backlog_file).cards
+
+    def backlog_depth(self) -> int:
+        """Return the current backlog depth."""
+
+        return len(self._read_store(self.paths.backlog_file).cards)
+
+    def peek_next(self) -> TaskCard | None:
+        """Return the next backlog card without mutation."""
+
+        backlog = self._read_store(self.paths.backlog_file).cards
+        return backlog[0] if backlog else None
+
+    def active_task(self) -> TaskCard | None:
+        """Return the currently active task card."""
+
+        active = self._read_active_document().cards
+        return active[0] if active else None
+
+    def reorder(self, task_ids: list[str] | tuple[str, ...]) -> tuple[TaskCard, ...]:
+        """Rewrite the backlog in one validated deterministic order."""
+
+        requested_ids = [task_id.strip() for task_id in task_ids if task_id.strip()]
+        if not requested_ids:
+            raise QueueStateError("queue reorder requires at least one backlog task id")
+        if len(set(requested_ids)) != len(requested_ids):
+            raise QueueStateError("queue reorder does not allow duplicate task ids")
+
+        with self._locked():
+            backlog_document = self._read_store(self.paths.backlog_file)
+            backlog_cards = list(backlog_document.cards)
+            known_ids = [card.task_id for card in backlog_cards]
+            if len(requested_ids) != len(known_ids):
+                raise QueueStateError(
+                    "queue reorder must specify the full backlog order exactly once"
+                )
+
+            by_id = {card.task_id: card for card in backlog_cards}
+            unknown_ids = [task_id for task_id in requested_ids if task_id not in by_id]
+            missing_ids = [task_id for task_id in known_ids if task_id not in requested_ids]
+            if unknown_ids or missing_ids:
+                details: list[str] = []
+                if unknown_ids:
+                    details.append(f"unknown={','.join(unknown_ids)}")
+                if missing_ids:
+                    details.append(f"missing={','.join(missing_ids)}")
+                raise QueueStateError("queue reorder id mismatch: " + " ".join(details))
+
+            reordered_cards = [by_id[task_id] for task_id in requested_ids]
+            self._write_store(
+                self.paths.backlog_file,
+                TaskStoreDocument(
+                    preamble=backlog_document.preamble,
+                    cards=reordered_cards,
+                ),
+            )
+            return tuple(reordered_cards)
+
+    def merge_pending_family(
+        self,
+        *,
+        expected_backlog_sha256: str,
+        expected_pending_sha256: str,
+        ordered_backlog_cards: Sequence[TaskCard],
+        pending_preamble: str = "",
+        clear_shard_paths: Sequence[Path] = (),
+    ) -> tuple[TaskCard, ...]:
+        """Atomically merge one prepared pending family into backlog and clear pending."""
+
+        merged_cards = [card for card in ordered_backlog_cards]
+        if not merged_cards:
+            raise QueueStateError("pending-family merge requires at least one backlog card")
+
+        merged_ids = [card.task_id for card in merged_cards]
+        if len(set(merged_ids)) != len(merged_ids):
+            raise QueueStateError("pending-family merge does not allow duplicate task ids")
+
+        with self._locked():
+            backlog_text = self._read_text(self.paths.backlog_file)
+            pending_text = self._read_text(self.paths.taskspending_file)
+            if _sha256_text(backlog_text) != expected_backlog_sha256:
+                raise QueueMergeConflictError("pending-family merge backlog snapshot changed before commit")
+            if _sha256_text(pending_text) != expected_pending_sha256:
+                raise QueueMergeConflictError("pending-family merge pending snapshot changed before commit")
+
+            backlog_document = self._read_store(self.paths.backlog_file)
+            self._write_store(
+                self.paths.backlog_file,
+                TaskStoreDocument(
+                    preamble=backlog_document.preamble,
+                    cards=merged_cards,
+                ),
+            )
+            self._write_store(
+                self.paths.taskspending_file,
+                TaskStoreDocument(preamble=pending_preamble, cards=[]),
+            )
+            for shard_path in clear_shard_paths:
+                shard_path.unlink(missing_ok=True)
+            return tuple(merged_cards)
+
+    def promote_next(self) -> TaskCard:
+        """Promote the next backlog card into the active task store."""
+
+        with self._locked():
+            active_document = self._read_active_document()
+            if active_document.cards:
+                raise QueueStateError("cannot promote when an active task already exists")
+
+            backlog_document = self._read_store(self.paths.backlog_file)
+            if not backlog_document.cards:
+                raise QueueEmptyError("cannot promote from an empty backlog")
+
+            card = backlog_document.cards[0]
+            self._write_store(
+                self.paths.backlog_file,
+                TaskStoreDocument(preamble=backlog_document.preamble, cards=backlog_document.cards[1:]),
+            )
+            self._write_store(
+                self.paths.tasks_file,
+                TaskStoreDocument(preamble=active_document.preamble, cards=[card]),
+            )
+            return card
+
+    def archive(self, card: TaskCard) -> None:
+        """Move the active task card into the archive store."""
+
+        with self._locked():
+            active_card = self._resolve_active_card(card)
+            active_document = self._read_active_document()
+            archive_document = self._read_store(self.paths.archive_file)
+            self._write_store(
+                self.paths.archive_file,
+                TaskStoreDocument(
+                    preamble=archive_document.preamble,
+                    cards=[*archive_document.cards, active_card],
+                ),
+            )
+            self._write_store(
+                self.paths.tasks_file,
+                TaskStoreDocument(preamble=active_document.preamble, cards=[]),
+            )
+
+    def demote(self, card: TaskCard) -> None:
+        """Move the active task card into backburner."""
+
+        with self._locked():
+            active_card = self._resolve_active_card(card)
+            active_document = self._read_active_document()
+            backburner_text = self._read_text(self.paths.backburner_file)
+            updated_backburner = append_markdown_block(backburner_text, active_card.render_markdown())
+            write_text_atomic(self.paths.backburner_file, updated_backburner)
+            self._write_store(
+                self.paths.tasks_file,
+                TaskStoreDocument(preamble=active_document.preamble, cards=[]),
+            )
+
+    def record_adaptive_upscope(
+        self,
+        card: TaskCard,
+        *,
+        target: SizeClass,
+        rule: str,
+        stage: str,
+        reason: str,
+    ) -> TaskCard:
+        """Rewrite the active task card with one explicit adaptive-upscope block."""
+
+        with self._locked():
+            active_card = self._resolve_active_card(card)
+            active_document = self._read_active_document()
+            updated_card = adaptive_upscope_task_card(
+                active_card,
+                target=target,
+                rule=rule,
+                stage=stage,
+                reason=reason,
+            )
+            self._write_store(
+                self.paths.tasks_file,
+                TaskStoreDocument(preamble=active_document.preamble, cards=[updated_card]),
+            )
+            return updated_card
+
+    def quarantine(
+        self,
+        card: TaskCard,
+        reason: str,
+        incident_path: Path | None = None,
+        *,
+        stage: str = "Consult",
+        status: ExecutionStatus = ExecutionStatus.NEEDS_RESEARCH,
+        run_dir: Path | None = None,
+        diagnostics_dir: Path | None = None,
+        prompt_artifact: Path | None = None,
+        notes: str | None = None,
+        retain_backlog_cards: int = 0,
+        failure_signature: str = "needs_research",
+    ) -> ResearchRecoveryLatch:
+        """Quarantine the active task and freeze backlog state for research handoff."""
+
+        with self._locked():
+            from .research.incidents import record_incident_recurrence, resolve_deduplicated_incident_path
+
+            active_card = self._resolve_active_card(card)
+            active_document = self._read_active_document()
+            backlog_document = self._read_store(self.paths.backlog_file)
+            fingerprint = self._active_task_fingerprint()
+            canonical_incident_path = incident_path
+            if status is ExecutionStatus.NEEDS_RESEARCH:
+                canonical_incident_path = resolve_deduplicated_incident_path(
+                    self.paths,
+                    fingerprint=fingerprint,
+                    failure_signature=failure_signature,
+                    preferred_path=incident_path,
+                )
+
+            retained_cards = backlog_document.cards[:retain_backlog_cards]
+            frozen_backlog_cards = backlog_document.cards[retain_backlog_cards:]
+            frozen_cards = [active_card, *frozen_backlog_cards]
+
+            now = datetime.now(timezone.utc)
+            batch_id = now.strftime("%Y%m%dT%H%M%SZ")
+            incident_ref = canonical_incident_path
+            latch = ResearchRecoveryLatch.model_validate(
+                {
+                    "batch_id": batch_id,
+                    "frozen_at": now,
+                    "run_dir": run_dir,
+                    "diag_dir": diagnostics_dir,
+                    "fingerprint": fingerprint,
+                    "failure_signature": failure_signature,
+                    "incident_path": incident_ref,
+                    "stage": stage,
+                    "reason": reason,
+                    "frozen_backlog_cards": len(frozen_backlog_cards),
+                    "retained_backlog_cards": len(retained_cards),
+                    "quarantine_reason": "consult_handoff",
+                }
+            )
+
+            blocker_entry = BlockerEntry.model_validate(
+                {
+                    "occurred_at": now,
+                    "task_title": active_card.title,
+                    "status": status,
+                    "stage_blocked": stage,
+                    "source_task": f"agents/tasks.md :: {active_card.heading}",
+                    "prompt_artifact": prompt_artifact,
+                    "run_dir": run_dir,
+                    "diagnostics_dir": diagnostics_dir,
+                    "root_cause_summary": reason,
+                    "next_action": (
+                        "Research handoff via incident intake and pending-task regeneration"
+                        if status is ExecutionStatus.NEEDS_RESEARCH
+                        else "Operator review of blocker state"
+                    ),
+                    "incident_path": incident_ref,
+                    "notes": notes,
+                }
+            )
+
+            freeze_lines = [
+                f"<!-- research_recovery:freeze:start {batch_id} -->",
+                f"<!-- frozen_at: {latch.frozen_at.isoformat().replace('+00:00', 'Z')} -->",
+            ]
+            if incident_ref is not None:
+                freeze_lines.append(f"<!-- incident_path: {incident_ref} -->")
+            freeze_lines.extend(card.render_markdown() for card in frozen_cards)
+            freeze_lines.append(f"<!-- research_recovery:freeze:end {batch_id} -->")
+            freeze_block = "\n\n".join(freeze_lines)
+
+            backburner_text = self._read_text(self.paths.backburner_file)
+            blocker_text = self._read_text(self.paths.blocker_file)
+            updated_backburner = append_markdown_block(backburner_text, freeze_block)
+            updated_blocker = insert_after_preamble(blocker_text, blocker_entry.render_markdown())
+
+            self._write_store(
+                self.paths.backlog_file,
+                TaskStoreDocument(preamble=backlog_document.preamble, cards=retained_cards),
+            )
+            self._write_store(
+                self.paths.tasks_file,
+                TaskStoreDocument(preamble=active_document.preamble, cards=[]),
+            )
+            write_text_atomic(self.paths.backburner_file, updated_backburner)
+            write_text_atomic(self.paths.blocker_file, updated_blocker)
+            write_research_recovery_latch(self.paths.research_recovery_latch_file, latch)
+            if status is ExecutionStatus.NEEDS_RESEARCH:
+                record_incident_recurrence(
+                    self.paths,
+                    fingerprint=fingerprint,
+                    failure_signature=failure_signature,
+                    observed_at=now,
+                    source="execution_quarantine",
+                    incident_path=incident_ref,
+                    source_task=active_card.task_id,
+                )
+            return latch
+
+    def thaw(self, latch: ResearchRecoveryLatch) -> int:
+        """Restore frozen backburner cards once research records a durable thaw decision."""
+
+        with self._locked():
+            decision = latch.remediation_decision
+            if decision is None:
+                return 0
+            if not self._visible_recovery_cards(decision.remediation_spec_id):
+                return 0
+
+            backlog_document = self._read_store(self.paths.backlog_file)
+            backburner_text = self._read_text(self.paths.backburner_file)
+            marker_start = f"<!-- research_recovery:freeze:start {latch.batch_id} -->"
+            marker_end = f"<!-- research_recovery:freeze:end {latch.batch_id} -->"
+            start = backburner_text.find(marker_start)
+            end = backburner_text.find(marker_end)
+            if start == -1 or end == -1 or end <= start:
+                self.paths.research_recovery_latch_file.unlink(missing_ok=True)
+                return 0
+
+            end += len(marker_end)
+            frozen_block = backburner_text[start:end]
+            block_body = frozen_block.replace(marker_start, "", 1).replace(marker_end, "", 1)
+            frozen_cards = parse_task_store(block_body).cards
+
+            updated_backlog = TaskStoreDocument(
+                preamble=backlog_document.preamble,
+                cards=[*backlog_document.cards, *frozen_cards],
+            )
+            stripped_backburner = (backburner_text[:start] + backburner_text[end:]).strip("\n")
+            if stripped_backburner:
+                stripped_backburner += "\n"
+            else:
+                stripped_backburner = (self._default_preamble(self.paths.backburner_file) + "\n")
+
+            self._write_store(self.paths.backlog_file, updated_backlog)
+            write_text_atomic(self.paths.backburner_file, stripped_backburner)
+            self.paths.research_recovery_latch_file.unlink(missing_ok=True)
+            return len(frozen_cards)

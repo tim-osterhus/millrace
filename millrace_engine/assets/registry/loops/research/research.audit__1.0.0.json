@@ -1,0 +1,224 @@
+{
+  "aliases": [
+    "audit",
+    "research-audit"
+  ],
+  "created_at": "2026-03-19T00:00:00Z",
+  "extends": null,
+  "id": "research.audit",
+  "kind": "loop_config",
+  "labels": [
+    "audit",
+    "baseline",
+    "research"
+  ],
+  "payload": {
+    "edges": [
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.intake.success.validate",
+        "from_node_id": "audit_intake",
+        "kind": "normal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": null,
+        "to_node_id": "audit_validate"
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.intake.failure.blocked",
+        "from_node_id": "audit_intake",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "terminal_state_id": "blocked",
+        "to_node_id": null
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.validate.success.gatekeeper",
+        "from_node_id": "audit_validate",
+        "kind": "normal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": null,
+        "to_node_id": "audit_gatekeeper"
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.validate.failure.blocked",
+        "from_node_id": "audit_validate",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "terminal_state_id": "blocked",
+        "to_node_id": null
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.gatekeeper.success.pass",
+        "from_node_id": "audit_gatekeeper",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": "audit_pass",
+        "to_node_id": null
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.gatekeeper.blocked.blocked",
+        "from_node_id": "audit_gatekeeper",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "blocked"
+        ],
+        "priority": 100,
+        "terminal_state_id": "blocked",
+        "to_node_id": null
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.audit.gatekeeper.failure.fail",
+        "from_node_id": "audit_gatekeeper",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "terminal_state_id": "audit_fail",
+        "to_node_id": null
+      }
+    ],
+    "entry_node_id": "audit_intake",
+    "model_profile_ref": {
+      "id": "model.default",
+      "kind": "model_profile",
+      "version": "1.0.0"
+    },
+    "nodes": [
+      {
+        "artifact_bindings": [],
+        "kind_id": "research.audit-intake",
+        "node_id": "audit_intake",
+        "overrides": {
+          "allow_search": null,
+          "effort": null,
+          "model": null,
+          "model_profile_ref": null,
+          "prompt_asset_ref": null,
+          "runner": null,
+          "timeout_seconds": null
+        }
+      },
+      {
+        "artifact_bindings": [
+          {
+            "input_artifact": "audit_scope",
+            "source_artifact": "audit_scope",
+            "source_node_id": "audit_intake"
+          }
+        ],
+        "kind_id": "research.audit-validate",
+        "node_id": "audit_validate",
+        "overrides": {
+          "allow_search": null,
+          "effort": null,
+          "model": null,
+          "model_profile_ref": null,
+          "prompt_asset_ref": null,
+          "runner": null,
+          "timeout_seconds": null
+        }
+      },
+      {
+        "artifact_bindings": [
+          {
+            "input_artifact": "audit_report",
+            "source_artifact": "audit_report",
+            "source_node_id": "audit_validate"
+          }
+        ],
+        "kind_id": "research.audit-gatekeeper",
+        "node_id": "audit_gatekeeper",
+        "overrides": {
+          "allow_search": null,
+          "effort": null,
+          "model": null,
+          "model_profile_ref": null,
+          "prompt_asset_ref": null,
+          "runner": null,
+          "timeout_seconds": null
+        }
+      }
+    ],
+    "outline_policy": null,
+    "plane": "research",
+    "task_authoring_profile_ref": null,
+    "task_authoring_required": false,
+    "terminal_states": [
+      {
+        "emits_artifacts": [
+          "stage_summary"
+        ],
+        "ends_plane_run": true,
+        "terminal_class": "success",
+        "terminal_state_id": "audit_pass",
+        "writes_status": "AUDIT_PASS"
+      },
+      {
+        "emits_artifacts": [
+          "stage_summary"
+        ],
+        "ends_plane_run": true,
+        "terminal_class": "failure",
+        "terminal_state_id": "audit_fail",
+        "writes_status": "AUDIT_FAIL"
+      },
+      {
+        "emits_artifacts": [
+          "stage_summary"
+        ],
+        "ends_plane_run": true,
+        "terminal_class": "blocked",
+        "terminal_state_id": "blocked",
+        "writes_status": "BLOCKED"
+      }
+    ]
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/loops/research/research.audit__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged audit research loop scaffold that terminates in an explicit audit pass or fail.",
+  "tier": "default",
+  "title": "Research Audit Loop",
+  "updated_at": "2026-03-19T00:00:00Z",
+  "version": "1.0.0"
+}

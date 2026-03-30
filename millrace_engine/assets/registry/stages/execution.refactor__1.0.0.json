@@ -1,0 +1,95 @@
+{
+  "aliases": [
+    "refactor",
+    "large-refactor"
+  ],
+  "created_at": "2026-03-19T00:00:00Z",
+  "extends": null,
+  "id": "execution.refactor",
+  "kind": "registered_stage_kind",
+  "labels": [
+    "execution",
+    "large",
+    "thorough"
+  ],
+  "payload": {
+    "allowed_overrides": [
+      "model_profile_ref",
+      "runner",
+      "model",
+      "effort",
+      "allow_search",
+      "prompt_asset_ref",
+      "timeout_seconds"
+    ],
+    "context_schema_ref": "execution.refactor.context.v1",
+    "contract_version": "1.0.0",
+    "handler_ref": "millrace_engine.stages.refactor:Stage",
+    "idempotence_policy": "single_attempt_only",
+    "input_artifacts": [
+      {
+        "kind": "task_card",
+        "multiplicity": "one",
+        "name": "task_card",
+        "required": true
+      }
+    ],
+    "kind_id": "execution.refactor",
+    "legal_predecessors": [
+      "execution.reassess"
+    ],
+    "legal_successors": [
+      "execution.qa",
+      "execution.update"
+    ],
+    "output_artifacts": [
+      {
+        "kind": "stage_summary",
+        "name": "stage_summary",
+        "persistence": "history",
+        "required_on": [
+          "success",
+          "LARGE_REFACTOR_COMPLETE"
+        ]
+      },
+      {
+        "kind": "run_bundle",
+        "name": "run_bundle",
+        "persistence": "runtime_bundle",
+        "required_on": [
+          "success"
+        ]
+      }
+    ],
+    "plane": "execution",
+    "queue_mutation_policy": "runtime_only",
+    "result_schema_ref": "execution.refactor.result.v1",
+    "retry_policy": {
+      "backoff_seconds": 0.0,
+      "exhausted_outcome": "blocked",
+      "max_attempts": 0
+    },
+    "routing_outcomes": [
+      "success",
+      "blocked"
+    ],
+    "running_status": "BUILDER_RUNNING",
+    "success_statuses": [
+      "LARGE_REFACTOR_COMPLETE"
+    ],
+    "terminal_statuses": [
+      "LARGE_REFACTOR_COMPLETE",
+      "BLOCKED"
+    ]
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/stages/execution.refactor__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged LARGE refactor stage registration for ordered thorough execution.",
+  "tier": "default",
+  "title": "Execution Refactor",
+  "updated_at": "2026-03-19T00:00:00Z",
+  "version": "1.0.0"
+}

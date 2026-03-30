@@ -1,0 +1,313 @@
+{
+  "aliases": [
+    "standard",
+    "builder-qa-loop"
+  ],
+  "created_at": "2026-03-19T00:00:00Z",
+  "id": "execution.standard",
+  "kind": "loop_config",
+  "labels": [
+    "baseline",
+    "execution",
+    "standard"
+  ],
+  "payload": {
+    "edges": [
+      {
+        "condition": {
+          "fact": "builder_success_target",
+          "kind": "fact_equals",
+          "value": "integration"
+        },
+        "edge_id": "execution.builder.success.integration",
+        "from_node_id": "builder",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "integration"
+      },
+      {
+        "condition": {
+          "fact": "builder_success_target",
+          "kind": "fact_equals",
+          "value": "qa"
+        },
+        "edge_id": "execution.builder.success.qa",
+        "from_node_id": "builder",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 200,
+        "to_node_id": "qa"
+      },
+      {
+        "edge_id": "execution.builder.failure.escalate",
+        "from_node_id": "builder",
+        "kind": "escalation",
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "to_node_id": "troubleshoot"
+      },
+      {
+        "edge_id": "execution.integration.success.qa",
+        "from_node_id": "integration",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "qa"
+      },
+      {
+        "edge_id": "execution.integration.failure.escalate",
+        "from_node_id": "integration",
+        "kind": "escalation",
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "to_node_id": "troubleshoot"
+      },
+      {
+        "edge_id": "execution.qa.success.update",
+        "from_node_id": "qa",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "update"
+      },
+      {
+        "edge_id": "execution.qa.quickfix.hotfix",
+        "from_node_id": "qa",
+        "kind": "normal",
+        "on_outcomes": [
+          "quickfix_needed"
+        ],
+        "priority": 100,
+        "to_node_id": "hotfix"
+      },
+      {
+        "edge_id": "execution.qa.failure.escalate",
+        "from_node_id": "qa",
+        "kind": "escalation",
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "to_node_id": "troubleshoot"
+      },
+      {
+        "edge_id": "execution.hotfix.success.doublecheck",
+        "from_node_id": "hotfix",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "doublecheck"
+      },
+      {
+        "edge_id": "execution.hotfix.failure.escalate",
+        "from_node_id": "hotfix",
+        "kind": "escalation",
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "to_node_id": "troubleshoot"
+      },
+      {
+        "edge_id": "execution.doublecheck.success.update",
+        "from_node_id": "doublecheck",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "update"
+      },
+      {
+        "edge_id": "execution.doublecheck.quickfix.retry",
+        "from_node_id": "doublecheck",
+        "kind": "normal",
+        "on_outcomes": [
+          "quickfix_needed"
+        ],
+        "priority": 100,
+        "to_node_id": "hotfix"
+      },
+      {
+        "edge_id": "execution.doublecheck.failure.escalate",
+        "from_node_id": "doublecheck",
+        "kind": "escalation",
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "to_node_id": "troubleshoot"
+      },
+      {
+        "edge_id": "execution.troubleshoot.success.resume",
+        "from_node_id": "troubleshoot",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "builder"
+      },
+      {
+        "edge_id": "execution.troubleshoot.blocked.consult",
+        "from_node_id": "troubleshoot",
+        "kind": "escalation",
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "to_node_id": "consult"
+      },
+      {
+        "edge_id": "execution.consult.success.resume",
+        "from_node_id": "consult",
+        "kind": "normal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "to_node_id": "builder"
+      },
+      {
+        "edge_id": "execution.consult.handoff.needs_research",
+        "from_node_id": "consult",
+        "kind": "handoff",
+        "on_outcomes": [
+          "handoff",
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "terminal_state_id": "needs_research"
+      },
+      {
+        "edge_id": "execution.update.success.archive",
+        "from_node_id": "update",
+        "kind": "terminal",
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": "idle"
+      }
+    ],
+    "entry_node_id": "builder",
+    "model_profile_ref": {
+      "id": "model.default",
+      "kind": "model_profile",
+      "version": "1.0.0"
+    },
+    "nodes": [
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.builder",
+        "node_id": "builder",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.integration",
+        "node_id": "integration",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.qa",
+        "node_id": "qa",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.hotfix",
+        "node_id": "hotfix",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.doublecheck",
+        "node_id": "doublecheck",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.troubleshoot",
+        "node_id": "troubleshoot",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.consult",
+        "node_id": "consult",
+        "overrides": {}
+      },
+      {
+        "artifact_bindings": [],
+        "kind_id": "execution.update",
+        "node_id": "update",
+        "overrides": {}
+      }
+    ],
+    "outline_policy": {
+      "mode": "hybrid"
+    },
+    "plane": "execution",
+    "task_authoring_profile_ref": {
+      "id": "task_authoring.narrow",
+      "kind": "task_authoring_profile",
+      "version": "1.0.0"
+    },
+    "task_authoring_required": true,
+    "terminal_states": [
+      {
+        "emits_artifacts": [
+          "run_bundle",
+          "stage_summary"
+        ],
+        "ends_plane_run": true,
+        "terminal_class": "success",
+        "terminal_state_id": "idle",
+        "writes_status": "UPDATE_COMPLETE"
+      },
+      {
+        "emits_artifacts": [
+          "stage_summary"
+        ],
+        "ends_plane_run": true,
+        "terminal_class": "handoff",
+        "terminal_state_id": "needs_research",
+        "writes_status": "NEEDS_RESEARCH"
+      }
+    ]
+  },
+  "source": {
+    "kind": "packaged_default",
+    "ref": "registry/loops/execution/execution.standard__1.0.0.json"
+  },
+  "status": "active",
+  "summary": "Packaged standard execution loop matching the current v1 task path.",
+  "tier": "default",
+  "title": "Standard Execution Loop",
+  "updated_at": "2026-03-19T00:00:00Z",
+  "version": "1.0.0"
+}
