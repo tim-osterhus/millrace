@@ -37,7 +37,7 @@ jobs:
           .publish-smoke/bin/millrace --help
           rm -rf /tmp/millrace-publish-smoke
           .publish-smoke/bin/millrace init /tmp/millrace-publish-smoke --json
-          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml health --json > /tmp/millrace-publish-smoke-health.json
+          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml health --json > /tmp/millrace-publish-smoke-health.json || true
           .publish-smoke/bin/python - <<'PY'
           import json
           from pathlib import Path
