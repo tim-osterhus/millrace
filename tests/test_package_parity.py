@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import fnmatch
 import json
+import tomllib
 from pathlib import Path
 
+from millrace_engine import __version__
 from millrace_engine.control import EngineControl
 from millrace_engine.config import load_engine_config
 from millrace_engine.contracts import StageType
@@ -22,6 +25,18 @@ PUBLIC_EXECUTION_STAGES = (
 EXTERNAL_FIXTURE_PATH = "/".join(
     ("ref-framework", "millrace-temp-main", "agents", "tools", "fixtures")
 )
+
+
+def _pyproject_payload() -> dict[str, object]:
+    return tomllib.loads((MILLRACE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+def _runtime_packages_on_disk() -> set[str]:
+    packages: set[str] = set()
+    for path in sorted((MILLRACE_ROOT / "millrace_engine").rglob("__init__.py")):
+        package_path = path.parent.relative_to(MILLRACE_ROOT)
+        packages.add(".".join(package_path.parts))
+    return packages
 
 
 def test_packaged_docs_and_operator_assets_exist() -> None:
@@ -97,9 +112,37 @@ def test_packaged_tests_do_not_reference_repo_external_fixtures() -> None:
         assert EXTERNAL_FIXTURE_PATH not in contents, path.name
 
 
-def test_setuptools_package_list_includes_shipped_runtime_subpackages() -> None:
-    pyproject_text = (MILLRACE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '"millrace_engine.research"' in pyproject_text
+def test_project_version_is_sourced_from_runtime_module() -> None:
+    pyproject = _pyproject_payload()
+    project = pyproject["project"]
+    setuptools_dynamic = pyproject["tool"]["setuptools"]["dynamic"]
+
+    assert "version" not in project
+    assert project["dynamic"] == ["version"]
+    assert setuptools_dynamic["version"] == {"attr": "millrace_engine.__version__"}
+    assert __version__ == "0.2.0"
+
+
+def test_setuptools_package_discovery_covers_non_legacy_runtime_packages() -> None:
+    pyproject = _pyproject_payload()
+    find = pyproject["tool"]["setuptools"]["packages"]["find"]
+    packages_on_disk = _runtime_packages_on_disk()
+
+    include_patterns = find["include"]
+    exclude_patterns = find["exclude"]
+    discovered = {
+        package
+        for package in packages_on_disk
+        if any(fnmatch.fnmatchcase(package, pattern) for pattern in include_patterns)
+        and not any(fnmatch.fnmatchcase(package, pattern) for pattern in exclude_patterns)
+    }
+
+    assert include_patterns == ["millrace_engine*"]
+    assert exclude_patterns == ["millrace_engine.legacy*"]
+    if "millrace_engine.legacy" in packages_on_disk:
+        assert discovered == packages_on_disk - {"millrace_engine.legacy"}
+    else:
+        assert discovered == packages_on_disk
 
 
 def test_shipped_runtime_package_does_not_import_dropped_legacy_package() -> None:

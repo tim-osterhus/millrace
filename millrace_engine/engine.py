@@ -135,6 +135,11 @@ class MillraceEngine:
     def _sync_ready_research_dispatch(self, *, trigger: str):
         if self.loaded.config.research.mode is ResearchMode.STUB:
             return None
+        if self.research_plane.snapshot_state().checkpoint is None:
+            thawed = self._consume_research_recovery_latch(trigger=f"research_sync:{trigger}")
+            if thawed > 0:
+                self._request_stop_if_completion_honored()
+                return None
         try:
             dispatch = self.research_plane.sync_runtime(trigger=trigger)
         except (ResearchDispatchError, IncidentExecutionError, AuditExecutionError):
@@ -410,12 +415,6 @@ class MillraceEngine:
         return True
 
     def _emit_cycle_events(self, result: ExecutionCycleResult) -> None:
-        if result.promoted_task is not None:
-            self.event_bus.emit(
-                EventType.TASK_PROMOTED,
-                source=EventSource.EXECUTION,
-                payload={"task_id": result.promoted_task.task_id, "title": result.promoted_task.title},
-            )
         if result.archived_task is not None:
             self.event_bus.emit(
                 EventType.TASK_ARCHIVED,

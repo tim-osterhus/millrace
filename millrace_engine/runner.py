@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from shutil import which
 from typing import Sequence
 import os
 import re
@@ -19,6 +20,10 @@ from .telemetry import extract_codex_exec_usage, format_usage_summary
 
 
 MARKER_RE = re.compile(r"^###\s+([A-Z0-9_]+)\s*$", re.MULTILINE)
+RUNNER_EXECUTABLES: dict[RunnerKind, str] = {
+    RunnerKind.CODEX: "codex",
+    RunnerKind.CLAUDE: "claude",
+}
 
 STAGE_LABELS: dict[StageType, str] = {
     StageType.BUILDER: "Builder",
@@ -70,6 +75,21 @@ def _display_path(root: Path, path: Path | None) -> str:
 
 def _stage_label(stage: StageType) -> str:
     return STAGE_LABELS.get(stage, stage.value.replace("_", " ").title().replace(" ", ""))
+
+
+def runner_executable_name(runner: RunnerKind) -> str | None:
+    """Return the default external executable name for one runner kind."""
+
+    return RUNNER_EXECUTABLES.get(runner)
+
+
+def resolve_runner_executable_path(runner: RunnerKind) -> str | None:
+    """Resolve one runner's external executable from PATH when applicable."""
+
+    executable = runner_executable_name(runner)
+    if executable is None:
+        return None
+    return which(executable)
 
 
 def _format_stage_result_summary(result: RunnerResult, root: Path) -> str:

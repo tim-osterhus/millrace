@@ -26,6 +26,8 @@ Read next:
 - `ADVISOR.md` for the agent-facing operator prompt
 - `docs/RUNTIME_DEEP_DIVE.md` for architecture and failure-model detail
 
+Millrace ships real default model ids in its packaged config and model profiles. A fresh workspace starts from Codex/OpenAI defaults such as `gpt-5.3-codex` and `gpt-5.2`; they are not placeholder values. Execution still depends on local runner readiness, so treat `doctor` as the final check for `codex` availability and auth before `start --once`.
+
 ## Why Millrace Exists
 
 Interactive coding tools are good at short sessions. They are weak at long-running governed work that needs queue discipline, durable state, recoverable execution, research-to-delivery handoff, and publish controls.
@@ -91,6 +93,7 @@ Create and inspect a workspace:
 ```bash
 millrace init /absolute/path/to/workspace
 millrace --config /absolute/path/to/workspace/millrace.toml health --json
+millrace --config /absolute/path/to/workspace/millrace.toml doctor
 millrace --config /absolute/path/to/workspace/millrace.toml status --detail --json
 python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml
 ```
@@ -113,6 +116,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -e '.[dev]'
 ```
+
+Release verification is narrower than source-checkout contributor verification: release CI smoke-installs the built wheel into a clean virtualenv, runs `millrace init` against a freshly generated workspace, and then runs `health --json` on that workspace. Broader pytest coverage remains a source-checkout path with dev dependencies; it is not currently advertised as a wheel or sdist smoke gate.
 
 ## TUI Shell
 
@@ -168,7 +173,11 @@ After scaffolding, run the workspace preflight before you rely on the runtime:
 
 ```bash
 millrace --config /absolute/path/to/workspace/millrace.toml health --json
+millrace --config /absolute/path/to/workspace/millrace.toml doctor
 ```
+
+`health` confirms bootstrap/config/assets truth. `doctor` is the execution-readiness check that tells you whether required external runner CLIs such as `codex` are available before `start --once`.
+The shipped model ids in that scaffold are real defaults, but `doctor` is still the command that tells you whether the current machine can actually execute them.
 
 ## Daily Operator Flow
 
@@ -178,6 +187,7 @@ The rest of this section assumes you are operating inside an initialized workspa
 
 ```bash
 millrace --config millrace.toml health --json
+millrace --config millrace.toml doctor
 ```
 
 Or launch the TUI and let the health gate run automatically:
@@ -212,6 +222,8 @@ millrace --config millrace.toml add-idea /absolute/path/to/idea.md
 millrace --config millrace.toml start --once
 millrace --config millrace.toml start --daemon
 ```
+
+`start --once` is a foreground single pass, not a guaranteed full research-plus-execution roundtrip. If startup research sync creates new execution backlog while the execution queue was empty, that invocation stops after the research pass; run `start --once` a second time to execute the newly generated task.
 
 The TUI exposes the same actions through the command palette and keyboard-driven panel flows.
 

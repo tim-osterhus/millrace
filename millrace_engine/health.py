@@ -12,9 +12,15 @@ from pydantic import Field, ValidationError, field_validator
 from .assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKind
 from .baseline_assets import packaged_baseline_bundle_version
 from .config import LoadedConfig, build_runtime_paths, load_engine_config
-from .contracts import ContractModel
+from .contracts import ContractModel, ExecutionStatus, RunnerKind, StageType
 from .config_compat import LegacyPolicyCompatStatus
 from .paths import RuntimePaths
+from .policies.sizing import SizeStatusError, parse_size_status
+from .policies.transport import DefaultTransportProbe, TransportProbeContext, TransportReadiness
+from .runner import runner_executable_name
+from .standard_runtime import preview_execution_runtime_selection
+from .standard_runtime_models import RuntimeSelectionView, StageExecutionBindingView
+from .status import ControlPlane, StatusError, StatusStore
 
 
 class HealthCheckStatus(str, Enum):
@@ -29,7 +35,7 @@ class WorkspaceHealthCheck(ContractModel):
     """One deterministic workspace health check."""
 
     check_id: str
-    category: Literal["config", "workspace", "assets"]
+    category: Literal["config", "workspace", "assets", "execution"]
     status: HealthCheckStatus
     message: str
     details: tuple[str, ...] = ()
@@ -77,12 +83,35 @@ class WorkspaceHealthReport(ContractModel):
     bundle_version: str
     status: HealthCheckStatus
     ok: bool
+    bootstrap_ready: bool
+    execution_ready: bool
     summary: WorkspaceHealthSummary
+    runner_prerequisites: tuple["RunnerPrerequisiteReport", ...] = ()
     checks: tuple[WorkspaceHealthCheck, ...]
 
     @field_validator("config_path", "workspace_root", mode="before")
     @classmethod
     def normalize_path_fields(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class RunnerPrerequisiteReport(ContractModel):
+    """Execution-readiness status for one configured external runner."""
+
+    runner: RunnerKind
+    executable: str
+    available: bool
+    message: str
+    resolved_path: Path | None = None
+    affected_stage_nodes: tuple[str, ...] = ()
+    affected_stages: tuple[StageType, ...] = ()
+    details: tuple[str, ...] = ()
+
+    @field_validator("resolved_path", mode="before")
+    @classmethod
+    def normalize_resolved_path(cls, value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
         return Path(value)
 
 
@@ -441,6 +470,145 @@ def _build_required_assets_check(
     )
 
 
+def _current_execution_status(paths: RuntimePaths) -> ExecutionStatus | None:
+    try:
+        return StatusStore(paths.status_file, ControlPlane.EXECUTION).read()
+    except (OSError, StatusError):
+        return None
+
+
+def _latched_size(paths: RuntimePaths) -> str:
+    if not paths.size_status_file.exists():
+        return "SMALL"
+    try:
+        return parse_size_status(paths.size_status_file.read_text(encoding="utf-8")).value
+    except (OSError, SizeStatusError, ValueError):
+        return "SMALL"
+
+
+def _preview_execution_selection(loaded: LoadedConfig, paths: RuntimePaths) -> RuntimeSelectionView:
+    return preview_execution_runtime_selection(
+        loaded.config,
+        paths,
+        preview_run_id="workspace-health-readiness",
+        size_latch=_latched_size(paths),
+        current_status=_current_execution_status(paths),
+        resolve_assets=False,
+    )
+
+
+def _external_runner_bindings(selection: RuntimeSelectionView) -> dict[RunnerKind, list[StageExecutionBindingView]]:
+    bindings: dict[RunnerKind, list[StageExecutionBindingView]] = {}
+    for binding in selection.stage_bindings:
+        runner = binding.runner
+        if runner not in (RunnerKind.CODEX, RunnerKind.CLAUDE):
+            continue
+        bindings.setdefault(runner, []).append(binding)
+    return bindings
+
+
+def _build_runner_prerequisite_reports(
+    selection: RuntimeSelectionView,
+) -> tuple[RunnerPrerequisiteReport, ...]:
+    probe = DefaultTransportProbe()
+    reports: list[RunnerPrerequisiteReport] = []
+    for runner, bindings in sorted(_external_runner_bindings(selection).items(), key=lambda item: item[0].value):
+        executable = runner_executable_name(runner) or runner.value
+        result = probe.check(TransportProbeContext(runner=runner))
+        stage_nodes = tuple(binding.node_id for binding in bindings)
+        stages = tuple(binding.stage for binding in bindings if binding.stage is not None)
+        details = [result.summary]
+        if result.command:
+            details.append(f"command: {' '.join(result.command)}")
+        if result.details.get("resolved_path"):
+            details.append(f"resolved_path: {result.details['resolved_path']}")
+        if stage_nodes:
+            details.append(f"affected_nodes: {', '.join(stage_nodes)}")
+        if stages:
+            details.append(f"affected_stages: {', '.join(stage.value for stage in stages)}")
+        reports.append(
+            RunnerPrerequisiteReport(
+                runner=runner,
+                executable=executable,
+                available=result.readiness is TransportReadiness.READY,
+                message=result.summary,
+                resolved_path=result.details.get("resolved_path"),
+                affected_stage_nodes=stage_nodes,
+                affected_stages=stages,
+                details=tuple(details),
+            )
+        )
+    return tuple(reports)
+
+
+def _build_execution_readiness_check(
+    loaded: LoadedConfig | None,
+    paths: RuntimePaths,
+) -> tuple[WorkspaceHealthCheck, tuple[RunnerPrerequisiteReport, ...], bool]:
+    if loaded is None:
+        check = WorkspaceHealthCheck(
+            check_id="execution.runners",
+            category="execution",
+            status=HealthCheckStatus.FAIL,
+            message="execution readiness could not be evaluated because config did not load",
+        )
+        return check, (), False
+
+    try:
+        selection = _preview_execution_selection(loaded, paths)
+    except (KeyError, RuntimeError, ValueError) as exc:
+        check = WorkspaceHealthCheck(
+            check_id="execution.runners",
+            category="execution",
+            status=HealthCheckStatus.FAIL,
+            message="execution readiness preview failed",
+            details=(f"error: {_single_line_message(exc)}",),
+        )
+        return check, (), False
+
+    reports = _build_runner_prerequisite_reports(selection)
+    if not reports:
+        check = WorkspaceHealthCheck(
+            check_id="execution.runners",
+            category="execution",
+            status=HealthCheckStatus.PASS,
+            message="configured execution stages do not require external runner CLIs",
+        )
+        return check, reports, True
+
+    missing = [report for report in reports if not report.available]
+    if missing:
+        details = [
+            (
+                f"missing prerequisite: {report.executable} "
+                f"(runner={report.runner.value}; stages={', '.join(stage.value for stage in report.affected_stages) or 'unknown'}; "
+                f"nodes={', '.join(report.affected_stage_nodes) or 'unknown'})"
+            )
+            for report in missing
+        ]
+        check = WorkspaceHealthCheck(
+            check_id="execution.runners",
+            category="execution",
+            status=HealthCheckStatus.FAIL,
+            message=f"configured execution stages are not ready to run ({len(missing)} missing prerequisite(s))",
+            details=tuple(details),
+        )
+        return check, reports, False
+
+    details = tuple(
+        f"{report.executable}: ready for nodes {', '.join(report.affected_stage_nodes)}"
+        for report in reports
+    )
+    check = WorkspaceHealthCheck(
+        check_id="execution.runners",
+        category="execution",
+        status=HealthCheckStatus.PASS,
+        message=f"configured execution stages are ready to run ({len(reports)} runner prerequisite(s) checked)",
+        details=details,
+    )
+    return check, reports, True
+
+
 def _report_status(checks: list[WorkspaceHealthCheck]) -> HealthCheckStatus:
     if any(check.status is HealthCheckStatus.FAIL for check in checks):
         return HealthCheckStatus.FAIL
@@ -468,7 +636,7 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
     config_check, loaded, workspace_root, agents_dir, paths = _build_config_load_check(
         config_path=normalized_config_path,
     )
-    checks = [
+    bootstrap_checks = [
         config_check,
         _build_legacy_compat_check(loaded),
         _build_required_directories_check(workspace_root=workspace_root, paths=paths),
@@ -484,6 +652,9 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
             loaded=loaded,
         ),
     ]
+    bootstrap_ready = not any(check.status is HealthCheckStatus.FAIL for check in bootstrap_checks)
+    execution_check, runner_prerequisites, execution_ready = _build_execution_readiness_check(loaded, paths)
+    checks = [*bootstrap_checks, execution_check]
     summary = _summary_for(checks)
     status = _report_status(checks)
     return WorkspaceHealthReport(
@@ -494,6 +665,9 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
         bundle_version=packaged_baseline_bundle_version(),
         status=status,
         ok=status is not HealthCheckStatus.FAIL,
+        bootstrap_ready=bootstrap_ready,
+        execution_ready=execution_ready,
         summary=summary,
+        runner_prerequisites=runner_prerequisites,
         checks=tuple(checks),
     )

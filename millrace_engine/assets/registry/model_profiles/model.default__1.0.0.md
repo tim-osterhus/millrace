@@ -17,7 +17,7 @@
 
 ## Summary
 
-Packaged baseline model selection profile.
+Packaged baseline model selection profile with real shipped Codex defaults.
 
 ## Payload
 

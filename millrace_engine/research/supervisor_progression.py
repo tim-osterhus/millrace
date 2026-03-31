@@ -9,7 +9,7 @@ from typing import Any
 from ..contracts import ResearchStatus
 from ..events import EventType
 from .goalspec import next_stage_for_success
-from .incidents import incident_source_exists
+from .incidents import incident_source_exists, incident_source_on_disk
 from .queues import ResearchQueueDiscovery
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
 from .supervisor_payloads import checkpoint_resumed_payload
@@ -100,6 +100,13 @@ def supports_incident_stage_execution(self: Any, checkpoint: ResearchCheckpoint 
         ResearchQueueFamily.BLOCKER,
     }:
         return False
+    source_on_disk = incident_source_on_disk(self.paths, checkpoint)
+    if not source_on_disk:
+        if checkpoint.node_id != "incident_intake":
+            return False
+        mode_reason = self.state.mode_reason or ""
+        if mode_reason.startswith("resume-from-checkpoint") and self.state.retry_state is None:
+            return False
     if not incident_source_exists(self.paths, checkpoint):
         return False
     return checkpoint.node_id in {

@@ -12,6 +12,7 @@ from ..config import EngineConfig
 from ..contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ExecutionStatus, RunnerResult, StageResult, StageType, TaskCard
 from ..compiler import CompileStatus, FrozenLoopPlan, FrozenRunPlan, FrozenStagePlan, FrozenTransition
 from ..events import EventType
+from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from ..policies import (
     POLICY_CYCLE_NODE_ID,
@@ -89,6 +90,7 @@ ROUTING_MODE_FIXED_V1_FALLBACK = "fixed_v1_fallback"
 ROUTING_MODE_FROZEN_PLAN = "frozen_plan"
 ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME = "frozen_plan_legacy_resume"
 ADAPTIVE_UPSCOPE_RULE = "blocked_small_non_usage_v1"
+QUICKFIX_ARTIFACT_SCAFFOLD = "# Quickfix\n"
 
 
 def _slugify(value: str) -> str:
@@ -145,6 +147,7 @@ class ExecutionPlane(PlaneRuntime):
         self._policy_routing_mode: str | None = None
         self._cycle_integration_context: ExecutionIntegrationContext | None = None
         self._last_research_handoff: ExecutionResearchHandoff | None = None
+        self._quickfix_artifact_active_for_cycle = False
         self.policy_evaluations: list[PolicyEvaluationRecord] = []
         self._stage_commands = {
             key: tuple(value) if value else ()
@@ -164,6 +167,19 @@ class ExecutionPlane(PlaneRuntime):
         if self.emit_event is None:
             return
         self.emit_event(event_type, payload or {})
+
+    def _mark_quickfix_artifact_active(self) -> None:
+        self._quickfix_artifact_active_for_cycle = True
+
+    def _clear_active_quickfix_artifact(self) -> None:
+        if not self._quickfix_artifact_active_for_cycle:
+            return
+        quickfix_path = self.paths.agents_dir / "quickfix.md"
+        if quickfix_path.exists():
+            current_text = quickfix_path.read_text(encoding="utf-8")
+            if current_text != QUICKFIX_ARTIFACT_SCAFFOLD:
+                write_text_atomic(quickfix_path, QUICKFIX_ARTIFACT_SCAFFOLD)
+        self._quickfix_artifact_active_for_cycle = False
 
     def _initialize_parameter_binder(self) -> None:
         initialize_parameter_binder_helper(self)
@@ -730,6 +746,7 @@ class ExecutionPlane(PlaneRuntime):
                 raise StageExecutionError(f"update stage ended with {update_status.value}")
         self.queue.archive(task)
         self.status_store.transition(ExecutionStatus.IDLE)
+        self._clear_active_quickfix_artifact()
         self._apply_inter_task_delay(stage_results)
         return task
 
@@ -819,6 +836,7 @@ class ExecutionPlane(PlaneRuntime):
         last_result: StageResult | None = stage_results[-1] if stage_results else None
         quickfix_stage = self.config.routing.quickfix_stage
         verification_stage = self.config.routing.quickfix_verification_stage
+        self._mark_quickfix_artifact_active()
 
         for attempt in range(1, max_attempts + 1):
             self._emit_event(
@@ -995,6 +1013,7 @@ class ExecutionPlane(PlaneRuntime):
             archived = self._complete_success_path(task, run_id, stage_results)
             return ExecutionStatus.IDLE, archived, None, None, 0
         if qa_status is ExecutionStatus.QUICKFIX_NEEDED:
+            self._mark_quickfix_artifact_active()
             return self._run_quickfix_loop(
                 task,
                 run_id,
@@ -1167,6 +1186,7 @@ class ExecutionPlane(PlaneRuntime):
         self._policy_routing_mode = None
         self._cycle_integration_context = None
         self._last_research_handoff = None
+        self._quickfix_artifact_active_for_cycle = current_status is ExecutionStatus.QUICKFIX_NEEDED
         self.policy_evaluations = []
 
         active_task = self.queue.active_task()
@@ -1195,6 +1215,14 @@ class ExecutionPlane(PlaneRuntime):
                 return ExecutionCycleResult(run_id=None, final_status=ExecutionStatus.IDLE)
 
             promoted_task = self.queue.promote_next()
+            if promoted_task is not None:
+                self._emit_event(
+                    EventType.TASK_PROMOTED,
+                    {
+                        "task_id": promoted_task.task_id,
+                        "title": promoted_task.title,
+                    },
+                )
             active_task = promoted_task
 
         size_view = self._refresh_size_status(active_task)

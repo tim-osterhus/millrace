@@ -12,6 +12,7 @@ from millrace_engine.config import (
     ComplexityBand,
     WatchRoot,
     build_runtime_paths,
+    default_stage_configs,
     diff_config_fields,
     load_engine_config,
 )
@@ -28,6 +29,16 @@ def test_native_config_loads_from_runtime_workspace(tmp_path: Path) -> None:
     assert loaded.config.paths.workspace == workspace_root.resolve()
     assert loaded.config.paths.agents_dir == (workspace_root / "agents").resolve()
     assert loaded.config.stages[StageType.BUILDER].prompt_file == (workspace_root / "agents/_start.md").resolve()
+
+
+def test_default_stage_configs_use_real_shipped_model_ids() -> None:
+    stages = default_stage_configs()
+
+    assert stages[StageType.BUILDER].runner.value == "codex"
+    assert stages[StageType.BUILDER].model == "gpt-5.3-codex"
+    assert stages[StageType.GOAL_INTAKE].model == "gpt-5.3-codex"
+    assert stages[StageType.SPEC_SYNTHESIS].model == "gpt-5.2"
+    assert stages[StageType.CLARIFY].model == "gpt-5.2"
 
 
 def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> None:

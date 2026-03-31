@@ -38,6 +38,7 @@ Use the CLI commands:
 
 - `init`
 - `health`
+- `doctor`
 - `status`
 - `queue`
 - `add-task`
@@ -66,7 +67,10 @@ Install the published package:
 python3 -m pip install millrace-ai
 millrace init /absolute/path/to/workspace
 millrace --config /absolute/path/to/workspace/millrace.toml health --json
+millrace --config /absolute/path/to/workspace/millrace.toml doctor
 ```
+
+The initialized workspace ships with real default model ids for the Codex runner, including `gpt-5.3-codex` and `gpt-5.2`. Those defaults are not placeholders, but they still rely on the local runner environment being usable.
 
 If you prefer an interactive shell, launch the TUI against that workspace after the environment is ready:
 
@@ -82,6 +86,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -e '.[dev]'
 ```
+
+Release CI verifies a narrower contract than a contributor source checkout: it smoke-installs the built wheel into a clean virtualenv, initializes a fresh workspace with `millrace init`, and runs `health --json` against that generated workspace. The broader pytest surface remains a source-checkout workflow with dev dependencies rather than a promised wheel or sdist verification path.
 
 ## Initialize A New Workspace
 
@@ -102,9 +108,11 @@ Always run the preflight after creating or updating a workspace:
 
 ```bash
 millrace --config /absolute/path/to/new-workspace/millrace.toml health --json
+millrace --config /absolute/path/to/new-workspace/millrace.toml doctor
 ```
 
 The TUI runs the same workspace health check automatically before entering the shell.
+Use `doctor` as the final execution-readiness gate: it verifies that the current machine can actually run the shipped defaults through the required external runner CLI.
 
 ## TUI Workflow
 
@@ -147,9 +155,13 @@ Expanded mode follows the current display mode:
 
 ```bash
 millrace --config millrace.toml health --json
+millrace --config millrace.toml doctor
 ```
 
 Do not move on if `health` fails. It is the supported bootstrap and cutover check.
+
+Do not move on if `doctor` fails. `health` tells you the workspace is scaffolded correctly; `doctor` tells you the configured execution stages can actually run with the external runner CLIs currently available on `PATH`.
+That split is intentional: the default model ids are real packaged defaults, while runner availability remains an environment prerequisite.
 
 ### 2. Inspect State
 
@@ -185,7 +197,7 @@ millrace --config millrace.toml start --once
 millrace --config millrace.toml start --daemon
 ```
 
-`start --once` is the foreground single-cycle path. `start --daemon` is the long-running local runtime mode.
+`start --once` is the foreground single-pass path. If startup research sync creates new execution backlog while the execution queue was empty, that invocation stops after the research pass and leaves the new task in backlog for the next `start --once`. `start --daemon` is the long-running local runtime mode.
 
 In the TUI, use the command palette or panel actions for the same lifecycle commands.
 

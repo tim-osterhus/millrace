@@ -25,6 +25,7 @@ from .control import (
 )
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .events import EventRecord, render_event_record_line
+from .health import HealthCheckStatus
 from .publishing import PublishCommitReport, PublishPreflightReport, StagingSyncReport
 from .standard_runtime import RegistryObjectSelectionView, RuntimeSelectionView, StageExecutionBindingView
 
@@ -572,6 +573,8 @@ def _render_health(report: WorkspaceHealthReport, *, json_mode: bool) -> None:
         f"Workspace root source: {report.workspace_root_source}",
         f"Config source kind: {report.config_source_kind}",
         f"Asset bundle version: {report.bundle_version}",
+        f"Bootstrap ready: {'yes' if report.bootstrap_ready else 'no'}",
+        f"Execution ready: {'yes' if report.execution_ready else 'no'}",
         f"Status: {report.status.value.upper()}",
         (
             f"Checks: {report.summary.total_checks} "
@@ -585,6 +588,46 @@ def _render_health(report: WorkspaceHealthReport, *, json_mode: bool) -> None:
             f"{check.status.value.upper()}: {check.check_id} [{check.category}] {check.message}"
         )
         lines.extend(f"- {detail}" for detail in check.details)
+    typer.echo("\n".join(lines))
+
+
+def _render_doctor(report: WorkspaceHealthReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Workspace root: {report.workspace_root.as_posix()}",
+        f"Config path: {report.config_path.as_posix()}",
+        f"Bootstrap ready: {'yes' if report.bootstrap_ready else 'no'}",
+        f"Execution ready: {'yes' if report.execution_ready else 'no'}",
+    ]
+    if report.bootstrap_ready and report.execution_ready:
+        lines.append("PASS: workspace bootstrap and configured runner prerequisites are ready.")
+    elif not report.bootstrap_ready:
+        lines.append("FAIL: workspace bootstrap is incomplete; fix the failing health checks before starting the runtime.")
+    else:
+        lines.append("FAIL: workspace bootstrap passed, but configured execution stages are missing runner prerequisites.")
+    if report.runner_prerequisites:
+        lines.append("Runner prerequisites:")
+        for prerequisite in report.runner_prerequisites:
+            status = "ready" if prerequisite.available else "missing"
+            lines.append(
+                f"- {prerequisite.executable}: {status}; "
+                f"stages={', '.join(stage.value for stage in prerequisite.affected_stages) or 'unknown'}; "
+                f"nodes={', '.join(prerequisite.affected_stage_nodes) or 'unknown'}"
+            )
+            if prerequisite.resolved_path is not None:
+                lines.append(f"  resolved_path={prerequisite.resolved_path.as_posix()}")
+            if not prerequisite.available:
+                lines.append(
+                    f"  action=install `{prerequisite.executable}` and ensure it is on PATH, or reconfigure the affected stages before `start --once`."
+                )
+    failing_checks = [check for check in report.checks if check.status is HealthCheckStatus.FAIL]
+    if failing_checks:
+        lines.append("Failing checks:")
+        for check in failing_checks:
+            lines.append(f"- {check.check_id}: {check.message}")
+            lines.extend(f"  {detail}" for detail in check.details)
     typer.echo("\n".join(lines))
 
 
@@ -890,11 +933,33 @@ def health_command(
         raise typer.Exit(code=1)
 
 
+@app.command("doctor")
+def doctor_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Run operator preflight for bootstrap and execution readiness."""
+
+    report = _run_expected(lambda: EngineControl.health_report(_config_path(ctx)), json_mode=json_mode)
+    _render_doctor(report, json_mode=json_mode)
+    if not report.bootstrap_ready or not report.execution_ready:
+        raise typer.Exit(code=1)
+
+
 @app.command("start")
 def start_command(
     ctx: typer.Context,
     daemon: Annotated[bool, typer.Option("--daemon", help="Run the foreground daemon loop.")] = False,
-    once: Annotated[bool, typer.Option("--once", help="Run one foreground execution cycle.")] = False,
+    once: Annotated[
+        bool,
+        typer.Option(
+            "--once",
+            help=(
+                "Run one foreground pass. If startup research sync creates new execution backlog from an empty "
+                "execution queue, stop after that research pass and run --once again to execute the new task."
+            ),
+        ),
+    ] = False,
     json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
 ) -> None:
     """Start the runtime in foreground once or daemon mode."""

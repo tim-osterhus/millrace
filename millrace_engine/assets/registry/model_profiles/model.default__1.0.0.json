@@ -34,7 +34,7 @@
     "ref": "registry/model_profiles/model.default__1.0.0.json"
   },
   "status": "active",
-  "summary": "Packaged baseline model selection profile.",
+  "summary": "Packaged baseline model selection profile with real shipped Codex defaults.",
   "tier": "golden",
   "title": "Default Model Profile",
   "updated_at": "2026-03-18T00:00:00Z",

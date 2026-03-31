@@ -22,6 +22,7 @@ from millrace_engine.contracts import (
     StageType,
 )
 from millrace_engine.events import EventType
+from millrace_engine.engine import MillraceEngine
 from millrace_engine.markdown import parse_task_cards
 from millrace_engine.planes.execution import ExecutionPlane
 from millrace_engine.policies import POLICY_CYCLE_NODE_ID, PolicyHook
@@ -227,6 +228,67 @@ def write_policy_stage_driver(tmp_path: Path) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     return script, env_path
+
+
+def append_subprocess_stage_config(config_path: Path) -> None:
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n".join(
+            [
+                "",
+                "[stages.builder]",
+                'runner = "subprocess"',
+                'model = "builder-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.integration]",
+                'runner = "subprocess"',
+                'model = "integration-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.qa]",
+                'runner = "subprocess"',
+                'model = "qa-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.hotfix]",
+                'runner = "subprocess"',
+                'model = "hotfix-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.doublecheck]",
+                'runner = "subprocess"',
+                'model = "doublecheck-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.troubleshoot]",
+                'runner = "subprocess"',
+                'model = "troubleshoot-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.consult]",
+                'runner = "subprocess"',
+                'model = "consult-model"',
+                "timeout_seconds = 30",
+                "",
+                "[stages.update]",
+                'runner = "subprocess"',
+                'model = "update-model"',
+                "timeout_seconds = 30",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def seed_active_quickfix_artifact(workspace: Path) -> Path:
+    quickfix_path = workspace / "agents" / "quickfix.md"
+    quickfix_path.write_text(
+        "# Quickfix\n\n- unresolved issue\n- rerun validation after the hotfix\n",
+        encoding="utf-8",
+    )
+    return quickfix_path
 
 
 def configure_execution_plane(
@@ -1942,6 +2004,105 @@ def test_execution_plane_recovers_via_quickfix_loop_and_archives_task(tmp_path: 
     quickfix_attempt = next(payload for event_type, payload in emitted if event_type is EventType.QUICKFIX_ATTEMPT)
     assert quickfix_attempt["attempt"] == 1
     assert quickfix_attempt["max_attempts"] == 2
+
+
+def test_execution_plane_quickfix_loop_clears_active_artifact_after_success(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "quickfix_recovery")
+    quickfix_path = seed_active_quickfix_artifact(workspace)
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.INTEGRATION: [sys.executable, str(script), "integration"],
+            StageType.QA: [sys.executable, str(script), "qa-quickfix"],
+            StageType.HOTFIX: [sys.executable, str(script), "hotfix-builder"],
+            StageType.DOUBLECHECK: [sys.executable, str(script), "doublecheck-qa"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+    )
+
+    result = plane.run_once()
+
+    assert result.final_status is ExecutionStatus.IDLE
+    assert result.archived_task is not None
+    assert quickfix_path.read_text(encoding="utf-8") == "# Quickfix\n"
+
+
+def test_execution_plane_unresolved_quickfix_preserves_active_artifact(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "quickfix_recovery")
+    quickfix_path = seed_active_quickfix_artifact(workspace)
+    original_text = quickfix_path.read_text(encoding="utf-8")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.INTEGRATION: [sys.executable, str(script), "integration"],
+            StageType.QA: [sys.executable, str(script), "qa-quickfix"],
+            StageType.HOTFIX: [sys.executable, str(script), "qa-blocked"],
+            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
+            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
+        },
+    )
+
+    result = plane.run_once()
+
+    assert result.archived_task is None
+    assert result.quarantined_task is not None
+    assert quickfix_path.read_text(encoding="utf-8") == original_text
+
+
+def test_promotion_event_precedes_stage_start_and_archive(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    append_subprocess_stage_config(config_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace('integration_mode = "large_only"', 'integration_mode = "always"', 1),
+        encoding="utf-8",
+    )
+    script = write_stage_driver(tmp_path)
+    task = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))[0]
+    engine = MillraceEngine(
+        config_path,
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.INTEGRATION: [sys.executable, str(script), "integration"],
+            StageType.QA: [sys.executable, str(script), "qa-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+    )
+
+    engine.start(once=True)
+
+    events = [
+        json.loads(line)
+        for line in (workspace / "agents" / "engine_events.log").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    event_types = [event["type"] for event in events]
+
+    promoted_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == EventType.TASK_PROMOTED.value and event["payload"].get("task_id") == task.task_id
+    )
+    first_stage_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == EventType.STAGE_STARTED.value and event["payload"].get("task_id") == task.task_id
+    )
+    archived_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == EventType.TASK_ARCHIVED.value and event["payload"].get("task_id") == task.task_id
+    )
+
+    assert promoted_index < first_stage_started_index < archived_index
+    assert event_types.count(EventType.TASK_PROMOTED.value) == 1
 
 
 def test_execution_plane_routing_override_can_skip_integration_via_config(tmp_path: Path) -> None:

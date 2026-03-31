@@ -63,6 +63,16 @@ def run_cli_subprocess(cwd: Path, *args: str) -> subprocess.CompletedProcess[str
     )
 
 
+def fake_runner_env(tmp_path: Path, *, executables: tuple[str, ...]) -> dict[str, str]:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir(exist_ok=True)
+    for executable in executables:
+        path = fake_bin / executable
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    return {"PATH": str(fake_bin)}
+
+
 def git_cli(repo_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", repo_dir.as_posix(), *args],
@@ -1103,6 +1113,23 @@ def test_cli_subgroup_help_does_not_require_config_file(tmp_path: Path) -> None:
         assert "Usage:" in result.stdout
 
 
+def test_cli_start_once_help_and_docs_describe_research_split_phase_contract(tmp_path: Path) -> None:
+    missing_config = tmp_path / "missing.toml"
+    result = RUNNER.invoke(app, ["--config", str(missing_config), "start", "--help"])
+
+    assert result.exit_code == 0
+    assert "startup research sync creates" in result.stdout
+    assert "new execution backlog from an empty execution queue" in result.stdout
+    assert "run --once again to execute" in result.stdout
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    operator_guide = (Path(__file__).resolve().parents[1] / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
+
+    assert "that invocation stops after the research pass" in readme
+    assert "run `start --once` a second time" in readme
+    assert "leaves the new task in backlog for the next `start --once`" in operator_guide
+
+
 def test_cli_init_scaffolds_new_workspace(tmp_path: Path) -> None:
     destination = tmp_path / "fresh-workspace"
 
@@ -1161,13 +1188,14 @@ def test_cli_init_force_overwrites_manifest_files_and_preserves_unmanaged_files(
 
 def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Path) -> None:
     destination = tmp_path / "scaffolded-workspace"
+    repo_root = Path(__file__).resolve().parents[1]
 
     init_result = RUNNER.invoke(app, ["init", str(destination)])
 
     assert init_result.exit_code == 0
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
-    repo_pythonpath = str(Path(__file__).resolve().parents[1])
+    repo_pythonpath = str(repo_root)
     env["PYTHONPATH"] = (
         repo_pythonpath if not existing_pythonpath else f"{repo_pythonpath}{os.pathsep}{existing_pythonpath}"
     )
@@ -1207,12 +1235,25 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
 
     assert "Workspace-first assets" in (destination / "README.md").read_text(encoding="utf-8")
     assert "## Asset Resolution" in (destination / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
+    assert "real default model ids" in (destination / "README.md").read_text(encoding="utf-8")
+    assert "default model ids are real packaged defaults" in (
+        destination / "OPERATOR_GUIDE.md"
+    ).read_text(encoding="utf-8")
     assert "Use `init` to scaffold workspaces instead of copying baseline files by hand." in (
         destination / "ADVISOR.md"
     ).read_text(encoding="utf-8")
     assert "packaged assets are the fallback when the workspace copy is absent" in (
         destination / "docs" / "RUNTIME_DEEP_DIVE.md"
     ).read_text(encoding="utf-8")
+    workspace_model_config = destination / "agents" / "options" / "model_config.md"
+    packaged_model_config = repo_root / "millrace_engine" / "assets" / "agents" / "options" / "model_config.md"
+    if packaged_model_config.exists():
+        assert workspace_model_config.exists()
+        assert "real packaged defaults for Codex/OpenAI execution" in workspace_model_config.read_text(
+            encoding="utf-8"
+        )
+    else:
+        assert not workspace_model_config.exists()
 
 
 def test_cli_health_reports_clean_initialized_workspace(tmp_path: Path) -> None:
@@ -1223,13 +1264,17 @@ def test_cli_health_reports_clean_initialized_workspace(tmp_path: Path) -> None:
     result = RUNNER.invoke(
         app,
         ["--config", str(destination / "millrace.toml"), "health", "--json"],
+        env=fake_runner_env(tmp_path, executables=("codex",)),
     )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["status"] == "pass"
+    assert payload["bootstrap_ready"] is True
+    assert payload["execution_ready"] is True
     assert payload["summary"]["failed_checks"] == 0
     assert payload["config_source_kind"] == "native_toml"
+    assert any(check["check_id"] == "execution.runners" for check in payload["checks"])
 
 
 def test_cli_health_exits_nonzero_for_broken_config(tmp_path: Path) -> None:
@@ -1251,6 +1296,26 @@ def test_cli_health_exits_nonzero_for_broken_config(tmp_path: Path) -> None:
     config_check = next(check for check in payload["checks"] if check["check_id"] == "config.load")
     assert config_check["status"] == "fail"
     assert any("config TOML is invalid" in detail for detail in config_check["details"])
+
+
+def test_cli_doctor_reports_missing_runner_prerequisite_before_start(tmp_path: Path) -> None:
+    destination = tmp_path / "doctor-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    result = RUNNER.invoke(
+        app,
+        ["--config", str(destination / "millrace.toml"), "doctor"],
+        env={"PATH": str(empty_bin)},
+    )
+
+    assert result.exit_code == 1
+    assert "Bootstrap ready: yes" in result.stdout
+    assert "Execution ready: no" in result.stdout
+    assert "codex" in result.stdout
+    assert "start --once" in result.stdout
 
 
 def test_cli_status_detail_and_config_show_report_asset_inventory(tmp_path: Path) -> None:
@@ -2240,6 +2305,51 @@ def test_cli_add_idea_mailbox_routes_once_through_research_stub(tmp_path: Path) 
     wait_for(lambda: read_state(state_path)["process_running"] is False)
     thread.join(timeout=5.0)
     assert not thread.is_alive()
+
+
+def test_cli_start_once_research_sync_requires_second_invocation_for_new_execution_work(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    append_subprocess_stage_config(config_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace('mode = "stub"', 'mode = "auto"', 1)
+        .replace('integration_mode = "large_only"', 'integration_mode = "never"', 1),
+        encoding="utf-8",
+    )
+    (workspace / "agents" / "ideas" / "raw" / "goal.md").write_text("# goal\n", encoding="utf-8")
+    script = write_outage_stage_driver(tmp_path)
+    engine = MillraceEngine(
+        config_path,
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa"],
+            StageType.UPDATE: [sys.executable, str(script), "update"],
+        },
+    )
+
+    engine.start(once=True)
+
+    backlog_after_first = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert backlog_after_first
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+    assert parse_task_cards((workspace / "agents/tasksarchive.md").read_text(encoding="utf-8")) == []
+    assert not any(
+        event["type"] == EventType.STAGE_STARTED.value and event["source"] == "execution"
+        for event in read_events(workspace)
+    )
+
+    engine.start(once=True)
+
+    backlog_after_second = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert len(backlog_after_second) == len(backlog_after_first) - 1
+    archived_cards = parse_task_cards((workspace / "agents/tasksarchive.md").read_text(encoding="utf-8"))
+    assert len(archived_cards) == 1
+    assert any(
+        event["type"] == EventType.STAGE_STARTED.value
+        and event["source"] == "execution"
+        and event["payload"].get("stage") == StageType.BUILDER.value
+        for event in read_events(workspace)
+    )
 
 
 def test_cli_queue_reorder_rewrites_backlog_directly(tmp_path: Path) -> None:

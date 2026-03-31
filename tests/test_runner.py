@@ -17,7 +17,13 @@ from millrace_engine.policies import (
     PolicyHook,
 )
 from millrace_engine.provenance import TransitionHistoryStore
-from millrace_engine.runner import ClaudeRunner, CodexRunner, SubprocessRunner
+from millrace_engine.runner import (
+    ClaudeRunner,
+    CodexRunner,
+    SubprocessRunner,
+    resolve_runner_executable_path,
+    runner_executable_name,
+)
 from millrace_engine.telemetry import EXIT_NO_USAGE, extract_codex_exec_usage
 
 
@@ -210,6 +216,22 @@ def test_subprocess_runner_does_not_block_on_inherited_stdio_holders(tmp_path: P
     assert result.duration_seconds < 1.0
     assert result.stdout_path is not None
     assert "### BUILDER_COMPLETE" in result.stdout_path.read_text(encoding="utf-8")
+
+
+def test_runner_executable_helpers_cover_external_runners(monkeypatch, tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    codex_path = fake_bin / "codex"
+    codex_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codex_path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    assert runner_executable_name(RunnerKind.CODEX) == "codex"
+    assert runner_executable_name(RunnerKind.CLAUDE) == "claude"
+    assert runner_executable_name(RunnerKind.SUBPROCESS) is None
+    assert resolve_runner_executable_path(RunnerKind.CODEX) == str(codex_path)
+    assert resolve_runner_executable_path(RunnerKind.CLAUDE) is None
+    assert resolve_runner_executable_path(RunnerKind.SUBPROCESS) is None
 
 
 def test_codex_runner_extracts_usage_and_preserves_rendered_response(tmp_path: Path) -> None:

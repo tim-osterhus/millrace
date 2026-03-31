@@ -91,7 +91,7 @@
     "ref": "registry/model_profiles/model.complexity.involved__1.0.0.json"
   },
   "status": "active",
-  "summary": "Packaged involved-band complexity-routing profile for LARGE-capable execution.",
+  "summary": "Packaged involved-band complexity-routing profile with real shipped Codex defaults.",
   "tier": "golden",
   "title": "Involved Complexity Model Profile",
   "updated_at": "2026-03-19T00:00:00Z",

@@ -17,7 +17,7 @@
 
 ## Summary
 
-Packaged complex-band complexity-routing profile for LARGE-capable execution.
+Packaged complex-band complexity-routing profile with real shipped Codex defaults.
 
 ## Payload
 

@@ -305,6 +305,21 @@ class ResearchPlane:
     _next_goalspec_stage = _next_goalspec_stage_helper
     _next_incident_stage = _next_incident_stage_helper
 
+    def _runtime_selected_family_for_selection(
+        self,
+        selection: ResearchDispatchSelection,
+        discovery: Any,
+    ) -> ResearchQueueFamily | None:
+        selected_family = selection.queue_snapshot.selected_family
+        if selected_family is None:
+            return None
+        if (
+            selection.runtime_mode is ResearchRuntimeMode.INCIDENT
+            and discovery.family_scan(ResearchQueueFamily.INCIDENT).ready
+        ):
+            return ResearchQueueFamily.INCIDENT
+        return selected_family
+
     def sync_runtime(
         self,
         *,
@@ -393,6 +408,7 @@ class ResearchPlane:
             )
             return None
 
+        runtime_selected_family = self._runtime_selected_family_for_selection(selection, discovery)
         self._acquire_lock(observed_at=started_at)
         dispatch_run_id = run_id or self._new_run_id(selection.runtime_mode.value.lower())
         try:
@@ -410,19 +426,19 @@ class ResearchPlane:
 
         ownerships = self._selection_ownerships(
             discovery=discovery,
-            selected_family=selection.queue_snapshot.selected_family,
+            selected_family=runtime_selected_family,
             owner_token=dispatch_run_id,
             acquired_at=started_at,
         )
         active_request, remaining_requests, parent_handoff = self._claim_dispatch_request(
-            selection.queue_snapshot.selected_family,
+            runtime_selected_family,
             discovery=discovery,
         )
         active_request, parent_handoff = self._bind_queue_context_to_request(
             active_request=active_request,
             parent_handoff=parent_handoff,
             discovery=discovery,
-            selected_family=selection.queue_snapshot.selected_family,
+            selected_family=runtime_selected_family,
             observed_at=started_at,
         )
         previous_mode = self.state.current_mode
@@ -430,7 +446,12 @@ class ResearchPlane:
         if previous_mode is not selection.runtime_mode:
             transition_count += 1
 
-        queue_snapshot = selection.queue_snapshot.model_copy(update={"ownerships": ownerships})
+        queue_snapshot = selection.queue_snapshot.model_copy(
+            update={
+                "ownerships": ownerships,
+                "selected_family": runtime_selected_family,
+            }
+        )
         checkpoint = dispatch.checkpoint(started_at=started_at).model_copy(
             update={
                 "owned_queues": ownerships,
@@ -463,7 +484,9 @@ class ResearchPlane:
                 "configured_mode": self.config.research.mode.value,
                 "runtime_mode": selection.runtime_mode.value,
                 "reason": self.state.mode_reason,
-                "selected_family": selection.queue_snapshot.selected_family.value,
+                "selected_family": (
+                    None if runtime_selected_family is None else runtime_selected_family.value
+                ),
                 "checkpoint_id": checkpoint.checkpoint_id,
                 "status": checkpoint.status.value,
                 "loop_ref": (

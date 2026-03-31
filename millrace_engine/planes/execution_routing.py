@@ -165,6 +165,7 @@ def apply_terminal_transition(
     if terminal_state.terminal_state_id == "idle":
         plane.queue.archive(task)
         plane.status_store.transition(ExecutionStatus.IDLE)
+        plane._clear_active_quickfix_artifact()
         return ExecutionStatus.IDLE, task, None, diagnostics_dir, quickfix_attempts
     if terminal_state.terminal_state_id == "blocked":
         if plane.status_store.read() is not ExecutionStatus.BLOCKED:
@@ -237,6 +238,7 @@ def run_frozen_plan(
     diagnostics_dir: Path | None = None
     while True:
         if node_id == "hotfix":
+            plane._mark_quickfix_artifact_active()
             next_attempt = quickfix_attempts + 1
             max_attempts = plane.config.execution.quickfix_max_attempts
             if next_attempt > max_attempts:

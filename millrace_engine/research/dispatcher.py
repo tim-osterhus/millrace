@@ -280,7 +280,7 @@ def _resolve_auto_candidate(
     if incident_ready or blocker_ready:
         grouped_candidates["incident"] = (
             ResearchRuntimeMode.INCIDENT,
-            ResearchQueueFamily.INCIDENT if incident_ready else ResearchQueueFamily.BLOCKER,
+            ResearchQueueFamily.BLOCKER,
             "incident-queue-ready" if incident_ready else "blocker-queue-ready",
         )
     if goalspec_ready:

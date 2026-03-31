@@ -357,7 +357,7 @@ def test_research_plane_dispatches_compiled_auto_plan(tmp_path: Path) -> None:
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
-    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.BLOCKER
     assert dispatch.research_plan.entry_node_id == "incident_intake"
 
     snapshot = plane.snapshot_state()
@@ -391,7 +391,7 @@ def test_research_plane_run_ready_work_executes_auto_incident_stages_through_arc
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
-    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.BLOCKER
     snapshot = plane.snapshot_state()
     assert snapshot.current_mode is ResearchRuntimeMode.AUTO
     assert snapshot.checkpoint is None
@@ -545,12 +545,7 @@ def test_research_plane_run_ready_work_preserves_blocker_handoff_lineage_on_inci
         incident_rel_path,
         diagnostics_dir=diagnostics_dir,
     )
-    _write_incident_file(
-        workspace / incident_rel_path,
-        incident_id="INC-HANDOFF-001",
-        title="Carry blocker lineage into incident archive",
-        summary="Keep the originating execution handoff attached through archive.",
-    )
+    assert not (workspace / incident_rel_path).exists()
     handoff = ExecutionResearchHandoff(
         handoff_id=f"execution-run-incident:needs_research:{latch.batch_id}",
         parent_run=CrossPlaneParentRun(
@@ -582,13 +577,16 @@ def test_research_plane_run_ready_work_preserves_blocker_handoff_lineage_on_inci
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
-    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.BLOCKER
     snapshot = plane.snapshot_state()
     assert snapshot.checkpoint is None
     assert snapshot.deferred_requests == ()
     assert plane.status_store.read() is ResearchStatus.IDLE
     archived_path = workspace / "agents" / "ideas" / "incidents" / "archived" / "INC-HANDOFF-001.md"
     assert archived_path.exists()
+    archived_text = archived_path.read_text(encoding="utf-8")
+    assert "Consult returned `NEEDS_RESEARCH` during `Consult`." in archived_text
+    assert "Consult exhausted the local path" in archived_text
 
     archive_record = json.loads(
         (paths.research_runtime_dir / "incidents" / "archive" / "incident-handoff-run.json").read_text(
@@ -2842,14 +2840,13 @@ def test_research_retry_restart_resume_waits_for_backoff_then_resumes_checkpoint
     assert dispatch is not None
     assert dispatch.run_id == "research-restart-run"
     assert snapshot.retry_state is None
-    assert snapshot.checkpoint is not None
-    assert snapshot.checkpoint.checkpoint_id == "research-restart-run"
-    assert snapshot.checkpoint.active_request is not None
-    assert snapshot.checkpoint.active_request.event_type is EventType.NEEDS_RESEARCH
-    assert snapshot.checkpoint.owned_queues[0].owner_token == "research-restart-run"
-    assert snapshot.checkpoint.deferred_follow_ons[0].event_type is EventType.IDEA_SUBMITTED
+    assert snapshot.checkpoint is None
     assert snapshot.deferred_requests[0].event_type is EventType.BACKLOG_EMPTY_AUDIT
-    assert snapshot.queue_snapshot.ownerships == snapshot.checkpoint.owned_queues
+    assert snapshot.queue_snapshot.ownerships == ()
+    assert snapshot.queue_snapshot.selected_family is None
+    assert snapshot.current_mode is ResearchRuntimeMode.AUTO
+    assert (workspace / "agents" / "research_status.md").read_text(encoding="utf-8") == "### IDLE\n"
+    assert (workspace / "agents" / "ideas" / "incidents" / "archived" / "incident.md").exists()
     assert load_research_runtime_state(workspace / "agents" / "research_state.json") == snapshot
 
 
@@ -3022,16 +3019,43 @@ def test_engine_start_resumes_checkpoint_from_restart_fixture(tmp_path: Path, mo
 
     state = load_research_runtime_state(workspace / "agents" / "research_state.json")
     assert state is not None
-    assert state.current_mode is ResearchRuntimeMode.INCIDENT
+    assert state.current_mode is ResearchRuntimeMode.AUTO
     assert state.lock_state is None
     assert state.retry_state is None
-    assert state.checkpoint is not None
-    assert state.checkpoint.checkpoint_id == "research-restart-run"
-    assert state.checkpoint.loop_ref is not None
-    assert state.checkpoint.loop_ref.id == "research.incident"
-    assert state.checkpoint.active_request is not None
+    assert state.checkpoint is None
     assert state.deferred_requests[0].event_type is EventType.BACKLOG_EMPTY_AUDIT
+    assert (workspace / "agents" / "research_status.md").read_text(encoding="utf-8") == "### IDLE\n"
+    assert (workspace / "agents" / "ideas" / "incidents" / "archived" / "incident.md").exists()
+
+
+def test_engine_start_repeated_once_unwedges_restart_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "research_retry_restart_resume")
+    engine = MillraceEngine(config_path)
+
+    monkeypatch.setattr(research_plane_module, "_utcnow", lambda: _dt("2026-03-19T12:04:59Z"))
+    engine.start(once=True)
+
+    first_state = load_research_runtime_state(workspace / "agents" / "research_state.json")
+    assert first_state is not None
+    assert first_state.retry_state is not None
+    assert first_state.checkpoint is not None
+    assert first_state.checkpoint.node_id == "incident_intake"
     assert (workspace / "agents" / "research_status.md").read_text(encoding="utf-8") == "### INCIDENT_INTAKE_RUNNING\n"
+
+    monkeypatch.setattr(research_plane_module, "_utcnow", lambda: _dt("2026-03-19T12:05:01Z"))
+    engine.start(once=True)
+
+    second_state = load_research_runtime_state(workspace / "agents" / "research_state.json")
+    assert second_state is not None
+    assert second_state.current_mode is ResearchRuntimeMode.AUTO
+    assert second_state.retry_state is None
+    assert second_state.checkpoint is None
+    assert second_state.deferred_requests[0].event_type is EventType.BACKLOG_EMPTY_AUDIT
+    assert (workspace / "agents" / "research_status.md").read_text(encoding="utf-8") == "### IDLE\n"
+    assert (workspace / "agents" / "ideas" / "incidents" / "archived" / "incident.md").exists()
 
 
 def test_research_package_re_exports_dispatcher_integration_surface() -> None:

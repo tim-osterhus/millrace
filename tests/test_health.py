@@ -11,7 +11,17 @@ def _check(report, check_id: str) -> WorkspaceHealthCheck:
     return next(check for check in report.checks if check.check_id == check_id)
 
 
-def test_workspace_health_report_passes_for_primary_runtime_workspace(tmp_path: Path) -> None:
+def _set_fake_codex_path(tmp_path: Path, monkeypatch) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    codex_path = fake_bin / "codex"
+    codex_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codex_path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+
+def test_workspace_health_report_passes_for_primary_runtime_workspace(tmp_path: Path, monkeypatch) -> None:
+    _set_fake_codex_path(tmp_path, monkeypatch)
     _, config_path = runtime_workspace(tmp_path)
     report = build_workspace_health_report(config_path)
 
@@ -23,7 +33,8 @@ def test_workspace_health_report_passes_for_primary_runtime_workspace(tmp_path: 
     assert _check(report, "assets.required").status is HealthCheckStatus.PASS
 
 
-def test_workspace_health_report_passes_for_initialized_workspace(tmp_path: Path) -> None:
+def test_workspace_health_report_passes_for_initialized_workspace(tmp_path: Path, monkeypatch) -> None:
+    _set_fake_codex_path(tmp_path, monkeypatch)
     destination = tmp_path / "healthy-workspace"
     init_result = EngineControl.init_workspace(destination)
 
@@ -41,6 +52,9 @@ def test_workspace_health_report_passes_for_initialized_workspace(tmp_path: Path
     assert _check(report, "workspace.directories").status is HealthCheckStatus.PASS
     assert _check(report, "workspace.files").status is HealthCheckStatus.PASS
     assert _check(report, "assets.required").status is HealthCheckStatus.PASS
+    assert _check(report, "execution.runners").status is HealthCheckStatus.PASS
+    assert report.bootstrap_ready is True
+    assert report.execution_ready is True
 
 
 def test_workspace_health_report_fails_for_invalid_native_config(tmp_path: Path) -> None:
@@ -98,3 +112,27 @@ def test_workspace_health_report_fails_for_missing_configured_asset(tmp_path: Pa
     assert assets_check.status is HealthCheckStatus.FAIL
     assert any("missing-builder.md" in detail for detail in assets_check.details)
 
+
+def test_workspace_health_report_distinguishes_bootstrap_from_execution_readiness(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    report = build_workspace_health_report(config_path)
+
+    assert report.status is HealthCheckStatus.FAIL
+    assert report.ok is False
+    assert report.bootstrap_ready is True
+    assert report.execution_ready is False
+    execution_check = _check(report, "execution.runners")
+    assert execution_check.status is HealthCheckStatus.FAIL
+    assert any("missing prerequisite: codex" in detail for detail in execution_check.details)
+    prerequisite = next(entry for entry in report.runner_prerequisites if entry.runner.value == "codex")
+    assert prerequisite.available is False
+    assert prerequisite.executable == "codex"
+    assert prerequisite.affected_stage_nodes
+    assert prerequisite.affected_stages

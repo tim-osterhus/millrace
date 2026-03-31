@@ -188,6 +188,8 @@ class ResearchQueueSnapshot(ContractModel):
             ResearchQueueFamily.BLOCKER: self.blocker_ready,
             ResearchQueueFamily.AUDIT: self.audit_ready,
         }
+        if self.selected_family is ResearchQueueFamily.BLOCKER and self.incident_ready:
+            return self
         if not ready_map[self.selected_family]:
             raise ValueError("selected_family must be ready inside queue_snapshot")
         return self
