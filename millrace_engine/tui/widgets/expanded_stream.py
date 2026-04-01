@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Static
 
-from ..formatting import render_runtime_event_debug_line
+from ..formatting import compact_run_label, render_runtime_event_debug_line
 from ..models import DisplayMode, EventLogView, KeyValueView, RuntimeEventView
 
 
@@ -38,7 +38,7 @@ def _labelize(value: str | None) -> str | None:
 
 def _run_prefix(payload: dict[str, str]) -> str:
     run_id = _first_present(payload, "run_id", "pause_run_id", "active_run_id", "parent_run_id")
-    return f"Run {run_id}: " if run_id else ""
+    return f"Run {compact_run_label(run_id)}: " if run_id else ""
 
 
 def render_runtime_event_operator_line(event: RuntimeEventView) -> str:

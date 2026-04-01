@@ -10,13 +10,14 @@ from pydantic import ValidationError
 from millrace_engine.config import (
     ConfigApplyBoundary,
     ComplexityBand,
+    StageConfig,
     WatchRoot,
     build_runtime_paths,
     default_stage_configs,
     diff_config_fields,
     load_engine_config,
 )
-from millrace_engine.contracts import StageType, load_objective_contract
+from millrace_engine.contracts import RunnerKind, StageContext, StageType, load_objective_contract
 from millrace_engine.paths import format_historylog_entry_name
 from tests.support import runtime_workspace
 
@@ -39,6 +40,26 @@ def test_default_stage_configs_use_real_shipped_model_ids() -> None:
     assert stages[StageType.GOAL_INTAKE].model == "gpt-5.3-codex"
     assert stages[StageType.SPEC_SYNTHESIS].model == "gpt-5.2"
     assert stages[StageType.CLARIFY].model == "gpt-5.2"
+
+
+def test_execution_stage_defaults_use_one_hour_timeout() -> None:
+    stages = default_stage_configs()
+
+    assert StageConfig().timeout_seconds == 3600
+    assert stages[StageType.BUILDER].timeout_seconds == 3600
+    assert stages[StageType.QA].timeout_seconds == 3600
+    assert stages[StageType.INTEGRATION].timeout_seconds == 3600
+
+
+def test_stage_context_default_timeout_matches_stage_defaults(tmp_path: Path) -> None:
+    context = StageContext(
+        stage=StageType.BUILDER,
+        runner=RunnerKind.CODEX,
+        model="gpt-5.3-codex",
+        working_dir=tmp_path,
+    )
+
+    assert context.timeout_seconds == 3600
 
 
 def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> None:

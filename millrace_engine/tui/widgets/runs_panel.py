@@ -9,7 +9,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Static
 
-from ..formatting import format_timestamp, run_operator_alert, run_operator_summary_lines, run_summary_lines
+from ..formatting import compact_run_label, format_timestamp, run_operator_alert, run_operator_summary_lines, run_summary_lines
 from ..models import DisplayMode, GatewayFailure, RunSummaryView, RunsOverviewView
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
 
@@ -229,11 +229,15 @@ class RunsPanel(Static):
         if self._requested_run_id is not None and self._requested_run_id not in {run.run_id for run in runs}:
             self._update_section(
                 "runs-request",
-                f"Missing: {self._requested_run_id}",
+                f"Missing: {compact_run_label(self._requested_run_id)}",
                 "requested run is not in the current recent-runs list",
             )
         elif self._requested_run_id is not None:
-            self._update_section("runs-request", self._requested_run_id, "requested run is visible in the recent list")
+            self._update_section(
+                "runs-request",
+                compact_run_label(self._requested_run_id),
+                "requested run is visible in the recent list",
+            )
         else:
             self._update_section("runs-request", "No requested run", "selection follows the visible recent-runs list")
 
@@ -307,7 +311,10 @@ class RunsPanel(Static):
             f" | scanned {format_timestamp(self._runs.scanned_at)}"
         )
         if self._requested_run_id is not None and self._requested_run_id not in {run.run_id for run in runs}:
-            lines.append(f"REQUEST requested run {self._requested_run_id} is not in the current recent-runs list")
+            lines.append(
+                "REQUEST requested run "
+                f"{compact_run_label(self._requested_run_id)} is not in the current recent-runs list"
+            )
         if not runs:
             lines.append("")
             lines.append("No run artifacts are visible yet.")

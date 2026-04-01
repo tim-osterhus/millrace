@@ -9,7 +9,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Static
 
-from ..formatting import format_short_timestamp, format_timestamp
+from ..formatting import compact_run_label, format_short_timestamp, format_timestamp
 from ..models import (
     DisplayMode,
     EventLogView,
@@ -45,7 +45,7 @@ def _event_state_class(event: RuntimeEventView) -> str:
 
 def _operator_event_summary(event: RuntimeEventView) -> str:
     summary = collapse_operator_text(event.summary or event.event_type, max_parts=2, max_length=68)
-    run_fragment = f" | run {event.run_id}" if event.run_id else ""
+    run_fragment = f" | run {compact_run_label(event.run_id)}" if event.run_id else ""
     return f"{event.event_type} | {summary}{run_fragment}"
 
 
@@ -128,7 +128,7 @@ class LogsPanel(Static):
     def _event_card(event: RuntimeEventView, *, selected: bool) -> Vertical:
         detail_fragments = [event.source, event.event_type, _event_priority(event)]
         if event.run_id:
-            detail_fragments.append(f"run {event.run_id}")
+            detail_fragments.append(f"run {compact_run_label(event.run_id)}")
         classes = f"overview-card panel-item-card {_event_state_class(event)}"
         if selected:
             classes += " is-selected"
@@ -416,7 +416,10 @@ class LogsPanel(Static):
         self._set_event_items(headline="Recent runtime events", detail=detail, items=items)
 
         if selected is not None and selected.run_id is not None:
-            action_detail = f"Enter opens run {selected.run_id} | f toggles follow | Ctrl+Arrows change filters"
+            action_detail = (
+                f"Enter opens run {compact_run_label(selected.run_id)} | "
+                "f toggles follow | Ctrl+Arrows change filters"
+            )
         else:
             action_detail = "Up/Down select | f toggles follow | Ctrl+Arrows change filters | open debug for payload detail"
         self._update_section("logs-actions", "Navigation and handoff ready", action_detail)
@@ -516,7 +519,10 @@ class LogsPanel(Static):
             )
         if selected is not None and selected.run_id is not None:
             lines.append("")
-            lines.append(f"RUN     press Enter to hand off {selected.run_id} to the run-detail workflow")
+            lines.append(
+                f"RUN     press Enter to hand off {compact_run_label(selected.run_id)} "
+                "to the run-detail workflow"
+            )
         elif filtered:
             lines.append("")
             append_operator_debug_hint(lines, detail_hint="open debug for full payload and event context")

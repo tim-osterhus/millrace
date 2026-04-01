@@ -376,7 +376,7 @@ class StageContext(ContractModel):
     prompt: str = ""
     working_dir: Path
     run_id: str | None = None
-    timeout_seconds: int = Field(default=600, ge=1)
+    timeout_seconds: int = Field(default=3600, ge=1)
     command: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
     prompt_path: Path | None = None

@@ -7,7 +7,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Static
 
-from ..formatting import format_short_timestamp, format_timestamp
+from ..formatting import compact_run_label, format_short_timestamp, format_timestamp
 from ..models import DisplayMode, GatewayFailure, ResearchOverviewView, ResearchQueueFamilyView
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
 
@@ -208,7 +208,7 @@ class ResearchPanel(Static):
         if last_activity is None:
             self._update_section("research-activity", "No recent research activity", "switch to debug for audit and governance detail")
         else:
-            run_fragment = f" | run {last_activity.run_id}" if last_activity.run_id else ""
+            run_fragment = f" | run {compact_run_label(last_activity.run_id)}" if last_activity.run_id else ""
             self._update_section(
                 "research-activity",
                 f"{format_short_timestamp(last_activity.timestamp)} | {last_activity.event_type}",
@@ -313,7 +313,7 @@ class ResearchPanel(Static):
         if last_activity is None:
             lines.append("LAST    no recent research activity")
         else:
-            run_fragment = f" | run {last_activity.run_id}" if last_activity.run_id else ""
+            run_fragment = f" | run {compact_run_label(last_activity.run_id)}" if last_activity.run_id else ""
             lines.append(
                 "LAST    "
                 f"{format_short_timestamp(last_activity.timestamp)}"

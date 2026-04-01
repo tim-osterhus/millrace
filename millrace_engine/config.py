@@ -387,7 +387,7 @@ class StageConfig(MillraceModel):
     runner: RunnerKind = RunnerKind.CODEX
     model: str = "gpt-5.3-codex"
     effort: ReasoningEffort | None = None
-    timeout_seconds: int = Field(default=600, ge=1)
+    timeout_seconds: int = Field(default=3600, ge=1)
     prompt_file: Path | None = None
     allow_search: bool = False
 

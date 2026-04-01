@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Any
 
 from ..events import EventRecord, is_research_event_type, render_structured_event_line
@@ -91,6 +92,83 @@ def short_hash(value: str | None, *, prefix: int = 12) -> str:
     if len(normalized) <= prefix:
         return normalized
     return normalized[:prefix]
+
+
+def _ellipsize_middle(value: str, *, max_length: int) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= max_length:
+        return normalized
+    if max_length <= 3:
+        return normalized[:max_length]
+    head = max(8, (max_length - 1) // 2)
+    tail = max(8, max_length - head - 1)
+    return f"{normalized[:head]}…{normalized[-tail:]}"
+
+
+def _strip_leading_date_tokens(slug: str) -> str:
+    tokens = [token for token in slug.split("-") if token]
+    index = 0
+    while index + 2 < len(tokens):
+        year, month, day = tokens[index : index + 3]
+        if not (len(year) == 4 and year.isdigit() and len(month) == 2 and month.isdigit() and len(day) == 2 and day.isdigit()):
+            break
+        index += 3
+    trimmed = "-".join(tokens[index:])
+    return trimmed or slug
+
+
+def _compact_slug_label(slug: str, *, max_length: int) -> str:
+    normalized = " ".join(slug.split())
+    if len(normalized) <= max_length:
+        return normalized
+    tokens = [token for token in normalized.split("-") if token]
+    if len(tokens) < 4:
+        return _ellipsize_middle(normalized, max_length=max_length)
+    left = tokens[:2]
+    right = tokens[-2:]
+    candidate = "-".join([*left, "…", *right])
+    if len(candidate) > max_length:
+        return _ellipsize_middle(normalized, max_length=max_length)
+    right_start = len(tokens) - 3
+    while right_start >= len(left):
+        next_candidate = "-".join([*left, "…", *tokens[right_start:]])
+        if len(next_candidate) > max_length:
+            break
+        candidate = next_candidate
+        right_start -= 1
+    return candidate
+
+
+def _compact_run_timestamp(run_id_prefix: str) -> str | None:
+    normalized = " ".join(run_id_prefix.split())
+    if not normalized:
+        return None
+    matched = re.fullmatch(r"(\d{8})T(\d{2})(\d{2})(\d{2})(?:\d+)?Z", normalized)
+    if matched is None:
+        return None
+    _, hour, minute, second = matched.groups()
+    return f"{hour}:{minute}:{second}Z"
+
+
+def compact_run_label(run_id: str | None, *, max_slug_length: int = 40) -> str:
+    """Render one run id into a shorter operator-facing label."""
+
+    normalized = " ".join((run_id or "").split())
+    if not normalized:
+        return "none"
+    prefix, separator, slug = normalized.partition("__")
+    if not separator:
+        return _ellipsize_middle(normalized, max_length=max(24, max_slug_length))
+    compact_slug = _strip_leading_date_tokens(slug)
+    compact_slug = _compact_slug_label(compact_slug, max_length=max_slug_length)
+    compact_time = _compact_run_timestamp(prefix)
+    if compact_time and compact_slug:
+        return f"{compact_slug} ({compact_time})"
+    if compact_slug:
+        return compact_slug
+    if compact_time:
+        return compact_time
+    return _ellipsize_middle(normalized, max_length=max(24, max_slug_length))
 
 
 def detail_items(payload: dict[str, Any]) -> tuple[KeyValueView, ...]:
@@ -251,7 +329,7 @@ def _compact_selection_ref(selection_ref: str | None) -> str | None:
 def run_operator_summary_lines(run: RunSummaryView) -> tuple[str, str]:
     """Render compact operator-mode header/detail lines for one run row."""
 
-    header_fragments = [run_outcome_label(run), run.run_id]
+    header_fragments = [run_outcome_label(run), compact_run_label(run.run_id)]
     detail_fragments: list[str] = []
     compact_ref = _compact_selection_ref(run.selection_ref)
     if compact_ref:
@@ -369,6 +447,7 @@ def run_integration_summary_lines(integration: RunIntegrationSummaryView | None)
 
 
 __all__ = [
+    "compact_run_label",
     "detail_items",
     "event_category_label",
     "event_run_id",

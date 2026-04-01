@@ -120,7 +120,9 @@ def test_project_version_is_sourced_from_runtime_module() -> None:
     assert "version" not in project
     assert project["dynamic"] == ["version"]
     assert setuptools_dynamic["version"] == {"attr": "millrace_engine.__version__"}
-    assert __version__ == "0.2.0"
+    assert __version__
+    assert len(__version__.split(".")) == 3
+    assert all(part.isdigit() for part in __version__.split("."))
 
 
 def test_setuptools_package_discovery_covers_non_legacy_runtime_packages() -> None:

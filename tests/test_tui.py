@@ -25,6 +25,7 @@ from millrace_engine.markdown import parse_task_cards
 from millrace_engine.tui.app import MillraceTUIApplication
 from millrace_engine.tui.gateway import RuntimeGateway
 from millrace_engine.tui.launcher import LauncherObservationPaths, LauncherSettings
+from millrace_engine.tui.formatting import compact_run_label
 from millrace_engine.tui.messages import (
     ActionFailed,
     ActionSucceeded,
@@ -563,6 +564,28 @@ def test_render_runtime_event_operator_line_falls_back_to_summary() -> None:
     )
 
     assert render_runtime_event_operator_line(event) == "[2026-03-26 14:04:00 UTC] note=hello"
+
+
+def test_render_runtime_event_operator_line_compacts_generated_run_ids() -> None:
+    run_id = "20260401T043039323989Z__2026-03-31-2026-03-31-messaging-p0-schema-and-sender-contract-refactor"
+    event = RuntimeEventView(
+        event_type="execution.stage.started",
+        source="execution",
+        timestamp=datetime(2026, 4, 1, 4, 37, 43, tzinfo=timezone.utc),
+        is_research_event=False,
+        payload=(
+            KeyValueView(key="run_id", value=run_id),
+            KeyValueView(key="stage", value="troubleshoot"),
+        ),
+        summary="stage=troubleshoot",
+        run_id=run_id,
+    )
+
+    rendered = render_runtime_event_operator_line(event)
+
+    assert compact_run_label(run_id) in rendered
+    assert run_id not in rendered
+    assert rendered.endswith("Troubleshoot started")
 
 
 def test_tui_shell_debug_expanded_mode_shows_structured_event_feed(monkeypatch, tmp_path) -> None:
@@ -2069,6 +2092,72 @@ def test_research_panel_renders_audit_governance_and_recent_activity() -> None:
     assert "research.scan.completed | family=audit | run run-audit-1" in debug_text
 
 
+def test_research_panel_operator_mode_compacts_generated_run_ids() -> None:
+    observed_at = datetime(2026, 4, 1, 4, 37, 43, tzinfo=timezone.utc)
+    run_id = "20260401T043039323989Z__2026-03-31-2026-03-31-messaging-p0-schema-and-sender-contract-refactor"
+    panel = ResearchPanel(id="panel-research")
+    research = ResearchOverviewView(
+        status="INCIDENT",
+        source_kind="live",
+        configured_mode="auto",
+        configured_idle_mode="watch",
+        current_mode="INCIDENT",
+        last_mode="AUTO",
+        mode_reason="incident queue ready",
+        cycle_count=1,
+        transition_count=1,
+        selected_family="incident",
+        deferred_breadcrumb_count=0,
+        deferred_request_count=0,
+        queue_families=(),
+        audit_summary_path="/tmp/workspace/agents/audit_summary.json",
+        audit_history_path="/tmp/workspace/agents/audit_history.md",
+        audit_summary_present=False,
+        latest_gate_decision=None,
+        latest_completion_decision=None,
+        completion_allowed=False,
+        completion_reason="incident_open",
+        updated_at=observed_at,
+        next_poll_at=observed_at,
+        recent_activity=(
+            _sample_runtime_event(
+                event_type="research.scan.completed",
+                source="research",
+                observed_at=observed_at,
+                category="RSH",
+                summary="family=incident",
+                run_id=run_id,
+            ),
+        ),
+    )
+
+    panel.show_snapshot(research)
+    text = panel.summary_text()
+    compact_label = compact_run_label(run_id)
+
+    assert compact_label in text
+    assert run_id not in text
+
+
+def test_runs_panel_operator_mode_compacts_generated_run_ids() -> None:
+    observed_at = datetime(2026, 4, 1, 4, 37, 43, tzinfo=timezone.utc)
+    run_id = "20260401T043039323989Z__2026-03-31-2026-03-31-messaging-p0-schema-and-sender-contract-refactor"
+    panel = RunsPanel(id="panel-runs")
+    runs = _sample_runs_overview(
+        observed_at=observed_at,
+        runs=(
+            _sample_run_summary(run_id=run_id, observed_at=observed_at),
+        ),
+    )
+
+    panel.show_snapshot(runs, requested_run_id=run_id)
+    text = panel.summary_text()
+    compact_label = compact_run_label(run_id)
+
+    assert compact_label in text
+    assert run_id not in text
+
+
 def test_config_panel_operator_and_debug_modes_split_summary_and_internal_detail() -> None:
     observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
     payload = _sample_refresh_payload(observed_at=observed_at)
@@ -2450,6 +2539,36 @@ def test_logs_panel_filters_freezes_and_emits_run_requests() -> None:
     debug_text = panel.summary_text()
     assert "MODE    frozen | retained 4 | visible 1" in debug_text
     assert "payload stage=builder" in debug_text
+
+
+def test_logs_panel_operator_mode_compacts_generated_run_ids() -> None:
+    observed_at = datetime(2026, 4, 1, 4, 37, 43, tzinfo=timezone.utc)
+    run_id = "20260401T043039323989Z__2026-03-31-2026-03-31-messaging-p0-schema-and-sender-contract-refactor"
+    panel = LogsPanel(id="panel-logs")
+
+    panel.show_snapshot(
+        EventLogView(
+            events=(
+                _sample_runtime_event(
+                    event_type="execution.stage.started",
+                    source="execution",
+                    observed_at=observed_at,
+                    category="EXE",
+                    summary="stage=troubleshoot",
+                    run_id=run_id,
+                    is_research_event=False,
+                    payload=(KeyValueView("stage", "troubleshoot"),),
+                ),
+            ),
+            last_loaded_at=observed_at,
+        )
+    )
+
+    text = panel.summary_text()
+    compact_label = compact_run_label(run_id)
+
+    assert compact_label in text
+    assert run_id not in text
 
 
 def test_logs_panel_selection_distinguishes_events_with_different_payloads() -> None:
