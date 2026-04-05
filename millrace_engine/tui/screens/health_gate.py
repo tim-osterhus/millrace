@@ -12,6 +12,7 @@ from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
 
 from ...health import HealthCheckStatus, WorkspaceHealthReport
+from ..formatting import compact_display_path
 from ..messages import HealthCheckCompleted, HealthCheckFailed
 from ..workers import (
     HEALTH_CHECK_WORKER_NAME,
@@ -115,8 +116,7 @@ class HealthGateScreen(Screen[None]):
     def on_health_check_failed(self, message: HealthCheckFailed) -> None:
         self._update_body(
             [
-                f"Workspace: {self.workspace_path}",
-                f"Config: {self.config_path}",
+                *self._context_lines(workspace_path=self.workspace_path, config_path=self.config_path),
                 "",
                 "Health check crashed before a report could be produced.",
                 f"Operation: {message.failure.operation}",
@@ -129,8 +129,7 @@ class HealthGateScreen(Screen[None]):
     def _render_pending(self) -> None:
         self._update_body(
             [
-                f"Workspace: {self.workspace_path}",
-                f"Config: {self.config_path}",
+                *self._context_lines(workspace_path=self.workspace_path, config_path=self.config_path),
                 "",
                 "Running the deterministic workspace health check before the shell becomes interactive.",
             ]
@@ -139,8 +138,7 @@ class HealthGateScreen(Screen[None]):
     def _render_success(self, report: WorkspaceHealthReport) -> None:
         self._update_body(
             [
-                f"Workspace: {report.workspace_root}",
-                f"Config: {report.config_path}",
+                *self._context_lines(workspace_path=report.workspace_root, config_path=report.config_path),
                 "",
                 f"Health passed with {report.summary.passed_checks} checks.",
                 "Entering the shell.",
@@ -150,8 +148,7 @@ class HealthGateScreen(Screen[None]):
     def _render_report(self, report: WorkspaceHealthReport) -> None:
         status_label = "passed" if report.status == HealthCheckStatus.PASS else "failed"
         lines = [
-            f"Workspace: {report.workspace_root}",
-            f"Config: {report.config_path}",
+            *self._context_lines(workspace_path=report.workspace_root, config_path=report.config_path),
             "",
             f"Workspace health {status_label}.",
             (
@@ -176,8 +173,7 @@ class HealthGateScreen(Screen[None]):
 
     def _render_config_recovery(self) -> None:
         lines = [
-            f"Workspace: {self.workspace_path}",
-            f"Config: {self.config_path}",
+            *self._context_lines(workspace_path=self.workspace_path, config_path=self.config_path),
             "",
             "Config recovery surface.",
             "Inspect the resolved config file, then press Retry after correcting the workspace.",
@@ -195,8 +191,7 @@ class HealthGateScreen(Screen[None]):
     def _render_logs_recovery(self) -> None:
         log_path = self.workspace_path / "agents" / "engine_events.log"
         lines = [
-            f"Workspace: {self.workspace_path}",
-            f"Config: {self.config_path}",
+            *self._context_lines(workspace_path=self.workspace_path, config_path=self.config_path),
             "",
             "Runtime log recovery surface.",
             "Inspect the runtime event log, then press Retry after correcting the workspace.",
@@ -220,7 +215,7 @@ class HealthGateScreen(Screen[None]):
         empty_message: str,
         tail_lines: int | None = None,
     ) -> list[str]:
-        lines = [f"Path: {path}"]
+        lines = [f"Path: {compact_display_path(path)}"]
         try:
             if not path.exists():
                 return lines + ["", missing_message]
@@ -232,6 +227,12 @@ class HealthGateScreen(Screen[None]):
         preview = content[-tail_lines:] if tail_lines is not None else content
         lines.extend(["", "Preview:", *preview])
         return lines
+
+    def _context_lines(self, *, workspace_path: Path, config_path: Path) -> list[str]:
+        return [
+            f"Workspace: {compact_display_path(workspace_path)}",
+            f"Config: {compact_display_path(config_path)}",
+        ]
 
     def _update_body(self, lines: list[str]) -> None:
         self.query_one("#health-gate-body", Static).update("\n".join(lines))

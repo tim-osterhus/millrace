@@ -6,17 +6,60 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 import json
 import re
 
-from ..contracts import BlockerEntry, ExecutionStatus, RunnerResult, StageResult, StageType, TaskCard
+from ..contracts import BlockerEntry, ExecutionResearchHandoff, ExecutionStatus, RunnerResult, StageResult, StageType, TaskCard
 from ..diagnostics import create_diagnostics_bundle
 from ..markdown import insert_after_preamble, write_text_atomic
 from ..stages.base import StageExecutionError
 
 if TYPE_CHECKING:
-    from .execution import ExecutionPlane
+    from ..config import EngineConfig
+    from ..paths import RuntimePaths
+    from ..queue import TaskQueue
+    from ..status import StatusStore
+
+
+class ExecutionRecoveryPlane(Protocol):
+    config: EngineConfig
+    paths: RuntimePaths
+    queue: TaskQueue
+    status_store: StatusStore
+    _last_research_handoff: ExecutionResearchHandoff | None
+
+    def _build_research_handoff(
+        self,
+        *,
+        run_id: str,
+        task: TaskCard,
+        stage_label: str,
+        reason: str,
+        diagnostics_dir: Path | None,
+        run_dir: Path | None,
+        latch: object,
+    ) -> ExecutionResearchHandoff: ...
+
+    def _run_stage(
+        self,
+        stage_type: StageType,
+        task: TaskCard | None,
+        run_id: str,
+        *,
+        node_id: str | None = None,
+    ) -> StageResult: ...
+
+    def _record_stage_transition(self, result: StageResult, **kwargs: object) -> None: ...
+
+    def _run_full_task_path(
+        self,
+        task: TaskCard,
+        run_id: str,
+        stage_results: list[StageResult],
+        *,
+        recovery_rounds: int = 0,
+    ) -> ExecutionOutcome: ...
 
 
 INCIDENT_PATH_RE = re.compile(r"agents/ideas/incidents/[A-Za-z0-9._/\-]+\.md")
@@ -36,14 +79,14 @@ class _RecoveryResult:
 ExecutionOutcome = tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]
 
 
-def active_config_hashes(plane: ExecutionPlane) -> dict[str, str]:
+def active_config_hashes(plane: ExecutionRecoveryPlane) -> dict[str, str]:
     """Capture the active engine-config hash for diagnostics bundles."""
 
     payload = json.dumps(plane.config.model_dump(mode="json"), sort_keys=True).encode("utf-8")
     return {"engine_config_sha256": sha256(payload).hexdigest()}
 
 
-def extract_incident_path(plane: ExecutionPlane, runner_result: RunnerResult | None) -> Path | None:
+def extract_incident_path(plane: ExecutionRecoveryPlane, runner_result: RunnerResult | None) -> Path | None:
     """Extract the first incident markdown path surfaced by a consult-like runner result."""
 
     del plane
@@ -61,7 +104,7 @@ def extract_incident_path(plane: ExecutionPlane, runner_result: RunnerResult | N
 
 
 def create_blocker_bundle(
-    plane: ExecutionPlane,
+    plane: ExecutionRecoveryPlane,
     run_id: str,
     stage_label: str,
     why: str,
@@ -103,7 +146,7 @@ def create_blocker_bundle(
 
 
 def write_blocker_entry(
-    plane: ExecutionPlane,
+    plane: ExecutionRecoveryPlane,
     task: TaskCard | None,
     *,
     stage_label: str,
@@ -144,7 +187,7 @@ def write_blocker_entry(
 
 
 def quarantine_task(
-    plane: ExecutionPlane,
+    plane: ExecutionRecoveryPlane,
     task: TaskCard,
     *,
     run_id: str,
@@ -193,7 +236,7 @@ def quarantine_task(
 
 
 def recover_or_quarantine(
-    plane: ExecutionPlane,
+    plane: ExecutionRecoveryPlane,
     task: TaskCard,
     *,
     run_id: str,
@@ -294,7 +337,7 @@ def recover_or_quarantine(
 
 
 def resume_after_recovery(
-    plane: ExecutionPlane,
+    plane: ExecutionRecoveryPlane,
     task: TaskCard,
     *,
     run_id: str,

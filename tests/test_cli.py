@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Thread
 import json
 import os
+import pytest
 import subprocess
 import sys
 import time
@@ -18,15 +19,18 @@ from millrace_engine.contracts import (
     AuditGateDecisionCounts,
     CompletionDecision,
     CrossPlaneParentRun,
+    ExecutionStatus,
     ExecutionResearchHandoff,
     ModelProfileDefinition,
     PersistedObjectKind,
+    ResearchStatus,
     ResearchRecoveryDecision,
     RegistryObjectRef,
     StageType,
 )
 from millrace_engine.events import EventRecord, EventSource, EventType
 from millrace_engine.engine import MillraceEngine
+from millrace_engine.control_models import RuntimeState
 from millrace_engine.markdown import parse_task_cards
 from millrace_engine.planes.research import ResearchPlane
 from millrace_engine.policies.outage import OutageProbeResult, StaticOutageProbe
@@ -3594,3 +3598,40 @@ def test_publish_preflight_and_commit_commands_render_json(tmp_path: Path) -> No
     assert commit_payload["status"] == "committed"
     assert commit_payload["marker"] == "SKIP_PUBLISH reason=push_disabled"
     assert commit_payload["commit_sha"]
+
+
+def test_engine_control_start_uses_engine_runtime_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    expected = RuntimeState.model_validate(
+        {
+            "process_running": False,
+            "paused": False,
+            "execution_status": ExecutionStatus.IDLE,
+            "research_status": ResearchStatus.IDLE,
+            "backlog_depth": 0,
+            "deferred_queue_size": 0,
+            "config_hash": "test-config-hash",
+            "updated_at": "2026-04-03T00:00:00Z",
+            "mode": "once",
+        }
+    )
+    observed: list[tuple[Path, bool, bool]] = []
+
+    def fake_start_engine(
+        helper_config_path: Path | str,
+        *,
+        daemon: bool = False,
+        once: bool = False,
+    ) -> RuntimeState:
+        observed.append((Path(helper_config_path), daemon, once))
+        return expected
+
+    monkeypatch.setattr("millrace_engine.control.start_engine", fake_start_engine)
+
+    result = EngineControl(config_path).start(once=True)
+
+    assert result == expected
+    assert observed == [(config_path.resolve(), False, True)]

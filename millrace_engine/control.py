@@ -66,6 +66,7 @@ from .control_reports import (
     write_runtime_state,
 )
 from .events import EventRecord, is_research_event_type
+from .engine_runtime import start_engine
 from .health import WorkspaceHealthReport, build_workspace_health_report
 from .paths import RuntimePaths
 from .policies import (
@@ -169,13 +170,7 @@ class EngineControl:
 
     def start(self, *, daemon: bool = False, once: bool = False) -> RuntimeState:
         """Start the engine in foreground once or daemon mode."""
-
-        if daemon and once:
-            raise ControlError("start may use only one of daemon or once")
-        from .engine import MillraceEngine
-
-        engine = MillraceEngine(self.config_path)
-        return engine.start(daemon=daemon, once=once)
+        return start_engine(self.config_path, daemon=daemon, once=once)
 
     def status(self, *, detail: bool = False) -> StatusReport:
         """Return the current runtime status."""

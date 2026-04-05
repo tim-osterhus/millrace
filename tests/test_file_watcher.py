@@ -111,7 +111,30 @@ def test_watch_mode_supported_falls_back_to_poll_on_macos_python_314() -> None:
 def test_watch_mode_poll_fallback_uses_short_wakeup_timeout(tmp_path: Path) -> None:
     _, config_path = load_workspace_fixture(tmp_path, "watcher_stop_completion")
     paths = runtime_paths(config_path)
-    watcher = FileWatcherAdapter(paths, emit=lambda event: None, mode="watch")
+    watcher = FileWatcherAdapter(
+        paths,
+        emit=lambda event: None,
+        mode="watch",
+        watch_support_check=lambda: False,
+    )
 
+    assert watcher.requested_mode == "watch"
+    assert watcher.effective_mode == "poll"
     assert watcher.mode == "poll"
     assert watcher.wakeup_timeout_seconds(60) == 0.5
+
+
+def test_watch_mode_reports_effective_watch_when_native_support_is_available(tmp_path: Path) -> None:
+    _, config_path = load_workspace_fixture(tmp_path, "watcher_stop_completion")
+    paths = runtime_paths(config_path)
+    watcher = FileWatcherAdapter(
+        paths,
+        emit=lambda event: None,
+        mode="watch",
+        watch_support_check=lambda: True,
+    )
+
+    assert watcher.requested_mode == "watch"
+    assert watcher.effective_mode == "watch"
+    assert watcher.mode == "watch"
+    assert watcher.wakeup_timeout_seconds(60) == 60

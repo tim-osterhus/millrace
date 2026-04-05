@@ -333,6 +333,7 @@ class FileWatcherAdapter:
         mode: str = "watch",
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
         observer_factory: Callable[[], Observer] | None = None,
+        watch_support_check: Callable[[], bool] | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self.paths = paths
@@ -347,27 +348,32 @@ class FileWatcherAdapter:
         )
         self.poller = PollingRuntimeInputSource(paths, self.router)
         self.observer_factory = observer_factory or Observer
+        self._watch_support_check = watch_support_check or watch_mode_supported
         self._observer: Observer | None = None
         self._handler: _WatchdogHandler | None = None
 
     @property
-    def mode(self) -> str:
-        if self.requested_mode == "watch" and watch_mode_supported():
+    def effective_mode(self) -> str:
+        if self.requested_mode == "watch" and self._watch_support_check():
             return "watch"
         return "poll"
+
+    @property
+    def mode(self) -> str:
+        return self.effective_mode
 
     def wakeup_timeout_seconds(self, configured_timeout: float) -> float:
         """Return the engine wakeup cadence for this watcher mode."""
 
         timeout = max(float(configured_timeout), 0.0)
-        if self.requested_mode == "watch" and self.mode == "poll":
+        if self.requested_mode == "watch" and self.effective_mode == "poll":
             return min(timeout, max(self.router.debounce_seconds, FALLBACK_WATCH_POLL_SECONDS))
         return timeout
 
     def start(self) -> None:
         """Start the watchdog observer when watch mode is active."""
 
-        if self.mode != "watch":
+        if self.effective_mode != "watch":
             return
         if self._observer is not None:
             return

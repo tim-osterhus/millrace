@@ -171,6 +171,26 @@ def compact_run_label(run_id: str | None, *, max_slug_length: int = 40) -> str:
     return _ellipsize_middle(normalized, max_length=max(24, max_slug_length))
 
 
+def compact_display_path(path: Path, *, max_length: int = 48, minimum_tail_parts: int = 2) -> str:
+    """Render one absolute path as a stable operator-facing label."""
+
+    rendered = path.as_posix()
+    if len(rendered) <= max_length or not path.is_absolute():
+        return rendered
+    visible_parts = [part for part in path.parts if part and part != path.anchor]
+    if len(visible_parts) <= minimum_tail_parts:
+        return rendered
+    budget = max_length - len(".../")
+    tail_parts: list[str] = []
+    for part in reversed(visible_parts):
+        candidate_parts = [part, *tail_parts]
+        candidate = "/".join(candidate_parts)
+        if tail_parts and len(candidate) > budget and len(candidate_parts) > minimum_tail_parts:
+            break
+        tail_parts = candidate_parts
+    return f".../{'/'.join(tail_parts)}"
+
+
 def detail_items(payload: dict[str, Any]) -> tuple[KeyValueView, ...]:
     """Render structured payload detail rows."""
 
@@ -447,6 +467,7 @@ def run_integration_summary_lines(integration: RunIntegrationSummaryView | None)
 
 
 __all__ = [
+    "compact_display_path",
     "compact_run_label",
     "detail_items",
     "event_category_label",

@@ -9,8 +9,8 @@ from typing import Any, Callable
 import re
 
 from ..config import EngineConfig
-from ..contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ExecutionStatus, RunnerResult, StageResult, StageType, TaskCard
-from ..compiler import CompileStatus, FrozenLoopPlan, FrozenRunPlan, FrozenStagePlan, FrozenTransition
+from ..contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ExecutionStatus, StageResult, StageType, TaskCard
+from ..compiler import CompileStatus, FrozenRunPlan, FrozenStagePlan
 from ..events import EventType
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -47,37 +47,26 @@ from ..stages.base import ExecutionStage, StageExecutionError
 from .base import PlaneRuntime, StageCommandMap
 from .execution_recovery import (
     _RecoveryResult,
-    active_config_hashes as active_config_hashes_helper,
     create_blocker_bundle as create_blocker_bundle_helper,
-    extract_incident_path as extract_incident_path_helper,
     quarantine_task as quarantine_task_helper,
     recover_or_quarantine as recover_or_quarantine_helper,
     resume_after_recovery as resume_after_recovery_helper,
     write_blocker_entry as write_blocker_entry_helper,
 )
 from .execution_routing import (
-    apply_terminal_transition as apply_terminal_transition_helper,
-    condition_matches as condition_matches_helper,
-    derive_stage_outcome as derive_stage_outcome_helper,
     execution_plan as execution_plan_helper,
-    legacy_resume_completed_node as legacy_resume_completed_node_helper,
     resume_from_completed_status as resume_from_completed_status_helper,
-    routing_facts as routing_facts_helper,
     run_frozen_plan as run_frozen_plan_helper,
-    select_transition as select_transition_helper,
     stage_plan as stage_plan_helper,
-    stage_type_for_node as stage_type_for_node_helper,
 )
 from .execution_runtime import (
     apply_active_config_rebindings as apply_active_config_rebindings_helper,
-    bound_parameters_from_result as bound_parameters_from_result_helper,
     bound_parameters_for_node as bound_parameters_for_node_helper,
     handle_status_change as handle_status_change_helper,
     initialize_parameter_binder as initialize_parameter_binder_helper,
     rebuild_stages as rebuild_stages_helper,
     record_stage_transition as record_stage_transition_helper,
     reconfigure as reconfigure_helper,
-    resolve_stage as resolve_stage_helper,
     run_stage as run_stage_helper,
     stage_context_payload as stage_context_payload_helper,
     start_transition_history as start_transition_history_helper,
@@ -326,117 +315,11 @@ class ExecutionPlane(PlaneRuntime):
     def _stage(self, stage_type: StageType) -> ExecutionStage:
         return self.stages[stage_type]
 
-    def _stage_instance(self, stage_type: StageType, *, node_id: str | None = None) -> ExecutionStage:
-        return resolve_stage_helper(self, stage_type, node_id=node_id)
-
     def _kind_id_for_stage(self, stage_type: StageType) -> str:
         return f"execution.{stage_type.value.replace('_', '-')}"
 
-    def _execution_plan(self) -> FrozenLoopPlan:
-        return execution_plan_helper(self)
-
     def _stage_plan(self, node_id: str) -> FrozenStagePlan:
         return stage_plan_helper(self, node_id)
-
-    def _stage_type_for_node(self, node_id: str) -> StageType:
-        return stage_type_for_node_helper(self, node_id)
-
-    def _routing_facts(self) -> dict[str, object]:
-        return routing_facts_helper(self)
-
-    def _derive_stage_outcome(self, stage_plan: FrozenStagePlan, result_status: str) -> str:
-        return derive_stage_outcome_helper(self, stage_plan, result_status)
-
-    def _condition_matches(
-        self,
-        transition: FrozenTransition,
-        *,
-        facts: dict[str, object],
-        artifacts: tuple[Path, ...] = (),
-    ) -> tuple[bool | None, dict[str, object]]:
-        return condition_matches_helper(self, transition, facts=facts, artifacts=artifacts)
-
-    def _select_transition(
-        self,
-        node_id: str,
-        *,
-        trigger_status: str,
-        facts: dict[str, object],
-        artifacts: tuple[Path, ...] = (),
-    ) -> tuple[FrozenTransition, str, bool | None, dict[str, object]]:
-        return select_transition_helper(
-            self,
-            node_id,
-            trigger_status=trigger_status,
-            facts=facts,
-            artifacts=artifacts,
-        )
-
-    def _apply_terminal_transition(
-        self,
-        transition: FrozenTransition,
-        *,
-        task: TaskCard,
-        run_id: str,
-        stage_results: list[StageResult],
-        diagnostics_dir: Path | None = None,
-        quickfix_attempts: int = 0,
-    ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        return apply_terminal_transition_helper(
-            self,
-            transition,
-            task=task,
-            run_id=run_id,
-            stage_results=stage_results,
-            diagnostics_dir=diagnostics_dir,
-            quickfix_attempts=quickfix_attempts,
-        )
-
-    def _legacy_resume_completed_node(self, status: ExecutionStatus) -> str | None:
-        return legacy_resume_completed_node_helper(self, status)
-
-    def _run_frozen_plan(
-        self,
-        task: TaskCard,
-        *,
-        run_id: str,
-        stage_results: list[StageResult],
-        start_node_id: str,
-        transition_reason_prefix: str,
-        routing_mode: str,
-    ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        return run_frozen_plan_helper(
-            self,
-            task,
-            run_id=run_id,
-            stage_results=stage_results,
-            start_node_id=start_node_id,
-            transition_reason_prefix=transition_reason_prefix,
-            routing_mode=routing_mode,
-        )
-
-    def _resume_from_completed_status(
-        self,
-        task: TaskCard,
-        *,
-        run_id: str,
-        stage_results: list[StageResult],
-        status: ExecutionStatus,
-    ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        return resume_from_completed_status_helper(
-            self,
-            task,
-            run_id=run_id,
-            stage_results=stage_results,
-            status=status,
-            routing_mode_frozen_plan_legacy_resume=ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME,
-        )
-
-    def _bound_parameters_from_result(self, result: StageResult) -> BoundExecutionParameters:
-        return bound_parameters_from_result_helper(self, result)
-
-    def _start_transition_history(self, run_id: str) -> TransitionHistoryStore:
-        return start_transition_history_helper(self, run_id)
 
     def _record_stage_transition(
         self,
@@ -535,12 +418,6 @@ class ExecutionPlane(PlaneRuntime):
         )
         self._record_policy_evaluations(records)
         return records
-
-    def _active_config_hashes(self) -> dict[str, str]:
-        return active_config_hashes_helper(self)
-
-    def _extract_incident_path(self, runner_result: RunnerResult | None) -> Path | None:
-        return extract_incident_path_helper(self, runner_result)
 
     def _create_blocker_bundle(
         self,
@@ -1202,7 +1079,7 @@ class ExecutionPlane(PlaneRuntime):
                 )
                 if self.config.execution.run_update_on_empty:
                     run_id = self._new_run_id(None, "update-empty")
-                    history = self._start_transition_history(run_id)
+                    history = start_transition_history_helper(self, run_id)
                     final_status = self._run_empty_backlog_sequence(run_id, stage_results)
                     return ExecutionCycleResult(
                         run_id=run_id,
@@ -1282,7 +1159,7 @@ class ExecutionPlane(PlaneRuntime):
         self._active_frozen_plan = compile_result.plan
         self._initialize_parameter_binder()
         self.runtime_provenance = compile_result.snapshot.runtime_provenance_context()
-        history = self._start_transition_history(run_id)
+        history = start_transition_history_helper(self, run_id)
 
         if current_status in {ExecutionStatus.IDLE, ExecutionStatus.BLOCKED, ExecutionStatus.NET_WAIT}:
             self._policy_routing_mode = ROUTING_MODE_FROZEN_PLAN
@@ -1303,11 +1180,12 @@ class ExecutionPlane(PlaneRuntime):
                     pause_requested=True,
                     pause_reason=usage_context.reason,
                 )
-            final_status, archived_task, quarantined_task, diagnostics_dir, quickfix_attempts = self._run_frozen_plan(
+            final_status, archived_task, quarantined_task, diagnostics_dir, quickfix_attempts = run_frozen_plan_helper(
+                self,
                 active_task,
                 run_id=run_id,
                 stage_results=stage_results,
-                start_node_id=self._execution_plan().entry_node_id,
+                start_node_id=execution_plan_helper(self).entry_node_id,
                 transition_reason_prefix="frozen execution plan",
                 routing_mode=ROUTING_MODE_FROZEN_PLAN,
             )
@@ -1359,11 +1237,13 @@ class ExecutionPlane(PlaneRuntime):
                     pause_requested=True,
                     pause_reason=usage_context.reason,
                 )
-            final_status, archived_task, quarantined_task, diagnostics_dir, quickfix_attempts = self._resume_from_completed_status(
+            final_status, archived_task, quarantined_task, diagnostics_dir, quickfix_attempts = resume_from_completed_status_helper(
+                self,
                 active_task,
                 run_id=run_id,
                 stage_results=stage_results,
                 status=current_status,
+                routing_mode_frozen_plan_legacy_resume=ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME,
             )
             pacing_delay_seconds = 0
             if archived_task is not None:

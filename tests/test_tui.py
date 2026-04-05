@@ -12,12 +12,15 @@ import shutil
 import pytest
 from textual.app import App, SystemCommand
 from textual.geometry import Region
+from textual.worker import WorkerState
 from textual.widgets import Button, ContentSwitcher, Input, Static, TextArea
 
 import millrace_engine.tui.gateway as gateway_module
+import millrace_engine.tui.gateway_support as gateway_support_module
 import millrace_engine.tui.launcher as launcher_module
 import millrace_engine.tui.screens.run_detail_modal as run_detail_modal_module
 import millrace_engine.tui.screens.shell as shell_module
+import millrace_engine.tui.screens.shell_support as shell_support_module
 import millrace_engine.tui.workers as workers_module
 from millrace_engine.config import EngineConfig
 from millrace_engine.events import EventRecord, EventSource, EventType, render_structured_event_line
@@ -25,7 +28,7 @@ from millrace_engine.markdown import parse_task_cards
 from millrace_engine.tui.app import MillraceTUIApplication
 from millrace_engine.tui.gateway import RuntimeGateway
 from millrace_engine.tui.launcher import LauncherObservationPaths, LauncherSettings
-from millrace_engine.tui.formatting import compact_run_label
+from millrace_engine.tui.formatting import compact_display_path, compact_run_label
 from millrace_engine.tui.messages import (
     ActionFailed,
     ActionSucceeded,
@@ -588,6 +591,15 @@ def test_render_runtime_event_operator_line_compacts_generated_run_ids() -> None
     assert rendered.endswith("Troubleshoot started")
 
 
+def test_compact_display_path_prefers_stable_tail_for_long_absolute_paths() -> None:
+    path = Path(
+        "/private/var/folders/nc/fh6yj4vx1vqc35w5vx48vblr0000gn/T/"
+        "millrace-tui-health-gate-snapshot/millrace/millrace.toml"
+    )
+
+    assert compact_display_path(path) == ".../millrace/millrace.toml"
+
+
 def test_tui_shell_debug_expanded_mode_shows_structured_event_feed(monkeypatch, tmp_path) -> None:
     _, config_path = load_operator_workspace(tmp_path)
     monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
@@ -813,9 +825,21 @@ def test_tui_notices_view_escalates_warning_and_error_only() -> None:
 
 
 def test_tui_health_gate_exposes_recovery_actions_and_retry_recovers(tmp_path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    scenario_root = (
+        tmp_path
+        / "health-gate-path-compaction"
+        / "segment-for-deterministic-display"
+        / "fixture-root"
+    )
+    workspace, config_path = load_workspace_fixture(scenario_root, "control_mailbox")
     missing_size_status = workspace / "agents" / "size_status.md"
     logs_path = workspace / "agents" / "engine_events.log"
+    workspace_display = compact_display_path(workspace)
+    config_display = compact_display_path(config_path)
+    logs_display = compact_display_path(logs_path)
+    assert workspace_display != workspace.as_posix()
+    assert config_display != config_path.as_posix()
+    assert logs_display != logs_path.as_posix()
 
     async def scenario(app: MillraceTUIApplication, pilot) -> None:
         await _wait_for_condition(
@@ -824,6 +848,11 @@ def test_tui_health_gate_exposes_recovery_actions_and_retry_recovers(tmp_path) -
             and "Workspace health failed." in _static_text(app.screen.query_one("#health-gate-body", Static)),
         )
         assert isinstance(app.screen, HealthGateScreen)
+        failure_body = _static_text(app.screen.query_one("#health-gate-body", Static))
+        assert f"Workspace: {workspace_display}" in failure_body
+        assert f"Config: {config_display}" in failure_body
+        assert workspace.as_posix() not in failure_body
+        assert config_path.as_posix() not in failure_body
         button_ids = {button.id for button in app.screen.query(Button)}
         assert {
             "health-gate-retry",
@@ -839,7 +868,9 @@ def test_tui_health_gate_exposes_recovery_actions_and_retry_recovers(tmp_path) -
             and "Config recovery surface." in _static_text(app.screen.query_one("#health-gate-body", Static)),
         )
         config_body = _static_text(app.screen.query_one("#health-gate-body", Static))
-        assert config_path.as_posix() in config_body
+        assert f"Config: {config_display}" in config_body
+        assert f"Path: {config_display}" in config_body
+        assert config_path.as_posix() not in config_body
         assert 'mode = "once"' in config_body
         assert isinstance(app.screen, HealthGateScreen)
 
@@ -850,7 +881,8 @@ def test_tui_health_gate_exposes_recovery_actions_and_retry_recovers(tmp_path) -
             and "Runtime log recovery surface." in _static_text(app.screen.query_one("#health-gate-body", Static)),
         )
         logs_body = _static_text(app.screen.query_one("#health-gate-body", Static))
-        assert logs_path.as_posix() in logs_body
+        assert f"Path: {logs_display}" in logs_body
+        assert logs_path.as_posix() not in logs_body
         assert "Runtime event log is empty." in logs_body
         assert isinstance(app.screen, HealthGateScreen)
 
@@ -2779,6 +2811,13 @@ def test_runtime_gateway_normalizes_input_and_control_failures(tmp_path) -> None
     assert missing_run.failure.exception_type == "ControlError"
 
 
+def test_runtime_gateway_support_normalizes_optional_text_and_resolves_paths(tmp_path) -> None:
+    config_path = tmp_path / "workspace" / "millrace.toml"
+    assert gateway_support_module.normalized_optional_text("  hello   there  ") == "hello there"
+    assert gateway_support_module.normalized_optional_text("   ") is None
+    assert gateway_support_module.resolve_config_path(config_path) == config_path.resolve()
+
+
 def test_runtime_gateway_commit_result_reports_missing_origin_downgrade(tmp_path) -> None:
     gateway = RuntimeGateway(tmp_path / "millrace.toml")
 
@@ -2815,6 +2854,30 @@ def test_runtime_gateway_commit_result_reports_detached_head_downgrade(tmp_path)
 
     assert result.message == "publish committed locally; push skipped: HEAD is detached"
     assert result.applied is True
+
+
+def test_tui_shell_worker_state_outcome_maps_initial_refresh_success() -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    payload = _sample_refresh_payload(observed_at=observed_at)
+
+    outcome = shell_support_module.worker_state_outcome(
+        worker_name=workers_module.INITIAL_REFRESH_WORKER_NAME,
+        state=WorkerState.SUCCESS,
+        result=GatewayResult(value=payload),
+        error=None,
+    )
+
+    assert outcome is not None
+    assert outcome.ensure_background_runtime is True
+    assert isinstance(outcome.message, RefreshSucceeded)
+    assert outcome.message.panels == shell_support_module.INITIAL_REFRESH_PANELS
+
+
+def test_tui_shell_publish_confirmation_lines_reflect_push_readiness() -> None:
+    lines = shell_support_module.publish_confirmation_lines(_sample_publish_overview(), push=True)
+
+    assert "Push ready from current facts: yes" in lines
+    assert lines[-1] == "Push stays intentionally higher friction than the default local-commit path."
 
 
 def test_run_detail_modal_renders_loaded_provenance(monkeypatch, tmp_path) -> None:

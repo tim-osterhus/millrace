@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..config import StageConfig
@@ -14,6 +14,7 @@ from ..execution_nodes import execution_stage_type_for_node
 from ..events import EventType
 from ..policies import (
     PolicyHookError,
+    PolicyEvaluationRecord,
     build_execution_policy_runtime,
     execution_preflight_context_from_records,
     execution_pacing_context_from_records,
@@ -22,6 +23,7 @@ from ..policies import (
 from ..provenance import (
     BoundExecutionParameters,
     ExecutionParameterRebindingRequest,
+    RuntimeProvenanceContext,
     TransitionHistoryStore,
     clear_transition_history,
     runtime_stage_parameter_key,
@@ -40,12 +42,45 @@ from ..stages.qa import QAStage
 from ..stages.troubleshoot import TroubleshootStage
 from ..stages.update import UpdateStage
 if TYPE_CHECKING:
+    from ..compiler import FrozenRunPlan, FrozenStagePlan
     from ..config import EngineConfig
     from ..paths import RuntimePaths
-    from .execution import ExecutionPlane
 
 
-def rebuild_stages(plane: ExecutionPlane) -> dict[StageType, ExecutionStage]:
+class ExecutionRuntimePlane(Protocol):
+    config: EngineConfig
+    paths: RuntimePaths
+    queue: TaskQueue
+    status_store: StatusStore
+    runners: dict[RunnerKind, SubprocessRunner | CodexRunner | ClaudeRunner]
+    stages: dict[StageType, ExecutionStage]
+    _stage_commands: dict[object, tuple[str, ...]]
+    _active_frozen_plan: FrozenRunPlan | None
+    _resolved_frozen_stages: dict[str, ExecutionStage]
+    _runtime_parameter_binder: FrozenExecutionParameterBinder | None
+    runtime_provenance: RuntimeProvenanceContext
+    _custom_policy_runtime: bool
+    policy_runtime: object
+    _transport_probe: object
+    before_stage: Callable[[StageType], None] | None
+    transition_history: TransitionHistoryStore | None
+    _policy_routing_mode: str | None
+    _status_event_context: dict[str, object] | None
+
+    def _stage_plan(self, node_id: str) -> FrozenStagePlan: ...
+
+    def _handle_status_change(self, change: StatusChange) -> None: ...
+
+    def _emit_event(self, event_type: EventType, payload: dict[str, Any] | None = None) -> None: ...
+
+    def _record_policy_evaluations(self, records: tuple[PolicyEvaluationRecord, ...]) -> None: ...
+
+    def _bound_execution_parameters_for_node(self, node_id: str) -> BoundExecutionParameters: ...
+
+    def _kind_id_for_stage(self, stage_type: StageType) -> str: ...
+
+
+def rebuild_stages(plane: ExecutionRuntimePlane) -> dict[StageType, ExecutionStage]:
     """Rebuild the concrete stage objects against the current runtime dependencies."""
 
     commands = plane._stage_commands
@@ -110,7 +145,7 @@ def rebuild_stages(plane: ExecutionPlane) -> dict[StageType, ExecutionStage]:
 
 
 def _stage_command_for(
-    plane: ExecutionPlane,
+    plane: ExecutionRuntimePlane,
     *,
     stage_type: StageType,
     node_id: str,
@@ -139,7 +174,7 @@ def _load_stage_handler(handler_ref: str) -> type[ExecutionStage]:
 
 
 def resolve_stage(
-    plane: ExecutionPlane,
+    plane: ExecutionRuntimePlane,
     stage_type: StageType,
     *,
     node_id: str | None = None,
@@ -193,7 +228,7 @@ def resolve_stage(
     return stage
 
 
-def reconfigure(plane: ExecutionPlane, config: EngineConfig, paths: RuntimePaths) -> None:
+def reconfigure(plane: ExecutionRuntimePlane, config: EngineConfig, paths: RuntimePaths) -> None:
     """Refresh the runtime dependencies for future stage executions."""
 
     plane.config = config
@@ -223,7 +258,7 @@ def reconfigure(plane: ExecutionPlane, config: EngineConfig, paths: RuntimePaths
         )
 
 
-def initialize_parameter_binder(plane: ExecutionPlane) -> None:
+def initialize_parameter_binder(plane: ExecutionRuntimePlane) -> None:
     """Reset the runtime rebinding view for the currently active frozen plan."""
 
     if plane._active_frozen_plan is None:
@@ -233,7 +268,7 @@ def initialize_parameter_binder(plane: ExecutionPlane) -> None:
 
 
 def bound_parameters_for_node(
-    plane: ExecutionPlane,
+    plane: ExecutionRuntimePlane,
     node_id: str,
     *,
     stage_plan: object | None = None,
@@ -270,7 +305,7 @@ def bound_parameters_for_node(
     )
 
 
-def apply_active_config_rebindings(plane: ExecutionPlane) -> None:
+def apply_active_config_rebindings(plane: ExecutionRuntimePlane) -> None:
     """Apply legal runtime rebinding fields from the current config to future plan nodes."""
 
     if plane._active_frozen_plan is None or plane._active_frozen_plan.content.execution_plan is None:
@@ -362,7 +397,7 @@ def apply_active_config_rebindings(plane: ExecutionPlane) -> None:
 
 
 def stage_context_payload(
-    plane: ExecutionPlane,
+    plane: ExecutionRuntimePlane,
     stage_type: StageType,
     *,
     task: TaskCard | None,
@@ -378,7 +413,7 @@ def stage_context_payload(
     return payload
 
 
-def handle_status_change(plane: ExecutionPlane, change: StatusChange) -> None:
+def handle_status_change(plane: ExecutionRuntimePlane, change: StatusChange) -> None:
     """Emit the execution-plane status-change event with stage context when available."""
 
     payload: dict[str, object] = {
@@ -393,7 +428,7 @@ def handle_status_change(plane: ExecutionPlane, change: StatusChange) -> None:
     plane._emit_event(EventType.STATUS_CHANGED, payload)
 
 
-def bound_parameters_from_result(plane: ExecutionPlane, result: StageResult) -> BoundExecutionParameters:
+def bound_parameters_from_result(plane: ExecutionRuntimePlane, result: StageResult) -> BoundExecutionParameters:
     """Resolve the bound execution parameters recorded for one stage result."""
 
     node_id = str(result.metadata.get("node_id") or result.stage.value).strip() or result.stage.value
@@ -415,7 +450,7 @@ def bound_parameters_from_result(plane: ExecutionPlane, result: StageResult) -> 
     )
 
 
-def start_transition_history(plane: ExecutionPlane, run_id: str) -> TransitionHistoryStore:
+def start_transition_history(plane: ExecutionRuntimePlane, run_id: str) -> TransitionHistoryStore:
     """Reset and open the transition-history store for one run."""
 
     history_path = plane.paths.runs_dir / run_id / "transition_history.jsonl"
@@ -429,7 +464,7 @@ def start_transition_history(plane: ExecutionPlane, run_id: str) -> TransitionHi
 
 
 def record_stage_transition(
-    plane: ExecutionPlane,
+    plane: ExecutionRuntimePlane,
     result: StageResult,
     *,
     task_before: TaskCard | None,
@@ -483,7 +518,7 @@ def record_stage_transition(
 
 
 def run_stage(
-    plane: ExecutionPlane,
+    plane: ExecutionRuntimePlane,
     stage_type: StageType,
     task: TaskCard | None,
     run_id: str,

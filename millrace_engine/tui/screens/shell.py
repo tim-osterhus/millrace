@@ -15,7 +15,6 @@ from textual.widgets import ContentSwitcher, Static
 from textual.worker import Worker, WorkerState
 
 from ...health import WorkspaceHealthReport
-from ..formatting import format_timestamp
 from ..gateway import RuntimeGateway
 from ..launcher import launch_start_daemon, launch_start_once
 from ..messages import (
@@ -66,36 +65,29 @@ from ..workers import (
     PERIODIC_REFRESH_WORKER_NAME,
     REFRESH_WORKER_GROUP,
     WorkerSettings,
-    gateway_failure_from_exception,
     load_workspace_refresh,
     stream_event_updates,
 )
-
-WORKSPACE_REFRESH_PANELS = (
-    PanelId.OVERVIEW,
-    PanelId.QUEUE,
-    PanelId.RUNS,
-    PanelId.RESEARCH,
-    PanelId.CONFIG,
+from .shell_support import (
+    ACTION_WORKER_GROUP,
+    ACTION_WORKER_PREFIX,
+    INITIAL_REFRESH_PANELS,
+    LIFECYCLE_WORKER_GROUP,
+    LIFECYCLE_WORKER_PREFIX,
+    PUBLISH_REFRESH_WORKER_GROUP,
+    PUBLISH_REFRESH_WORKER_NAME,
+    WORKSPACE_REFRESH_PANELS,
+    is_lifecycle_action,
+    latest_run_summary_from_runs,
+    notification_severity,
+    publish_confirmation_lines,
+    queue_reorder_confirmation_lines,
+    selected_config_field,
+    worker_state_outcome,
 )
-INITIAL_REFRESH_PANELS = WORKSPACE_REFRESH_PANELS + (PanelId.LOGS,)
-ACTION_WORKER_GROUP = "actions"
-ACTION_WORKER_PREFIX = "action."
-LIFECYCLE_WORKER_GROUP = "lifecycle"
-LIFECYCLE_WORKER_PREFIX = "lifecycle."
+
 ACTION_GROUP = Binding.Group("Actions", compact=True)
 DISCOVERY_GROUP = Binding.Group("Discover", compact=True)
-PUBLISH_REFRESH_WORKER_NAME = "refresh.publish"
-PUBLISH_REFRESH_WORKER_GROUP = "refresh.publish"
-LIFECYCLE_ACTION_NAMES = {
-    "start_once",
-    "start_daemon",
-    "start.once",
-    "start.daemon",
-    "pause",
-    "resume",
-    "stop",
-}
 
 
 class ShellScreen(Screen[None]):
@@ -277,83 +269,24 @@ class ShellScreen(Screen[None]):
 
     @on(Worker.StateChanged)
     def _handle_worker_state_changed(self, message: Worker.StateChanged) -> None:
-        if message.worker.name.startswith(LIFECYCLE_WORKER_PREFIX):
-            if message.state in {WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED}:
-                self._clear_lifecycle_busy(message.worker.name)
-            if message.state == WorkerState.SUCCESS:
-                result = message.worker.result
-                if isinstance(result, GatewayResult):
-                    if result.ok and result.value is not None:
-                        self.post_message(ActionSucceeded(result.value))
-                    elif result.failure is not None:
-                        self.post_message(ActionFailed(result.failure))
-                return
-            if message.state == WorkerState.ERROR and isinstance(message.worker.error, Exception):
-                self.post_message(
-                    ActionFailed(
-                        gateway_failure_from_exception(message.worker.name, message.worker.error)
-                    )
-                )
+        outcome = worker_state_outcome(
+            worker_name=message.worker.name,
+            state=message.state,
+            result=message.worker.result,
+            error=(message.worker.error if isinstance(message.worker.error, Exception) else None),
+        )
+        if outcome is None:
             return
-        if message.worker.name.startswith(ACTION_WORKER_PREFIX):
-            if message.state == WorkerState.SUCCESS:
-                result = message.worker.result
-                if isinstance(result, GatewayResult):
-                    if result.ok and result.value is not None:
-                        self.post_message(ActionSucceeded(result.value))
-                    elif result.failure is not None:
-                        self.post_message(ActionFailed(result.failure))
-                return
-            if message.state == WorkerState.ERROR and isinstance(message.worker.error, Exception):
-                self.post_message(
-                    ActionFailed(
-                        gateway_failure_from_exception(message.worker.name, message.worker.error)
-                    )
-                )
-            return
-        if message.worker.name == PUBLISH_REFRESH_WORKER_NAME:
-            if message.state == WorkerState.SUCCESS:
-                result = message.worker.result
-                if isinstance(result, GatewayResult):
-                    if result.ok and result.value is not None:
-                        self.post_message(RefreshSucceeded(result.value, panels=(PanelId.PUBLISH,)))
-                    elif result.failure is not None:
-                        self.post_message(RefreshFailed(result.failure, panels=(PanelId.PUBLISH,)))
-                return
-            if message.state == WorkerState.ERROR and isinstance(message.worker.error, Exception):
-                self.post_message(
-                    RefreshFailed(
-                        gateway_failure_from_exception("refresh.publish", message.worker.error),
-                        panels=(PanelId.PUBLISH,),
-                    )
-                )
-            return
-        if message.worker.name not in {INITIAL_REFRESH_WORKER_NAME, PERIODIC_REFRESH_WORKER_NAME}:
-            return
-        panels = INITIAL_REFRESH_PANELS if message.worker.name == INITIAL_REFRESH_WORKER_NAME else WORKSPACE_REFRESH_PANELS
-        if message.state == WorkerState.SUCCESS:
-            result = message.worker.result
-            if isinstance(result, GatewayResult):
-                if result.ok and result.value is not None:
-                    self.post_message(RefreshSucceeded(result.value, panels=panels))
-                elif result.failure is not None:
-                    self.post_message(RefreshFailed(result.failure, panels=panels))
-            if message.worker.name == INITIAL_REFRESH_WORKER_NAME:
-                self._ensure_background_runtime()
-            return
-        if message.state == WorkerState.ERROR and isinstance(message.worker.error, Exception):
-            self.post_message(
-                RefreshFailed(
-                    gateway_failure_from_exception("refresh.workspace", message.worker.error),
-                    panels=panels,
-                )
-            )
-            if message.worker.name == INITIAL_REFRESH_WORKER_NAME:
-                self._ensure_background_runtime()
+        if outcome.clear_lifecycle_busy:
+            self._clear_lifecycle_busy(message.worker.name)
+        if outcome.message is not None:
+            self.post_message(outcome.message)
+        if outcome.ensure_background_runtime:
+            self._ensure_background_runtime()
 
     def on_refresh_succeeded(self, message: RefreshSucceeded) -> None:
         self._store.apply_refresh_success(message.payload, panels=message.panels)
-        self._latest_run_summary = self._latest_run_summary_from_runs()
+        self._latest_run_summary = latest_run_summary_from_runs(self._store.state.runs)
         self._render_state()
         self._maybe_offer_startup_daemon_launch()
         if self.active_panel is PanelId.PUBLISH and PanelId.PUBLISH not in message.panels:
@@ -373,7 +306,7 @@ class ShellScreen(Screen[None]):
     def on_action_succeeded(self, message: ActionSucceeded) -> None:
         if message.result.action == "reorder_queue":
             self.query_one(QueuePanel).clear_reorder_draft()
-        if self._is_lifecycle_action(message.result.action):
+        if is_lifecycle_action(message.result.action):
             self._last_lifecycle_failure = None
         notice = notice_from_action(message.result)
         previous_notices = self._store.state.notices
@@ -386,7 +319,7 @@ class ShellScreen(Screen[None]):
             self._start_periodic_refresh()
 
     def on_action_failed(self, message: ActionFailed) -> None:
-        if self._is_lifecycle_action(message.failure.operation):
+        if is_lifecycle_action(message.failure.operation):
             self._last_lifecycle_failure = message.failure
         notice = notice_from_failure(message.failure)
         previous_notices = self._store.state.notices
@@ -620,7 +553,11 @@ class ShellScreen(Screen[None]):
         self.app.push_screen(
             ConfirmModal(
                 title="Apply Queue Reorder",
-                body_lines=self._queue_reorder_confirmation_lines(message.task_ids),
+                body_lines=queue_reorder_confirmation_lines(
+                    message.task_ids,
+                    queue=self._store.state.queue,
+                    runtime=self._store.state.runtime,
+                ),
                 confirm_label="Apply Reorder",
             ),
             self._handle_queue_reorder_confirmation,
@@ -658,21 +595,12 @@ class ShellScreen(Screen[None]):
             lambda: RuntimeGateway(self.config_path).reload_config(),
         )
 
-    def _selected_config_field(self, field_key: str | None = None):
-        config = self._store.state.config
-        if config is None:
-            return None
-        selected_key = field_key or self.query_one(ConfigPanel).selected_field_key
-        editable_fields = [field for field in config.fields if field.editable]
-        if not editable_fields:
-            return None
-        for field in editable_fields:
-            if field.key == selected_key:
-                return field
-        return editable_fields[0]
-
     def _open_config_edit_modal(self, field_key: str | None = None) -> None:
-        field = self._selected_config_field(field_key)
+        field = selected_config_field(
+            self._store.state.config,
+            selected_key=self.query_one(ConfigPanel).selected_field_key,
+            field_key=field_key,
+        )
         if field is None:
             self.app.notify(
                 "No guided config field is currently available for editing.",
@@ -717,47 +645,11 @@ class ShellScreen(Screen[None]):
         self.app.push_screen(
             ConfirmModal(
                 title=("Commit And Push" if push else "Commit Without Push"),
-                body_lines=self._publish_confirmation_lines(push=push),
+                body_lines=publish_confirmation_lines(publish, push=push),
                 confirm_label=("Commit And Push" if push else "Commit Locally"),
             ),
             self._handle_publish_commit_confirmation,
         )
-
-    def _publish_confirmation_lines(self, *, push: bool) -> tuple[str, ...]:
-        publish = self._store.state.publish
-        if publish is None:
-            return ("Publish preflight is not loaded yet.",)
-        push_ready = publish.commit_allowed and publish.origin_configured and publish.branch is not None
-        lines = [
-            (
-                "Create a staging commit and push it to the configured origin?"
-                if push
-                else "Create a local staging commit without pushing?"
-            ),
-            "",
-            f"Status: {publish.status}",
-            f"Staging repo: {publish.staging_repo_dir}",
-            f"Branch: {publish.branch or 'detached'}",
-            f"Origin configured: {'yes' if publish.origin_configured else 'no'}",
-            f"Changed paths: {len(publish.changed_paths)}",
-            f"Skip reason: {publish.skip_reason or 'none'}",
-            f"Push ready from current facts: {'yes' if push_ready else 'no'}",
-        ]
-        if push:
-            lines.extend(
-                [
-                    "",
-                    "Push stays intentionally higher friction than the default local-commit path.",
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    "",
-                    "This is the default no-push publish surface. Remote orchestration stays out of scope here.",
-                ]
-            )
-        return tuple(lines)
 
     def _handle_publish_commit_confirmation(self, confirmed: bool) -> None:
         push = self._pending_publish_push
@@ -774,40 +666,7 @@ class ShellScreen(Screen[None]):
         if current_notices == previous_notices or not current_notices:
             return
         latest = current_notices[-1]
-        severity = "information"
-        if latest.level.value == "warning":
-            severity = "warning"
-        elif latest.level.value == "error":
-            severity = "error"
-        self.app.notify(latest.message, title=latest.title, severity=severity)
-
-    def _queue_reorder_confirmation_lines(self, task_ids: tuple[str, ...]) -> tuple[str, ...]:
-        queue = self._store.state.queue
-        backlog_by_id = {task.task_id: task for task in queue.backlog} if queue is not None else {}
-        lines = [
-            "Apply this backlog order?",
-            "",
-            *[
-                f"{index}. {backlog_by_id.get(task_id).title if task_id in backlog_by_id else task_id} [{task_id}]"
-                for index, task_id in enumerate(task_ids, start=1)
-            ],
-        ]
-        runtime = self._store.state.runtime
-        if runtime is not None and runtime.process_running:
-            lines.extend(
-                [
-                    "",
-                    "The daemon is running. This reorder will be queued to the mailbox first.",
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    "",
-                    "This will rewrite the visible backlog order immediately.",
-                ]
-            )
-        return tuple(lines)
+        self.app.notify(latest.message, title=latest.title, severity=notification_severity(latest))
 
     def _handle_queue_reorder_confirmation(self, confirmed: bool) -> None:
         task_ids = self._pending_queue_reorder
@@ -932,31 +791,6 @@ class ShellScreen(Screen[None]):
             pending_action=self._pending_lifecycle_action_name(),
             pending_message=self._lifecycle_busy_message,
             lifecycle_failure=self._last_lifecycle_failure,
-        )
-
-    def _is_lifecycle_action(self, name: str) -> bool:
-        normalized = name.replace("action.", "").replace("lifecycle.", "")
-        return normalized in LIFECYCLE_ACTION_NAMES
-
-    def _latest_run_summary_from_runs(self) -> LatestRunSummary | None:
-        runs = self._store.state.runs
-        if runs is None or not runs.runs:
-            return None
-        latest = runs.runs[0]
-        if latest.issue is not None:
-            return LatestRunSummary(run_id=latest.run_id, error=latest.issue)
-        note = latest.note
-        if note is None and not latest.history_present:
-            note = "transition history not present"
-        return LatestRunSummary(
-            run_id=latest.run_id,
-            compiled_at=(format_timestamp(latest.compiled_at) if latest.compiled_at is not None else None),
-            selection_ref=latest.selection_ref,
-            stage_count=latest.stage_count,
-            latest_status=latest.latest_status,
-            latest_transition_label=latest.latest_transition_label,
-            history_present=latest.history_present,
-            note=note,
         )
 
     @on(SidebarNav.PanelSelected)

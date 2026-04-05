@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..compiler import FrozenLoopPlan, FrozenStagePlan, FrozenTransition
 from ..contracts import ExecutionStatus, StageResult, StageType, TaskCard
@@ -12,13 +12,60 @@ from ..events import EventType
 from ..stages.base import StageExecutionError
 
 if TYPE_CHECKING:
-    from .execution import ExecutionPlane
+    from ..config import EngineConfig
+    from ..paths import RuntimePaths
+    from ..queue import TaskQueue
+    from ..status import StatusStore
+
+
+class ExecutionRoutingPlane(Protocol):
+    _active_frozen_plan: object | None
+    config: EngineConfig
+    queue: TaskQueue
+    status_store: StatusStore
+    paths: RuntimePaths
+
+    def _builder_success_target(self) -> str: ...
+
+    def _clear_active_quickfix_artifact(self) -> None: ...
+
+    def _quarantine_task(
+        self,
+        task: TaskCard,
+        *,
+        run_id: str,
+        stage_label: str,
+        why: str,
+        diagnostics_dir: Path,
+        consult_result: StageResult | None,
+    ) -> TaskCard: ...
+
+    def _emit_event(self, event_type: EventType, payload: dict[str, Any] | None = None) -> None: ...
+
+    def _run_stage(
+        self,
+        stage_type: StageType,
+        task: TaskCard | None,
+        run_id: str,
+        *,
+        node_id: str | None = None,
+    ) -> StageResult: ...
+
+    def _create_blocker_bundle(
+        self,
+        run_id: str,
+        stage_label: str,
+        why: str,
+        failing_result: StageResult | None,
+    ) -> Path: ...
+
+    def _record_stage_transition(self, result: StageResult, **kwargs: object) -> None: ...
 
 
 ExecutionOutcome = tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]
 
 
-def execution_plan(plane: ExecutionPlane) -> FrozenLoopPlan:
+def execution_plan(plane: ExecutionRoutingPlane) -> FrozenLoopPlan:
     """Return the active frozen execution plan for the current run."""
 
     if plane._active_frozen_plan is None or plane._active_frozen_plan.content.execution_plan is None:
@@ -26,7 +73,7 @@ def execution_plan(plane: ExecutionPlane) -> FrozenLoopPlan:
     return plane._active_frozen_plan.content.execution_plan
 
 
-def stage_plan(plane: ExecutionPlane, node_id: str) -> FrozenStagePlan:
+def stage_plan(plane: ExecutionRoutingPlane, node_id: str) -> FrozenStagePlan:
     """Resolve one stage node from the active frozen execution plan."""
 
     for stage in execution_plan(plane).stages:
@@ -35,7 +82,7 @@ def stage_plan(plane: ExecutionPlane, node_id: str) -> FrozenStagePlan:
     raise StageExecutionError(f"frozen execution plan is missing node {node_id}")
 
 
-def stage_type_for_node(plane: ExecutionPlane, node_id: str) -> StageType:
+def stage_type_for_node(plane: ExecutionRoutingPlane, node_id: str) -> StageType:
     """Map one frozen-plan node id back to a public execution stage type."""
 
     del plane
@@ -47,7 +94,7 @@ def stage_type_for_node(plane: ExecutionPlane, node_id: str) -> StageType:
     return stage_type
 
 
-def routing_facts(plane: ExecutionPlane) -> dict[str, object]:
+def routing_facts(plane: ExecutionRoutingPlane) -> dict[str, object]:
     """Build the static routing facts used by frozen-plan conditions."""
 
     return {
@@ -55,7 +102,7 @@ def routing_facts(plane: ExecutionPlane) -> dict[str, object]:
     }
 
 
-def derive_stage_outcome(plane: ExecutionPlane, stage_plan_value: FrozenStagePlan, result_status: str) -> str:
+def derive_stage_outcome(plane: ExecutionRoutingPlane, stage_plan_value: FrozenStagePlan, result_status: str) -> str:
     """Normalize one stage terminal status into a frozen-plan routing outcome."""
 
     del plane
@@ -74,7 +121,7 @@ def derive_stage_outcome(plane: ExecutionPlane, stage_plan_value: FrozenStagePla
 
 
 def condition_matches(
-    plane: ExecutionPlane,
+    plane: ExecutionRoutingPlane,
     transition: FrozenTransition,
     *,
     facts: dict[str, object],
@@ -102,7 +149,7 @@ def condition_matches(
 
 
 def select_transition(
-    plane: ExecutionPlane,
+    plane: ExecutionRoutingPlane,
     node_id: str,
     *,
     trigger_status: str,
@@ -139,7 +186,7 @@ def select_transition(
 
 
 def apply_terminal_transition(
-    plane: ExecutionPlane,
+    plane: ExecutionRoutingPlane,
     transition: FrozenTransition,
     *,
     task: TaskCard,
@@ -202,7 +249,7 @@ def apply_terminal_transition(
     )
 
 
-def legacy_resume_completed_node(plane: ExecutionPlane, status: ExecutionStatus) -> str | None:
+def legacy_resume_completed_node(plane: ExecutionRoutingPlane, status: ExecutionStatus) -> str | None:
     """Map legacy completed statuses back to a frozen-plan node id."""
 
     del plane
@@ -222,7 +269,7 @@ def legacy_resume_completed_node(plane: ExecutionPlane, status: ExecutionStatus)
 
 
 def run_frozen_plan(
-    plane: ExecutionPlane,
+    plane: ExecutionRoutingPlane,
     task: TaskCard,
     *,
     run_id: str,
@@ -377,7 +424,7 @@ def run_frozen_plan(
 
 
 def resume_from_completed_status(
-    plane: ExecutionPlane,
+    plane: ExecutionRoutingPlane,
     task: TaskCard,
     *,
     run_id: str,

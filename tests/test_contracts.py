@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import millrace_engine.contracts as contracts
+import millrace_engine.contract_documents as contract_documents
 import millrace_engine.loop_architecture as loop_architecture
 import millrace_engine.loop_architecture_catalog as loop_architecture_catalog
 import millrace_engine.loop_architecture_common as loop_architecture_common
@@ -127,6 +128,17 @@ def test_contracts_re_export_loop_architecture_surface() -> None:
     assert contracts.RegisteredStageKindDefinition is loop_architecture.RegisteredStageKindDefinition
     assert contracts.LoopConfigDefinition is loop_architecture.LoopConfigDefinition
     assert contracts.StructuredStageResult is loop_architecture.StructuredStageResult
+
+
+def test_contracts_re_export_document_contract_family() -> None:
+    assert contracts.TaskCard is contract_documents.TaskCard
+    assert contracts.AuditContract is contract_documents.AuditContract
+    assert contracts.CompletionManifest is contract_documents.CompletionManifest
+    assert contracts.ObjectiveContract is contract_documents.ObjectiveContract
+    assert contracts.AuditGateDecision is contract_documents.AuditGateDecision
+    assert contracts.CompletionDecision is contract_documents.CompletionDecision
+    assert contracts.BlockerEntry is contract_documents.BlockerEntry
+    assert contracts.StageResult is contract_documents.StageResult
 
 
 def test_loop_architecture_re_exports_split_contract_families() -> None:

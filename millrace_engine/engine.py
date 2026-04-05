@@ -25,17 +25,18 @@ from .config import (
     load_engine_config,
 )
 from .contracts import CompletionDecision, ExecutionStatus, ResearchMode
-from .control import (
-    ControlError,
-    OperationResult,
-    RuntimeState,
+from .control_common import ControlError
+from .control_models import OperationResult, RuntimeState
+from .control_mutations import (
     _assert_reload_safe,
-    _decision_report_paths,
     append_task_to_backlog,
     apply_native_config_value,
+    copy_idea_into_raw_queue,
+)
+from .control_reports import (
     build_live_runtime_state,
     config_hash,
-    copy_idea_into_raw_queue,
+    decision_report_paths,
     write_runtime_state,
 )
 from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEventSubscriber
@@ -464,7 +465,7 @@ class MillraceEngine:
         marker_path = self.paths.agents_dir / "AUTONOMY_COMPLETE"
         if not marker_path.exists() or not marker_path.is_file():
             return False
-        _, completion_decision_path = _decision_report_paths(self.paths)
+        _, completion_decision_path = decision_report_paths(self.paths)
         if not completion_decision_path.exists():
             return False
         try:
