@@ -280,16 +280,16 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "67135bb8474c8016c00bdb7c40fbceb0dfda0d922a0dc90afb58e72ee0189fdb",
-      "size_bytes": 11577,
+      "sha256": "a9ddaa2ab30ea42d330a4ab7e64e18cadd14b9b9ffe3a99373d3a3342e97e465",
+      "size_bytes": 12843,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "86c1c67a36cd2663ec0210889c9334d8b9b7bb70f0ab0c9d6a14421b3b50b18c",
-      "size_bytes": 12917,
+      "sha256": "5f054832f09bb2db08466eae614711584011195d37e971e7b2758417d0ce2868",
+      "size_bytes": 13801,
       "source": "runtime"
     },
     {
@@ -459,6 +459,14 @@
       "sha256": "4841ab33cd71302d3eaef71f61327bcd05a2722da51c16b7058c801a4681ac38",
       "size_bytes": 2192,
       "source": "reference"
+    },
+    {
+      "category": "research_entrypoint",
+      "family": "entrypoints",
+      "path": "agents/_spec_interview.md",
+      "sha256": "789ac875b5eadfc8489a2ef9d7a0f0199ba410b8f024fb1516c9e1f4dce67332",
+      "size_bytes": 877,
+      "source": "runtime"
     },
     {
       "category": "research_entrypoint",
@@ -1312,16 +1320,16 @@
       "category": "workspace_seed",
       "family": "workspace",
       "path": "agents/status_contract.md",
-      "sha256": "8615dfd8d0610eab1edab6b2a2baff99430ed2194fcfd3c96736a7f2b5a73d5d",
-      "size_bytes": 6604,
+      "sha256": "5544213a299c10f31a3660528d72df98178aac2f7064aa56664b6c65cf22baab",
+      "size_bytes": 6714,
       "source": "reference"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "7a688e99423620062ddc0e6f44bceeb0eb80248c4eaa663674f7284a25e44f62",
-      "size_bytes": 46736,
+      "sha256": "715f2c5a67bf482ae21c63c9b27cd5e602413f3c2952e7c8d24224f7a7ff266f",
+      "size_bytes": 46763,
       "source": "runtime"
     },
     {
@@ -1336,8 +1344,8 @@
       "category": "config",
       "family": "config",
       "path": "millrace.toml",
-      "sha256": "a0c448db855ea57c4c9cc9a239854a10ebf2de72c566a9e2748fc0d9fcc25ccb",
-      "size_bytes": 369,
+      "sha256": "28144c67e4c9d9f49fe9e39ca491a217787fed05d8c598e47cc3557eea9e5365",
+      "size_bytes": 394,
       "source": "runtime"
     }
   ],

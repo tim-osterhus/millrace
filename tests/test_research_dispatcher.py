@@ -16,6 +16,7 @@ from millrace_engine.contracts import (
     ExecutionStatus,
     ResearchMode,
     ResearchStatus,
+    SpecInterviewPolicy,
     StageType,
 )
 from millrace_engine.control import EngineControl
@@ -34,9 +35,11 @@ from millrace_engine.research.goalspec import (
     execute_completion_manifest_draft,
     execute_goal_intake,
     execute_objective_profile_sync,
+    execute_spec_interview,
     execute_spec_review,
     execute_spec_synthesis,
 )
+from millrace_engine.research.interview import answer_interview_question, list_interview_questions
 from millrace_engine.research.queues import discover_research_queues
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
 from millrace_engine.research.state import (
@@ -57,10 +60,12 @@ def _configured_runtime(
     tmp_path: Path,
     *,
     mode: ResearchMode,
+    interview_policy: str = "off",
 ) -> tuple[Path, object, object]:
     workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
     loaded = load_engine_config(config_path)
     loaded.config.research.mode = mode
+    loaded.config.research.interview_policy = interview_policy
     return workspace, loaded.config, build_runtime_paths(loaded.config)
 
 
@@ -1138,6 +1143,8 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
     assert snapshot.checkpoint is None
     assert snapshot.queue_snapshot.selected_family is None
     assert plane.status_store.read() is ResearchStatus.IDLE
+    assert not (workspace / "agents" / ".research_runtime" / "goalspec" / "spec_interview").exists()
+    assert not list((workspace / "agents" / "specs" / "questions").glob("SPEC-77__interview-*.json"))
     assert (workspace / "agents" / "audit" / "completion_manifest.json").exists()
     assert (
         workspace
@@ -1174,6 +1181,93 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
     assert not (workspace / "agents" / "taskspending" / "SPEC-77.md").exists()
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
     assert len(backlog.cards) == 3
+
+
+def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config, paths = _configured_runtime(
+        tmp_path,
+        mode=ResearchMode.GOALSPEC,
+        interview_policy="always",
+    )
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    _write_queue_file(
+        raw_goal_path,
+        "---\n"
+        "idea_id: IDEA-88\n"
+        "title: Interview Block And Resume\n"
+        "---\n\n"
+        "# Interview Block And Resume\n\n"
+        "Exercise operator-needed interview pause/resume.\n",
+    )
+    plane = ResearchPlane(config, paths)
+    original_execute_spec_synthesis = research_plane_module.execute_spec_synthesis
+
+    def _execute_spec_synthesis_with_ambiguity(*args: object, **kwargs: object):
+        result = original_execute_spec_synthesis(*args, **kwargs)
+        queue_spec_path = workspace / result.queue_spec_path
+        queue_spec_path.write_text(
+            queue_spec_path.read_text(encoding="utf-8")
+            + "\n## Interview Override\n- TODO: Confirm the rollout gate for this design.\n",
+            encoding="utf-8",
+        )
+        return result
+
+    monkeypatch.setattr(
+        research_plane_module,
+        "execute_spec_synthesis",
+        _execute_spec_synthesis_with_ambiguity,
+    )
+
+    plane.run_ready_work(run_id="goalspec-interview-block-88", resolve_assets=False)
+
+    blocked_snapshot = plane.snapshot_state()
+    questions = list_interview_questions(paths)
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert blocked_snapshot.checkpoint is not None
+    assert blocked_snapshot.checkpoint.node_id == "spec_interview"
+    assert len(questions) == 1
+    assert questions[0].status == "pending"
+    assert not (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "spec_review"
+        / "goalspec-interview-block-88.json"
+    ).exists()
+
+    answer_interview_question(
+        paths,
+        question_id=questions[0].question_id,
+        text="Rollout stays operator-controlled until the review checklist is complete.",
+    )
+
+    plane.sync_runtime(trigger="operator-answer", resolve_assets=False)
+
+    resumed_snapshot = plane.snapshot_state()
+    resumed_questions = list_interview_questions(paths)
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert resumed_snapshot.checkpoint is None
+    assert resumed_questions[0].status == "answered"
+    assert (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "spec_interview"
+        / "goalspec-interview-block-88.json"
+    ).exists()
+    assert (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "spec_review"
+        / "goalspec-interview-block-88.json"
+    ).exists()
 
 
 def test_execute_goal_intake_archives_same_queue_filename_to_distinct_execution_paths(tmp_path: Path) -> None:
@@ -1487,6 +1581,115 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     assert decision_path.read_text(encoding="utf-8") == first_decision_text
     assert json.loads(first_record_text)["emitted_at"] == "2026-03-21T12:00:00Z"
     assert json.loads(first_family_state_text)["updated_at"] == "2026-03-21T12:00:00Z"
+
+
+def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(
+        tmp_path,
+        mode=ResearchMode.GOALSPEC,
+        interview_policy="always",
+    )
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-interview-auto-42"
+    emitted_at = _dt("2026-04-04T12:00:00Z")
+
+    def _queue_checkpoint(path: Path) -> ResearchCheckpoint:
+        return ResearchCheckpoint(
+            checkpoint_id=run_id,
+            mode=ResearchRuntimeMode.GOALSPEC,
+            status=ResearchStatus.GOALSPEC_RUNNING,
+            node_id="goal_intake",
+            stage_kind_id="research.goal-intake",
+            started_at=emitted_at,
+            updated_at=emitted_at,
+            owned_queues=(
+                ResearchQueueOwnership(
+                    family=ResearchQueueFamily.GOALSPEC,
+                    queue_path=path.parent,
+                    item_path=path,
+                    owner_token=run_id,
+                    acquired_at=emitted_at,
+                ),
+            ),
+        )
+
+    def _active_request_checkpoint(path: Path, *, node_id: str, stage_kind_id: str) -> ResearchCheckpoint:
+        return ResearchCheckpoint(
+            checkpoint_id=run_id,
+            mode=ResearchRuntimeMode.GOALSPEC,
+            status=ResearchStatus.GOALSPEC_RUNNING,
+            node_id=node_id,
+            stage_kind_id=stage_kind_id,
+            started_at=emitted_at,
+            updated_at=emitted_at,
+            active_request={
+                "event_type": EventType.IDEA_SUBMITTED,
+                "received_at": emitted_at,
+                "payload": {"path": path.as_posix()},
+                "queue_family": ResearchQueueFamily.GOALSPEC,
+            },
+        )
+
+    _write_queue_file(
+        raw_goal_path,
+        "---\nidea_id: IDEA-42\ntitle: Auto Answerable Interview\n---\n\n# Auto Answerable Interview\n\nKeep upstream traceability intact.\n",
+    )
+    goal_intake = execute_goal_intake(paths, _queue_checkpoint(raw_goal_path), run_id=run_id, emitted_at=emitted_at)
+    staged_path = workspace / goal_intake.research_brief_path
+    objective = execute_objective_profile_sync(
+        paths,
+        _active_request_checkpoint(
+            staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _active_request_checkpoint(
+            staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _active_request_checkpoint(
+            staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    queue_spec_path = workspace / synthesis.queue_spec_path
+    interview = execute_spec_interview(
+        paths,
+        _queue_checkpoint(queue_spec_path).model_copy(
+            update={
+                "node_id": "spec_interview",
+                "stage_kind_id": "research.spec-interview",
+            }
+        ),
+        run_id=run_id,
+        policy=SpecInterviewPolicy.ALWAYS,
+        emitted_at=emitted_at,
+    )
+
+    assert interview.blocked is False
+    assert interview.question_path == "agents/specs/questions/SPEC-42__interview-001.json"
+    assert interview.decision_path == "agents/specs/decisions/SPEC-42__interview-001__decision.json"
+    question_payload = json.loads((workspace / interview.question_path).read_text(encoding="utf-8"))
+    decision_payload = json.loads((workspace / interview.decision_path).read_text(encoding="utf-8"))
+    assert question_payload["status"] == "accepted"
+    assert question_payload["answer_source"] == "repo"
+    assert decision_payload["decision_source"] == "accepted_recommendation"
+    assert decision_payload["question_id"] == "SPEC-42__interview-001"
 
 
 def test_research_plane_records_goalspec_stage_execution_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -190,6 +190,29 @@ Use `add-task` for execution backlog work. Use `add-idea` to feed research-side 
 
 In the TUI, use the Add Task and Add Idea modals. Queue reorder is available from the Queue panel.
 
+### 3A. Resolve GoalSpec Interview Questions
+
+When optional GoalSpec interview mode is enabled, research may pause after synthesis or during the integrated `spec_interview` stage with one durable pending question written under `agents/specs/questions/`. The runtime does not require a live external skill fetch here: the question, recommendation, and eventual resolution stay file-backed inside the workspace.
+
+Use the CLI when you want explicit artifact-oriented control:
+
+```bash
+millrace --config millrace.toml interview list
+millrace --config millrace.toml interview show <question-id>
+millrace --config millrace.toml interview answer <question-id> --text "..."
+millrace --config millrace.toml interview accept <question-id>
+millrace --config millrace.toml interview skip <question-id> --reason "..."
+```
+
+Use the TUI when you want to stay inside the operator shell:
+
+- open the Research panel
+- select the pending interview question with the arrow keys
+- press `Enter` to open the interview modal
+- record an operator answer, accept the recommended answer, or skip the question
+
+After the resolution is written, Millrace can resume the paused research progression on the next research pass or foreground cycle using the same file-backed state the CLI exposes.
+
 ### 4. Execute
 
 ```bash

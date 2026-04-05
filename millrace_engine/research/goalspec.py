@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import field_validator
 
-from ..contracts import ContractModel, _normalize_datetime
+from ..contracts import ContractModel, SpecInterviewPolicy, _normalize_datetime
 from .goalspec_helpers import (
     GoalSpecExecutionError,
     _normalize_decomposition_profile,
@@ -375,6 +375,49 @@ class SpecSynthesisExecutionResult(ContractModel):
     queue_ownership: ResearchQueueOwnership
 
 
+class SpecInterviewRecord(ContractModel):
+    """Per-run runtime record for one Spec Interview execution."""
+
+    schema_version: Literal["1.0"] = GOALSPEC_ARTIFACT_SCHEMA_VERSION
+    artifact_type: Literal["spec_interview"] = "spec_interview"
+    run_id: str
+    emitted_at: datetime
+    spec_id: str
+    title: str
+    source_path: str
+    question_path: str = ""
+    decision_path: str = ""
+    policy: SpecInterviewPolicy
+    resolution: Literal["skipped", "repo_answered", "waiting_for_operator", "operator_resolved"]
+    blocking: bool = False
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_emitted_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator("run_id", "spec_id", "title", "source_path")
+    @classmethod
+    def validate_required_text(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("question_path", "decision_path", mode="before")
+    @classmethod
+    def normalize_optional_paths(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value)
+
+
+class SpecInterviewExecutionResult(ContractModel):
+    """Resolved outputs from one Spec Interview execution."""
+
+    record_path: str = ""
+    question_path: str = ""
+    decision_path: str = ""
+    blocked: bool = False
+    queue_ownership: ResearchQueueOwnership
+
+
 class SpecReviewExecutionResult(ContractModel):
     """Resolved outputs from one Spec Review execution."""
 
@@ -391,6 +434,7 @@ from .goalspec_stage_support import (
     execute_completion_manifest_draft,
     execute_goal_intake,
     execute_objective_profile_sync,
+    execute_spec_interview,
     execute_spec_review,
     execute_spec_synthesis,
     next_stage_for_success,
@@ -412,8 +456,11 @@ __all__ = [
     "ObjectiveProfileSyncExecutionResult",
     "ObjectiveProfileSyncRecord",
     "ObjectiveProfileSyncStateRecord",
+    "SpecInterviewExecutionResult",
+    "SpecInterviewRecord",
     "SpecSynthesisExecutionResult",
     "SpecSynthesisRecord",
+    "execute_spec_interview",
     "SpecReviewExecutionResult",
     "execute_completion_manifest_draft",
     "execute_goal_intake",

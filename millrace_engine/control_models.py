@@ -16,6 +16,7 @@ from .policies import ExecutionIntegrationContext, SizeClassificationView
 from .provenance import RuntimeTransitionRecord, routing_modes_from_records
 from .research.audit import AuditRemediationRecord, AuditSummary
 from .research.governance import ResearchGovernanceReport
+from .research.interview import InterviewDecisionRecord, InterviewQuestionRecord
 from .research.queues import ResearchQueueItem
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
 from .standard_runtime import RuntimeSelectionView
@@ -196,6 +197,94 @@ class ResearchReport(ContractModel):
     @field_validator("config_path", "audit_history_path", "audit_summary_path", mode="before")
     @classmethod
     def normalize_path_fields(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class InterviewQuestionSummary(ContractModel):
+    """Compact operator-facing summary for one persisted interview question."""
+
+    question_id: str
+    status: str
+    spec_id: str
+    idea_id: str = ""
+    title: str
+    question: str
+    why_this_matters: str
+    recommended_answer: str
+    answer_source: str
+    blocking: bool
+    source_path: str
+    updated_at: datetime
+
+    @field_validator(
+        "question_id",
+        "status",
+        "spec_id",
+        "idea_id",
+        "title",
+        "question",
+        "why_this_matters",
+        "recommended_answer",
+        "answer_source",
+        "source_path",
+    )
+    @classmethod
+    def normalize_text(cls, value: str, info: object) -> str:
+        normalized = " ".join(value.strip().split())
+        if normalized or getattr(info, "field_name", "") == "idea_id":
+            return normalized
+        raise ValueError("interview summary text may not be empty")
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def normalize_updated_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+
+class InterviewListReport(ContractModel):
+    """Deterministic payload for `millrace interview list`."""
+
+    config_path: Path
+    questions: tuple[InterviewQuestionSummary, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class InterviewQuestionReport(ContractModel):
+    """Detailed payload for `millrace interview show`."""
+
+    config_path: Path
+    question_path: Path
+    question: InterviewQuestionRecord
+    decision_path: Path | None = None
+    decision: InterviewDecisionRecord | None = None
+
+    @field_validator("config_path", "question_path", "decision_path", mode="before")
+    @classmethod
+    def normalize_paths(cls, value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
+        return Path(value)
+
+
+class InterviewMutationReport(ContractModel):
+    """Detailed payload for interview create/answer/accept/skip operations."""
+
+    config_path: Path
+    action: str
+    question_path: Path
+    question: InterviewQuestionRecord
+    decision_path: Path | None = None
+    decision: InterviewDecisionRecord | None = None
+
+    @field_validator("config_path", "question_path", "decision_path", mode="before")
+    @classmethod
+    def normalize_paths(cls, value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
         return Path(value)
 
 

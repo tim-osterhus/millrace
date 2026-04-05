@@ -177,7 +177,7 @@ Research is now a real supervisor in v1:
 - it accepts selected handoff and intake events
 - persists a typed runtime snapshot in `agents/research_state.json`
 - compiles and owns research-plane dispatch/queue selection
-- executes the supported GoalSpec stages (`goal_intake`, `objective_profile_sync`, `spec_synthesis`, `spec_review`, `taskmaster`, plus `taskaudit` when family-complete)
+- executes the supported GoalSpec stages (`goal_intake`, `objective_profile_sync`, `spec_synthesis`, optional `spec_interview`, `spec_review`, `taskmaster`, plus `taskaudit` when family-complete)
 - executes the supported incident stages (`incident_intake`, `incident_resolve`, `incident_archive`) plus deterministic remediation task generation
 - executes the packaged audit intake/validate/gatekeeper stages
 - writes durable audit outcomes to `agents/audit_history.md`, `agents/audit_summary.json`, and the audit runtime artifact tree

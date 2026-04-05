@@ -16,7 +16,7 @@ import millrace_engine.tui.gateway as gateway_module
 import millrace_engine.tui.screens.shell as shell_module
 
 from millrace_engine.tui.app import MillraceTUIApplication
-from tests.tui_support import SNAPSHOT_WORKER_SETTINGS, load_operator_workspace
+from tests.tui_support import SNAPSHOT_WORKER_SETTINGS, load_operator_workspace, seed_pending_interview_question
 
 
 shell_module.stream_event_updates = lambda *args, **kwargs: None
@@ -25,6 +25,7 @@ _snapshot_root = Path(tempfile.gettempdir()) / "millrace-tui-shell-snapshot"
 shutil.rmtree(_snapshot_root, ignore_errors=True)
 _snapshot_root.mkdir(parents=True, exist_ok=True)
 _workspace, _config_path = load_operator_workspace(_snapshot_root)
+seed_pending_interview_question(_workspace)
 app = MillraceTUIApplication.from_config_path(_config_path, worker_settings=SNAPSHOT_WORKER_SETTINGS)
 
 

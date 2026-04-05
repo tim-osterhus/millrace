@@ -11,6 +11,7 @@ from .gateway_views import (
     action_result_view,
     commit_action_result_view,
     config_overview_view,
+    interview_action_result_view,
     publish_overview_view,
     queue_overview_view,
     research_overview_view,
@@ -55,6 +56,7 @@ class RuntimeGateway:
             config = control.config_show()
             queue = control.queue_inspect()
             research = control.research_report()
+            interview = control.interview_list()
             research_activity = control.research_history(RESEARCH_ACTIVITY_LIMIT)
             events = control.logs(log_limit)
             return RefreshPayload(
@@ -62,7 +64,11 @@ class RuntimeGateway:
                 runtime=runtime_overview_view(status),
                 config=config_overview_view(config),
                 queue=queue_overview_view(queue),
-                research=research_overview_view(research, recent_activity=research_activity),
+                research=research_overview_view(
+                    research,
+                    recent_activity=research_activity,
+                    interview_questions=interview.questions,
+                ),
                 events=event_log_view(events, refreshed_at=refreshed_at),
                 runs=runs_overview_view(control, observed_at=refreshed_at, read_provenance=read_run_provenance),
             )
@@ -126,6 +132,33 @@ class RuntimeGateway:
             self._new_control,
             "action.add_idea",
             lambda control: action_result_view("add_idea", control.add_idea(source_path)),
+        )
+
+    def answer_interview(self, question_id: str, *, text: str) -> GatewayResult[ActionResultView]:
+        return execute_gateway_operation(
+            self._new_control,
+            "action.interview_answer",
+            lambda control: interview_action_result_view(
+                "answer",
+                control.interview_answer(question_id, text=text),
+            ),
+        )
+
+    def accept_interview(self, question_id: str) -> GatewayResult[ActionResultView]:
+        return execute_gateway_operation(
+            self._new_control,
+            "action.interview_accept",
+            lambda control: interview_action_result_view("accept", control.interview_accept(question_id)),
+        )
+
+    def skip_interview(self, question_id: str, *, reason: str | None = None) -> GatewayResult[ActionResultView]:
+        return execute_gateway_operation(
+            self._new_control,
+            "action.interview_skip",
+            lambda control: interview_action_result_view(
+                "skip",
+                control.interview_skip(question_id, reason=reason),
+            ),
         )
 
     def pause_runtime(self) -> GatewayResult[ActionResultView]:

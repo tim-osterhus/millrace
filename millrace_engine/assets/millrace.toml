@@ -15,6 +15,7 @@ run_update_on_empty = false
 
 [research]
 mode = "stub"
+interview_policy = "off"
 
 [watchers]
 debounce_seconds = 0.5

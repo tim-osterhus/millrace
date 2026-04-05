@@ -93,6 +93,9 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.goalspec_spec_synthesis_records_dir == (
         workspace_root / "agents/.research_runtime/goalspec/spec_synthesis"
     ).resolve()
+    assert paths.goalspec_spec_interview_records_dir == (
+        workspace_root / "agents/.research_runtime/goalspec/spec_interview"
+    ).resolve()
     assert paths.goalspec_spec_review_records_dir == (
         workspace_root / "agents/.research_runtime/goalspec/spec_review"
     ).resolve()
@@ -206,6 +209,32 @@ def test_invalid_native_config_fails_validation(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_engine_config(config_path)
+
+
+def test_native_config_loads_spec_interview_policy(tmp_path: Path) -> None:
+    config_path = tmp_path / "millrace.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[engine]",
+                'mode = "once"',
+                "",
+                "[paths]",
+                'workspace = "."',
+                'agents_dir = "agents"',
+                "",
+                "[research]",
+                'mode = "goalspec"',
+                'interview_policy = "always"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_engine_config(config_path)
+
+    assert loaded.config.research.interview_policy.value == "always"
 
 
 def test_native_config_loads_typed_complexity_routing_policy(tmp_path: Path) -> None:

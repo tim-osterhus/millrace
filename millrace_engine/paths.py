@@ -69,6 +69,7 @@ class RuntimePaths:
     goalspec_objective_profile_sync_records_dir: Path
     goalspec_completion_manifest_records_dir: Path
     goalspec_spec_synthesis_records_dir: Path
+    goalspec_spec_interview_records_dir: Path
     goalspec_spec_review_records_dir: Path
     goalspec_lineage_dir: Path
     specs_dir: Path
@@ -158,6 +159,7 @@ class RuntimePaths:
             goalspec_objective_profile_sync_records_dir=goalspec_runtime_dir / "objective_profile_sync",
             goalspec_completion_manifest_records_dir=goalspec_runtime_dir / "completion_manifest",
             goalspec_spec_synthesis_records_dir=goalspec_runtime_dir / "spec_synthesis",
+            goalspec_spec_interview_records_dir=goalspec_runtime_dir / "spec_interview",
             goalspec_spec_review_records_dir=goalspec_runtime_dir / "spec_review",
             goalspec_lineage_dir=goalspec_runtime_dir / "lineage",
             specs_dir=specs_dir,

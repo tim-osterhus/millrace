@@ -47,6 +47,7 @@ _ENTRY_STAGE_TYPE_BY_NODE_ID: dict[str, StageType] = {
     "goal_intake": StageType.GOAL_INTAKE,
     "objective_profile_sync": StageType.OBJECTIVE_PROFILE_SYNC,
     "spec_synthesis": StageType.SPEC_SYNTHESIS,
+    "spec_interview": StageType.SPEC_INTERVIEW,
     "spec_review": StageType.SPEC_REVIEW,
     "taskmaster": StageType.TASKMASTER,
     "incident_intake": StageType.INCIDENT_INTAKE,
@@ -341,6 +342,12 @@ class SpecReviewStage(ResearchStage):
     success_statuses = (ResearchStatus.IDLE,)
 
 
+class SpecInterviewStage(ResearchStage):
+    stage_type = StageType.SPEC_INTERVIEW
+    running_status = ResearchStatus.SPEC_INTERVIEW_RUNNING
+    success_statuses = (ResearchStatus.IDLE,)
+
+
 class TaskmasterStage(ResearchStage):
     stage_type = StageType.TASKMASTER
     running_status = ResearchStatus.TASKMASTER_RUNNING
@@ -400,6 +407,7 @@ __all__ = [
     "ResearchDispatchError",
     "ResearchDispatchSelection",
     "ResearchStage",
+    "SpecInterviewStage",
     "SpecReviewStage",
     "SpecSynthesisStage",
     "TaskmasterStage",

@@ -114,12 +114,14 @@ def test_stage_result_populates_public_fields_from_runner_result() -> None:
 def test_contract_surfaces_mark_forward_compatible_vocabulary_explicitly() -> None:
     assert StageType.BUILDER.surface is ContractSurface.PUBLIC_V1
     assert StageType.GOAL_INTAKE.surface is ContractSurface.FORWARD_COMPATIBLE
+    assert StageType.SPEC_INTERVIEW.surface is ContractSurface.FORWARD_COMPATIBLE
 
     assert ExecutionStatus.UPDATE_RUNNING.surface is ContractSurface.PUBLIC_V1
     assert ExecutionStatus.LARGE_PLAN_COMPLETE.surface is ContractSurface.FORWARD_COMPATIBLE
 
     assert ResearchStatus.GOALSPEC_RUNNING.surface is ContractSurface.PUBLIC_V1
     assert ResearchStatus.COMPLETION_MANIFEST_RUNNING.surface is ContractSurface.FORWARD_COMPATIBLE
+    assert ResearchStatus.SPEC_INTERVIEW_RUNNING.surface is ContractSurface.FORWARD_COMPATIBLE
 
 
 def test_contracts_re_export_loop_architecture_surface() -> None:

@@ -1,23 +1,23 @@
-# Research Spec Review
+# Research Spec Interview
 
 > Generated from the canonical JSON registry object. Edit the JSON file, not this companion.
 
 - Kind: `registered_stage_kind`
-- Canonical ID: `research.spec-review`
+- Canonical ID: `research.spec-interview`
 - Version: `1.0.0`
 - Tier: `default`
 - Status: `active`
 - Source Kind: `packaged_default`
-- Source Ref: `registry/stages/research.spec-review__1.0.0.json`
-- Aliases: `spec-review`
+- Source Ref: `registry/stages/research.spec-interview__1.0.0.json`
+- Aliases: `spec-interview`
 - Labels: `baseline`, `goalspec`, `research`
 - Extends: _none_
-- Created At: 2026-03-19T00:00:00Z
-- Updated At: 2026-03-19T00:00:00Z
+- Created At: 2026-04-04T00:00:00Z
+- Updated At: 2026-04-04T00:00:00Z
 
 ## Summary
 
-Packaged scaffold for validating synthesized spec-family artifacts before task generation.
+Packaged scaffold for optional one-question-at-a-time GoalSpec interview hardening.
 
 ## Payload
 
@@ -32,9 +32,9 @@ Packaged scaffold for validating synthesized spec-family artifacts before task g
     "prompt_asset_ref",
     "timeout_seconds"
   ],
-  "context_schema_ref": "research.spec_review.context.v1",
+  "context_schema_ref": "research.spec_interview.context.v1",
   "contract_version": "1.0.0",
-  "handler_ref": "millrace_engine.research.dispatcher:SpecReviewStage",
+  "handler_ref": "millrace_engine.research.dispatcher:SpecInterviewStage",
   "idempotence_policy": "retry_safe_with_key",
   "input_artifacts": [
     {
@@ -44,17 +44,23 @@ Packaged scaffold for validating synthesized spec-family artifacts before task g
       "required": true
     }
   ],
-  "kind_id": "research.spec-review",
+  "kind_id": "research.spec-interview",
   "legal_predecessors": [
-    "research.spec-interview"
+    "research.spec-synthesis"
   ],
   "legal_successors": [
-    "research.taskmaster"
+    "research.spec-review"
   ],
   "output_artifacts": [
     {
-      "kind": "approved_spec",
-      "name": "approved_spec",
+      "kind": "spec_family_state",
+      "name": "spec_family_state",
+      "persistence": "runtime_bundle",
+      "required_on": []
+    },
+    {
+      "kind": "interview_decision",
+      "name": "interview_decision",
       "persistence": "runtime_bundle",
       "required_on": []
     },
@@ -67,7 +73,7 @@ Packaged scaffold for validating synthesized spec-family artifacts before task g
   ],
   "plane": "research",
   "queue_mutation_policy": "runtime_only",
-  "result_schema_ref": "research.spec_review.result.v1",
+  "result_schema_ref": "research.spec_interview.result.v1",
   "retry_policy": {
     "backoff_seconds": 5.0,
     "exhausted_outcome": "terminal_failure",
@@ -78,7 +84,7 @@ Packaged scaffold for validating synthesized spec-family artifacts before task g
     "blocked",
     "terminal_failure"
   ],
-  "running_status": "SPEC_REVIEW_RUNNING",
+  "running_status": "SPEC_INTERVIEW_RUNNING",
   "success_statuses": [
     "GOALSPEC_RUNNING"
   ],

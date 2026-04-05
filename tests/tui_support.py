@@ -11,6 +11,8 @@ from textual.app import App
 from textual.widgets import Static
 
 from millrace_engine.markdown import parse_task_cards
+from millrace_engine.paths import RuntimePaths
+from millrace_engine.research.interview import create_manual_interview_question
 from millrace_engine.tui.app import MillraceTUIApplication
 from millrace_engine.tui.models import (
     RunDetailView,
@@ -181,6 +183,46 @@ def load_operator_workspace(
         mode=mode,
     )
     return workspace, config_path
+
+
+def seed_pending_interview_question(
+    workspace: Path,
+    *,
+    relative_source_path: str = "agents/specs/staging/SPEC-TUI-001__operator-interview.md",
+    title: str = "Operator interview spec",
+    question: str = "Should queue reorder approvals stay operator-confirmed in the TUI?",
+    why_this_matters: str = "This determines whether queue mutation remains governed or becomes one-step.",
+    recommended_answer: str = "Keep confirmation so daemon and foreground flows stay behaviorally aligned.",
+) -> str:
+    source_path = workspace / relative_source_path
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(
+        "\n".join(
+            (
+                "---",
+                'spec_id = "SPEC-TUI-001"',
+                f'title = "{title}"',
+                "---",
+                "",
+                f"# {title}",
+                "",
+                "A staged synthesized spec used by the TUI interview fixtures.",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    result = create_manual_interview_question(
+        RuntimePaths.from_workspace(workspace, workspace / "agents"),
+        source_path=source_path,
+        question=question,
+        why_this_matters=why_this_matters,
+        recommended_answer=recommended_answer,
+        answer_source="operator",
+        blocking=True,
+        evidence=("tests/tui_support.py fixture",),
+    )
+    return result.question.question_id
 
 
 def create_snapshot_workspace(

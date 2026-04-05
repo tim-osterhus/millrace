@@ -40,7 +40,7 @@ from millrace_engine.queue import TaskQueue, load_research_recovery_latch
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
 from millrace_engine.registry import discover_registry_state, persist_workspace_registry_object
 from millrace_engine.standard_runtime import compile_standard_runtime_selection
-from tests.support import load_workspace_fixture, read_state, set_engine_idle_mode, wait_for
+from tests.support import load_workspace_fixture, read_state, runtime_workspace, set_engine_idle_mode, wait_for
 
 
 RUNNER = CliRunner()
@@ -165,6 +165,40 @@ def write_staging_manifest(workspace: Path, *, payload: str) -> None:
     manifest_path = workspace / "agents" / "staging_manifest.yml"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(payload, encoding="utf-8")
+
+
+def write_interview_source(
+    workspace: Path,
+    *,
+    relative_path: str,
+    source_id: str,
+    title: str,
+    kind: str,
+) -> Path:
+    path = workspace / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter = [f"title: {title}"]
+    if kind == "idea":
+        frontmatter.insert(0, f"idea_id: {source_id}")
+    else:
+        frontmatter.insert(0, f"idea_id: IDEA-{source_id.split('SPEC-', 1)[-1]}")
+        frontmatter.insert(0, f"spec_id: {source_id}")
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                *frontmatter,
+                "---",
+                "",
+                f"# {title}",
+                "",
+                "Interview CLI fixture source.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def write_typed_objective_contract(
@@ -3635,3 +3669,151 @@ def test_engine_control_start_uses_engine_runtime_helper(
 
     assert result == expected
     assert observed == [(config_path.resolve(), False, True)]
+
+
+def test_cli_interview_create_list_show_and_accept_render_json(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    source_path = write_interview_source(
+        workspace,
+        relative_path="agents/ideas/staging/IDEA-411__cli-interview.md",
+        source_id="IDEA-411",
+        title="CLI interview idea",
+        kind="idea",
+    )
+
+    create_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "interview",
+            "create",
+            str(source_path),
+            "--question",
+            "What is the operator recovery path?",
+            "--why-this-matters",
+            "The manual flow needs a deterministic fallback.",
+            "--recommended-answer",
+            "Resume from the persisted question artifact.",
+            "--answer-source",
+            "repo",
+            "--json",
+        ],
+    )
+    assert create_result.exit_code == 0, create_result.output
+    create_payload = json.loads(create_result.stdout)
+    question_id = create_payload["question"]["question_id"]
+    assert create_payload["question"]["status"] == "pending"
+    assert create_payload["question"]["spec_id"] == "SPEC-411"
+
+    list_result = RUNNER.invoke(app, ["--config", str(config_path), "interview", "list", "--json"])
+    assert list_result.exit_code == 0, list_result.output
+    list_payload = json.loads(list_result.stdout)
+    assert list_payload["questions"][0]["question_id"] == question_id
+
+    show_result = RUNNER.invoke(app, ["--config", str(config_path), "interview", "show", question_id, "--json"])
+    assert show_result.exit_code == 0, show_result.output
+    show_payload = json.loads(show_result.stdout)
+    assert show_payload["question"]["recommended_answer"] == "Resume from the persisted question artifact."
+    assert show_payload["decision"] is None
+
+    accept_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "interview", "accept", question_id, "--json"],
+    )
+    assert accept_result.exit_code == 0, accept_result.output
+    accept_payload = json.loads(accept_result.stdout)
+    assert accept_payload["question"]["status"] == "accepted"
+    assert accept_payload["decision"]["decision_source"] == "accepted_recommendation"
+    assert accept_payload["decision"]["decision"] == "Resume from the persisted question artifact."
+
+
+def test_cli_interview_duplicate_pending_rejected_then_answer_and_skip_succeed(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    source_path = write_interview_source(
+        workspace,
+        relative_path="agents/ideas/specs/SPEC-512__cli-spec.md",
+        source_id="SPEC-512",
+        title="CLI interview spec",
+        kind="spec",
+    )
+
+    create_args = [
+        "--config",
+        str(config_path),
+        "interview",
+        "create",
+        str(source_path),
+        "--question",
+        "How should operator notes be stored?",
+        "--why-this-matters",
+        "Decision persistence must be durable.",
+        "--recommended-answer",
+        "Persist them alongside the decision artifact.",
+        "--json",
+    ]
+    first_create = RUNNER.invoke(app, create_args)
+    assert first_create.exit_code == 0, first_create.output
+    first_question_id = json.loads(first_create.stdout)["question"]["question_id"]
+
+    duplicate_create = RUNNER.invoke(app, create_args)
+    assert duplicate_create.exit_code == 1
+    assert "pending interview question already exists" in duplicate_create.output
+
+    answer_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "interview",
+            "answer",
+            first_question_id,
+            "--text",
+            "Store them in the decision JSON and surface them in show.",
+            "--json",
+        ],
+    )
+    assert answer_result.exit_code == 0, answer_result.output
+    answer_payload = json.loads(answer_result.stdout)
+    assert answer_payload["question"]["status"] == "answered"
+    assert answer_payload["decision"]["decision_source"] == "operator"
+
+    second_create = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "interview",
+            "create",
+            str(source_path),
+            "--question",
+            "Which naming convention should operators prefer?",
+            "--why-this-matters",
+            "This requires human judgment.",
+            "--recommended-answer",
+            "Use the current public package name.",
+            "--json",
+        ],
+    )
+    assert second_create.exit_code == 0, second_create.output
+    second_question_id = json.loads(second_create.stdout)["question"]["question_id"]
+    assert second_question_id.endswith("002")
+
+    skip_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "interview",
+            "skip",
+            second_question_id,
+            "--reason",
+            "Deferred to operator naming review.",
+            "--json",
+        ],
+    )
+    assert skip_result.exit_code == 0, skip_result.output
+    skip_payload = json.loads(skip_result.stdout)
+    assert skip_payload["question"]["status"] == "skipped"
+    assert skip_payload["decision"]["decision_source"] == "assumption"
+    assert skip_payload["decision"]["decision"] == "Deferred to operator naming review."

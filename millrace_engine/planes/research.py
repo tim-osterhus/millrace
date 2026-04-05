@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from ..compiler import FrozenRunCompiler
 from ..config import EngineConfig
-from ..contracts import ExecutionResearchHandoff, ResearchMode, ResearchStatus
+from ..contracts import ExecutionResearchHandoff, ResearchMode, ResearchStatus, SpecInterviewPolicy
 from ..events import EventRecord, EventType
 from ..paths import RuntimePaths
 from ..research.audit import (
@@ -34,6 +34,7 @@ from ..research.goalspec import (
     GoalSpecExecutionError,
     execute_goal_intake,
     execute_objective_profile_sync,
+    execute_spec_interview,
     research_stage_for_node,
     execute_spec_review,
     execute_spec_synthesis,
@@ -675,6 +676,7 @@ class ResearchPlane:
             "goal_intake",
             "objective_profile_sync",
             "spec_synthesis",
+            "spec_interview",
             "spec_review",
             "taskmaster",
         }:
@@ -709,6 +711,42 @@ class ResearchPlane:
                     completion_manifest=completion_manifest.draft_state,
                     emitted_at=stage_started_at,
                 )
+            elif checkpoint.node_id == "spec_interview":
+                self._set_research_status(ResearchStatus.SPEC_INTERVIEW_RUNNING)
+                result = execute_spec_interview(
+                    self.paths,
+                    checkpoint,
+                    run_id=dispatch.run_id,
+                    policy=self.config.research.interview_policy,
+                    emitted_at=stage_started_at,
+                )
+                if result.blocked:
+                    blocked_checkpoint = checkpoint.model_copy(
+                        update={
+                            "status": ResearchStatus.BLOCKED,
+                            "updated_at": stage_started_at,
+                            "owned_queues": (result.queue_ownership,),
+                        }
+                    )
+                    queue_snapshot = self.state.queue_snapshot.model_copy(
+                        update={
+                            "ownerships": blocked_checkpoint.owned_queues,
+                            "last_scanned_at": stage_started_at,
+                            "selected_family": ResearchQueueFamily.GOALSPEC,
+                        }
+                    )
+                    self.state = self.state.model_copy(
+                        update={
+                            "updated_at": stage_started_at,
+                            "queue_snapshot": queue_snapshot,
+                            "retry_state": None,
+                            "checkpoint": blocked_checkpoint,
+                        }
+                    )
+                    self._persist_state()
+                    self._set_research_status(ResearchStatus.BLOCKED)
+                    self._release_execution_lock(observed_at=stage_started_at)
+                    return
             elif checkpoint.node_id == "spec_review":
                 self._set_research_status(ResearchStatus.SPEC_REVIEW_RUNNING)
                 result = execute_spec_review(
@@ -764,6 +802,7 @@ class ResearchPlane:
                 "goal_intake",
                 "objective_profile_sync",
                 "spec_synthesis",
+                "spec_interview",
                 "spec_review",
                 "taskmaster",
             }:

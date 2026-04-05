@@ -34,6 +34,7 @@ REQUIRED_BUNDLE_PATHS = (
     "agents/_goal_intake.md",
     "agents/_objective_profile_sync.md",
     "agents/_spec_synthesis.md",
+    "agents/_spec_interview.md",
     "agents/_spec_review.md",
     "agents/_taskmaster.md",
     "agents/_taskaudit.md",

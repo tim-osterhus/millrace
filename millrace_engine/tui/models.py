@@ -336,6 +336,22 @@ class ResearchQueueFamilyView:
 
 
 @dataclass(frozen=True, slots=True)
+class InterviewQuestionSummaryView:
+    question_id: str
+    status: str
+    spec_id: str
+    idea_id: str = ""
+    title: str = ""
+    question: str = ""
+    why_this_matters: str = ""
+    recommended_answer: str = ""
+    answer_source: str = ""
+    blocking: bool = False
+    source_path: str = ""
+    updated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchOverviewView:
     status: str
     source_kind: str
@@ -359,6 +375,7 @@ class ResearchOverviewView:
     completion_reason: str
     updated_at: datetime
     next_poll_at: datetime | None
+    interview_questions: tuple[InterviewQuestionSummaryView, ...] = ()
     audit_summary: "ResearchAuditSummaryView | None" = None
     governance: "ResearchGovernanceOverviewView | None" = None
     recent_activity: tuple["RuntimeEventView", ...] = ()
@@ -667,6 +684,7 @@ __all__ = [
     "FailureCategory",
     "GatewayFailure",
     "GatewayResult",
+    "InterviewQuestionSummaryView",
     "KeyValueView",
     "LifecycleSignalView",
     "LifecycleState",

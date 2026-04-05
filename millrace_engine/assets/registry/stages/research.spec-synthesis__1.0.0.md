@@ -49,7 +49,7 @@ Packaged scaffold for creating a durable spec-family state from a prepared resea
     "research.objective-profile-sync"
   ],
   "legal_successors": [
-    "research.spec-review"
+    "research.spec-interview"
   ],
   "output_artifacts": [
     {

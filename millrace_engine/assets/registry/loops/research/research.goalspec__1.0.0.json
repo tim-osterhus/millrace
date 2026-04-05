@@ -75,8 +75,37 @@
       {
         "condition": null,
         "description": null,
-        "edge_id": "research.goalspec.spec_synthesis.success.spec_review",
+        "edge_id": "research.goalspec.spec_synthesis.success.spec_interview",
         "from_node_id": "spec_synthesis",
+        "kind": "normal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "success"
+        ],
+        "priority": 100,
+        "terminal_state_id": null,
+        "to_node_id": "spec_interview"
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.goalspec.spec_synthesis.failure.blocked",
+        "from_node_id": "spec_synthesis",
+        "kind": "terminal",
+        "max_attempts": null,
+        "on_outcomes": [
+          "blocked",
+          "terminal_failure"
+        ],
+        "priority": 100,
+        "terminal_state_id": "blocked",
+        "to_node_id": null
+      },
+      {
+        "condition": null,
+        "description": null,
+        "edge_id": "research.goalspec.spec_interview.success.spec_review",
+        "from_node_id": "spec_interview",
         "kind": "normal",
         "max_attempts": null,
         "on_outcomes": [
@@ -89,8 +118,8 @@
       {
         "condition": null,
         "description": null,
-        "edge_id": "research.goalspec.spec_synthesis.failure.blocked",
-        "from_node_id": "spec_synthesis",
+        "edge_id": "research.goalspec.spec_interview.failure.blocked",
+        "from_node_id": "spec_interview",
         "kind": "terminal",
         "max_attempts": null,
         "on_outcomes": [
@@ -227,6 +256,26 @@
             "input_artifact": "spec_family_state",
             "source_artifact": "spec_family_state",
             "source_node_id": "spec_synthesis"
+          }
+        ],
+        "kind_id": "research.spec-interview",
+        "node_id": "spec_interview",
+        "overrides": {
+          "allow_search": null,
+          "effort": null,
+          "model": null,
+          "model_profile_ref": null,
+          "prompt_asset_ref": null,
+          "runner": null,
+          "timeout_seconds": null
+        }
+      },
+      {
+        "artifact_bindings": [
+          {
+            "input_artifact": "spec_family_state",
+            "source_artifact": "spec_family_state",
+            "source_node_id": "spec_interview"
           }
         ],
         "kind_id": "research.spec-review",

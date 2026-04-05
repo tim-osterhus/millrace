@@ -45,6 +45,7 @@ from .add_task_modal import AddTaskModal, AddTaskRequest
 from .confirm_modal import ConfirmModal
 from .config_edit_modal import ConfigEditModal, ConfigEditRequest
 from .help_modal import HelpModal
+from .interview_modal import InterviewModal, InterviewResolutionRequest
 from .run_detail_modal import RunDetailModal
 from ..store import TUIStore
 from ..widgets.config_panel import ConfigPanel
@@ -574,6 +575,11 @@ class ShellScreen(Screen[None]):
         self._request_config_reload()
         message.stop()
 
+    @on(ResearchPanel.InterviewRequested)
+    def _handle_research_interview_requested(self, message: ResearchPanel.InterviewRequested) -> None:
+        self.app.push_screen(InterviewModal(question=message.question), self._handle_interview_resolution_request)
+        message.stop()
+
     @on(PublishPanel.PreflightRequested)
     def _handle_publish_preflight_requested(self, message: PublishPanel.PreflightRequested) -> None:
         self._start_publish_refresh()
@@ -624,6 +630,33 @@ class ShellScreen(Screen[None]):
             "set_config",
             lambda: RuntimeGateway(self.config_path).set_config(request.key, request.value),
         )
+
+    def _handle_interview_resolution_request(self, request: InterviewResolutionRequest | None) -> None:
+        if request is None:
+            return
+        if request.action == "answer":
+            self._run_gateway_action(
+                "interview_answer",
+                lambda: RuntimeGateway(self.config_path).answer_interview(
+                    request.question_id,
+                    text=request.answer_text or "",
+                ),
+            )
+            return
+        if request.action == "accept":
+            self._run_gateway_action(
+                "interview_accept",
+                lambda: RuntimeGateway(self.config_path).accept_interview(request.question_id),
+            )
+            return
+        if request.action == "skip":
+            self._run_gateway_action(
+                "interview_skip",
+                lambda: RuntimeGateway(self.config_path).skip_interview(
+                    request.question_id,
+                    reason=request.skip_reason,
+                ),
+            )
 
     def _request_publish_sync(self) -> None:
         self._run_gateway_action(

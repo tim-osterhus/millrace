@@ -216,6 +216,20 @@ millrace --config millrace.toml add-idea /absolute/path/to/idea.md
 
 `add-task` appends an execution task to the backlog. `add-idea` copies a source markdown file into `agents/ideas/raw/` for research-side intake.
 
+If GoalSpec interview mode is enabled, research can pause after synthesis with one durable pending interview question under `agents/specs/questions/`. The feature is optional and file-backed: Millrace records the question and recommended answer on disk, then waits for operator input before continuing review/task decomposition.
+
+Resolve interview pauses with either surface:
+
+```bash
+millrace --config millrace.toml interview list
+millrace --config millrace.toml interview show <question-id>
+millrace --config millrace.toml interview answer <question-id> --text "..."
+millrace --config millrace.toml interview accept <question-id>
+millrace --config millrace.toml interview skip <question-id> --reason "..."
+```
+
+Or open the TUI Research panel, select the pending interview question, and press `Enter` to answer it, accept the recommended answer, or skip it from the modal workflow.
+
 4. Run the engine:
 
 ```bash

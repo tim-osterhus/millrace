@@ -65,6 +65,7 @@ These markers are consumed by `agents/research_loop.sh` and research entrypoints
 | `### COMPLETION_MANIFEST_RUNNING` | `_contractor.md` | Project-local completion manifest drafting active. |
 | `### OBJECTIVE_PROFILE_SYNC_RUNNING` | `_objective_profile_sync.md` | Goal-derived acceptance/profile sync stage active. |
 | `### SPEC_SYNTHESIS_RUNNING` | `_spec_synthesis.md` | Condensed GoalSpec synthesis stage active. |
+| `### SPEC_INTERVIEW_RUNNING` | `_spec_interview.md` | Optional GoalSpec interview hardening stage active. |
 | `### SPEC_REVIEW_RUNNING` | `_spec_review.md` | Condensed GoalSpec review stage active. |
 | `### CLARIFY_RUNNING` | `_clarify.md` | Legacy GoalSpec clarify compatibility stage active. |
 | `### TASKMASTER_RUNNING` | `_taskmaster.md` | GoalSpec taskmaster stage active. |

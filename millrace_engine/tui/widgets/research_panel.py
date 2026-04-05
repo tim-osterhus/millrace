@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Static
 
 from ..formatting import compact_run_label, format_short_timestamp, format_timestamp
-from ..models import DisplayMode, GatewayFailure, ResearchOverviewView, ResearchQueueFamilyView
+from ..models import (
+    DisplayMode,
+    GatewayFailure,
+    InterviewQuestionSummaryView,
+    ResearchOverviewView,
+    ResearchQueueFamilyView,
+)
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
 
 
@@ -47,6 +57,44 @@ def _family_operator_line(family: ResearchQueueFamilyView) -> str:
     return " | ".join(fragments)
 
 
+def _selected_label(selected: bool) -> str:
+    return "focus" if selected else "open"
+
+
+def _interview_status(question: InterviewQuestionSummaryView) -> str:
+    return "blocking" if question.blocking else "non-blocking"
+
+
+def _interview_card(question: InterviewQuestionSummaryView, *, selected: bool) -> Vertical:
+    classes = "overview-card panel-item-card"
+    if selected:
+        classes += " is-selected"
+    return Vertical(
+        Static(question.title, classes="panel-item-title"),
+        Static(
+            " | ".join(
+                (
+                    question.spec_id,
+                    _interview_status(question),
+                    f"updated {format_short_timestamp(question.updated_at)}",
+                )
+            ),
+            classes="panel-item-meta",
+        ),
+        Static(question.question, classes="panel-item-alert"),
+        classes=classes,
+    )
+
+
+def _interview_operator_line(question: InterviewQuestionSummaryView, *, selected: bool) -> str:
+    return (
+        f"{'>' if selected else '-'} {question.title}"
+        f" | {question.spec_id}"
+        f" | {_selected_label(selected)}"
+        f" | {_interview_status(question)}"
+    )
+
+
 def _governance_alert_fragments(research: ResearchOverviewView) -> list[str]:
     governance = research.governance
     if governance is None:
@@ -67,6 +115,23 @@ class ResearchPanel(Static):
     """Compact research-plane report with audit and governance summaries."""
 
     can_focus = True
+    BINDINGS = (
+        Binding("up", "cursor_up", show=False),
+        Binding("down", "cursor_down", show=False),
+        Binding("home", "cursor_home", show=False),
+        Binding("end", "cursor_end", show=False),
+        Binding("o", "open_interview", show=False),
+        Binding("enter", "open_interview", show=False),
+    )
+
+    class InterviewRequested(Message):
+        """Posted when the operator wants to resolve the selected interview question."""
+
+        bubble = True
+
+        def __init__(self, question: InterviewQuestionSummaryView) -> None:
+            super().__init__()
+            self.question = question
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__("", id=id, classes="panel-card", markup=False)
@@ -74,6 +139,7 @@ class ResearchPanel(Static):
         self._research: ResearchOverviewView | None = None
         self._failure: GatewayFailure | None = None
         self._display_mode: DisplayMode = DisplayMode.OPERATOR
+        self._selected_question_id: str | None = None
 
     def compose(self) -> ComposeResult:
         with ContentSwitcher(initial="research-operator", id="research-mode-switcher"):
@@ -83,8 +149,17 @@ class ResearchPanel(Static):
                     yield self._metric_card("research-mode", "Mode")
                     yield self._metric_card("research-families", "Families")
                     yield self._metric_card("research-deferred", "Deferred")
+                yield self._section_card("research-interview", "Interview")
                 yield self._section_card("research-audit", "Audit")
                 yield self._section_card("research-activity", "Latest activity")
+                with Vertical(
+                    id="research-interview-list-card",
+                    classes="overview-card panel-section-card panel-list-card",
+                ):
+                    yield Static("Pending interview", classes="overview-card-label")
+                    yield Static("--", id="research-interview-list-headline", classes="overview-card-headline")
+                    yield Static("", id="research-interview-list-detail", classes="overview-card-detail")
+                    yield Vertical(id="research-interview-items", classes="panel-item-stack")
                 with Vertical(id="research-families-card", classes="overview-card panel-section-card panel-list-card"):
                     yield Static("Families", classes="overview-card-label")
                     yield Static("--", id="research-families-headline", classes="overview-card-headline")
@@ -146,6 +221,7 @@ class ResearchPanel(Static):
         self._research = research
         self._failure = failure
         self._display_mode = display_mode
+        self._reconcile_selection()
         if self.is_mounted:
             self._render_state()
 
@@ -168,13 +244,17 @@ class ResearchPanel(Static):
             self._update_metric("research-mode", "--", "mode unavailable")
             self._update_metric("research-families", "--", "family counts unavailable")
             self._update_metric("research-deferred", "--", "deferred counts unavailable")
+            self._update_section("research-interview", "Interview state unavailable", "research snapshot not loaded")
             self._update_section("research-audit", "Audit summary unavailable", "research snapshot not loaded")
             self._update_section("research-activity", "No research activity", "waiting for research events")
+            self._set_interview_items(headline="No pending interview questions", detail="research snapshot not loaded", items=())
             self._set_family_items(headline="No families visible", detail="research queue snapshot not loaded", items=())
             self._update_section("research-warnings", "Open debug for deeper detail", "audit and governance detail stay in debug mode")
             return
 
         research = self._research
+        pending_questions = self._pending_questions(research)
+        blocking_questions = sum(1 for question in pending_questions if question.blocking)
         total_families = len(research.queue_families)
         ready_families = sum(1 for family in research.queue_families if family.ready)
         total_items = sum(family.item_count for family in research.queue_families)
@@ -198,6 +278,31 @@ class ResearchPanel(Static):
             str(research.deferred_request_count),
             f"breadcrumbs {research.deferred_breadcrumb_count}",
         )
+        if pending_questions:
+            selected = self._selected_question(research) or pending_questions[0]
+            interview_detail = f"{selected.spec_id} | {_interview_status(selected)}"
+            if selected.updated_at is not None:
+                interview_detail = f"{interview_detail} | updated {format_short_timestamp(selected.updated_at)}"
+            self._update_section(
+                "research-interview",
+                f"{len(pending_questions)} pending | {blocking_questions} blocking",
+                interview_detail,
+            )
+            self._set_interview_items(
+                headline=f"{len(pending_questions)} pending interview question{'s' if len(pending_questions) != 1 else ''}",
+                detail="Up/Down select | Enter opens answer, accept, and skip actions",
+                items=tuple(
+                    _interview_card(question, selected=(question.question_id == self._selected_question_id))
+                    for question in pending_questions[:3]
+                ),
+            )
+        else:
+            self._update_section("research-interview", "No pending interview questions", "research is not waiting on operator interview input")
+            self._set_interview_items(
+                headline="No pending interview questions",
+                detail="interview actions appear here when research pauses for operator input",
+                items=(),
+            )
         self._update_section(
             "research-audit",
             "allowed" if research.completion_allowed else "blocked",
@@ -226,9 +331,35 @@ class ResearchPanel(Static):
 
         warnings = self._operator_warnings(research, blocked_items=blocked_items)
         if warnings:
-            self._update_section("research-warnings", f"{len(warnings)} operator attention items", " | ".join(warnings[:3]))
+            detail = " | ".join(warnings[:3])
+            if pending_questions:
+                detail = f"interview pending | {detail}"
+            self._update_section("research-warnings", f"{len(warnings)} operator attention items", detail)
         else:
-            self._update_section("research-warnings", "No operator attention needed", "open debug for audit summary, governance, and recent events")
+            detail = "open debug for audit summary, governance, and recent events"
+            if pending_questions:
+                detail = "open the selected interview question to answer, accept, or skip it"
+            self._update_section("research-warnings", "No operator attention needed", detail)
+
+    def action_cursor_up(self) -> None:
+        self._move_selection(-1)
+
+    def action_cursor_down(self) -> None:
+        self._move_selection(1)
+
+    def action_cursor_home(self) -> None:
+        self._select_index(0)
+
+    def action_cursor_end(self) -> None:
+        pending = self._pending_questions(self._research)
+        if pending:
+            self._select_index(len(pending) - 1)
+
+    def action_open_interview(self) -> None:
+        question = self._selected_question(self._research)
+        if question is None:
+            return
+        self.post_message(self.InterviewRequested(question))
 
     def _update_metric(self, suffix: str, value: str, meta: str) -> None:
         self.query_one(f"#{suffix}-value", Static).update(value)
@@ -255,6 +386,72 @@ class ResearchPanel(Static):
                 )
             )
 
+    def _set_interview_items(self, *, headline: str, detail: str, items: tuple[Widget, ...]) -> None:
+        self.query_one("#research-interview-list-headline", Static).update(headline)
+        self.query_one("#research-interview-list-detail", Static).update(detail)
+        container = self.query_one("#research-interview-items", Vertical)
+        container.remove_children()
+        if items:
+            for item in items:
+                container.mount(item)
+            return
+        container.mount(
+            Vertical(
+                Static("No pending interview questions", classes="panel-item-title"),
+                Static(detail, classes="panel-item-meta"),
+                classes="overview-card panel-item-card panel-empty-card",
+            )
+        )
+
+    @staticmethod
+    def _pending_questions(research: ResearchOverviewView | None) -> tuple[InterviewQuestionSummaryView, ...]:
+        if research is None:
+            return ()
+        return tuple(question for question in research.interview_questions if question.status == "pending")
+
+    def _selected_question(self, research: ResearchOverviewView | None) -> InterviewQuestionSummaryView | None:
+        pending = self._pending_questions(research)
+        if not pending:
+            return None
+        if self._selected_question_id is None:
+            return pending[0]
+        for question in pending:
+            if question.question_id == self._selected_question_id:
+                return question
+        return pending[0]
+
+    def _reconcile_selection(self) -> None:
+        selected = self._selected_question(self._research)
+        self._selected_question_id = None if selected is None else selected.question_id
+
+    def _select_index(self, index: int) -> None:
+        pending = self._pending_questions(self._research)
+        if not pending:
+            self._selected_question_id = None
+            if self.is_mounted:
+                self._render_state()
+            return
+        normalized = min(max(index, 0), len(pending) - 1)
+        self._selected_question_id = pending[normalized].question_id
+        if self.is_mounted:
+            self._render_state()
+
+    def _move_selection(self, delta: int) -> None:
+        pending = self._pending_questions(self._research)
+        if not pending:
+            return
+        selected = self._selected_question(self._research)
+        if selected is None:
+            self._selected_question_id = pending[0].question_id
+        else:
+            current_index = next(
+                (index for index, question in enumerate(pending) if question.question_id == selected.question_id),
+                0,
+            )
+            self._selected_question_id = pending[min(max(current_index + delta, 0), len(pending) - 1)].question_id
+        if self.is_mounted:
+            self._render_state()
+
     def _failure_operator_detail(self, *, has_snapshot: bool) -> str:
         if self._failure is None:
             return ""
@@ -280,6 +477,7 @@ class ResearchPanel(Static):
             return "\n".join(lines)
 
         research = self._research
+        pending_questions = self._pending_questions(research)
         total_families = len(research.queue_families)
         ready_families = sum(1 for family in research.queue_families if family.ready)
         total_items = sum(family.item_count for family in research.queue_families)
@@ -302,6 +500,16 @@ class ResearchPanel(Static):
             f" | deferred {research.deferred_request_count}"
             f" | breadcrumbs {research.deferred_breadcrumb_count}"
         )
+        if pending_questions:
+            selected = self._selected_question(research) or pending_questions[0]
+            lines.append(
+                "INTERVIEW "
+                f"{len(pending_questions)} pending"
+                f" | focus {selected.title}"
+                f" | {_interview_status(selected)}"
+            )
+        else:
+            lines.append("INTERVIEW none pending")
         lines.append(
             "AUDIT   "
             f"{'allowed' if research.completion_allowed else 'blocked'}"
@@ -322,6 +530,18 @@ class ResearchPanel(Static):
             )
 
         lines.append("")
+        if pending_questions:
+            lines.append("PENDING interview questions")
+            for question in pending_questions[:3]:
+                lines.append(
+                    _interview_operator_line(
+                        question,
+                        selected=(question.question_id == self._selected_question_id),
+                    )
+                )
+            if len(pending_questions) > 3:
+                lines.append(f"- +{len(pending_questions) - 3} more pending questions")
+            lines.append("")
         if total_families:
             lines.append("FAMILY  queue status")
             for family in research.queue_families[:5]:
@@ -338,7 +558,10 @@ class ResearchPanel(Static):
             for warning in warnings:
                 lines.append(f"- {warning}")
         lines.append("")
-        lines.append("NEXT    switch to debug for audit and governance detail")
+        if pending_questions:
+            lines.append("NEXT    press Enter to answer, accept, or skip the selected interview question")
+        else:
+            lines.append("NEXT    switch to debug for audit and governance detail")
         return "\n".join(lines)
 
     def _render_debug_text(self) -> str:
@@ -382,6 +605,8 @@ class ResearchPanel(Static):
             f" | breadcrumbs {research.deferred_breadcrumb_count}"
         )
         lines.append("")
+        lines.extend(self._interview_lines(research))
+        lines.append("")
         lines.append("FAMILIES")
         if research.queue_families:
             for family in research.queue_families:
@@ -409,6 +634,11 @@ class ResearchPanel(Static):
 
     def _operator_warnings(self, research: ResearchOverviewView, *, blocked_items: int) -> list[str]:
         warnings: list[str] = []
+        pending_questions = self._pending_questions(research)
+        if pending_questions:
+            warnings.append(
+                f"{len(pending_questions)} interview question{'s' if len(pending_questions) != 1 else ''} waiting for operator input"
+            )
         if not research.completion_allowed:
             warnings.append(
                 "completion blocked"
@@ -524,6 +754,28 @@ class ResearchPanel(Static):
                 f"- {format_short_timestamp(event.timestamp)} "
                 f"{event.category} {event.event_type} | {event.summary}{run_fragment}"
             )
+        return lines
+
+    def _interview_lines(self, research: ResearchOverviewView) -> list[str]:
+        pending = self._pending_questions(research)
+        if not pending:
+            return ["INTERVIEW no pending interview questions."]
+
+        lines = [f"INTERVIEW {len(pending)} pending question{'s' if len(pending) != 1 else ''}"]
+        for question in pending:
+            fragments = [
+                question.question_id,
+                question.spec_id,
+                question.status,
+                _interview_status(question),
+                f"source {question.answer_source}",
+            ]
+            lines.append(f"- {' | '.join(fragments)}")
+            lines.append(f"  title {question.title}")
+            lines.append(f"  ask {question.question}")
+            lines.append(f"  why {question.why_this_matters}")
+            lines.append(f"  recommend {question.recommended_answer}")
+            lines.append(f"  updated {format_timestamp(question.updated_at)} | path {question.source_path}")
         return lines
 
 

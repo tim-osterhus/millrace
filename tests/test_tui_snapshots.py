@@ -90,7 +90,7 @@ async def _wait_for_research_panel(pilot) -> None:
         key="4",
         panel_id="panel-research",
         panel_type=ResearchPanel,
-        expected_text="FAMILY  queue status",
+        expected_text="INTERVIEW 1 pending",
     )
 
 

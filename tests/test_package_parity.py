@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import re
 import tomllib
 from pathlib import Path
+
+import pytest
 
 from millrace_engine import __version__
 from millrace_engine.control import EngineControl
@@ -29,6 +32,18 @@ EXTERNAL_FIXTURE_PATH = "/".join(
 
 def _pyproject_payload() -> dict[str, object]:
     return tomllib.loads((MILLRACE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+def _runtime_version_from_init(repo_root: Path) -> str | None:
+    init_path = repo_root / "millrace_engine" / "__init__.py"
+    if not init_path.is_file():
+        return None
+    match = re.search(
+        r'^__version__\s*=\s*"(?P<version>\d+\.\d+\.\d+)"\s*$',
+        init_path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    return match.group("version") if match else None
 
 
 def _runtime_packages_on_disk() -> set[str]:
@@ -123,6 +138,16 @@ def test_project_version_is_sourced_from_runtime_module() -> None:
     assert __version__
     assert len(__version__.split(".")) == 3
     assert all(part.isdigit() for part in __version__.split("."))
+
+
+def test_staged_clean_repo_version_matches_source_when_present() -> None:
+    staged_clean_root = MILLRACE_ROOT.parent / "clean"
+    staged_clean_version = _runtime_version_from_init(staged_clean_root)
+
+    if staged_clean_version is None:
+        pytest.skip("staged clean repo not present")
+
+    assert staged_clean_version == __version__
 
 
 def test_setuptools_package_discovery_covers_non_legacy_runtime_packages() -> None:

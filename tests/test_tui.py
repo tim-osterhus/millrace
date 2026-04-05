@@ -50,6 +50,7 @@ from millrace_engine.tui.models import (
     FailureCategory,
     GatewayFailure,
     GatewayResult,
+    InterviewQuestionSummaryView,
     KeyValueView,
     LifecycleState,
     NoticeLevel,
@@ -82,6 +83,7 @@ from millrace_engine.tui.screens.confirm_modal import ConfirmModal
 from millrace_engine.tui.screens.config_edit_modal import ConfigEditModal
 from millrace_engine.tui.screens.health_gate import HealthGateScreen
 from millrace_engine.tui.screens.help_modal import HelpModal
+from millrace_engine.tui.screens.interview_modal import InterviewModal
 from millrace_engine.tui.screens.run_detail_modal import RunDetailModal
 from millrace_engine.tui.screens.shell import ShellScreen
 from millrace_engine.tui.widgets.config_panel import ConfigPanel
@@ -100,7 +102,7 @@ from millrace_engine.tui.widgets.runs_panel import RunsPanel
 from millrace_engine.tui.widgets.status_bar import StatusBar
 from millrace_engine.tui.workers import WorkerSettings
 from tests.support import FIXTURE_ROOT, load_workspace_fixture
-from tests.tui_support import load_operator_workspace
+from tests.tui_support import load_operator_workspace, seed_pending_interview_question
 
 
 def _run_app_scenario(
@@ -1087,6 +1089,28 @@ def _sample_refresh_payload(
         ),
         events=EventLogView(events=(), last_loaded_at=observed_at),
         runs=runs,
+    )
+
+
+def _sample_interview_question(
+    *,
+    question_id: str = "SPEC-TUI-001__interview-001",
+    spec_id: str = "SPEC-TUI-001",
+    title: str = "Operator interview spec",
+    question: str = "Should queue reorder approvals stay operator-confirmed in the TUI?",
+) -> InterviewQuestionSummaryView:
+    return InterviewQuestionSummaryView(
+        question_id=question_id,
+        status="pending",
+        spec_id=spec_id,
+        title=title,
+        question=question,
+        why_this_matters="This keeps queue mutation behavior aligned across foreground and daemon flows.",
+        recommended_answer="Keep confirmation so the operator explicitly approves queue order changes.",
+        answer_source="operator",
+        blocking=True,
+        source_path="agents/specs/staging/SPEC-TUI-001__operator-interview.md",
+        updated_at=datetime(2026, 4, 4, tzinfo=timezone.utc),
     )
 
 
@@ -2171,6 +2195,101 @@ def test_research_panel_operator_mode_compacts_generated_run_ids() -> None:
     assert run_id not in text
 
 
+def test_research_panel_renders_pending_interview_questions_and_selection() -> None:
+    observed_at = datetime(2026, 4, 4, tzinfo=timezone.utc)
+    panel = ResearchPanel(id="panel-research")
+    question = _sample_interview_question()
+    research = ResearchOverviewView(
+        status="SPEC_INTERVIEW_RUNNING",
+        source_kind="live",
+        configured_mode="goalspec",
+        configured_idle_mode="watch",
+        current_mode="GOALSPEC",
+        last_mode="GOALSPEC",
+        mode_reason="operator interview pending",
+        cycle_count=2,
+        transition_count=2,
+        selected_family="goalspec",
+        deferred_breadcrumb_count=0,
+        deferred_request_count=0,
+        queue_families=(),
+        audit_summary_path="/tmp/workspace/agents/audit_summary.json",
+        audit_history_path="/tmp/workspace/agents/audit_history.md",
+        audit_summary_present=False,
+        latest_gate_decision=None,
+        latest_completion_decision=None,
+        completion_allowed=False,
+        completion_reason="interview_pending",
+        updated_at=observed_at,
+        next_poll_at=observed_at,
+        interview_questions=(question,),
+    )
+
+    panel.show_snapshot(research)
+    text = panel.summary_text()
+
+    assert "INTERVIEW 1 pending | focus Operator interview spec | blocking" in text
+    assert "PENDING interview questions" in text
+    assert "> Operator interview spec | SPEC-TUI-001 | focus | blocking" in text
+    assert "NEXT    press Enter to answer, accept, or skip the selected interview question" in text
+
+
+def test_interview_modal_validates_answer_and_returns_requests() -> None:
+    class ModalHost(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.result = None
+
+        async def on_mount(self) -> None:
+            self.push_screen(InterviewModal(question=_sample_interview_question()), self._capture)
+
+        def _capture(self, result) -> None:
+            self.result = result
+
+    async def runner() -> None:
+        app = ModalHost()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert isinstance(app.screen, InterviewModal)
+            app.screen.action_submit_answer()
+            await _wait_for_condition(
+                pilot,
+                lambda: isinstance(app.screen, InterviewModal)
+                and "Answer text is required" in _static_text(app.screen.query_one("#interview-error", Static)),
+            )
+
+            app.screen.query_one("#interview-answer-text", TextArea).load_text(
+                "Keep explicit confirmation in the TUI."
+            )
+            await pilot.pause()
+            app.screen.action_submit_answer()
+            await _wait_for_condition(pilot, lambda: app.result is not None)
+            assert app.result.action == "answer"
+            assert app.result.question_id == "SPEC-TUI-001__interview-001"
+            assert app.result.answer_text == "Keep explicit confirmation in the TUI."
+
+        app = ModalHost()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert isinstance(app.screen, InterviewModal)
+            app.screen.action_accept_recommendation()
+            await _wait_for_condition(pilot, lambda: app.result is not None)
+            assert app.result.action == "accept"
+
+        app = ModalHost()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert isinstance(app.screen, InterviewModal)
+            app.screen.query_one("#interview-skip-reason", Input).value = "Defer until governance review."
+            await pilot.pause()
+            app.screen.action_skip_question()
+            await _wait_for_condition(pilot, lambda: app.result is not None)
+            assert app.result.action == "skip"
+            assert app.result.skip_reason == "Defer until governance review."
+
+    asyncio.run(runner())
+
+
 def test_runs_panel_operator_mode_compacts_generated_run_ids() -> None:
     observed_at = datetime(2026, 4, 1, 4, 37, 43, tzinfo=timezone.utc)
     run_id = "20260401T043039323989Z__2026-03-31-2026-03-31-messaging-p0-schema-and-sender-contract-refactor"
@@ -3240,6 +3359,55 @@ def test_tui_shell_add_idea_modal_validates_locally_and_copies_source(monkeypatc
         assert app.screen._store.state.last_action.message == "idea queued"
         assert app.screen._store.state.notices[-1].message == "idea queued"
         assert any(path.name.endswith("__candidate.md") for path in raw_dir.iterdir())
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_research_panel_resolves_pending_interview_from_modal(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    question_id = seed_pending_interview_question(workspace)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.research is not None
+            and app.screen._store.state.research.interview_questions,
+        )
+
+        await pilot.press("4")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert isinstance(app.screen, ShellScreen)
+        research_panel = app.screen.query_one("#panel-research", ResearchPanel)
+        assert research_panel.summary_text().count("pending") >= 1
+
+        await pilot.press("enter")
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, InterviewModal))
+        assert isinstance(app.screen, InterviewModal)
+        app.screen.query_one("#interview-answer-text", TextArea).load_text(
+            "Keep the confirmation path explicit so queue mutations stay governed."
+        )
+        await pilot.pause()
+        app.screen.action_submit_answer()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.last_action is not None
+            and app.screen._store.state.last_action.message == "interview answer recorded",
+        )
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen._store.state.research is not None
+        assert all(
+            question.status != "pending" for question in app.screen._store.state.research.interview_questions
+        )
+        assert app.screen._store.state.notices[-1].message == "interview answer recorded"
+        decision_path = workspace / "agents" / "specs" / "decisions" / f"{question_id}__decision.json"
+        assert decision_path.exists()
 
     _run_app_scenario(config_path, scenario)
 

@@ -30,6 +30,7 @@ from .cli_rendering import (
     render_status,
 )
 from .control import ConfigShowReport, ControlError, EngineControl
+from .control_models import InterviewListReport, InterviewMutationReport, InterviewQuestionReport
 from .events import EventRecord
 
 
@@ -37,10 +38,12 @@ app = typer.Typer(add_completion=False, help="Control the Millrace runtime.")
 config_app = typer.Typer(help="Inspect or mutate runtime config.")
 queue_app = typer.Typer(help="Inspect visible execution queues.")
 research_app = typer.Typer(help="Inspect research runtime state and history.")
+interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
 app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
 app.add_typer(research_app, name="research")
+app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
 
 
@@ -88,6 +91,85 @@ def _iter_expected(events: Any, *, json_mode: bool) -> Any:
         yield from events
     except ControlError as exc:
         _exit_control_error(exc, json_mode=json_mode)
+
+
+def _render_interview_list(report: InterviewListReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    if not report.questions:
+        typer.echo("No interview questions.")
+        return
+    lines: list[str] = []
+    for question in report.questions:
+        lines.extend(
+            [
+                f"{question.question_id} [{question.status}] spec={question.spec_id}",
+                f"  Title: {question.title}",
+                f"  Question: {question.question}",
+                f"  Blocking: {'yes' if question.blocking else 'no'}",
+                f"  Source: {question.source_path}",
+            ]
+        )
+    typer.echo("\n".join(lines))
+
+
+def _render_interview_question(report: InterviewQuestionReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    question = report.question
+    lines = [
+        f"Question ID: {question.question_id}",
+        f"Status: {question.status}",
+        f"Spec ID: {question.spec_id}",
+    ]
+    if question.idea_id:
+        lines.append(f"Idea ID: {question.idea_id}")
+    lines.extend(
+        [
+            f"Title: {question.title}",
+            f"Source: {question.source_path}",
+            f"Blocking: {'yes' if question.blocking else 'no'}",
+            f"Question: {question.question}",
+            f"Why this matters: {question.why_this_matters}",
+            f"Recommended answer: {question.recommended_answer}",
+            f"Answer source: {question.answer_source}",
+            f"Question artifact: {report.question_path.as_posix()}",
+        ]
+    )
+    if question.evidence:
+        lines.append("Evidence:")
+        lines.extend(f"- {item}" for item in question.evidence)
+    if report.decision is not None and report.decision_path is not None:
+        lines.extend(
+            [
+                f"Decision: {report.decision.decision}",
+                f"Decision source: {report.decision.decision_source}",
+                f"Decision artifact: {report.decision_path.as_posix()}",
+            ]
+        )
+    typer.echo("\n".join(lines))
+
+
+def _render_interview_mutation(report: InterviewMutationReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Action: {report.action}",
+        f"Question ID: {report.question.question_id}",
+        f"Status: {report.question.status}",
+        f"Question artifact: {report.question_path.as_posix()}",
+    ]
+    if report.decision is not None and report.decision_path is not None:
+        lines.extend(
+            [
+                f"Decision source: {report.decision.decision_source}",
+                f"Decision artifact: {report.decision_path.as_posix()}",
+            ]
+        )
+    typer.echo("\n".join(lines))
 
 
 @app.callback()
@@ -386,6 +468,146 @@ def research_root(
         return
     report = _run_expected(lambda: _control(ctx).research_report(), json_mode=json_mode)
     render_research_report(report, json_mode=json_mode)
+
+
+@interview_app.command("list")
+def interview_list_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """List persisted manual interview questions."""
+
+    _render_interview_list(
+        _run_expected(lambda: _control(ctx).interview_list(), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@interview_app.command("show")
+def interview_show_command(
+    ctx: typer.Context,
+    question_id: Annotated[str, typer.Argument(help="Interview question identifier.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one interview question plus any recorded decision."""
+
+    _render_interview_question(
+        _run_expected(lambda: _control(ctx).interview_show(question_id), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@interview_app.command("create")
+def interview_create_command(
+    ctx: typer.Context,
+    source_path: Annotated[
+        Path,
+        typer.Argument(
+            help="Staged idea or synthesized spec path to interview.",
+        ),
+    ],
+    question: Annotated[str, typer.Option("--question", help="Interview question text.")],
+    why_this_matters: Annotated[str, typer.Option("--why-this-matters", help="Why the question matters.")],
+    recommended_answer: Annotated[
+        str,
+        typer.Option("--recommended-answer", help="Recommended answer to accept when appropriate."),
+    ],
+    answer_source: Annotated[
+        str,
+        typer.Option("--answer-source", help="Recommended answer provenance: repo, operator, or assumption."),
+    ] = "assumption",
+    blocking: Annotated[
+        bool,
+        typer.Option("--blocking/--non-blocking", help="Whether the question is blocking."),
+    ] = True,
+    evidence: Annotated[
+        list[str],
+        typer.Option("--evidence", help="Repeatable evidence note for the question artifact."),
+    ] = [],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Create one pending interview question for a staged idea or synthesized spec."""
+
+    _render_interview_mutation(
+        _run_expected(
+            lambda: _control(ctx).interview_create(
+                source_path=source_path,
+                question=question,
+                why_this_matters=why_this_matters,
+                recommended_answer=recommended_answer,
+                answer_source=answer_source,
+                blocking=blocking,
+                evidence=evidence,
+            ),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@interview_app.command("answer")
+def interview_answer_command(
+    ctx: typer.Context,
+    question_id: Annotated[str, typer.Argument(help="Interview question identifier.")],
+    text: Annotated[str, typer.Option("--text", help="Operator answer to persist.")],
+    evidence: Annotated[
+        list[str],
+        typer.Option("--evidence", help="Repeatable evidence note for the decision artifact."),
+    ] = [],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Answer one pending interview question."""
+
+    _render_interview_mutation(
+        _run_expected(
+            lambda: _control(ctx).interview_answer(question_id, text=text, evidence=evidence),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@interview_app.command("accept")
+def interview_accept_command(
+    ctx: typer.Context,
+    question_id: Annotated[str, typer.Argument(help="Interview question identifier.")],
+    evidence: Annotated[
+        list[str],
+        typer.Option("--evidence", help="Repeatable evidence note for the decision artifact."),
+    ] = [],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Accept the recommended answer for one pending interview question."""
+
+    _render_interview_mutation(
+        _run_expected(
+            lambda: _control(ctx).interview_accept(question_id, evidence=evidence),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@interview_app.command("skip")
+def interview_skip_command(
+    ctx: typer.Context,
+    question_id: Annotated[str, typer.Argument(help="Interview question identifier.")],
+    reason: Annotated[str | None, typer.Option("--reason", help="Optional skip reason.")] = None,
+    evidence: Annotated[
+        list[str],
+        typer.Option("--evidence", help="Repeatable evidence note for the decision artifact."),
+    ] = [],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Skip one pending interview question with an assumption record."""
+
+    _render_interview_mutation(
+        _run_expected(
+            lambda: _control(ctx).interview_skip(question_id, reason=reason, evidence=evidence),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
 
 
 @publish_app.command("sync")

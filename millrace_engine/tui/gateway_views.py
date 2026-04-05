@@ -20,6 +20,7 @@ from .models import (
     ConfigFieldInputKind,
     ConfigFieldView,
     ConfigOverviewView,
+    InterviewQuestionSummaryView,
     KeyValueView,
     PublishOverviewView,
     QueueOverviewView,
@@ -285,6 +286,7 @@ def research_overview_view(
     report: object,
     *,
     recent_activity: Iterable[EventRecord] = (),
+    interview_questions: Iterable[object] = (),
 ) -> ResearchOverviewView:
     runtime = getattr(report, "runtime")
     queue_snapshot = getattr(runtime, "queue_snapshot")
@@ -336,9 +338,27 @@ def research_overview_view(
         completion_reason=str(getattr(completion_state, "reason")),
         updated_at=getattr(runtime, "updated_at"),
         next_poll_at=getattr(runtime, "next_poll_at"),
+        interview_questions=tuple(interview_question_summary_view(question) for question in interview_questions),
         audit_summary=research_audit_summary_view(report),
         governance=research_governance_view(report),
         recent_activity=tuple(runtime_event_view(record) for record in recent_activity),
+    )
+
+
+def interview_question_summary_view(question: object) -> InterviewQuestionSummaryView:
+    return InterviewQuestionSummaryView(
+        question_id=str(getattr(question, "question_id")),
+        status=str(getattr(question, "status")),
+        spec_id=str(getattr(question, "spec_id")),
+        idea_id=str(getattr(question, "idea_id", "")),
+        title=str(getattr(question, "title")),
+        question=str(getattr(question, "question")),
+        why_this_matters=str(getattr(question, "why_this_matters")),
+        recommended_answer=str(getattr(question, "recommended_answer")),
+        answer_source=str(getattr(question, "answer_source")),
+        blocking=bool(getattr(question, "blocking")),
+        source_path=Path(getattr(question, "source_path")).as_posix(),
+        updated_at=getattr(question, "updated_at", None),
     )
 
 
@@ -675,6 +695,29 @@ def action_result_view(action: str, result: object) -> ActionResultView:
     )
 
 
+def interview_action_result_view(action: str, report: object) -> ActionResultView:
+    question = getattr(report, "question")
+    decision = getattr(report, "decision", None)
+    details = [
+        KeyValueView("question_id", str(getattr(question, "question_id"))),
+        KeyValueView("status", str(getattr(question, "status"))),
+        KeyValueView("spec_id", str(getattr(question, "spec_id"))),
+    ]
+    if decision is not None:
+        details.append(KeyValueView("decision_source", str(getattr(decision, "decision_source"))))
+    messages = {
+        "answer": "interview answer recorded",
+        "accept": "interview recommendation accepted",
+        "skip": "interview question skipped",
+    }
+    return ActionResultView(
+        action=f"interview_{action}",
+        message=messages.get(action, "interview updated"),
+        applied=True,
+        details=tuple(details),
+    )
+
+
 def sync_action_result_view(report: StagingSyncReport) -> ActionResultView:
     return ActionResultView(
         action="publish_sync",
@@ -725,6 +768,7 @@ __all__ = [
     "action_result_view",
     "commit_action_result_view",
     "config_overview_view",
+    "interview_action_result_view",
     "publish_overview_view",
     "queue_overview_view",
     "research_overview_view",

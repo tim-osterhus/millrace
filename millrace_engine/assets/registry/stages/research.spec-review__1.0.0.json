@@ -35,7 +35,7 @@
     ],
     "kind_id": "research.spec-review",
     "legal_predecessors": [
-      "research.spec-synthesis"
+      "research.spec-interview"
     ],
     "legal_successors": [
       "research.taskmaster"

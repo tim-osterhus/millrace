@@ -19,6 +19,7 @@ def test_packaged_research_registry_scaffolds_are_discoverable(tmp_path: Path) -
         "research.goal-intake",
         "research.objective-profile-sync",
         "research.spec-synthesis",
+        "research.spec-interview",
         "research.spec-review",
         "research.taskmaster",
         "research.incident-intake",
@@ -61,6 +62,7 @@ def test_packaged_research_modes_materialize_research_loops(tmp_path: Path) -> N
         "research.goal-intake",
         "research.objective-profile-sync",
         "research.spec-synthesis",
+        "research.spec-interview",
         "research.spec-review",
         "research.taskmaster",
     }

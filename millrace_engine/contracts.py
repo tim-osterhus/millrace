@@ -177,6 +177,7 @@ class StageType(str, Enum):
     GOAL_INTAKE = "goal_intake"
     OBJECTIVE_PROFILE_SYNC = "objective_profile_sync"
     SPEC_SYNTHESIS = "spec_synthesis"
+    SPEC_INTERVIEW = "spec_interview"
     SPEC_REVIEW = "spec_review"
     TASKMASTER = "taskmaster"
     TASKAUDIT = "taskaudit"
@@ -249,6 +250,7 @@ class ResearchStatus(str, Enum):
     COMPLETION_MANIFEST_RUNNING = "COMPLETION_MANIFEST_RUNNING"
     OBJECTIVE_PROFILE_SYNC_RUNNING = "OBJECTIVE_PROFILE_SYNC_RUNNING"
     SPEC_SYNTHESIS_RUNNING = "SPEC_SYNTHESIS_RUNNING"
+    SPEC_INTERVIEW_RUNNING = "SPEC_INTERVIEW_RUNNING"
     SPEC_REVIEW_RUNNING = "SPEC_REVIEW_RUNNING"
     CLARIFY_RUNNING = "CLARIFY_RUNNING"
     TASKMASTER_RUNNING = "TASKMASTER_RUNNING"
@@ -297,6 +299,13 @@ class ResearchMode(str, Enum):
     GOALSPEC = "goalspec"
     INCIDENT = "incident"
     AUDIT = "audit"
+
+
+class SpecInterviewPolicy(str, Enum):
+    OFF = "off"
+    WHEN_AMBIGUOUS = "when_ambiguous"
+    ALWAYS = "always"
+    MANUAL_ONLY = "manual_only"
 
 
 PUBLIC_V1_STAGE_TYPES = frozenset(

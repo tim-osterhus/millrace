@@ -87,6 +87,7 @@ def supports_goalspec_stage_execution(self: Any, checkpoint: ResearchCheckpoint 
         "goal_intake",
         "objective_profile_sync",
         "spec_synthesis",
+        "spec_interview",
         "spec_review",
         "taskmaster",
     }
@@ -164,6 +165,7 @@ def advance_goalspec_checkpoint(
             "goal_intake",
             "objective_profile_sync",
             "spec_synthesis",
+            "spec_interview",
             "spec_review",
             "taskmaster",
         }

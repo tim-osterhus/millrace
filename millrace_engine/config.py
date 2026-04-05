@@ -16,6 +16,7 @@ from .contracts import (
     ReasoningEffort,
     RegistryObjectRef,
     ResearchMode,
+    SpecInterviewPolicy,
     RunnerKind,
     StageType,
 )
@@ -179,6 +180,7 @@ class ResearchConfig(MillraceModel):
     idle_poll_seconds: int = Field(default=60, ge=1)
     stage_retry_max: int = Field(default=1, ge=0)
     stage_retry_backoff_seconds: int = Field(default=5, ge=0)
+    interview_policy: SpecInterviewPolicy = SpecInterviewPolicy.OFF
 
 
 class WatchRoot(str, Enum):
@@ -551,6 +553,7 @@ class ConfigBoundaries(MillraceModel):
         "research.idle_poll_seconds",
         "research.stage_retry_max",
         "research.stage_retry_backoff_seconds",
+        "research.interview_policy",
         "watchers",
     )
 
@@ -615,6 +618,12 @@ def default_stage_configs() -> dict[StageType, StageConfig]:
             effort=ReasoningEffort.XHIGH,
             timeout_seconds=5400,
             prompt_file=Path("agents/_spec_synthesis.md"),
+        ),
+        StageType.SPEC_INTERVIEW: StageConfig(
+            model="gpt-5.3-codex",
+            effort=ReasoningEffort.HIGH,
+            timeout_seconds=5400,
+            prompt_file=Path("agents/_spec_interview.md"),
         ),
         StageType.SPEC_REVIEW: StageConfig(
             model="gpt-5.3-codex",
