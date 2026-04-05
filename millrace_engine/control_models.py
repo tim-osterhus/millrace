@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,6 +13,8 @@ from .compiler import CompileTimeResolvedSnapshot
 from .config import ConfigApplyBoundary, ConfigSourceInfo, EngineConfig
 from .contracts import AuditGateDecision, CompletionDecision, ContractModel, ExecutionStatus, ResearchMode, ResearchStatus
 from .diagnostics import DiagnosticsPolicyEvidenceSnapshot
+from .events import EventRecord
+from .health import HealthCheckStatus, WorkspaceHealthSummary
 from .policies import ExecutionIntegrationContext, SizeClassificationView
 from .provenance import RuntimeTransitionRecord, routing_modes_from_records
 from .research.audit import AuditRemediationRecord, AuditSummary
@@ -329,6 +332,81 @@ class StatusReport(ContractModel):
     @classmethod
     def normalize_config_path(cls, value: str | Path) -> Path:
         return Path(value)
+
+
+class SupervisorAttentionReason(str, Enum):
+    """Stable machine-readable one-workspace attention reasons for external supervisors."""
+
+    NONE = "none"
+    HEALTH_FAILED = "health_failed"
+    NOT_BOOTSTRAPPED = "not_bootstrapped"
+    RUNNER_NOT_READY = "runner_not_ready"
+    BLOCKED_EXECUTION = "blocked_execution"
+    BLOCKED_RESEARCH = "blocked_research"
+    AWAITING_OPERATOR_INPUT = "awaiting_operator_input"
+    AUDIT_FAILED = "audit_failed"
+    STALLED = "stalled"
+    IDLE_WITH_NO_WORK = "idle_with_no_work"
+    IDLE_WITH_PENDING_WORK = "idle_with_pending_work"
+    DEGRADED_STATE = "degraded_state"
+
+
+class SupervisorAction(str, Enum):
+    """Named supported action hints exposed by the supervisor report."""
+
+    PAUSE = "pause"
+    RESUME = "resume"
+    ADD_TASK = "add_task"
+    QUEUE_REORDER = "queue_reorder"
+    STOP = "stop"
+
+
+class SupervisorReport(ContractModel):
+    """Aggregated one-workspace external-supervisor report."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    workspace_root: Path
+    config_path: Path
+    generated_at: datetime
+    health_status: HealthCheckStatus
+    health_summary: WorkspaceHealthSummary
+    bootstrap_ready: bool
+    execution_ready: bool
+    process_running: bool
+    paused: bool
+    execution_status: ExecutionStatus
+    research_status: ResearchStatus
+    status_source_kind: Literal["snapshot", "live"]
+    research_source_kind: Literal["snapshot", "live"]
+    active_task: QueueItemView | None = None
+    next_task: QueueItemView | None = None
+    backlog_depth: int = Field(ge=0)
+    deferred_queue_size: int = Field(ge=0)
+    current_run_id: str | None = None
+    current_stage: str | None = None
+    time_in_current_status_seconds: float | None = Field(default=None, ge=0)
+    attention_reason: SupervisorAttentionReason
+    attention_summary: str
+    allowed_actions: tuple[SupervisorAction, ...] = ()
+    recent_events: tuple[EventRecord, ...] = ()
+
+    @field_validator("workspace_root", "config_path", mode="before")
+    @classmethod
+    def normalize_path_fields(cls, value: str | Path) -> Path:
+        return Path(value)
+
+    @field_validator("generated_at", mode="before")
+    @classmethod
+    def normalize_generated_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+    @field_validator("attention_summary")
+    @classmethod
+    def normalize_attention_summary(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("attention_summary may not be empty")
+        return normalized
 
 
 class ConfigShowReport(ContractModel):

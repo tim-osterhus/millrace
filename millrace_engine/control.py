@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from .adapters.control_mailbox import ControlCommand, write_command
 from .config import LoadedConfig, build_runtime_paths
-from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus
+from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
 from .control_common import (
     ControlError,
     event_log_control_error,
@@ -41,6 +41,9 @@ from .control_models import (
     RuntimeState,
     SelectionExplanationView,
     StatusReport,
+    SupervisorAction,
+    SupervisorAttentionReason,
+    SupervisorReport,
 )
 from .control_mutations import (
     _assert_reload_safe,
@@ -69,7 +72,7 @@ from .control_reports import (
     task_view,
     write_runtime_state,
 )
-from .events import EventRecord, is_research_event_type
+from .events import EventRecord, EventType, is_research_event_type
 from .engine_runtime import start_engine
 from .health import WorkspaceHealthReport, build_workspace_health_report
 from .paths import RuntimePaths
@@ -116,6 +119,101 @@ def _default_publish_commit_message() -> str:
 
 
 _decision_report_paths = decision_report_paths
+
+
+def _supervisor_allowed_actions(runtime: RuntimeState, *, backlog_depth: int) -> tuple[SupervisorAction, ...]:
+    actions: list[SupervisorAction] = [SupervisorAction.ADD_TASK]
+    if backlog_depth > 1:
+        actions.append(SupervisorAction.QUEUE_REORDER)
+    if runtime.process_running:
+        actions.append(SupervisorAction.STOP)
+        actions.append(SupervisorAction.RESUME if runtime.paused else SupervisorAction.PAUSE)
+    return tuple(actions)
+
+
+def _derive_supervisor_run_context(
+    events: tuple[EventRecord, ...],
+    *,
+    runtime: RuntimeState,
+    research_status: ResearchStatus,
+    generated_at: datetime,
+) -> tuple[str | None, str | None, float | None]:
+    current_run_id: str | None = None
+    current_stage: str | None = None
+    time_in_current_status_seconds: float | None = None
+
+    for event in reversed(events):
+        payload = event.payload
+        if current_run_id is None:
+            candidate = str(payload.get("run_id") or "").strip()
+            if candidate:
+                current_run_id = candidate
+        if current_stage is None:
+            for key in ("stage", "stage_type", "stage_id", "node_id"):
+                candidate = str(payload.get(key) or "").strip()
+                if candidate:
+                    current_stage = candidate
+                    break
+        if current_run_id is not None and current_stage is not None:
+            break
+
+    for event in reversed(events):
+        payload = event.payload
+        if event.type is EventType.STATUS_CHANGED and payload.get("status") == runtime.execution_status.value:
+            time_in_current_status_seconds = max((generated_at - event.timestamp).total_seconds(), 0.0)
+            break
+        if research_status is ResearchStatus.BLOCKED and event.type is EventType.RESEARCH_BLOCKED:
+            time_in_current_status_seconds = max((generated_at - event.timestamp).total_seconds(), 0.0)
+            break
+        if research_status is ResearchStatus.IDLE and event.type is EventType.RESEARCH_IDLE:
+            time_in_current_status_seconds = max((generated_at - event.timestamp).total_seconds(), 0.0)
+            break
+
+    return current_run_id, current_stage, time_in_current_status_seconds
+
+
+def _attention_reason_for(
+    *,
+    health: WorkspaceHealthReport,
+    status: StatusReport,
+    pending_blocking_interview: bool,
+) -> tuple[SupervisorAttentionReason, str]:
+    runtime = status.runtime
+    research = status.research
+    assert research is not None
+
+    if not health.bootstrap_ready:
+        return SupervisorAttentionReason.NOT_BOOTSTRAPPED, "Workspace bootstrap checks are failing."
+    if health.status.value == "fail" and not health.execution_ready:
+        return SupervisorAttentionReason.RUNNER_NOT_READY, (
+            "Workspace bootstrap passed, but execution prerequisites are not ready."
+        )
+    if health.status.value == "fail":
+        return SupervisorAttentionReason.HEALTH_FAILED, "Workspace health checks are failing."
+    if pending_blocking_interview:
+        return (
+            SupervisorAttentionReason.AWAITING_OPERATOR_INPUT,
+            "A pending blocking interview question requires operator input.",
+        )
+    if research.status is ResearchStatus.AUDIT_FAIL:
+        return SupervisorAttentionReason.AUDIT_FAILED, "Research reported AUDIT_FAIL."
+    if runtime.execution_status is ExecutionStatus.BLOCKED:
+        return SupervisorAttentionReason.BLOCKED_EXECUTION, "Execution status is BLOCKED."
+    if research.status is ResearchStatus.BLOCKED:
+        return SupervisorAttentionReason.BLOCKED_RESEARCH, "Research status is BLOCKED."
+    if runtime.execution_status in {ExecutionStatus.QUICKFIX_NEEDED, ExecutionStatus.NET_WAIT} or research.status in {
+        ResearchStatus.NET_WAIT,
+    }:
+        return SupervisorAttentionReason.DEGRADED_STATE, "Workspace is degraded and may require supervisor action."
+    if runtime.execution_status is ExecutionStatus.IDLE:
+        research_ready = any(family.ready for family in research.queue_families)
+        if runtime.backlog_depth > 0 or research_ready:
+            return (
+                SupervisorAttentionReason.IDLE_WITH_PENDING_WORK,
+                "Execution is idle while pending work remains available.",
+            )
+        return SupervisorAttentionReason.IDLE_WITH_NO_WORK, "Workspace is idle with no pending work."
+    return SupervisorAttentionReason.NONE, "Workspace is active and does not currently require supervisor attention."
 
 
 class EngineControl:
@@ -244,6 +342,70 @@ class EngineControl:
                 "active_task": queue.active_task if detail else None,
                 "next_task": queue.next_task if detail else None,
             }
+        )
+
+    def supervisor_report(self, *, recent_event_limit: int = 10) -> SupervisorReport:
+        """Return one aggregated external-supervisor report for this workspace."""
+
+        if recent_event_limit < 0:
+            raise ControlError("supervisor_report requires a non-negative recent event limit")
+
+        generated_at = datetime.now(timezone.utc)
+        health = self.health()
+        status = self.status(detail=True)
+        research = status.research
+        if research is None:
+            raise ControlError("supervisor report requires detailed research visibility")
+
+        recent_events = tuple(self.logs(n=recent_event_limit))
+        try:
+            pending_blocking_interview = any(
+                question.status == "pending" and question.blocking
+                for question in list_interview_questions(self.paths)
+            )
+        except (InterviewError, ValidationError, ValueError) as exc:
+            raise ControlError(f"supervisor report failed: {expected_error_message(exc)}") from exc
+
+        attention_reason, attention_summary = _attention_reason_for(
+            health=health,
+            status=status,
+            pending_blocking_interview=pending_blocking_interview,
+        )
+        current_run_id, current_stage, time_in_current_status_seconds = _derive_supervisor_run_context(
+            recent_events,
+            runtime=status.runtime,
+            research_status=research.status,
+            generated_at=generated_at,
+        )
+
+        return SupervisorReport(
+            workspace_root=self.paths.root,
+            config_path=self.config_path,
+            generated_at=generated_at,
+            health_status=health.status,
+            health_summary=health.summary,
+            bootstrap_ready=health.bootstrap_ready,
+            execution_ready=health.execution_ready,
+            process_running=status.runtime.process_running,
+            paused=status.runtime.paused,
+            execution_status=status.runtime.execution_status,
+            research_status=research.status,
+            status_source_kind=status.source_kind,
+            research_source_kind=research.source_kind,
+            active_task=status.active_task,
+            next_task=status.next_task,
+            backlog_depth=status.runtime.backlog_depth,
+            deferred_queue_size=status.runtime.deferred_queue_size,
+            current_run_id=current_run_id,
+            current_stage=current_stage,
+            time_in_current_status_seconds=time_in_current_status_seconds,
+            attention_reason=attention_reason,
+            attention_summary=attention_summary,
+            allowed_actions=_supervisor_allowed_actions(
+                status.runtime,
+                backlog_depth=status.runtime.backlog_depth,
+            ),
+            recent_events=recent_events,
         )
 
     def run_provenance(self, run_id: str) -> RunProvenanceReport:

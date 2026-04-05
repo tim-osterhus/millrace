@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Thread
 import json
@@ -39,6 +40,7 @@ from millrace_engine.provenance import read_transition_history
 from millrace_engine.queue import TaskQueue, load_research_recovery_latch
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
 from millrace_engine.registry import discover_registry_state, persist_workspace_registry_object
+from millrace_engine.status import ControlPlane, StatusStore
 from millrace_engine.standard_runtime import compile_standard_runtime_selection
 from tests.support import load_workspace_fixture, read_state, runtime_workspace, set_engine_idle_mode, wait_for
 
@@ -92,6 +94,29 @@ def read_event_types(workspace: Path) -> list[str]:
         for line in (workspace / "agents/engine_events.log").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def append_event(
+    workspace: Path,
+    *,
+    event_type: EventType,
+    source: EventSource = EventSource.CONTROL,
+    timestamp: str = "2026-04-04T12:00:00Z",
+    payload: dict[str, object] | None = None,
+) -> EventRecord:
+    event = EventRecord.model_validate(
+        {
+            "type": event_type,
+            "timestamp": timestamp,
+            "source": source,
+            "payload": payload or {},
+        }
+    )
+    log_path = workspace / "agents" / "engine_events.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(event.model_dump_json() + "\n")
+    return event
 
 
 def write_audit_queue_file(
@@ -3817,3 +3842,81 @@ def test_cli_interview_duplicate_pending_rejected_then_answer_and_skip_succeed(t
     assert skip_payload["question"]["status"] == "skipped"
     assert skip_payload["decision"]["decision_source"] == "assumption"
     assert skip_payload["decision"]["decision"] == "Deferred to operator naming review."
+
+
+def test_engine_control_supervisor_report_contract_for_idle_workspace(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    append_event(
+        workspace,
+        event_type=EventType.RESEARCH_IDLE,
+        source=EventSource.RESEARCH,
+        timestamp=(datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+        payload={"reason": "no-work"},
+    )
+
+    report = EngineControl(config_path).supervisor_report(recent_event_limit=5)
+
+    assert report.schema_version == "1.0"
+    assert report.workspace_root == workspace.resolve()
+    assert report.config_path == config_path.resolve()
+    assert report.bootstrap_ready is True
+    assert report.execution_ready is True
+    assert report.attention_reason.value == "idle_with_no_work"
+    assert report.time_in_current_status_seconds is not None
+    assert report.time_in_current_status_seconds >= 0
+    assert [action.value for action in report.allowed_actions] == ["add_task"]
+    assert report.recent_events[-1].type is EventType.RESEARCH_IDLE
+
+
+def test_engine_control_supervisor_report_flags_blocked_research(tmp_path: Path) -> None:
+    _workspace, config_path = runtime_workspace(tmp_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    StatusStore(paths.research_status_file, ControlPlane.RESEARCH).write_raw(ResearchStatus.BLOCKED)
+
+    report = EngineControl(config_path).supervisor_report()
+
+    assert report.research_status is ResearchStatus.BLOCKED
+    assert report.attention_reason.value == "blocked_research"
+    assert "blocked" in report.attention_summary.lower()
+
+
+def test_engine_control_supervisor_report_flags_awaiting_operator_input(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    source_path = write_interview_source(
+        workspace,
+        relative_path="agents/ideas/specs/SPEC-901__supervisor-spec.md",
+        source_id="SPEC-901",
+        title="Supervisor compatibility spec",
+        kind="spec",
+    )
+    control = EngineControl(config_path)
+    control.interview_create(
+        source_path=source_path,
+        question="Should the external harness escalate this blocker immediately?",
+        why_this_matters="The supervisor contract needs an explicit operator checkpoint.",
+        recommended_answer="Yes, request operator review before resuming.",
+        answer_source="operator",
+    )
+
+    report = control.supervisor_report()
+
+    assert report.attention_reason.value == "awaiting_operator_input"
+    assert "operator input" in report.attention_summary.lower()
+
+
+def test_cli_supervisor_report_renders_json(tmp_path: Path) -> None:
+    _workspace, config_path = runtime_workspace(tmp_path)
+    EngineControl(config_path).add_task("Review external supervisor report")
+
+    result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "report", "--recent-events", "0", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "1.0"
+    assert payload["attention_reason"] == "idle_with_pending_work"
+    assert payload["backlog_depth"] == 1
+    assert payload["allowed_actions"] == ["add_task"]
+    assert payload["recent_events"] == []

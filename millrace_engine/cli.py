@@ -28,6 +28,7 @@ from .cli_rendering import (
     render_run_provenance,
     render_staging_sync,
     render_status,
+    render_supervisor_report,
 )
 from .control import ConfigShowReport, ControlError, EngineControl
 from .control_models import InterviewListReport, InterviewMutationReport, InterviewQuestionReport
@@ -40,11 +41,13 @@ queue_app = typer.Typer(help="Inspect visible execution queues.")
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
+supervisor_app = typer.Typer(help="External supervisor report surfaces.")
 app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
+app.add_typer(supervisor_app, name="supervisor")
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,6 +471,24 @@ def research_root(
         return
     report = _run_expected(lambda: _control(ctx).research_report(), json_mode=json_mode)
     render_research_report(report, json_mode=json_mode)
+
+
+@supervisor_app.command("report")
+def supervisor_report_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+    recent_events: Annotated[
+        int,
+        typer.Option("--recent-events", min=0, help="Number of recent events to include."),
+    ] = 10,
+) -> None:
+    """Show one machine-readable workspace report for external supervisors."""
+
+    report = _run_expected(
+        lambda: _control(ctx).supervisor_report(recent_event_limit=recent_events),
+        json_mode=json_mode,
+    )
+    render_supervisor_report(report, json_mode=json_mode)
 
 
 @interview_app.command("list")

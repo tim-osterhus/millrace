@@ -16,6 +16,7 @@ from .control import (
     RunProvenanceReport,
     SelectionExplanationView,
     StatusReport,
+    SupervisorReport,
     WorkspaceHealthReport,
 )
 from .events import EventRecord, render_event_record_line
@@ -501,6 +502,61 @@ def render_status(report: StatusReport, *, json_mode: bool) -> None:
         lines.extend(_asset_inventory_lines(report.assets))
     if report.research is not None:
         lines.extend(_research_report_lines(report.research, include_status=False))
+    typer.echo("\n".join(lines))
+
+
+def render_supervisor_report(report: SupervisorReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Schema version: {report.schema_version}",
+        f"Workspace root: {report.workspace_root.as_posix()}",
+        f"Config path: {report.config_path.as_posix()}",
+        f"Generated at: {report.generated_at.isoformat().replace('+00:00', 'Z')}",
+        f"Health status: {report.health_status.value.upper()}",
+        f"Bootstrap ready: {'yes' if report.bootstrap_ready else 'no'}",
+        f"Execution ready: {'yes' if report.execution_ready else 'no'}",
+        f"Process: {'running' if report.process_running else 'stopped'}",
+        f"Paused: {'yes' if report.paused else 'no'}",
+        f"Execution status: {report.execution_status.value}",
+        f"Research status: {report.research_status.value}",
+        f"Status source: {report.status_source_kind}",
+        f"Research source: {report.research_source_kind}",
+        f"Backlog depth: {report.backlog_depth}",
+        f"Deferred queue size: {report.deferred_queue_size}",
+        f"Active task: {report.active_task.task_id if report.active_task is not None else 'none'}",
+        (
+            f"Next task: {report.next_task.task_id} :: {report.next_task.title}"
+            if report.next_task is not None
+            else "Next task: none"
+        ),
+        f"Current run id: {report.current_run_id or 'none'}",
+        f"Current stage: {report.current_stage or 'none'}",
+        (
+            f"Time in current status seconds: {report.time_in_current_status_seconds:.1f}"
+            if report.time_in_current_status_seconds is not None
+            else "Time in current status seconds: n/a"
+        ),
+        f"Attention reason: {report.attention_reason.value}",
+        f"Attention summary: {report.attention_summary}",
+        (
+            "Allowed actions: "
+            + (", ".join(action.value for action in report.allowed_actions) if report.allowed_actions else "none")
+        ),
+        (
+            "Health summary: "
+            f"total={report.health_summary.total_checks} "
+            f"pass={report.health_summary.passed_checks} "
+            f"warn={report.health_summary.warning_checks} "
+            f"fail={report.health_summary.failed_checks}"
+        ),
+    ]
+    if report.recent_events:
+        lines.append("Recent events:")
+        lines.extend(f"- {render_event_record_line(event)}" for event in report.recent_events)
+    else:
+        lines.append("Recent events: none")
     typer.echo("\n".join(lines))
 
 
