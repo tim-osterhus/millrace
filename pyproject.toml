@@ -21,8 +21,10 @@ millrace = "millrace_engine.cli:main"
 
 [project.optional-dependencies]
 dev = [
+  "mypy>=1.11,<2",
   "pytest>=8,<9",
   "pytest-textual-snapshot>=1,<2",
+  "ruff>=0.11,<1",
 ]
 
 [tool.setuptools.dynamic]
@@ -56,3 +58,17 @@ exclude = ["millrace_engine.legacy*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+exclude = "(^build/|^clean/)"

@@ -1,0 +1,103 @@
+[lint]
+paths = ["tools/repo_guardrails.py"]
+
+[typecheck]
+paths = ["tools/repo_guardrails.py"]
+
+[budgets]
+runtime_limit = 500
+test_limit = 800
+
+[budgets.exceptions]
+runtime = [
+  "millrace_engine/cli.py",
+  "millrace_engine/cli_rendering.py",
+  "millrace_engine/compiler.py",
+  "millrace_engine/compiler_models.py",
+  "millrace_engine/config.py",
+  "millrace_engine/contract_documents.py",
+  "millrace_engine/contracts.py",
+  "millrace_engine/control.py",
+  "millrace_engine/control_models.py",
+  "millrace_engine/control_reports.py",
+  "millrace_engine/diagnostics.py",
+  "millrace_engine/engine.py",
+  "millrace_engine/health.py",
+  "millrace_engine/loop_architecture_stage_contracts.py",
+  "millrace_engine/materialization.py",
+  "millrace_engine/planes/execution.py",
+  "millrace_engine/planes/execution_runtime.py",
+  "millrace_engine/planes/research.py",
+  "millrace_engine/policies/hooks.py",
+  "millrace_engine/policies/sizing.py",
+  "millrace_engine/provenance.py",
+  "millrace_engine/registry.py",
+  "millrace_engine/research/audit.py",
+  "millrace_engine/research/goalspec_stage_support.py",
+  "millrace_engine/research/governance.py",
+  "millrace_engine/research/incidents.py",
+  "millrace_engine/research/interview.py",
+  "millrace_engine/research/specs.py",
+  "millrace_engine/research/taskmaster.py",
+  "millrace_engine/status.py",
+  "millrace_engine/telemetry.py",
+  "millrace_engine/tui/gateway_views.py",
+  "millrace_engine/tui/models.py",
+  "millrace_engine/tui/screens/shell.py",
+  "millrace_engine/tui/widgets/logs_panel.py",
+  "millrace_engine/tui/widgets/queue_panel.py",
+  "millrace_engine/tui/widgets/research_panel.py",
+]
+tests = [
+  "tests/test_cli.py",
+  "tests/test_compiler.py",
+  "tests/test_execution_plane.py",
+  "tests/test_goalspec_state.py",
+  "tests/test_research_dispatcher.py",
+  "tests/test_tui.py",
+]
+
+[[cycles.allowed]]
+modules = [
+  "millrace_engine.queue",
+  "millrace_engine.research.audit",
+  "millrace_engine.research.audit_gate_helpers",
+  "millrace_engine.research.audit_remediation_helpers",
+  "millrace_engine.research.audit_storage_helpers",
+  "millrace_engine.research.dispatcher",
+  "millrace_engine.research.goalspec",
+  "millrace_engine.research.goalspec_helpers",
+  "millrace_engine.research.goalspec_persistence",
+  "millrace_engine.research.goalspec_stage_support",
+  "millrace_engine.research.governance",
+  "millrace_engine.research.incident_intake_helpers",
+  "millrace_engine.research.incident_remediation_helpers",
+  "millrace_engine.research.incident_state_helpers",
+  "millrace_engine.research.incidents",
+  "millrace_engine.research.interview",
+  "millrace_engine.research.queues",
+  "millrace_engine.research.research_progress_watchdog",
+  "millrace_engine.research.research_queue_discovery",
+  "millrace_engine.research.research_state_store",
+  "millrace_engine.research.state",
+  "millrace_engine.research.taskaudit",
+  "millrace_engine.research.taskmaster",
+]
+
+[[cycles.allowed]]
+modules = [
+  "millrace_engine.contract_documents",
+  "millrace_engine.contracts",
+  "millrace_engine.loop_architecture",
+  "millrace_engine.loop_architecture_catalog",
+  "millrace_engine.loop_architecture_common",
+  "millrace_engine.loop_architecture_loop_contracts",
+  "millrace_engine.loop_architecture_profile_contracts",
+  "millrace_engine.loop_architecture_stage_contracts",
+]
+
+[[cycles.allowed]]
+modules = [
+  "millrace_engine.compiler_models",
+  "millrace_engine.compiler_rebinding",
+]
