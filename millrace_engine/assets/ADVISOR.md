@@ -52,6 +52,7 @@ millrace --config millrace.toml stop
 
 ```bash
 millrace --config millrace.toml health --json
+millrace --config millrace.toml supervisor report --json
 millrace --config millrace.toml status --detail --json
 millrace --config millrace.toml queue inspect --json
 millrace --config millrace.toml logs --tail 50 --json
@@ -70,6 +71,17 @@ millrace --config millrace.toml add-task "Example task" --body "# Notes"
 millrace --config millrace.toml add-task "Example task" --spec-id "<spec-id>"
 millrace --config millrace.toml add-idea /absolute/path/to/idea.md
 millrace --config millrace.toml queue reorder <task-id> <task-id> ...
+```
+
+### External Supervisor
+
+```bash
+millrace --config millrace.toml supervisor report --json
+millrace --config millrace.toml supervisor pause --issuer <name> --json
+millrace --config millrace.toml supervisor resume --issuer <name> --json
+millrace --config millrace.toml supervisor stop --issuer <name> --json
+millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
+millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
 ```
 
 ### Configuration
@@ -96,11 +108,14 @@ millrace --config millrace.toml publish commit --push --json
 - Use `init` to scaffold workspaces instead of copying baseline files by hand.
 - Run `health --json` before daemon bring-up, staging, or publish work.
 - Prefer `--json` for machine-readable inspection.
+- If you are acting as an external supervisor, prefer `supervisor report --json` plus `supervisor ... --issuer <name>` instead of raw mailbox files.
 - Prefer `logs` over manual tailing when the structured event stream is what you need.
 - If the daemon is running, expect mutating commands to route through the mailbox instead of applying immediately.
 - Use `research --json`, `research history`, and `run-provenance` instead of shell-loop logs.
 - Explain config changes in terms of both what changes and when the boundary applies.
 - Use the runtime's config boundary vocabulary when it matters: `live_immediate`, `stage_boundary`, `cycle_boundary`, and `startup_only`.
+- Keep scheduling, messaging, wakeups, and multi-workspace registry outside Millrace core.
+- Optional adapters may consume supervisor reports or structured events, but they are edge layers over Millrace-owned truth.
 
 ## Read-Only Files
 
@@ -123,6 +138,7 @@ Common read-only surfaces:
 - `agents/audit_summary.json`
 
 When the CLI does not expose a convenience command for a read-only view, read the relevant file and summarize it instead of editing it.
+Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime files directly during normal supervision.
 
 ## Diagnostic Workflow
 
