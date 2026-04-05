@@ -74,6 +74,203 @@ def _write_queue_file(path: Path, body: str = "# queued\n") -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def _write_json_file(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _goal_queue_checkpoint(
+    *,
+    run_id: str,
+    emitted_at: datetime,
+    queue_path: Path,
+    item_path: Path,
+    owner_token: str | None = None,
+    status: ResearchStatus = ResearchStatus.GOALSPEC_RUNNING,
+    node_id: str = "goal_intake",
+    stage_kind_id: str = "research.goal-intake",
+) -> ResearchCheckpoint:
+    return ResearchCheckpoint(
+        checkpoint_id=run_id,
+        mode=ResearchRuntimeMode.GOALSPEC,
+        status=status,
+        node_id=node_id,
+        stage_kind_id=stage_kind_id,
+        started_at=emitted_at,
+        updated_at=emitted_at,
+        owned_queues=(
+            ResearchQueueOwnership(
+                family=ResearchQueueFamily.GOALSPEC,
+                queue_path=queue_path,
+                item_path=item_path,
+                owner_token=run_id if owner_token is None else owner_token,
+                acquired_at=emitted_at,
+            ),
+        ),
+    )
+
+
+def _goal_active_request_checkpoint(
+    *,
+    run_id: str,
+    emitted_at: datetime,
+    path: Path,
+    status: ResearchStatus = ResearchStatus.GOALSPEC_RUNNING,
+    node_id: str,
+    stage_kind_id: str,
+) -> ResearchCheckpoint:
+    return ResearchCheckpoint(
+        checkpoint_id=run_id,
+        mode=ResearchRuntimeMode.GOALSPEC,
+        status=status,
+        node_id=node_id,
+        stage_kind_id=stage_kind_id,
+        started_at=emitted_at,
+        updated_at=emitted_at,
+        active_request={
+            "event_type": EventType.IDEA_SUBMITTED,
+            "received_at": emitted_at,
+            "payload": {"path": path.as_posix()},
+            "queue_family": ResearchQueueFamily.GOALSPEC,
+        },
+    )
+
+
+def _configure_auto_blocker_runtime(
+    tmp_path: Path,
+    *,
+    title: str,
+    goal: str,
+    acceptance: str,
+) -> tuple[Path, Path, object, object, TaskQueue, object]:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace('mode = "stub"', 'mode = "auto"', 1),
+        encoding="utf-8",
+    )
+    (workspace / "agents" / "tasks.md").write_text(
+        "\n".join(
+            [
+                "# Active Task",
+                "",
+                f"## 2026-03-19 - {title}",
+                "",
+                f"- **Goal:** {goal}",
+                f"- **Acceptance:** {acceptance}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_engine_config(config_path)
+    paths = build_runtime_paths(loaded.config)
+    queue = TaskQueue(paths)
+    active_task = queue.active_task()
+    assert active_task is not None
+    return workspace, config_path, loaded, paths, queue, active_task
+
+
+def _quarantine_blocker_with_handoff(
+    queue: TaskQueue,
+    active_task: object,
+    *,
+    workspace: Path,
+    incident_path: str,
+    diagnostics_name: str,
+    handoff_id: str,
+    parent_run_id: str,
+    frozen_plan_id: str,
+    frozen_plan_hash: str,
+    snapshot_id: str | None = None,
+    reason: str = "Consult exhausted the local path",
+    task_id: str | None = None,
+    task_title: str | None = None,
+    recovery_batch_id: str | None = None,
+    failure_signature: str | None = None,
+) -> tuple[Path, Path, object, ExecutionResearchHandoff]:
+    diagnostics_dir = workspace / "agents" / "diagnostics" / diagnostics_name
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    latch = queue.quarantine(
+        active_task,
+        reason,
+        Path(incident_path),
+        diagnostics_dir=diagnostics_dir,
+    )
+    handoff = ExecutionResearchHandoff(
+        handoff_id=handoff_id,
+        parent_run=CrossPlaneParentRun(
+            plane="execution",
+            run_id=parent_run_id,
+            snapshot_id=snapshot_id or f"snapshot-{parent_run_id}",
+            frozen_plan_id=frozen_plan_id,
+            frozen_plan_hash=frozen_plan_hash,
+            transition_history_path=Path(f"agents/runs/{parent_run_id}/transition_history.jsonl"),
+        ),
+        task_id=active_task.task_id if task_id is None else task_id,
+        task_title=active_task.title if task_title is None else task_title,
+        stage="Consult",
+        reason=reason,
+        incident_path=latch.incident_path,
+        diagnostics_dir=diagnostics_dir,
+        recovery_batch_id=latch.batch_id if recovery_batch_id is None else recovery_batch_id,
+        failure_signature=latch.failure_signature if failure_signature is None else failure_signature,
+        frozen_backlog_cards=latch.frozen_backlog_cards,
+        retained_backlog_cards=latch.retained_backlog_cards,
+    )
+    latch_path = workspace / "agents/.runtime/research_recovery_latch.json"
+    latch_path.write_text(
+        latch.model_copy(update={"handoff": handoff}).model_dump_json(indent=2, exclude_none=True) + "\n",
+        encoding="utf-8",
+    )
+    return diagnostics_dir, latch_path, latch, handoff
+
+
+def _blocker_deferred_request(
+    *,
+    task_id: str,
+    received_at: str,
+    handoff: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "event_type": EventType.NEEDS_RESEARCH.value,
+        "received_at": received_at,
+        "payload": {"task_id": task_id},
+        "queue_family": ResearchQueueFamily.BLOCKER.value,
+    }
+    if handoff is not None:
+        payload["handoff"] = handoff
+    return payload
+
+
+def _write_research_runtime_state(
+    workspace: Path,
+    *,
+    deferred_requests: list[dict[str, object]],
+) -> None:
+    _write_json_file(
+        workspace / "agents/research_state.json",
+        {
+            "schema_version": "1.0",
+            "updated_at": "2026-03-19T12:00:00Z",
+            "current_mode": "AUTO",
+            "last_mode": "STUB",
+            "mode_reason": "research-plane-initialized",
+            "cycle_count": 0,
+            "transition_count": 0,
+            "deferred_requests": deferred_requests,
+            "queue_snapshot": {
+                "goalspec_ready": False,
+                "incident_ready": False,
+                "blocker_ready": True,
+                "audit_ready": False,
+                "selected_family": None,
+                "ownerships": [],
+                "last_scanned_at": "2026-03-19T12:00:00Z",
+            },
+        },
+    )
+
+
 def _write_incident_file(
     path: Path,
     *,
@@ -1355,47 +1552,15 @@ def test_execute_objective_profile_sync_pins_frozen_family_policy_fields(tmp_pat
         "Preserve frozen-family policy during objective refresh.\n"
     )
 
-    def _queue_checkpoint(path: Path) -> ResearchCheckpoint:
-        return ResearchCheckpoint(
-            checkpoint_id=run_id,
-            mode=ResearchRuntimeMode.GOALSPEC,
-            status=ResearchStatus.GOALSPEC_RUNNING,
-            node_id="goal_intake",
-            stage_kind_id="research.goal-intake",
-            started_at=emitted_at,
-            updated_at=emitted_at,
-            owned_queues=(
-                ResearchQueueOwnership(
-                    family=ResearchQueueFamily.GOALSPEC,
-                    queue_path=paths.ideas_raw_dir,
-                    item_path=path,
-                    owner_token=run_id,
-                    acquired_at=emitted_at,
-                ),
-            ),
-        )
-
-    def _active_request_checkpoint(path: Path) -> ResearchCheckpoint:
-        return ResearchCheckpoint(
-            checkpoint_id=run_id,
-            mode=ResearchRuntimeMode.GOALSPEC,
-            status=ResearchStatus.GOALSPEC_RUNNING,
-            node_id="objective_profile_sync",
-            stage_kind_id="research.objective-profile-sync",
-            started_at=emitted_at,
-            updated_at=emitted_at,
-            active_request={
-                "event_type": EventType.IDEA_SUBMITTED,
-                "received_at": emitted_at,
-                "payload": {"path": path.as_posix()},
-                "queue_family": ResearchQueueFamily.GOALSPEC,
-            },
-        )
-
     _write_queue_file(raw_goal_path, goal_text)
     execute_goal_intake(
         paths,
-        _queue_checkpoint(raw_goal_path),
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
         run_id=run_id,
         emitted_at=emitted_at,
     )
@@ -1447,7 +1612,13 @@ def test_execute_objective_profile_sync_pins_frozen_family_policy_fields(tmp_pat
 
     result = execute_objective_profile_sync(
         paths,
-        _active_request_checkpoint(staged_path),
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
         run_id=run_id,
         emitted_at=emitted_at,
     )
@@ -1486,66 +1657,53 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     run_id = "goalspec-idempotent-201"
     staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-201__preserve-goalspec-idempotency.md"
 
-    def _queue_checkpoint(path: Path) -> ResearchCheckpoint:
-        return ResearchCheckpoint(
-            checkpoint_id=run_id,
-            mode=ResearchRuntimeMode.GOALSPEC,
-            status=ResearchStatus.GOALSPEC_RUNNING,
-            node_id="goal_intake",
-            stage_kind_id="research.goal-intake",
-            started_at=emitted_at,
-            updated_at=emitted_at,
-            owned_queues=(
-                ResearchQueueOwnership(
-                    family=ResearchQueueFamily.GOALSPEC,
-                    queue_path=paths.ideas_raw_dir,
-                    item_path=path,
-                    owner_token=run_id,
-                    acquired_at=emitted_at,
-                ),
-            ),
-        )
-
-    def _active_request_checkpoint(path: Path) -> ResearchCheckpoint:
-        return ResearchCheckpoint(
-            checkpoint_id=run_id,
-            mode=ResearchRuntimeMode.GOALSPEC,
-            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
-            node_id="spec_synthesis",
-            stage_kind_id="research.spec-synthesis",
-            started_at=emitted_at,
-            updated_at=emitted_at,
-            active_request={
-                "event_type": EventType.IDEA_SUBMITTED,
-                "received_at": emitted_at,
-                "payload": {"path": path.as_posix()},
-                "queue_family": ResearchQueueFamily.GOALSPEC,
-            },
-        )
-
     _write_queue_file(raw_goal_path, raw_goal_text)
     execute_goal_intake(
         paths,
-        _queue_checkpoint(raw_goal_path),
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
         run_id=run_id,
         emitted_at=emitted_at,
     )
     execute_objective_profile_sync(
         paths,
-        _active_request_checkpoint(staged_path),
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
         run_id=run_id,
         emitted_at=emitted_at,
     )
     completion_manifest = execute_completion_manifest_draft(
         paths,
-        _active_request_checkpoint(staged_path),
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
         run_id=run_id,
         emitted_at=emitted_at,
     ).draft_state
 
     first_result = execute_spec_synthesis(
         paths,
-        _active_request_checkpoint(staged_path),
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
         run_id=run_id,
         completion_manifest=completion_manifest,
         emitted_at=emitted_at,
@@ -1566,7 +1724,14 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
 
     second_result = execute_spec_synthesis(
         paths,
-        _active_request_checkpoint(staged_path),
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
         run_id=run_id,
         completion_manifest=completion_manifest,
         emitted_at=_dt("2026-03-21T12:30:00Z"),
@@ -1593,53 +1758,28 @@ def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Pat
     run_id = "goalspec-interview-auto-42"
     emitted_at = _dt("2026-04-04T12:00:00Z")
 
-    def _queue_checkpoint(path: Path) -> ResearchCheckpoint:
-        return ResearchCheckpoint(
-            checkpoint_id=run_id,
-            mode=ResearchRuntimeMode.GOALSPEC,
-            status=ResearchStatus.GOALSPEC_RUNNING,
-            node_id="goal_intake",
-            stage_kind_id="research.goal-intake",
-            started_at=emitted_at,
-            updated_at=emitted_at,
-            owned_queues=(
-                ResearchQueueOwnership(
-                    family=ResearchQueueFamily.GOALSPEC,
-                    queue_path=path.parent,
-                    item_path=path,
-                    owner_token=run_id,
-                    acquired_at=emitted_at,
-                ),
-            ),
-        )
-
-    def _active_request_checkpoint(path: Path, *, node_id: str, stage_kind_id: str) -> ResearchCheckpoint:
-        return ResearchCheckpoint(
-            checkpoint_id=run_id,
-            mode=ResearchRuntimeMode.GOALSPEC,
-            status=ResearchStatus.GOALSPEC_RUNNING,
-            node_id=node_id,
-            stage_kind_id=stage_kind_id,
-            started_at=emitted_at,
-            updated_at=emitted_at,
-            active_request={
-                "event_type": EventType.IDEA_SUBMITTED,
-                "received_at": emitted_at,
-                "payload": {"path": path.as_posix()},
-                "queue_family": ResearchQueueFamily.GOALSPEC,
-            },
-        )
-
     _write_queue_file(
         raw_goal_path,
         "---\nidea_id: IDEA-42\ntitle: Auto Answerable Interview\n---\n\n# Auto Answerable Interview\n\nKeep upstream traceability intact.\n",
     )
-    goal_intake = execute_goal_intake(paths, _queue_checkpoint(raw_goal_path), run_id=run_id, emitted_at=emitted_at)
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
     staged_path = workspace / goal_intake.research_brief_path
     objective = execute_objective_profile_sync(
         paths,
-        _active_request_checkpoint(
-            staged_path,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
             node_id="objective_profile_sync",
             stage_kind_id="research.objective-profile-sync",
         ),
@@ -1648,8 +1788,10 @@ def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Pat
     )
     completion_manifest = execute_completion_manifest_draft(
         paths,
-        _active_request_checkpoint(
-            staged_path,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
             node_id="spec_synthesis",
             stage_kind_id="research.spec-synthesis",
         ),
@@ -1658,8 +1800,10 @@ def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Pat
     )
     synthesis = execute_spec_synthesis(
         paths,
-        _active_request_checkpoint(
-            staged_path,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
             node_id="spec_synthesis",
             stage_kind_id="research.spec-synthesis",
         ),
@@ -1670,7 +1814,12 @@ def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Pat
     queue_spec_path = workspace / synthesis.queue_spec_path
     interview = execute_spec_interview(
         paths,
-        _queue_checkpoint(queue_spec_path).model_copy(
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=queue_spec_path.parent,
+            item_path=queue_spec_path,
+        ).model_copy(
             update={
                 "node_id": "spec_interview",
                 "stage_kind_id": "research.spec-interview",
@@ -2333,65 +2482,24 @@ def test_sync_runtime_blocks_completion_when_tasks_pending_and_open_gaps_remain(
 
 
 def test_research_plane_blocker_dispatch_restores_parent_handoff_from_recovery_latch(tmp_path: Path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace('mode = "stub"', 'mode = "auto"', 1),
-        encoding="utf-8",
+    workspace, config_path, loaded, paths, queue, active_task = _configure_auto_blocker_runtime(
+        tmp_path,
+        title="Restore parent handoff",
+        goal="Exercise blocker dispatch from the recovery latch.",
+        acceptance="Research restores the execution parent link without breadcrumbs.",
     )
-    (workspace / "agents" / "tasks.md").write_text(
-        "\n".join(
-            [
-                "# Active Task",
-                "",
-                "## 2026-03-19 - Restore parent handoff",
-                "",
-                "- **Goal:** Exercise blocker dispatch from the recovery latch.",
-                "- **Acceptance:** Research restores the execution parent link without breadcrumbs.",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loaded = load_engine_config(config_path)
-    paths = build_runtime_paths(loaded.config)
-    queue = TaskQueue(paths)
-    active_task = queue.active_task()
-    assert active_task is not None
     initial_breadcrumb_count = len([path for path in paths.deferred_dir.iterdir() if path.is_file()])
 
-    diagnostics_dir = workspace / "agents" / "diagnostics" / "diag-parent-handoff"
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    latch = queue.quarantine(
+    _, latch_path, _, handoff = _quarantine_blocker_with_handoff(
+        queue,
         active_task,
-        "Consult exhausted the local path",
-        Path("agents/ideas/incidents/incoming/INC-PARENT-001.md"),
-        diagnostics_dir=diagnostics_dir,
-    )
-    handoff = ExecutionResearchHandoff(
+        workspace=workspace,
+        incident_path="agents/ideas/incidents/incoming/INC-PARENT-001.md",
+        diagnostics_name="diag-parent-handoff",
         handoff_id="execution-run-123:needs_research:20260319T120000Z",
-        parent_run=CrossPlaneParentRun(
-            plane="execution",
-            run_id="execution-run-123",
-            snapshot_id="snapshot-execution-run-123",
-            frozen_plan_id="frozen-plan:abc123",
-            frozen_plan_hash="abc123",
-            transition_history_path=Path("agents/runs/execution-run-123/transition_history.jsonl"),
-        ),
-        task_id=active_task.task_id,
-        task_title=active_task.title,
-        stage="Consult",
-        reason="Consult exhausted the local path",
-        incident_path=latch.incident_path,
-        diagnostics_dir=diagnostics_dir,
-        recovery_batch_id=latch.batch_id,
-        failure_signature=latch.failure_signature,
-        frozen_backlog_cards=latch.frozen_backlog_cards,
-        retained_backlog_cards=latch.retained_backlog_cards,
-    )
-    latch_path = workspace / "agents/.runtime/research_recovery_latch.json"
-    latch_path.write_text(
-        latch.model_copy(update={"handoff": handoff}).model_dump_json(indent=2, exclude_none=True) + "\n",
-        encoding="utf-8",
+        parent_run_id="execution-run-123",
+        frozen_plan_id="frozen-plan:abc123",
+        frozen_plan_hash="abc123",
     )
 
     plane = ResearchPlane(loaded.config, paths)
@@ -2418,236 +2526,106 @@ def test_research_plane_blocker_dispatch_restores_parent_handoff_from_recovery_l
     assert report.deferred_breadcrumb_count == initial_breadcrumb_count
 
 
-def test_research_plane_blocker_dispatch_prefers_deferred_request_matching_latch_handoff(
-    tmp_path: Path,
-) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace('mode = "stub"', 'mode = "auto"', 1),
-        encoding="utf-8",
-    )
-    (workspace / "agents" / "tasks.md").write_text(
-        "\n".join(
-            [
-                "# Active Task",
-                "",
-                "## 2026-03-19 - Match blocker request",
-                "",
-                "- **Goal:** Ensure blocker dispatch chooses the request that matches the latch handoff.",
-                "- **Acceptance:** Active blocker request payload matches the execution handoff task.",
-                "",
-            ]
+@pytest.mark.parametrize(
+    ("title", "goal", "acceptance", "incident_path", "diagnostics_name", "handoff_id_template", "parent_run_id",
+     "frozen_plan_id", "frozen_plan_hash", "deferred_requests_factory", "remaining_task_id",
+     "remaining_recovery_batch_id"),
+    [
+        (
+            "Match blocker request",
+            "Ensure blocker dispatch chooses the request that matches the latch handoff.",
+            "Active blocker request payload matches the execution handoff task.",
+            "agents/ideas/incidents/incoming/INC-MATCH-001.md",
+            "diag-matching-blocker",
+            "execution-run-456:needs_research:{batch_id}",
+            "execution-run-456",
+            "frozen-plan:def456",
+            "def456",
+            lambda task_id, task_title: [
+                _blocker_deferred_request(task_id="2026-03-19__unrelated-blocker", received_at="2026-03-19T12:00:00Z"),
+                _blocker_deferred_request(task_id=task_id, received_at="2026-03-19T12:01:00Z"),
+            ],
+            "2026-03-19__unrelated-blocker",
+            None,
         ),
-        encoding="utf-8",
-    )
-    loaded = load_engine_config(config_path)
-    paths = build_runtime_paths(loaded.config)
-    queue = TaskQueue(paths)
-    active_task = queue.active_task()
-    assert active_task is not None
-
-    diagnostics_dir = workspace / "agents" / "diagnostics" / "diag-matching-blocker"
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    latch = queue.quarantine(
-        active_task,
-        "Consult exhausted the local path",
-        Path("agents/ideas/incidents/incoming/INC-MATCH-001.md"),
-        diagnostics_dir=diagnostics_dir,
-    )
-    handoff = ExecutionResearchHandoff(
-        handoff_id=f"execution-run-456:needs_research:{latch.batch_id}",
-        parent_run=CrossPlaneParentRun(
-            plane="execution",
-            run_id="execution-run-456",
-            snapshot_id="snapshot-execution-run-456",
-            frozen_plan_id="frozen-plan:def456",
-            frozen_plan_hash="def456",
-            transition_history_path=Path("agents/runs/execution-run-456/transition_history.jsonl"),
-        ),
-        task_id=active_task.task_id,
-        task_title=active_task.title,
-        stage="Consult",
-        reason="Consult exhausted the local path",
-        incident_path=latch.incident_path,
-        diagnostics_dir=diagnostics_dir,
-        recovery_batch_id=latch.batch_id,
-        failure_signature=latch.failure_signature,
-        frozen_backlog_cards=latch.frozen_backlog_cards,
-        retained_backlog_cards=latch.retained_backlog_cards,
-    )
-    latch_path = workspace / "agents/.runtime/research_recovery_latch.json"
-    latch_path.write_text(
-        latch.model_copy(update={"handoff": handoff}).model_dump_json(indent=2, exclude_none=True) + "\n",
-        encoding="utf-8",
-    )
-    state_path = workspace / "agents/research_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "1.0",
-                "updated_at": "2026-03-19T12:00:00Z",
-                "current_mode": "AUTO",
-                "last_mode": "STUB",
-                "mode_reason": "research-plane-initialized",
-                "cycle_count": 0,
-                "transition_count": 0,
-                "deferred_requests": [
-                    {
-                        "event_type": EventType.NEEDS_RESEARCH.value,
-                        "received_at": "2026-03-19T12:00:00Z",
-                        "payload": {"task_id": "2026-03-19__unrelated-blocker"},
-                        "queue_family": ResearchQueueFamily.BLOCKER.value,
-                    },
-                    {
-                        "event_type": EventType.NEEDS_RESEARCH.value,
-                        "received_at": "2026-03-19T12:01:00Z",
-                        "payload": {"task_id": active_task.task_id},
-                        "queue_family": ResearchQueueFamily.BLOCKER.value,
-                    },
-                ],
-                "queue_snapshot": {
-                    "goalspec_ready": False,
-                    "incident_ready": False,
-                    "blocker_ready": True,
-                    "audit_ready": False,
-                    "selected_family": None,
-                    "ownerships": [],
-                    "last_scanned_at": "2026-03-19T12:00:00Z",
-                },
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    plane = ResearchPlane(loaded.config, paths)
-    dispatch = plane.dispatch_ready_work(run_id="research-blocker-run", resolve_assets=False)
-
-    assert dispatch is not None
-    snapshot = plane.snapshot_state()
-    assert snapshot.checkpoint is not None
-    assert snapshot.checkpoint.active_request is not None
-    assert snapshot.checkpoint.active_request.payload["task_id"] == active_task.task_id
-    assert snapshot.checkpoint.active_request.handoff == handoff
-    assert snapshot.checkpoint.parent_handoff == handoff
-    assert len(snapshot.deferred_requests) == 1
-    assert snapshot.deferred_requests[0].payload["task_id"] == "2026-03-19__unrelated-blocker"
-
-
-def test_research_plane_blocker_dispatch_synthesizes_latch_request_when_only_batch_mismatched_request_exists(
-    tmp_path: Path,
-) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace('mode = "stub"', 'mode = "auto"', 1),
-        encoding="utf-8",
-    )
-    (workspace / "agents" / "tasks.md").write_text(
-        "\n".join(
-            [
-                "# Active Task",
-                "",
-                "## 2026-03-19 - Preserve unrelated blocker request",
-                "",
-                "- **Goal:** Ensure latch restoration does not hijack a blocker request from another batch.",
-                "- **Acceptance:** Research synthesizes the active request from the latch and leaves the queued request intact.",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loaded = load_engine_config(config_path)
-    paths = build_runtime_paths(loaded.config)
-    queue = TaskQueue(paths)
-    active_task = queue.active_task()
-    assert active_task is not None
-
-    diagnostics_dir = workspace / "agents" / "diagnostics" / "diag-batch-mismatch"
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    latch = queue.quarantine(
-        active_task,
-        "Consult exhausted the local path",
-        Path("agents/ideas/incidents/incoming/INC-BATCH-MISMATCH-001.md"),
-        diagnostics_dir=diagnostics_dir,
-    )
-    handoff = ExecutionResearchHandoff(
-        handoff_id=f"execution-run-batch:needs_research:{latch.batch_id}",
-        parent_run=CrossPlaneParentRun(
-            plane="execution",
-            run_id="execution-run-batch",
-            snapshot_id="snapshot-execution-run-batch",
-            frozen_plan_id="frozen-plan:batch123",
-            frozen_plan_hash="batch123",
-            transition_history_path=Path("agents/runs/execution-run-batch/transition_history.jsonl"),
-        ),
-        task_id=active_task.task_id,
-        task_title=active_task.title,
-        stage="Consult",
-        reason="Consult exhausted the local path",
-        incident_path=latch.incident_path,
-        diagnostics_dir=diagnostics_dir,
-        recovery_batch_id=latch.batch_id,
-        failure_signature=latch.failure_signature,
-        frozen_backlog_cards=latch.frozen_backlog_cards,
-        retained_backlog_cards=latch.retained_backlog_cards,
-    )
-    latch_path = workspace / "agents/.runtime/research_recovery_latch.json"
-    latch_path.write_text(
-        latch.model_copy(update={"handoff": handoff}).model_dump_json(indent=2, exclude_none=True) + "\n",
-        encoding="utf-8",
-    )
-    state_path = workspace / "agents/research_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "1.0",
-                "updated_at": "2026-03-19T12:00:00Z",
-                "current_mode": "AUTO",
-                "last_mode": "STUB",
-                "mode_reason": "research-plane-initialized",
-                "cycle_count": 0,
-                "transition_count": 0,
-                "deferred_requests": [
-                    {
-                        "event_type": EventType.NEEDS_RESEARCH.value,
-                        "received_at": "2026-03-19T12:00:00Z",
-                        "payload": {"task_id": active_task.task_id},
-                        "queue_family": ResearchQueueFamily.BLOCKER.value,
-                        "handoff": {
-                            "handoff_id": "execution-run-other:needs_research:other-batch",
-                            "parent_run": {
-                                "plane": "execution",
-                                "run_id": "execution-run-other",
-                            },
-                            "task_id": active_task.task_id,
-                            "task_title": active_task.title,
-                            "stage": "Consult",
-                            "reason": "Earlier blocker batch",
-                            "status": ExecutionStatus.NEEDS_RESEARCH.value,
-                            "recovery_batch_id": "other-batch",
-                            "failure_signature": "other-signature",
-                            "frozen_backlog_cards": 1,
-                            "retained_backlog_cards": 0,
+        (
+            "Preserve unrelated blocker request",
+            "Ensure latch restoration does not hijack a blocker request from another batch.",
+            "Research synthesizes the active request from the latch and leaves the queued request intact.",
+            "agents/ideas/incidents/incoming/INC-BATCH-MISMATCH-001.md",
+            "diag-batch-mismatch",
+            "execution-run-batch:needs_research:{batch_id}",
+            "execution-run-batch",
+            "frozen-plan:batch123",
+            "batch123",
+            lambda task_id, task_title: [
+                _blocker_deferred_request(
+                    task_id=task_id,
+                    received_at="2026-03-19T12:00:00Z",
+                    handoff={
+                        "handoff_id": "execution-run-other:needs_research:other-batch",
+                        "parent_run": {
+                            "plane": "execution",
+                            "run_id": "execution-run-other",
                         },
+                        "task_id": task_id,
+                        "task_title": task_title,
+                        "stage": "Consult",
+                        "reason": "Earlier blocker batch",
+                        "status": ExecutionStatus.NEEDS_RESEARCH.value,
+                        "recovery_batch_id": "other-batch",
+                        "failure_signature": "other-signature",
+                        "frozen_backlog_cards": 1,
+                        "retained_backlog_cards": 0,
                     },
-                ],
-                "queue_snapshot": {
-                    "goalspec_ready": False,
-                    "incident_ready": False,
-                    "blocker_ready": True,
-                    "audit_ready": False,
-                    "selected_family": None,
-                    "ownerships": [],
-                    "last_scanned_at": "2026-03-19T12:00:00Z",
-                },
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
+                )
+            ],
+            "__ACTIVE_TASK__",
+            "other-batch",
+        ),
+    ],
+    ids=["matching-latch-request", "batch-mismatched-request"],
+)
+def test_research_plane_blocker_dispatch_reconciles_deferred_requests_against_latch_handoff(
+    tmp_path: Path,
+    title: str,
+    goal: str,
+    acceptance: str,
+    incident_path: str,
+    diagnostics_name: str,
+    handoff_id_template: str,
+    parent_run_id: str,
+    frozen_plan_id: str,
+    frozen_plan_hash: str,
+    deferred_requests_factory,
+    remaining_task_id: str,
+    remaining_recovery_batch_id: str | None,
+) -> None:
+    workspace, _, loaded, paths, queue, active_task = _configure_auto_blocker_runtime(
+        tmp_path,
+        title=title,
+        goal=goal,
+        acceptance=acceptance,
+    )
+    _, _, latch, handoff = _quarantine_blocker_with_handoff(
+        queue,
+        active_task,
+        workspace=workspace,
+        incident_path=incident_path,
+        diagnostics_name=diagnostics_name,
+        handoff_id=handoff_id_template.format(batch_id="{batch_id}"),
+        parent_run_id=parent_run_id,
+        frozen_plan_id=frozen_plan_id,
+        frozen_plan_hash=frozen_plan_hash,
+    )
+    handoff = handoff.model_copy(update={"handoff_id": handoff_id_template.format(batch_id=latch.batch_id)})
+    (workspace / "agents/.runtime/research_recovery_latch.json").write_text(
+        latch.model_copy(update={"handoff": handoff}).model_dump_json(indent=2, exclude_none=True) + "\n",
         encoding="utf-8",
+    )
+    _write_research_runtime_state(
+        workspace,
+        deferred_requests=deferred_requests_factory(active_task.task_id, active_task.title),
     )
 
     plane = ResearchPlane(loaded.config, paths)
@@ -2657,72 +2635,43 @@ def test_research_plane_blocker_dispatch_synthesizes_latch_request_when_only_bat
     snapshot = plane.snapshot_state()
     assert snapshot.checkpoint is not None
     assert snapshot.checkpoint.active_request is not None
+    assert snapshot.checkpoint.active_request.payload["task_id"] == active_task.task_id
     assert snapshot.checkpoint.active_request.handoff == handoff
     assert snapshot.checkpoint.parent_handoff == handoff
-    assert snapshot.checkpoint.active_request.payload["task_id"] == active_task.task_id
     assert len(snapshot.deferred_requests) == 1
-    assert snapshot.deferred_requests[0].handoff is not None
-    assert snapshot.deferred_requests[0].handoff.recovery_batch_id == "other-batch"
+    expected_remaining_task_id = active_task.task_id if remaining_task_id == "__ACTIVE_TASK__" else remaining_task_id
+    assert snapshot.deferred_requests[0].payload["task_id"] == expected_remaining_task_id
+    if remaining_recovery_batch_id is None:
+        assert snapshot.deferred_requests[0].handoff is None
+    else:
+        assert snapshot.deferred_requests[0].handoff is not None
+        assert snapshot.deferred_requests[0].handoff.recovery_batch_id == remaining_recovery_batch_id
 
 
 def test_research_plane_resume_checkpoint_restores_parent_handoff_from_recovery_latch(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace('mode = "stub"', 'mode = "auto"', 1),
-        encoding="utf-8",
+    workspace, _, loaded, paths, queue, active_task = _configure_auto_blocker_runtime(
+        tmp_path,
+        title="Resume blocker handoff",
+        goal="Restore parent linkage when a blocker checkpoint resumes after restart.",
+        acceptance="Missing handoff fields are rehydrated from the recovery latch.",
     )
-    (workspace / "agents" / "tasks.md").write_text(
-        "\n".join(
-            [
-                "# Active Task",
-                "",
-                "## 2026-03-19 - Resume blocker handoff",
-                "",
-                "- **Goal:** Restore parent linkage when a blocker checkpoint resumes after restart.",
-                "- **Acceptance:** Missing handoff fields are rehydrated from the recovery latch.",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loaded = load_engine_config(config_path)
-    paths = build_runtime_paths(loaded.config)
-    queue = TaskQueue(paths)
-    active_task = queue.active_task()
-    assert active_task is not None
-
-    diagnostics_dir = workspace / "agents" / "diagnostics" / "diag-resume-blocker"
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    latch = queue.quarantine(
+    _, _, _, handoff = _quarantine_blocker_with_handoff(
+        queue,
         active_task,
-        "Consult exhausted the local path",
-        Path("agents/ideas/incidents/incoming/INC-RESUME-001.md"),
-        diagnostics_dir=diagnostics_dir,
-    )
-    handoff = ExecutionResearchHandoff(
-        handoff_id=f"execution-run-789:needs_research:{latch.batch_id}",
-        parent_run=CrossPlaneParentRun(
-            plane="execution",
-            run_id="execution-run-789",
-            snapshot_id="snapshot-execution-run-789",
-            frozen_plan_id="frozen-plan:ghi789",
-            frozen_plan_hash="ghi789",
-            transition_history_path=Path("agents/runs/execution-run-789/transition_history.jsonl"),
-        ),
-        task_id=active_task.task_id,
-        task_title=active_task.title,
-        stage="Consult",
-        reason="Consult exhausted the local path",
-        incident_path=latch.incident_path,
-        diagnostics_dir=diagnostics_dir,
-        recovery_batch_id=latch.batch_id,
-        failure_signature=latch.failure_signature,
-        frozen_backlog_cards=latch.frozen_backlog_cards,
-        retained_backlog_cards=latch.retained_backlog_cards,
+        workspace=workspace,
+        incident_path="agents/ideas/incidents/incoming/INC-RESUME-001.md",
+        diagnostics_name="diag-resume-blocker",
+        handoff_id="execution-run-789:needs_research:placeholder-batch",
+        parent_run_id="execution-run-789",
+        frozen_plan_id="frozen-plan:ghi789",
+        frozen_plan_hash="ghi789",
     )
     latch_path = workspace / "agents/.runtime/research_recovery_latch.json"
+    latch = load_research_recovery_latch(latch_path)
+    assert latch is not None
+    handoff = handoff.model_copy(update={"handoff_id": f"execution-run-789:needs_research:{latch.batch_id}"})
     latch_path.write_text(
         latch.model_copy(update={"handoff": handoff}).model_dump_json(indent=2, exclude_none=True) + "\n",
         encoding="utf-8",
@@ -2758,59 +2707,25 @@ def test_research_plane_resume_checkpoint_restores_parent_handoff_from_recovery_
 def test_research_plane_resume_checkpoint_preserves_existing_parent_handoff_when_latch_mismatches(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace('mode = "stub"', 'mode = "auto"', 1),
-        encoding="utf-8",
+    workspace, _, loaded, paths, queue, active_task = _configure_auto_blocker_runtime(
+        tmp_path,
+        title="Preserve resumed parent handoff",
+        goal="Prevent restart-time latch drift from overwriting a checkpoint's existing parent handoff.",
+        acceptance="Resume keeps the checkpoint's original execution parent linkage when the latch points at another batch.",
     )
-    (workspace / "agents" / "tasks.md").write_text(
-        "\n".join(
-            [
-                "# Active Task",
-                "",
-                "## 2026-03-19 - Preserve resumed parent handoff",
-                "",
-                "- **Goal:** Prevent restart-time latch drift from overwriting a checkpoint's existing parent handoff.",
-                "- **Acceptance:** Resume keeps the checkpoint's original execution parent linkage when the latch points at another batch.",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    loaded = load_engine_config(config_path)
-    paths = build_runtime_paths(loaded.config)
-    queue = TaskQueue(paths)
-    active_task = queue.active_task()
-    assert active_task is not None
-
-    diagnostics_dir = workspace / "agents" / "diagnostics" / "diag-resume-preserve"
-    diagnostics_dir.mkdir(parents=True, exist_ok=True)
-    latch = queue.quarantine(
+    diagnostics_dir, _, latch, preserved_handoff = _quarantine_blocker_with_handoff(
+        queue,
         active_task,
-        "Consult exhausted the local path",
-        Path("agents/ideas/incidents/incoming/INC-RESUME-PRESERVE-001.md"),
-        diagnostics_dir=diagnostics_dir,
+        workspace=workspace,
+        incident_path="agents/ideas/incidents/incoming/INC-RESUME-PRESERVE-001.md",
+        diagnostics_name="diag-resume-preserve",
+        handoff_id="execution-run-preserved:needs_research:placeholder-batch",
+        parent_run_id="execution-run-preserved",
+        frozen_plan_id="frozen-plan:preserved123",
+        frozen_plan_hash="preserved123",
     )
-    preserved_handoff = ExecutionResearchHandoff(
-        handoff_id=f"execution-run-preserved:needs_research:{latch.batch_id}",
-        parent_run=CrossPlaneParentRun(
-            plane="execution",
-            run_id="execution-run-preserved",
-            snapshot_id="snapshot-execution-run-preserved",
-            frozen_plan_id="frozen-plan:preserved123",
-            frozen_plan_hash="preserved123",
-            transition_history_path=Path("agents/runs/execution-run-preserved/transition_history.jsonl"),
-        ),
-        task_id=active_task.task_id,
-        task_title=active_task.title,
-        stage="Consult",
-        reason="Consult exhausted the local path",
-        incident_path=latch.incident_path,
-        diagnostics_dir=diagnostics_dir,
-        recovery_batch_id=latch.batch_id,
-        failure_signature=latch.failure_signature,
-        frozen_backlog_cards=latch.frozen_backlog_cards,
-        retained_backlog_cards=latch.retained_backlog_cards,
+    preserved_handoff = preserved_handoff.model_copy(
+        update={"handoff_id": f"execution-run-preserved:needs_research:{latch.batch_id}"}
     )
     mismatched_handoff = ExecutionResearchHandoff(
         handoff_id="execution-run-mismatch:needs_research:other-batch",
