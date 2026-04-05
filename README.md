@@ -263,6 +263,30 @@ millrace --config millrace.toml stop
 
 When the daemon is running, mutating commands route through the mailbox so one owner process stays in control of live state.
 
+## External Supervisor Workflow
+
+Millrace supports external supervision one workspace at a time through a CLI-first, JSON-first contract. A harness such as OpenClaw should start with:
+
+```bash
+millrace --config millrace.toml supervisor report --json
+```
+
+That report is the supported first-pass decision surface for one workspace. It collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons into one payload without requiring raw runtime-file synthesis.
+
+If the harness decides action is needed, use the supported supervisor-safe CLI path with explicit issuer attribution:
+
+```bash
+millrace --config millrace.toml supervisor pause --issuer <name> --json
+millrace --config millrace.toml supervisor resume --issuer <name> --json
+millrace --config millrace.toml supervisor stop --issuer <name> --json
+millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
+millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
+```
+
+Scheduling, messaging, wakeups, and multi-workspace registry stay outside Millrace core. Millrace owns one-workspace runtime truth, event history, and safe action semantics; the external harness owns cadence, portfolio ordering, and outbound communication.
+
+Optional adapters may translate `supervisor report`, research/status surfaces, or structured events into wakeups, webhooks, or inbox items, but they remain edge layers over Millrace-owned truth. Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime files directly during normal supervision.
+
 ## Publish And Staging
 
 Millrace includes a staging and publish surface for preparing a release worktree:

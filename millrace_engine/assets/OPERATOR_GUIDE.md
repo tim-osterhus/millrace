@@ -40,9 +40,11 @@ Use the CLI commands:
 - `health`
 - `doctor`
 - `status`
+- `supervisor`
 - `queue`
 - `add-task`
 - `add-idea`
+- `interview`
 - `start`
 - `pause`
 - `resume`
@@ -235,6 +237,26 @@ millrace --config millrace.toml stop
 When the daemon is running, mutating commands become mailbox commands so the daemon stays the only live owner of runtime state.
 
 The TUI follows the same rule. It does not mutate live daemon state directly.
+
+## External Supervisor Workflow
+
+Use this pattern when another harness is supervising a Millrace workspace. The supported flow is:
+
+1. Poll one workspace through `millrace --config millrace.toml supervisor report --json`.
+2. Decide whether to wait, message, escalate, or act based on the report's machine-readable attention state.
+3. If action is needed, use the supported supervisor-safe CLI surface with issuer attribution:
+
+```bash
+millrace --config millrace.toml supervisor pause --issuer <name> --json
+millrace --config millrace.toml supervisor resume --issuer <name> --json
+millrace --config millrace.toml supervisor stop --issuer <name> --json
+millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
+millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
+```
+
+Scheduling, messaging, wakeups, and multi-workspace registry remain external-harness concerns. Millrace does not become the portfolio scheduler.
+
+Optional adapters may translate supervisor reports or structured events into local wakeups, webhooks, or inbox delivery, but they stay at the edge. Mailbox files remain runtime-owned. Do not write `agents/.runtime/commands/incoming/` directly during normal supervision.
 
 ### 6. Inspect Outcomes
 
