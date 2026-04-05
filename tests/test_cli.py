@@ -69,6 +69,41 @@ def run_cli_subprocess(cwd: Path, *args: str) -> subprocess.CompletedProcess[str
     )
 
 
+def assert_cli_subprocess_failure(
+    result: subprocess.CompletedProcess[str],
+    *,
+    stderr_prefix: str | None = None,
+    json_error: str | None = None,
+    json_error_prefix: str | None = None,
+) -> dict[str, object] | None:
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
+    if json_error is not None:
+        payload = json.loads(result.stderr)
+        assert payload == {"error": json_error}
+        return payload
+    if json_error_prefix is not None:
+        payload = json.loads(result.stderr)
+        assert payload["error"].startswith(json_error_prefix)
+        return payload
+    assert stderr_prefix is not None
+    assert stderr_prefix in result.stderr
+    return None
+
+
+def invoke_cli_report_text(config_path: Path, *args: str) -> str:
+    result = RUNNER.invoke(app, ["--config", str(config_path), *args])
+    assert result.exit_code == 0
+    return result.stdout
+
+
+def invoke_cli_report_json(config_path: Path, *args: str) -> dict[str, object]:
+    result = RUNNER.invoke(app, ["--config", str(config_path), *args, "--json"])
+    assert result.exit_code == 0
+    return json.loads(result.stdout)
+
+
 def fake_runner_env(tmp_path: Path, *, executables: tuple[str, ...]) -> dict[str, str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
@@ -1024,10 +1059,7 @@ def test_cli_status_invalid_toml_fails_on_stderr_without_traceback(tmp_path: Pat
 
     result = run_cli_subprocess(workspace, "--config", "millrace.toml", "status")
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "config TOML is invalid:" in result.stderr
-    assert "Traceback" not in result.stderr
+    assert_cli_subprocess_failure(result, stderr_prefix="config TOML is invalid:")
 
 
 def test_cli_config_show_preview_failure_uses_text_stderr_only(tmp_path: Path) -> None:
@@ -1036,10 +1068,7 @@ def test_cli_config_show_preview_failure_uses_text_stderr_only(tmp_path: Path) -
 
     result = run_cli_subprocess(workspace, "--config", "millrace.toml", "config", "show")
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "standard runtime selection preview failed:" in result.stderr
-    assert "Traceback" not in result.stderr
+    assert_cli_subprocess_failure(result, stderr_prefix="standard runtime selection preview failed:")
 
 
 def test_cli_config_show_text_uses_preview_plan_labels(tmp_path: Path) -> None:
@@ -1068,11 +1097,7 @@ def test_cli_config_set_unknown_key_json_error_stderr_only(tmp_path: Path) -> No
         "--json",
     )
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "Traceback" not in result.stderr
-    payload = json.loads(result.stderr)
-    assert payload == {"error": "unknown config key segment: nope"}
+    assert_cli_subprocess_failure(result, json_error="unknown config key segment: nope")
 
 
 def test_cli_queue_reorder_unknown_id_fails_on_stderr_without_traceback(tmp_path: Path) -> None:
@@ -1090,10 +1115,7 @@ def test_cli_queue_reorder_unknown_id_fails_on_stderr_without_traceback(tmp_path
         *requested_ids,
     )
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "queue reorder id mismatch:" in result.stderr
-    assert "Traceback" not in result.stderr
+    assert_cli_subprocess_failure(result, stderr_prefix="queue reorder id mismatch:")
 
 
 def test_cli_run_provenance_corrupt_snapshot_json_error_stderr_only(tmp_path: Path) -> None:
@@ -1111,11 +1133,7 @@ def test_cli_run_provenance_corrupt_snapshot_json_error_stderr_only(tmp_path: Pa
         "--json",
     )
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "Traceback" not in result.stderr
-    payload = json.loads(result.stderr)
-    assert payload["error"].startswith("run provenance is invalid:")
+    assert_cli_subprocess_failure(result, json_error_prefix="run provenance is invalid:")
 
 
 def test_cli_run_provenance_inconsistent_snapshot_contract_error_stderr_only(tmp_path: Path) -> None:
@@ -1155,11 +1173,7 @@ def test_cli_run_provenance_inconsistent_snapshot_contract_error_stderr_only(tmp
         "--json",
     )
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "Traceback" not in result.stderr
-    payload = json.loads(result.stderr)
-    assert payload["error"].startswith("run provenance is invalid:")
+    assert_cli_subprocess_failure(result, json_error_prefix="run provenance is invalid:")
 
 
 def test_cli_subgroup_help_does_not_require_config_file(tmp_path: Path) -> None:
@@ -1397,20 +1411,8 @@ def test_cli_status_detail_and_config_show_report_asset_inventory(tmp_path: Path
     custom_role.parent.mkdir(parents=True, exist_ok=True)
     custom_role.write_text("custom role\n", encoding="utf-8")
 
-    status_result = RUNNER.invoke(
-        app,
-        ["--config", str(destination / "millrace.toml"), "status", "--detail", "--json"],
-    )
-    config_result = RUNNER.invoke(
-        app,
-        ["--config", str(destination / "millrace.toml"), "config", "show", "--json"],
-    )
-
-    assert status_result.exit_code == 0
-    assert config_result.exit_code == 0
-
-    status_payload = json.loads(status_result.stdout)
-    config_payload = json.loads(config_result.stdout)
+    status_payload = invoke_cli_report_json(destination / "millrace.toml", "status", "--detail")
+    config_payload = invoke_cli_report_json(destination / "millrace.toml", "config", "show")
 
     assert status_payload["runtime"]["asset_bundle_version"] == "baseline-bundle-v1"
     assert status_payload["selection"]["mode"]["ref"]["id"] == "mode.standard"
@@ -1438,13 +1440,7 @@ def test_cli_research_report_tolerates_initialized_workspace_without_snapshot_fi
     workspace_result = EngineControl.init_workspace(destination)
     assert workspace_result.applied is True
 
-    result = RUNNER.invoke(
-        app,
-        ["--config", str(destination / "millrace.toml"), "research", "--json"],
-    )
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
+    payload = invoke_cli_report_json(destination / "millrace.toml", "research")
     assert payload["source_kind"] == "live"
     assert payload["runtime"]["mode_reason"] == "control-live-view"
     assert payload["runtime"]["updated_at"] is not None
@@ -1466,14 +1462,12 @@ def test_cli_research_report_exposes_mode_queue_retry_and_lock_state(tmp_path: P
     try:
         plane.dispatch_ready_work(run_id="research-auto-run", resolve_assets=False)
 
-        json_result = RUNNER.invoke(app, ["--config", str(config_path), "research", "--json"])
-        text_result = RUNNER.invoke(app, ["--config", str(config_path), "research"])
-        status_result = RUNNER.invoke(app, ["--config", str(config_path), "status", "--detail", "--json"])
+        payload = invoke_cli_report_json(config_path, "research")
+        text_output = invoke_cli_report_text(config_path, "research")
+        status_payload = invoke_cli_report_json(config_path, "status", "--detail")
     finally:
         plane.shutdown()
 
-    assert json_result.exit_code == 0
-    payload = json.loads(json_result.stdout)
     assert payload["configured_mode"] == "auto"
     assert payload["configured_idle_mode"] == loaded.config.research.idle_mode
     assert payload["status"] == "INCIDENT_INTAKE_RUNNING"
@@ -1486,16 +1480,13 @@ def test_cli_research_report_exposes_mode_queue_retry_and_lock_state(tmp_path: P
     assert incident_family["item_count"] == 1
     assert incident_family["ownerships"][0]["owner_token"] == "research-auto-run"
 
-    assert text_result.exit_code == 0
-    assert "Research configured mode: auto" in text_result.stdout
-    assert "Research status: INCIDENT_INTAKE_RUNNING" in text_result.stdout
-    assert "Research runtime mode: INCIDENT" in text_result.stdout
-    assert "Research lock: owner=" in text_result.stdout
-    assert "Research queues:" in text_result.stdout
-    assert "- incident: ready=yes items=1" in text_result.stdout
+    assert "Research configured mode: auto" in text_output
+    assert "Research status: INCIDENT_INTAKE_RUNNING" in text_output
+    assert "Research runtime mode: INCIDENT" in text_output
+    assert "Research lock: owner=" in text_output
+    assert "Research queues:" in text_output
+    assert "- incident: ready=yes items=1" in text_output
 
-    assert status_result.exit_code == 0
-    status_payload = json.loads(status_result.stdout)
     assert status_payload["research"]["runtime"]["checkpoint"]["checkpoint_id"] == "research-auto-run"
 
 
@@ -1517,14 +1508,12 @@ def test_cli_research_report_exposes_gate_and_completion_decisions(tmp_path: Pat
     try:
         plane.sync_runtime(trigger="cli-research-report", run_id="audit-cli-run", resolve_assets=False)
 
-        json_result = RUNNER.invoke(app, ["--config", str(config_path), "research", "--json"])
-        text_result = RUNNER.invoke(app, ["--config", str(config_path), "research"])
-        status_result = RUNNER.invoke(app, ["--config", str(config_path), "status", "--detail", "--json"])
+        payload = invoke_cli_report_json(config_path, "research")
+        text_output = invoke_cli_report_text(config_path, "research")
+        status_payload = invoke_cli_report_json(config_path, "status", "--detail")
     finally:
         plane.shutdown()
 
-    assert json_result.exit_code == 0
-    payload = json.loads(json_result.stdout)
     assert payload["status"] == "AUDIT_PASS"
     assert payload["latest_gate_decision"]["decision"] == "PASS"
     assert payload["latest_gate_decision"]["counts"]["completion_required"] == 1
@@ -1537,13 +1526,10 @@ def test_cli_research_report_exposes_gate_and_completion_decisions(tmp_path: Pat
     assert payload["completion_state"]["marker_honored"] is False
     assert payload["completion_state"]["reason"] == "marker_missing"
 
-    assert text_result.exit_code == 0
-    assert "Research gate decision: PASS" in text_result.stdout
-    assert "Research completion decision: PASS" in text_result.stdout
-    assert "Research completion state: marker_present=no completion_allowed=yes marker_honored=no reason=marker_missing" in text_result.stdout
+    assert "Research gate decision: PASS" in text_output
+    assert "Research completion decision: PASS" in text_output
+    assert "Research completion state: marker_present=no completion_allowed=yes marker_honored=no reason=marker_missing" in text_output
 
-    assert status_result.exit_code == 0
-    status_payload = json.loads(status_result.stdout)
     assert status_payload["research"]["latest_gate_decision"]["decision"] == "PASS"
     assert status_payload["research"]["latest_completion_decision"]["decision"] == "PASS"
     assert status_payload["research"]["completion_state"]["completion_allowed"] is True
@@ -1592,14 +1578,12 @@ def test_cli_research_report_exposes_audit_failure_story_and_remediation(tmp_pat
     try:
         plane.sync_runtime(trigger="cli-research-report-fail", run_id="audit-cli-fail-run", resolve_assets=False)
 
-        json_result = RUNNER.invoke(app, ["--config", str(config_path), "research", "--json"])
-        text_result = RUNNER.invoke(app, ["--config", str(config_path), "research"])
-        status_result = RUNNER.invoke(app, ["--config", str(config_path), "status", "--detail", "--json"])
+        payload = invoke_cli_report_json(config_path, "research")
+        text_output = invoke_cli_report_text(config_path, "research")
+        status_payload = invoke_cli_report_json(config_path, "status", "--detail")
     finally:
         plane.shutdown()
 
-    assert json_result.exit_code == 0
-    payload = json.loads(json_result.stdout)
     assert payload["status"] == "AUDIT_FAIL"
     assert payload["audit_summary"]["counts"] == {"total": 1, "pass": 0, "fail": 1}
     assert payload["audit_summary"]["last_outcome"]["audit_id"] == "AUD-CLI-FAIL-001"
@@ -1609,15 +1593,12 @@ def test_cli_research_report_exposes_audit_failure_story_and_remediation(tmp_pat
     assert payload["latest_audit_remediation"]["remediation_task_title"] == "Remediate failed audit AUD-CLI-FAIL-001"
     assert payload["latest_completion_decision"]["decision"] == "FAIL"
 
-    assert text_result.exit_code == 0
-    assert "Research audit outcome: AUDIT_FAIL audit=AUD-CLI-FAIL-001" in text_result.stdout
-    assert "Research audit details: Forbidden command marker `--fast` found in observed commands." in text_result.stdout
-    assert "Research audit remediation: enqueue_backlog_task spec=SPEC-AUD-CLI-FAIL-001-REMEDIATION" in text_result.stdout
-    assert "audited=agents/ideas/audit/incoming/AUD-CLI-FAIL-001.md" in text_result.stdout
-    assert "terminal=agents/ideas/audit/failed/AUD-CLI-FAIL-001.md" in text_result.stdout
+    assert "Research audit outcome: AUDIT_FAIL audit=AUD-CLI-FAIL-001" in text_output
+    assert "Research audit details: Forbidden command marker `--fast` found in observed commands." in text_output
+    assert "Research audit remediation: enqueue_backlog_task spec=SPEC-AUD-CLI-FAIL-001-REMEDIATION" in text_output
+    assert "audited=agents/ideas/audit/incoming/AUD-CLI-FAIL-001.md" in text_output
+    assert "terminal=agents/ideas/audit/failed/AUD-CLI-FAIL-001.md" in text_output
 
-    assert status_result.exit_code == 0
-    status_payload = json.loads(status_result.stdout)
     assert status_payload["research"]["audit_summary"]["last_outcome"]["audit_id"] == "AUD-CLI-FAIL-001"
     assert status_payload["research"]["latest_audit_remediation"]["remediation_spec_id"] == (
         "SPEC-AUD-CLI-FAIL-001-REMEDIATION"
@@ -2700,11 +2681,7 @@ def test_cli_logs_invalid_event_log_json_error_stderr_only(tmp_path: Path) -> No
         "--json",
     )
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "Traceback" not in result.stderr
-    payload = json.loads(result.stderr)
-    assert payload["error"].startswith("event log is invalid:")
+    assert_cli_subprocess_failure(result, json_error_prefix="event log is invalid:")
 
 
 def test_cli_logs_follow_invalid_event_stream_json_error_stderr_only(tmp_path: Path) -> None:
@@ -2737,11 +2714,7 @@ def test_cli_logs_follow_invalid_event_stream_json_error_stderr_only(tmp_path: P
     )
     thread.join(timeout=2.0)
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert "Traceback" not in result.stderr
-    payload = json.loads(result.stderr)
-    assert payload["error"].startswith("event log is invalid:")
+    assert_cli_subprocess_failure(result, json_error_prefix="event log is invalid:")
 
 
 def test_cli_run_provenance_reports_frozen_plan_identity(tmp_path: Path) -> None:
