@@ -13,6 +13,7 @@ import re
 from ..contracts import BlockerEntry, ExecutionResearchHandoff, ExecutionStatus, RunnerResult, StageResult, StageType, TaskCard
 from ..diagnostics import create_diagnostics_bundle
 from ..markdown import insert_after_preamble, write_text_atomic
+from ..run_ids import stable_slug
 from ..stages.base import StageExecutionError
 
 if TYPE_CHECKING:
@@ -63,10 +64,6 @@ class ExecutionRecoveryPlane(Protocol):
 
 
 INCIDENT_PATH_RE = re.compile(r"agents/ideas/incidents/[A-Za-z0-9._/\-]+\.md")
-
-
-def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-") or "run"
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +127,10 @@ def create_blocker_bundle(
             snapshot_paths.append(run_dir)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    bundle_name = f"diag-{_slugify(run_id)}-{_slugify(stage_label)}-{timestamp}"
+    bundle_name = (
+        f"diag-{stable_slug(run_id, fallback='run')}"
+        f"-{stable_slug(stage_label, fallback='run')}-{timestamp}"
+    )
     return create_diagnostics_bundle(
         plane.paths,
         stage=failing_result.stage if failing_result is not None else StageType.CONSULT,

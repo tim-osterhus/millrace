@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-import re
 from typing import Any, Callable
 
 from ..compiler import FrozenRunCompiler
@@ -13,6 +12,7 @@ from ..config import EngineConfig
 from ..contracts import ExecutionResearchHandoff, ResearchMode, ResearchStatus, SpecInterviewPolicy
 from ..events import EventRecord, EventType
 from ..paths import RuntimePaths
+from ..run_ids import timestamped_slug_id
 from ..research.audit import (
     AuditExecutionError,
     execute_audit_gatekeeper,
@@ -119,10 +119,6 @@ from ..status import ControlPlane, StatusStore
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-") or "event"
 
 
 _MODE_REF_BY_RUNTIME_MODE = {
@@ -957,8 +953,7 @@ class ResearchPlane:
         self._release_execution_lock(observed_at=_utcnow())
 
     def _new_run_id(self, label: str) -> str:
-        timestamp = _utcnow().strftime("%Y%m%dT%H%M%S%fZ")
-        return f"{timestamp}__{_slugify(label)}"
+        return timestamped_slug_id(label, fallback="event", moment=_utcnow())
 
 
 ResearchStubPlane = ResearchPlane

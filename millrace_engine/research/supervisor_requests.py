@@ -5,27 +5,20 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 from typing import Any
 
 from ..contracts import ExecutionResearchHandoff, ResearchMode
 from ..events import EventRecord, EventType
 from ..markdown import write_text_atomic
 from ..queue import load_research_recovery_latch
+from ..run_ids import stable_slug
 from .audit import AuditTrigger, ensure_backlog_empty_audit_ticket, load_audit_queue_record
 from .state import DeferredResearchRequest, ResearchCheckpoint, ResearchQueueFamily
 from .supervisor_payloads import research_deferred_payload
 
-_TOKEN_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _slugify(value: str) -> str:
-    return _TOKEN_RE.sub("-", value.strip().lower()).strip("-") or "event"
-
-
 def breadcrumb_name(self: Any, received_at: datetime, event_type: EventType) -> str:
     timestamp = received_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    return f"{timestamp}__{_slugify(event_type.value)}.json"
+    return f"{timestamp}__{stable_slug(event_type.value, fallback='event')}.json"
 
 
 def breadcrumb_path(self: Any, request: DeferredResearchRequest) -> Path:

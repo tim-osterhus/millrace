@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-import re
 
 from ..config import EngineConfig
 from ..contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ExecutionStatus, StageResult, StageType, TaskCard
@@ -41,6 +40,7 @@ from ..provenance import (
 )
 from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..queue import load_research_recovery_latch
+from ..run_ids import timestamped_slug_id
 from ..standard_runtime import compile_execution_runtime_selection
 from ..status import StatusChange
 from ..stages.base import ExecutionStage, StageExecutionError
@@ -80,10 +80,6 @@ ROUTING_MODE_FROZEN_PLAN = "frozen_plan"
 ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME = "frozen_plan_legacy_resume"
 ADAPTIVE_UPSCOPE_RULE = "blocked_small_non_usage_v1"
 QUICKFIX_ARTIFACT_SCAFFOLD = "# Quickfix\n"
-
-
-def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-") or "run"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,10 +188,9 @@ class ExecutionPlane(PlaneRuntime):
         handle_status_change_helper(self, change)
 
     def _new_run_id(self, task: TaskCard | None, label: str) -> str:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         if task is not None:
-            return f"{timestamp}__{_slugify(task.task_id)}"
-        return f"{timestamp}__{_slugify(label)}"
+            return timestamped_slug_id(task.task_id, fallback="run")
+        return timestamped_slug_id(label, fallback="run")
 
     def _integration_context(self, task: TaskCard | None = None) -> ExecutionIntegrationContext:
         if self._cycle_integration_context is not None:
