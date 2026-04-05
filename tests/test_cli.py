@@ -42,6 +42,12 @@ from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_fa
 from millrace_engine.registry import discover_registry_state, persist_workspace_registry_object
 from millrace_engine.status import ControlPlane, StatusStore
 from millrace_engine.standard_runtime import compile_standard_runtime_selection
+from tests.provenance_support import (
+    compile_standard_provenance,
+    load_provenance_fixture,
+    persist_packaged_shadow,
+    prompt_path,
+)
 from tests.support import load_workspace_fixture, read_state, runtime_workspace, set_engine_idle_mode, wait_for
 
 
@@ -90,6 +96,25 @@ def assert_cli_subprocess_failure(
     assert stderr_prefix is not None
     assert stderr_prefix in result.stderr
     return None
+
+
+def run_cli_provenance_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    append_subprocess_stage_config(config_path)
+    script = write_needs_research_stage_driver(tmp_path)
+    engine = MillraceEngine(
+        config_path,
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-blocked"],
+            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
+            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
+        },
+    )
+    engine.start(once=True)
+    run_dirs = sorted((workspace / "agents" / "runs").iterdir())
+    assert run_dirs
+    return workspace, config_path, run_dirs[-1].name
 
 
 def invoke_cli_report_text(config_path: Path, *args: str) -> str:
@@ -1137,24 +1162,8 @@ def test_cli_run_provenance_corrupt_snapshot_json_error_stderr_only(tmp_path: Pa
 
 
 def test_cli_run_provenance_inconsistent_snapshot_contract_error_stderr_only(tmp_path: Path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    append_subprocess_stage_config(config_path)
-    script = write_needs_research_stage_driver(tmp_path)
-    engine = MillraceEngine(
-        config_path,
-        stage_commands={
-            StageType.BUILDER: [sys.executable, str(script), "builder"],
-            StageType.QA: [sys.executable, str(script), "qa-blocked"],
-            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
-            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
-        },
-    )
-
-    engine.start(once=True)
-
-    run_dirs = sorted((workspace / "agents" / "runs").iterdir())
-    assert run_dirs
-    run_dir = run_dirs[-1]
+    workspace, _, run_id = run_cli_provenance_fixture(tmp_path)
+    run_dir = workspace / "agents" / "runs" / run_id
     snapshot_path = run_dir / "resolved_snapshot.json"
     snapshot_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     snapshot_payload["selection_ref"] = {
@@ -1169,7 +1178,7 @@ def test_cli_run_provenance_inconsistent_snapshot_contract_error_stderr_only(tmp
         "--config",
         "millrace.toml",
         "run-provenance",
-        run_dir.name,
+        run_id,
         "--json",
     )
 
@@ -2718,24 +2727,7 @@ def test_cli_logs_follow_invalid_event_stream_json_error_stderr_only(tmp_path: P
 
 
 def test_cli_run_provenance_reports_frozen_plan_identity(tmp_path: Path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    append_subprocess_stage_config(config_path)
-    script = write_needs_research_stage_driver(tmp_path)
-    engine = MillraceEngine(
-        config_path,
-        stage_commands={
-            StageType.BUILDER: [sys.executable, str(script), "builder"],
-            StageType.QA: [sys.executable, str(script), "qa-blocked"],
-            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
-            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
-        },
-    )
-
-    engine.start(once=True)
-
-    run_dirs = sorted((workspace / "agents" / "runs").iterdir())
-    assert run_dirs
-    run_id = run_dirs[-1].name
+    _, config_path, run_id = run_cli_provenance_fixture(tmp_path)
 
     result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id, "--json"])
 
@@ -2792,37 +2784,13 @@ def test_cli_run_provenance_reports_frozen_plan_identity(tmp_path: Path) -> None
 def test_cli_run_provenance_preserves_compile_time_registry_provenance_after_workspace_shadow(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    append_subprocess_stage_config(config_path)
-    script = write_needs_research_stage_driver(tmp_path)
-    engine = MillraceEngine(
-        config_path,
-        stage_commands={
-            StageType.BUILDER: [sys.executable, str(script), "builder"],
-            StageType.QA: [sys.executable, str(script), "qa-blocked"],
-            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
-            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
-        },
-    )
-
-    engine.start(once=True)
-
-    run_dirs = sorted((workspace / "agents" / "runs").iterdir())
-    assert run_dirs
-    run_id = run_dirs[-1].name
-
-    packaged_mode = next(
-        document.definition
-        for document in discover_registry_state(workspace, validate_catalog=False).packaged
-        if document.key == ("mode", "mode.standard", "1.0.0")
-    )
-    shadow_payload = packaged_mode.model_dump(mode="json")
-    shadow_payload["title"] = "Workspace standard shadow"
-    shadow_payload["aliases"] = ["shadow-standard"]
-    shadow_payload["source"] = {"kind": "workspace_defined"}
-    persist_workspace_registry_object(
+    workspace, config_path, run_id = run_cli_provenance_fixture(tmp_path)
+    persist_packaged_shadow(
         workspace,
-        packaged_mode.__class__.model_validate(shadow_payload),
+        kind="mode",
+        object_id="mode.standard",
+        title="Workspace standard shadow",
+        aliases=("shadow-standard",),
     )
 
     result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id, "--json"])
@@ -2836,38 +2804,27 @@ def test_cli_run_provenance_preserves_compile_time_registry_provenance_after_wor
 
 
 def test_cli_run_provenance_reports_current_preview_separately_from_frozen_history(tmp_path: Path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "cli-preview-contrast"
 
-    prompt_path = workspace / "agents" / "_start.md"
-    prompt_path.unlink()
+    prompt_file = prompt_path(context.workspace)
+    prompt_file.unlink()
 
-    compile_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    compile_result = compile_standard_provenance(context, run_id=run_id)
 
     assert compile_result.status.value == "ok"
     assert compile_result.snapshot is not None
 
-    prompt_path.write_text("Workspace prompt restored for CLI preview\n", encoding="utf-8")
-    packaged_mode = next(
-        document.definition
-        for document in discover_registry_state(workspace, validate_catalog=False).packaged
-        if document.key == ("mode", "mode.standard", "1.0.0")
-    )
-    shadow_payload = packaged_mode.model_dump(mode="json")
-    shadow_payload["title"] = "Workspace CLI preview shadow"
-    shadow_payload["aliases"] = ["workspace-cli-preview-shadow"]
-    shadow_payload["source"] = {"kind": "workspace_defined"}
-    persist_workspace_registry_object(
-        workspace,
-        packaged_mode.__class__.model_validate(shadow_payload),
+    prompt_file.write_text("Workspace prompt restored for CLI preview\n", encoding="utf-8")
+    persist_packaged_shadow(
+        context.workspace,
+        kind="mode",
+        object_id="mode.standard",
+        title="Workspace CLI preview shadow",
+        aliases=("workspace-cli-preview-shadow",),
     )
 
-    result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id, "--json"])
+    result = RUNNER.invoke(app, ["--config", str(context.config_path), "run-provenance", run_id, "--json"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -2880,7 +2837,7 @@ def test_cli_run_provenance_reports_current_preview_separately_from_frozen_histo
     assert payload["current_preview"]["stage_bindings"][0]["prompt_source_kind"] == "workspace"
     assert payload["current_preview_error"] is None
 
-    text_result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id])
+    text_result = RUNNER.invoke(app, ["--config", str(context.config_path), "run-provenance", run_id])
 
     assert text_result.exit_code == 0
     assert "Selection scope: frozen_run" in text_result.stdout
@@ -2893,24 +2850,19 @@ def test_cli_run_provenance_reports_current_preview_separately_from_frozen_histo
 def test_cli_run_provenance_survives_broken_live_registry_with_frozen_history_json(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "cli-broken-live-registry"
 
-    compile_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    compile_result = compile_standard_provenance(context, run_id=run_id)
 
     assert compile_result.status.value == "ok"
     assert compile_result.snapshot is not None
 
-    broken_registry_path = workspace / "agents" / "registry" / "modes" / "broken__1.0.0.json"
+    broken_registry_path = context.workspace / "agents" / "registry" / "modes" / "broken__1.0.0.json"
     broken_registry_path.parent.mkdir(parents=True, exist_ok=True)
     broken_registry_path.write_text("{not valid json\n", encoding="utf-8")
 
-    result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id, "--json"])
+    result = RUNNER.invoke(app, ["--config", str(context.config_path), "run-provenance", run_id, "--json"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)

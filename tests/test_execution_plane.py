@@ -53,6 +53,15 @@ from millrace_engine.standard_runtime import compile_standard_runtime_selection,
 from millrace_engine.stages.base import StageExecutionError
 from millrace_engine.standard_runtime_views import runtime_selection_view_from_snapshot
 
+from tests.provenance_support import (
+    append_stage_transition_record,
+    compile_mode_provenance,
+    compile_standard_provenance,
+    load_provenance_fixture,
+    packaged_definition,
+    persist_packaged_shadow,
+    prompt_path,
+)
 from tests.support import load_workspace_fixture
 
 
@@ -1164,46 +1173,22 @@ def test_execution_plane_large_preflight_net_wait_keeps_active_task_and_records_
 
 
 def test_control_run_provenance_reads_compile_snapshot_and_runtime_history(tmp_path: Path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-control-run"
 
-    compile_result = FrozenRunCompiler(paths).compile_mode(
-        RegistryObjectRef(
-            kind=PersistedObjectKind.MODE,
-            id="mode.default_autonomous",
-            version="1.0.0",
-        ),
-        run_id=run_id,
-    )
+    compile_result = compile_mode_provenance(context, run_id=run_id, mode_id="mode.default_autonomous")
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    TransitionHistoryStore(
-        paths.runs_dir / run_id / "transition_history.jsonl",
+    append_stage_transition_record(
+        context,
         run_id=run_id,
-        provenance=compile_result.snapshot.runtime_provenance_context(),
-    ).append(
-        event_name="execution.stage.transition",
-        source="execution_plane",
-        plane=ControlPlane.EXECUTION,
-        node_id="builder",
-        kind_id="execution.builder",
-        outcome="success",
-        selected_edge_id="execution.builder.success.qa",
-        selected_edge_reason="builder completed in the fixed v1 execution plane",
-        status_before="IDLE",
-        status_after="BUILDER_COMPLETE",
-        bound_execution_parameters=BoundExecutionParameters(model="fixture-model"),
+        snapshot=compile_result.snapshot,
         attributes={"routing_mode": "fixed_v1_fallback"},
     )
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.run_id == run_id
     assert report.selection is not None
@@ -1213,8 +1198,8 @@ def test_control_run_provenance_reads_compile_snapshot_and_runtime_history(tmp_p
     assert report.selection.mode.ref.id == "mode.default_autonomous"
     assert report.routing_modes == ("fixed_v1_fallback",)
     assert report.compile_snapshot is not None
-    assert report.snapshot_path == paths.runs_dir / run_id / "resolved_snapshot.json"
-    assert report.transition_history_path == paths.runs_dir / run_id / "transition_history.jsonl"
+    assert report.snapshot_path == context.paths.runs_dir / run_id / "resolved_snapshot.json"
+    assert report.transition_history_path == context.paths.runs_dir / run_id / "transition_history.jsonl"
     assert len(report.runtime_history) == 1
     assert report.runtime_history[0].snapshot_id == report.compile_snapshot.snapshot_id
     assert report.runtime_history[0].frozen_plan is not None
@@ -1222,52 +1207,23 @@ def test_control_run_provenance_reads_compile_snapshot_and_runtime_history(tmp_p
 
 
 def test_control_run_provenance_rejects_runtime_history_snapshot_mismatch(tmp_path: Path) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-history-mismatch"
 
-    compile_result = FrozenRunCompiler(paths).compile_mode(
-        RegistryObjectRef(
-            kind=PersistedObjectKind.MODE,
-            id="mode.default_autonomous",
-            version="1.0.0",
-        ),
-        run_id=run_id,
-    )
+    compile_result = compile_mode_provenance(context, run_id=run_id, mode_id="mode.default_autonomous")
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    history_path = paths.runs_dir / run_id / "transition_history.jsonl"
-    record = TransitionHistoryStore(
-        history_path,
-        run_id=run_id,
-        provenance=compile_result.snapshot.runtime_provenance_context(),
-    ).append(
-        event_name="execution.stage.transition",
-        source="execution_plane",
-        plane=ControlPlane.EXECUTION,
-        node_id="builder",
-        kind_id="execution.builder",
-        outcome="success",
-        selected_edge_id="execution.builder.success.qa",
-        selected_edge_reason="builder completed",
-        status_before="IDLE",
-        status_after="BUILDER_COMPLETE",
-        bound_execution_parameters=BoundExecutionParameters(model="fixture-model"),
-        attributes={"routing_mode": "frozen_plan"},
-    )
+    history_path = context.paths.runs_dir / run_id / "transition_history.jsonl"
+    record = append_stage_transition_record(context, run_id=run_id, snapshot=compile_result.snapshot)
 
     payload = record.model_dump(mode="json")
     payload["snapshot_id"] = "resolved-snapshot:other-run:deadbeef0000"
     history_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     with pytest.raises(ControlError, match="runtime history snapshot_id does not match compile snapshot"):
-        EngineControl(config_path).run_provenance(run_id)
+        EngineControl(context.config_path).run_provenance(run_id)
 
 
 def test_control_run_provenance_rejects_invalid_policy_evaluation_payload(tmp_path: Path) -> None:
@@ -1338,27 +1294,15 @@ def test_bound_execution_parameters_apply_preserves_typed_registry_refs() -> Non
 
 
 def test_control_run_provenance_rejects_selection_view_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-selection-mismatch"
 
-    compile_result = FrozenRunCompiler(paths).compile_mode(
-        RegistryObjectRef(
-            kind=PersistedObjectKind.MODE,
-            id="mode.default_autonomous",
-            version="1.0.0",
-        ),
-        run_id=run_id,
-    )
+    compile_result = compile_mode_provenance(context, run_id=run_id, mode_id="mode.default_autonomous")
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    selection = runtime_selection_view_from_snapshot(compile_result.snapshot, workspace_root=workspace)
+    selection = runtime_selection_view_from_snapshot(compile_result.snapshot, workspace_root=context.workspace)
     selection_payload = selection.model_dump(mode="python")
     selection_payload["frozen_plan_id"] = "frozen-plan:wrong"
     mismatched_selection = selection.__class__.model_validate(selection_payload)
@@ -1368,34 +1312,22 @@ def test_control_run_provenance_rejects_selection_view_mismatch(tmp_path: Path, 
     )
 
     with pytest.raises(ControlError, match="selection view frozen_plan_id does not match compile snapshot"):
-        EngineControl(config_path).run_provenance(run_id)
+        EngineControl(context.config_path).run_provenance(run_id)
 
 
 def test_control_run_provenance_rejects_selection_research_participation_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-selection-research-mismatch"
 
-    compile_result = FrozenRunCompiler(paths).compile_mode(
-        RegistryObjectRef(
-            kind=PersistedObjectKind.MODE,
-            id="mode.default_autonomous",
-            version="1.0.0",
-        ),
-        run_id=run_id,
-    )
+    compile_result = compile_mode_provenance(context, run_id=run_id, mode_id="mode.default_autonomous")
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    selection = runtime_selection_view_from_snapshot(compile_result.snapshot, workspace_root=workspace)
+    selection = runtime_selection_view_from_snapshot(compile_result.snapshot, workspace_root=context.workspace)
     selection_payload = selection.model_dump(mode="python")
     selection_payload["research_participation"] = "incorrect-but-nonempty"
     mismatched_selection = selection.__class__.model_validate(selection_payload)
@@ -1405,51 +1337,35 @@ def test_control_run_provenance_rejects_selection_research_participation_mismatc
     )
 
     with pytest.raises(ControlError, match="selection view research_participation does not match compile snapshot"):
-        EngineControl(config_path).run_provenance(run_id)
+        EngineControl(context.config_path).run_provenance(run_id)
 
 
 def test_control_run_provenance_reports_latest_snapshot_after_same_run_id_recompile_with_shadow(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-rerun-shadow"
-    mode_ref = RegistryObjectRef(
-        kind=PersistedObjectKind.MODE,
-        id="mode.standard",
-        version="1.0.0",
-    )
 
-    first_result = FrozenRunCompiler(paths).compile_mode(mode_ref, run_id=run_id)
+    first_result = compile_mode_provenance(context, run_id=run_id, mode_id="mode.standard")
 
     assert first_result.status is CompileStatus.OK
     assert first_result.snapshot is not None
 
-    packaged_mode = next(
-        document.definition
-        for document in discover_registry_state(workspace, validate_catalog=False).packaged
-        if document.key == ("mode", "mode.standard", "1.0.0")
-    )
-    shadow_payload = packaged_mode.model_dump(mode="json")
-    shadow_payload["title"] = "Workspace standard rerun shadow"
-    shadow_payload["aliases"] = ["workspace-standard-rerun"]
-    shadow_payload["source"] = {"kind": "workspace_defined"}
-    persist_workspace_registry_object(
-        workspace,
-        packaged_mode.__class__.model_validate(shadow_payload),
+    packaged_mode = persist_packaged_shadow(
+        context.workspace,
+        kind="mode",
+        object_id="mode.standard",
+        title="Workspace standard rerun shadow",
+        aliases=("workspace-standard-rerun",),
     )
 
-    second_result = FrozenRunCompiler(paths).compile_mode(mode_ref, run_id=run_id)
+    second_result = compile_mode_provenance(context, run_id=run_id, mode_id="mode.standard")
 
     assert second_result.status is CompileStatus.OK
     assert second_result.snapshot is not None
     assert second_result.snapshot.snapshot_id != first_result.snapshot.snapshot_id
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.compile_snapshot is not None
     assert report.compile_snapshot.snapshot_id == second_result.snapshot.snapshot_id
@@ -1465,38 +1381,28 @@ def test_control_run_provenance_reports_latest_snapshot_after_same_run_id_recomp
 def test_control_run_provenance_distinguishes_frozen_history_from_current_preview_under_overlay_churn(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-preview-contrast"
 
-    prompt_path = workspace / "agents" / "_start.md"
-    prompt_path.unlink()
+    prompt_file = prompt_path(context.workspace)
+    prompt_file.unlink()
 
-    compile_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    compile_result = compile_standard_provenance(context, run_id=run_id)
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    prompt_path.write_text("Restored workspace prompt\n", encoding="utf-8")
-    packaged_mode = next(
-        document.definition
-        for document in discover_registry_state(workspace, validate_catalog=False).packaged
-        if document.key == ("mode", "mode.standard", "1.0.0")
-    )
-    shadow_payload = packaged_mode.model_dump(mode="json")
-    shadow_payload["title"] = "Workspace preview shadow"
-    shadow_payload["aliases"] = ["workspace-preview-shadow"]
-    shadow_payload["source"] = {"kind": "workspace_defined"}
-    persist_workspace_registry_object(
-        workspace,
-        packaged_mode.__class__.model_validate(shadow_payload),
+    packaged_mode = packaged_definition(context.workspace, kind="mode", object_id="mode.standard")
+    prompt_file.write_text("Restored workspace prompt\n", encoding="utf-8")
+    persist_packaged_shadow(
+        context.workspace,
+        kind="mode",
+        object_id="mode.standard",
+        title="Workspace preview shadow",
+        aliases=("workspace-preview-shadow",),
     )
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.selection is not None
     assert report.selection.scope == "frozen_run"
@@ -1522,30 +1428,25 @@ def test_control_run_provenance_distinguishes_frozen_history_from_current_previe
 def test_control_run_provenance_reports_latest_prompt_provenance_after_same_run_id_recompile(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-rerun-prompt"
 
-    prompt_path = workspace / "agents" / "_start.md"
-    prompt_path.unlink()
+    prompt_file = prompt_path(context.workspace)
+    prompt_file.unlink()
 
-    first_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    first_result = compile_standard_provenance(context, run_id=run_id)
 
     assert first_result.status is CompileStatus.OK
     assert first_result.snapshot is not None
 
-    prompt_path.write_text("Workspace rerun prompt\n", encoding="utf-8")
-    second_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    prompt_file.write_text("Workspace rerun prompt\n", encoding="utf-8")
+    second_result = compile_standard_provenance(context, run_id=run_id)
 
     assert second_result.status is CompileStatus.OK
     assert second_result.snapshot is not None
     assert second_result.snapshot.snapshot_id != first_result.snapshot.snapshot_id
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.compile_snapshot is not None
     assert report.compile_snapshot.snapshot_id == second_result.snapshot.snapshot_id
@@ -1681,26 +1582,21 @@ def test_control_run_provenance_uses_frozen_aliases_without_live_registry_fallba
 def test_control_run_provenance_survives_current_preview_failures_without_rewriting_history(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-preview-failure"
 
-    compile_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    compile_result = compile_standard_provenance(context, run_id=run_id)
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8")
+    context.config_path.write_text(
+        context.config_path.read_text(encoding="utf-8")
         + '\n[stages.builder]\nprompt_file = "agents/not-a-real-prompt.md"\n',
         encoding="utf-8",
     )
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.selection is not None
     assert report.selection.scope == "frozen_run"
@@ -1712,24 +1608,19 @@ def test_control_run_provenance_survives_current_preview_failures_without_rewrit
 def test_control_run_provenance_survives_broken_live_registry_using_frozen_source_metadata(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-broken-live-registry"
 
-    compile_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    compile_result = compile_standard_provenance(context, run_id=run_id)
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    broken_registry_path = workspace / "agents" / "registry" / "modes" / "broken__1.0.0.json"
+    broken_registry_path = context.workspace / "agents" / "registry" / "modes" / "broken__1.0.0.json"
     broken_registry_path.parent.mkdir(parents=True, exist_ok=True)
     broken_registry_path.write_text("{not valid json\n", encoding="utf-8")
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.selection is not None
     assert report.selection.scope == "frozen_run"
@@ -1744,39 +1635,28 @@ def test_control_run_provenance_survives_broken_live_registry_using_frozen_sourc
 def test_control_run_provenance_uses_compile_provenance_when_source_refs_are_missing(
     tmp_path: Path,
 ) -> None:
-    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
-    loaded = load_engine_config(config_path)
-    config = loaded.config
-    config.paths.workspace = workspace
-    config.paths.agents_dir = workspace / "agents"
-    paths = build_runtime_paths(config)
+    context = load_provenance_fixture(tmp_path)
     run_id = "provenance-missing-source-refs"
 
-    compile_result = compile_standard_runtime_selection(config, paths, run_id=run_id)
+    compile_result = compile_standard_provenance(context, run_id=run_id)
 
     assert compile_result.status is CompileStatus.OK
     assert compile_result.snapshot is not None
 
-    snapshot_path = paths.runs_dir / run_id / "resolved_snapshot.json"
+    snapshot_path = context.paths.runs_dir / run_id / "resolved_snapshot.json"
     snapshot_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     snapshot_payload["content"]["source_refs"] = []
     snapshot_path.write_text(json.dumps(snapshot_payload), encoding="utf-8")
 
-    packaged_mode = next(
-        document.definition
-        for document in discover_registry_state(workspace, validate_catalog=False).packaged
-        if document.key == ("mode", "mode.standard", "1.0.0")
-    )
-    shadow_payload = packaged_mode.model_dump(mode="json")
-    shadow_payload["title"] = "Workspace shadow after old compile"
-    shadow_payload["aliases"] = ["workspace-shadow-after-old-compile"]
-    shadow_payload["source"] = {"kind": "workspace_defined"}
-    persist_workspace_registry_object(
-        workspace,
-        packaged_mode.__class__.model_validate(shadow_payload),
+    packaged_mode = persist_packaged_shadow(
+        context.workspace,
+        kind="mode",
+        object_id="mode.standard",
+        title="Workspace shadow after old compile",
+        aliases=("workspace-shadow-after-old-compile",),
     )
 
-    report = EngineControl(config_path).run_provenance(run_id)
+    report = EngineControl(context.config_path).run_provenance(run_id)
 
     assert report.selection is not None
     assert report.selection.mode is not None
