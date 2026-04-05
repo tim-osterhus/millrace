@@ -53,6 +53,13 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def normalize_command_issuer(value: str | None) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    if not normalized:
+        raise ValueError("issuer may not be empty")
+    return normalized
+
+
 class ControlCommandEnvelope(ContractModel):
     """Normalized mailbox command."""
 
@@ -68,6 +75,11 @@ class ControlCommandEnvelope(ContractModel):
     @classmethod
     def normalize_issued_at(cls, value: datetime | str) -> datetime:
         return _normalize_datetime(value)
+
+    @field_validator("issuer", mode="before")
+    @classmethod
+    def normalize_issuer(cls, value: str | None) -> str:
+        return normalize_command_issuer(value)
 
 
 class MailboxCommandResult(ContractModel):

@@ -491,6 +491,93 @@ def supervisor_report_command(
     render_supervisor_report(report, json_mode=json_mode)
 
 
+@supervisor_app.command("pause")
+def supervisor_pause_command(
+    ctx: typer.Context,
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Queue a supervisor-attributed pause request."""
+
+    render_operation(
+        _run_expected(lambda: _control(ctx).supervisor_pause(issuer=issuer), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_app.command("resume")
+def supervisor_resume_command(
+    ctx: typer.Context,
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Queue a supervisor-attributed resume request."""
+
+    render_operation(
+        _run_expected(lambda: _control(ctx).supervisor_resume(issuer=issuer), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_app.command("stop")
+def supervisor_stop_command(
+    ctx: typer.Context,
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Queue a supervisor-attributed stop request."""
+
+    render_operation(
+        _run_expected(lambda: _control(ctx).supervisor_stop(issuer=issuer), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_app.command("add-task")
+def supervisor_add_task_command(
+    ctx: typer.Context,
+    title: Annotated[str, typer.Argument(help="Task title.")],
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    body: Annotated[str | None, typer.Option("--body", help="Optional markdown body.")] = None,
+    spec_id: Annotated[str | None, typer.Option("--spec-id", help="Optional spec identifier.")] = None,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Add one task through the supervisor-safe mutation path."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).supervisor_add_task(
+                title,
+                issuer=issuer,
+                body=body,
+                spec_id=spec_id,
+            ),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_app.command("queue-reorder")
+def supervisor_queue_reorder_command(
+    ctx: typer.Context,
+    task_ids: Annotated[list[str], typer.Argument(help="Backlog task IDs in final order.")],
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Rewrite backlog order through the supervisor-safe mutation path."""
+
+    if not task_ids:
+        raise typer.BadParameter("provide at least one task id to reorder")
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).supervisor_queue_reorder(task_ids, issuer=issuer),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
 @interview_app.command("list")
 def interview_list_command(
     ctx: typer.Context,

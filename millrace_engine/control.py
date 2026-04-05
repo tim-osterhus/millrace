@@ -9,7 +9,7 @@ import time
 
 from pydantic import ValidationError
 
-from .adapters.control_mailbox import ControlCommand, write_command
+from .adapters.control_mailbox import ControlCommand, normalize_command_issuer, write_command
 from .config import LoadedConfig, build_runtime_paths
 from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
 from .control_common import (
@@ -261,6 +261,25 @@ class EngineControl:
     @property
     def state_path(self) -> Path:
         return self.paths.runtime_dir / "state.json"
+
+    @staticmethod
+    def _normalize_supervisor_issuer(issuer: str) -> str:
+        try:
+            return normalize_command_issuer(issuer)
+        except ValueError as exc:
+            raise ControlError(str(exc)) from exc
+
+    @staticmethod
+    def _operation_with_payload_value(operation: OperationResult, *, key: str, value: object) -> OperationResult:
+        payload = dict(operation.payload)
+        payload[key] = value
+        return OperationResult(
+            command_id=operation.command_id,
+            mode=operation.mode,
+            applied=operation.applied,
+            message=operation.message,
+            payload=payload,
+        )
 
     def reload_local_config(self) -> LoadedConfig:
         """Reload config from disk and refresh cached paths."""
@@ -613,6 +632,34 @@ class EngineControl:
             },
         )
 
+    def supervisor_queue_reorder(self, task_ids: list[str] | tuple[str, ...], *, issuer: str) -> OperationResult:
+        """Rewrite backlog order through the supervisor-safe mutation path."""
+
+        normalized_issuer = self._normalize_supervisor_issuer(issuer)
+        requested_ids = [task_id.strip() for task_id in task_ids if task_id.strip()]
+        if not requested_ids:
+            raise ControlError("queue reorder requires at least one task id")
+
+        if self.is_daemon_running():
+            envelope = write_command(
+                self.paths,
+                ControlCommand.QUEUE_REORDER,
+                payload={"task_ids": requested_ids},
+                issuer=normalized_issuer,
+            )
+            return OperationResult(
+                command_id=envelope.command_id,
+                mode="mailbox",
+                applied=True,
+                message="queue_reorder queued",
+                payload={"task_ids": requested_ids, "issuer": normalized_issuer},
+            )
+        return self._operation_with_payload_value(
+            self.queue_reorder(requested_ids),
+            key="issuer",
+            value=normalized_issuer,
+        )
+
     def research_report(self) -> ResearchReport:
         """Return a typed visibility report for the research runtime."""
 
@@ -928,6 +975,37 @@ class EngineControl:
             payload={"task_id": card.task_id},
         )
 
+    def supervisor_add_task(
+        self,
+        title: str,
+        *,
+        issuer: str,
+        body: str | None = None,
+        spec_id: str | None = None,
+    ) -> OperationResult:
+        """Add one task through the supported supervisor-safe mutation path."""
+
+        normalized_issuer = self._normalize_supervisor_issuer(issuer)
+        if self.is_daemon_running():
+            envelope = write_command(
+                self.paths,
+                ControlCommand.ADD_TASK,
+                payload={"title": title, "body": body, "spec_id": spec_id},
+                issuer=normalized_issuer,
+            )
+            return OperationResult(
+                command_id=envelope.command_id,
+                mode="mailbox",
+                applied=True,
+                message="add_task queued",
+                payload={"issuer": normalized_issuer},
+            )
+        return self._operation_with_payload_value(
+            self.add_task(title, body=body, spec_id=spec_id),
+            key="issuer",
+            value=normalized_issuer,
+        )
+
     def add_idea(self, file: Path | str) -> OperationResult:
         """Queue one idea file."""
 
@@ -1011,6 +1089,21 @@ class EngineControl:
             message="stop queued",
         )
 
+    def supervisor_stop(self, *, issuer: str) -> OperationResult:
+        """Request daemon stop through the supervisor-safe mutation path."""
+
+        normalized_issuer = self._normalize_supervisor_issuer(issuer)
+        if self.is_daemon_running():
+            envelope = write_command(self.paths, ControlCommand.STOP, issuer=normalized_issuer)
+            return OperationResult(
+                command_id=envelope.command_id,
+                mode="mailbox",
+                applied=True,
+                message="stop queued",
+                payload={"issuer": normalized_issuer},
+            )
+        return self._operation_with_payload_value(self.stop(), key="issuer", value=normalized_issuer)
+
     def pause(self) -> OperationResult:
         """Request daemon pause."""
 
@@ -1024,6 +1117,21 @@ class EngineControl:
             message="pause queued",
         )
 
+    def supervisor_pause(self, *, issuer: str) -> OperationResult:
+        """Request daemon pause through the supervisor-safe mutation path."""
+
+        normalized_issuer = self._normalize_supervisor_issuer(issuer)
+        if self.is_daemon_running():
+            envelope = write_command(self.paths, ControlCommand.PAUSE, issuer=normalized_issuer)
+            return OperationResult(
+                command_id=envelope.command_id,
+                mode="mailbox",
+                applied=True,
+                message="pause queued",
+                payload={"issuer": normalized_issuer},
+            )
+        return self._operation_with_payload_value(self.pause(), key="issuer", value=normalized_issuer)
+
     def resume(self) -> OperationResult:
         """Request daemon resume."""
 
@@ -1036,3 +1144,18 @@ class EngineControl:
             applied=True,
             message="resume queued",
         )
+
+    def supervisor_resume(self, *, issuer: str) -> OperationResult:
+        """Request daemon resume through the supervisor-safe mutation path."""
+
+        normalized_issuer = self._normalize_supervisor_issuer(issuer)
+        if self.is_daemon_running():
+            envelope = write_command(self.paths, ControlCommand.RESUME, issuer=normalized_issuer)
+            return OperationResult(
+                command_id=envelope.command_id,
+                mode="mailbox",
+                applied=True,
+                message="resume queued",
+                payload={"issuer": normalized_issuer},
+            )
+        return self._operation_with_payload_value(self.resume(), key="issuer", value=normalized_issuer)

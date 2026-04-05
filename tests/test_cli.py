@@ -119,6 +119,10 @@ def append_event(
     return event
 
 
+def read_archived_command_payloads(directory: Path) -> list[dict[str, object]]:
+    return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(directory.glob("*.json"))]
+
+
 def write_audit_queue_file(
     workspace: Path,
     *,
@@ -1169,6 +1173,8 @@ def test_cli_subgroup_help_does_not_require_config_file(tmp_path: Path) -> None:
         ["--config", str(missing_config), "queue", "reorder", "--help"],
         ["--config", str(missing_config), "research", "--help"],
         ["--config", str(missing_config), "research", "history", "--help"],
+        ["--config", str(missing_config), "supervisor", "--help"],
+        ["--config", str(missing_config), "supervisor", "add-task", "--help"],
         ["--config", str(missing_config), "logs", "--help"],
     ):
         result = RUNNER.invoke(app, args)
@@ -2497,6 +2503,170 @@ def test_cli_queue_reorder_uses_mailbox_when_daemon_is_running(tmp_path: Path) -
     wait_for(lambda: read_state(state_path)["process_running"] is False)
     thread.join(timeout=5.0)
     assert not thread.is_alive()
+
+
+def test_cli_supervisor_add_task_records_issuer_in_direct_mode(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "supervisor",
+            "add-task",
+            "Supervisor direct task",
+            "--issuer",
+            "openclaw",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "direct"
+    assert payload["message"] == "task added"
+    assert payload["payload"]["issuer"] == "openclaw"
+
+    backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert [card.title for card in backlog] == ["Supervisor direct task"]
+
+
+def test_cli_supervisor_mailbox_actions_preserve_issuer_in_processed_archive(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    controller = EngineControl(config_path)
+    state_path = workspace / "agents/.runtime/state.json"
+    processed_dir = workspace / "agents/.runtime/commands/processed"
+    thread = Thread(target=lambda: controller.start(daemon=True), daemon=True)
+    thread.start()
+
+    wait_for(lambda: state_path.exists() and read_state(state_path)["process_running"] is True)
+
+    pause_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "pause", "--issuer", "openclaw", "--json"],
+    )
+    assert pause_result.exit_code == 0, pause_result.output
+    assert json.loads(pause_result.stdout)["payload"]["issuer"] == "openclaw"
+    wait_for(lambda: read_state(state_path)["paused"] is True)
+
+    first_add = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "supervisor",
+            "add-task",
+            "Supervisor mailbox first",
+            "--issuer",
+            "openclaw",
+            "--json",
+        ],
+    )
+    second_add = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "supervisor",
+            "add-task",
+            "Supervisor mailbox second",
+            "--issuer",
+            "openclaw",
+            "--json",
+        ],
+    )
+    assert first_add.exit_code == 0, first_add.output
+    assert second_add.exit_code == 0, second_add.output
+    wait_for(
+        lambda: len(parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))) == 2
+    )
+    backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+
+    reorder_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "supervisor",
+            "queue-reorder",
+            backlog[1].task_id,
+            backlog[0].task_id,
+            "--issuer",
+            "openclaw",
+            "--json",
+        ],
+    )
+    assert reorder_result.exit_code == 0, reorder_result.output
+    assert json.loads(reorder_result.stdout)["payload"]["issuer"] == "openclaw"
+    wait_for(
+        lambda: [
+            card.title
+            for card in parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+        ]
+        == ["Supervisor mailbox second", "Supervisor mailbox first"]
+    )
+
+    stop_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "stop", "--issuer", "openclaw", "--json"],
+    )
+    assert stop_result.exit_code == 0, stop_result.output
+    assert json.loads(stop_result.stdout)["payload"]["issuer"] == "openclaw"
+    wait_for(lambda: read_state(state_path)["process_running"] is False)
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
+
+    archives = read_archived_command_payloads(processed_dir)
+    assert len(archives) == 5
+    assert [archive["envelope"]["command"] for archive in archives] == [
+        "pause",
+        "add_task",
+        "add_task",
+        "queue_reorder",
+        "stop",
+    ]
+    assert all(archive["envelope"]["issuer"] == "openclaw" for archive in archives)
+
+
+def test_cli_supervisor_resume_preserves_issuer_in_processed_archive(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    controller = EngineControl(config_path)
+    state_path = workspace / "agents/.runtime/state.json"
+    processed_dir = workspace / "agents/.runtime/commands/processed"
+    thread = Thread(target=lambda: controller.start(daemon=True), daemon=True)
+    thread.start()
+
+    wait_for(lambda: state_path.exists() and read_state(state_path)["process_running"] is True)
+
+    pause_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "pause", "--issuer", "openclaw", "--json"],
+    )
+    assert pause_result.exit_code == 0, pause_result.output
+    wait_for(lambda: read_state(state_path)["paused"] is True)
+
+    resume_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "resume", "--issuer", "openclaw", "--json"],
+    )
+    assert resume_result.exit_code == 0, resume_result.output
+    assert json.loads(resume_result.stdout)["payload"]["issuer"] == "openclaw"
+    wait_for(lambda: read_state(state_path)["paused"] is False)
+
+    stop_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "stop", "--issuer", "openclaw", "--json"],
+    )
+    assert stop_result.exit_code == 0, stop_result.output
+    wait_for(lambda: read_state(state_path)["process_running"] is False)
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
+
+    archives = read_archived_command_payloads(processed_dir)
+    assert len(archives) == 3
+    assert [archive["envelope"]["command"] for archive in archives] == ["pause", "resume", "stop"]
+    assert all(archive["envelope"]["issuer"] == "openclaw" for archive in archives)
 
 
 def test_cli_logs_reads_recent_structured_events(tmp_path: Path) -> None:
