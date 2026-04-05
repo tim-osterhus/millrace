@@ -7,6 +7,8 @@ import pytest
 
 from millrace_engine.research.interview import (
     InterviewError,
+    InterviewQuestionRecord,
+    InterviewSource,
     answer_interview_question,
     accept_interview_question,
     create_manual_interview_question,
@@ -106,6 +108,65 @@ def test_create_manual_interview_question_persists_pending_question_and_blocks_d
             question="What is the fallback transport?",
             why_this_matters="The runtime needs one fallback.",
             recommended_answer="Use the existing local mailbox path.",
+        )
+
+
+def test_interview_contracts_normalize_text_fields_and_preserve_required_field_messages() -> None:
+    question = InterviewQuestionRecord.model_validate(
+        {
+            "question_id": "  SPEC-777__interview-001  ",
+            "spec_id": "  SPEC-777  ",
+            "idea_id": "  IDEA-777  ",
+            "source_kind": "idea",
+            "source_path": Path("agents/ideas/staging/IDEA-777__duplicate-pending.md"),
+            "title": "  Manual   interview source  ",
+            "question": "  What   is the rollback   story?  ",
+            "why_this_matters": "  Release safety   depends on it.  ",
+            "recommended_answer": "  Use feature flags   and a documented revert path.  ",
+            "evidence": [
+                "  agents/ideas/staging/IDEA-777__duplicate-pending.md  ",
+                "agents/ideas/staging/IDEA-777__duplicate-pending.md",
+                "",
+            ],
+            "created_at": "2026-03-21T12:00:00Z",
+            "updated_at": "2026-03-21T12:00:00Z",
+        }
+    )
+
+    assert question.question_id == "SPEC-777__interview-001"
+    assert question.idea_id == "IDEA-777"
+    assert question.title == "Manual interview source"
+    assert question.question == "What is the rollback story?"
+    assert question.why_this_matters == "Release safety depends on it."
+    assert question.recommended_answer == "Use feature flags and a documented revert path."
+    assert question.evidence == ("agents/ideas/staging/IDEA-777__duplicate-pending.md",)
+
+    source = InterviewSource.model_validate(
+        {
+            "source_kind": "idea",
+            "source_path": Path("agents/ideas/staging/IDEA-777__duplicate-pending.md"),
+            "relative_source_path": "  agents/ideas/staging/IDEA-777__duplicate-pending.md  ",
+            "title": "  Manual   interview source  ",
+            "spec_id": " SPEC-777 ",
+            "idea_id": "   ",
+        }
+    )
+    assert source.idea_id == ""
+
+    with pytest.raises(ValueError, match="question may not be empty"):
+        InterviewQuestionRecord.model_validate(
+            {
+                "question_id": "SPEC-777__interview-001",
+                "spec_id": "SPEC-777",
+                "source_kind": "idea",
+                "source_path": "agents/ideas/staging/IDEA-777__duplicate-pending.md",
+                "title": "Manual interview source",
+                "question": "   ",
+                "why_this_matters": "Release safety depends on it.",
+                "recommended_answer": "Use feature flags and a documented revert path.",
+                "created_at": "2026-03-21T12:00:00Z",
+                "updated_at": "2026-03-21T12:00:00Z",
+            }
         )
 
 

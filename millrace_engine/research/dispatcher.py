@@ -10,19 +10,13 @@ from pydantic import field_validator, model_validator
 from ..compiler import CompileResult, CompileStatus, FrozenLoopPlan, FrozenRunCompiler, FrozenStagePlan
 from ..contracts import ContractModel, PersistedObjectKind, RegistryObjectRef, ResearchMode, ResearchStatus, StageType
 from ..paths import RuntimePaths
+from .normalization_helpers import _normalize_required_text
 from .queues import ResearchQueueDiscovery
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueSnapshot, ResearchRuntimeMode
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _normalize_required_text(value: str, *, field_name: str) -> str:
-    normalized = " ".join(value.strip().split())
-    if not normalized:
-        raise ValueError(f"{field_name} may not be empty")
-    return normalized
 
 
 def _mode_ref(object_id: str) -> RegistryObjectRef:

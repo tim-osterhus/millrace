@@ -8,10 +8,12 @@ from pathlib import Path
 import json
 import re
 
-from ..contracts import ContractModel, _normalize_path
+from ..contracts import ContractModel
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .dispatcher import ResearchDispatchError
+from .normalization_helpers import _normalize_optional_text, _normalize_required_text
+from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from .specs import GoalSpecDecompositionProfile
 from .state import ResearchCheckpoint
 
@@ -42,28 +44,6 @@ def _isoformat_z(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _normalize_required_text(value: str, *, field_name: str) -> str:
-    normalized = " ".join(value.strip().split())
-    if not normalized:
-        raise ValueError(f"{field_name} may not be empty")
-    return normalized
-
-
-def _normalize_optional_text(value: str | None) -> str:
-    if value is None:
-        return ""
-    return " ".join(value.strip().split())
-
-
-def _normalize_path_token(value: str | Path | None) -> str:
-    if value is None:
-        return ""
-    normalized = _normalize_path(value)
-    if normalized is None:
-        return ""
-    return normalized.as_posix()
-
-
 def _slugify(value: str) -> str:
     slug = _TOKEN_RE.sub("-", value.strip().lower()).strip("-")
     return slug or "goal"
@@ -71,13 +51,6 @@ def _slugify(value: str) -> str:
 
 def _sha256_text(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
-
-
-def _resolve_path_token(path_token: str | Path, *, relative_to: Path) -> Path:
-    candidate = Path(path_token)
-    if candidate.is_absolute():
-        return candidate
-    return relative_to / candidate
 
 
 def _load_json_object(path: Path) -> dict[str, object]:
@@ -107,13 +80,6 @@ def _archive_filename_for_execution(source_path: Path, *, run_id: str, checksum_
     run_token = _slugify(run_id)
     checksum_token = checksum_sha256[:12]
     return f"{stem}__{run_token}__{checksum_token}{suffix}"
-
-
-def _relative_path(path: Path, *, relative_to: Path) -> str:
-    try:
-        return path.relative_to(relative_to).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _write_json_model(path: Path, model: ContractModel) -> None:
@@ -232,4 +198,3 @@ def resolve_goal_source(paths: RuntimePaths, checkpoint: ResearchCheckpoint):
         body=body.strip() or text.strip(),
         checksum_sha256=_sha256_text(text),
     )
-

@@ -13,16 +13,10 @@ from pydantic import ValidationError
 from ..contracts import CompletionDecision, ContractModel, ResearchStatus
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
+from .path_helpers import _relative_path, _resolve_path_token
 
 if TYPE_CHECKING:
     from .audit import AuditGateDecision, AuditQueueRecord, AuditRemediationRecord, AuditSummary
-
-
-def _relative_path(path: Path, *, relative_to: Path) -> str:
-    try:
-        return path.relative_to(relative_to).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _write_json_model(path: Path, model: ContractModel) -> None:
@@ -33,13 +27,6 @@ def _write_json_model(path: Path, model: ContractModel) -> None:
 
 def _load_json_model(path: Path, model_cls: type[ContractModel]) -> ContractModel:
     return model_cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
-
-
-def _resolve_path_token(path_token: Path | str, *, relative_to: Path) -> Path:
-    candidate = Path(path_token)
-    if candidate.is_absolute():
-        return candidate
-    return relative_to / candidate
 
 
 def _audit_runtime_dir(paths: RuntimePaths) -> Path:

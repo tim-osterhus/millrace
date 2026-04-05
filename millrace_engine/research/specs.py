@@ -13,6 +13,12 @@ from pydantic import Field, field_serializer, field_validator, model_validator
 
 from ..contracts import ContractModel, _normalize_datetime
 from ..markdown import write_text_atomic
+from .normalization_helpers import (
+    _normalize_optional_text,
+    _normalize_required_text,
+    _normalize_token_sequence,
+)
+from .path_helpers import _normalize_path_sequence, _normalize_path_token, _path_token
 
 
 SCHEMA_VERSION = "1.0"
@@ -33,60 +39,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_required_text(value: str, *, field_name: str) -> str:
-    normalized = " ".join(value.strip().split())
-    if not normalized:
-        raise ValueError(f"{field_name} may not be empty")
-    return normalized
-
-
-def _normalize_optional_text(value: str | None) -> str:
-    if value is None:
-        return ""
-    return " ".join(value.strip().split())
-
-
 def _normalize_optional_datetime(value: datetime | str | None) -> datetime | None:
     if value in (None, ""):
         return None
     return _normalize_datetime(value)
-
-
-def _normalize_token_sequence(values: list[str]) -> tuple[str, ...]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        token = value.strip()
-        if not token or token in seen:
-            continue
-        seen.add(token)
-        deduped.append(token)
-    return tuple(deduped)
-
-
-def _normalize_path_token(value: str | Path | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, Path):
-        return value.as_posix()
-    stripped = value.strip()
-    if not stripped:
-        return ""
-    return Path(stripped).as_posix()
-
-
-def _normalize_path_sequence(values: list[str | Path]) -> tuple[str, ...]:
-    return _normalize_token_sequence([_normalize_path_token(value) for value in values])
-
-
-def _path_token(path: Path, *, relative_to: Path | None = None) -> str:
-    candidate = path
-    if relative_to is not None:
-        try:
-            candidate = path.relative_to(relative_to)
-        except ValueError:
-            pass
-    return candidate.as_posix()
 
 
 def _sha256_file(path: Path) -> str:

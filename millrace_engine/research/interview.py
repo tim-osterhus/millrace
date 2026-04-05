@@ -20,6 +20,11 @@ from .goalspec_helpers import (
     _utcnow,
     _write_json_model,
 )
+from .normalization_helpers import (
+    _normalize_optional_text,
+    _normalize_required_text,
+    _normalize_text_sequence,
+)
 
 
 INTERVIEW_ARTIFACT_SCHEMA_VERSION = "1.0"
@@ -27,33 +32,6 @@ InterviewQuestionStatus = Literal["pending", "answered", "accepted", "skipped"]
 InterviewAnswerSource = Literal["repo", "operator", "assumption"]
 InterviewDecisionSource = Literal["repo", "operator", "accepted_recommendation", "assumption"]
 InterviewSourceKind = Literal["idea", "spec"]
-
-
-def _normalize_required_text(value: str, *, field_name: str) -> str:
-    normalized = " ".join(value.strip().split())
-    if not normalized:
-        raise ValueError(f"{field_name} may not be empty")
-    return normalized
-
-
-def _normalize_optional_text(value: str | None) -> str:
-    if value is None:
-        return ""
-    return " ".join(value.strip().split())
-
-
-def _normalize_text_sequence(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
-    if not values:
-        return ()
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        text = " ".join(str(item).strip().split())
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        normalized.append(text)
-    return tuple(normalized)
 
 
 class InterviewError(ValueError):

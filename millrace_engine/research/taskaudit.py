@@ -15,6 +15,12 @@ from ..markdown import TaskStoreDocument, parse_task_store, render_task_store, w
 from ..paths import RuntimePaths
 from ..queue import QueueMergeConflictError, TaskQueue
 from .goalspec import GoalSpecExecutionError
+from .normalization_helpers import (
+    _normalize_optional_text,
+    _normalize_required_text,
+    _normalize_token_sequence,
+)
+from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from .provenance import TaskauditProvenance, refresh_task_provenance_registry, task_provenance_source_paths
 from .specs import GoalSpecFamilyState, load_goal_spec_family_state
 
@@ -30,56 +36,6 @@ def _utcnow() -> datetime:
 
 def _sha256_text(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
-
-
-def _normalize_required_text(value: str, *, field_name: str) -> str:
-    normalized = " ".join(value.strip().split())
-    if not normalized:
-        raise ValueError(f"{field_name} may not be empty")
-    return normalized
-
-
-def _normalize_optional_text(value: str | None) -> str:
-    if value is None:
-        return ""
-    return " ".join(value.strip().split())
-
-
-def _normalize_path_token(value: str | Path | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, Path):
-        return value.as_posix()
-    stripped = value.strip()
-    if not stripped:
-        return ""
-    return Path(stripped).as_posix()
-
-
-def _normalize_token_sequence(values: list[str]) -> tuple[str, ...]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        token = value.strip()
-        if not token or token in seen:
-            continue
-        seen.add(token)
-        deduped.append(token)
-    return tuple(deduped)
-
-
-def _relative_path(path: Path, *, relative_to: Path) -> str:
-    try:
-        return path.relative_to(relative_to).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _resolve_path_token(path_token: str | Path, *, relative_to: Path) -> Path:
-    candidate = Path(path_token)
-    if candidate.is_absolute():
-        return candidate
-    return relative_to / candidate
 
 
 def _write_json_model(path: Path, model: ContractModel) -> None:

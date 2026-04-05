@@ -9,6 +9,7 @@ from millrace_engine.events import EventType
 from millrace_engine.research.incident_intake_helpers import materialize_incident_source
 from millrace_engine.research.incident_state_helpers import incident_archive_evidence_paths
 from millrace_engine.research.incidents import IncidentFixSpecRecord, IncidentRemediationRecord, resolve_incident_source
+from millrace_engine.research.path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from millrace_engine.research.state import ResearchCheckpoint
 from tests.support import load_workspace_fixture
 
@@ -149,3 +150,20 @@ def test_incident_archive_evidence_paths_preserve_runtime_order_and_skip_duplica
         "agents/task_provenance.json",
         "agents/.research_runtime/incidents/lineage/inc-helper-001.json",
     )
+
+
+def test_research_path_helpers_preserve_token_and_relative_path_semantics(tmp_path: Path) -> None:
+    workspace, paths = _configured_paths(tmp_path)
+    absolute = workspace / "agents" / "ideas" / "incidents" / "incoming" / "INC-PATH-001.md"
+
+    assert _normalize_path_token(Path("agents/ideas/incidents/incoming/INC-PATH-001.md")) == (
+        "agents/ideas/incidents/incoming/INC-PATH-001.md"
+    )
+    assert _normalize_path_token("  agents/ideas/incidents/incoming/INC-PATH-001.md  ") == (
+        "agents/ideas/incidents/incoming/INC-PATH-001.md"
+    )
+    assert _normalize_path_token("   ") == ""
+    assert _resolve_path_token(absolute, relative_to=paths.root) == absolute
+    assert _resolve_path_token("agents/ideas/incidents/incoming/INC-PATH-001.md", relative_to=paths.root) == absolute
+    assert _relative_path(absolute, relative_to=paths.root) == "agents/ideas/incidents/incoming/INC-PATH-001.md"
+    assert _relative_path(Path("/tmp/external.md"), relative_to=paths.root) == "/tmp/external.md"
