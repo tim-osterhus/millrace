@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
 
 from ..models import InterviewQuestionSummaryView
+from .modal_support import ManagedModalScreen
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,13 +23,16 @@ class InterviewResolutionRequest:
     skip_reason: str | None = None
 
 
-class InterviewModal(ModalScreen[InterviewResolutionRequest | None]):
+class InterviewModal(ManagedModalScreen[InterviewResolutionRequest | None]):
     """Collect one operator decision for a pending interview question."""
 
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        *ManagedModalScreen.BINDINGS,
         ("ctrl+enter", "submit_answer", "Answer"),
     ]
+    cancel_result = None
+    initial_focus_selector = "#interview-answer-text"
+    error_selector = "#interview-error"
 
     def __init__(self, *, question: InterviewQuestionSummaryView) -> None:
         super().__init__()
@@ -59,17 +62,11 @@ class InterviewModal(ModalScreen[InterviewResolutionRequest | None]):
                 yield Button("Accept Recommendation", id="interview-accept")
                 yield Button("Record Answer", id="interview-answer", variant="primary")
 
-    def on_mount(self) -> None:
-        self.query_one("#interview-answer-text", TextArea).focus()
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
     def action_submit_answer(self) -> None:
         answer = self.query_one("#interview-answer-text", TextArea).text.strip()
         if not answer:
             self._set_error("Answer text is required to record an operator answer.")
-            self.query_one("#interview-answer-text", TextArea).focus()
+            self._focus_initial()
             return
         self.dismiss(
             InterviewResolutionRequest(
@@ -141,12 +138,5 @@ class InterviewModal(ModalScreen[InterviewResolutionRequest | None]):
     @on(TextArea.Changed, "#interview-answer-text")
     def _handle_input_changed(self, _: Input.Changed | TextArea.Changed) -> None:
         self._clear_error()
-
-    def _set_error(self, message: str) -> None:
-        self.query_one("#interview-error", Static).update(message)
-
-    def _clear_error(self) -> None:
-        self._set_error("")
-
 
 __all__ = ["InterviewModal", "InterviewResolutionRequest"]

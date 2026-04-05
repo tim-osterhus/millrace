@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
+
+from .modal_support import ManagedModalScreen
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,13 +21,16 @@ class AddTaskRequest:
     body: str | None = None
 
 
-class AddTaskModal(ModalScreen[AddTaskRequest | None]):
+class AddTaskModal(ManagedModalScreen[AddTaskRequest | None]):
     """Collect one operator-authored task card before gateway execution."""
 
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        *ManagedModalScreen.BINDINGS,
         ("ctrl+enter", "submit", "Submit"),
     ]
+    cancel_result = None
+    initial_focus_selector = "#add-task-title"
+    error_selector = "#add-task-error"
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal-dialog modal-form"):
@@ -58,17 +62,11 @@ class AddTaskModal(ModalScreen[AddTaskRequest | None]):
                 yield Button("Cancel", id="add-task-cancel")
                 yield Button("Add Task", id="add-task-submit", variant="primary")
 
-    def on_mount(self) -> None:
-        self.query_one("#add-task-title", Input).focus()
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
     def action_submit(self) -> None:
         title = self.query_one("#add-task-title", Input).value.strip()
         if not title:
             self._set_error("Task title is required.")
-            self.query_one("#add-task-title", Input).focus()
+            self._focus_initial()
             return
 
         spec_id = self.query_one("#add-task-spec-id", Input).value.strip() or None
@@ -93,12 +91,5 @@ class AddTaskModal(ModalScreen[AddTaskRequest | None]):
     @on(TextArea.Changed, "#add-task-body")
     def _handle_body_changed(self, _: TextArea.Changed) -> None:
         self._clear_error()
-
-    def _set_error(self, message: str) -> None:
-        self.query_one("#add-task-error", Static).update(message)
-
-    def _clear_error(self) -> None:
-        self._set_error("")
-
 
 __all__ = ["AddTaskModal", "AddTaskRequest"]

@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from ..models import ConfigFieldInputKind, ConfigFieldView
+from .modal_support import ManagedModalScreen
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,13 +21,16 @@ class ConfigEditRequest:
     value: str
 
 
-class ConfigEditModal(ModalScreen[ConfigEditRequest | None]):
+class ConfigEditModal(ManagedModalScreen[ConfigEditRequest | None]):
     """Collect one validated config edit for a supported field."""
 
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        *ManagedModalScreen.BINDINGS,
         ("ctrl+enter", "submit", "Apply"),
     ]
+    cancel_result = None
+    initial_focus_selector = "#config-edit-value"
+    error_selector = "#config-edit-error"
 
     def __init__(self, *, field: ConfigFieldView, daemon_running: bool) -> None:
         super().__init__()
@@ -65,12 +68,6 @@ class ConfigEditModal(ModalScreen[ConfigEditRequest | None]):
             with Horizontal(classes="modal-actions"):
                 yield Button("Cancel", id="config-edit-cancel")
                 yield Button("Apply Edit", id="config-edit-submit", variant="primary")
-
-    def on_mount(self) -> None:
-        self.query_one("#config-edit-value", Input).focus()
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
 
     def action_submit(self) -> None:
         value = self.query_one("#config-edit-value", Input).value.strip()
@@ -131,12 +128,5 @@ class ConfigEditModal(ModalScreen[ConfigEditRequest | None]):
     @on(Input.Changed, "#config-edit-value")
     def _handle_input_changed(self, _: Input.Changed) -> None:
         self._clear_error()
-
-    def _set_error(self, message: str) -> None:
-        self.query_one("#config-edit-error", Static).update(message)
-
-    def _clear_error(self) -> None:
-        self._set_error("")
-
 
 __all__ = ["ConfigEditModal", "ConfigEditRequest"]

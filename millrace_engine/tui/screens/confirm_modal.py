@@ -5,16 +5,16 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from .modal_support import ManagedModalScreen
 
-class ConfirmModal(ModalScreen[bool]):
+
+class ConfirmModal(ManagedModalScreen[bool]):
     """Ask the operator to explicitly confirm one high-friction action."""
 
-    BINDINGS = [
-        ("escape", "cancel", "Cancel"),
-    ]
+    cancel_result = False
+    initial_focus_selector = "#confirm-cancel"
 
     def __init__(
         self,
@@ -37,12 +37,6 @@ class ConfirmModal(ModalScreen[bool]):
             with Horizontal(classes="modal-actions"):
                 yield Button(self._cancel_label, id="confirm-cancel")
                 yield Button(self._confirm_label, id="confirm-submit", variant="primary")
-
-    def on_mount(self) -> None:
-        self.query_one("#confirm-cancel", Button).focus()
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
 
     def action_confirm(self) -> None:
         self.dismiss(True)

@@ -8,8 +8,9 @@ from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
+
+from .modal_support import ManagedModalScreen
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,13 +20,16 @@ class AddIdeaRequest:
     source_path: Path
 
 
-class AddIdeaModal(ModalScreen[AddIdeaRequest | None]):
+class AddIdeaModal(ManagedModalScreen[AddIdeaRequest | None]):
     """Collect and validate one source file path before queueing an idea."""
 
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
+        *ManagedModalScreen.BINDINGS,
         ("ctrl+enter", "submit", "Submit"),
     ]
+    cancel_result = None
+    initial_focus_selector = "#add-idea-path"
+    error_selector = "#add-idea-error"
 
     def __init__(self, *, workspace_path: Path) -> None:
         super().__init__()
@@ -52,17 +56,11 @@ class AddIdeaModal(ModalScreen[AddIdeaRequest | None]):
                 yield Button("Cancel", id="add-idea-cancel")
                 yield Button("Queue Idea", id="add-idea-submit", variant="primary")
 
-    def on_mount(self) -> None:
-        self.query_one("#add-idea-path", Input).focus()
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
     def action_submit(self) -> None:
         raw_value = self.query_one("#add-idea-path", Input).value.strip()
         if not raw_value:
             self._set_error("Idea source path is required.")
-            self.query_one("#add-idea-path", Input).focus()
+            self._focus_initial()
             return
 
         source_path = Path(raw_value).expanduser()
@@ -72,11 +70,11 @@ class AddIdeaModal(ModalScreen[AddIdeaRequest | None]):
 
         if not source_path.exists():
             self._set_error(f"Idea source file does not exist: {source_path}")
-            self.query_one("#add-idea-path", Input).focus()
+            self._focus_initial()
             return
         if not source_path.is_file():
             self._set_error(f"Idea source path is not a file: {source_path}")
-            self.query_one("#add-idea-path", Input).focus()
+            self._focus_initial()
             return
 
         self.dismiss(AddIdeaRequest(source_path=source_path))
@@ -94,12 +92,5 @@ class AddIdeaModal(ModalScreen[AddIdeaRequest | None]):
     @on(Input.Changed, "#add-idea-path")
     def _handle_input_changed(self, _: Input.Changed) -> None:
         self._clear_error()
-
-    def _set_error(self, message: str) -> None:
-        self.query_one("#add-idea-error", Static).update(message)
-
-    def _clear_error(self) -> None:
-        self._set_error("")
-
 
 __all__ = ["AddIdeaModal", "AddIdeaRequest"]
