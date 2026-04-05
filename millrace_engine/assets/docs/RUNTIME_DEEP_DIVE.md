@@ -8,6 +8,7 @@ It is intentionally implementation-oriented. It describes:
 - the on-disk contract under `millrace/agents/`
 - the package/module layout under `millrace/millrace_engine/`
 - the end-to-end control flow for the CLI, the TUI, and foreground or daemon execution
+- the explicit one-workspace external supervisor contract used by OpenClaw-style harnesses
 - how status, queues, events, watchers, diagnostics, and tests fit together
 - what is intentionally deferred or scoped in v1
 
@@ -34,6 +35,8 @@ It is not:
 - a web service
 - a distributed job system
 - a complete port of every legacy shell behavior
+
+External supervisors stay outside the core runtime. The explicit compatibility seam is the CLI-first one-workspace supervisor contract: observe with `millrace --config millrace.toml supervisor report --json`, then act through issuer-attributed `millrace --config millrace.toml supervisor ... --issuer <name> --json` commands when intervention is required.
 
 The research side in v1 now includes a real supervisor path (`auto`, `goalspec`, `incident`, `audit`) plus a compatibility `stub` mode that records deferred breadcrumbs.
 
@@ -1253,6 +1256,19 @@ Operationally, the TUI gives the operator:
 - guided config edits, reload, and publish confirmation flows
 
 The TUI is therefore a denser presentation and control layer over the same runtime contract, not an alternate control plane.
+
+### 22.3 External Supervisor Surface
+
+OpenClaw or another external supervisor harness should treat Millrace as a one-workspace control plane.
+
+The supported compatibility seam is intentionally narrow:
+
+- `millrace --config millrace.toml supervisor report --json` for consolidated observation
+- `millrace --config millrace.toml supervisor ... --issuer <name> --json` for attributable control actions
+
+That report collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons without requiring the harness to synthesize raw runtime files.
+
+Scheduling, messaging, wakeups, and multi-workspace portfolio logic stay outside the core runtime. External harnesses must not write `agents/.runtime/commands/incoming/` or other engine-owned files directly during normal supervision.
 
 ## 23. Foreground vs Daemon Behavior
 

@@ -4,6 +4,8 @@ Millrace is a local autonomous software-delivery runtime for long-running coding
 
 It is built for unattended or semi-attended work that needs more than a chat session or a thin agent wrapper. You get one engine, one control plane, and multiple operator surfaces over the same on-disk truth: CLI, TUI, and agent-guided operation.
 
+That same control plane also exposes an explicit one-workspace compatibility seam for OpenClaw-style supervisor agents: `supervisor report --json` for observation, plus issuer-attributed `supervisor ... --issuer <name>` actions for safe control.
+
 ## Install
 
 ```bash
@@ -15,6 +17,7 @@ This installs the `millrace` command. Create a workspace with `millrace init ...
 It gives you:
 
 - a Python CLI and a Textual TUI, plus an agent-facing advisor surface
+- an explicit OpenClaw-compatible supervisor contract over the same CLI and JSON control plane
 - a single runtime engine
 - an execution plane for delivery work
 - a research plane for idea intake, audit, and governed handoff
@@ -265,7 +268,7 @@ When the daemon is running, mutating commands route through the mailbox so one o
 
 ## External Supervisor Workflow
 
-Millrace supports external supervision one workspace at a time through a CLI-first, JSON-first contract. A harness such as OpenClaw should start with:
+Millrace supports explicit OpenClaw and external-supervisor compatibility one workspace at a time through a CLI-first, JSON-first contract. An OpenClaw Supervisor agent or similar harness should start with:
 
 ```bash
 millrace --config millrace.toml supervisor report --json
@@ -285,7 +288,7 @@ millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ...
 
 Scheduling, messaging, wakeups, and multi-workspace registry stay outside Millrace core. Millrace owns one-workspace runtime truth, event history, and safe action semantics; the external harness owns cadence, portfolio ordering, and outbound communication.
 
-Optional adapters may translate `supervisor report`, research/status surfaces, or structured events into wakeups, webhooks, or inbox items, but they remain edge layers over Millrace-owned truth. Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime files directly during normal supervision.
+Optional adapters may translate `supervisor report`, research/status surfaces, or structured events into wakeups, webhooks, or inbox items, but they remain edge layers over Millrace-owned truth. This keeps the OpenClaw/Supervisor compatibility seam attributable and file-safe. Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime files directly during normal supervision.
 
 ## Publish And Staging
 

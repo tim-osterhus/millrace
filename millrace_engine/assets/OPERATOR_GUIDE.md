@@ -240,7 +240,7 @@ The TUI follows the same rule. It does not mutate live daemon state directly.
 
 ## External Supervisor Workflow
 
-Use this pattern when another harness is supervising a Millrace workspace. The supported flow is:
+Use this pattern when OpenClaw or another external supervisor harness is supervising a Millrace workspace. The supported compatibility flow is:
 
 1. Poll one workspace through `millrace --config millrace.toml supervisor report --json`.
 2. Decide whether to wait, message, escalate, or act based on the report's machine-readable attention state.
@@ -256,7 +256,7 @@ millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ...
 
 Scheduling, messaging, wakeups, and multi-workspace registry remain external-harness concerns. Millrace does not become the portfolio scheduler.
 
-Optional adapters may translate supervisor reports or structured events into local wakeups, webhooks, or inbox delivery, but they stay at the edge. Mailbox files remain runtime-owned. Do not write `agents/.runtime/commands/incoming/` directly during normal supervision.
+Optional adapters may translate supervisor reports or structured events into local wakeups, webhooks, or inbox delivery, but they stay at the edge. The TUI remains a local operator shell for one workspace; it is not the remote compatibility surface. Mailbox files remain runtime-owned. Do not write `agents/.runtime/commands/incoming/` directly during normal supervision.
 
 ### 6. Inspect Outcomes
 

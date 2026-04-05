@@ -66,6 +66,18 @@ The TUI is not:
 
 When the daemon is running, mutating operations still go through mailbox-safe control paths. The TUI does not directly seize ownership of live runtime state.
 
+## External Supervisor Boundary
+
+If OpenClaw or another external supervisor harness is coordinating Millrace work, keep that harness on the CLI-first supervisor contract instead of treating the TUI as the automation surface:
+
+```bash
+millrace --config millrace.toml supervisor report --json
+millrace --config millrace.toml supervisor pause --issuer <name> --json
+millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
+```
+
+The TUI can observe and act through the same control plane for a local operator, but it is not the remote harness interface and it should not replace the attributable supervisor contract.
+
 ## Launching The TUI
 
 From the workspace root:

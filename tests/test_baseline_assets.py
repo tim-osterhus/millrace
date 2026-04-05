@@ -60,6 +60,7 @@ RUNTIME_DOC_PATHS = (
     "ADVISOR.md",
     "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md",
+    "docs/TUI_DOCUMENTATION.md",
 )
 STALE_RUN06_DOC_MARKERS = (
     "workspace-local override resolution and precedence are not yet implemented",
@@ -75,6 +76,7 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "## External Supervisor Workflow",
         "they are not expected at the public repo root",
         "a Python CLI and a Textual TUI",
+        "OpenClaw-style supervisor agents",
         "python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml",
         "supervisor report --json",
         "Scheduling, messaging, wakeups, and multi-workspace registry stay outside Millrace core.",
@@ -86,6 +88,7 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "### Workspace Setup",
         "### External Supervisor",
         "health --json",
+        "OpenClaw Supervisor agent",
         "supervisor report --json",
         "supervisor pause --issuer <name>",
         "Do not write `agents/.runtime/commands/incoming/`",
@@ -95,6 +98,7 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
     "OPERATOR_GUIDE.md": (
         "## External Supervisor Workflow",
         "## TUI Workflow",
+        "OpenClaw or another external supervisor harness",
         "python3 -m millrace_engine.tui --config millrace.toml",
         "supervisor add-task \"Example task\" --issuer <name>",
         "Mailbox files remain runtime-owned.",
@@ -102,8 +106,17 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
     ),
     "docs/RUNTIME_DEEP_DIVE.md": (
         "### 22.2 TUI Surface",
+        "### 22.3 External Supervisor Surface",
+        "OpenClaw or another external supervisor harness",
         "millrace_engine/tui/",
         "The TUI is an operator shell, not a second runtime engine.",
+        "multi-workspace portfolio logic stay outside the core runtime",
+    ),
+    "docs/TUI_DOCUMENTATION.md": (
+        "## External Supervisor Boundary",
+        "OpenClaw or another external supervisor harness",
+        "supervisor report --json",
+        "it is not the remote harness interface",
     ),
 }
 

@@ -93,6 +93,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "millrace init /absolute/path/to/workspace" in readme
     assert "OPERATOR_GUIDE.md" in readme
     assert "ADVISOR.md" in readme
+    assert "OpenClaw-style supervisor agents" in readme
     assert "millrace --config /absolute/path/to/workspace/millrace.toml health --json" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
@@ -101,7 +102,17 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "install `millrace-ai`" in advisor
     assert "millrace init /absolute/path/to/workspace" in advisor
     assert "health --json" in advisor
+    assert "OpenClaw Supervisor agent" in advisor
     assert "publish preflight --json" in advisor
+
+    operator_guide = (MILLRACE_ROOT / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
+    assert "OpenClaw or another external supervisor harness" in operator_guide
+
+    runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
+    assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
+
+    tui_doc = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
+    assert "## External Supervisor Boundary" in tui_doc
 
 
 def test_default_public_stage_prompt_assets_exist(tmp_path: Path) -> None:

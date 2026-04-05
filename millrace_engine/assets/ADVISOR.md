@@ -75,6 +75,8 @@ millrace --config millrace.toml queue reorder <task-id> <task-id> ...
 
 ### External Supervisor
 
+For an OpenClaw Supervisor agent or any other external harness, stay on the one-workspace supervisor contract and keep runtime-owned files read-only:
+
 ```bash
 millrace --config millrace.toml supervisor report --json
 millrace --config millrace.toml supervisor pause --issuer <name> --json
@@ -115,7 +117,7 @@ millrace --config millrace.toml publish commit --push --json
 - Explain config changes in terms of both what changes and when the boundary applies.
 - Use the runtime's config boundary vocabulary when it matters: `live_immediate`, `stage_boundary`, `cycle_boundary`, and `startup_only`.
 - Keep scheduling, messaging, wakeups, and multi-workspace registry outside Millrace core.
-- Optional adapters may consume supervisor reports or structured events, but they are edge layers over Millrace-owned truth.
+- Optional adapters may consume supervisor reports or structured events, but they are edge layers over Millrace-owned truth and the OpenClaw/Supervisor compatibility seam.
 
 ## Read-Only Files
 
