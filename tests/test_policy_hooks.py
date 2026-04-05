@@ -351,6 +351,56 @@ def test_execution_integration_context_rejects_malformed_persisted_boolean_field
         execution_integration_context(record)
 
 
+def test_execution_integration_context_rejects_missing_persisted_boolean_fields(tmp_path: Path) -> None:
+    _, _, frozen_plan, snapshot_id = _compiled_plan(tmp_path)
+    facts = PolicyHookRuntime().evaluate_cycle_boundary(
+        run_id="persisted-integration-context-missing",
+        routing_mode="frozen_plan",
+        execution_status=ExecutionStatus.IDLE,
+        active_task=TaskCard.model_validate(
+            {
+                "heading": "## 2026-03-19 - Force integration explicitly",
+                "body": "\n".join(
+                    [
+                        "**Gates:** INTEGRATION",
+                        "- **Goal:** Ensure integration runs.",
+                    ]
+                ),
+            }
+        ),
+        backlog_depth=1,
+        transition_history_count=0,
+        frozen_plan=frozen_plan,
+        snapshot_id=snapshot_id,
+    )[0].facts
+    record = PolicyEvaluationRecord(
+        evaluator=ExecutionIntegrationEvaluator.evaluator_name,
+        hook=PolicyHook.CYCLE_BOUNDARY,
+        decision=PolicyDecision.PASS,
+        facts=facts,
+        evidence=(
+            PolicyEvidence(
+                kind=PolicyEvidenceKind.INTEGRATION_POLICY,
+                summary="Task gate requires integration.",
+                details={
+                    "effective_mode": "never",
+                    "builder_success_target": "integration",
+                    "task_gate_required": True,
+                    "task_integration_preference": None,
+                    "requested_sequence": ["integration", "qa"],
+                    "effective_sequence": ["integration", "qa"],
+                    "available_execution_nodes": ["builder", "integration", "qa", "update"],
+                    "reason": "Task gate requires integration. Builder routes to integration.",
+                },
+            ),
+        ),
+        notes=("Task gate requires integration.",),
+    )
+
+    with pytest.raises(ValueError, match="should_run_integration must be a boolean"):
+        execution_integration_context(record)
+
+
 def test_execution_usage_budget_evaluator_rejects_non_cycle_boundary_hook(tmp_path: Path) -> None:
     workspace, config_path, frozen_plan, snapshot_id = _compiled_plan(tmp_path)
     loaded = load_engine_config(config_path)
@@ -479,6 +529,48 @@ def test_execution_preflight_context_rejects_malformed_persisted_boolean_fields(
                     "preflight_outcome": PolicyDecision.PASS.value,
                     "effective_allow_search": "false",
                     "effective_allow_network": "false",
+                    "reason": "search disabled by policy",
+                },
+            ),
+        ),
+        notes=("search disabled by policy",),
+    )
+
+    with pytest.raises(ValueError, match="effective_allow_search must be a boolean"):
+        execution_preflight_context(record)
+
+
+def test_execution_preflight_context_rejects_missing_persisted_boolean_fields(tmp_path: Path) -> None:
+    _, _, frozen_plan, snapshot_id = _compiled_plan(tmp_path)
+    facts = PolicyHookRuntime().evaluate_pre_stage(
+        run_id="persisted-preflight-context-missing",
+        routing_mode="frozen_plan",
+        execution_status=ExecutionStatus.IDLE,
+        active_task=None,
+        backlog_depth=1,
+        transition_history_count=0,
+        frozen_plan=frozen_plan,
+        snapshot_id=snapshot_id,
+        stage_type=StageType.BUILDER,
+        node_id="builder",
+    )[0].facts
+    record = PolicyEvaluationRecord(
+        evaluator=ExecutionPreflightEvaluator.evaluator_name,
+        hook=PolicyHook.PRE_STAGE,
+        decision=PolicyDecision.PASS,
+        facts=facts,
+        evidence=(
+            PolicyEvidence(
+                kind=PolicyEvidenceKind.TRANSPORT_CHECK,
+                summary="transport ready",
+                details={"readiness": TransportReadiness.READY.value, "summary": "transport ready"},
+            ),
+            PolicyEvidence(
+                kind=PolicyEvidenceKind.NETWORK_GUARD,
+                summary="search disabled by policy",
+                details={
+                    "preflight_outcome": PolicyDecision.PASS.value,
+                    "effective_allow_network": False,
                     "reason": "search disabled by policy",
                 },
             ),

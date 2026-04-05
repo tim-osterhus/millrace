@@ -25,6 +25,7 @@ _EVENT_CATEGORY_LABELS = {
     "execution": "EXE",
     "research": "RSH",
 }
+_EPHEMERAL_TAIL_PARTS = {"T"}
 _RUN_ID_KEYS = ("run_id", "pause_run_id", "parent_run_id", "active_run_id")
 _SUMMARY_KEYS = (
     "stage",
@@ -188,6 +189,8 @@ def compact_display_path(path: Path, *, max_length: int = 48, minimum_tail_parts
         if tail_parts and len(candidate) > budget and len(candidate_parts) > minimum_tail_parts:
             break
         tail_parts = candidate_parts
+    while len(tail_parts) > minimum_tail_parts and tail_parts[0] in _EPHEMERAL_TAIL_PARTS:
+        tail_parts = tail_parts[1:]
     return f".../{'/'.join(tail_parts)}"
 
 

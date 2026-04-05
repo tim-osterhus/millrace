@@ -9,6 +9,7 @@ from pydantic import field_validator
 
 from ..config import EngineConfig
 from ..contracts import ContractModel, ExecutionStatus, StageType
+from .evidence_helpers import _policy_evidence_details, _require_bool_detail
 from .hooks import (
     PolicyDecision,
     PolicyEvaluationRecord,
@@ -311,28 +312,22 @@ def execution_preflight_context(record: PolicyEvaluationRecord | None) -> Execut
 
     if record is None or record.evaluator != ExecutionPreflightEvaluator.evaluator_name:
         return None
-    details = next(
-        (
-            evidence.details
-            for evidence in record.evidence
-            if evidence.kind is PolicyEvidenceKind.NETWORK_GUARD
-        ),
-        None,
-    )
+    details = _policy_evidence_details(record, kind=PolicyEvidenceKind.NETWORK_GUARD)
     if details is None:
         return None
-    transport_details = next(
-        (
-            evidence.details
-            for evidence in record.evidence
-            if evidence.kind is PolicyEvidenceKind.TRANSPORT_CHECK
-        ),
-        {},
-    )
+    transport_details = _policy_evidence_details(record, kind=PolicyEvidenceKind.TRANSPORT_CHECK) or {}
     return ExecutionPreflightContext(
         outcome=PolicyDecision(str(details.get("preflight_outcome") or record.decision.value)),
-        allow_search=_require_bool_detail(details, "effective_allow_search"),
-        allow_network=_require_bool_detail(details, "effective_allow_network"),
+        allow_search=_require_bool_detail(
+            details,
+            "effective_allow_search",
+            error_prefix="persisted preflight evidence",
+        ),
+        allow_network=_require_bool_detail(
+            details,
+            "effective_allow_network",
+            error_prefix="persisted preflight evidence",
+        ),
         block_status=(
             ExecutionStatus(str(details["block_status"]))
             if details.get("block_status")
@@ -341,15 +336,6 @@ def execution_preflight_context(record: PolicyEvaluationRecord | None) -> Execut
         reason=record.notes[0] if record.notes else str(details.get("reason") or "Execution preflight decision recorded."),
         transport=TransportProbeResult.model_validate(transport_details),
     )
-
-
-def _require_bool_detail(details: dict[str, object], field_name: str) -> bool:
-    """Reject malformed persisted boolean fields instead of coercing them."""
-
-    value = details.get(field_name)
-    if not isinstance(value, bool):
-        raise ValueError(f"persisted preflight evidence field {field_name} must be a boolean")
-    return value
 
 
 def execution_preflight_context_from_records(

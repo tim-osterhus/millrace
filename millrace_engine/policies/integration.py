@@ -8,6 +8,7 @@ from pydantic import Field, field_validator
 
 from ..config import EngineConfig
 from ..contracts import ContractModel, StageType, TaskCard
+from .evidence_helpers import _policy_evidence_details, _require_bool_detail
 from .hooks import (
     PolicyDecision,
     PolicyEvaluationRecord,
@@ -272,29 +273,21 @@ def execution_integration_context(record: PolicyEvaluationRecord | None) -> Exec
 
     if record is None or record.evaluator != ExecutionIntegrationEvaluator.evaluator_name:
         return None
-    details = next(
-        (
-            evidence.details
-            for evidence in record.evidence
-            if evidence.kind is PolicyEvidenceKind.INTEGRATION_POLICY
-        ),
-        None,
-    )
+    details = _policy_evidence_details(record, kind=PolicyEvidenceKind.INTEGRATION_POLICY)
     if details is None:
         return None
     sanitized_details = dict(details)
-    sanitized_details["should_run_integration"] = _require_bool_detail(details, "should_run_integration")
-    sanitized_details["task_gate_required"] = _require_bool_detail(details, "task_gate_required")
+    sanitized_details["should_run_integration"] = _require_bool_detail(
+        details,
+        "should_run_integration",
+        error_prefix="persisted integration evidence",
+    )
+    sanitized_details["task_gate_required"] = _require_bool_detail(
+        details,
+        "task_gate_required",
+        error_prefix="persisted integration evidence",
+    )
     return ExecutionIntegrationContext.model_validate(sanitized_details)
-
-
-def _require_bool_detail(details: dict[str, object], field_name: str) -> bool:
-    """Reject malformed persisted boolean fields instead of coercing them."""
-
-    value = details.get(field_name)
-    if not isinstance(value, bool):
-        raise ValueError(f"persisted integration evidence field {field_name} must be a boolean")
-    return value
 
 
 def execution_integration_context_from_records(

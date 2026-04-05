@@ -602,6 +602,15 @@ def test_compact_display_path_prefers_stable_tail_for_long_absolute_paths() -> N
     assert compact_display_path(path) == ".../millrace/millrace.toml"
 
 
+def test_compact_display_path_drops_temp_root_marker_from_workspace_tail() -> None:
+    path = Path(
+        "/private/var/folders/nc/fh6yj4vx1vqc35w5vx48vblr0000gn/T/"
+        "millrace-tui-health-gate-snapshot/millrace"
+    )
+
+    assert compact_display_path(path) == ".../millrace-tui-health-gate-snapshot/millrace"
+
+
 def test_tui_shell_debug_expanded_mode_shows_structured_event_feed(monkeypatch, tmp_path) -> None:
     _, config_path = load_operator_workspace(tmp_path)
     monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
@@ -1705,6 +1714,9 @@ def test_runtime_gateway_shapes_research_audit_governance_and_recent_activity(mo
                 )
             ]
 
+        def interview_list(self):
+            return SimpleNamespace(questions=())
+
         def logs(self, n: int = 50):
             return [
                 EventRecord(
@@ -1826,6 +1838,9 @@ def test_runtime_gateway_load_workspace_snapshot_includes_recent_runs(monkeypatc
 
         def research_history(self, limit: int):
             return ()
+
+        def interview_list(self):
+            return SimpleNamespace(questions=())
 
         def logs(self, limit: int):
             return ()
