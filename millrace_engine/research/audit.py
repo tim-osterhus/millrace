@@ -25,6 +25,7 @@ from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .audit_gate_helpers import _evaluate_completion_gate
 from .audit_remediation_helpers import _persist_audit_remediation
+from .parser_helpers import _extract_heading_title, _parse_frontmatter_block
 from .audit_storage_helpers import (
     _audit_record_path,
     _audit_remediation_record_path,
@@ -44,8 +45,6 @@ if TYPE_CHECKING:
     from .state import ResearchCheckpoint
 
 
-_FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*(?:\n|$)", flags=re.DOTALL)
-_HEADING_RE = re.compile(r"^#\s+(?P<title>.+?)\s*$", flags=re.MULTILINE)
 _SECTION_HEADING_RE = re.compile(r"^##+\s+(?P<title>.+?)\s*$")
 _LIST_MARKER_RE = re.compile(r"^(?:[-*]|\d+\.)\s+")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -75,28 +74,6 @@ def _normalize_optional_text(value: str | None, *, field_name: str) -> str | Non
     return normalized
 
 
-def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    match = _FRONTMATTER_RE.match(text)
-    if match is None:
-        return {}, text
-
-    fields: dict[str, str] = {}
-    for line in match.group("body").splitlines():
-        stripped = line.strip()
-        if not stripped or ":" not in stripped:
-            continue
-        key, raw_value = stripped.split(":", 1)
-        fields[key.strip()] = raw_value.strip()
-    return fields, text[match.end() :]
-
-
-def _extract_heading_title(text: str) -> str | None:
-    match = _HEADING_RE.search(text)
-    if match is None:
-        return None
-    return _normalize_required_text(match.group("title"), field_name="title")
-
-
 def _normalize_section_name(value: str) -> str:
     return _WHITESPACE_RE.sub(" ", value.strip()).casefold()
 
@@ -108,7 +85,7 @@ def _normalize_section_line(value: str) -> str | None:
 
 
 def _extract_section_lines(text: str, *, section_names: frozenset[str]) -> tuple[str, ...]:
-    _, body = _parse_frontmatter(text)
+    _, body = _parse_frontmatter_block(text)
     collected: list[str] = []
     active_section: str | None = None
     in_code_block = False
@@ -125,7 +102,7 @@ def _extract_section_lines(text: str, *, section_names: frozenset[str]) -> tuple
             active_section = candidate if candidate in section_names else None
             continue
 
-        if active_section is None or not stripped:
+        if in_code_block or active_section is None or not stripped:
             continue
 
         normalized = _normalize_section_line(raw_line)
@@ -727,7 +704,7 @@ def _move_audit_record(
     updated_iso = updated_at.isoformat().replace("+00:00", "Z")
 
     if source_path.exists():
-        frontmatter, body = _parse_frontmatter(source_path.read_text(encoding="utf-8"))
+        frontmatter, body = _parse_frontmatter_block(source_path.read_text(encoding="utf-8"))
         frontmatter["audit_id"] = _frontmatter_value(frontmatter, "audit_id", default=record.audit_id)
         frontmatter["scope"] = _frontmatter_value(frontmatter, "scope", default=record.scope)
         frontmatter["trigger"] = _frontmatter_value(frontmatter, "trigger", default=record.trigger.value)
@@ -983,10 +960,10 @@ def parse_audit_queue_record(
 ) -> AuditQueueRecord:
     """Validate one audit markdown document."""
 
-    frontmatter, body = _parse_frontmatter(text)
+    frontmatter, body = _parse_frontmatter_block(text)
     status = frontmatter.get("status") or source_path.parent.name
     audit_id = frontmatter.get("audit_id") or source_path.stem
-    title = _extract_heading_title(body) or f"Audit {audit_id}"
+    title = _extract_heading_title(body, normalize=lambda value: _normalize_required_text(value, field_name="title")) or f"Audit {audit_id}"
     record = AuditQueueRecord.model_validate(
         {
             "source_path": source_path,

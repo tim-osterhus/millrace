@@ -14,23 +14,18 @@ from ..contracts import CompletionDecision, ContractModel, ResearchStatus
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .path_helpers import _relative_path, _resolve_path_token
+from .persistence_helpers import _load_json_model, _write_json_model as _shared_write_json_model
 
 if TYPE_CHECKING:
     from .audit import AuditGateDecision, AuditQueueRecord, AuditRemediationRecord, AuditSummary
 
 
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(model.model_dump_json(exclude_none=False, by_alias=True))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
-def _load_json_model(path: Path, model_cls: type[ContractModel]) -> ContractModel:
-    return model_cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
-
-
 def _audit_runtime_dir(paths: RuntimePaths) -> Path:
     return paths.research_runtime_dir / "audit"
+
+
+def _write_json_model(path: Path, model: ContractModel) -> None:
+    _shared_write_json_model(path, model, create_parent=True, by_alias=True)
 
 
 def _audit_record_path(paths: RuntimePaths, *, stage: str, run_id: str) -> Path:
@@ -62,9 +57,7 @@ def _audited_source_path(paths: RuntimePaths, *, run_id: str, record: "AuditQueu
 
     intake_record_path = _audit_record_path(paths, stage="intake", run_id=run_id)
     if intake_record_path.exists():
-        intake_record = AuditIntakeRecord.model_validate(
-            _load_json_model(intake_record_path, AuditIntakeRecord)
-        )
+        intake_record = _load_json_model(intake_record_path, AuditIntakeRecord)
         return intake_record.source_path
     return _relative_path(record.source_path, relative_to=paths.root)
 

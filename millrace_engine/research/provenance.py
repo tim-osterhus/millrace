@@ -10,9 +10,10 @@ import json
 from pydantic import Field, field_validator, model_validator
 
 from ..contracts import ContractModel, _normalize_datetime
-from ..markdown import parse_task_store, write_text_atomic
+from ..markdown import parse_task_store
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
 from .path_helpers import _normalize_path_token, _path_token
+from .persistence_helpers import _write_json_model
 
 
 SCHEMA_VERSION = "1.0"
@@ -27,11 +28,6 @@ def _normalize_optional_datetime(value: datetime | str | None) -> datetime | Non
     if value in (None, ""):
         return None
     return _normalize_datetime(value)
-
-
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    payload = json.loads(model.model_dump_json(exclude_none=False))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 class TaskProvenanceSource(ContractModel):

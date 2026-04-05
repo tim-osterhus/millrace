@@ -12,13 +12,14 @@ import json
 from pydantic import Field, field_serializer, field_validator, model_validator
 
 from ..contracts import ContractModel, _normalize_datetime
-from ..markdown import write_text_atomic
 from .normalization_helpers import (
     _normalize_optional_text,
     _normalize_required_text,
     _normalize_token_sequence,
 )
+from .parser_helpers import _parse_simple_frontmatter
 from .path_helpers import _normalize_path_sequence, _normalize_path_token, _path_token
+from .persistence_helpers import _load_json_object, _write_json_model
 
 
 SCHEMA_VERSION = "1.0"
@@ -62,21 +63,6 @@ def _frozen_tier(spec_path: str) -> FrozenTier:
     return ""
 
 
-def _parse_frontmatter(text: str) -> dict[str, str]:
-    if not text.startswith("---\n"):
-        return {}
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return {}
-    data: dict[str, str] = {}
-    for raw_line in text[4:end].splitlines():
-        if ":" not in raw_line:
-            continue
-        key, value = raw_line.split(":", 1)
-        data[key.strip()] = value.strip()
-    return data
-
-
 def _parse_string_list(raw: str) -> tuple[str, ...]:
     stripped = raw.strip()
     if not stripped:
@@ -88,18 +74,6 @@ def _parse_string_list(raw: str) -> tuple[str, ...]:
     if isinstance(parsed, list):
         return _normalize_token_sequence([str(item) for item in parsed])
     return _normalize_token_sequence(part for part in stripped.strip("[]").split(","))
-
-
-def _load_json_object(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    return payload
-
-
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    payload = json.loads(model.model_dump_json(exclude_none=False))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 class StableSpecRecord(ContractModel):
@@ -600,7 +574,7 @@ def stable_spec_metadata_from_file(
     """Extract strict GoalSpec metadata from one markdown spec file."""
 
     text = spec_file.read_text(encoding="utf-8", errors="replace")
-    frontmatter = _parse_frontmatter(text)
+    frontmatter = _parse_simple_frontmatter(text)
     spec_id = frontmatter.get("spec_id", "").strip() or spec_file.name.split("__", 1)[0].strip() or spec_file.stem
     return GoalSpecArtifactMetadata.model_validate(
         {

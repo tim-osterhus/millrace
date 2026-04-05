@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-import json
 import re
 
 from pydantic import Field, field_validator
@@ -24,7 +23,9 @@ from ..paths import RuntimePaths
 from .dispatcher import CompiledResearchDispatch
 from .goalspec import GoalSpecExecutionError
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
+from .parser_helpers import _markdown_section, _split_frontmatter_block
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
+from .persistence_helpers import _load_json_model, _write_json_model
 from .specs import GoalSpecLineageRecord, load_goal_spec_family_state, write_goal_spec_family_state
 from .state import ResearchCheckpoint
 
@@ -53,15 +54,6 @@ def _dedupe(values: list[str]) -> tuple[str, ...]:
         seen.add(token)
         deduped.append(token)
     return tuple(deduped)
-
-
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    payload = json.loads(model.model_dump_json(exclude_none=False))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
-def _load_json_model(path: Path, model_cls: type[ContractModel]) -> ContractModel:
-    return model_cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _field_value(body: str, field_name: str) -> str:
@@ -99,38 +91,6 @@ def _field_block_lines(body: str, field_name: str) -> tuple[str, ...]:
             break
         collected.append(stripped)
     return _dedupe(collected)
-
-
-def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    if not text.startswith(f"{_FRONTMATTER_BOUNDARY}\n"):
-        return {}, text
-    end = text.find(f"\n{_FRONTMATTER_BOUNDARY}\n", len(_FRONTMATTER_BOUNDARY) + 1)
-    if end == -1:
-        return {}, text
-    frontmatter: dict[str, str] = {}
-    for raw_line in text[len(_FRONTMATTER_BOUNDARY) + 1:end].splitlines():
-        if ":" not in raw_line:
-            continue
-        key, value = raw_line.split(":", 1)
-        frontmatter[key.strip()] = value.strip()
-    body = text[end + len(f"\n{_FRONTMATTER_BOUNDARY}\n") :]
-    return frontmatter, body
-
-
-def _markdown_section(body: str, heading: str) -> str:
-    target = heading.casefold()
-    lines: list[str] = []
-    capture = False
-    for raw_line in body.splitlines():
-        stripped = raw_line.strip()
-        if stripped.startswith("## "):
-            if capture:
-                break
-            capture = stripped[3:].strip().casefold() == target
-            continue
-        if capture:
-            lines.append(raw_line.rstrip())
-    return "\n".join(lines).strip()
 
 
 def _normalize_goal_token(value: str) -> str:
@@ -364,7 +324,7 @@ def _finish_source_idea(paths: RuntimePaths, family_state_path: str, *, emitted_
     finished_dir.mkdir(parents=True, exist_ok=True)
     finished_path = finished_dir / source_path.name
     text = source_path.read_text(encoding="utf-8")
-    frontmatter, body = _split_frontmatter(text)
+    frontmatter, body = _split_frontmatter_block(text, boundary=_FRONTMATTER_BOUNDARY)
     if frontmatter:
         frontmatter["status"] = "finished"
         ordered = [f"{key}: {value}" for key, value in frontmatter.items()]
@@ -539,7 +499,7 @@ def execute_taskmaster(
 
     reviewed_relative_path = _relative_path(reviewed_spec_path, relative_to=paths.root)
     reviewed_text = reviewed_spec_path.read_text(encoding="utf-8")
-    frontmatter, _ = _split_frontmatter(reviewed_text)
+    frontmatter, _ = _split_frontmatter_block(reviewed_text, boundary=_FRONTMATTER_BOUNDARY)
     spec_id = frontmatter.get("spec_id", "").strip()
     if not spec_id:
         raise TaskmasterExecutionError(f"Reviewed spec is missing spec_id frontmatter: {reviewed_relative_path}")
@@ -560,7 +520,7 @@ def execute_taskmaster(
         raise TaskmasterExecutionError(f"GoalSpec family state is missing a stable phase spec for {spec_id}")
     primary_phase_path = _resolve_path_token(phase_relative_paths[0], relative_to=paths.root)
     phase_text = primary_phase_path.read_text(encoding="utf-8")
-    phase_frontmatter, _ = _split_frontmatter(phase_text)
+    phase_frontmatter, _ = _split_frontmatter_block(phase_text, boundary=_FRONTMATTER_BOUNDARY)
     phase_key = phase_frontmatter.get("phase_key", "").strip() or "PHASE_01"
     phase_steps = _phase_steps(phase_text, phase_key=phase_key)
     if not phase_steps:

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import Literal
-import json
 
 from pydantic import Field, field_validator
 
@@ -21,6 +19,7 @@ from .normalization_helpers import (
     _normalize_token_sequence,
 )
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
+from .persistence_helpers import _load_json_model, _sha256_text, _write_json_model
 from .provenance import TaskauditProvenance, refresh_task_provenance_registry, task_provenance_source_paths
 from .specs import GoalSpecFamilyState, load_goal_spec_family_state
 
@@ -32,19 +31,6 @@ _DEFAULT_BACKLOG_PREAMBLE = "# Task Backlog"
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _sha256_text(text: str) -> str:
-    return sha256(text.encode("utf-8")).hexdigest()
-
-
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    payload = json.loads(model.model_dump_json(exclude_none=False))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
-def _load_json_model(path: Path, model_cls: type[ContractModel]) -> ContractModel:
-    return model_cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _read_store_text(path: Path, *, default_preamble: str) -> str:

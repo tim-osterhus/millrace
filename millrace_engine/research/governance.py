@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-import json
 
 from pydantic import Field, field_validator, model_validator
 
 from ..contracts import ContractModel
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
+from .persistence_helpers import _load_json_object, _sha256_text
 from .specs import (
     FrozenInitialFamilySpecPlan,
     GoalSpecFamilyGovernorState,
@@ -99,17 +98,6 @@ def _normalize_scalar(value: object) -> object:
             if str(key).strip()
         }
     return value
-
-
-def _load_json_object(path: Path) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"{path.as_posix()} must contain a JSON object")
-    return payload
-
-
-def _sha256_text(text: str) -> str:
-    return sha256(text.encode("utf-8")).hexdigest()
 
 
 def _file_sha256_or_none(path: Path) -> str | None:

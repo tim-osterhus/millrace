@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 import json
@@ -14,7 +13,6 @@ import re
 from pydantic import Field, field_validator, model_validator
 
 from ..contracts import ContractModel, _normalize_datetime, _normalize_path
-from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .incident_intake_helpers import (
     incident_source_exists,
@@ -35,13 +33,18 @@ from .incident_state_helpers import (
     persist_recovery_decision as _persist_recovery_decision,
     updated_lineage_record as _updated_lineage_record,
 )
+from .parser_helpers import (
+    _extract_heading_title as _shared_extract_heading_title,
+    _markdown_section as _shared_markdown_section,
+    _parse_frontmatter_block as _shared_parse_frontmatter_block,
+)
+from .persistence_helpers import _load_json_object, _sha256_text, _write_json_model as _shared_write_json_model
 
 if TYPE_CHECKING:
     from .dispatcher import CompiledResearchDispatch
     from .state import ResearchCheckpoint, ResearchQueueOwnership
 
 
-_FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*(?:\n|$)", flags=re.DOTALL)
 _HEADING_RE = re.compile(r"^#\s+(?P<title>.+?)\s*$", flags=re.MULTILINE)
 _FIELD_RE = re.compile(r"^\s*-\s*(?P<name>[^:]+):\s*(?P<value>.*)$")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -88,53 +91,28 @@ def _resolve_path_token(path_token: str | Path, *, relative_to: Path) -> Path:
     return relative_to / candidate
 
 
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(model.model_dump_json(exclude_none=False))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
 def _slugify(value: str) -> str:
     slug = _TOKEN_RE.sub("-", value.strip().lower()).strip("-")
     return slug or "incident"
 
 
-def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    match = _FRONTMATTER_RE.match(text)
-    if match is None:
-        return {}, text
+def _write_json_model(path: Path, model: ContractModel) -> None:
+    _shared_write_json_model(path, model, create_parent=True)
 
-    fields: dict[str, str] = {}
-    for line in match.group("body").splitlines():
-        stripped = line.strip()
-        if not stripped or ":" not in stripped:
-            continue
-        key, raw_value = stripped.split(":", 1)
-        fields[key.strip()] = raw_value.strip()
-    return fields, text[match.end() :]
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    return _shared_parse_frontmatter_block(text)
 
 
 def _markdown_section(text: str, heading: str) -> str:
-    target = heading.strip().casefold()
-    current: list[str] = []
-    capture = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            if capture:
-                break
-            capture = stripped[3:].strip().casefold() == target
-            continue
-        if capture:
-            current.append(line.rstrip())
-    return "\n".join(current).strip()
+    return _shared_markdown_section(text, heading)
 
 
 def _extract_heading_title(text: str) -> str | None:
-    match = _HEADING_RE.search(text)
-    if match is None:
-        return None
-    return _normalize_required_text(match.group("title"), field_name="title")
+    return _shared_extract_heading_title(
+        text,
+        normalize=lambda value: _normalize_required_text(value, field_name="title"),
+    )
 
 
 def _extract_markdown_field(text: str, field_name: str) -> str | None:
@@ -735,7 +713,7 @@ def incident_dedup_signature(
     )
     if normalized_fingerprint is None or normalized_failure_signature is None:
         return None
-    return sha256(f"{normalized_fingerprint}|{normalized_failure_signature}".encode("utf-8")).hexdigest()
+    return _sha256_text(f"{normalized_fingerprint}|{normalized_failure_signature}")
 
 
 def load_incident_recurrence_ledger(path: Path) -> IncidentRecurrenceLedger:
@@ -743,9 +721,10 @@ def load_incident_recurrence_ledger(path: Path) -> IncidentRecurrenceLedger:
 
     if not path.exists():
         return default_incident_recurrence_ledger()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise IncidentExecutionError(f"{path.as_posix()} must contain a JSON object")
+    try:
+        payload = _load_json_object(path)
+    except ValueError as exc:
+        raise IncidentExecutionError(f"{path.as_posix()} must contain a JSON object") from exc
     return IncidentRecurrenceLedger.model_validate(payload)
 
 
@@ -944,7 +923,7 @@ def _render_incident_fix_spec(
             f"title: {title}",
             "status: proposed",
             "golden_version: 1",
-            f"base_goal_sha256: {sha256(f'{incident_id}|{scope_summary}'.encode('utf-8')).hexdigest()}",
+            f"base_goal_sha256: {_sha256_text(f'{incident_id}|{scope_summary}')}",
             "effort: 2",
             "decomposition_profile: simple",
             "depends_on_specs: []",

@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
-import json
 import re
 
 from ..contracts import ContractModel
-from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .dispatcher import ResearchDispatchError
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
+from .parser_helpers import (
+    _markdown_section as _shared_markdown_section,
+    _split_frontmatter_block as _shared_split_frontmatter_block,
+)
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
+from .persistence_helpers import (
+    _load_json_model as _shared_load_json_model,
+    _load_json_object as _shared_load_json_object,
+    _sha256_text,
+    _write_json_model as _shared_write_json_model,
+)
 from .specs import GoalSpecDecompositionProfile
 from .state import ResearchCheckpoint
 
@@ -49,15 +56,27 @@ def _slugify(value: str) -> str:
     return slug or "goal"
 
 
-def _sha256_text(text: str) -> str:
-    return sha256(text.encode("utf-8")).hexdigest()
-
-
 def _load_json_object(path: Path) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise GoalSpecExecutionError(f"{path.as_posix()} must contain a JSON object")
-    return payload
+    try:
+        return _shared_load_json_object(path)
+    except ValueError as exc:
+        raise GoalSpecExecutionError(f"{path.as_posix()} must contain a JSON object") from exc
+
+
+def _write_json_model(path: Path, model: ContractModel) -> None:
+    _shared_write_json_model(path, model, create_parent=True)
+
+
+def _load_json_model(path: Path, model_cls: type[ContractModel]) -> ContractModel:
+    return _shared_load_json_model(path, model_cls)
+
+
+def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    return _shared_split_frontmatter_block(text, boundary=_FRONTMATTER_BOUNDARY)
+
+
+def _markdown_section(body: str, heading: str) -> str:
+    return _shared_markdown_section(body, heading)
 
 
 def _spec_id_for_goal(goal_id: str) -> str:
@@ -82,33 +101,6 @@ def _archive_filename_for_execution(source_path: Path, *, run_id: str, checksum_
     return f"{stem}__{run_token}__{checksum_token}{suffix}"
 
 
-def _write_json_model(path: Path, model: ContractModel) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(model.model_dump_json(exclude_none=False))
-    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
-def _load_json_model(path: Path, model_cls: type[ContractModel]) -> ContractModel:
-    return model_cls.model_validate(_load_json_object(path))
-
-
-def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    if not text.startswith(f"{_FRONTMATTER_BOUNDARY}\n"):
-        return {}, text
-    end = text.find(f"\n{_FRONTMATTER_BOUNDARY}\n", len(_FRONTMATTER_BOUNDARY) + 1)
-    if end == -1:
-        return {}, text
-
-    frontmatter: dict[str, str] = {}
-    for raw_line in text[len(_FRONTMATTER_BOUNDARY) + 1 : end].splitlines():
-        if ":" not in raw_line:
-            continue
-        key, value = raw_line.split(":", 1)
-        frontmatter[key.strip()] = value.strip()
-    body = text[end + len(f"\n{_FRONTMATTER_BOUNDARY}\n") :]
-    return frontmatter, body
-
-
 def _first_heading(body: str) -> str:
     for line in body.splitlines():
         stripped = line.strip()
@@ -129,22 +121,6 @@ def _first_paragraph(body: str) -> str:
             continue
         paragraph.append(stripped)
     return " ".join(paragraph).strip()
-
-
-def _markdown_section(body: str, heading: str) -> str:
-    target = heading.strip().casefold()
-    current: list[str] = []
-    capture = False
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            if capture:
-                break
-            capture = stripped[3:].strip().casefold() == target
-            continue
-        if capture:
-            current.append(line.rstrip())
-    return "\n".join(current).strip()
 
 
 def _normalize_decomposition_profile(value: str | None) -> GoalSpecDecompositionProfile:
