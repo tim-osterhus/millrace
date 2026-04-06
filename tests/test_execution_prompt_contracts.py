@@ -4,10 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from millrace_engine.execution_prompt_contracts import iter_critical_execution_prompt_contracts
+from millrace_engine.execution_prompt_contracts import (
+    iter_critical_execution_prompt_contracts,
+    parse_markdown_sections,
+)
 
 MILLRACE_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_ASSETS = MILLRACE_ROOT / "millrace_engine" / "assets" / "agents"
+
+
+def _assert_section_contains(section_body: str, required_values: tuple[str, ...], label: str) -> None:
+    for value in required_values:
+        assert value in section_body, f"{label} missing {value!r}"
+
 
 @pytest.mark.parametrize("contract", iter_critical_execution_prompt_contracts())
 def test_critical_execution_entrypoints_retain_structured_contract(contract) -> None:
@@ -15,18 +24,44 @@ def test_critical_execution_entrypoints_retain_structured_contract(contract) -> 
 
     assert prompt_path.is_file(), contract.prompt_asset
     contents = prompt_path.read_text(encoding="utf-8")
-    nonempty_lines = [line for line in contents.splitlines() if line.strip()]
+    sections = parse_markdown_sections(contents)
+    sections_by_heading = {section.heading: section for section in sections}
+    section_headings = tuple(section.heading for section in sections)
+    section_positions = [
+        section_headings.index(heading) for heading in contract.required_section_headings
+    ]
 
-    assert len(nonempty_lines) >= contract.minimum_nonempty_lines, contract.prompt_asset
-    required_markers = (
-        contract.required_subordinate_docs
-        + contract.required_artifacts
-        + contract.required_report_outputs
-        + contract.terminal_marker_lines
-        + contract.required_phrases
-    )
-    for marker in required_markers:
-        assert marker in contents, f"{contract.prompt_asset} missing {marker!r}"
+    assert section_positions == sorted(section_positions), contract.prompt_asset
+
+    for section_contract in contract.policy_sections:
+        section = sections_by_heading.get(section_contract.heading)
+        assert section is not None, f"{contract.prompt_asset} missing section {section_contract.heading!r}"
+        _assert_section_contains(
+            section.body,
+            section_contract.subordinate_docs,
+            f"{contract.prompt_asset} {section_contract.heading}",
+        )
+        _assert_section_contains(
+            section.body,
+            section_contract.artifacts,
+            f"{contract.prompt_asset} {section_contract.heading}",
+        )
+        _assert_section_contains(
+            section.body,
+            section_contract.report_outputs,
+            f"{contract.prompt_asset} {section_contract.heading}",
+        )
+        _assert_section_contains(
+            section.body,
+            section_contract.literals,
+            f"{contract.prompt_asset} {section_contract.heading}",
+        )
+        if section_contract.require_terminal_markers:
+            _assert_section_contains(
+                section.body,
+                contract.terminal_marker_lines,
+                f"{contract.prompt_asset} {section_contract.heading}",
+            )
 
 
 @pytest.mark.parametrize(
@@ -106,6 +141,9 @@ def test_noncritical_execution_entrypoints_retain_controller_contract(
     minimum_nonempty_lines: int,
     required_markers: tuple[str, ...],
 ) -> None:
+    # Non-critical controller prompts intentionally retain lighter legacy smoke
+    # coverage in this run; only the critical Builder / Integration / QA family
+    # moves to the richer structured validator.
     prompt_path = AGENTS_ASSETS / relative_path
 
     assert prompt_path.is_file(), relative_path

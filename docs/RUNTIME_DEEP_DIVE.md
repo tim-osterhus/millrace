@@ -348,6 +348,15 @@ Run 06 changes that behavior slightly but importantly:
 - when the configured workspace prompt path is missing, packaged prompt assets are the deterministic fallback if the relative path exists in the bundled manifest
 - stage metadata and operator inspection surfaces report whether the prompt resolved from `workspace:...` or `package:...`
 
+For the critical standard execution entrypoints (`_start.md`, `_integrate.md`, `_check.md`), Millrace now treats the prompt surface as a hybrid contract:
+
+- structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`
+- that structured layer owns the required section layout plus the machine-checkable subordinate-doc, artifact/report, and completion-marker obligations
+- terminal markers continue to derive from the runtime stage/status contract, not from a second hard-coded markdown-only list
+- the markdown files remain the instruction layer for persona wording, explanatory prose, and workflow detail inside those required sections
+
+This keeps prompt authors free to improve wording and guidance without silently changing the critical Builder / Integration / QA execution contract.
+
 ## 6. Configuration System
 
 `config.py` defines the runtime config model and loading behavior.
