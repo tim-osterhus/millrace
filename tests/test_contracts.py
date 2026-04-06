@@ -5,6 +5,7 @@ from pathlib import Path
 
 import millrace_engine.contracts as contracts
 import millrace_engine.contract_documents as contract_documents
+import millrace_engine.contract_runtime as contract_runtime
 import millrace_engine.loop_architecture as loop_architecture
 import millrace_engine.loop_architecture_catalog as loop_architecture_catalog
 import millrace_engine.loop_architecture_common as loop_architecture_common
@@ -141,6 +142,13 @@ def test_contracts_re_export_document_contract_family() -> None:
     assert contracts.CompletionDecision is contract_documents.CompletionDecision
     assert contracts.BlockerEntry is contract_documents.BlockerEntry
     assert contracts.StageResult is contract_documents.StageResult
+
+
+def test_contracts_re_export_runtime_contract_family() -> None:
+    assert contracts.StageContext is contract_runtime.StageContext
+    assert contracts.RunnerResult is contract_runtime.RunnerResult
+    assert contracts.ExecutionResearchHandoff is contract_runtime.ExecutionResearchHandoff
+    assert contracts.ResearchRecoveryLatch is contract_runtime.ResearchRecoveryLatch
 
 
 def test_loop_architecture_re_exports_split_contract_families() -> None:

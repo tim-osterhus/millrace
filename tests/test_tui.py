@@ -18,6 +18,7 @@ from textual.widgets import Button, ContentSwitcher, Input, Static, TextArea
 import millrace_engine.tui.gateway as gateway_module
 import millrace_engine.tui.gateway_support as gateway_support_module
 import millrace_engine.tui.launcher as launcher_module
+import millrace_engine.tui.shell_models as shell_models
 import millrace_engine.tui.screens.run_detail_modal as run_detail_modal_module
 import millrace_engine.tui.screens.shell as shell_module
 import millrace_engine.tui.screens.shell_support as shell_support_module
@@ -107,6 +108,12 @@ from millrace_engine.tui.widgets.status_bar import StatusBar
 from millrace_engine.tui.workers import WorkerSettings
 from tests.support import FIXTURE_ROOT, load_workspace_fixture
 from tests.tui_support import load_operator_workspace, seed_pending_interview_question
+
+
+def test_tui_models_re_export_shell_structure_family() -> None:
+    assert PanelId is shell_models.PanelId
+    assert DisplayMode is shell_models.DisplayMode
+    assert EXPANDED_STREAM_WIDGET_ID == shell_models.EXPANDED_STREAM_WIDGET_ID
 
 
 def _run_app_scenario(

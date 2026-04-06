@@ -7,6 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+import millrace_engine.config_runtime as config_runtime
 from millrace_engine.config import (
     ConfigApplyBoundary,
     ComplexityBand,
@@ -49,6 +50,12 @@ def test_execution_stage_defaults_use_one_hour_timeout() -> None:
     assert stages[StageType.BUILDER].timeout_seconds == 3600
     assert stages[StageType.QA].timeout_seconds == 3600
     assert stages[StageType.INTEGRATION].timeout_seconds == 3600
+
+
+def test_config_re_exports_runtime_stage_and_boundary_family() -> None:
+    assert StageConfig is config_runtime.StageConfig
+    assert ConfigApplyBoundary is config_runtime.ConfigApplyBoundary
+    assert default_stage_configs is config_runtime.default_stage_configs
 
 
 def test_stage_context_default_timeout_matches_stage_defaults(tmp_path: Path) -> None:
