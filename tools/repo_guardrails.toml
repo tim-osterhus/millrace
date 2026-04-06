@@ -64,6 +64,7 @@ runtime = [
   "millrace_engine/tui/widgets/logs_panel.py",
   "millrace_engine/tui/widgets/queue_panel.py",
   "millrace_engine/tui/widgets/research_panel.py",
+  "millrace_engine/workspace_init.py",
 ]
 tests = [
   "tests/test_cli.py",
