@@ -1,4 +1,4 @@
-"""Control API and runtime-state helpers."""
+"""Control API facade and runtime-state helpers."""
 
 from __future__ import annotations
 
@@ -9,9 +9,20 @@ import time
 
 from pydantic import ValidationError
 
-from .adapters.control_mailbox import ControlCommand, normalize_command_issuer, write_command
+from .adapters.control_mailbox import ControlCommand, write_command
 from .config import LoadedConfig, build_runtime_paths
 from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
+from .control_actions import (
+    add_idea as add_idea_operation,
+    add_task as add_task_operation,
+    lifecycle_action,
+    normalize_supervisor_issuer,
+    operation_with_payload_value,
+    queue_reorder as queue_reorder_operation,
+    supervisor_add_task as supervisor_add_task_operation,
+    supervisor_lifecycle_action,
+    supervisor_queue_reorder as supervisor_queue_reorder_operation,
+)
 from .control_common import (
     ControlError,
     event_log_control_error,
@@ -45,11 +56,19 @@ from .control_models import (
     SupervisorAttentionReason,
     SupervisorReport,
 )
-from .control_mutations import (
-    _assert_reload_safe,
-    append_task_to_backlog,
-    apply_native_config_value,
-    copy_idea_into_raw_queue,
+from .control_interview import (
+    interview_accept as interview_accept_operation,
+    interview_answer as interview_answer_operation,
+    interview_create as interview_create_operation,
+    interview_list as interview_list_operation,
+    interview_show as interview_show_operation,
+    interview_skip as interview_skip_operation,
+)
+from .control_mutations import apply_native_config_value
+from .control_publish import (
+    publish_commit as publish_commit_operation,
+    publish_preflight as publish_preflight_operation,
+    publish_sync as publish_sync_operation,
 )
 from .control_reports import (
     asset_inventory_for,
@@ -90,32 +109,14 @@ from .publishing import (
     sync_staging_repo,
 )
 from .queue import QueueError, TaskQueue
-from .research.audit import (
-    AuditRemediationRecord,
-    AuditSummary,
-    load_audit_remediation_record,
-    load_audit_summary,
-)
+from .research.audit import load_audit_remediation_record, load_audit_summary
 from .research.governance import ResearchGovernanceReport, build_research_governance_report
-from .research.interview import (
-    InterviewError,
-    accept_interview_question,
-    answer_interview_question,
-    create_manual_interview_question,
-    find_interview_question,
-    list_interview_questions,
-    load_interview_decision_for_question,
-    skip_interview_question,
-)
+from .research.interview import InterviewError, list_interview_questions
 from .research.queues import discover_research_queues
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
 from .standard_runtime import RuntimeSelectionView, runtime_selection_view_from_snapshot
 from .status import ControlPlane, StatusError, StatusStore
 from .workspace_init import WorkspaceInitError, WorkspaceInitReport, initialize_workspace
-
-
-def _default_publish_commit_message() -> str:
-    return "Millrace staging sync"
 
 
 _decision_report_paths = decision_report_paths
@@ -264,22 +265,11 @@ class EngineControl:
 
     @staticmethod
     def _normalize_supervisor_issuer(issuer: str) -> str:
-        try:
-            return normalize_command_issuer(issuer)
-        except ValueError as exc:
-            raise ControlError(str(exc)) from exc
+        return normalize_supervisor_issuer(issuer)
 
     @staticmethod
     def _operation_with_payload_value(operation: OperationResult, *, key: str, value: object) -> OperationResult:
-        payload = dict(operation.payload)
-        payload[key] = value
-        return OperationResult(
-            command_id=operation.command_id,
-            mode=operation.mode,
-            applied=operation.applied,
-            message=operation.message,
-            payload=payload,
-        )
+        return operation_with_payload_value(operation, key=key, value=value)
 
     def reload_local_config(self) -> LoadedConfig:
         """Reload config from disk and refresh cached paths."""
@@ -600,64 +590,20 @@ class EngineControl:
     def queue_reorder(self, task_ids: list[str] | tuple[str, ...]) -> OperationResult:
         """Rewrite the backlog order exactly as requested."""
 
-        requested_ids = [task_id.strip() for task_id in task_ids if task_id.strip()]
-        if not requested_ids:
-            raise ControlError("queue reorder requires at least one task id")
-
-        if self.is_daemon_running():
-            envelope = write_command(
-                self.paths,
-                ControlCommand.QUEUE_REORDER,
-                payload={"task_ids": requested_ids},
-            )
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="queue_reorder queued",
-                payload={"task_ids": requested_ids},
-            )
-
-        try:
-            reordered = TaskQueue(self.paths).reorder(requested_ids)
-        except (FileNotFoundError, QueueError, ValidationError, ValueError) as exc:
-            raise queue_control_error(exc, prefix="queue reorder failed") from exc
-        return OperationResult(
-            mode="direct",
-            applied=True,
-            message="queue reordered",
-            payload={
-                "task_ids": [card.task_id for card in reordered],
-                "backlog_depth": len(reordered),
-            },
+        return queue_reorder_operation(
+            self.paths,
+            task_ids=task_ids,
+            daemon_running=self.is_daemon_running(),
         )
 
     def supervisor_queue_reorder(self, task_ids: list[str] | tuple[str, ...], *, issuer: str) -> OperationResult:
         """Rewrite backlog order through the supervisor-safe mutation path."""
 
-        normalized_issuer = self._normalize_supervisor_issuer(issuer)
-        requested_ids = [task_id.strip() for task_id in task_ids if task_id.strip()]
-        if not requested_ids:
-            raise ControlError("queue reorder requires at least one task id")
-
-        if self.is_daemon_running():
-            envelope = write_command(
-                self.paths,
-                ControlCommand.QUEUE_REORDER,
-                payload={"task_ids": requested_ids},
-                issuer=normalized_issuer,
-            )
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="queue_reorder queued",
-                payload={"task_ids": requested_ids, "issuer": normalized_issuer},
-            )
-        return self._operation_with_payload_value(
-            self.queue_reorder(requested_ids),
-            key="issuer",
-            value=normalized_issuer,
+        return supervisor_queue_reorder_operation(
+            self.paths,
+            task_ids=task_ids,
+            issuer=issuer,
+            daemon_running=self.is_daemon_running(),
         )
 
     def research_report(self) -> ResearchReport:
@@ -758,46 +704,12 @@ class EngineControl:
     def interview_list(self) -> InterviewListReport:
         """Return all persisted manual interview questions."""
 
-        try:
-            questions = list_interview_questions(self.paths)
-        except (InterviewError, ValidationError, ValueError) as exc:
-            raise ControlError(f"interview list failed: {expected_error_message(exc)}") from exc
-        return InterviewListReport(
-            config_path=self.config_path,
-            questions=tuple(
-                InterviewQuestionSummary(
-                    question_id=question.question_id,
-                    status=question.status,
-                    spec_id=question.spec_id,
-                    idea_id=question.idea_id,
-                    title=question.title,
-                    question=question.question,
-                    why_this_matters=question.why_this_matters,
-                    recommended_answer=question.recommended_answer,
-                    answer_source=question.answer_source,
-                    blocking=question.blocking,
-                    source_path=question.source_path,
-                    updated_at=question.updated_at,
-                )
-                for question in questions
-            ),
-        )
+        return interview_list_operation(self.config_path, self.paths)
 
     def interview_show(self, question_id: str) -> InterviewQuestionReport:
         """Return one persisted interview question plus any recorded decision."""
 
-        try:
-            question, question_path = find_interview_question(self.paths, question_id)
-            decision, decision_path = load_interview_decision_for_question(self.paths, question)
-        except (InterviewError, ValidationError, ValueError) as exc:
-            raise ControlError(f"interview show failed: {expected_error_message(exc)}") from exc
-        return InterviewQuestionReport(
-            config_path=self.config_path,
-            question_path=question_path,
-            question=question,
-            decision_path=decision_path,
-            decision=decision,
-        )
+        return interview_show_operation(self.config_path, self.paths, question_id)
 
     def interview_create(
         self,
@@ -812,24 +724,16 @@ class EngineControl:
     ) -> InterviewMutationReport:
         """Create one pending interview question for a selected staged idea or spec."""
 
-        try:
-            result = create_manual_interview_question(
-                self.paths,
-                source_path=source_path,
-                question=question,
-                why_this_matters=why_this_matters,
-                recommended_answer=recommended_answer,
-                answer_source=answer_source,
-                blocking=blocking,
-                evidence=evidence,
-            )
-        except (InterviewError, ValidationError, ValueError) as exc:
-            raise ControlError(f"interview create failed: {expected_error_message(exc)}") from exc
-        return InterviewMutationReport(
-            config_path=self.config_path,
-            action="create",
-            question_path=self.paths.root / result.question_path,
-            question=result.question,
+        return interview_create_operation(
+            self.config_path,
+            self.paths,
+            source_path=source_path,
+            question=question,
+            why_this_matters=why_this_matters,
+            recommended_answer=recommended_answer,
+            answer_source=answer_source,
+            blocking=blocking,
+            evidence=evidence,
         )
 
     def interview_answer(
@@ -841,17 +745,12 @@ class EngineControl:
     ) -> InterviewMutationReport:
         """Resolve one pending interview question with an explicit operator answer."""
 
-        try:
-            result = answer_interview_question(self.paths, question_id=question_id, text=text, evidence=evidence)
-        except (InterviewError, ValidationError, ValueError) as exc:
-            raise ControlError(f"interview answer failed: {expected_error_message(exc)}") from exc
-        return InterviewMutationReport(
-            config_path=self.config_path,
-            action=result.action,
-            question_path=self.paths.root / result.question_path,
-            question=result.question,
-            decision_path=self.paths.root / result.decision_path,
-            decision=result.decision,
+        return interview_answer_operation(
+            self.config_path,
+            self.paths,
+            question_id,
+            text=text,
+            evidence=evidence,
         )
 
     def interview_accept(
@@ -862,17 +761,11 @@ class EngineControl:
     ) -> InterviewMutationReport:
         """Resolve one pending interview question by accepting its recommended answer."""
 
-        try:
-            result = accept_interview_question(self.paths, question_id=question_id, evidence=evidence)
-        except (InterviewError, ValidationError, ValueError) as exc:
-            raise ControlError(f"interview accept failed: {expected_error_message(exc)}") from exc
-        return InterviewMutationReport(
-            config_path=self.config_path,
-            action=result.action,
-            question_path=self.paths.root / result.question_path,
-            question=result.question,
-            decision_path=self.paths.root / result.decision_path,
-            decision=result.decision,
+        return interview_accept_operation(
+            self.config_path,
+            self.paths,
+            question_id,
+            evidence=evidence,
         )
 
     def interview_skip(
@@ -884,17 +777,12 @@ class EngineControl:
     ) -> InterviewMutationReport:
         """Resolve one pending interview question by skipping it with an assumption record."""
 
-        try:
-            result = skip_interview_question(self.paths, question_id=question_id, reason=reason, evidence=evidence)
-        except (InterviewError, ValidationError, ValueError) as exc:
-            raise ControlError(f"interview skip failed: {expected_error_message(exc)}") from exc
-        return InterviewMutationReport(
-            config_path=self.config_path,
-            action=result.action,
-            question_path=self.paths.root / result.question_path,
-            question=result.question,
-            decision_path=self.paths.root / result.decision_path,
-            decision=result.decision,
+        return interview_skip_operation(
+            self.config_path,
+            self.paths,
+            question_id,
+            reason=reason,
+            evidence=evidence,
         )
 
     def logs(self, n: int = 50) -> list[EventRecord]:
@@ -955,24 +843,12 @@ class EngineControl:
     def add_task(self, title: str, *, body: str | None = None, spec_id: str | None = None) -> OperationResult:
         """Add one task card to the backlog or daemon mailbox."""
 
-        if self.is_daemon_running():
-            envelope = write_command(
-                self.paths,
-                ControlCommand.ADD_TASK,
-                payload={"title": title, "body": body, "spec_id": spec_id},
-            )
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="add_task queued",
-            )
-        card = append_task_to_backlog(self.paths, title=title, body=body, spec_id=spec_id)
-        return OperationResult(
-            mode="direct",
-            applied=True,
-            message="task added",
-            payload={"task_id": card.task_id},
+        return add_task_operation(
+            self.paths,
+            title=title,
+            body=body,
+            spec_id=spec_id,
+            daemon_running=self.is_daemon_running(),
         )
 
     def supervisor_add_task(
@@ -985,58 +861,28 @@ class EngineControl:
     ) -> OperationResult:
         """Add one task through the supported supervisor-safe mutation path."""
 
-        normalized_issuer = self._normalize_supervisor_issuer(issuer)
-        if self.is_daemon_running():
-            envelope = write_command(
-                self.paths,
-                ControlCommand.ADD_TASK,
-                payload={"title": title, "body": body, "spec_id": spec_id},
-                issuer=normalized_issuer,
-            )
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="add_task queued",
-                payload={"issuer": normalized_issuer},
-            )
-        return self._operation_with_payload_value(
-            self.add_task(title, body=body, spec_id=spec_id),
-            key="issuer",
-            value=normalized_issuer,
+        return supervisor_add_task_operation(
+            self.paths,
+            title=title,
+            issuer=issuer,
+            body=body,
+            spec_id=spec_id,
+            daemon_running=self.is_daemon_running(),
         )
 
     def add_idea(self, file: Path | str) -> OperationResult:
         """Queue one idea file."""
 
-        source_file = Path(file).expanduser().resolve()
-        if self.is_daemon_running():
-            envelope = write_command(
-                self.paths,
-                ControlCommand.ADD_IDEA,
-                payload={"file": source_file.as_posix()},
-            )
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="add_idea queued",
-            )
-        copied = copy_idea_into_raw_queue(self.paths, source_file)
-        return OperationResult(
-            mode="direct",
-            applied=True,
-            message="idea queued",
-            payload={"path": copied.as_posix()},
+        return add_idea_operation(
+            self.paths,
+            file=file,
+            daemon_running=self.is_daemon_running(),
         )
 
     def publish_sync(self, *, staging_repo_dir: Path | str | None = None) -> StagingSyncReport:
         """Sync the manifest-selected workspace surface into the staging repo."""
 
-        try:
-            return sync_staging_repo(self.paths, staging_repo_dir=staging_repo_dir)
-        except StagingPublishError as exc:
-            raise ControlError(str(exc)) from exc
+        return publish_sync_operation(self.paths, staging_repo_dir=staging_repo_dir)
 
     def publish_preflight(
         self,
@@ -1047,15 +893,12 @@ class EngineControl:
     ) -> PublishPreflightReport:
         """Return publish readiness for the staging repo without mutating git state."""
 
-        try:
-            return preflight_staging_publish(
-                self.paths,
-                staging_repo_dir=staging_repo_dir,
-                commit_message=(commit_message or _default_publish_commit_message()),
-                push=push,
-            )
-        except StagingPublishError as exc:
-            raise ControlError(str(exc)) from exc
+        return publish_preflight_operation(
+            self.paths,
+            staging_repo_dir=staging_repo_dir,
+            commit_message=commit_message,
+            push=push,
+        )
 
     def publish_commit(
         self,
@@ -1066,96 +909,66 @@ class EngineControl:
     ) -> PublishCommitReport:
         """Commit staging-repo changes and optionally push them."""
 
-        try:
-            return commit_staging_repo(
-                self.paths,
-                staging_repo_dir=staging_repo_dir,
-                commit_message=(commit_message or _default_publish_commit_message()),
-                push=push,
-            )
-        except StagingPublishError as exc:
-            raise ControlError(str(exc)) from exc
+        return publish_commit_operation(
+            self.paths,
+            staging_repo_dir=staging_repo_dir,
+            commit_message=commit_message,
+            push=push,
+        )
 
     def stop(self) -> OperationResult:
         """Request daemon stop."""
 
-        if not self.is_daemon_running():
-            return OperationResult(mode="direct", applied=False, message="engine is not running")
-        envelope = write_command(self.paths, ControlCommand.STOP)
-        return OperationResult(
-            command_id=envelope.command_id,
-            mode="mailbox",
-            applied=True,
-            message="stop queued",
+        return lifecycle_action(
+            self.paths,
+            command=ControlCommand.STOP,
+            daemon_running=self.is_daemon_running(),
         )
 
     def supervisor_stop(self, *, issuer: str) -> OperationResult:
         """Request daemon stop through the supervisor-safe mutation path."""
 
-        normalized_issuer = self._normalize_supervisor_issuer(issuer)
-        if self.is_daemon_running():
-            envelope = write_command(self.paths, ControlCommand.STOP, issuer=normalized_issuer)
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="stop queued",
-                payload={"issuer": normalized_issuer},
-            )
-        return self._operation_with_payload_value(self.stop(), key="issuer", value=normalized_issuer)
+        return supervisor_lifecycle_action(
+            self.paths,
+            command=ControlCommand.STOP,
+            issuer=issuer,
+            daemon_running=self.is_daemon_running(),
+        )
 
     def pause(self) -> OperationResult:
         """Request daemon pause."""
 
-        if not self.is_daemon_running():
-            return OperationResult(mode="direct", applied=False, message="engine is not running")
-        envelope = write_command(self.paths, ControlCommand.PAUSE)
-        return OperationResult(
-            command_id=envelope.command_id,
-            mode="mailbox",
-            applied=True,
-            message="pause queued",
+        return lifecycle_action(
+            self.paths,
+            command=ControlCommand.PAUSE,
+            daemon_running=self.is_daemon_running(),
         )
 
     def supervisor_pause(self, *, issuer: str) -> OperationResult:
         """Request daemon pause through the supervisor-safe mutation path."""
 
-        normalized_issuer = self._normalize_supervisor_issuer(issuer)
-        if self.is_daemon_running():
-            envelope = write_command(self.paths, ControlCommand.PAUSE, issuer=normalized_issuer)
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="pause queued",
-                payload={"issuer": normalized_issuer},
-            )
-        return self._operation_with_payload_value(self.pause(), key="issuer", value=normalized_issuer)
+        return supervisor_lifecycle_action(
+            self.paths,
+            command=ControlCommand.PAUSE,
+            issuer=issuer,
+            daemon_running=self.is_daemon_running(),
+        )
 
     def resume(self) -> OperationResult:
         """Request daemon resume."""
 
-        if not self.is_daemon_running():
-            return OperationResult(mode="direct", applied=False, message="engine is not running")
-        envelope = write_command(self.paths, ControlCommand.RESUME)
-        return OperationResult(
-            command_id=envelope.command_id,
-            mode="mailbox",
-            applied=True,
-            message="resume queued",
+        return lifecycle_action(
+            self.paths,
+            command=ControlCommand.RESUME,
+            daemon_running=self.is_daemon_running(),
         )
 
     def supervisor_resume(self, *, issuer: str) -> OperationResult:
         """Request daemon resume through the supervisor-safe mutation path."""
 
-        normalized_issuer = self._normalize_supervisor_issuer(issuer)
-        if self.is_daemon_running():
-            envelope = write_command(self.paths, ControlCommand.RESUME, issuer=normalized_issuer)
-            return OperationResult(
-                command_id=envelope.command_id,
-                mode="mailbox",
-                applied=True,
-                message="resume queued",
-                payload={"issuer": normalized_issuer},
-            )
-        return self._operation_with_payload_value(self.resume(), key="issuer", value=normalized_issuer)
+        return supervisor_lifecycle_action(
+            self.paths,
+            command=ControlCommand.RESUME,
+            issuer=issuer,
+            daemon_running=self.is_daemon_running(),
+        )

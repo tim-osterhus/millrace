@@ -2522,6 +2522,40 @@ def test_cli_supervisor_add_task_records_issuer_in_direct_mode(tmp_path: Path) -
     assert [card.title for card in backlog] == ["Supervisor direct task"]
 
 
+def test_engine_control_supervisor_queue_reorder_and_lifecycle_preserve_issuer_in_direct_mode(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+
+    control.add_task("First direct supervisor task")
+    control.add_task("Second direct supervisor task")
+    backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+
+    reorder_result = control.supervisor_queue_reorder(
+        [backlog[1].task_id, backlog[0].task_id],
+        issuer="openclaw",
+    )
+    assert reorder_result.mode == "direct"
+    assert reorder_result.message == "queue reordered"
+    assert reorder_result.payload["issuer"] == "openclaw"
+    assert reorder_result.payload["task_ids"] == [backlog[1].task_id, backlog[0].task_id]
+
+    reordered = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert [card.title for card in reordered] == ["Second direct supervisor task", "First direct supervisor task"]
+
+    stop_result = control.supervisor_stop(issuer="openclaw")
+    pause_result = control.supervisor_pause(issuer="openclaw")
+    resume_result = control.supervisor_resume(issuer="openclaw")
+    assert stop_result.applied is False
+    assert pause_result.applied is False
+    assert resume_result.applied is False
+    assert stop_result.payload["issuer"] == "openclaw"
+    assert pause_result.payload["issuer"] == "openclaw"
+    assert resume_result.payload["issuer"] == "openclaw"
+    assert stop_result.message == "engine is not running"
+    assert pause_result.message == "engine is not running"
+    assert resume_result.message == "engine is not running"
+
+
 def test_cli_supervisor_mailbox_actions_preserve_issuer_in_processed_archive(tmp_path: Path) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
     controller = EngineControl(config_path)
