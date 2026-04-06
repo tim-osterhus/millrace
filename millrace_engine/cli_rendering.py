@@ -570,6 +570,14 @@ def render_health(report: WorkspaceHealthReport, *, json_mode: bool) -> None:
         f"Workspace root source: {report.workspace_root_source}",
         f"Config source kind: {report.config_source_kind}",
         f"Asset bundle version: {report.bundle_version}",
+        (
+            "Research bootstrap: "
+            f"{report.research_bootstrap.contract_state} "
+            f"(mode={report.research_bootstrap.mode.value if report.research_bootstrap.mode is not None else 'unknown'}, "
+            f"interview_policy="
+            f"{report.research_bootstrap.interview_policy.value if report.research_bootstrap.interview_policy is not None else 'unknown'})"
+        ),
+        f"Research summary: {report.research_bootstrap.summary}",
         f"Bootstrap ready: {'yes' if report.bootstrap_ready else 'no'}",
         f"Execution ready: {'yes' if report.execution_ready else 'no'}",
         f"Status: {report.status.value.upper()}",
@@ -595,6 +603,14 @@ def render_doctor(report: WorkspaceHealthReport, *, json_mode: bool) -> None:
     lines = [
         f"Workspace root: {report.workspace_root.as_posix()}",
         f"Config path: {report.config_path.as_posix()}",
+        (
+            "Research bootstrap: "
+            f"{report.research_bootstrap.contract_state} "
+            f"(mode={report.research_bootstrap.mode.value if report.research_bootstrap.mode is not None else 'unknown'}, "
+            f"interview_policy="
+            f"{report.research_bootstrap.interview_policy.value if report.research_bootstrap.interview_policy is not None else 'unknown'})"
+        ),
+        f"Research summary: {report.research_bootstrap.summary}",
         f"Bootstrap ready: {'yes' if report.bootstrap_ready else 'no'}",
         f"Execution ready: {'yes' if report.execution_ready else 'no'}",
     ]
@@ -604,6 +620,7 @@ def render_doctor(report: WorkspaceHealthReport, *, json_mode: bool) -> None:
         lines.append("FAIL: workspace bootstrap is incomplete; fix the failing health checks before starting the runtime.")
     else:
         lines.append("FAIL: workspace bootstrap passed, but configured execution stages are missing runner prerequisites.")
+    lines.append(f"Research next step: {report.research_bootstrap.next_step}")
     if report.runner_prerequisites:
         lines.append("Runner prerequisites:")
         for prerequisite in report.runner_prerequisites:

@@ -1348,6 +1348,19 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
         assert not workspace_model_config.exists()
 
 
+def test_cli_package_docs_state_default_research_bootstrap_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    operator_guide = (repo_root / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
+
+    assert '[research] mode = "stub"' in readme
+    assert 'interview_policy = "off"' in readme
+    assert "first-run research only records deferred breadcrumbs" in readme
+    assert '[research] mode = "stub"' in operator_guide
+    assert 'interview_policy = "off"' in operator_guide
+    assert "health` and `doctor` also surface the active research bootstrap contract" in operator_guide
+
+
 def test_cli_health_reports_clean_initialized_workspace(tmp_path: Path) -> None:
     destination = tmp_path / "health-workspace"
     workspace_result = EngineControl.init_workspace(destination)
@@ -1366,6 +1379,11 @@ def test_cli_health_reports_clean_initialized_workspace(tmp_path: Path) -> None:
     assert payload["execution_ready"] is True
     assert payload["summary"]["failed_checks"] == 0
     assert payload["config_source_kind"] == "native_toml"
+    assert payload["research_bootstrap"]["source"] == "config"
+    assert payload["research_bootstrap"]["contract_state"] == "stubbed"
+    assert payload["research_bootstrap"]["mode"] == "stub"
+    assert payload["research_bootstrap"]["interview_policy"] == "off"
+    assert "stub mode" in payload["research_bootstrap"]["summary"]
     assert any(check["check_id"] == "execution.runners" for check in payload["checks"])
 
 
@@ -1404,10 +1422,28 @@ def test_cli_doctor_reports_missing_runner_prerequisite_before_start(tmp_path: P
     )
 
     assert result.exit_code == 1
+    assert "Research bootstrap: stubbed (mode=stub, interview_policy=off)" in result.stdout
+    assert "Research summary: Fresh-workspace research defaults to stub mode with interviews off." in result.stdout
     assert "Bootstrap ready: yes" in result.stdout
     assert "Execution ready: no" in result.stdout
     assert "codex" in result.stdout
     assert "start --once" in result.stdout
+
+
+def test_cli_health_human_output_surfaces_research_bootstrap_contract(tmp_path: Path) -> None:
+    destination = tmp_path / "health-human-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    result = RUNNER.invoke(
+        app,
+        ["--config", str(destination / "millrace.toml"), "health"],
+        env=fake_runner_env(tmp_path, executables=("codex",)),
+    )
+
+    assert result.exit_code == 0
+    assert "Research bootstrap: stubbed (mode=stub, interview_policy=off)" in result.stdout
+    assert "Research summary: Fresh-workspace research defaults to stub mode with interviews off." in result.stdout
 
 
 def test_cli_status_detail_and_config_show_report_asset_inventory(tmp_path: Path) -> None:

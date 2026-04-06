@@ -48,6 +48,10 @@ def test_workspace_health_report_passes_for_initialized_workspace(tmp_path: Path
     assert report.workspace_root_source == "loaded_config"
     assert report.summary.failed_checks == 0
     assert report.summary.warning_checks == 0
+    assert report.research_bootstrap.source == "config"
+    assert report.research_bootstrap.contract_state == "stubbed"
+    assert report.research_bootstrap.mode.value == "stub"
+    assert report.research_bootstrap.interview_policy.value == "off"
     assert _check(report, "config.load").status is HealthCheckStatus.PASS
     assert _check(report, "workspace.directories").status is HealthCheckStatus.PASS
     assert _check(report, "workspace.files").status is HealthCheckStatus.PASS
@@ -69,6 +73,8 @@ def test_workspace_health_report_fails_for_invalid_native_config(tmp_path: Path)
     assert report.status is HealthCheckStatus.FAIL
     assert report.ok is False
     assert report.config_source_kind == "unresolved"
+    assert report.research_bootstrap.source == "unresolved"
+    assert report.research_bootstrap.contract_state == "unknown"
     config_check = _check(report, "config.load")
     assert config_check.status is HealthCheckStatus.FAIL
     assert any("config TOML is invalid" in detail for detail in config_check.details)

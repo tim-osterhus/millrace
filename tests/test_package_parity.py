@@ -95,6 +95,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "ADVISOR.md" in readme
     assert "OpenClaw-style supervisor agents" in readme
     assert "millrace --config /absolute/path/to/workspace/millrace.toml health --json" in readme
+    assert '[research] mode = "stub"' in readme
+    assert 'interview_policy = "off"' in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -107,6 +109,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
 
     operator_guide = (MILLRACE_ROOT / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
     assert "OpenClaw or another external supervisor harness" in operator_guide
+    assert '[research] mode = "stub"' in operator_guide
+    assert 'interview_policy = "off"' in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive

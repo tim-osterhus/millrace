@@ -280,16 +280,16 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "1b83b78b89f1bd7827121f9adf364b7b02fb9f438fd44420a7a355d81e8de86c",
-      "size_bytes": 14287,
+      "sha256": "73d69296bc0f051f1d935fcd40de5ddcf8d5cc356dc2588cadc036662c33e982",
+      "size_bytes": 14808,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "b28e94318f503eaa5d2e2a83e620251abf0d77975a14c8d0f1277f887931ca17",
-      "size_bytes": 15926,
+      "sha256": "2eb58c7b6267e85ef2502623b6b24ab84641c12ce1afcb2f104013347285ec7f",
+      "size_bytes": 16494,
       "source": "runtime"
     },
     {

@@ -14,6 +14,8 @@ python3 -m pip install millrace-ai
 
 This installs the `millrace` command. Create a workspace with `millrace init ...`; `millrace.toml` and `agents/` live inside that initialized workspace, not at the public repo root.
 
+Fresh-workspace research is explicit by default: the shipped baseline config starts with `[research] mode = "stub"` and `interview_policy = "off"`. A new workspace still includes the research plane and its reporting surfaces, but first-run research only records deferred breadcrumbs until you deliberately reconfigure research to a non-stub mode.
+
 It gives you:
 
 - a Python CLI and a Textual TUI, plus an agent-facing advisor surface
@@ -181,6 +183,7 @@ millrace --config /absolute/path/to/workspace/millrace.toml doctor
 
 `health` confirms bootstrap/config/assets truth. `doctor` is the execution-readiness check that tells you whether required external runner CLIs such as `codex` are available before `start --once`.
 The shipped model ids in that scaffold are real defaults, but `doctor` is still the command that tells you whether the current machine can actually execute them.
+Those preflight surfaces also echo the active research bootstrap contract so you can see that fresh-workspace research is stubbed by default instead of assuming GoalSpec, incident, or audit automation is already active.
 
 ## Daily Operator Flow
 

@@ -12,7 +12,7 @@ from pydantic import Field, ValidationError, field_validator
 from .assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKind
 from .baseline_assets import packaged_baseline_bundle_version
 from .config import LoadedConfig, build_runtime_paths, load_engine_config
-from .contracts import ContractModel, ExecutionStatus, RunnerKind, StageType
+from .contracts import ContractModel, ExecutionStatus, ResearchMode, RunnerKind, SpecInterviewPolicy, StageType
 from .config_compat import LegacyPolicyCompatStatus
 from .paths import RuntimePaths
 from .policies.sizing import SizeStatusError, parse_size_status
@@ -73,6 +73,25 @@ class WorkspaceHealthSummary(ContractModel):
     failed_checks: int = Field(ge=0)
 
 
+class ResearchBootstrapReport(ContractModel):
+    """Typed first-run research contract surfaced in preflight output."""
+
+    source: Literal["config", "unresolved"]
+    contract_state: Literal["stubbed", "active", "unknown"]
+    mode: ResearchMode | None = None
+    interview_policy: SpecInterviewPolicy | None = None
+    summary: str
+    next_step: str
+
+    @field_validator("summary", "next_step")
+    @classmethod
+    def normalize_copy(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("research bootstrap text may not be empty")
+        return normalized
+
+
 class WorkspaceHealthReport(ContractModel):
     """Machine-readable workspace bootstrap and health report."""
 
@@ -85,6 +104,7 @@ class WorkspaceHealthReport(ContractModel):
     ok: bool
     bootstrap_ready: bool
     execution_ready: bool
+    research_bootstrap: ResearchBootstrapReport
     summary: WorkspaceHealthSummary
     runner_prerequisites: tuple["RunnerPrerequisiteReport", ...] = ()
     checks: tuple[WorkspaceHealthCheck, ...]
@@ -609,6 +629,36 @@ def _build_execution_readiness_check(
     return check, reports, True
 
 
+def _build_research_bootstrap_report(loaded: LoadedConfig | None) -> ResearchBootstrapReport:
+    if loaded is None:
+        return ResearchBootstrapReport(
+            source="unresolved",
+            contract_state="unknown",
+            summary="Research bootstrap contract unavailable because config did not load.",
+            next_step="Fix config.load before relying on research preflight details.",
+        )
+
+    research = loaded.config.research
+    if research.mode is ResearchMode.STUB:
+        return ResearchBootstrapReport(
+            source="config",
+            contract_state="stubbed",
+            mode=research.mode,
+            interview_policy=research.interview_policy,
+            summary="Fresh-workspace research defaults to stub mode with interviews off.",
+            next_step="Reconfigure [research] in millrace.toml before expecting active GoalSpec, incident, or audit flows.",
+        )
+
+    return ResearchBootstrapReport(
+        source="config",
+        contract_state="active",
+        mode=research.mode,
+        interview_policy=research.interview_policy,
+        summary="Fresh-workspace research is configured for an active non-stub mode.",
+        next_step="Use health/doctor plus research/status surfaces to confirm the selected research flow matches operator intent.",
+    )
+
+
 def _report_status(checks: list[WorkspaceHealthCheck]) -> HealthCheckStatus:
     if any(check.status is HealthCheckStatus.FAIL for check in checks):
         return HealthCheckStatus.FAIL
@@ -654,6 +704,7 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
     ]
     bootstrap_ready = not any(check.status is HealthCheckStatus.FAIL for check in bootstrap_checks)
     execution_check, runner_prerequisites, execution_ready = _build_execution_readiness_check(loaded, paths)
+    research_bootstrap = _build_research_bootstrap_report(loaded)
     checks = [*bootstrap_checks, execution_check]
     summary = _summary_for(checks)
     status = _report_status(checks)
@@ -667,6 +718,7 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
         ok=status is not HealthCheckStatus.FAIL,
         bootstrap_ready=bootstrap_ready,
         execution_ready=execution_ready,
+        research_bootstrap=research_bootstrap,
         summary=summary,
         runner_prerequisites=runner_prerequisites,
         checks=tuple(checks),

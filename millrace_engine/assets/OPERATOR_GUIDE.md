@@ -74,6 +74,8 @@ millrace --config /absolute/path/to/workspace/millrace.toml doctor
 
 The initialized workspace ships with real default model ids for the Codex runner, including `gpt-5.3-codex` and `gpt-5.2`. Those defaults are not placeholders, but they still rely on the local runner environment being usable.
 
+The first-run research contract is also deliberate: a fresh workspace starts with `[research] mode = "stub"` and `interview_policy = "off"`. Research reporting and queues are present, but real GoalSpec, incident, and audit progression are not active until you intentionally reconfigure research away from the stub baseline.
+
 If you prefer an interactive shell, launch the TUI against that workspace after the environment is ready:
 
 ```bash
@@ -115,6 +117,7 @@ millrace --config /absolute/path/to/new-workspace/millrace.toml doctor
 
 The TUI runs the same workspace health check automatically before entering the shell.
 Use `doctor` as the final execution-readiness gate: it verifies that the current machine can actually run the shipped defaults through the required external runner CLI.
+`health` and `doctor` also surface the active research bootstrap contract, so operators can tell immediately whether research is stubbed by default or intentionally configured for an active mode.
 
 ## TUI Workflow
 
