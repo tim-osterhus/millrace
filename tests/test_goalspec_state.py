@@ -52,37 +52,33 @@ from millrace_engine.research.taskaudit import (
     TaskauditRecord,
 )
 
-
-def test_research_package_re_exports_goalspec_run01_contracts() -> None:
-    assert research.FrozenInitialFamilySpecPlan is FrozenInitialFamilySpecPlan
-    assert research.GoalSpecReviewStatus is GoalSpecReviewStatus
-    assert research.INITIAL_FAMILY_FREEZE_MODE == INITIAL_FAMILY_FREEZE_MODE
-    assert research.INITIAL_FAMILY_PLAN_SCHEMA_VERSION == INITIAL_FAMILY_PLAN_SCHEMA_VERSION
-    assert research.DEFAULT_PINNED_FAMILY_POLICY_FIELDS == DEFAULT_PINNED_FAMILY_POLICY_FIELDS
-    assert research.apply_initial_family_policy_pin is apply_initial_family_policy_pin
-    assert research.evaluate_family_policy_drift is evaluate_family_policy_drift
-    assert research.evaluate_governance_canary is evaluate_governance_canary
-    assert research.evaluate_initial_family_plan_guard is evaluate_initial_family_plan_guard
-    assert research.resolve_family_governor_state is resolve_family_governor_state
-
-
-def test_research_package_re_exports_goalspec_run03_contracts() -> None:
-    assert research.CompletionManifestDraftStateRecord is CompletionManifestDraftStateRecord
-    assert research.SpecSynthesisRecord is SpecSynthesisRecord
-
-
-def test_research_package_re_exports_taskmaster_run05_contracts() -> None:
-    assert research.TASKMASTER_ARTIFACT_SCHEMA_VERSION == TASKMASTER_ARTIFACT_SCHEMA_VERSION
-    assert research.TaskAuthoringProfileSelection is TaskAuthoringProfileSelection
-    assert research.TaskmasterExecutionResult is TaskmasterExecutionResult
-    assert research.TaskmasterRecord is TaskmasterRecord
-
-
-def test_research_package_re_exports_taskaudit_run06_contracts() -> None:
-    assert research.TASKAUDIT_ARTIFACT_SCHEMA_VERSION == TASKAUDIT_ARTIFACT_SCHEMA_VERSION
-    assert research.TaskauditExecutionResult is TaskauditExecutionResult
-    assert research.TaskauditProvenance is TaskauditProvenance
-    assert research.TaskauditRecord is TaskauditRecord
+@pytest.mark.parametrize(
+    ("exported", "expected"),
+    [
+        ("FrozenInitialFamilySpecPlan", FrozenInitialFamilySpecPlan),
+        ("GoalSpecReviewStatus", GoalSpecReviewStatus),
+        ("INITIAL_FAMILY_FREEZE_MODE", INITIAL_FAMILY_FREEZE_MODE),
+        ("INITIAL_FAMILY_PLAN_SCHEMA_VERSION", INITIAL_FAMILY_PLAN_SCHEMA_VERSION),
+        ("DEFAULT_PINNED_FAMILY_POLICY_FIELDS", DEFAULT_PINNED_FAMILY_POLICY_FIELDS),
+        ("apply_initial_family_policy_pin", apply_initial_family_policy_pin),
+        ("evaluate_family_policy_drift", evaluate_family_policy_drift),
+        ("evaluate_governance_canary", evaluate_governance_canary),
+        ("evaluate_initial_family_plan_guard", evaluate_initial_family_plan_guard),
+        ("resolve_family_governor_state", resolve_family_governor_state),
+        ("CompletionManifestDraftStateRecord", CompletionManifestDraftStateRecord),
+        ("SpecSynthesisRecord", SpecSynthesisRecord),
+        ("TASKMASTER_ARTIFACT_SCHEMA_VERSION", TASKMASTER_ARTIFACT_SCHEMA_VERSION),
+        ("TaskAuthoringProfileSelection", TaskAuthoringProfileSelection),
+        ("TaskmasterExecutionResult", TaskmasterExecutionResult),
+        ("TaskmasterRecord", TaskmasterRecord),
+        ("TASKAUDIT_ARTIFACT_SCHEMA_VERSION", TASKAUDIT_ARTIFACT_SCHEMA_VERSION),
+        ("TaskauditExecutionResult", TaskauditExecutionResult),
+        ("TaskauditProvenance", TaskauditProvenance),
+        ("TaskauditRecord", TaskauditRecord),
+    ],
+)
+def test_research_package_re_exports_contracts(exported: str, expected: object) -> None:
+    assert getattr(research, exported) is expected
 
 
 def test_refresh_stable_spec_registry_bootstraps_and_writes_deterministically(tmp_path: Path) -> None:
@@ -684,13 +680,11 @@ def test_progress_watchdog_regenerates_missing_audit_recovery_task_without_rewri
     assert paths.progress_watchdog_report_file.exists()
 
     backlog_cards = parse_task_store(backlog_file.read_text(encoding="utf-8"), source_file=backlog_file).cards
-    assert [card.title for card in backlog_cards] == ["Watchdog audit remediation task"]
-    assert backlog_cards[0].spec_id == "SPEC-AUD-WATCHDOG-001"
+    assert ([card.title for card in backlog_cards], backlog_cards[0].spec_id) == (["Watchdog audit remediation task"], "SPEC-AUD-WATCHDOG-001")
 
 
 def test_refresh_task_provenance_registry_bootstraps_and_tracks_visible_task_cards(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    agents_dir = workspace / "agents"
+    workspace = tmp_path / "workspace"; agents_dir = workspace / "agents"
     output_path = agents_dir / "task_provenance.json"
     tasks_path, backlog_path, archive_path = task_provenance_source_paths(agents_dir)
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -744,8 +738,7 @@ def test_refresh_task_provenance_registry_bootstraps_and_tracks_visible_task_car
 
 
 def test_refresh_task_provenance_registry_records_taskaudit_metadata(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    agents_dir = workspace / "agents"
+    workspace = tmp_path / "workspace"; agents_dir = workspace / "agents"
     output_path = agents_dir / "task_provenance.json"
     tasks_path, backlog_path, archive_path = task_provenance_source_paths(agents_dir)
     agents_dir.mkdir(parents=True, exist_ok=True)

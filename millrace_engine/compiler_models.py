@@ -39,6 +39,20 @@ RESOLVED_SNAPSHOT_SCHEMA_VERSION = "1.0"
 DIAGNOSTIC_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
+def _normalize_unique_text_items(value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return tuple(normalized)
+
+
 def _expected_resume_states(terminal_states: tuple[LoopTerminalState, ...]) -> tuple["FrozenResumeState", ...]:
     return tuple(
         FrozenResumeState(
@@ -106,17 +120,7 @@ class CompilerDiagnostic(ContractModel):
     @field_validator("related_refs", mode="before")
     @classmethod
     def normalize_related_refs(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
-        if not value:
-            return ()
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in value:
-            text = str(item).strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            normalized.append(text)
-        return tuple(normalized)
+        return _normalize_unique_text_items(value)
 
 
 class FrozenParameterRebindingRule(ContractModel):
@@ -161,17 +165,7 @@ class FrozenPlanSourceRef(ContractModel):
     @field_validator("aliases", mode="before")
     @classmethod
     def normalize_aliases(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
-        if not value:
-            return ()
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in value:
-            alias = str(item).strip()
-            if not alias or alias in seen:
-                continue
-            seen.add(alias)
-            normalized.append(alias)
-        return tuple(normalized)
+        return _normalize_unique_text_items(value)
 
 
 class FrozenResumeState(ContractModel):
