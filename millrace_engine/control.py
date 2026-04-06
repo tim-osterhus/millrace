@@ -117,6 +117,8 @@ from .research.state import ResearchQueueFamily, ResearchQueueOwnership, Researc
 from .standard_runtime import RuntimeSelectionView, runtime_selection_view_from_snapshot
 from .status import ControlPlane, StatusError, StatusStore
 from .workspace_init import (
+    PersistedStateMigrationApplyReport,
+    PersistedStateMigrationPreviewReport,
     WorkspaceUpgradeApplyReport,
     WorkspaceInitError,
     WorkspaceInitReport,
@@ -128,6 +130,34 @@ from .workspace_init import (
 
 
 _decision_report_paths = decision_report_paths
+
+
+def _persisted_state_migration_preview_payload(
+    report: PersistedStateMigrationPreviewReport,
+) -> dict[str, object]:
+    return {
+        "state_family": report.state_family,
+        "action": report.action,
+        "state_path": report.state_path.as_posix(),
+        "deferred_dir": report.deferred_dir.as_posix(),
+        "breadcrumb_file_count": report.breadcrumb_file_count,
+        "would_write_state_file": report.would_write_state_file,
+        "summary": report.summary,
+    }
+
+
+def _persisted_state_migration_apply_payload(
+    report: PersistedStateMigrationApplyReport,
+) -> dict[str, object]:
+    return {
+        "state_family": report.state_family,
+        "action": report.action,
+        "state_path": report.state_path.as_posix(),
+        "deferred_dir": report.deferred_dir.as_posix(),
+        "breadcrumb_file_count": report.breadcrumb_file_count,
+        "wrote_state_file": report.wrote_state_file,
+        "summary": report.summary,
+    }
 
 
 def _supervisor_allowed_actions(runtime: RuntimeState, *, backlog_depth: int) -> tuple[SupervisorAction, ...]:
@@ -302,6 +332,10 @@ class EngineControl:
                 "conflicting_paths": report.conflicting_paths,
                 "preserved_runtime_owned": report.preserved_runtime_owned,
                 "preserved_operator_owned": report.preserved_operator_owned,
+                "persisted_state_migrations": tuple(
+                    _persisted_state_migration_preview_payload(item)
+                    for item in report.persisted_state_migrations
+                ),
             },
         )
 
@@ -325,6 +359,10 @@ class EngineControl:
                 "conflicting_paths": report.conflicting_paths,
                 "preserved_runtime_owned": report.preserved_runtime_owned,
                 "preserved_operator_owned": report.preserved_operator_owned,
+                "persisted_state_migrations": tuple(
+                    _persisted_state_migration_apply_payload(item)
+                    for item in report.persisted_state_migrations
+                ),
             },
         )
 

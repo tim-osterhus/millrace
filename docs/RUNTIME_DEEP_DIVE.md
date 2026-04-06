@@ -151,7 +151,7 @@ Phase 01B registry defaults are intentionally split from the workspace seed surf
 Current behavior in this run:
 
 - `millrace init` can materialize a baseline workspace from the packaged bundle
-- `millrace upgrade` previews that manifest-tracked refresh, while `millrace upgrade --apply` writes the same manifest-tracked creates/updates in place without resetting preserved runtime-owned or operator-owned paths
+- `millrace upgrade` previews that manifest-tracked refresh plus any supported persisted-state migrations, while `millrace upgrade --apply` writes the same manifest-tracked creates/updates and applies those migrations in place without resetting preserved runtime-owned or operator-owned paths
 - the engine still reads the configured realized workspace files under `millrace/` or another initialized workspace
 - workspace prompt files take precedence over packaged baseline assets when present
 - packaged assets are the fallback when the workspace copy is absent
@@ -179,7 +179,7 @@ Execution is real in v1.
 Research is now a real supervisor in v1:
 
 - it accepts selected handoff and intake events
-- persists a typed runtime snapshot in `agents/research_state.json`
+- persists a typed runtime snapshot in `agents/research_state.json`, and the workspace upgrade seam can now explicitly canonicalize or materialize that file when a supported migration is needed
 - compiles and owns research-plane dispatch/queue selection
 - executes the supported GoalSpec stages (`goal_intake`, `objective_profile_sync`, `spec_synthesis`, optional `spec_interview`, `spec_review`, `taskmaster`, plus `taskaudit` when family-complete)
 - executes the supported incident stages (`incident_intake`, `incident_resolve`, `incident_archive`) plus deterministic remediation task generation
@@ -279,7 +279,7 @@ History is hybrid by design:
 
 - `historylog.md`: short compatibility index
 - `historylog/`: durable detailed history entries
-- `research_state.json`: typed research-plane runtime snapshot and deferred-request queue
+- `research_state.json`: typed research-plane runtime snapshot and deferred-request queue; `millrace upgrade` now exposes the supported migration seam for canonicalizing legacy payload keys or materializing the file from deferred breadcrumbs when needed
 - `runs/<run_id>/resolved_snapshot.json` plus `resolved_snapshot.md`: immutable compile-time resolved snapshot emitted by the Phase 01B compiler
 - `runs/<run_id>/transition_history.jsonl`: append-only runtime transition history with stage-transition records plus any persisted policy-hook evaluation records, including selected route decisions and bound execution parameters
 - copied diagnostics snapshots preserve that append-only history shape but redact sensitive policy-evidence details in the copied `transition_history.jsonl`

@@ -426,9 +426,13 @@ class ResearchRuntimeState(ContractModel):
         return observed_at >= self.next_poll_at
 
 from .research_state_store import (
+    PersistedStateMigrationApplyReport,
+    PersistedStateMigrationPreviewReport,
     ResearchStateStore,
+    apply_research_runtime_state_migration,
     clear_research_runtime_lock,
     load_research_runtime_state,
+    preview_research_runtime_state_migration,
     rebind_research_runtime_state,
     write_research_runtime_state,
 )
@@ -436,6 +440,8 @@ from .research_state_store import (
 
 __all__ = [
     "DeferredResearchRequest",
+    "PersistedStateMigrationApplyReport",
+    "PersistedStateMigrationPreviewReport",
     "ResearchStateStore",
     "ResearchCheckpoint",
     "ResearchLockScope",
@@ -446,8 +452,10 @@ __all__ = [
     "ResearchRuntimeMode",
     "ResearchRuntimeState",
     "ResearchStageRetryState",
+    "apply_research_runtime_state_migration",
     "clear_research_runtime_lock",
     "load_research_runtime_state",
+    "preview_research_runtime_state_migration",
     "rebind_research_runtime_state",
     "write_research_runtime_state",
 ]

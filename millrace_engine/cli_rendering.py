@@ -668,7 +668,7 @@ def render_upgrade_preview(result: OperationResult, *, json_mode: bool = False) 
 
     payload = result.payload
     lines = [
-        "Upgrade preview: manifest-tracked baseline refresh only",
+        "Upgrade preview: baseline refresh plus persisted-state migration inspection",
         f"Workspace root: {payload['workspace_root']}",
         f"Bundle version: {payload['bundle_version']}",
         f"Manifest files: {payload['manifest_file_count']}",
@@ -679,6 +679,7 @@ def render_upgrade_preview(result: OperationResult, *, json_mode: bool = False) 
         f"Conflicts: {len(payload['conflicting_paths'])}",
         f"Preserved runtime-owned paths: {len(payload['preserved_runtime_owned'])}",
         f"Preserved operator-owned files: {len(payload['preserved_operator_owned'])}",
+        f"Persisted-state migrations: {len(payload['persisted_state_migrations'])}",
         "Preview only: yes",
     ]
     section_order = (
@@ -694,6 +695,18 @@ def render_upgrade_preview(result: OperationResult, *, json_mode: bool = False) 
             continue
         lines.append(f"{label}:")
         lines.extend(f"- {path}" for path in paths)
+    for migration in payload["persisted_state_migrations"]:
+        lines.extend(
+            [
+                "Persisted-state migration:",
+                f"- family={migration['state_family']} action={migration['action']} "
+                f"would_write_state_file={_bool_label(migration['would_write_state_file'])} "
+                f"breadcrumbs={migration['breadcrumb_file_count']}",
+                f"  state_path={migration['state_path']}",
+                f"  deferred_dir={migration['deferred_dir']}",
+                f"  summary={migration['summary']}",
+            ]
+        )
     typer.echo("\n".join(lines))
 
 
@@ -704,7 +717,7 @@ def render_upgrade_apply(result: OperationResult, *, json_mode: bool = False) ->
 
     payload = result.payload
     lines = [
-        "Upgrade apply: manifest-tracked baseline refresh",
+        "Upgrade apply: baseline refresh plus persisted-state migration",
         f"Workspace root: {payload['workspace_root']}",
         f"Bundle version: {payload['bundle_version']}",
         f"Manifest files: {payload['manifest_file_count']}",
@@ -716,6 +729,7 @@ def render_upgrade_apply(result: OperationResult, *, json_mode: bool = False) ->
         f"Conflicts: {len(payload['conflicting_paths'])}",
         f"Preserved runtime-owned paths: {len(payload['preserved_runtime_owned'])}",
         f"Preserved operator-owned files: {len(payload['preserved_operator_owned'])}",
+        f"Persisted-state migrations: {len(payload['persisted_state_migrations'])}",
         "Applied: yes",
     ]
     section_order = (
@@ -731,6 +745,18 @@ def render_upgrade_apply(result: OperationResult, *, json_mode: bool = False) ->
             continue
         lines.append(f"{label}:")
         lines.extend(f"- {path}" for path in paths)
+    for migration in payload["persisted_state_migrations"]:
+        lines.extend(
+            [
+                "Persisted-state migration:",
+                f"- family={migration['state_family']} action={migration['action']} "
+                f"wrote_state_file={_bool_label(migration['wrote_state_file'])} "
+                f"breadcrumbs={migration['breadcrumb_file_count']}",
+                f"  state_path={migration['state_path']}",
+                f"  deferred_dir={migration['deferred_dir']}",
+                f"  summary={migration['summary']}",
+            ]
+        )
     typer.echo("\n".join(lines))
 
 

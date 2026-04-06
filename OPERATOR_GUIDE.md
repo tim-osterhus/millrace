@@ -108,8 +108,9 @@ Behavior to remember:
 
 - Without `--force`, the destination must be absent or empty.
 - With `--force`, Millrace overwrites manifest-tracked baseline files in place. It does not clean the directory.
-- `millrace upgrade` is the non-destructive inspection path for existing workspaces: it previews manifest-tracked baseline deltas and leaves runtime-owned plus operator-owned paths untouched.
-- `millrace upgrade --apply` refreshes those manifest-tracked baseline files in place while preserving runtime-owned plus operator-owned paths.
+- `millrace upgrade` is the non-destructive inspection path for existing workspaces: it previews manifest-tracked baseline deltas plus any supported persisted-state migrations and leaves runtime-owned plus operator-owned paths untouched.
+- `millrace upgrade --apply` refreshes those manifest-tracked baseline files and applies supported persisted-state migrations in place while preserving runtime-owned plus operator-owned paths.
+- The current persisted-state migration seam covers research runtime state: upgrade can canonicalize or materialize `agents/research_state.json` from supported research-state helpers instead of expecting silent fallback or manual deletion.
 - Treat `init --force` as the scaffold write path, not as a substitute for the supported upgrade flow.
 - The new workspace still uses workspace-first asset resolution after init.
 

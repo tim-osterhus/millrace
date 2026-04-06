@@ -173,8 +173,9 @@ Important behavior:
 
 - Without `--force`, the destination must be absent or empty.
 - With `--force`, Millrace overwrites manifest-tracked baseline files in place. It does not wipe the directory.
-- `millrace upgrade` previews the manifest-tracked baseline refresh for an existing workspace without modifying files.
-- `millrace upgrade --apply` writes only the manifest-tracked baseline refresh in place, preserving runtime-owned and operator-owned artifacts.
+- `millrace upgrade` previews both the manifest-tracked baseline refresh and any supported persisted-state migrations for an existing workspace without modifying files.
+- `millrace upgrade --apply` writes the manifest-tracked baseline refresh and applies supported persisted-state migrations in place, preserving runtime-owned and operator-owned artifacts.
+- The current persisted-state migration seam is explicit and inspectable: when needed, upgrade canonicalizes or materializes `agents/research_state.json` from the supported research-state helpers instead of relying on silent fallback or manual deletion.
 - Use `upgrade` and `upgrade --apply` for supported workspace evolution; use `init --force` only when you intentionally want the scaffold write path.
 - Workspace prompt and registry overlays can override packaged defaults after scaffolding.
 - Missing workspace prompt files fall back to packaged assets when the resolver supports that family.

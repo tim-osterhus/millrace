@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from millrace_engine.workspace_init import (
     preview_workspace_upgrade,
     WorkspaceInitError,
 )
+from millrace_engine.research.state import load_research_runtime_state
 
 
 MILLRACE_ROOT = Path(__file__).resolve().parents[1]
@@ -189,6 +191,116 @@ def test_workspace_upgrade_preview_does_not_mutate_workspace_files(tmp_path: Pat
 
     assert readme_path.read_text(encoding="utf-8") == "custom readme\n"
     assert status_path.read_text(encoding="utf-8") == "### QUICKFIX_NEEDED\n"
+
+
+def test_workspace_upgrade_preview_reports_noop_persisted_state_migration_when_research_state_is_absent(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+
+    report = preview_workspace_upgrade(workspace)
+
+    migration = report.persisted_state_migrations[0]
+    assert migration.state_family == "research_runtime_state"
+    assert migration.action == "none"
+    assert migration.would_write_state_file is False
+    assert migration.breadcrumb_file_count == 0
+    assert migration.summary == "No persisted research runtime state or deferred breadcrumbs require migration."
+
+
+def test_workspace_upgrade_rewrites_legacy_research_state_through_explicit_migration_seam(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    state_path = workspace / "agents" / "research_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "current_mode": "STUB",
+                "previous_mode": "STUB",
+                "reason": "legacy bootstrap",
+                "cycle_count": 0,
+                "transition_count": 0,
+                "pending": [
+                    {
+                        "event_type": "handoff.idea_submitted",
+                        "received_at": "2026-04-04T12:00:00Z",
+                        "payload": {"idea_id": "IDEA-LEGACY-001"},
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    preview = preview_workspace_upgrade(workspace)
+    preview_migration = preview.persisted_state_migrations[0]
+    assert preview_migration.action == "rewrite_state"
+    assert preview_migration.would_write_state_file is True
+
+    report = apply_workspace_upgrade(workspace)
+    migration = report.persisted_state_migrations[0]
+    assert migration.action == "rewrite_state"
+    assert migration.wrote_state_file is True
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["mode_reason"] == "legacy bootstrap"
+    assert payload["last_mode"] == "STUB"
+    assert payload["deferred_requests"][0]["event_type"] == "handoff.idea_submitted"
+    assert payload["updated_at"] == "2026-04-04T12:00:00Z"
+    assert "pending" not in payload
+    assert "previous_mode" not in payload
+    assert "reason" not in payload
+
+
+def test_workspace_upgrade_materializes_research_state_from_breadcrumbs_without_deleting_breadcrumbs(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    breadcrumb_path = workspace / "agents" / ".deferred" / "idea-submitted.json"
+    breadcrumb_path.parent.mkdir(parents=True, exist_ok=True)
+    breadcrumb_path.write_text(
+        json.dumps(
+            {
+                "event_type": "handoff.idea_submitted",
+                "received_at": "2026-04-04T12:05:00Z",
+                "payload": {"idea_id": "IDEA-BREADCRUMB-001"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    preview = preview_workspace_upgrade(workspace)
+    preview_migration = preview.persisted_state_migrations[0]
+    assert preview_migration.action == "materialize_from_breadcrumbs"
+    assert preview_migration.would_write_state_file is True
+    assert preview_migration.breadcrumb_file_count == 1
+
+    report = apply_workspace_upgrade(workspace)
+    migration = report.persisted_state_migrations[0]
+    assert migration.action == "materialize_from_breadcrumbs"
+    assert migration.wrote_state_file is True
+    assert breadcrumb_path.exists()
+
+    state = load_research_runtime_state(
+        workspace / "agents" / "research_state.json",
+        deferred_dir=workspace / "agents" / ".deferred",
+    )
+    assert state is not None
+    assert state.current_mode.value == "STUB"
+    assert len(state.deferred_requests) == 1
+    assert state.deferred_requests[0].event_type.value == "handoff.idea_submitted"
 
 
 def test_workspace_upgrade_apply_refreshes_manifest_files_and_preserves_owned_files(tmp_path: Path) -> None:

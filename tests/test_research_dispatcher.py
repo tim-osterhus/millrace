@@ -43,6 +43,8 @@ from millrace_engine.research.interview import answer_interview_question, list_i
 from millrace_engine.research.queues import discover_research_queues
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
 from millrace_engine.research.state import (
+    apply_research_runtime_state_migration,
+    preview_research_runtime_state_migration,
     ResearchCheckpoint,
     ResearchQueueFamily,
     ResearchQueueOwnership,
@@ -3178,3 +3180,37 @@ def test_engine_start_repeated_once_unwedges_restart_fixture(
 
 def test_research_package_re_exports_dispatcher_integration_surface() -> None:
     assert CompiledResearchDispatchError.__name__ == "CompiledResearchDispatchError"
+
+
+def test_research_runtime_state_upgrade_migration_materializes_breadcrumbs_explicitly(tmp_path: Path) -> None:
+    workspace, _config, paths = _configured_runtime(tmp_path, mode=ResearchMode.STUB)
+    breadcrumb_path = paths.deferred_dir / "idea-submitted.json"
+    _write_json_file(
+        breadcrumb_path,
+        {
+            "event_type": EventType.IDEA_SUBMITTED.value,
+            "received_at": "2026-04-04T12:05:00Z",
+            "payload": {"idea_id": "IDEA-DISPATCHER-BREADCRUMB-001"},
+        },
+    )
+
+    preview = preview_research_runtime_state_migration(
+        paths.research_state_file,
+        deferred_dir=paths.deferred_dir,
+    )
+
+    assert preview.action == "materialize_from_breadcrumbs"
+    assert preview.would_write_state_file is True
+    assert preview.breadcrumb_file_count == 1
+
+    report = apply_research_runtime_state_migration(
+        paths.research_state_file,
+        deferred_dir=paths.deferred_dir,
+    )
+
+    assert report.action == "materialize_from_breadcrumbs"
+    assert report.wrote_state_file is True
+    assert breadcrumb_path.exists()
+    snapshot = load_research_runtime_state(paths.research_state_file, deferred_dir=paths.deferred_dir)
+    assert snapshot is not None
+    assert snapshot.deferred_requests[0].event_type is EventType.IDEA_SUBMITTED

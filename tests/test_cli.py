@@ -1372,6 +1372,8 @@ def test_cli_upgrade_preview_reports_manifest_deltas_without_mutation(tmp_path: 
     assert "millrace.toml" in payload["payload"]["unchanged"]
     assert "agents/status.md" in payload["payload"]["preserved_runtime_owned"]
     assert "notes.md" in payload["payload"]["preserved_operator_owned"]
+    assert payload["payload"]["persisted_state_migrations"][0]["state_family"] == "research_runtime_state"
+    assert payload["payload"]["persisted_state_migrations"][0]["action"] == "none"
     assert (destination / "README.md").read_text(encoding="utf-8") == "custom workspace readme\n"
     assert (destination / "agents" / "status.md").read_text(encoding="utf-8") == "### BLOCKED\n"
 
@@ -1386,8 +1388,9 @@ def test_cli_upgrade_preview_human_output_explains_preview_scope(tmp_path: Path)
     result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade"])
 
     assert result.exit_code == 0
-    assert "Upgrade preview: manifest-tracked baseline refresh only" in result.stdout
+    assert "Upgrade preview: baseline refresh plus persisted-state migration inspection" in result.stdout
     assert "Preview only: yes" in result.stdout
+    assert "Persisted-state migration:" in result.stdout
     assert "Would update:" in result.stdout
     assert "- README.md" in result.stdout
 
@@ -1414,6 +1417,7 @@ def test_cli_upgrade_apply_reports_manifest_refresh_and_preserves_owned_files(tm
     assert "README.md" in payload["payload"]["updated_files"]
     assert "agents/status.md" in payload["payload"]["preserved_runtime_owned"]
     assert "notes.md" in payload["payload"]["preserved_operator_owned"]
+    assert payload["payload"]["persisted_state_migrations"][0]["action"] == "none"
     assert (destination / "README.md").read_text(encoding="utf-8") != "custom workspace readme\n"
     assert (destination / "agents" / "status.md").read_text(encoding="utf-8") == "### BLOCKED\n"
     assert (destination / "notes.md").read_text(encoding="utf-8") == "keep me\n"
@@ -1429,10 +1433,79 @@ def test_cli_upgrade_apply_human_output_explains_apply_scope(tmp_path: Path) -> 
     result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply"])
 
     assert result.exit_code == 0
-    assert "Upgrade apply: manifest-tracked baseline refresh" in result.stdout
+    assert "Upgrade apply: baseline refresh plus persisted-state migration" in result.stdout
     assert "Applied: yes" in result.stdout
+    assert "Persisted-state migration:" in result.stdout
     assert "Updated files:" in result.stdout
     assert "- README.md" in result.stdout
+
+
+def test_cli_upgrade_preview_reports_explicit_research_state_rewrite(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    (destination / "agents" / "research_state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "current_mode": "STUB",
+                "previous_mode": "STUB",
+                "reason": "legacy bootstrap",
+                "pending": [
+                    {
+                        "event_type": "handoff.idea_submitted",
+                        "received_at": "2026-04-04T12:00:00Z",
+                        "payload": {"idea_id": "IDEA-CLI-LEGACY-001"},
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    migration = payload["payload"]["persisted_state_migrations"][0]
+    assert migration["action"] == "rewrite_state"
+    assert migration["would_write_state_file"] is True
+
+
+def test_cli_upgrade_apply_materializes_research_state_from_breadcrumbs(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    breadcrumb_path = destination / "agents" / ".deferred" / "idea-submitted.json"
+    breadcrumb_path.parent.mkdir(parents=True, exist_ok=True)
+    breadcrumb_path.write_text(
+        json.dumps(
+            {
+                "event_type": "handoff.idea_submitted",
+                "received_at": "2026-04-04T12:05:00Z",
+                "payload": {"idea_id": "IDEA-CLI-BREADCRUMB-001"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    migration = payload["payload"]["persisted_state_migrations"][0]
+    assert migration["action"] == "materialize_from_breadcrumbs"
+    assert migration["wrote_state_file"] is True
+    assert (destination / "agents" / "research_state.json").exists()
+    assert breadcrumb_path.exists()
 
 
 def test_cli_upgrade_apply_fails_on_conflicting_manifest_path_without_mutation(tmp_path: Path) -> None:

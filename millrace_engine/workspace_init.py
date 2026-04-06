@@ -14,7 +14,14 @@ from .baseline_assets import (
     packaged_baseline_asset,
     packaged_baseline_bundle_version,
 )
+from .paths import RuntimePaths
 from .policies.sizing import SizeClass, format_size_status
+from .research.research_state_store import (
+    PersistedStateMigrationApplyReport,
+    PersistedStateMigrationPreviewReport,
+    apply_research_runtime_state_migration,
+    preview_research_runtime_state_migration,
+)
 
 
 class WorkspaceInitError(RuntimeError):
@@ -109,6 +116,7 @@ class WorkspaceUpgradePreviewReport:
     conflicting_paths: tuple[str, ...]
     preserved_runtime_owned: tuple[str, ...]
     preserved_operator_owned: tuple[str, ...]
+    persisted_state_migrations: tuple[PersistedStateMigrationPreviewReport, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +136,7 @@ class WorkspaceUpgradeApplyReport:
     conflicting_paths: tuple[str, ...]
     preserved_runtime_owned: tuple[str, ...]
     preserved_operator_owned: tuple[str, ...]
+    persisted_state_migrations: tuple[PersistedStateMigrationApplyReport, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +394,13 @@ def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradeP
         for relative_path in _existing_relative_file_paths(workspace_root)
         if relative_path not in manifest_file_path_set and relative_path not in runtime_owned_file_path_set
     )
+    runtime_paths = RuntimePaths.from_workspace(workspace_root, workspace_root / "agents")
+    persisted_state_migrations = (
+        preview_research_runtime_state_migration(
+            runtime_paths.research_state_file,
+            deferred_dir=runtime_paths.deferred_dir,
+        ),
+    )
 
     return _WorkspaceUpgradePlan(
         workspace_root=workspace_root,
@@ -401,6 +417,7 @@ def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradeP
             conflicting_paths=tuple(sorted(conflicting_paths)),
             preserved_runtime_owned=preserved_runtime_owned,
             preserved_operator_owned=preserved_operator_owned,
+            persisted_state_migrations=persisted_state_migrations,
         ),
     )
 
@@ -438,6 +455,13 @@ def apply_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradeApplyRep
         if relative_path in update_targets:
             _write_manifest_file(plan.workspace_root, relative_path, force=True)
             updated_file_count += 1
+    runtime_paths = RuntimePaths.from_workspace(plan.workspace_root, plan.workspace_root / "agents")
+    persisted_state_migrations = (
+        apply_research_runtime_state_migration(
+            runtime_paths.research_state_file,
+            deferred_dir=runtime_paths.deferred_dir,
+        ),
+    )
 
     return WorkspaceUpgradeApplyReport(
         workspace_root=plan.workspace_root,
@@ -453,6 +477,7 @@ def apply_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradeApplyRep
         conflicting_paths=preview.conflicting_paths,
         preserved_runtime_owned=preview.preserved_runtime_owned,
         preserved_operator_owned=preview.preserved_operator_owned,
+        persisted_state_migrations=persisted_state_migrations,
     )
 
 

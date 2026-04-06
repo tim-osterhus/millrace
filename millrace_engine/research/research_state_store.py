@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 import json
 
 from ..contracts import _normalize_datetime
@@ -109,6 +110,133 @@ def _repair_runtime_state_payload(payload: Any, *, state_path: Path) -> Any:
             datetime.fromtimestamp(state_path.stat().st_mtime, tz=timezone.utc)
         )
     return repaired
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedStateMigrationPreviewReport:
+    """Inspectable preview of one supported persisted-state upgrade action."""
+
+    state_family: Literal["research_runtime_state"]
+    action: Literal["none", "rewrite_state", "materialize_from_breadcrumbs"]
+    state_path: Path
+    deferred_dir: Path
+    breadcrumb_file_count: int
+    would_write_state_file: bool
+    summary: str
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedStateMigrationApplyReport:
+    """Deterministic apply result for one supported persisted-state upgrade action."""
+
+    state_family: Literal["research_runtime_state"]
+    action: Literal["none", "rewrite_state", "materialize_from_breadcrumbs"]
+    state_path: Path
+    deferred_dir: Path
+    breadcrumb_file_count: int
+    wrote_state_file: bool
+    summary: str
+
+
+def _deferred_breadcrumb_paths(deferred_dir: Path | None) -> tuple[Path, ...]:
+    if deferred_dir is None or not deferred_dir.exists():
+        return ()
+    return tuple(sorted(path for path in deferred_dir.glob("*.json") if path.is_file()))
+
+
+def _planned_research_runtime_state(
+    state_path: Path,
+    *,
+    deferred_dir: Path | None = None,
+):
+    from .state import ResearchRuntimeState
+
+    breadcrumb_paths = _deferred_breadcrumb_paths(deferred_dir)
+    breadcrumb_count = len(breadcrumb_paths)
+    resolved_deferred_dir = deferred_dir or state_path.parent / ".deferred"
+
+    if state_path.exists():
+        raw_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        normalized_payload = _repair_runtime_state_payload(raw_payload, state_path=state_path)
+        state = ResearchRuntimeState.model_validate(normalized_payload)
+        canonical_payload = json.loads(state.model_dump_json(exclude_none=True))
+        if raw_payload == canonical_payload:
+            return (
+                "none",
+                state,
+                breadcrumb_count,
+                "No persisted research runtime state migration required.",
+            )
+        return (
+            "rewrite_state",
+            state,
+            breadcrumb_count,
+            "Would rewrite agents/research_state.json to the canonical persisted research runtime schema.",
+        )
+
+    if breadcrumb_paths:
+        state = load_research_runtime_state(state_path, deferred_dir=deferred_dir)
+        assert state is not None
+        return (
+            "materialize_from_breadcrumbs",
+            state,
+            breadcrumb_count,
+            "Would materialize agents/research_state.json from deferred research breadcrumbs.",
+        )
+
+    return (
+        "none",
+        None,
+        0,
+        "No persisted research runtime state or deferred breadcrumbs require migration.",
+    )
+
+
+def preview_research_runtime_state_migration(
+    state_path: Path,
+    *,
+    deferred_dir: Path | None = None,
+) -> PersistedStateMigrationPreviewReport:
+    """Plan the explicit research runtime state migration, if any."""
+
+    action, _, breadcrumb_count, summary = _planned_research_runtime_state(
+        state_path,
+        deferred_dir=deferred_dir,
+    )
+    return PersistedStateMigrationPreviewReport(
+        state_family="research_runtime_state",
+        action=action,
+        state_path=state_path,
+        deferred_dir=deferred_dir or state_path.parent / ".deferred",
+        breadcrumb_file_count=breadcrumb_count,
+        would_write_state_file=action != "none",
+        summary=summary,
+    )
+
+
+def apply_research_runtime_state_migration(
+    state_path: Path,
+    *,
+    deferred_dir: Path | None = None,
+) -> PersistedStateMigrationApplyReport:
+    """Apply the explicit research runtime state migration, if needed."""
+
+    action, state, breadcrumb_count, summary = _planned_research_runtime_state(
+        state_path,
+        deferred_dir=deferred_dir,
+    )
+    if action != "none":
+        assert state is not None
+        write_research_runtime_state(state_path, state)
+    return PersistedStateMigrationApplyReport(
+        state_family="research_runtime_state",
+        action=action,
+        state_path=state_path,
+        deferred_dir=deferred_dir or state_path.parent / ".deferred",
+        breadcrumb_file_count=breadcrumb_count,
+        wrote_state_file=action != "none",
+        summary=summary.replace("Would ", "", 1) if action != "none" else summary,
+    )
 
 
 def load_research_runtime_state(
