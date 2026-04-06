@@ -20,7 +20,7 @@ from .specs import (
 )
 
 if TYPE_CHECKING:
-    from .incidents import IncidentDocument, IncidentFixSpecRecord, IncidentRemediationRecord
+    from .incident_documents import IncidentDocument, IncidentFixSpecRecord, IncidentRemediationRecord
 
 
 def incident_fix_spec_record(
@@ -31,18 +31,9 @@ def incident_fix_spec_record(
 ) -> "IncidentFixSpecRecord":
     """Derive the remediation-spec path family for one resolved incident."""
 
-    from .incidents import (
-        IncidentFixSpecRecord,
-        _extract_markdown_field,
-        _markdown_section,
-        _parse_frontmatter,
-        _relative_path,
-        _resolve_path_token,
-        _scope_summary_for_incident,
-        _slugify,
-        _spec_id_for_incident,
-        _strip_ticks,
-    )
+    from .incident_document_rendering import _scope_summary_for_incident, _slugify, _spec_id_for_incident
+    from .incident_documents import IncidentFixSpecRecord, _extract_markdown_field, _markdown_section, _parse_frontmatter, _strip_ticks
+    from .path_helpers import _relative_path, _resolve_path_token
 
     incident_text = incident_path.read_text(encoding="utf-8")
     _, remainder = _parse_frontmatter(incident_text)
@@ -85,17 +76,15 @@ def write_incident_remediation_bundle(
 ) -> "IncidentRemediationRecord":
     """Write the resolved incident's remediation-spec bundle and runtime record."""
 
-    from .incidents import (
-        IncidentRemediationRecord,
-        _incident_remediation_record_path,
-        _relative_path,
-        _render_incident_fix_spec,
-        _render_incident_phase_spec,
-        _render_incident_review_decision,
-        _render_incident_review_questions,
-        _resolve_path_token,
-        _write_json_model,
+    from .incident_document_rendering import (
+        render_incident_fix_spec,
+        render_incident_phase_spec,
+        render_incident_review_decision,
+        render_incident_review_questions,
     )
+    from .incident_documents import IncidentRemediationRecord
+    from .incidents import _incident_remediation_record_path, _write_json_model
+    from .path_helpers import _relative_path, _resolve_path_token
 
     fix_spec = incident_fix_spec_record(paths, document=document, incident_path=incident_path)
     queue_spec_path = _resolve_path_token(fix_spec.queue_spec_path, relative_to=paths.root)
@@ -117,7 +106,7 @@ def write_incident_remediation_bundle(
     review_decision_path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(
         queue_spec_path,
-        _render_incident_fix_spec(
+        render_incident_fix_spec(
             emitted_at=emitted_at,
             document=document,
             resolved_path=resolved_relative_path,
@@ -130,7 +119,7 @@ def write_incident_remediation_bundle(
     write_text_atomic(golden_spec_path, queue_spec_path.read_text(encoding="utf-8"))
     write_text_atomic(
         phase_spec_path,
-        _render_incident_phase_spec(
+        render_incident_phase_spec(
             emitted_at=emitted_at,
             document=document,
             spec_id=fix_spec.spec_id,
@@ -141,7 +130,7 @@ def write_incident_remediation_bundle(
     )
     write_text_atomic(
         review_questions_path,
-        _render_incident_review_questions(
+        render_incident_review_questions(
             emitted_at=emitted_at,
             run_id=run_id,
             incident_id=document.incident_id or incident_path.stem,
@@ -152,7 +141,7 @@ def write_incident_remediation_bundle(
     )
     write_text_atomic(
         review_decision_path,
-        _render_incident_review_decision(
+        render_incident_review_decision(
             emitted_at=emitted_at,
             run_id=run_id,
             incident_id=document.incident_id or incident_path.stem,
@@ -237,7 +226,8 @@ def write_incident_remediation_bundle(
 def load_incident_remediation_record(path: Path) -> "IncidentRemediationRecord":
     """Load one persisted incident remediation record."""
 
-    from .incidents import IncidentExecutionError, IncidentRemediationRecord
+    from .incident_documents import IncidentRemediationRecord
+    from .incidents import IncidentExecutionError
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):

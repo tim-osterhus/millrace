@@ -6,6 +6,8 @@ from pathlib import Path
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ResearchStatus
 from millrace_engine.events import EventType
+from millrace_engine.research.incident_document_rendering import _slugify, render_incident_fix_spec
+from millrace_engine.research.incident_documents import load_incident_document, parse_incident_document
 from millrace_engine.research.incident_intake_helpers import materialize_incident_source
 from millrace_engine.research.incident_state_helpers import incident_archive_evidence_paths
 from millrace_engine.research.incidents import IncidentFixSpecRecord, IncidentRemediationRecord, resolve_incident_source
@@ -167,3 +169,88 @@ def test_research_path_helpers_preserve_token_and_relative_path_semantics(tmp_pa
     assert _resolve_path_token("agents/ideas/incidents/incoming/INC-PATH-001.md", relative_to=paths.root) == absolute
     assert _relative_path(absolute, relative_to=paths.root) == "agents/ideas/incidents/incoming/INC-PATH-001.md"
     assert _relative_path(Path("/tmp/external.md"), relative_to=paths.root) == "/tmp/external.md"
+
+
+def test_incident_document_module_parses_frontmatter_and_summary_contracts(tmp_path: Path) -> None:
+    incident_path = tmp_path / "agents" / "ideas" / "incidents" / "incoming" / "INC-DOC-001.md"
+    incident_path.parent.mkdir(parents=True, exist_ok=True)
+    incident_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "incident_id: INC-DOC-001",
+                "status: incoming",
+                "severity: s3",
+                "fingerprint: fp-doc-001",
+                "failure_signature: consult:doc-001",
+                "source_task: agents/tasks.md :: ## Incident doc parsing",
+                "opened_at: 2026-03-21T12:00:00Z",
+                "updated_at: 2026-03-21T12:05:00Z",
+                "---",
+                "",
+                "# Incident doc parsing",
+                "",
+                "- **Incident-ID:** `INC-DOC-001`",
+                "- **Severity Class:** `S3`",
+                "",
+                "## Summary",
+                "- Preserve summary normalization across the extraction seam.",
+                "- Keep queue discovery behavior stable.",
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    document = load_incident_document(incident_path)
+    reparsed = parse_incident_document(incident_path.read_text(encoding="utf-8"), source_path=incident_path)
+
+    assert document == reparsed
+    assert document.incident_id == "INC-DOC-001"
+    assert document.lifecycle_status.value == "incoming"
+    assert document.severity.value == "S3"
+    assert document.summary == "Preserve summary normalization across the extraction seam. Keep queue discovery behavior stable."
+
+
+def test_incident_document_rendering_preserves_fix_spec_contract_text(tmp_path: Path) -> None:
+    incident_path = tmp_path / "agents" / "ideas" / "incidents" / "resolved" / "INC-RENDER-001.md"
+    document = parse_incident_document(
+        "\n".join(
+            [
+                "---",
+                "incident_id: INC-RENDER-001",
+                "status: resolved",
+                "severity: S2",
+                "---",
+                "",
+                "# Rendering seam incident",
+                "",
+                "## Summary",
+                "- Preserve generated remediation copy.",
+                "",
+            ]
+        )
+        + "\n",
+        source_path=incident_path,
+    )
+
+    rendered = render_incident_fix_spec(
+        emitted_at=_dt("2026-03-21T12:05:00Z"),
+        document=document,
+        resolved_path="agents/ideas/incidents/resolved/INC-RENDER-001.md",
+        lineage_path="agents/.research_runtime/incidents/lineage/inc-render-001.json",
+        spec_id="SPEC-INC-RENDER-001",
+        scope_summary="Preserve generated remediation copy.",
+    )
+
+    assert "spec_id: SPEC-INC-RENDER-001" in rendered
+    assert "title: Rendering seam incident remediation" in rendered
+    assert "## Requirements Traceability (Req-ID Matrix)" in rendered
+    assert "`agents/ideas/incidents/resolved/INC-RENDER-001.md`" in rendered
+
+
+def test_incident_document_rendering_slugify_keeps_ascii_only_legacy_contract() -> None:
+    assert _slugify("Café Incident") == "caf-incident"
+    assert _slugify("Δelta failure") == "elta-failure"
+    assert _slugify("中文 事件") == "incident"
