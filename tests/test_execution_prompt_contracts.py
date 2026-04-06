@@ -4,59 +4,34 @@ from pathlib import Path
 
 import pytest
 
+from millrace_engine.execution_prompt_contracts import iter_critical_execution_prompt_contracts
 
 MILLRACE_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_ASSETS = MILLRACE_ROOT / "millrace_engine" / "assets" / "agents"
+
+@pytest.mark.parametrize("contract", iter_critical_execution_prompt_contracts())
+def test_critical_execution_entrypoints_retain_structured_contract(contract) -> None:
+    prompt_path = contract.prompt_path
+
+    assert prompt_path.is_file(), contract.prompt_asset
+    contents = prompt_path.read_text(encoding="utf-8")
+    nonempty_lines = [line for line in contents.splitlines() if line.strip()]
+
+    assert len(nonempty_lines) >= contract.minimum_nonempty_lines, contract.prompt_asset
+    required_markers = (
+        contract.required_subordinate_docs
+        + contract.required_artifacts
+        + contract.required_report_outputs
+        + contract.terminal_marker_lines
+        + contract.required_phrases
+    )
+    for marker in required_markers:
+        assert marker in contents, f"{contract.prompt_asset} missing {marker!r}"
 
 
 @pytest.mark.parametrize(
     ("relative_path", "minimum_nonempty_lines", "required_markers"),
     (
-        (
-            "_start.md",
-            30,
-            (
-                "agents/prompts/create_prompt.md",
-                "agents/prompts/run_prompt.md",
-                "agents/prompts/builder_cycle.md",
-                "agents/roles/planner-architect.md",
-                "agents/historylog.md",
-                "agents/reports/",
-                "### BUILDER_COMPLETE",
-                "### BLOCKED",
-                "Writing the status marker is the last repo mutation",
-                "End your final response with the same marker",
-            ),
-        ),
-        (
-            "_check.md",
-            35,
-            (
-                "agents/expectations.md",
-                "agents/prompts/qa_cycle.md",
-                "agents/roles/qa-test-engineer.md",
-                "agents/quickfix.md",
-                "agents/historylog.md",
-                "### QA_COMPLETE",
-                "### QUICKFIX_NEEDED",
-                "### BLOCKED",
-                "Writing the status marker is the last repo mutation",
-                "End your final response with the same marker",
-            ),
-        ),
-        (
-            "_integrate.md",
-            35,
-            (
-                "agents/roles/integration-steward.md",
-                "MILLRACE_RUN_DIR",
-                "agents/integration_report.md",
-                "agents/reports/integration_",
-                "agents/historylog.md",
-                "### INTEGRATION_COMPLETE",
-                "### BLOCKED",
-            ),
-        ),
         (
             "_hotfix.md",
             20,
@@ -126,7 +101,7 @@ AGENTS_ASSETS = MILLRACE_ROOT / "millrace_engine" / "assets" / "agents"
         ),
     ),
 )
-def test_execution_entrypoints_retain_controller_contract(
+def test_noncritical_execution_entrypoints_retain_controller_contract(
     relative_path: str,
     minimum_nonempty_lines: int,
     required_markers: tuple[str, ...],
