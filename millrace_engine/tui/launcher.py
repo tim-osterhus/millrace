@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 import sys
 import tempfile
@@ -40,6 +41,13 @@ class LauncherSettings:
 class LauncherObservationPaths:
     state_path: Path
     events_log_path: Path
+    source: "ObservationPathSource"
+    source_detail: str | None = None
+
+
+class ObservationPathSource(StrEnum):
+    CONFIG = "config"
+    WORKSPACE_FALLBACK = "workspace_fallback"
 
 
 def _resolve_config_path(config_path: Path | str) -> Path:
@@ -66,12 +74,16 @@ def _load_observation_paths(config_path: Path) -> LauncherObservationPaths:
         return LauncherObservationPaths(
             state_path=paths.runtime_dir / "state.json",
             events_log_path=paths.engine_events_log,
+            source=ObservationPathSource.CONFIG,
+            source_detail=loaded.source.kind,
         )
-    except Exception:  # noqa: BLE001 - launcher must keep fallback paths available
+    except FileNotFoundError as exc:
         workspace_root = config_path.parent
         return LauncherObservationPaths(
             state_path=workspace_root / "agents" / ".runtime" / "state.json",
             events_log_path=workspace_root / "agents" / "engine_events.log",
+            source=ObservationPathSource.WORKSPACE_FALLBACK,
+            source_detail=str(exc),
         )
 
 
@@ -102,6 +114,27 @@ def _best_output_excerpt(*values: str, limit: int) -> str | None:
         if value.strip():
             return _excerpt_text(value, limit=limit)
     return None
+
+
+def _observation_path_details(paths: LauncherObservationPaths) -> tuple[KeyValueView, ...]:
+    details = [
+        KeyValueView(key="state_path", value=paths.state_path.as_posix()),
+        KeyValueView(key="path_source", value=paths.source.value),
+    ]
+    if paths.source_detail:
+        details.append(
+            KeyValueView(
+                key="path_source_detail",
+                value=_excerpt_text(paths.source_detail, limit=200),
+            )
+        )
+    return tuple(details)
+
+
+def _observation_path_message_suffix(paths: LauncherObservationPaths) -> str:
+    if paths.source is ObservationPathSource.CONFIG:
+        return ""
+    return " Observation paths came from the workspace fallback because the config could not be loaded."
 
 
 def _failure(
@@ -234,13 +267,22 @@ async def launch_start_daemon(
 ) -> GatewayResult[ActionResultView]:
     active_settings = settings or LauncherSettings()
     resolved_config = _resolve_config_path(config_path)
-    observation_paths = await asyncio.to_thread(_load_observation_paths, resolved_config)
+    try:
+        observation_paths = await asyncio.to_thread(_load_observation_paths, resolved_config)
+    except Exception as exc:  # noqa: BLE001 - launcher is a process boundary and must surface path-resolution failures cleanly
+        return _failure(
+            START_DAEMON_OPERATION,
+            f"unable to resolve daemon observation paths: {exc}",
+            category=FailureCategory.INPUT,
+            exception_type=exc.__class__.__name__,
+        )
     if await asyncio.to_thread(_daemon_running, observation_paths.state_path):
         return _failure(
             START_DAEMON_OPERATION,
             (
                 "runtime already reports a running daemon; "
-                "refresh status or use pause, resume, or stop instead"
+                "refresh status or use pause, resume, or stop instead."
+                f"{_observation_path_message_suffix(observation_paths)}"
             ),
             exception_type="RuntimeAlreadyRunning",
             retryable=False,
@@ -275,10 +317,8 @@ async def launch_start_daemon(
                             message="daemon launched",
                             applied=True,
                             mode="detached",
-                            details=(
-                                KeyValueView(key="pid", value=str(process.pid)),
-                                KeyValueView(key="state_path", value=observation_paths.state_path.as_posix()),
-                            ),
+                            details=(KeyValueView(key="pid", value=str(process.pid)),)
+                            + _observation_path_details(observation_paths),
                         )
                     )
                 if process.returncode is not None:
@@ -293,6 +333,7 @@ async def launch_start_daemon(
                         f"Check {observation_paths.events_log_path.as_posix()} or rerun "
                         f"`{' '.join(command)}` in a terminal."
                     )
+                    message = f"{message}{_observation_path_message_suffix(observation_paths)}"
                     if excerpt is not None:
                         message = f"{message} Output: {excerpt}"
                     return _failure(
@@ -309,9 +350,9 @@ async def launch_start_daemon(
                             mode="detached",
                             details=(
                                 KeyValueView(key="pid", value=str(process.pid)),
-                                KeyValueView(key="state_path", value=observation_paths.state_path.as_posix()),
                                 KeyValueView(key="events_log", value=observation_paths.events_log_path.as_posix()),
-                            ),
+                            )
+                            + _observation_path_details(observation_paths),
                         )
                     )
                 await asyncio.sleep(active_settings.daemon_startup_poll_interval_seconds)
@@ -322,6 +363,7 @@ async def launch_start_daemon(
 __all__ = [
     "LauncherObservationPaths",
     "LauncherSettings",
+    "ObservationPathSource",
     "START_DAEMON_OPERATION",
     "START_ONCE_OPERATION",
     "launch_start_daemon",

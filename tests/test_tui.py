@@ -27,7 +27,11 @@ from millrace_engine.events import EventRecord, EventSource, EventType, render_s
 from millrace_engine.markdown import parse_task_cards
 from millrace_engine.tui.app import MillraceTUIApplication
 from millrace_engine.tui.gateway import RuntimeGateway
-from millrace_engine.tui.launcher import LauncherObservationPaths, LauncherSettings
+from millrace_engine.tui.launcher import (
+    LauncherObservationPaths,
+    LauncherSettings,
+    ObservationPathSource,
+)
 from millrace_engine.tui.formatting import compact_display_path, compact_run_label
 from millrace_engine.tui.messages import (
     ActionFailed,
@@ -1360,6 +1364,8 @@ def test_launcher_start_daemon_uses_detached_launch_and_runtime_state(monkeypatc
         lambda config_path: LauncherObservationPaths(
             state_path=tmp_path / "state.json",
             events_log_path=tmp_path / "engine_events.log",
+            source=ObservationPathSource.CONFIG,
+            source_detail="native_toml",
         ),
     )
     monkeypatch.setattr(launcher_module, "_daemon_running", lambda path: next(running_states))
@@ -1380,6 +1386,7 @@ def test_launcher_start_daemon_uses_detached_launch_and_runtime_state(monkeypatc
     assert action.message == "daemon launched"
     assert action.mode == "detached"
     assert ("pid", "7331") in {(item.key, item.value) for item in action.details}
+    assert ("path_source", "config") in {(item.key, item.value) for item in action.details}
     assert captured["kwargs"]["stdin"] == asyncio.subprocess.DEVNULL
     assert captured["kwargs"]["start_new_session"] is True
     assert captured["kwargs"]["stdout"] is captured["kwargs"]["stderr"]
@@ -1404,6 +1411,7 @@ def test_launcher_start_daemon_rejects_preexisting_running_state(monkeypatch, tm
         lambda config_path: LauncherObservationPaths(
             state_path=tmp_path / "state.json",
             events_log_path=tmp_path / "engine_events.log",
+            source=ObservationPathSource.CONFIG,
         ),
     )
     monkeypatch.setattr(launcher_module, "_daemon_running", lambda path: True)
@@ -1434,6 +1442,8 @@ def test_launcher_start_daemon_surfaces_early_exit_with_actionable_detail(monkey
         lambda config_path: LauncherObservationPaths(
             state_path=tmp_path / "state.json",
             events_log_path=tmp_path / "engine_events.log",
+            source=ObservationPathSource.WORKSPACE_FALLBACK,
+            source_detail="No native config found",
         ),
     )
     monkeypatch.setattr(launcher_module, "_daemon_running", lambda path: False)
@@ -1445,6 +1455,7 @@ def test_launcher_start_daemon_surfaces_early_exit_with_actionable_detail(monkey
     assert "engine_events.log" in result.failure.message
     assert "start --daemon" in result.failure.message
     assert "engine already running" in result.failure.message
+    assert "workspace fallback" in result.failure.message
 
 
 def test_launcher_start_daemon_cancellation_does_not_terminate_detached_process(monkeypatch, tmp_path) -> None:
@@ -1470,6 +1481,7 @@ def test_launcher_start_daemon_cancellation_does_not_terminate_detached_process(
         lambda config_path: LauncherObservationPaths(
             state_path=tmp_path / "state.json",
             events_log_path=tmp_path / "engine_events.log",
+            source=ObservationPathSource.CONFIG,
         ),
     )
     monkeypatch.setattr(launcher_module, "_daemon_running", lambda path: False)
@@ -1493,6 +1505,43 @@ def test_launcher_start_daemon_cancellation_does_not_terminate_detached_process(
 
     assert process.terminated is False
     assert process.killed is False
+
+
+def test_launcher_observation_paths_fallback_is_explicit(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        launcher_module,
+        "load_engine_config",
+        lambda config_path: (_ for _ in ()).throw(FileNotFoundError("missing config")),
+    )
+
+    paths = launcher_module._load_observation_paths(tmp_path / "millrace.toml")
+
+    assert paths.source is ObservationPathSource.WORKSPACE_FALLBACK
+    assert paths.state_path == tmp_path / "agents" / ".runtime" / "state.json"
+    assert paths.events_log_path == tmp_path / "agents" / "engine_events.log"
+    assert paths.source_detail is not None
+    assert "missing config" in paths.source_detail
+
+
+def test_launcher_start_daemon_surfaces_observation_path_resolution_failure(monkeypatch, tmp_path) -> None:
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(launcher_module.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(
+        launcher_module,
+        "_load_observation_paths",
+        lambda config_path: (_ for _ in ()).throw(ValueError("invalid config payload")),
+    )
+
+    result = asyncio.run(launcher_module.launch_start_daemon(tmp_path / "millrace.toml"))
+
+    assert not result.ok
+    assert result.failure is not None
+    assert result.failure.category is FailureCategory.INPUT
+    assert result.failure.retryable is True
+    assert "unable to resolve daemon observation paths" in result.failure.message
+    assert "invalid config payload" in result.failure.message
 
 
 def test_runtime_gateway_loads_shaped_snapshot_and_publish_status(tmp_path) -> None:
