@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -117,7 +116,9 @@ class RoutingConfig(MillraceRuntimeConfigModel):
             raise ValueError("builder success sequence must include qa exactly once")
         if value.count(StageType.INTEGRATION) > 1:
             raise ValueError("builder success sequence may include integration at most once")
-        if StageType.INTEGRATION in value and value.index(StageType.INTEGRATION) > value.index(StageType.QA):
+        if StageType.INTEGRATION in value and value.index(StageType.INTEGRATION) > value.index(
+            StageType.QA
+        ):
             raise ValueError("integration must come before qa in builder success sequence")
         return value
 

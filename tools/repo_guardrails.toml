@@ -1,8 +1,27 @@
 [lint]
-paths = ["tools/repo_guardrails.py"]
+paths = [
+  "tools/repo_guardrails.py",
+  "millrace_engine/config_runtime.py",
+  "millrace_engine/contract_runtime.py",
+  "millrace_engine/tui/models.py",
+  "millrace_engine/tui/shell_models.py",
+  "millrace_engine/tui/launcher.py",
+]
+scope = "representative bounded runtime slice"
+rationale = "This guardrail intentionally covers the repo guardrail tool plus a small config/contracts/TUI runtime slice. It is not whole-package lint coverage yet."
 
 [typecheck]
-paths = ["tools/repo_guardrails.py"]
+paths = [
+  "tools/repo_guardrails.py",
+  "millrace_engine/config_runtime.py",
+  "millrace_engine/contract_runtime.py",
+  "millrace_engine/tui/models.py",
+  "millrace_engine/tui/shell_models.py",
+  "millrace_engine/tui/launcher.py",
+]
+args = ["--follow-imports=silent"]
+scope = "representative bounded runtime slice"
+rationale = "Type-checking stays on the same bounded slice and uses --follow-imports=silent so coverage expansion remains truthful without claiming whole-package strict mypy cleanliness."
 
 [budgets]
 runtime_limit = 500

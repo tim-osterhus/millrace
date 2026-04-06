@@ -52,14 +52,20 @@ PANELS: tuple[PanelDefinition, ...] = (
         id=PanelId.OVERVIEW,
         label="Overview",
         summary="Workspace shell, status landmarks, and later runtime summary widgets.",
-        placeholder_body="The overview will host workspace health and the top-level runtime summary in later runs.",
+        placeholder_body=(
+            "The overview will host workspace health and the top-level runtime "
+            "summary in later runs."
+        ),
         palette_help="Open the shell summary panel.",
     ),
     PanelDefinition(
         id=PanelId.QUEUE,
         label="Queue",
         summary="Execution backlog, active work, and queue actions arrive in later runs.",
-        placeholder_body="Queue visibility and queue actions are staged for later runs once gateway models exist.",
+        placeholder_body=(
+            "Queue visibility and queue actions are staged for later runs once "
+            "gateway models exist."
+        ),
         palette_help="Open active and backlog queue state.",
     ),
     PanelDefinition(
@@ -73,28 +79,45 @@ PANELS: tuple[PanelDefinition, ...] = (
         id=PanelId.RESEARCH,
         label="Research",
         summary="Research queue, reports, and history views land after the gateway layer exists.",
-        placeholder_body="Research visibility is intentionally placeholder-only in the shell foundation.",
+        placeholder_body=(
+            "Research visibility is intentionally placeholder-only in the shell foundation."
+        ),
         palette_help="Open research queue and governance summary.",
     ),
     PanelDefinition(
         id=PanelId.LOGS,
         label="Logs",
         summary="Structured event streaming and log tailing arrive in later runs.",
-        placeholder_body="Logs will be powered by the runtime gateway and workers after the shell foundation is stable.",
+        placeholder_body=(
+            "Logs will be powered by the runtime gateway and workers after the "
+            "shell foundation is stable."
+        ),
         palette_help="Open filtered runtime event stream.",
     ),
     PanelDefinition(
         id=PanelId.CONFIG,
         label="Config",
-        summary="Active config summary, boundary-aware explanations, and controlled reload or edit flows.",
-        placeholder_body="Config visibility and controlled edits are rendered through the dedicated config panel widget.",
+        summary=(
+            "Active config summary, boundary-aware explanations, and controlled "
+            "reload or edit flows."
+        ),
+        placeholder_body=(
+            "Config visibility and controlled edits are rendered through the "
+            "dedicated config panel widget."
+        ),
         palette_help="Open config state and guided edits.",
     ),
     PanelDefinition(
         id=PanelId.PUBLISH,
         label="Publish",
-        summary="Staging preflight, changed-path visibility, and deliberate publish preparation actions.",
-        placeholder_body="Publish visibility and actions are rendered through the dedicated publish panel widget.",
+        summary=(
+            "Staging preflight, changed-path visibility, and deliberate publish "
+            "preparation actions."
+        ),
+        placeholder_body=(
+            "Publish visibility and actions are rendered through the dedicated "
+            "publish panel widget."
+        ),
         palette_help="Open staging preflight and publish actions.",
     ),
 )

@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-import sys
-import tempfile
 from typing import BinaryIO
 
 from ..config import build_runtime_paths, load_engine_config
 from ..control_reports import read_runtime_state
-from .models import ActionResultView, FailureCategory, GatewayFailure, GatewayResult, KeyValueView
-
+from .models import (
+    ActionResultView,
+    FailureCategory,
+    GatewayFailure,
+    GatewayResult,
+    KeyValueView,
+)
 
 START_ONCE_OPERATION = "action.start.once"
 START_DAEMON_OPERATION = "action.start.daemon"
@@ -134,7 +139,10 @@ def _observation_path_details(paths: LauncherObservationPaths) -> tuple[KeyValue
 def _observation_path_message_suffix(paths: LauncherObservationPaths) -> str:
     if paths.source is ObservationPathSource.CONFIG:
         return ""
-    return " Observation paths came from the workspace fallback because the config could not be loaded."
+    return (
+        " Observation paths came from the workspace fallback because the config "
+        "could not be loaded."
+    )
 
 
 def _failure(
@@ -173,7 +181,11 @@ def _foreground_details(
     return tuple(details)
 
 
-async def _terminate_foreground_process(process: asyncio.subprocess.Process, *, timeout: float) -> None:
+async def _terminate_foreground_process(
+    process: asyncio.subprocess.Process,
+    *,
+    timeout: float,
+) -> None:
     if process.returncode is not None:
         return
     try:
@@ -227,7 +239,11 @@ async def launch_start_once(
     stdout = _decode_output(stdout_bytes)
     stderr = _decode_output(stderr_bytes)
     if process.returncode != 0:
-        excerpt = _best_output_excerpt(stderr, stdout, limit=active_settings.output_excerpt_char_limit)
+        excerpt = _best_output_excerpt(
+            stderr,
+            stdout,
+            limit=active_settings.output_excerpt_char_limit,
+        )
         message = f"once run failed with exit code {process.returncode}"
         if excerpt is not None:
             message = f"{message}: {excerpt}"
@@ -256,7 +272,9 @@ def _read_tempfile_excerpt(handle: BinaryIO, *, limit: int) -> str | None:
     handle.flush()
     handle.seek(0)
     data = handle.read()
-    text = _decode_output(data if isinstance(data, bytes) else data.encode("utf-8", errors="replace"))
+    text = _decode_output(
+        data if isinstance(data, bytes) else data.encode("utf-8", errors="replace")
+    )
     return _best_output_excerpt(text, limit=limit)
 
 
@@ -307,7 +325,9 @@ async def launch_start_daemon(
                 exception_type=exc.__class__.__name__,
             )
 
-        deadline = asyncio.get_running_loop().time() + active_settings.daemon_startup_timeout_seconds
+        deadline = (
+            asyncio.get_running_loop().time() + active_settings.daemon_startup_timeout_seconds
+        )
         try:
             while True:
                 if await asyncio.to_thread(_daemon_running, observation_paths.state_path):
@@ -350,7 +370,10 @@ async def launch_start_daemon(
                             mode="detached",
                             details=(
                                 KeyValueView(key="pid", value=str(process.pid)),
-                                KeyValueView(key="events_log", value=observation_paths.events_log_path.as_posix()),
+                                KeyValueView(
+                                    key="events_log",
+                                    value=observation_paths.events_log_path.as_posix(),
+                                ),
                             )
                             + _observation_path_details(observation_paths),
                         )

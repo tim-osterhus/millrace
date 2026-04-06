@@ -16,10 +16,15 @@ CONFIG_PATH = Path(__file__).with_name("repo_guardrails.toml")
 
 class LintConfig(TypedDict):
     paths: list[str]
+    scope: str
+    rationale: str
 
 
 class TypecheckConfig(TypedDict):
     paths: list[str]
+    args: list[str]
+    scope: str
+    rationale: str
 
 
 class BudgetExceptions(TypedDict):
@@ -84,8 +89,9 @@ def _run_lint(config: GuardrailConfig) -> int:
 
 
 def _run_typecheck(config: GuardrailConfig) -> int:
-    paths = [str(ROOT / value) for value in config["typecheck"]["paths"]]
-    return _run(_python_module("mypy", *paths))
+    typecheck_config = config["typecheck"]
+    paths = [str(ROOT / value) for value in typecheck_config["paths"]]
+    return _run(_python_module("mypy", *typecheck_config["args"], *paths))
 
 
 def _budget_failures(

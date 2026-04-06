@@ -11,10 +11,10 @@ from typing import Generic, TypeVar
 # preserve the top-level TUI model import surface.
 from .shell_models import (
     DEFAULT_PANEL,
-    DisplayMode,
     EXPANDED_STREAM_WIDGET_ID,
     PANEL_BY_ID,
     PANELS,
+    DisplayMode,
     PanelDefinition,
     PanelId,
     ShellBodyMode,
