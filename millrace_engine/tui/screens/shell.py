@@ -476,4 +476,20 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         message.stop()
 
 
+_PANEL_MESSAGE_HANDLERS = (
+    (LogsPanel.RunRequested, ShellWorkflowMixin._handle_logs_run_requested),
+    (RunsPanel.RunRequested, ShellWorkflowMixin._handle_runs_run_requested),
+    (QueuePanel.RunRequested, ShellWorkflowMixin._handle_queue_run_requested),
+    (QueuePanel.ReorderRequested, ShellWorkflowMixin._handle_queue_reorder_requested),
+    (ConfigPanel.EditRequested, ShellWorkflowMixin._handle_config_edit_requested),
+    (ConfigPanel.ReloadRequested, ShellWorkflowMixin._handle_config_reload_requested),
+    (ResearchPanel.InterviewRequested, ShellWorkflowMixin._handle_research_interview_requested),
+    (PublishPanel.PreflightRequested, ShellWorkflowMixin._handle_publish_preflight_requested),
+    (PublishPanel.SyncRequested, ShellWorkflowMixin._handle_publish_sync_requested),
+    (PublishPanel.CommitRequested, ShellWorkflowMixin._handle_publish_commit_requested),
+)
+for _message_type, _handler in _PANEL_MESSAGE_HANDLERS:
+    ShellScreen._decorated_handlers.setdefault(_message_type, []).append((_handler, {}))
+
+
 __all__ = ["ShellScreen"]
