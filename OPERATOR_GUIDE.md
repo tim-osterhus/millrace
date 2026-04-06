@@ -91,7 +91,7 @@ source .venv/bin/activate
 python3 -m pip install -e '.[dev]'
 ```
 
-Release CI verifies a narrower contract than a contributor source checkout: it smoke-installs the built wheel into a clean virtualenv, initializes a fresh workspace with `millrace init`, and runs `health --json` against that generated workspace. The broader pytest surface remains a source-checkout workflow with dev dependencies rather than a promised wheel or sdist verification path.
+Release CI verifies a narrower contract than a contributor source checkout: it smoke-installs the built wheel into a clean virtualenv, initializes a fresh workspace with `millrace init`, verifies `health --json`, verifies `doctor --json` under a controlled runner-prerequisite shim, and proves one operator mutation/report path by adding a task and inspecting the queue. The broader pytest surface remains a source-checkout workflow with dev dependencies rather than a promised full wheel or sdist contributor-validation path.
 
 ## Initialize A New Workspace
 

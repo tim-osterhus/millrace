@@ -122,7 +122,7 @@ source .venv/bin/activate
 python3 -m pip install -e '.[dev]'
 ```
 
-Release verification is narrower than source-checkout contributor verification: release CI smoke-installs the built wheel into a clean virtualenv, runs `millrace init` against a freshly generated workspace, and then runs `health --json` on that workspace. Broader pytest coverage remains a source-checkout path with dev dependencies; it is not currently advertised as a wheel or sdist smoke gate.
+Release verification is narrower than source-checkout contributor verification: release CI smoke-installs the built wheel into a clean virtualenv, runs `millrace init` against a freshly generated workspace, verifies `health --json`, verifies `doctor --json` under a controlled runner-prerequisite shim, and proves one operator mutation/report path by adding a task and inspecting the queue. Broader pytest coverage remains a source-checkout path with dev dependencies; it is not advertised as a full wheel or sdist contributor-test gate.
 
 ## TUI Shell
 
