@@ -12,6 +12,7 @@ from millrace_engine.workspace_init import (
     initialize_workspace,
     iter_runtime_owned_workspace_directories,
     iter_runtime_owned_workspace_files,
+    preview_workspace_upgrade,
 )
 
 
@@ -148,3 +149,39 @@ def test_workspace_init_creates_runtime_owned_files_with_expected_bootstrap_cont
 
     for relative, contents in expected_contents.items():
         assert (workspace / relative).read_text(encoding="utf-8") == contents
+
+
+def test_workspace_upgrade_preview_classifies_manifest_and_preserved_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    (workspace / "README.md").write_text("locally customized readme\n", encoding="utf-8")
+    (workspace / "agents" / "status.md").write_text("### BLOCKED\n", encoding="utf-8")
+    (workspace / "agents" / "local-notes.md").write_text("keep me\n", encoding="utf-8")
+    (workspace / "OPERATOR_GUIDE.md").unlink()
+
+    report = preview_workspace_upgrade(workspace)
+
+    assert report.workspace_root == workspace.resolve()
+    assert report.bundle_version == "baseline-bundle-v1"
+    assert "OPERATOR_GUIDE.md" in report.would_create
+    assert "README.md" in report.would_update
+    assert "millrace.toml" in report.unchanged
+    assert "agents/status.md" in report.preserved_runtime_owned
+    assert "agents/local-notes.md" in report.preserved_operator_owned
+    assert report.conflicting_paths == ()
+
+
+def test_workspace_upgrade_preview_does_not_mutate_workspace_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    readme_path = workspace / "README.md"
+    status_path = workspace / "agents" / "status.md"
+    readme_path.write_text("custom readme\n", encoding="utf-8")
+    status_path.write_text("### QUICKFIX_NEEDED\n", encoding="utf-8")
+
+    preview_workspace_upgrade(workspace)
+
+    assert readme_path.read_text(encoding="utf-8") == "custom readme\n"
+    assert status_path.read_text(encoding="utf-8") == "### QUICKFIX_NEEDED\n"

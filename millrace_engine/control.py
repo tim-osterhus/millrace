@@ -116,7 +116,13 @@ from .research.queues import discover_research_queues
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
 from .standard_runtime import RuntimeSelectionView, runtime_selection_view_from_snapshot
 from .status import ControlPlane, StatusError, StatusStore
-from .workspace_init import WorkspaceInitError, WorkspaceInitReport, initialize_workspace
+from .workspace_init import (
+    WorkspaceInitError,
+    WorkspaceInitReport,
+    WorkspaceUpgradePreviewReport,
+    initialize_workspace,
+    preview_workspace_upgrade,
+)
 
 
 _decision_report_paths = decision_report_paths
@@ -244,6 +250,15 @@ class EngineControl:
         self.loaded = load_control_config(self.config_path)
         self.paths = build_runtime_paths(self.loaded.config)
 
+    def preview_workspace_upgrade(self) -> OperationResult:
+        """Return a non-mutating preview of manifest-tracked workspace upgrade impact."""
+
+        try:
+            report = preview_workspace_upgrade(self.paths.root)
+        except WorkspaceInitError as exc:
+            raise ControlError(str(exc)) from exc
+        return self._workspace_upgrade_preview_result(report)
+
     @staticmethod
     def _workspace_init_result(report: WorkspaceInitReport) -> OperationResult:
         return OperationResult(
@@ -256,6 +271,26 @@ class EngineControl:
                 "created_file_count": report.created_file_count,
                 "overwritten_file_count": report.overwritten_file_count,
                 "created_directory_count": report.created_directory_count,
+            },
+        )
+
+    @staticmethod
+    def _workspace_upgrade_preview_result(report: WorkspaceUpgradePreviewReport) -> OperationResult:
+        return OperationResult(
+            mode="direct",
+            applied=False,
+            message="workspace upgrade preview generated",
+            payload={
+                "workspace_root": report.workspace_root.as_posix(),
+                "bundle_version": report.bundle_version,
+                "manifest_file_count": report.manifest_file_count,
+                "manifest_directory_count": report.manifest_directory_count,
+                "would_create": report.would_create,
+                "would_update": report.would_update,
+                "unchanged": report.unchanged,
+                "conflicting_paths": report.conflicting_paths,
+                "preserved_runtime_owned": report.preserved_runtime_owned,
+                "preserved_operator_owned": report.preserved_operator_owned,
             },
         )
 

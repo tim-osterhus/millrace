@@ -1348,6 +1348,50 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
         assert not workspace_model_config.exists()
 
 
+def test_cli_upgrade_preview_reports_manifest_deltas_without_mutation(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    (destination / "README.md").write_text("custom workspace readme\n", encoding="utf-8")
+    (destination / "agents" / "status.md").write_text("### BLOCKED\n", encoding="utf-8")
+    (destination / "notes.md").write_text("keep me\n", encoding="utf-8")
+    (destination / "OPERATOR_GUIDE.md").unlink()
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "direct"
+    assert payload["applied"] is False
+    assert payload["message"] == "workspace upgrade preview generated"
+    assert payload["payload"]["workspace_root"] == destination.resolve().as_posix()
+    assert payload["payload"]["bundle_version"] == "baseline-bundle-v1"
+    assert "OPERATOR_GUIDE.md" in payload["payload"]["would_create"]
+    assert "README.md" in payload["payload"]["would_update"]
+    assert "millrace.toml" in payload["payload"]["unchanged"]
+    assert "agents/status.md" in payload["payload"]["preserved_runtime_owned"]
+    assert "notes.md" in payload["payload"]["preserved_operator_owned"]
+    assert (destination / "README.md").read_text(encoding="utf-8") == "custom workspace readme\n"
+    assert (destination / "agents" / "status.md").read_text(encoding="utf-8") == "### BLOCKED\n"
+
+
+def test_cli_upgrade_preview_human_output_explains_preview_scope(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    (destination / "README.md").write_text("custom workspace readme\n", encoding="utf-8")
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade"])
+
+    assert result.exit_code == 0
+    assert "Upgrade preview: manifest-tracked baseline refresh only" in result.stdout
+    assert "Preview only: yes" in result.stdout
+    assert "Would update:" in result.stdout
+    assert "- README.md" in result.stdout
+
+
 def test_cli_package_docs_state_default_research_bootstrap_contract() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")

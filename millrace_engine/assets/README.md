@@ -165,12 +165,15 @@ Use `init` when you want a new Millrace workspace without copying files by hand:
 ```bash
 millrace init /absolute/path/to/workspace
 millrace init --force /absolute/path/to/workspace
+millrace --config /absolute/path/to/workspace/millrace.toml upgrade
 ```
 
 Important behavior:
 
 - Without `--force`, the destination must be absent or empty.
 - With `--force`, Millrace overwrites manifest-tracked baseline files in place. It does not wipe the directory.
+- `millrace upgrade` is a preview-only workspace-upgrade surface: it reports which manifest-tracked baseline files would be created, updated, or left unchanged, and which runtime-owned or operator-owned paths stay preserved.
+- Use `upgrade` to inspect an existing workspace before later apply or migration work; use `init --force` only when you intentionally want the scaffold write path.
 - Workspace prompt and registry overlays can override packaged defaults after scaffolding.
 - Missing workspace prompt files fall back to packaged assets when the resolver supports that family.
 

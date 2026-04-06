@@ -95,6 +95,22 @@ class WorkspaceInitReport:
     created_directory_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class WorkspaceUpgradePreviewReport:
+    """Deterministic summary of a non-mutating workspace upgrade preview."""
+
+    workspace_root: Path
+    bundle_version: str
+    manifest_file_count: int
+    manifest_directory_count: int
+    would_create: tuple[str, ...]
+    would_update: tuple[str, ...]
+    unchanged: tuple[str, ...]
+    conflicting_paths: tuple[str, ...]
+    preserved_runtime_owned: tuple[str, ...]
+    preserved_operator_owned: tuple[str, ...]
+
+
 def iter_runtime_owned_workspace_directories() -> tuple[str, ...]:
     """Return empty workspace directories created by init instead of the asset bundle."""
 
@@ -160,6 +176,19 @@ def _prepare_workspace_root(workspace_root: Path, *, force: bool) -> None:
             raise WorkspaceInitError("destination exists and is not empty; re-run with --force to overwrite")
         return
     _ensure_directory(workspace_root, display_path=workspace_root.as_posix())
+
+
+def _existing_relative_file_paths(workspace_root: Path) -> tuple[PurePosixPath, ...]:
+    return tuple(
+        sorted(
+            (
+                PurePosixPath(path.relative_to(workspace_root).as_posix())
+                for path in workspace_root.rglob("*")
+                if path.is_file()
+            ),
+            key=lambda value: (len(value.parts), value.as_posix()),
+        )
+    )
 
 
 def _materialize_directories(workspace_root: Path) -> int:
@@ -254,6 +283,78 @@ def _materialize_runtime_owned_files(workspace_root: Path, *, force: bool) -> tu
         else:
             created_count += 1
     return created_count, overwritten_count
+
+
+def preview_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradePreviewReport:
+    """Inspect how the packaged baseline manifest would affect an existing workspace."""
+
+    workspace_root = Path(destination).expanduser().resolve()
+    _validate_workspace_root(workspace_root)
+    if not workspace_root.exists():
+        raise WorkspaceInitError("workspace root does not exist")
+    if not workspace_root.is_dir():
+        raise WorkspaceInitError("workspace root is not a directory")
+
+    manifest_directory_paths = _manifest_relative_paths(
+        iter_packaged_baseline_directories(),
+        entry_kind="directory",
+    )
+    manifest_file_paths = _manifest_relative_paths(
+        iter_packaged_baseline_files(),
+        entry_kind="file",
+    )
+    conflicting_paths: set[str] = set()
+    for relative_path in manifest_directory_paths:
+        destination_path = _destination_path(workspace_root, relative_path)
+        if destination_path.exists() and not destination_path.is_dir():
+            conflicting_paths.add(relative_path.as_posix())
+
+    would_create: list[str] = []
+    would_update: list[str] = []
+    unchanged: list[str] = []
+    for relative_path in manifest_file_paths:
+        destination_path = _destination_path(workspace_root, relative_path)
+        if destination_path.exists():
+            if destination_path.is_dir():
+                conflicting_paths.add(relative_path.as_posix())
+                continue
+            if destination_path.read_bytes() == packaged_baseline_asset(relative_path.as_posix()).read_bytes():
+                unchanged.append(relative_path.as_posix())
+            else:
+                would_update.append(relative_path.as_posix())
+            continue
+        would_create.append(relative_path.as_posix())
+
+    preserved_runtime_owned = tuple(
+        sorted(
+            relative_path.as_posix()
+            for relative_path in (
+                *(_RUNTIME_OWNED_DIRECTORY_PATHS),
+                *(path for path, _ in _RUNTIME_OWNED_FILE_CONTENTS),
+            )
+            if _destination_path(workspace_root, relative_path).exists()
+        )
+    )
+    manifest_file_path_set = set(manifest_file_paths)
+    runtime_owned_file_path_set = {path for path, _ in _RUNTIME_OWNED_FILE_CONTENTS}
+    preserved_operator_owned = tuple(
+        relative_path.as_posix()
+        for relative_path in _existing_relative_file_paths(workspace_root)
+        if relative_path not in manifest_file_path_set and relative_path not in runtime_owned_file_path_set
+    )
+
+    return WorkspaceUpgradePreviewReport(
+        workspace_root=workspace_root,
+        bundle_version=packaged_baseline_bundle_version(),
+        manifest_file_count=len(manifest_file_paths),
+        manifest_directory_count=len(manifest_directory_paths),
+        would_create=tuple(would_create),
+        would_update=tuple(would_update),
+        unchanged=tuple(unchanged),
+        conflicting_paths=tuple(sorted(conflicting_paths)),
+        preserved_runtime_owned=preserved_runtime_owned,
+        preserved_operator_owned=preserved_operator_owned,
+    )
 
 
 def initialize_workspace(destination: Path | str, *, force: bool = False) -> WorkspaceInitReport:

@@ -151,6 +151,7 @@ Phase 01B registry defaults are intentionally split from the workspace seed surf
 Current behavior in this run:
 
 - `millrace init` can materialize a baseline workspace from the packaged bundle
+- `millrace upgrade` is currently a preview-only surface over that same manifest metadata; it reports manifest-tracked creates/updates/unchanged files plus preserved runtime-owned and operator-owned paths without mutating the workspace
 - the engine still reads the configured realized workspace files under `millrace/` or another initialized workspace
 - workspace prompt files take precedence over packaged baseline assets when present
 - packaged assets are the fallback when the workspace copy is absent

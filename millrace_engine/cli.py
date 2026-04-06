@@ -29,6 +29,7 @@ from .cli_rendering import (
     render_staging_sync,
     render_status,
     render_supervisor_report,
+    render_upgrade_preview,
 )
 from .control import ConfigShowReport, ControlError, EngineControl
 from .control_models import InterviewListReport, InterviewMutationReport, InterviewQuestionReport
@@ -221,6 +222,17 @@ def init_command(
     except ControlError as exc:
         raise typer.BadParameter(str(exc), param_hint="destination") from exc
     render_operation(result, json_mode=json_mode)
+
+
+@app.command("upgrade")
+def upgrade_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Preview manifest-tracked baseline upgrade impact without modifying files."""
+
+    result = _run_expected(lambda: _control(ctx).preview_workspace_upgrade(), json_mode=json_mode)
+    render_upgrade_preview(result, json_mode=json_mode)
 
 
 @app.command("health")

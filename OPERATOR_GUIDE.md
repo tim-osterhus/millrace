@@ -100,12 +100,15 @@ Use `init` when you want a fresh workspace without copying files manually:
 ```bash
 millrace init /absolute/path/to/new-workspace
 millrace init --force /absolute/path/to/new-workspace
+millrace --config /absolute/path/to/new-workspace/millrace.toml upgrade
 ```
 
 Behavior to remember:
 
 - Without `--force`, the destination must be absent or empty.
 - With `--force`, Millrace overwrites manifest-tracked baseline files in place. It does not clean the directory.
+- `millrace upgrade` is the non-destructive inspection path for existing workspaces: it previews manifest-tracked baseline deltas and leaves runtime-owned plus operator-owned paths untouched.
+- Treat `init --force` as the scaffold write path, not as a substitute for upgrade preview.
 - The new workspace still uses workspace-first asset resolution after init.
 
 Always run the preflight after creating or updating a workspace:
