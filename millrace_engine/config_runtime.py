@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .contracts import ReasoningEffort, RunnerKind, StageType
+from .contract_core import ReasoningEffort, RunnerKind, StageType
 
 
 class MillraceRuntimeConfigModel(BaseModel):
