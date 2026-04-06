@@ -3,16 +3,20 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 from millrace_engine.baseline_assets import (
     iter_packaged_baseline_directories,
     iter_packaged_baseline_files,
     packaged_baseline_asset,
 )
 from millrace_engine.workspace_init import (
+    apply_workspace_upgrade,
     initialize_workspace,
     iter_runtime_owned_workspace_directories,
     iter_runtime_owned_workspace_files,
     preview_workspace_upgrade,
+    WorkspaceInitError,
 )
 
 
@@ -185,3 +189,52 @@ def test_workspace_upgrade_preview_does_not_mutate_workspace_files(tmp_path: Pat
 
     assert readme_path.read_text(encoding="utf-8") == "custom readme\n"
     assert status_path.read_text(encoding="utf-8") == "### QUICKFIX_NEEDED\n"
+
+
+def test_workspace_upgrade_apply_refreshes_manifest_files_and_preserves_owned_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    (workspace / "README.md").write_text("custom readme\n", encoding="utf-8")
+    (workspace / "agents" / "status.md").write_text("### BLOCKED\n", encoding="utf-8")
+    (workspace / "notes.md").write_text("keep me\n", encoding="utf-8")
+    (workspace / "OPERATOR_GUIDE.md").unlink()
+
+    preview = preview_workspace_upgrade(workspace)
+    report = apply_workspace_upgrade(workspace)
+
+    assert report.workspace_root == workspace.resolve()
+    assert report.created_files == preview.would_create
+    assert report.updated_files == preview.would_update
+    assert report.created_file_count == len(report.created_files)
+    assert report.updated_file_count == len(report.updated_files)
+    assert report.created_file_count == 1
+    assert report.updated_file_count >= 1
+    assert "OPERATOR_GUIDE.md" in report.created_files
+    assert "README.md" in report.updated_files
+    assert report.preserved_runtime_owned == preview.preserved_runtime_owned
+    assert report.preserved_operator_owned == preview.preserved_operator_owned
+    assert (workspace / "README.md").read_text(encoding="utf-8") == packaged_baseline_asset("README.md").read_text(
+        encoding="utf-8"
+    )
+    assert (workspace / "OPERATOR_GUIDE.md").read_text(encoding="utf-8") == packaged_baseline_asset(
+        "OPERATOR_GUIDE.md"
+    ).read_text(encoding="utf-8")
+    assert (workspace / "agents" / "status.md").read_text(encoding="utf-8") == "### BLOCKED\n"
+    assert (workspace / "notes.md").read_text(encoding="utf-8") == "keep me\n"
+
+
+def test_workspace_upgrade_apply_fails_before_mutation_on_conflicting_manifest_path(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    readme_before = (workspace / "README.md").read_text(encoding="utf-8")
+    guide_path = workspace / "OPERATOR_GUIDE.md"
+    guide_path.unlink()
+    guide_path.mkdir()
+
+    with pytest.raises(WorkspaceInitError, match="conflicting manifest paths"):
+        apply_workspace_upgrade(workspace)
+
+    assert (workspace / "README.md").read_text(encoding="utf-8") == readme_before
+    assert guide_path.is_dir()

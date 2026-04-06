@@ -697,6 +697,43 @@ def render_upgrade_preview(result: OperationResult, *, json_mode: bool = False) 
     typer.echo("\n".join(lines))
 
 
+def render_upgrade_apply(result: OperationResult, *, json_mode: bool = False) -> None:
+    if json_mode:
+        _json_output(result.model_dump(mode="json"))
+        return
+
+    payload = result.payload
+    lines = [
+        "Upgrade apply: manifest-tracked baseline refresh",
+        f"Workspace root: {payload['workspace_root']}",
+        f"Bundle version: {payload['bundle_version']}",
+        f"Manifest files: {payload['manifest_file_count']}",
+        f"Manifest directories: {payload['manifest_directory_count']}",
+        f"Created directories: {payload['created_directory_count']}",
+        f"Created files: {payload['created_file_count']}",
+        f"Updated files: {payload['updated_file_count']}",
+        f"Unchanged: {len(payload['unchanged'])}",
+        f"Conflicts: {len(payload['conflicting_paths'])}",
+        f"Preserved runtime-owned paths: {len(payload['preserved_runtime_owned'])}",
+        f"Preserved operator-owned files: {len(payload['preserved_operator_owned'])}",
+        "Applied: yes",
+    ]
+    section_order = (
+        ("Created files", payload["created_files"]),
+        ("Updated files", payload["updated_files"]),
+        ("Unchanged", payload["unchanged"]),
+        ("Conflicting paths", payload["conflicting_paths"]),
+        ("Preserved runtime-owned paths", payload["preserved_runtime_owned"]),
+        ("Preserved operator-owned files", payload["preserved_operator_owned"]),
+    )
+    for label, paths in section_order:
+        if not paths:
+            continue
+        lines.append(f"{label}:")
+        lines.extend(f"- {path}" for path in paths)
+    typer.echo("\n".join(lines))
+
+
 def render_queue(snapshot: QueueSnapshot, *, json_mode: bool, detail: bool) -> None:
     if json_mode:
         _json_output(snapshot.model_dump(mode="json"))

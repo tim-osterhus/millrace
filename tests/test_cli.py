@@ -1392,6 +1392,67 @@ def test_cli_upgrade_preview_human_output_explains_preview_scope(tmp_path: Path)
     assert "- README.md" in result.stdout
 
 
+def test_cli_upgrade_apply_reports_manifest_refresh_and_preserves_owned_files(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    (destination / "README.md").write_text("custom workspace readme\n", encoding="utf-8")
+    (destination / "agents" / "status.md").write_text("### BLOCKED\n", encoding="utf-8")
+    (destination / "notes.md").write_text("keep me\n", encoding="utf-8")
+    (destination / "OPERATOR_GUIDE.md").unlink()
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "direct"
+    assert payload["applied"] is True
+    assert payload["message"] == "workspace upgrade applied"
+    assert payload["payload"]["workspace_root"] == destination.resolve().as_posix()
+    assert "OPERATOR_GUIDE.md" in payload["payload"]["created_files"]
+    assert "README.md" in payload["payload"]["updated_files"]
+    assert "agents/status.md" in payload["payload"]["preserved_runtime_owned"]
+    assert "notes.md" in payload["payload"]["preserved_operator_owned"]
+    assert (destination / "README.md").read_text(encoding="utf-8") != "custom workspace readme\n"
+    assert (destination / "agents" / "status.md").read_text(encoding="utf-8") == "### BLOCKED\n"
+    assert (destination / "notes.md").read_text(encoding="utf-8") == "keep me\n"
+
+
+def test_cli_upgrade_apply_human_output_explains_apply_scope(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    (destination / "README.md").write_text("custom workspace readme\n", encoding="utf-8")
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply"])
+
+    assert result.exit_code == 0
+    assert "Upgrade apply: manifest-tracked baseline refresh" in result.stdout
+    assert "Applied: yes" in result.stdout
+    assert "Updated files:" in result.stdout
+    assert "- README.md" in result.stdout
+
+
+def test_cli_upgrade_apply_fails_on_conflicting_manifest_path_without_mutation(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    readme_before = (destination / "README.md").read_text(encoding="utf-8")
+    guide_path = destination / "OPERATOR_GUIDE.md"
+    guide_path.unlink()
+    guide_path.mkdir()
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply"])
+
+    assert result.exit_code == 1
+    assert "conflicting manifest paths" in result.stdout + result.stderr
+    assert (destination / "README.md").read_text(encoding="utf-8") == readme_before
+    assert guide_path.is_dir()
+
+
 def test_cli_package_docs_state_default_research_bootstrap_contract() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")

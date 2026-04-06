@@ -117,9 +117,11 @@ from .research.state import ResearchQueueFamily, ResearchQueueOwnership, Researc
 from .standard_runtime import RuntimeSelectionView, runtime_selection_view_from_snapshot
 from .status import ControlPlane, StatusError, StatusStore
 from .workspace_init import (
+    WorkspaceUpgradeApplyReport,
     WorkspaceInitError,
     WorkspaceInitReport,
     WorkspaceUpgradePreviewReport,
+    apply_workspace_upgrade,
     initialize_workspace,
     preview_workspace_upgrade,
 )
@@ -259,6 +261,15 @@ class EngineControl:
             raise ControlError(str(exc)) from exc
         return self._workspace_upgrade_preview_result(report)
 
+    def apply_workspace_upgrade(self) -> OperationResult:
+        """Apply a manifest-tracked baseline refresh without resetting preserved files."""
+
+        try:
+            report = apply_workspace_upgrade(self.paths.root)
+        except WorkspaceInitError as exc:
+            raise ControlError(str(exc)) from exc
+        return self._workspace_upgrade_apply_result(report)
+
     @staticmethod
     def _workspace_init_result(report: WorkspaceInitReport) -> OperationResult:
         return OperationResult(
@@ -287,6 +298,29 @@ class EngineControl:
                 "manifest_directory_count": report.manifest_directory_count,
                 "would_create": report.would_create,
                 "would_update": report.would_update,
+                "unchanged": report.unchanged,
+                "conflicting_paths": report.conflicting_paths,
+                "preserved_runtime_owned": report.preserved_runtime_owned,
+                "preserved_operator_owned": report.preserved_operator_owned,
+            },
+        )
+
+    @staticmethod
+    def _workspace_upgrade_apply_result(report: WorkspaceUpgradeApplyReport) -> OperationResult:
+        return OperationResult(
+            mode="direct",
+            applied=True,
+            message="workspace upgrade applied",
+            payload={
+                "workspace_root": report.workspace_root.as_posix(),
+                "bundle_version": report.bundle_version,
+                "manifest_file_count": report.manifest_file_count,
+                "manifest_directory_count": report.manifest_directory_count,
+                "created_directory_count": report.created_directory_count,
+                "created_file_count": report.created_file_count,
+                "updated_file_count": report.updated_file_count,
+                "created_files": report.created_files,
+                "updated_files": report.updated_files,
                 "unchanged": report.unchanged,
                 "conflicting_paths": report.conflicting_paths,
                 "preserved_runtime_owned": report.preserved_runtime_owned,

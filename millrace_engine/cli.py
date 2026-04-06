@@ -29,6 +29,7 @@ from .cli_rendering import (
     render_staging_sync,
     render_status,
     render_supervisor_report,
+    render_upgrade_apply,
     render_upgrade_preview,
 )
 from .control import ConfigShowReport, ControlError, EngineControl
@@ -227,9 +228,21 @@ def init_command(
 @app.command("upgrade")
 def upgrade_command(
     ctx: typer.Context,
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Apply the manifest-tracked baseline refresh instead of previewing it.",
+        ),
+    ] = False,
     json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
 ) -> None:
-    """Preview manifest-tracked baseline upgrade impact without modifying files."""
+    """Preview or apply manifest-tracked baseline refresh for an existing workspace."""
+
+    if apply:
+        result = _run_expected(lambda: _control(ctx).apply_workspace_upgrade(), json_mode=json_mode)
+        render_upgrade_apply(result, json_mode=json_mode)
+        return
 
     result = _run_expected(lambda: _control(ctx).preview_workspace_upgrade(), json_mode=json_mode)
     render_upgrade_preview(result, json_mode=json_mode)

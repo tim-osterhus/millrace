@@ -111,6 +111,33 @@ class WorkspaceUpgradePreviewReport:
     preserved_operator_owned: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class WorkspaceUpgradeApplyReport:
+    """Deterministic summary of one manifest-tracked workspace upgrade apply run."""
+
+    workspace_root: Path
+    bundle_version: str
+    manifest_file_count: int
+    manifest_directory_count: int
+    created_directory_count: int
+    created_file_count: int
+    updated_file_count: int
+    created_files: tuple[str, ...]
+    updated_files: tuple[str, ...]
+    unchanged: tuple[str, ...]
+    conflicting_paths: tuple[str, ...]
+    preserved_runtime_owned: tuple[str, ...]
+    preserved_operator_owned: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkspaceUpgradePlan:
+    workspace_root: Path
+    manifest_directory_paths: tuple[PurePosixPath, ...]
+    manifest_file_paths: tuple[PurePosixPath, ...]
+    preview_report: WorkspaceUpgradePreviewReport
+
+
 def iter_runtime_owned_workspace_directories() -> tuple[str, ...]:
     """Return empty workspace directories created by init instead of the asset bundle."""
 
@@ -214,6 +241,24 @@ def _materialize_directories(workspace_root: Path) -> int:
     return created_count
 
 
+def _materialize_manifest_directories(
+    workspace_root: Path,
+    directory_paths: Iterable[PurePosixPath],
+) -> int:
+    created_count = 0
+    for relative_path in directory_paths:
+        destination = _destination_path(workspace_root, relative_path)
+        if destination.exists():
+            if not destination.is_dir():
+                raise WorkspaceInitError(
+                    f"manifest directory path is occupied by a file: {relative_path.as_posix()}"
+                )
+            continue
+        _ensure_directory(destination, display_path=relative_path.as_posix())
+        created_count += 1
+    return created_count
+
+
 def _write_manifest_file(
     workspace_root: Path,
     relative_path: PurePosixPath,
@@ -285,9 +330,7 @@ def _materialize_runtime_owned_files(workspace_root: Path, *, force: bool) -> tu
     return created_count, overwritten_count
 
 
-def preview_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradePreviewReport:
-    """Inspect how the packaged baseline manifest would affect an existing workspace."""
-
+def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradePlan:
     workspace_root = Path(destination).expanduser().resolve()
     _validate_workspace_root(workspace_root)
     if not workspace_root.exists():
@@ -343,17 +386,73 @@ def preview_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradePrevie
         if relative_path not in manifest_file_path_set and relative_path not in runtime_owned_file_path_set
     )
 
-    return WorkspaceUpgradePreviewReport(
+    return _WorkspaceUpgradePlan(
         workspace_root=workspace_root,
-        bundle_version=packaged_baseline_bundle_version(),
-        manifest_file_count=len(manifest_file_paths),
-        manifest_directory_count=len(manifest_directory_paths),
-        would_create=tuple(would_create),
-        would_update=tuple(would_update),
-        unchanged=tuple(unchanged),
-        conflicting_paths=tuple(sorted(conflicting_paths)),
-        preserved_runtime_owned=preserved_runtime_owned,
-        preserved_operator_owned=preserved_operator_owned,
+        manifest_directory_paths=manifest_directory_paths,
+        manifest_file_paths=manifest_file_paths,
+        preview_report=WorkspaceUpgradePreviewReport(
+            workspace_root=workspace_root,
+            bundle_version=packaged_baseline_bundle_version(),
+            manifest_file_count=len(manifest_file_paths),
+            manifest_directory_count=len(manifest_directory_paths),
+            would_create=tuple(would_create),
+            would_update=tuple(would_update),
+            unchanged=tuple(unchanged),
+            conflicting_paths=tuple(sorted(conflicting_paths)),
+            preserved_runtime_owned=preserved_runtime_owned,
+            preserved_operator_owned=preserved_operator_owned,
+        ),
+    )
+
+
+def preview_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradePreviewReport:
+    """Inspect how the packaged baseline manifest would affect an existing workspace."""
+
+    return _build_workspace_upgrade_plan(destination).preview_report
+
+
+def apply_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradeApplyReport:
+    """Refresh manifest-tracked baseline files in an existing workspace."""
+
+    plan = _build_workspace_upgrade_plan(destination)
+    preview = plan.preview_report
+    if preview.conflicting_paths:
+        raise WorkspaceInitError(
+            "workspace upgrade blocked by conflicting manifest paths: "
+            + ", ".join(preview.conflicting_paths)
+        )
+
+    created_directory_count = _materialize_manifest_directories(
+        plan.workspace_root,
+        plan.manifest_directory_paths,
+    )
+    create_targets = {PurePosixPath(path) for path in preview.would_create}
+    update_targets = {PurePosixPath(path) for path in preview.would_update}
+    created_file_count = 0
+    updated_file_count = 0
+    for relative_path in plan.manifest_file_paths:
+        if relative_path in create_targets:
+            _write_manifest_file(plan.workspace_root, relative_path, force=False)
+            created_file_count += 1
+            continue
+        if relative_path in update_targets:
+            _write_manifest_file(plan.workspace_root, relative_path, force=True)
+            updated_file_count += 1
+
+    return WorkspaceUpgradeApplyReport(
+        workspace_root=plan.workspace_root,
+        bundle_version=preview.bundle_version,
+        manifest_file_count=preview.manifest_file_count,
+        manifest_directory_count=preview.manifest_directory_count,
+        created_directory_count=created_directory_count,
+        created_file_count=created_file_count,
+        updated_file_count=updated_file_count,
+        created_files=preview.would_create,
+        updated_files=preview.would_update,
+        unchanged=preview.unchanged,
+        conflicting_paths=preview.conflicting_paths,
+        preserved_runtime_owned=preview.preserved_runtime_owned,
+        preserved_operator_owned=preview.preserved_operator_owned,
     )
 
 
