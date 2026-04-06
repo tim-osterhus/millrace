@@ -15,6 +15,13 @@ from millrace_engine.contracts import StageType
 
 
 MILLRACE_ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_DOC_PARITY_PATHS = {
+    "README.md": "README.md",
+    "ADVISOR.md": "ADVISOR.md",
+    "OPERATOR_GUIDE.md": "OPERATOR_GUIDE.md",
+    "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
+    "docs/TUI_DOCUMENTATION.md": "docs/TUI_DOCUMENTATION.md",
+}
 PUBLIC_EXECUTION_STAGES = (
     StageType.BUILDER,
     StageType.INTEGRATION,
@@ -54,6 +61,14 @@ def _runtime_packages_on_disk() -> set[str]:
     return packages
 
 
+def _assert_public_docs_match_packaged_copies() -> None:
+    assets_root = MILLRACE_ROOT / "millrace_engine" / "assets"
+    for public_relative, asset_relative in PUBLIC_DOC_PARITY_PATHS.items():
+        public_text = (MILLRACE_ROOT / public_relative).read_text(encoding="utf-8")
+        asset_text = (assets_root / asset_relative).read_text(encoding="utf-8")
+        assert public_text == asset_text, public_relative
+
+
 def test_packaged_docs_and_operator_assets_exist() -> None:
     for relative in (
         "README.md",
@@ -81,6 +96,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "OPERATOR_GUIDE.md" in manifest_paths
     assert "docs/RUNTIME_DEEP_DIVE.md" in manifest_paths
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths
+    _assert_public_docs_match_packaged_copies()
 
     readme = (MILLRACE_ROOT / "README.md").read_text(encoding="utf-8")
     assert "autonomous" in readme.lower()
@@ -97,6 +113,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "millrace --config /absolute/path/to/workspace/millrace.toml health --json" in readme
     assert '[research] mode = "stub"' in readme
     assert 'interview_policy = "off"' in readme
+    assert "Release verification is narrower than source-checkout contributor verification" in readme
+    assert "upgrade --apply" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -111,9 +129,13 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "OpenClaw or another external supervisor harness" in operator_guide
     assert '[research] mode = "stub"' in operator_guide
     assert 'interview_policy = "off"' in operator_guide
+    assert "Release CI verifies a narrower contract than a contributor source checkout" in operator_guide
+    assert "upgrade --apply" in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
+    assert "structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`" in runtime_deep_dive
+    assert "the markdown files remain the instruction layer" in runtime_deep_dive
 
     tui_doc = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
     assert "## External Supervisor Boundary" in tui_doc
