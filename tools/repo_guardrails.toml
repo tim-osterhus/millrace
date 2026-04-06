@@ -102,18 +102,6 @@ modules = [
 
 [[cycles.allowed]]
 modules = [
-  "millrace_engine.contract_documents",
-  "millrace_engine.contracts",
-  "millrace_engine.loop_architecture",
-  "millrace_engine.loop_architecture_catalog",
-  "millrace_engine.loop_architecture_common",
-  "millrace_engine.loop_architecture_loop_contracts",
-  "millrace_engine.loop_architecture_profile_contracts",
-  "millrace_engine.loop_architecture_stage_contracts",
-]
-
-[[cycles.allowed]]
-modules = [
   "millrace_engine.compiler_models",
   "millrace_engine.compiler_rebinding",
 ]

@@ -9,14 +9,13 @@ import json
 
 from pydantic import Field, field_validator, model_validator
 
-from .contracts import (
+from .contract_core import (
     ACCEPTANCE_ID_RE,
     CARD_HEADING_RE,
     REQUIREMENT_ID_RE,
     TOKEN_RE,
     ContractModel,
     ExecutionStatus,
-    RunnerResult,
     StageType,
     _extract_field_block_lines,
     _extract_field_tokens,
@@ -28,6 +27,7 @@ from .contracts import (
     _normalize_tokens,
     _slugify_task_id,
 )
+from .contract_runtime import RunnerResult
 
 
 class TaskCard(ContractModel):

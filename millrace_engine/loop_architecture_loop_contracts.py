@@ -6,7 +6,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
-from .contracts import ContractModel
+from .contract_core import ContractModel
 from .loop_architecture_common import (
     ControlPlane,
     LoopEdgeKind,

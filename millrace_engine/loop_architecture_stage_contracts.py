@@ -7,13 +7,13 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from .contracts import (
+from .contract_core import (
     ContractModel,
     ReasoningEffort,
     RunnerKind,
-    RunnerResult,
     _normalize_path,
 )
+from .contract_runtime import RunnerResult
 from .loop_architecture_common import (
     ArtifactMultiplicity,
     ArtifactPersistence,

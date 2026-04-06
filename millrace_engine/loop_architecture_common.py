@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
 import re
 
 from pydantic import field_validator, model_validator
 
-from .contracts import ContractModel, _normalize_datetime
+from .contract_core import ContractModel, _normalize_datetime
 
 
 CANONICAL_ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
@@ -20,10 +19,6 @@ REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 STATUS_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 ROUTING_TOKEN_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 STAGE_SELECTOR_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\.\*)?$")
-
-
-if TYPE_CHECKING:
-    from .loop_architecture_stage_contracts import RegisteredStageKindDefinition
 
 
 def _normalize_text(value: str, *, field_label: str) -> str:

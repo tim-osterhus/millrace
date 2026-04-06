@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from .contracts import ContractModel, ReasoningEffort, RunnerKind
+from .contract_core import ContractModel, ReasoningEffort, RunnerKind
 from .loop_architecture_common import (
     AcceptanceProfile,
     GateStrictness,
