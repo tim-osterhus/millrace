@@ -5,27 +5,24 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock
 from typing import Literal
 
 from .adapters.file_watcher import FileWatcherAdapter, RuntimeInputEvent, RuntimeInputKind
 from .config import (
     ConfigApplyBoundary,
-    LoadedConfig,
     build_runtime_paths,
-    diff_config_fields,
     load_engine_config,
 )
 from .contracts import CompletionDecision, ExecutionStatus, ResearchMode
 from .control_common import ControlError
 from .control_models import OperationResult, RuntimeState
-from .control_mutations import _assert_reload_safe
 from .control_reports import (
     build_live_runtime_state,
     config_hash,
     decision_report_paths,
     write_runtime_state,
 )
+from .engine_config_coordinator import EngineConfigCoordinator, EngineConfigCoordinatorHooks
 from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEventSubscriber
 from .engine_mailbox_processor import EngineMailboxHooks, EngineMailboxProcessor
 from .planes.base import StageCommandMap
@@ -68,17 +65,11 @@ class MillraceEngine:
         self.stage_commands = stage_commands
         self._transport_probe = transport_probe
         self._outage_probe = outage_probe or DefaultOutageProbe()
-        self._config_lock = RLock()
-        self.loaded = load_engine_config(self.config_path)
-        self.paths = build_runtime_paths(self.loaded.config)
-        self.pending_loaded: LoadedConfig | None = None
-        self.previous_loaded: LoadedConfig | None = None
-        self.pending_boundary: ConfigApplyBoundary | None = None
-        self.pending_changed_fields: tuple[str, ...] = ()
-        self.rollback_armed = False
+        initial_loaded = load_engine_config(self.config_path)
+        initial_paths = build_runtime_paths(initial_loaded.config)
         self.execution_plane = ExecutionPlane(
-            self.loaded.config,
-            self.paths,
+            initial_loaded.config,
+            initial_paths,
             stage_commands=self.stage_commands,
             before_stage=self._before_stage_boundary,
             emit_event=lambda event_type, payload: self.event_bus.emit(
@@ -88,11 +79,11 @@ class MillraceEngine:
             ),
             transport_probe=self._transport_probe,
         )
-        self.research_plane = ResearchPlane(self.loaded.config, self.paths)
+        self.research_plane = ResearchPlane(initial_loaded.config, initial_paths)
         self.event_bus = EventBus(
             [
-                JsonlEventSubscriber(self.paths),
-                HistorySubscriber(self.paths),
+                JsonlEventSubscriber(initial_paths),
+                HistorySubscriber(initial_paths),
                 self.research_plane,
             ]
         )
@@ -102,6 +93,22 @@ class MillraceEngine:
                 source=EventSource.RESEARCH,
                 payload=payload,
             )
+        )
+        self.config_coordinator = EngineConfigCoordinator(
+            config_path=self.config_path,
+            initial_loaded=initial_loaded,
+            initial_paths=initial_paths,
+            hooks=EngineConfigCoordinatorHooks(
+                emit_event=lambda event_type, source, payload: self.event_bus.emit(
+                    event_type,
+                    source=source,
+                    payload=payload,
+                ),
+                install_loaded_config=self._install_loaded_runtime,
+                sync_ready_research_dispatch=lambda trigger: self._sync_ready_research_dispatch(
+                    trigger=trigger
+                ),
+            ),
         )
         self.mailbox_processor = EngineMailboxProcessor(
             config_path=self.config_path,
@@ -134,6 +141,34 @@ class MillraceEngine:
     def state_path(self) -> Path:
         return self.paths.runtime_dir / "state.json"
 
+    @property
+    def loaded(self):
+        return self.config_coordinator.loaded
+
+    @property
+    def paths(self):
+        return self.config_coordinator.paths
+
+    @property
+    def pending_loaded(self):
+        return self.config_coordinator.pending_loaded
+
+    @property
+    def previous_loaded(self):
+        return self.config_coordinator.previous_loaded
+
+    @property
+    def pending_boundary(self):
+        return self.config_coordinator.pending_boundary
+
+    @property
+    def pending_changed_fields(self):
+        return self.config_coordinator.pending_changed_fields
+
+    @property
+    def rollback_armed(self):
+        return self.config_coordinator.rollback_armed
+
     def _set_stop_requested(self, requested: bool) -> None:
         self.stop_requested = requested
 
@@ -142,11 +177,9 @@ class MillraceEngine:
         self.pause_reason = reason
         self.pause_run_id = run_id
 
-    def _install_loaded_config(self, loaded: LoadedConfig) -> None:
-        self.loaded = loaded
-        self.paths = build_runtime_paths(self.loaded.config)
-        self.execution_plane.reconfigure(self.loaded.config, self.paths)
-        self.research_plane.reconfigure(self.loaded.config, self.paths)
+    def _install_loaded_runtime(self, loaded, paths) -> None:
+        self.execution_plane.reconfigure(loaded.config, paths)
+        self.research_plane.reconfigure(loaded.config, paths)
 
     def _sync_ready_research_dispatch(self, *, trigger: str):
         if self.loaded.config.research.mode is ResearchMode.STUB:
@@ -165,41 +198,26 @@ class MillraceEngine:
         return dispatch
 
     def _snapshot(self, *, process_running: bool, mode: Literal["once", "daemon"]) -> RuntimeState:
-        with self._config_lock:
-            loaded = self.loaded
-            pending_loaded = self.pending_loaded
-            previous_loaded = self.previous_loaded
-            pending_boundary = self.pending_boundary
-            pending_fields = self.pending_changed_fields
-            rollback_armed = self.rollback_armed
+        config_state = self.config_coordinator.snapshot_state()
         return build_live_runtime_state(
-            loaded,
+            config_state.loaded,
             process_running=process_running,
             paused=self.paused,
             pause_reason=self.pause_reason,
             pause_run_id=self.pause_run_id,
             started_at=self.started_at,
             mode=mode,
-            pending_loaded=pending_loaded,
-            previous_loaded=previous_loaded,
-            pending_boundary=pending_boundary,
-            pending_fields=pending_fields,
-            rollback_armed=rollback_armed,
+            pending_loaded=config_state.pending_loaded,
+            previous_loaded=config_state.previous_loaded,
+            pending_boundary=config_state.pending_boundary,
+            pending_fields=config_state.pending_changed_fields,
+            rollback_armed=config_state.rollback_armed,
         )
 
     def _write_state(self, *, process_running: bool, mode: Literal["once", "daemon"]) -> RuntimeState:
         state = self._snapshot(process_running=process_running, mode=mode)
         write_runtime_state(self.state_path, state)
         return state
-
-    def _watcher_restart_required(self, changed_fields: tuple[str, ...]) -> bool:
-        return any(
-            field == "engine.idle_mode"
-            or field.startswith("engine.idle_mode.")
-            or field == "watchers"
-            or field.startswith("watchers.")
-            for field in changed_fields
-        )
 
     def _build_file_watcher(self) -> FileWatcherAdapter:
         if self.input_queue is None:
@@ -214,163 +232,18 @@ class MillraceEngine:
             loop=asyncio.get_running_loop(),
         )
 
-    def _boundary_allows(self, current: ConfigApplyBoundary, pending: ConfigApplyBoundary) -> bool:
-        order = {
-            ConfigApplyBoundary.LIVE_IMMEDIATE: 0,
-            ConfigApplyBoundary.STAGE_BOUNDARY: 1,
-            ConfigApplyBoundary.CYCLE_BOUNDARY: 2,
-            ConfigApplyBoundary.STARTUP_ONLY: 3,
-        }
-        return order[pending] <= order[current]
-
-    def _apply_loaded_config_locked(
-        self,
-        loaded: LoadedConfig,
-        *,
-        changed_fields: tuple[str, ...],
-    ) -> tuple[str, str]:
-        previous_hash = config_hash(self.loaded.config)
-        self.previous_loaded = self.loaded
-        self.pending_loaded = None
-        self.pending_boundary = None
-        self.pending_changed_fields = ()
-        self.rollback_armed = True
-        self._install_loaded_config(loaded)
-        return previous_hash, config_hash(self.loaded.config)
-
-    def _emit_config_changed(
-        self,
-        *,
-        command_id: str | None,
-        boundary: ConfigApplyBoundary,
-        changed_fields: tuple[str, ...],
-        loaded: LoadedConfig,
-        key: str | None = None,
-    ) -> None:
-        payload = {
-            "command_id": command_id,
-            "boundary": boundary.value,
-            "changed_fields": changed_fields,
-            "pending_config_hash": config_hash(loaded.config),
-        }
-        if key is not None:
-            payload["key"] = key
-        self.event_bus.emit(
-            EventType.CONFIG_CHANGED,
-            source=EventSource.CONTROL,
-            payload=payload,
-        )
-
-    def _emit_config_applied(
-        self,
-        *,
-        command_id: str | None,
-        boundary: ConfigApplyBoundary,
-        changed_fields: tuple[str, ...],
-        active_hash: str,
-        previous_hash: str | None,
-        rollback: bool = False,
-        reason: str | None = None,
-    ) -> None:
-        payload = {
-            "command_id": command_id,
-            "boundary": boundary.value,
-            "changed_fields": changed_fields,
-            "config_hash": active_hash,
-            "rollback": rollback,
-        }
-        if previous_hash is not None:
-            payload["previous_config_hash"] = previous_hash
-        if reason is not None:
-            payload["reason"] = reason
-        self.event_bus.emit(
-            EventType.CONFIG_APPLIED,
-            source=EventSource.CONTROL,
-            payload=payload,
-        )
-
     def _queue_or_apply_reloaded_config(
         self,
-        loaded: LoadedConfig,
+        loaded,
         *,
         command_id: str | None,
         key: str | None = None,
     ) -> tuple[OperationResult, bool]:
-        applied_operation: OperationResult | None = None
-        restart_watcher = False
-        with self._config_lock:
-            changed_fields = diff_config_fields(self.loaded.config, loaded.config)
-            boundary = self.loaded.config.boundaries.classify_fields(changed_fields)
-            if not changed_fields or boundary is None:
-                return (
-                    OperationResult(mode="direct", applied=False, message="config already current"),
-                    False,
-                )
-            if boundary is ConfigApplyBoundary.STARTUP_ONLY:
-                raise ControlError(f"cannot change startup-only field at runtime: {changed_fields[0]}")
-
-            if boundary is ConfigApplyBoundary.LIVE_IMMEDIATE:
-                self._emit_config_changed(
-                    command_id=command_id,
-                    boundary=boundary,
-                    changed_fields=changed_fields,
-                    loaded=loaded,
-                    key=key,
-                )
-                previous_hash, active_hash = self._apply_loaded_config_locked(
-                    loaded,
-                    changed_fields=changed_fields,
-                )
-                self._emit_config_applied(
-                    command_id=command_id,
-                    boundary=boundary,
-                    changed_fields=changed_fields,
-                    active_hash=active_hash,
-                    previous_hash=previous_hash,
-                )
-                applied_operation = OperationResult(
-                    mode="direct",
-                    applied=True,
-                    message="config applied immediately",
-                    payload={
-                        "boundary": boundary.value,
-                        "config_hash": active_hash,
-                        "previous_config_hash": previous_hash,
-                        "changed_fields": changed_fields,
-                        **({"key": key} if key is not None else {}),
-                    },
-                )
-                restart_watcher = self._watcher_restart_required(changed_fields)
-            else:
-                self.pending_loaded = loaded
-                self.pending_boundary = boundary
-                self.pending_changed_fields = changed_fields
-                self._emit_config_changed(
-                    command_id=command_id,
-                    boundary=boundary,
-                    changed_fields=changed_fields,
-                    loaded=loaded,
-                    key=key,
-                )
-                return (
-                    OperationResult(
-                        mode="direct",
-                        applied=True,
-                        message=f"config queued for {boundary.value}",
-                        payload={
-                            "boundary": boundary.value,
-                            "pending_config_hash": config_hash(loaded.config),
-                            "changed_fields": changed_fields,
-                            **({"key": key} if key is not None else {}),
-                        },
-                    ),
-                    False,
-                )
-
-        self._sync_ready_research_dispatch(trigger="config-applied")
-        if applied_operation is None:
-            raise RuntimeError("live config apply did not produce an operation result")
-        return applied_operation, restart_watcher
+        return self.config_coordinator.queue_or_apply_reloaded_config(
+            loaded,
+            command_id=command_id,
+            key=key,
+        )
 
     def _apply_pending_config_if_due(
         self,
@@ -378,57 +251,16 @@ class MillraceEngine:
         *,
         command_id: str | None = None,
     ) -> bool:
-        with self._config_lock:
-            if self.pending_loaded is None or self.pending_boundary is None:
-                return False
-            if not self._boundary_allows(boundary, self.pending_boundary):
-                return False
-            changed_fields = self.pending_changed_fields
-            applied_boundary = self.pending_boundary
-            previous_hash, active_hash = self._apply_loaded_config_locked(
-                self.pending_loaded,
-                changed_fields=changed_fields,
-            )
-        self._emit_config_applied(
+        return self.config_coordinator.apply_pending_config_if_due(
+            boundary,
             command_id=command_id,
-            boundary=applied_boundary,
-            changed_fields=changed_fields,
-            active_hash=active_hash,
-            previous_hash=previous_hash,
         )
-        self._sync_ready_research_dispatch(trigger="config-applied")
-        return self._watcher_restart_required(changed_fields)
 
     def _clear_rollback_guard(self) -> None:
-        with self._config_lock:
-            self.previous_loaded = None
-            self.rollback_armed = False
+        self.config_coordinator.clear_rollback_guard()
 
     def _rollback_active_config(self, reason: str) -> bool:
-        with self._config_lock:
-            if not self.rollback_armed or self.previous_loaded is None:
-                return False
-            failed_hash = config_hash(self.loaded.config)
-            changed_fields = diff_config_fields(self.previous_loaded.config, self.loaded.config)
-            boundary = self.previous_loaded.config.boundaries.classify_fields(changed_fields) or ConfigApplyBoundary.STAGE_BOUNDARY
-            rollback_target = self.previous_loaded
-            self._install_loaded_config(rollback_target)
-            restored_hash = config_hash(self.loaded.config)
-            self.previous_loaded = None
-            self.pending_loaded = None
-            self.pending_boundary = None
-            self.pending_changed_fields = ()
-            self.rollback_armed = False
-        self._emit_config_applied(
-            command_id=None,
-            boundary=boundary,
-            changed_fields=changed_fields,
-            active_hash=restored_hash,
-            previous_hash=failed_hash,
-            rollback=True,
-            reason=reason,
-        )
-        return True
+        return self.config_coordinator.rollback_active_config(reason)
 
     def _emit_cycle_events(self, result: ExecutionCycleResult) -> None:
         if result.archived_task is not None:
@@ -494,44 +326,13 @@ class MillraceEngine:
         self.stop_requested = True
         return True
 
-    def _emit_config_rejected(self, *, reason: str, path: Path | None = None) -> None:
-        payload: dict[str, object] = {
-            "rejected": True,
-            "reason": reason,
-        }
-        if path is not None:
-            payload["path"] = path
-        self.event_bus.emit(
-            EventType.CONFIG_CHANGED,
-            source=EventSource.ADAPTER,
-            payload=payload,
-        )
-
     async def _reload_config_from_disk(self, *, trigger_path: Path | None = None) -> bool:
-        reloaded: LoadedConfig | None = None
-        last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                reloaded = load_engine_config(self.config_path)
-                _assert_reload_safe(self.loaded, reloaded)
-            except Exception as exc:  # noqa: BLE001 - config reload must not crash the daemon
-                last_error = exc
-                if attempt == 2:
-                    self._emit_config_rejected(reason=str(exc), path=trigger_path)
-                    return False
-                await asyncio.sleep(0.1 * (attempt + 1))
-                continue
-            break
-
-        if reloaded is None:
-            if last_error is not None:
-                self._emit_config_rejected(reason=str(last_error), path=trigger_path)
-            return False
-
-        operation, restart_watcher = self._queue_or_apply_reloaded_config(reloaded, command_id=None)
+        operation_applied, restart_watcher = await self.config_coordinator.reload_config_from_disk(
+            trigger_path=trigger_path
+        )
         if restart_watcher:
             await self._restart_file_watcher()
-        return operation.applied
+        return operation_applied
 
     def _consume_research_recovery_latch(
         self,
