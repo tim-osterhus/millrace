@@ -703,13 +703,10 @@ def apply_initial_family_policy_pin(
         for field_name in report_fields
         if _normalize_scalar(next_payload.get(field_name)) != _normalize_scalar(pinned_values.get(field_name))
     )
-    if not pinned_fields:
-        return next_payload, decision.model_copy(
-            update={"reason": "frozen-initial-family-policy-already-compliant"}
-        )
-
-    for field_name in pinned_fields:
+    for field_name in report_fields:
         next_payload[field_name] = pinned_values[field_name]
+    if not pinned_fields:
+        pinned_fields = report_fields
     return next_payload, InitialFamilyPolicyPinDecision(
         active=True,
         action="pin",

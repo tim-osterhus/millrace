@@ -16,6 +16,7 @@ from .goalspec_helpers import (
     _normalize_required_text,
     resolve_goal_source,
 )
+from .goalspec_semantic_profile import GoalSemanticProfile
 from .governance import InitialFamilyPolicyPinDecision
 from .specs import (
     GoalSpecDecompositionProfile,
@@ -104,6 +105,7 @@ class AcceptanceProfileRecord(ContractModel):
     updated_at: datetime
     source_path: str
     research_brief_path: str
+    semantic_profile: GoalSemanticProfile
     milestones: tuple[str, ...]
     hard_blockers: tuple[str, ...]
 

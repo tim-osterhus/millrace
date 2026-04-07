@@ -1161,7 +1161,7 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
 
     finished_text = finished_source_path.read_text(encoding="utf-8")
     stale_deferred_text = "Spec synthesis and review are intentionally deferred to later Phase 05 runs."
-    downstream_pending_text = "Spec Review and task generation remain downstream after this draft synthesis pass."
+    downstream_pending_text = "Implementation remains open for the profiled product"
     assert "status: finished" in finished_text
     assert "## Route Decision" in finished_text
     assert "agents/_goal_intake.md" in finished_text
@@ -1198,13 +1198,13 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert profile_json["goal_id"] == "IDEA-42"
     assert profile_json["run_id"] == "goalspec-run-42"
     assert profile_json["research_brief_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
-    assert profile_json["hard_blockers"] == [downstream_pending_text]
+    assert any(downstream_pending_text in item for item in profile_json["hard_blockers"])
 
     completion_manifest = json.loads(completion_manifest_path.read_text(encoding="utf-8"))
     assert completion_manifest["artifact_type"] == "completion_manifest_draft"
     assert completion_manifest["goal_id"] == "IDEA-42"
     assert completion_manifest["objective_profile_path"] == "agents/reports/acceptance_profiles/idea-42-profile.json"
-    assert completion_manifest["open_questions"] == [downstream_pending_text]
+    assert any(downstream_pending_text in item for item in completion_manifest["open_questions"])
     assert completion_manifest["required_outputs"][0]["path"] == "agents/ideas/specs/SPEC-42__modernize-goal-intake.md"
 
     completion_record = json.loads(completion_record_path.read_text(encoding="utf-8"))

@@ -25,6 +25,7 @@ from .goalspec_helpers import (
     _write_json_model,
     resolve_goal_source,
 )
+from .goalspec_family_policy import derive_objective_family_policy
 from .goalspec_semantic_profile import (
     build_goal_semantic_profile,
     discover_semantic_seed_path,
@@ -33,6 +34,37 @@ from .goalspec_semantic_profile import (
 from .governance import apply_initial_family_policy_pin, build_queue_governor_report
 from .specs import load_goal_spec_family_state
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
+
+
+def _join_human_list(items: tuple[str, ...], *, limit: int = 4) -> str:
+    selected = tuple(item.strip() for item in items if item.strip())[:limit]
+    if not selected:
+        return ""
+    if len(selected) == 1:
+        return selected[0]
+    if len(selected) == 2:
+        return f"{selected[0]} and {selected[1]}"
+    return f"{', '.join(selected[:-1])}, and {selected[-1]}"
+
+
+def _build_product_hard_blockers(*, title: str, semantic_profile: object) -> tuple[str, ...]:
+    capability_domains = tuple(getattr(semantic_profile, "capability_domains", ()) or ())
+    progression_lines = tuple(getattr(semantic_profile, "progression_lines", ()) or ())
+
+    if capability_domains:
+        implementation_target = _join_human_list(capability_domains)
+        implementation_gap = f"Implementation remains open for the profiled product capabilities: {implementation_target}."
+    else:
+        implementation_gap = f"Implementation remains open for the profiled product objective: {title}."
+
+    if progression_lines:
+        verification_gap = (
+            f"End-to-end validation remains pending for the product progression: {progression_lines[0]}"
+        )
+    else:
+        verification_gap = "End-to-end product validation remains pending against the profiled acceptance path."
+
+    return (implementation_gap, verification_gap)
 
 
 def execute_objective_profile_sync(
@@ -81,9 +113,7 @@ def execute_objective_profile_sync(
         ),
     )
     milestones = tuple(item.outcome for item in semantic_profile.milestones)
-    hard_blockers = (
-        "Completion evidence, spec synthesis, and task generation remain downstream after this profile-sync pass.",
-    )
+    hard_blockers = _build_product_hard_blockers(title=source.title, semantic_profile=semantic_profile)
 
     acceptance_profile = AcceptanceProfileRecord(
         profile_id=profile_id,
@@ -93,6 +123,7 @@ def execute_objective_profile_sync(
         updated_at=emitted_at,
         source_path=source.relative_source_path,
         research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
+        semantic_profile=semantic_profile,
         milestones=milestones,
         hard_blockers=hard_blockers,
     )
@@ -110,6 +141,17 @@ def execute_objective_profile_sync(
                 f"- **Run-ID:** {run_id}",
                 f"- **Updated-At:** {_isoformat_z(emitted_at)}",
                 f"- **Source-Path:** `{source.relative_source_path}`",
+                "",
+                "## Objective Summary",
+                semantic_profile.objective_summary,
+                "",
+                "## Capability Domains",
+                *(f"- {item}" for item in semantic_profile.capability_domains),
+                *(["- No explicit capability domains were detected."] if not semantic_profile.capability_domains else []),
+                "",
+                "## Progression Lines",
+                *(f"- {item}" for item in semantic_profile.progression_lines),
+                *(["- No explicit progression lines were detected."] if not semantic_profile.progression_lines else []),
                 "",
                 "## Milestones",
                 *(f"- {item}" for item in milestones),
@@ -129,14 +171,12 @@ def execute_objective_profile_sync(
     family_policy_payload: dict[str, object] = {}
     if paths.objective_family_policy_file.exists():
         family_policy_payload = _load_json_object(paths.objective_family_policy_file)
-    family_policy_payload.update(
-        {
-            "schema_version": "1.0",
-            "family_cap_mode": "deterministic",
-            "initial_family_max_specs": 1,
-            "source_goal_id": source.idea_id,
-            "updated_at": _isoformat_z(emitted_at),
-        }
+    family_policy_payload = derive_objective_family_policy(
+        current_policy_payload=family_policy_payload,
+        semantic_profile=semantic_profile,
+        decomposition_profile=source.decomposition_profile,
+        source_goal_id=source.idea_id,
+        updated_at=emitted_at,
     )
     family_policy_payload, initial_family_policy_pin = apply_initial_family_policy_pin(
         paths=paths,
@@ -187,6 +227,11 @@ def execute_objective_profile_sync(
                     f"- **Profile-State:** "
                     f"`{_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root)}`"
                 ),
+                f"- **Family-Cap-Mode:** `{family_policy_payload.get('family_cap_mode', 'adaptive')}`",
+                (
+                    f"- **Initial-Family-Max-Specs:** "
+                    f"`{int(family_policy_payload.get('initial_family_max_specs', 0) or 0)}`"
+                ),
                 "",
                 "## Outcome",
                 "Objective Profile Sync refreshed the canonical acceptance-profile and current objective state for downstream GoalSpec work.",
@@ -234,6 +279,14 @@ def execute_objective_profile_sync(
                 "research_brief_path": _relative_path(research_brief_path, relative_to=paths.root),
                 "report_path": _relative_path(report_path, relative_to=paths.root),
                 "goal_intake_record_path": _relative_path(goal_intake_record_path, relative_to=paths.root),
+                "semantic_profile": semantic_profile.model_dump(mode="json"),
+                "hard_blockers": list(hard_blockers),
+                "family_policy_path": _relative_path(paths.objective_family_policy_file, relative_to=paths.root),
+                "family_cap_mode": str(family_policy_payload.get("family_cap_mode", "")).strip() or "adaptive",
+                "initial_family_max_specs": int(family_policy_payload.get("initial_family_max_specs", 0) or 0),
+                "remediation_family_max_specs": int(
+                    family_policy_payload.get("remediation_family_max_specs", 0) or 0
+                ),
             },
         ),
     )
@@ -247,6 +300,7 @@ def execute_objective_profile_sync(
             updated_at=emitted_at,
             source_path=source.relative_source_path,
             research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
+            semantic_profile=semantic_profile,
             milestones=milestones,
             hard_blockers=hard_blockers,
         ),
