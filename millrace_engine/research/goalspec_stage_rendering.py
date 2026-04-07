@@ -225,12 +225,21 @@ def render_queue_spec(
 def render_phase_spec(
     *,
     emitted_at: datetime,
+    source: GoalSource,
     spec_id: str,
-    title: str,
+    profile: AcceptanceProfileRecord,
+    completion_manifest: CompletionManifestDraftStateRecord,
     completion_manifest_path: str,
     objective_profile_path: str,
+    planned_spec_ids: tuple[str, ...] = (),
 ) -> str:
     timestamp = _isoformat_z(emitted_at)
+    summary = _product_summary(source=source, profile=profile)
+    capability_domains = _capability_domains(profile)
+    progression_lines = _progression_lines(profile)
+    acceptance_focus = _acceptance_focus(completion_manifest)
+    required_output_paths = _required_output_paths(completion_manifest)
+    planned_spec_lines = [f"- `{spec_id}`" for spec_id in planned_spec_ids] or ["- None."]
     return "\n".join(
         [
             _FRONTMATTER_BOUNDARY,
@@ -238,7 +247,7 @@ def render_phase_spec(
             "phase_key: PHASE_01",
             "phase_priority: P1",
             f"parent_spec_id: {spec_id}",
-            f"title: {title} Implementation Foundation",
+            f"title: {source.title} Product Slice 01",
             "status: planned",
             "owner: research",
             f"created_at: {timestamp}",
@@ -246,52 +255,87 @@ def render_phase_spec(
             _FRONTMATTER_BOUNDARY,
             "",
             "## Objective",
-            "- Carry the drafted GoalSpec package into a reviewable runtime implementation slice.",
+            f"- Deliver the first bounded product capability slice for `{source.idea_id}` while preserving measurable verification for {summary}.",
             "",
             "## Entry Criteria",
             f"- Completion manifest draft exists at `{completion_manifest_path}`.",
             f"- Objective profile exists at `{objective_profile_path}`.",
+            "- The bounded initial-family declaration is frozen for this synthesis pass.",
             "",
             "## Scope",
             "### In Scope",
-            "- Finalize the bounded GoalSpec runtime surfaces declared by the draft spec.",
-            "- Preserve traceability between the staged goal, completion manifest, and emitted spec artifacts.",
+            f"- Product-facing implementation for {_format_domain_sentence(capability_domains)}.",
+            (
+                f"- Verification coverage for {progression_lines[0]}."
+                if progression_lines
+                else "- Verification coverage for the profiled product objective."
+            ),
+            (
+                f"- Repo deltas required to satisfy these outputs: {', '.join(f'`{path}`' for path in required_output_paths)}."
+                if required_output_paths
+                else "- Repo deltas required to satisfy the bounded product slice."
+            ),
             "",
             "### Out of Scope",
-            "- Spec Review approval.",
-            "- Task generation.",
+            "- Spec Review decisions and task-card generation.",
+            "- Product capability slices reserved for later planned specs in the same bounded family.",
             "",
             "## Work Plan",
-            "1. Validate the completion-manifest draft and objective profile against the emitted queue spec.",
-            "2. Implement the bounded GoalSpec runtime deliverables declared by the draft package.",
-            "3. Run targeted verification and hand the package to Spec Review.",
+            (
+                f"1. Implement the first bounded capability slice centered on {progression_lines[0]}."
+                if progression_lines
+                else "1. Implement the first bounded capability slice from the synced product objective."
+            ),
+            (
+                f"2. Add or update proof for the highest-priority acceptance checks: {'; '.join(acceptance_focus[:3])}."
+                if acceptance_focus
+                else "2. Add or update proof for the profiled product acceptance path."
+            ),
+            "3. Close this phase with bounded handoff evidence and explicit family-state continuity for downstream review.",
             "",
             "## Requirements Traceability (Req-ID)",
-            f"- `Req-ID: REQ-001` traced through `{completion_manifest_path}`.",
-            f"- `Req-ID: REQ-002` traced through `{objective_profile_path}`.",
+            (
+                f"- `Req-ID: REQ-001` | Deliver the first product slice for {_format_domain_sentence(capability_domains)} | `{objective_profile_path}`"
+            ),
+            (
+                f"- `Req-ID: REQ-002` | Preserve measurable validation for this bounded slice | `{completion_manifest_path}`"
+            ),
             "",
             "## Assumptions Ledger",
-            "- The emitted draft package remains a single-spec family through review (confidence: inferred).",
+            (
+                "- The first emitted slice can advance the highest-priority capability path without absorbing later planned slices (confidence: inferred)."
+            ),
             "",
             "## Structured Decision Log",
             "| decision_id | phase_key | phase_priority | status | owner | rationale | timestamp |",
             "| --- | --- | --- | --- | --- | --- | --- |",
-            f"| DEC-PHASE-001 | PHASE_01 | P1 | proposed | research | Preserve bounded Run 03 scope for the first draft spec family | {timestamp} |",
+            f"| DEC-PHASE-001 | PHASE_01 | P1 | proposed | research | Keep the first phase bounded to one product capability slice plus its verification closure | {timestamp} |",
             "",
             "## Interrogation Notes",
-            "- This phase exists to keep implementation work bounded and reviewable after draft synthesis.",
+            "- This phase keeps the first emitted spec decomposition-ready by separating the immediate product slice from later planned family work.",
             "",
             "## Verification",
-            "- Draft artifacts and family state remain mutually traceable.",
+            *(
+                f"- Confirm this acceptance check passes: {item}"
+                for item in acceptance_focus[:3]
+            ),
+            *(
+                [f"- Confirm the slice advances this progression path: {progression_lines[0]}"]
+                if progression_lines
+                else []
+            ),
+            "- Confirm emitted artifacts and family state remain mutually traceable.",
             "",
             "## Exit Criteria",
-            "- The package is ready for Spec Review without inventing new scope.",
+            "- The first bounded product slice is implemented or explicitly specified with measurable proof expectations and no family-scope drift.",
             "",
             "## Handoff",
-            "- Feed the queue spec and this phase note into the next research stage.",
+            "- Feed the queue spec, phase note, and frozen initial-family declaration into downstream review.",
+            "- Planned later initial-family specs:",
+            *planned_spec_lines,
             "",
             "## Risks",
-            "- Review may discover a need for additional later specs; if so, record them explicitly in a later run.",
+            "- Broad goals may still require later planned slices; those must stay within the frozen bounded family or route to remediation later.",
             "",
         ]
     )
@@ -309,6 +353,7 @@ def render_synthesis_decision_record(
     objective_profile_path: str,
     queue_spec_path: str,
     family_complete: bool,
+    planned_spec_ids: tuple[str, ...] = (),
 ) -> str:
     timestamp = _isoformat_z(emitted_at)
     family_complete_text = "yes" if family_complete else "no"
@@ -339,7 +384,7 @@ def render_synthesis_decision_record(
             ),
             "",
             "## Designer Resolutions",
-            "- Emit one bounded product-grounded spec family for this goal in Run 03.",
+            "- Emit one bounded product-grounded spec family for this goal in the current synthesis pass.",
             (
                 f"- Keep the first emitted slice centered on {_format_domain_sentence(capability_domains)}."
                 if capability_domains
@@ -361,10 +406,18 @@ def render_synthesis_decision_record(
             "- The emitted queue/golden/phase artifacts preserve the bounded product decisions above without silently collapsing into GoalSpec-administration work.",
             "",
             "## Family Plan",
-            "- Initial-family declaration: one emitted spec.",
+            (
+                f"- Initial-family declaration: one emitted spec plus {len(planned_spec_ids)} planned later spec(s)."
+                if planned_spec_ids
+                else "- Initial-family declaration: one emitted spec."
+            ),
             f"- Family complete after this run: `{family_complete_text}`",
             f"- Emitted spec: `{spec_id}` at `{queue_spec_path}`",
-            "- Planned later specs: none",
+            (
+                f"- Planned later specs: {', '.join(f'`{item}`' for item in planned_spec_ids)}"
+                if planned_spec_ids
+                else "- Planned later specs: none"
+            ),
             "",
             "## References",
             f"- Staged goal: `{source.relative_source_path}`",

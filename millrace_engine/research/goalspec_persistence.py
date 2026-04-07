@@ -120,6 +120,9 @@ def _build_goal_spec_family_state(
     decomposition_profile: GoalSpecDecompositionProfile,
     queue_spec_path: Path,
     emitted_at: datetime,
+    planned_specs: tuple[GoalSpecFamilySpecState, ...] = (),
+    planned_spec_ids: tuple[str, ...] = (),
+    family_complete: bool = True,
 ) -> GoalSpecFamilyState:
     current_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
     policy_payload = (
@@ -165,6 +168,10 @@ def _build_goal_spec_family_state(
     spec_order = next_state.spec_order or (spec_id,)
     if spec_id not in spec_order:
         spec_order = spec_order + (spec_id,)
+    for planned_spec_id, planned_spec in zip(planned_spec_ids, planned_specs):
+        specs[planned_spec_id] = planned_spec
+        if planned_spec_id not in spec_order:
+            spec_order = spec_order + (planned_spec_id,)
     guard_decision = evaluate_initial_family_plan_guard(
         current_state=next_state,
         candidate_spec_id=spec_id,
@@ -181,7 +188,7 @@ def _build_goal_spec_family_state(
             "goal_id": source.idea_id,
             "source_idea_path": source.relative_source_path,
             "family_phase": "initial_family",
-            "family_complete": True,
+            "family_complete": family_complete,
             "active_spec_id": spec_id,
             "spec_order": spec_order,
             "specs": specs,
@@ -215,6 +222,9 @@ def _updated_goal_spec_family_state(
     decomposition_profile: GoalSpecDecompositionProfile,
     queue_spec_path: Path,
     emitted_at: datetime,
+    planned_specs: tuple[GoalSpecFamilySpecState, ...] = (),
+    planned_spec_ids: tuple[str, ...] = (),
+    family_complete: bool = True,
 ) -> GoalSpecFamilyState:
     next_state = _build_goal_spec_family_state(
         paths=paths,
@@ -224,6 +234,9 @@ def _updated_goal_spec_family_state(
         decomposition_profile=decomposition_profile,
         queue_spec_path=queue_spec_path,
         emitted_at=emitted_at,
+        planned_specs=planned_specs,
+        planned_spec_ids=planned_spec_ids,
+        family_complete=family_complete,
     )
     return write_goal_spec_family_state(
         paths.goal_spec_family_state_file,
@@ -289,4 +302,3 @@ def _build_goal_spec_review_state(
         goal_id=goal_id,
         source_idea_path=next_state.source_idea_path,
     )
-

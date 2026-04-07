@@ -1758,8 +1758,12 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     assert "Keep measurable validation and bounded output expectations attached to the synthesized slice" in first_queue_text
     assert "Convert `IDEA-201` into a traceable GoalSpec draft package." not in first_queue_text
     assert "Persist completion-manifest drafting state before spec output" not in first_queue_text
+    assert "Carry the drafted GoalSpec package into a reviewable runtime implementation slice." not in first_phase_text
+    assert "Deliver the first bounded product capability slice for `IDEA-201`" in first_phase_text
+    assert "Implement the first bounded capability slice" in first_phase_text
     assert "smallest bounded spec slice" in first_decision_text
     assert "GoalSpec traceability" not in first_decision_text
+    assert "Planned later specs: none" in first_decision_text
     assert spec_record_path.read_text(encoding="utf-8") == first_record_text
     assert family_state_path.read_text(encoding="utf-8") == first_family_state_text
     assert queue_spec_path.read_text(encoding="utf-8") == first_queue_text
@@ -1768,6 +1772,204 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     assert decision_path.read_text(encoding="utf-8") == first_decision_text
     assert json.loads(first_record_text)["emitted_at"] == "2026-03-21T12:00:00Z"
     assert json.loads(first_family_state_text)["updated_at"] == "2026-03-21T12:00:00Z"
+
+
+def test_execute_spec_synthesis_declares_bounded_multi_spec_initial_family_for_broad_goal(
+    tmp_path: Path,
+) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    raw_goal_text = (
+        "---\n"
+        "idea_id: IDEA-BROAD-201\n"
+        "title: Aura Workshop Expansion\n"
+        "decomposition_profile: involved\n"
+        "---\n"
+        "\n"
+        "# Aura Workshop Expansion\n\n"
+        "Build an involved aura workshop expansion with multiple gameplay systems for the first playable release.\n\n"
+        "## Capability Domains\n"
+        "- Aura Collector\n"
+        "- Aura Conduit\n"
+        "- Aura Reservoir\n"
+        "- Aura Infuser\n"
+        "- Aura Forge\n"
+        "- Aura Boss Arena\n\n"
+        "## Progression Lines\n"
+        "- Progression from collection to routing to infusion to boss payoff.\n"
+        "- Progression from solo crafting to coordinated combat trials.\n"
+    )
+    emitted_at = _dt("2026-04-07T12:00:00Z")
+    run_id = "goalspec-broad-family-201"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-201__aura-workshop-expansion.md"
+
+    _write_queue_file(raw_goal_path, raw_goal_text)
+    execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    ).draft_state
+
+    result = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=emitted_at,
+    )
+
+    family_state = json.loads((workspace / result.family_state_path).read_text(encoding="utf-8"))
+    phase_text = (workspace / result.phase_spec_path).read_text(encoding="utf-8")
+    decision_text = (workspace / result.decision_path).read_text(encoding="utf-8")
+
+    assert family_state["family_complete"] is False
+    assert family_state["active_spec_id"] == "SPEC-BROAD-201"
+    assert family_state["spec_order"] == ["SPEC-BROAD-201", "SPEC-BROAD-201-02", "SPEC-BROAD-201-03"]
+    assert family_state["specs"]["SPEC-BROAD-201"]["status"] == "emitted"
+    assert family_state["specs"]["SPEC-BROAD-201-02"]["status"] == "planned"
+    assert family_state["specs"]["SPEC-BROAD-201-02"]["depends_on_specs"] == ["SPEC-BROAD-201"]
+    assert family_state["specs"]["SPEC-BROAD-201-03"]["status"] == "planned"
+    assert family_state["initial_family_plan"]["spec_order"] == [
+        "SPEC-BROAD-201",
+        "SPEC-BROAD-201-02",
+        "SPEC-BROAD-201-03",
+    ]
+    assert phase_text.count("Planned later initial-family specs:") == 1
+    assert "`SPEC-BROAD-201-02`" in phase_text
+    assert "`SPEC-BROAD-201-03`" in phase_text
+    assert "Carry the drafted GoalSpec package" not in phase_text
+    assert "Planned later specs: `SPEC-BROAD-201-02`, `SPEC-BROAD-201-03`" in decision_text
+
+
+def test_execute_spec_synthesis_respects_single_spec_family_cap_for_broad_goal(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    raw_goal_text = (
+        "---\n"
+        "idea_id: IDEA-BROAD-CAP-201\n"
+        "title: Aura Workshop Capped\n"
+        "decomposition_profile: involved\n"
+        "---\n"
+        "\n"
+        "# Aura Workshop Capped\n\n"
+        "Build an involved aura workshop expansion with capped initial-family planning.\n\n"
+        "## Capability Domains\n"
+        "- Aura Collector\n"
+        "- Aura Conduit\n"
+        "- Aura Reservoir\n"
+        "- Aura Infuser\n"
+        "- Aura Forge\n"
+        "- Aura Boss Arena\n\n"
+        "## Progression Lines\n"
+        "- Progression from collection to routing to infusion to boss payoff.\n"
+        "- Progression from solo crafting to coordinated combat trials.\n"
+    )
+    emitted_at = _dt("2026-04-07T12:20:00Z")
+    run_id = "goalspec-broad-cap-201"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-CAP-201__aura-workshop-capped.md"
+
+    _write_queue_file(raw_goal_path, raw_goal_text)
+    execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    ).draft_state
+    paths.objective_family_policy_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.objective_family_policy_file.write_text(
+        json.dumps({"initial_family_max_specs": 1}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=emitted_at,
+    )
+
+    family_state = json.loads((workspace / result.family_state_path).read_text(encoding="utf-8"))
+    decision_text = (workspace / result.decision_path).read_text(encoding="utf-8")
+
+    assert family_state["family_complete"] is True
+    assert family_state["active_spec_id"] == "SPEC-BROAD-CAP-201"
+    assert family_state["spec_order"] == ["SPEC-BROAD-CAP-201"]
+    assert family_state["initial_family_plan"]["spec_order"] == ["SPEC-BROAD-CAP-201"]
+    assert "Planned later specs: none" in decision_text
 
 
 def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Path) -> None:
