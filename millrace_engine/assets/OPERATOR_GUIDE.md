@@ -62,6 +62,21 @@ Or launch the TUI directly with:
 
 Do not treat `bash agents/orchestrate_loop.sh ...` or `bash agents/research_loop.sh ...` as the supported operator entrypoints. Those shell assets are compatibility or reference material now, not the main runtime path.
 
+## Governed Compounding Operating Model
+
+Governed compounding follows an explicit `raw -> compiled -> query -> lint` loop. Millrace does not treat transcript summaries or packaged `agents/skills` as runtime authority for this subsystem.
+
+- `raw`: the input evidence is runtime-owned and file-backed, including run outputs, `agents/runs/<run_id>/transition_history.jsonl`, diagnostics bundles, and harness benchmark/search artifacts.
+- `compiled`: the runtime turns selected evidence into typed governed artifacts under `agents/compounding/`, including procedures, context facts, lifecycle records, harness candidates, benchmark results, and recommendations. Those primary artifacts are the authority.
+- `query`: stage-aware retrieval injects only eligible procedures and context facts under explicit stage rules and budgets, while the CLI exposes operator inspection through `millrace compounding ...`. `millrace compounding orient` writes `agents/compounding/indexes/governed_store_index.json` and `agents/compounding/indexes/relationship_summary.json` as secondary orientation aids.
+- `lint`: `millrace compounding lint` plus `health` and `doctor` catch stale governed artifacts, broken references, and stored-orientation drift before those problems silently degrade reuse.
+
+Keep this boundary straight:
+
+- packaged `agents/skills` remain shipped operating playbooks
+- governed compounding authority lives in typed artifacts under `agents/compounding/`
+- `Derived orientation surface only; governed compounding artifacts remain the source of truth.`
+
 ## First Setup
 
 Install the published package:
@@ -281,6 +296,8 @@ millrace --config millrace.toml logs --follow
 millrace --config millrace.toml run-provenance <run_id> --json
 millrace --config millrace.toml research history --json
 millrace --config millrace.toml compounding --json
+millrace --config millrace.toml compounding orient --query builder
+millrace --config millrace.toml compounding lint
 millrace --config millrace.toml compounding facts --json
 millrace --config millrace.toml compounding harness recommendations --json
 ```
@@ -291,6 +308,8 @@ Use:
 - `run-provenance` for one execution run's frozen plan, transitions, and evidence
 - `research --json` and `research history` for research-side state and recent research events
 - `compounding --json` for one compact governance summary across procedures, context facts, harness candidates, and recommendations
+- `compounding orient` for a queryable secondary index and relationship summary over the governed stores
+- `compounding lint` for explicit integrity checks before you trust governed reuse state
 - `compounding facts` plus the existing compounding procedure/harness subcommands for artifact-level governed reuse inspection
 
 In the TUI:

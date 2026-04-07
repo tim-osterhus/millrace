@@ -93,6 +93,21 @@ The runtime is also split by ownership internally, not just by product surface:
 - `millrace_engine/research/goalspec_stage_support.py` is a thin GoalSpec facade over per-stage executors such as `goalspec_goal_intake.py`, `goalspec_spec_synthesis.py`, `goalspec_spec_interview.py`, and `goalspec_spec_review.py`, with shared rendering in `goalspec_stage_rendering.py`.
 - `tools/repo_guardrails.py` enforces size budgets and same-change ratchets for orchestration-heavy files so those seams do not silently collapse back into long-lived exception zones.
 
+## Governed Compounding Model
+
+Millrace uses an explicit `raw -> compiled -> query -> lint` loop for governed compounding. It is not a transcript-memory or wiki-first subsystem.
+
+- `raw`: the runtime starts from file-backed evidence it already owns, such as stage outputs, `agents/runs/<run_id>/transition_history.jsonl`, diagnostics bundles, and governed harness benchmark/search artifacts. Packaged `agents/skills` remain shipped operating playbooks, not runtime compounding authority.
+- `compiled`: Millrace derives typed primary artifacts under `agents/compounding/`, including procedures, context facts, lifecycle records, harness candidates, benchmark results, and recommendations. Those governed artifacts carry scope, provenance, and lifecycle state; they are the source of truth.
+- `query`: stage-aware retrieval injects only eligible governed procedures and context facts into the stages that allow them, under explicit budgets. Operators query the same stores through `millrace compounding ...`. `millrace compounding orient` also writes `agents/compounding/indexes/governed_store_index.json` and `agents/compounding/indexes/relationship_summary.json` as secondary orientation aids.
+- `lint`: `millrace compounding lint` and the `health`/`doctor` surfaces validate stale governed artifacts, broken cross-artifact references, and stored-orientation drift. Fix the primary governed artifacts when lint fails; the orientation files are derived outputs, not the authority.
+
+Millrace-specific boundary to remember:
+
+- packaged `agents/skills` are the shipped operator/agent guidance surface
+- transcript summaries are not promoted into runtime authority by default
+- `Derived orientation surface only; governed compounding artifacts remain the source of truth.`
+
 ## Quick Start
 
 Install the published package:
@@ -273,6 +288,8 @@ millrace --config millrace.toml logs --follow
 millrace --config millrace.toml run-provenance <run_id> --json
 millrace --config millrace.toml research history --json
 millrace --config millrace.toml compounding --json
+millrace --config millrace.toml compounding orient --query builder
+millrace --config millrace.toml compounding lint
 millrace --config millrace.toml compounding facts --json
 millrace --config millrace.toml compounding procedures --json
 millrace --config millrace.toml compounding harness recommendations --json

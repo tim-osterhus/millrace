@@ -161,6 +161,12 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`goalspec_stage_rendering.py`" in readme
     assert "`tools/repo_guardrails.py`" in readme
     assert "same-change ratchets" in readme
+    assert "## Governed Compounding Model" in readme
+    assert "raw -> compiled -> query -> lint" in readme
+    assert "packaged `agents/skills` are the shipped operator/agent guidance surface" in readme
+    assert "compounding orient --query builder" in readme
+    assert "compounding lint" in readme
+    assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -205,8 +211,20 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert 'interview_policy = "off"' in operator_guide
     assert "Release CI verifies a narrower contract than a contributor source checkout" in operator_guide
     assert "upgrade --apply" in operator_guide
+    assert "## Governed Compounding Operating Model" in operator_guide
+    assert "raw -> compiled -> query -> lint" in operator_guide
+    assert "governed compounding authority lives in typed artifacts under `agents/compounding/`" in operator_guide
+    assert "compounding orient --query builder" in operator_guide
+    assert "compounding lint" in operator_guide
+    assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
+    assert "### 5.7 Governed Compounding Operating Model" in runtime_deep_dive
+    assert "raw -> compiled -> query -> lint" in runtime_deep_dive
+    assert "`procedures/` for reusable procedure artifacts" in runtime_deep_dive
+    assert "`millrace compounding orient` derives `agents/compounding/indexes/governed_store_index.json`" in runtime_deep_dive
+    assert "`compounding.integrity` workspace check" in runtime_deep_dive
+    assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in runtime_deep_dive
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
     assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in runtime_deep_dive
     assert "supervisor cleanup remove|quarantine" in runtime_deep_dive

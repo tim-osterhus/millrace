@@ -1619,7 +1619,17 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
             assert marker not in contents
 
     assert "Workspace-first assets" in (destination / "README.md").read_text(encoding="utf-8")
+    assert "## Governed Compounding Model" in (destination / "README.md").read_text(encoding="utf-8")
+    assert "compounding orient --query builder" in (destination / "README.md").read_text(encoding="utf-8")
+    assert "compounding lint" in (destination / "README.md").read_text(encoding="utf-8")
     assert "## Asset Resolution" in (destination / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
+    assert "## Governed Compounding Operating Model" in (destination / "OPERATOR_GUIDE.md").read_text(
+        encoding="utf-8"
+    )
+    assert "compounding orient --query builder" in (destination / "OPERATOR_GUIDE.md").read_text(
+        encoding="utf-8"
+    )
+    assert "compounding lint" in (destination / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
     assert "real default model ids" in (destination / "README.md").read_text(encoding="utf-8")
     assert "default model ids are real packaged defaults" in (
         destination / "OPERATOR_GUIDE.md"
@@ -1628,6 +1638,12 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
         destination / "ADVISOR.md"
     ).read_text(encoding="utf-8")
     assert "packaged assets are the fallback when the workspace copy is absent" in (
+        destination / "docs" / "RUNTIME_DEEP_DIVE.md"
+    ).read_text(encoding="utf-8")
+    assert "### 5.7 Governed Compounding Operating Model" in (
+        destination / "docs" / "RUNTIME_DEEP_DIVE.md"
+    ).read_text(encoding="utf-8")
+    assert "`compounding.integrity` workspace check" in (
         destination / "docs" / "RUNTIME_DEEP_DIVE.md"
     ).read_text(encoding="utf-8")
     workspace_model_config = destination / "agents" / "options" / "model_config.md"

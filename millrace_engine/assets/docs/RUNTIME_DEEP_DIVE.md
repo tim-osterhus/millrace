@@ -365,6 +365,36 @@ For the critical standard execution entrypoints (`_start.md`, `_integrate.md`, `
 
 This keeps prompt authors free to improve wording and guidance without silently changing the critical Builder / Integration / QA execution contract.
 
+### 5.7 Governed Compounding Operating Model
+
+Governed compounding is an explicit `raw -> compiled -> query -> lint` loop over runtime-owned files. It is not a generic transcript-memory layer, and it does not reuse packaged `agents/skills` as the authority surface.
+
+- `raw` evidence comes from the files the runtime already owns:
+  - stage outputs and run artifacts under `agents/runs/<run_id>/`
+  - `agents/runs/<run_id>/transition_history.jsonl`
+  - copied diagnostics bundles
+  - bounded harness benchmark and search artifacts
+- `compiled` artifacts live under `agents/compounding/`:
+  - `procedures/` for reusable procedure artifacts
+  - `context_facts/` for durable fact artifacts
+  - `lifecycle/` for workspace promotion, deprecation, and replacement records
+  - `harness_candidates/`, `benchmark_results/`, and `harness_recommendations/` for governed harness work
+- those compiled artifacts are the primary governed stores. They carry scope, provenance, and review state, and they are the compounding source of truth.
+- `query` happens in two ways:
+  - `compounding/retrieval.py` performs stage-aware bounded injection of eligible procedures and facts into execution stages
+  - operator-facing CLI/control surfaces inspect the same stores through `millrace compounding ...`
+- `millrace compounding orient` derives `agents/compounding/indexes/governed_store_index.json` and `agents/compounding/indexes/relationship_summary.json` to help humans and agents navigate the governed stores, but those files are explicitly secondary.
+- `lint` is the integrity closeout:
+  - `millrace compounding lint` runs the governed-store integrity report
+  - `health.py` exposes that result as the `compounding.integrity` workspace check
+  - `doctor` surfaces the same failures before operators rely on broken governed reuse state
+
+Millrace-specific boundary:
+
+- packaged `agents/skills` remain shipped operator guidance and open overlay assets
+- transcript summaries are not promoted into runtime authority by default
+- `Derived orientation surface only; governed compounding artifacts remain the source of truth.`
+
 ## 6. Configuration System
 
 `config.py` defines the runtime config model and loading behavior.
