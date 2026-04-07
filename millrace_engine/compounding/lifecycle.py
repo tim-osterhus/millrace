@@ -136,6 +136,17 @@ def lifecycle_history_for_procedure(
     return tuple(reversed(procedure.lifecycle_records))
 
 
+def discover_lifecycle_records(paths: RuntimePaths) -> tuple[StoredProcedureLifecycleRecord, ...]:
+    """Return every persisted lifecycle record in newest-first order."""
+
+    records = [
+        record
+        for records_for_procedure in _records_by_procedure_id(paths).values()
+        for record in records_for_procedure
+    ]
+    return tuple(sorted(records, key=_lifecycle_sort_key, reverse=True))
+
+
 def workspace_candidate_procedure_id_for(procedure_id: str) -> str:
     """Return the canonical workspace-scope review candidate id for one procedure."""
 

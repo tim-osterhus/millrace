@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from millrace_engine.control import EngineControl
+from millrace_engine.contracts import ProcedureScope, ReusableProcedureArtifact, StageType
 from millrace_engine.health import HealthCheckStatus, WorkspaceHealthCheck, build_workspace_health_report
 from tests.support import runtime_workspace
 
@@ -31,6 +32,7 @@ def test_workspace_health_report_passes_for_primary_runtime_workspace(tmp_path: 
     assert _check(report, "workspace.directories").status is HealthCheckStatus.PASS
     assert _check(report, "workspace.files").status is HealthCheckStatus.PASS
     assert _check(report, "assets.required").status is HealthCheckStatus.PASS
+    assert _check(report, "compounding.integrity").status is HealthCheckStatus.PASS
 
 
 def test_workspace_health_report_passes_for_initialized_workspace(tmp_path: Path, monkeypatch) -> None:
@@ -56,6 +58,7 @@ def test_workspace_health_report_passes_for_initialized_workspace(tmp_path: Path
     assert _check(report, "workspace.directories").status is HealthCheckStatus.PASS
     assert _check(report, "workspace.files").status is HealthCheckStatus.PASS
     assert _check(report, "assets.required").status is HealthCheckStatus.PASS
+    assert _check(report, "compounding.integrity").status is HealthCheckStatus.PASS
     assert _check(report, "execution.runners").status is HealthCheckStatus.PASS
     assert report.bootstrap_ready is True
     assert report.execution_ready is True
@@ -142,3 +145,28 @@ def test_workspace_health_report_distinguishes_bootstrap_from_execution_readines
     assert prerequisite.executable == "codex"
     assert prerequisite.affected_stage_nodes
     assert prerequisite.affected_stages
+
+
+def test_workspace_health_report_warns_for_stale_compounding_artifacts(tmp_path: Path, monkeypatch) -> None:
+    _set_fake_codex_path(tmp_path, monkeypatch)
+    workspace, config_path = runtime_workspace(tmp_path)
+    procedure = ReusableProcedureArtifact(
+        procedure_id="proc.workspace.builder.stale",
+        scope=ProcedureScope.WORKSPACE,
+        source_run_id="run-stale",
+        source_stage=StageType.BUILDER,
+        title="Stale builder procedure",
+        summary="Pending review before broader reuse.",
+        procedure_markdown="Preserve the builder audit trail.",
+        created_at="2026-04-07T18:00:00Z",
+    )
+    procedure_path = workspace / "agents" / "compounding" / "procedures" / "proc.workspace.builder.stale.json"
+    procedure_path.parent.mkdir(parents=True, exist_ok=True)
+    procedure_path.write_text(procedure.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    report = build_workspace_health_report(config_path)
+
+    assert report.status is HealthCheckStatus.WARN
+    integrity_check = _check(report, "compounding.integrity")
+    assert integrity_check.status is HealthCheckStatus.WARN
+    assert any("stale and withheld from retrieval" in detail for detail in integrity_check.details)

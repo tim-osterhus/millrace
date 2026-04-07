@@ -179,6 +179,22 @@ def discover_harness_recommendations(paths: RuntimePaths) -> tuple[StoredHarness
     return tuple(recommendations)
 
 
+def discover_harness_search_requests(paths: RuntimePaths) -> tuple[StoredHarnessSearchRequest, ...]:
+    """Return persisted bounded harness search requests, newest-first."""
+
+    if not paths.compounding_harness_search_requests_dir.exists():
+        return ()
+    requests = [
+        StoredHarnessSearchRequest(
+            path=path,
+            request=HarnessSearchRequestArtifact.model_validate_json(path.read_text(encoding="utf-8")),
+        )
+        for path in sorted(paths.compounding_harness_search_requests_dir.glob("*.json"))
+    ]
+    requests.sort(key=lambda item: (item.request.created_at, item.request.search_id), reverse=True)
+    return tuple(requests)
+
+
 def harness_recommendation_for_id(paths: RuntimePaths, recommendation_id: str) -> StoredHarnessRecommendation:
     """Resolve one stored recommendation artifact by id."""
 

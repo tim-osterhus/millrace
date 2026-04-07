@@ -7,11 +7,13 @@ from .finalization import (
     flush_milestone_for_transition,
     flush_run_scoped_compounding_candidates,
 )
+from .integrity import build_compounding_integrity_report
 from .orientation import build_compounding_orientation_snapshot
 from .harness import (
     discover_harness_benchmark_results,
     discover_harness_candidates,
     discover_harness_recommendations,
+    discover_harness_search_requests,
     harness_benchmark_result_for_id,
     harness_candidate_for_id,
     harness_recommendation_for_id,
@@ -21,6 +23,7 @@ from .harness import (
 from .lifecycle import (
     deprecate_procedure,
     discover_governed_procedures,
+    discover_lifecycle_records,
     discover_workspace_procedures,
     governed_procedure_for_id,
     lifecycle_history_for_procedure,
@@ -41,6 +44,7 @@ __all__ = [
     "CompoundingFlushMilestone",
     "build_injected_context_fact_bundle",
     "build_injected_procedure_bundle",
+    "build_compounding_integrity_report",
     "build_compounding_orientation_snapshot",
     "clear_run_scoped_procedure_candidates",
     "context_fact_retrieval_rule_for_stage",
@@ -49,6 +53,8 @@ __all__ = [
     "discover_harness_benchmark_results",
     "discover_harness_candidates",
     "discover_harness_recommendations",
+    "discover_harness_search_requests",
+    "discover_lifecycle_records",
     "discover_workspace_procedures",
     "flush_milestone_for_transition",
     "flush_run_scoped_compounding_candidates",

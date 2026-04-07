@@ -11,6 +11,7 @@ from pydantic import Field, ValidationError, field_validator
 
 from .assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKind
 from .baseline_assets import packaged_baseline_bundle_version
+from .compounding.integrity import CompoundingIntegrityStatus, build_compounding_integrity_report
 from .config import LoadedConfig, build_runtime_paths, load_engine_config
 from .contracts import ContractModel, ExecutionStatus, ResearchMode, RunnerKind, SpecInterviewPolicy, StageType
 from .config_compat import LegacyPolicyCompatStatus
@@ -35,7 +36,7 @@ class WorkspaceHealthCheck(ContractModel):
     """One deterministic workspace health check."""
 
     check_id: str
-    category: Literal["config", "workspace", "assets", "execution"]
+    category: Literal["config", "workspace", "assets", "execution", "knowledge"]
     status: HealthCheckStatus
     message: str
     details: tuple[str, ...] = ()
@@ -490,6 +491,46 @@ def _build_required_assets_check(
     )
 
 
+def _build_compounding_integrity_check(paths: RuntimePaths) -> WorkspaceHealthCheck:
+    try:
+        report = build_compounding_integrity_report(paths)
+    except (OSError, ValidationError, ValueError) as exc:
+        return WorkspaceHealthCheck(
+            check_id="compounding.integrity",
+            category="knowledge",
+            status=HealthCheckStatus.FAIL,
+            message="governed compounding integrity lint could not complete",
+            details=(f"error: {_single_line_message(exc)}",),
+        )
+
+    details = tuple(
+        f"{issue.severity.value}: {issue.family.value}: {issue.message}"
+        for issue in report.issues
+    )
+    if report.status is CompoundingIntegrityStatus.FAIL:
+        return WorkspaceHealthCheck(
+            check_id="compounding.integrity",
+            category="knowledge",
+            status=HealthCheckStatus.FAIL,
+            message="governed compounding integrity lint found blocking failures",
+            details=details,
+        )
+    if report.status is CompoundingIntegrityStatus.WARN:
+        return WorkspaceHealthCheck(
+            check_id="compounding.integrity",
+            category="knowledge",
+            status=HealthCheckStatus.WARN,
+            message="governed compounding integrity lint found warnings",
+            details=details,
+        )
+    return WorkspaceHealthCheck(
+        check_id="compounding.integrity",
+        category="knowledge",
+        status=HealthCheckStatus.PASS,
+        message="governed compounding stores passed integrity lint",
+    )
+
+
 def _current_execution_status(paths: RuntimePaths) -> ExecutionStatus | None:
     try:
         return StatusStore(paths.status_file, ControlPlane.EXECUTION).read()
@@ -701,6 +742,7 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
             paths=paths,
             loaded=loaded,
         ),
+        _build_compounding_integrity_check(paths),
     ]
     bootstrap_ready = not any(check.status is HealthCheckStatus.FAIL for check in bootstrap_checks)
     execution_check, runner_prerequisites, execution_ready = _build_execution_readiness_check(loaded, paths)

@@ -10,6 +10,7 @@ import typer
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .control import (
     AssetInventoryView,
+    CompoundingIntegrityReport,
     CompoundingContextFactListReport,
     CompoundingContextFactReport,
     CompoundingGovernanceSummaryView,
@@ -1252,6 +1253,34 @@ def render_compounding_orientation(report: CompoundingOrientationReport, *, json
                 lines.append(f"  Shared terms: {', '.join(cluster.shared_terms)}")
     else:
         lines.append("Relationship summaries: none")
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_lint(report: CompoundingIntegrityReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Status: {report.status.value.upper()}",
+        f"Summary: {report.summary}",
+        (
+            "Checked counts: "
+            + (", ".join(f"{key}={report.checked_counts[key]}" for key in sorted(report.checked_counts)) or "none")
+        ),
+        f"Stored orientation index present: {_bool_label(report.orientation_index_present)}",
+        f"Stored relationship summary present: {_bool_label(report.relationship_summary_present)}",
+        f"Issues: total={report.issue_count} warn={report.warning_count} fail={report.failure_count}",
+    ]
+    if report.issues:
+        lines.append("Findings:")
+        for issue in report.issues:
+            lines.append(f"- {issue.severity.value.upper()}: {issue.issue_id} [{issue.family.value}] {issue.message}")
+            if issue.artifact_ref is not None:
+                lines.append(f"  Artifact: {issue.artifact_ref}")
+            if issue.related_refs:
+                lines.append(f"  Related: {', '.join(issue.related_refs)}")
+    else:
+        lines.append("Findings: none")
     typer.echo("\n".join(lines))
 
 

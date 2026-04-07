@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from .adapters.control_mailbox import ControlCommand, write_command
 from .compounding import (
+    build_compounding_integrity_report,
     build_compounding_orientation_snapshot,
     discover_governed_procedures,
     discover_harness_benchmark_results,
@@ -24,6 +25,7 @@ from .compounding import (
     run_harness_benchmark,
     run_harness_search,
 )
+from .compounding.integrity import CompoundingIntegrityReport
 from .config import LoadedConfig, build_runtime_paths
 from .context_facts import context_fact_for_id, discover_context_facts
 from .contract_compounding import ProcedureScope
@@ -994,6 +996,16 @@ class EngineControl:
                 for cluster in snapshot.relationship_clusters
             ),
         )
+
+    def compounding_lint(self) -> CompoundingIntegrityReport:
+        """Return governed-store integrity findings for compounding artifacts."""
+
+        try:
+            return build_compounding_integrity_report(self.paths)
+        except ValidationError as exc:
+            raise ControlError(f"compounding lint is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding lint is invalid: {single_line_message(exc)}") from exc
 
     def compounding_harness_candidates(self) -> CompoundingHarnessCandidateListReport:
         """Return all discoverable governed harness candidates."""

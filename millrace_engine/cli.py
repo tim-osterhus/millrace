@@ -21,6 +21,7 @@ from .cli_rendering import (
     render_compounding_harness_candidates,
     render_compounding_harness_recommendation,
     render_compounding_harness_recommendations,
+    render_compounding_lint,
     render_compounding_orientation,
     render_compounding_procedure,
     render_compounding_procedures,
@@ -44,6 +45,7 @@ from .cli_rendering import (
     render_upgrade_apply,
     render_upgrade_preview,
 )
+from .compounding.integrity import CompoundingIntegrityReport
 from .control import ConfigShowReport, ControlError, EngineControl
 from .control_models import (
     CompoundingContextFactListReport,
@@ -589,6 +591,20 @@ def compounding_orient_command(
         json_mode=json_mode,
     )
     render_compounding_orientation(report, json_mode=json_mode)
+
+
+@compounding_app.command("lint")
+def compounding_lint_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Run governed-store integrity lint for compounding artifacts."""
+
+    report: CompoundingIntegrityReport = _run_expected(
+        lambda: _control(ctx).compounding_lint(),
+        json_mode=json_mode,
+    )
+    render_compounding_lint(report, json_mode=json_mode)
 
 
 @compounding_facts_app.command("show")

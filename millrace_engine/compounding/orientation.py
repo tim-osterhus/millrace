@@ -69,30 +69,12 @@ def build_compounding_orientation_snapshot(
 ) -> CompoundingOrientationSnapshot:
     """Generate, persist, and optionally query the secondary compounding orientation artifacts."""
 
-    generated_at = datetime.now(timezone.utc)
-    entries = _build_index_entries(paths)
-    index_dir = paths.compounding_indexes_dir
-    index_dir.mkdir(parents=True, exist_ok=True)
-    index_path = index_dir / INDEX_ARTIFACT_NAME
-    index_artifact = CompoundingKnowledgeIndexArtifact(
-        generated_at=generated_at,
-        secondary_surface_note=SECONDARY_SURFACE_NOTE,
-        source_families=tuple(family.value for family in CompoundingKnowledgeFamily),
-        family_counts=_count_map(entry.family.value for entry in entries),
-        entries=entries,
+    index_artifact, relationship_artifact = generate_compounding_orientation_artifacts(paths)
+    index_path, relationship_path = persist_compounding_orientation_artifacts(
+        paths,
+        index_artifact=index_artifact,
+        relationship_artifact=relationship_artifact,
     )
-    write_text_atomic(index_path, index_artifact.model_dump_json(indent=2) + "\n")
-
-    relationship_path = index_dir / RELATIONSHIP_ARTIFACT_NAME
-    clusters = _build_relationship_clusters(entries)
-    relationship_artifact = CompoundingRelationshipSummaryArtifact(
-        generated_at=generated_at,
-        secondary_surface_note=SECONDARY_SURFACE_NOTE,
-        index_artifact_ref=_relative_ref(paths.root, index_path),
-        cluster_counts=_count_map(cluster.kind.value for cluster in clusters),
-        clusters=clusters,
-    )
-    write_text_atomic(relationship_path, relationship_artifact.model_dump_json(indent=2) + "\n")
 
     normalized_query = _normalize_query(query)
     entry_lookup = {entry.entry_id: entry for entry in index_artifact.entries}
@@ -110,6 +92,71 @@ def build_compounding_orientation_snapshot(
         entries=filtered_entries,
         relationship_clusters=filtered_clusters,
     )
+
+
+def generate_compounding_orientation_artifacts(
+    paths: RuntimePaths,
+    *,
+    generated_at: datetime | None = None,
+) -> tuple[CompoundingKnowledgeIndexArtifact, CompoundingRelationshipSummaryArtifact]:
+    """Build the secondary orientation artifacts in memory without writing them."""
+
+    moment = generated_at or datetime.now(timezone.utc)
+    entries = _build_index_entries(paths)
+    clusters = _build_relationship_clusters(entries)
+    index_artifact = CompoundingKnowledgeIndexArtifact(
+        generated_at=moment,
+        secondary_surface_note=SECONDARY_SURFACE_NOTE,
+        source_families=tuple(family.value for family in CompoundingKnowledgeFamily),
+        family_counts=_count_map(entry.family.value for entry in entries),
+        entries=entries,
+    )
+    relationship_artifact = CompoundingRelationshipSummaryArtifact(
+        generated_at=moment,
+        secondary_surface_note=SECONDARY_SURFACE_NOTE,
+        index_artifact_ref=_relative_ref(paths.root, paths.compounding_indexes_dir / INDEX_ARTIFACT_NAME),
+        cluster_counts=_count_map(cluster.kind.value for cluster in clusters),
+        clusters=clusters,
+    )
+    return index_artifact, relationship_artifact
+
+
+def persist_compounding_orientation_artifacts(
+    paths: RuntimePaths,
+    *,
+    index_artifact: CompoundingKnowledgeIndexArtifact,
+    relationship_artifact: CompoundingRelationshipSummaryArtifact,
+) -> tuple[Path, Path]:
+    """Persist generated compounding orientation artifacts to the runtime-owned workspace."""
+
+    index_dir = paths.compounding_indexes_dir
+    index_dir.mkdir(parents=True, exist_ok=True)
+    index_path = index_dir / INDEX_ARTIFACT_NAME
+    relationship_path = index_dir / RELATIONSHIP_ARTIFACT_NAME
+    write_text_atomic(index_path, index_artifact.model_dump_json(indent=2) + "\n")
+    write_text_atomic(relationship_path, relationship_artifact.model_dump_json(indent=2) + "\n")
+    return index_path, relationship_path
+
+
+def load_compounding_orientation_artifacts(
+    paths: RuntimePaths,
+) -> tuple[CompoundingKnowledgeIndexArtifact, CompoundingRelationshipSummaryArtifact] | None:
+    """Load the stored orientation artifacts without regenerating them."""
+
+    index_path = paths.compounding_indexes_dir / INDEX_ARTIFACT_NAME
+    relationship_path = paths.compounding_indexes_dir / RELATIONSHIP_ARTIFACT_NAME
+    index_exists = index_path.exists()
+    relationship_exists = relationship_path.exists()
+    if not index_exists and not relationship_exists:
+        return None
+    if not index_exists or not relationship_exists:
+        missing = RELATIONSHIP_ARTIFACT_NAME if index_exists else INDEX_ARTIFACT_NAME
+        raise ValueError(f"stored compounding orientation artifacts are incomplete: missing {missing}")
+    index_artifact = CompoundingKnowledgeIndexArtifact.model_validate_json(index_path.read_text(encoding="utf-8"))
+    relationship_artifact = CompoundingRelationshipSummaryArtifact.model_validate_json(
+        relationship_path.read_text(encoding="utf-8")
+    )
+    return index_artifact, relationship_artifact
 
 
 def _build_index_entries(paths: RuntimePaths) -> tuple[CompoundingKnowledgeIndexEntry, ...]:

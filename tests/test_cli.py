@@ -1963,6 +1963,41 @@ def test_cli_doctor_reports_missing_runner_prerequisite_before_start(tmp_path: P
     assert "start --once" in result.stdout
 
 
+def test_cli_doctor_reports_compounding_integrity_failures(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_harness_candidate(
+        workspace,
+        filename="candidate.fixture.json",
+        candidate_id="candidate.fixture",
+        profile="governed_plus",
+        budget_characters=4800,
+    )
+    write_harness_benchmark_result(
+        workspace,
+        filename="benchmark.fixture.json",
+        result_id="benchmark.fixture",
+        candidate_id="candidate.fixture",
+    )
+    write_harness_recommendation(
+        workspace,
+        filename="recommendation.fixture.json",
+        recommendation_id="recommendation.fixture",
+        candidate_id="candidate.fixture",
+        result_id="benchmark.fixture",
+    )
+
+    result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "doctor"],
+        env=fake_runner_env(tmp_path, executables=("codex",)),
+    )
+
+    assert result.exit_code == 1
+    assert "FAIL: workspace bootstrap is incomplete" in result.stdout
+    assert "compounding.integrity" in result.stdout
+    assert "governed compounding integrity lint found blocking failures" in result.stdout
+
+
 def test_cli_health_human_output_surfaces_research_bootstrap_contract(tmp_path: Path) -> None:
     destination = tmp_path / "health-human-workspace"
     workspace_result = EngineControl.init_workspace(destination)
@@ -3955,6 +3990,57 @@ def test_cli_compounding_orient_generates_secondary_artifacts_and_filters_query(
     assert "Matching entries:" in text_result.stdout
     assert "proc.workspace.builder.audit [procedure eligible] Reviewed Audit Procedure" in text_result.stdout
     assert "fact.workspace.builder.audit [context_fact eligible] Audit trail fact" in text_result.stdout
+
+
+def test_cli_compounding_lint_reports_stale_and_broken_governed_artifacts(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-stale.json",
+        procedure_id="proc.workspace.builder.stale",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Stale Builder Procedure",
+        summary="Pending review before reuse.",
+        procedure_markdown="Preserve the builder audit trail.",
+    )
+    write_harness_candidate(
+        workspace,
+        filename="candidate.fixture.json",
+        candidate_id="candidate.fixture",
+        profile="governed_plus",
+        budget_characters=4800,
+    )
+    write_harness_benchmark_result(
+        workspace,
+        filename="benchmark.fixture.json",
+        result_id="benchmark.fixture",
+        candidate_id="candidate.fixture",
+    )
+    write_harness_recommendation(
+        workspace,
+        filename="recommendation.fixture.json",
+        recommendation_id="recommendation.fixture",
+        candidate_id="candidate.fixture",
+        result_id="benchmark.fixture",
+    )
+
+    result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "lint", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "fail"
+    assert payload["warning_count"] >= 1
+    assert payload["failure_count"] >= 1
+    issue_ids = {item["issue_id"] for item in payload["issues"]}
+    assert "procedure.stale.proc.workspace.builder.stale" in issue_ids
+    assert "harness_recommendation.missing_search.recommendation.fixture" in issue_ids
+
+    text_result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "lint"])
+    assert text_result.exit_code == 0
+    assert "Status: FAIL" in text_result.stdout
+    assert "Findings:" in text_result.stdout
+    assert "harness_recommendation.missing_search.recommendation.fixture" in text_result.stdout
 
 
 def test_cli_compounding_procedure_promote_materializes_workspace_artifact_and_record(tmp_path: Path) -> None:
