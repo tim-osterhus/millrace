@@ -33,7 +33,41 @@ from .state import ResearchCheckpoint
 TASKMASTER_ARTIFACT_SCHEMA_VERSION = "1.0"
 _FRONTMATTER_BOUNDARY = "---"
 _NUMBERED_LINE_RE = re.compile(r"^(\d+)\.\s+(.*\S)\s*$")
-_BACKTICKED_PATH_RE = re.compile(r"`((?:agents|millrace|tests)/[^`]+)`")
+_BACKTICKED_TOKEN_RE = re.compile(r"`([^`\n]+)`")
+_FRAMEWORK_OBJECTIVE_HINTS = (
+    "goalspec",
+    "goal intake",
+    "objective profile",
+    "objective sync",
+    "completion manifest",
+    "taskmaster",
+    "taskaudit",
+    "queue governor",
+    "family governor",
+    "family policy",
+    "stable spec registry",
+    "research dispatcher",
+    "research plane",
+    "research runtime",
+    "task provenance",
+    "lineage",
+)
+_INTERNAL_PIPELINE_RE = re.compile(
+    r"(?i)\b(?:_taskmaster\.md|_taskaudit\.md|merge_backlog\.py|queue_governor|"
+    r"run\s+taskmaster|run\s+taskaudit|regenerate(?:\s+\w+){0,4}\s+backlog|"
+    r"pending\s+backlog|task\s+queue\s+maintenance|task\s+store\s+maintenance|"
+    r"task\s+store|agents/tasks(?:backlog|archive|pending|backburner)?\.md)\b"
+)
+_ROOT_LEVEL_REPO_FILES = {
+    "README.md",
+    "Makefile",
+    "pyproject.toml",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "Cargo.toml",
+}
 
 
 def _utcnow() -> datetime:
@@ -122,11 +156,30 @@ def _verification_commands(reviewed_text: str) -> tuple[str, ...]:
     )
 
 
+def _looks_like_repo_relative_path(value: str) -> bool:
+    token = _normalize_path_token(value)
+    if not token or " " in token:
+        return False
+    if token.startswith(("http://", "https://", "file://", "/", "~")):
+        return False
+    if token.startswith("../"):
+        return False
+    if token in _ROOT_LEVEL_REPO_FILES:
+        return True
+    if "/" in token:
+        return True
+    return bool(Path(token).suffix)
+
+
+def _extract_repo_relative_paths(text: str) -> tuple[str, ...]:
+    matches = [match.group(1) for match in _BACKTICKED_TOKEN_RE.finditer(text)]
+    return _dedupe([token for token in matches if _looks_like_repo_relative_path(token)])
+
+
 def _dependency_paths(reviewed_text: str) -> tuple[str, ...]:
     dependencies = _markdown_section(reviewed_text, "Dependencies")
     references = _markdown_section(reviewed_text, "References")
-    matches = [match.group(1) for match in _BACKTICKED_PATH_RE.finditer(f"{dependencies}\n{references}")]
-    return _dedupe(matches)
+    return _extract_repo_relative_paths(f"{dependencies}\n{references}")
 
 
 def _phase_steps(phase_text: str, *, phase_key: str) -> tuple[tuple[str, str], ...]:
@@ -151,6 +204,70 @@ def _strict_files_to_touch(
     ordered = [reviewed_path, *stable_spec_paths, *dependency_paths]
     filtered = [path for path in ordered if path and not path.startswith("agents/tasks")]
     return _dedupe(filtered)
+
+
+def _task_card_files_to_touch(body: str) -> tuple[str, ...]:
+    lines = _field_block_lines(body, "Files to touch")
+    return _dedupe([line.strip().strip("-* ").strip("`") for line in lines])
+
+
+def _objective_scope_summary(
+    *,
+    reviewed_text: str,
+    phase_text: str,
+    reviewed_frontmatter: dict[str, str],
+    phase_frontmatter: dict[str, str],
+    spec_id: str,
+) -> str:
+    return "\n".join(
+        [
+            _goal_title(reviewed_frontmatter, spec_id),
+            _goal_title(phase_frontmatter, spec_id),
+            _markdown_section(reviewed_text, "Summary"),
+            _markdown_section(phase_text, "Objective"),
+        ]
+    ).lower()
+
+
+def _is_open_product_objective(
+    *,
+    family_phase: str,
+    reviewed_text: str,
+    phase_text: str,
+    reviewed_frontmatter: dict[str, str],
+    phase_frontmatter: dict[str, str],
+    spec_id: str,
+) -> bool:
+    if family_phase == "goal_gap_remediation":
+        return False
+    scope_summary = _objective_scope_summary(
+        reviewed_text=reviewed_text,
+        phase_text=phase_text,
+        reviewed_frontmatter=reviewed_frontmatter,
+        phase_frontmatter=phase_frontmatter,
+        spec_id=spec_id,
+    )
+    return not any(hint in scope_summary for hint in _FRAMEWORK_OBJECTIVE_HINTS)
+
+
+def _validate_open_product_objective_shard(shard_path: Path, document: object) -> None:
+    cards = getattr(document, "cards", ())
+    if not cards:
+        raise TaskmasterExecutionError(f"Taskmaster shard {shard_path.as_posix()} emitted no cards to validate")
+
+    all_touched_paths: list[str] = []
+    for card in cards:
+        touched_paths = _task_card_files_to_touch(card.body)
+        all_touched_paths.extend(touched_paths)
+        if _INTERNAL_PIPELINE_RE.search(f"{card.title}\n{card.body}"):
+            raise TaskmasterExecutionError(
+                f"Taskmaster card {card.title!r} routes an open product objective into internal pipeline maintenance"
+            )
+
+    if not any(path and not path.startswith("agents/") for path in all_touched_paths):
+        raise TaskmasterExecutionError(
+            f"Taskmaster shard {shard_path.as_posix()} decomposed an open product objective into agents/*-only artifact surfaces"
+        )
 
 
 def _rewrite_emitted_task_paths(
@@ -227,6 +344,7 @@ def _validate_strict_shard(
     expected_spec_id: str,
     expected_card_count_min: int,
     expected_card_count_max: int,
+    enforce_open_product_lane: bool = False,
 ) -> tuple[str, ...]:
     document = parse_task_store(shard_path.read_text(encoding="utf-8"), source_file=shard_path)
     card_count = len(document.cards)
@@ -269,6 +387,8 @@ def _validate_strict_shard(
         verification = _field_block_lines(card.body, "Verification commands")
         if not verification or not all("`" in line for line in verification):
             raise TaskmasterExecutionError(f"Taskmaster card {card.title!r} is missing executable Verification commands")
+    if enforce_open_product_lane:
+        _validate_open_product_objective_shard(shard_path, document)
     return tuple(titles)
 
 
@@ -553,6 +673,14 @@ def execute_taskmaster(
     )
     if not files_to_touch:
         raise TaskmasterExecutionError(f"Taskmaster could not resolve Files to touch for {spec_id}")
+    enforce_open_product_lane = _is_open_product_objective(
+        family_phase=family_state.family_phase,
+        reviewed_text=reviewed_text,
+        phase_text=phase_text,
+        reviewed_frontmatter=frontmatter,
+        phase_frontmatter=phase_frontmatter,
+        spec_id=spec_id,
+    )
 
     pending_dir = paths.agents_dir / "taskspending"
     pending_dir.mkdir(parents=True, exist_ok=True)
@@ -586,6 +714,7 @@ def execute_taskmaster(
         expected_spec_id=spec_id,
         expected_card_count_min=min_cards,
         expected_card_count_max=max_cards,
+        enforce_open_product_lane=enforce_open_product_lane,
     )
     taskspending_after = (
         paths.taskspending_file.read_text(encoding="utf-8")

@@ -143,6 +143,7 @@ Each generated card must:
 - include stable golden path reference `agents/specs/stable/golden/<spec_id>__<slug>.md`
 - include related phase path references from `agents/specs/stable/phase/` when applicable
 - include explicit Dependencies references when applicable
+- for open product objectives, include at least one repo-local implementation/test surface outside `agents/*`; do not decompose only into `agents/*` artifact maintenance
 - never emit product/objective cards that mutate task-store files (`agents/tasks*.md`) or target Taskmaster/Taskaudit/backlog-regeneration internals
 
 ## deterministic split contract (phase work plans)

@@ -39,6 +39,7 @@ from millrace_engine.research.goalspec import (
     execute_spec_review,
     execute_spec_synthesis,
 )
+from millrace_engine.research.taskmaster import TaskmasterExecutionError, execute_taskmaster
 from millrace_engine.research.interview import answer_interview_question, list_interview_questions
 from millrace_engine.research.queues import discover_research_queues
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
@@ -79,6 +80,22 @@ def _write_queue_file(path: Path, body: str = "# queued\n") -> None:
 def _write_json_file(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _replace_markdown_section(document: str, heading: str, replacement: str) -> str:
+    marker = f"## {heading}"
+    start = document.index(marker)
+    next_heading = document.find("\n## ", start + len(marker))
+    if next_heading == -1:
+        end = len(document)
+    else:
+        end = next_heading + 1
+    prefix = document[:start]
+    suffix = document[end:]
+    updated = prefix + replacement.rstrip() + "\n"
+    if suffix and not suffix.startswith("\n"):
+        updated += "\n"
+    return updated + suffix.lstrip("\n")
 
 
 def _goal_queue_checkpoint(
@@ -136,6 +153,100 @@ def _goal_active_request_checkpoint(
             "queue_family": ResearchQueueFamily.GOALSPEC,
         },
     )
+
+
+def _prepare_reviewed_spec_for_taskmaster(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    emitted_at: datetime,
+    title: str,
+    body: str,
+    decomposition_profile: str = "simple",
+    idea_id: str | None = None,
+) -> tuple[Path, object, object, object, Path]:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    suffix = run_id.rsplit("-", 1)[-1]
+    resolved_idea_id = idea_id or f"IDEA-{suffix.upper()}"
+    goal_text = (
+        "---\n"
+        f"idea_id: {resolved_idea_id}\n"
+        f"title: {title}\n"
+        f"decomposition_profile: {decomposition_profile}\n"
+        "---\n\n"
+        f"# {title}\n\n"
+        f"{body}\n"
+    )
+    _write_queue_file(raw_goal_path, goal_text)
+
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    queue_spec_path = workspace / synthesis.queue_spec_path
+    review = execute_spec_review(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=queue_spec_path.parent,
+            item_path=queue_spec_path,
+            status=ResearchStatus.SPEC_REVIEW_RUNNING,
+            node_id="spec_review",
+            stage_kind_id="research.spec-review",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    reviewed_path = workspace / review.reviewed_path
+    return workspace, config, paths, synthesis, reviewed_path
 
 
 def _configure_auto_blocker_runtime(
@@ -1970,6 +2081,174 @@ def test_execute_spec_synthesis_respects_single_spec_family_cap_for_broad_goal(t
     assert family_state["spec_order"] == ["SPEC-BROAD-CAP-201"]
     assert family_state["initial_family_plan"]["spec_order"] == ["SPEC-BROAD-CAP-201"]
     assert "Planned later specs: none" in decision_text
+
+
+def test_execute_taskmaster_rejects_agents_only_shard_for_open_product_objective(tmp_path: Path) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-product-401",
+        emitted_at=_dt("2026-04-07T14:00:00Z"),
+        title="Aura Workshop Vertical Slice",
+        body=(
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura collector gameplay\n"
+            "- Aura conduit routing\n\n"
+            "## Progression Lines\n"
+            "- Progression from collection to conduit routing to first playable proof.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-product-401",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    with pytest.raises(
+        TaskmasterExecutionError,
+        match="open product objective into agents/\\*-only artifact surfaces",
+    ):
+        execute_taskmaster(
+            paths,
+            _goal_queue_checkpoint(
+                run_id="goalspec-taskmaster-product-401",
+                emitted_at=_dt("2026-04-07T14:00:00Z"),
+                queue_path=reviewed_path.parent,
+                item_path=reviewed_path,
+                status=ResearchStatus.TASKMASTER_RUNNING,
+                node_id="taskmaster",
+                stage_kind_id="research.taskmaster",
+            ),
+            dispatch=dispatch,
+            run_id="goalspec-taskmaster-product-401",
+            emitted_at=_dt("2026-04-07T14:00:00Z"),
+        )
+
+    assert reviewed_path.exists()
+    assert not (workspace / "agents" / "ideas" / "archive" / reviewed_path.name).exists()
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    assert family_state["specs"]["SPEC-401"]["status"] == "reviewed"
+
+
+def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_names_repo_paths(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-product-402",
+        emitted_at=_dt("2026-04-07T14:10:00Z"),
+        title="Aura Workshop Vertical Slice",
+        body=(
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura collector gameplay\n"
+            "- Aura conduit routing\n\n"
+            "## Progression Lines\n"
+            "- Progression from collection to conduit routing to first playable proof.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+    reviewed_text = reviewed_path.read_text(encoding="utf-8")
+    reviewed_text = _replace_markdown_section(
+        reviewed_text,
+        "Dependencies",
+        "\n".join(
+            [
+                "## Dependencies",
+                "- Product implementation: `src/aura/collector.py`",
+                "- Verification: `tests/test_aura_collector.py`",
+            ]
+        ),
+    )
+    reviewed_path.write_text(reviewed_text, encoding="utf-8")
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-product-402",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskmaster-product-402",
+            emitted_at=_dt("2026-04-07T14:10:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskmaster-product-402",
+        emitted_at=_dt("2026-04-07T14:10:00Z"),
+    )
+
+    shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
+    assert "src/aura/collector.py" in shard_text
+    assert "tests/test_aura_collector.py" in shard_text
+    assert not reviewed_path.exists()
+    assert (workspace / result.archived_path).exists()
+
+
+def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_paths(tmp_path: Path) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-internal-403",
+        emitted_at=_dt("2026-04-07T14:20:00Z"),
+        title="Modernize Goal Intake",
+        body=(
+            "Create real GoalSpec intake and objective sync stages for the Millrace research runtime.\n\n"
+            "## Capability Domains\n"
+            "- Goal intake artifact capture\n"
+            "- Objective profile sync persistence\n\n"
+            "## Progression Lines\n"
+            "- Progression from raw goal intake to staged product brief to synced objective profile.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-internal-403",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskmaster-internal-403",
+            emitted_at=_dt("2026-04-07T14:20:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskmaster-internal-403",
+        emitted_at=_dt("2026-04-07T14:20:00Z"),
+    )
+
+    shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
+    assert "agents/specs/stable/golden/SPEC-403__modernize-goal-intake.md" in shard_text
+    assert not reviewed_path.exists()
+    assert (workspace / result.archived_path).exists()
 
 
 def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Path) -> None:
