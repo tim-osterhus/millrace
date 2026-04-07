@@ -40,6 +40,12 @@ from millrace_engine.contracts import (
     HarnessSearchRequestArtifact,
     InjectedContextFact,
     InjectedProcedure,
+    LabHarnessComparisonArtifact,
+    LabHarnessComparisonRow,
+    LabHarnessProposalArtifact,
+    LabHarnessProposalState,
+    LabHarnessRequestArtifact,
+    LabHarnessRequestSourceKind,
     ProcedureInjectionBundle,
     ProcedureLifecycleRecord,
     ProcedureLifecycleState,
@@ -282,6 +288,19 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     ).resolve()
     assert paths.compounding_harness_recommendations_dir == (
         workspace_root / "agents/compounding/harness_recommendations"
+    ).resolve()
+    assert paths.lab_dir == (workspace_root / "agents/lab").resolve()
+    assert paths.lab_harness_requests_dir == (
+        workspace_root / "agents/lab/harness_requests"
+    ).resolve()
+    assert paths.lab_harness_proposals_dir == (
+        workspace_root / "agents/lab/harness_proposals"
+    ).resolve()
+    assert paths.lab_harness_candidate_assets_dir == (
+        workspace_root / "agents/lab/harness_candidate_assets"
+    ).resolve()
+    assert paths.lab_harness_comparisons_dir == (
+        workspace_root / "agents/lab/harness_comparisons"
     ).resolve()
     assert paths.completion_manifest_plan_file == (
         workspace_root / "agents/reports/completion_manifest_plan.md"
@@ -557,6 +576,103 @@ def test_harness_contract_models_validate_and_normalize_payloads() -> None:
     assert search.asset_targets[0].stage is StageType.BUILDER
     assert recommendation.disposition is HarnessRecommendationDisposition.RECOMMEND
     assert recommendation.summary == "Recommend the asset-backed candidate."
+
+
+def test_lab_harness_contract_models_validate_and_normalize_payloads() -> None:
+    request = LabHarnessRequestArtifact.model_validate(
+        {
+            "request_id": "lab.request.search.20260407T211000Z.20260407T220000Z",
+            "source_kind": "recommendation",
+            "source_recommendation_id": "recommend.search.20260407T211000Z",
+            "source_search_id": "search.20260407T211000Z",
+            "source_candidate_ids": ["harness.search.search.20260407T211000Z.config.baseline"],
+            "source_benchmark_result_ids": ["bench.20260407T211500Z.harness-search-example"],
+            "created_at": "2026-04-07T22:00:00Z",
+            "created_by": " lab.fixture ",
+        }
+    )
+    proposal = LabHarnessProposalArtifact.model_validate(
+        {
+            "proposal_id": "lab.harness.proposal.lab-request-search-20260407T211000Z-20260407T220000Z.harness-search-example",
+            "request_id": request.request_id,
+            "source_candidate_id": "harness.search.search.20260407T211000Z.config.baseline",
+            "source_benchmark_result_id": "bench.20260407T211500Z.harness-search-example",
+            "state": "proposal",
+            "name": " Lab proposal from bounded runtime candidate ",
+            "summary": " Copy the bounded candidate into the off-path lab lane. ",
+            "changed_surfaces": [
+                {
+                    "kind": "config",
+                    "target": "policies.compounding.profile",
+                    "summary": "Switch the profile into governed plus mode.",
+                }
+            ],
+            "compounding_policy_override": {
+                "profile": "governed_plus",
+                "governed_plus_budget_characters": 2800,
+            },
+            "prompt_asset_overrides": [
+                {
+                    "stage": "builder",
+                    "source_ref": "package:agents/_start.md",
+                    "candidate_prompt_file": "agents/lab/harness_candidate_assets/example/builder.md",
+                }
+            ],
+            "created_at": "2026-04-07T22:00:00Z",
+            "created_by": "lab.fixture",
+        }
+    )
+    comparison = LabHarnessComparisonArtifact.model_validate(
+        {
+            "comparison_id": "lab.compare.lab-request-search-20260407T211000Z-20260407T220000Z",
+            "request_id": request.request_id,
+            "source_recommendation_id": request.source_recommendation_id,
+            "proposal_ids": [proposal.proposal_id],
+            "rows": [
+                {
+                    "source_candidate_id": proposal.source_candidate_id,
+                    "source_benchmark_result_id": proposal.source_benchmark_result_id,
+                    "proposal_id": proposal.proposal_id,
+                    "benchmark_status": "complete",
+                    "benchmark_outcome": "changed",
+                    "selection_changed": False,
+                    "changed_config_fields": ["policies.compounding.profile"],
+                    "changed_stage_bindings": ["builder"],
+                    "budget_delta_characters": -400,
+                    "summary": "Bounded runtime benchmark showed a builder prompt delta.",
+                }
+            ],
+            "summary": " Generated one off-path proposal. ",
+            "created_at": "2026-04-07T22:00:00Z",
+            "created_by": "lab.fixture",
+        }
+    )
+
+    assert request.source_kind is LabHarnessRequestSourceKind.RECOMMENDATION
+    assert request.created_by == "lab.fixture"
+    assert proposal.state is LabHarnessProposalState.PROPOSAL
+    assert proposal.name == "Lab proposal from bounded runtime candidate"
+    assert proposal.prompt_asset_overrides == (
+        HarnessCandidatePromptAssetOverride(
+            stage=StageType.BUILDER,
+            source_ref="package:agents/_start.md",
+            candidate_prompt_file=Path("agents/lab/harness_candidate_assets/example/builder.md"),
+        ),
+    )
+    assert comparison.rows == (
+        LabHarnessComparisonRow(
+            source_candidate_id=proposal.source_candidate_id,
+            source_benchmark_result_id=proposal.source_benchmark_result_id,
+            proposal_id=proposal.proposal_id,
+            benchmark_status="complete",
+            benchmark_outcome="changed",
+            selection_changed=False,
+            changed_config_fields=("policies.compounding.profile",),
+            changed_stage_bindings=("builder",),
+            budget_delta_characters=-400,
+            summary="Bounded runtime benchmark showed a builder prompt delta.",
+        ),
+    )
 
 
 def test_context_fact_contract_models_validate_and_normalize_payloads() -> None:

@@ -106,6 +106,15 @@ from .contract_harness import (
     HarnessSearchAssetTarget,
     HarnessSearchRequestArtifact,
 )
+from .contract_lab import (
+    LAB_HARNESS_SCHEMA_VERSION,
+    LabHarnessComparisonArtifact,
+    LabHarnessComparisonRow,
+    LabHarnessProposalArtifact,
+    LabHarnessProposalState,
+    LabHarnessRequestArtifact,
+    LabHarnessRequestSourceKind,
+)
 
 # Phase 01B loop-architecture contracts live in a dedicated module but remain
 # re-exported here to preserve the existing shared-contract import surface.

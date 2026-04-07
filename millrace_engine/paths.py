@@ -73,6 +73,11 @@ class RuntimePaths:
     compounding_benchmark_results_dir: Path
     compounding_harness_search_requests_dir: Path
     compounding_harness_recommendations_dir: Path
+    lab_dir: Path
+    lab_harness_requests_dir: Path
+    lab_harness_proposals_dir: Path
+    lab_harness_candidate_assets_dir: Path
+    lab_harness_comparisons_dir: Path
     goal_spec_family_state_file: Path
     goalspec_runtime_dir: Path
     goalspec_goal_intake_records_dir: Path
@@ -133,6 +138,7 @@ class RuntimePaths:
         policies_dir = resolved_agents_dir / "policies"
         research_runtime_dir = resolved_agents_dir / ".research_runtime"
         compounding_dir = resolved_agents_dir / "compounding"
+        lab_dir = resolved_agents_dir / "lab"
         goalspec_runtime_dir = research_runtime_dir / "goalspec"
         specs_dir = resolved_agents_dir / "specs"
         specs_stable_dir = specs_dir / "stable"
@@ -174,6 +180,11 @@ class RuntimePaths:
             compounding_benchmark_results_dir=compounding_dir / "benchmark_results",
             compounding_harness_search_requests_dir=compounding_dir / "harness_searches",
             compounding_harness_recommendations_dir=compounding_dir / "harness_recommendations",
+            lab_dir=lab_dir,
+            lab_harness_requests_dir=lab_dir / "harness_requests",
+            lab_harness_proposals_dir=lab_dir / "harness_proposals",
+            lab_harness_candidate_assets_dir=lab_dir / "harness_candidate_assets",
+            lab_harness_comparisons_dir=lab_dir / "harness_comparisons",
             goal_spec_family_state_file=research_runtime_dir / "spec_family_state.json",
             goalspec_runtime_dir=goalspec_runtime_dir,
             goalspec_goal_intake_records_dir=goalspec_runtime_dir / "goal_intake",
