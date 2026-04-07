@@ -78,6 +78,7 @@ def execute_spec_synthesis(
         spec_id=spec_id,
         objective_state=objective_state,
         profile=profile,
+        completion_manifest=completion_manifest,
         completion_manifest_path=completion_manifest_path,
     )
     phase_spec_text = render_phase_spec(
@@ -101,6 +102,8 @@ def execute_spec_synthesis(
         run_id=run_id,
         source=source,
         spec_id=spec_id,
+        profile=profile,
+        completion_manifest=completion_manifest,
         completion_manifest_path=completion_manifest_path,
         objective_profile_path=objective_state.profile_path,
         queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),
@@ -139,6 +142,7 @@ def execute_spec_synthesis(
             spec_id=spec_id,
             objective_state=objective_state,
             profile=profile,
+            completion_manifest=completion_manifest,
             completion_manifest_path=completion_manifest_path,
         )
         expected_phase_spec = render_phase_spec(
@@ -153,6 +157,8 @@ def execute_spec_synthesis(
             run_id=run_id,
             source=source,
             spec_id=spec_id,
+            profile=profile,
+            completion_manifest=completion_manifest,
             completion_manifest_path=completion_manifest_path,
             objective_profile_path=objective_state.profile_path,
             queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),

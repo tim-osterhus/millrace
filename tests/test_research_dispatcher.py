@@ -1160,14 +1160,21 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     ]
 
     finished_text = finished_source_path.read_text(encoding="utf-8")
+    golden_text = golden_spec_path.read_text(encoding="utf-8")
+    decision_text = decision_path.read_text(encoding="utf-8")
     stale_deferred_text = "Spec synthesis and review are intentionally deferred to later Phase 05 runs."
     downstream_pending_text = "Implementation remains open for the profiled product"
     assert "status: finished" in finished_text
     assert "## Route Decision" in finished_text
     assert "agents/_goal_intake.md" in finished_text
-    assert archived_reviewed_path.read_text(encoding="utf-8") == golden_spec_path.read_text(encoding="utf-8")
+    assert archived_reviewed_path.read_text(encoding="utf-8") == golden_text
     assert "agents/audit/completion_manifest.json" in archived_reviewed_path.read_text(encoding="utf-8")
-    assert "SPEC-42" in decision_path.read_text(encoding="utf-8")
+    assert "SPEC-42" in decision_text
+    assert "Deliver the product outcome captured in `IDEA-42`" in golden_text
+    assert "Convert `IDEA-42` into a traceable GoalSpec draft package." not in golden_text
+    assert "Persist completion-manifest drafting state before spec output" not in golden_text
+    assert "smallest bounded spec slice" in decision_text
+    assert "preserves GoalSpec traceability" not in decision_text
     assert stale_deferred_text not in profile_md_path.read_text(encoding="utf-8")
     assert stale_deferred_text not in completion_manifest_path.read_text(encoding="utf-8")
     assert stale_deferred_text not in completion_report_path.read_text(encoding="utf-8")
@@ -1651,9 +1658,15 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
         "idea_id: IDEA-201\n"
         "title: Preserve GoalSpec Idempotency\n"
         "decomposition_profile: moderate\n"
-        "---\n\n"
+        "---\n"
+        "\n"
         "# Preserve GoalSpec Idempotency\n\n"
-        "Exercise restart-safe synthesis reuse.\n"
+        "Exercise restart-safe synthesis reuse for a product-scoped GoalSpec modernization.\n\n"
+        "## Capability Domains\n"
+        "- Goal intake artifact capture\n"
+        "- Objective profile sync persistence\n\n"
+        "## Progression Lines\n"
+        "- Move from raw goal intake to staged product brief to synced objective profile.\n"
     )
     emitted_at = _dt("2026-03-21T12:00:00Z")
     run_id = "goalspec-idempotent-201"
@@ -1740,6 +1753,13 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     )
 
     assert second_result == first_result
+    assert "Deliver the product outcome captured in `IDEA-201`" in first_queue_text
+    assert "- Goal intake artifact capture" in first_queue_text
+    assert "Keep measurable validation and bounded output expectations attached to the synthesized slice" in first_queue_text
+    assert "Convert `IDEA-201` into a traceable GoalSpec draft package." not in first_queue_text
+    assert "Persist completion-manifest drafting state before spec output" not in first_queue_text
+    assert "smallest bounded spec slice" in first_decision_text
+    assert "GoalSpec traceability" not in first_decision_text
     assert spec_record_path.read_text(encoding="utf-8") == first_record_text
     assert family_state_path.read_text(encoding="utf-8") == first_family_state_text
     assert queue_spec_path.read_text(encoding="utf-8") == first_queue_text
