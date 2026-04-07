@@ -8,6 +8,7 @@ import warnings
 import pytest
 
 from millrace_engine.compiler import CompileStatus, FrozenRunCompiler
+from millrace_engine.compounding import build_injected_procedure_bundle
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import ControlError, EngineControl
 from millrace_engine.contracts import (
@@ -16,6 +17,8 @@ from millrace_engine.contracts import (
     LoopConfigDefinition,
     ModelProfileDefinition,
     PersistedObjectKind,
+    ProcedureLifecycleRecord,
+    ProcedureLifecycleState,
     ProcedureScope,
     RegisteredStageKindDefinition,
     RegistryObjectRef,
@@ -578,6 +581,32 @@ def _write_compounding_procedure(
         created_at="2026-04-07T18:00:00Z",
     )
     path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _write_compounding_lifecycle_record(
+    workspace: Path,
+    *,
+    procedure_id: str,
+    state: ProcedureLifecycleState,
+    changed_by: str = "qa.fixture",
+    reason: str = "fixture lifecycle decision",
+    replacement_procedure_id: str | None = None,
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "lifecycle"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    record = ProcedureLifecycleRecord(
+        record_id=f"record.{state.value}.{procedure_id.replace('.', '-')}",
+        procedure_id=procedure_id,
+        state=state,
+        scope=ProcedureScope.WORKSPACE,
+        changed_at="2026-04-07T19:00:00Z",
+        changed_by=changed_by,
+        reason=reason,
+        replacement_procedure_id=replacement_procedure_id,
+    )
+    path = target_dir / f"{record.record_id}.json"
+    path.write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -1947,6 +1976,12 @@ def test_execution_stage_injects_workspace_scoped_procedures_with_stage_rules_an
         summary="Apply the known builder fix sequence before continuing.",
         procedure_markdown="# Workspace Builder Procedure\n\n" + ("Step: keep the working tree coherent.\n" * 180),
     )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.selected",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="reviewed for builder reuse",
+    )
     _write_compounding_procedure(
         workspace,
         filename="workspace-qa-ignored.json",
@@ -1979,6 +2014,70 @@ def test_execution_stage_injects_workspace_scoped_procedures_with_stage_rules_an
     assert injection["procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
     assert injection["procedures"][0]["source_stage"] == "builder"
     assert injection["procedures"][0]["scope"] == "workspace"
+
+
+def test_compounding_retrieval_requires_explicit_promotion_and_withholds_deprecated_workspace_procedures(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-promoted.json",
+        procedure_id="proc.workspace.builder.promoted",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Promoted Builder Procedure",
+        summary="Reviewed builder procedure.",
+        procedure_markdown="Use the reviewed builder path.",
+    )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.promoted",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="approved for broader reuse",
+    )
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-stale.json",
+        procedure_id="proc.workspace.builder.stale",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Stale Builder Procedure",
+        summary="Never explicitly reviewed.",
+        procedure_markdown="This should stay withheld.",
+    )
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-deprecated.json",
+        procedure_id="proc.workspace.builder.deprecated",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Deprecated Builder Procedure",
+        summary="This path is no longer safe.",
+        procedure_markdown="This should not be injected.",
+    )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.deprecated",
+        state=ProcedureLifecycleState.DEPRECATED,
+        reason="superseded by a safer path",
+    )
+
+    bundle = build_injected_procedure_bundle(
+        paths,
+        run_id="builder-governance-run",
+        stage=StageType.BUILDER,
+    )
+
+    assert bundle is not None
+    assert [procedure.procedure_id for procedure in bundle.considered_procedures] == [
+        "proc.workspace.builder.promoted"
+    ]
+    assert [procedure.procedure_id for procedure in bundle.procedures] == [
+        "proc.workspace.builder.promoted"
+    ]
 
 
 def test_execution_plane_injects_run_scoped_builder_candidate_into_later_qa_stage(tmp_path: Path) -> None:
@@ -2024,6 +2123,12 @@ def test_control_run_provenance_reports_compounding_creation_and_selection_detai
         title="Workspace Builder Procedure",
         summary="Apply the known builder fix sequence before continuing.",
         procedure_markdown="# Workspace Builder Procedure\n\n" + ("Keep the working tree coherent.\n" * 180),
+    )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.selected",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="reviewed for builder reuse",
     )
 
     plane = configure_execution_plane(

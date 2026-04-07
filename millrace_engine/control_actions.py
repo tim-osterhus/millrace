@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .adapters.control_mailbox import ControlCommand, normalize_command_issuer, write_command
+from .compounding import deprecate_procedure, promote_procedure
 from .control_common import ControlError, queue_control_error
 from .control_models import OperationResult
 from .control_mutations import append_task_to_backlog, copy_idea_into_raw_queue
@@ -19,6 +20,15 @@ def normalize_supervisor_issuer(issuer: str) -> str:
         return normalize_command_issuer(issuer)
     except ValueError as exc:
         raise ControlError(str(exc)) from exc
+
+
+def normalize_lifecycle_actor(changed_by: str) -> str:
+    """Return one validated lifecycle actor token."""
+
+    normalized = str(changed_by).strip()
+    if not normalized:
+        raise ControlError("changed_by may not be empty")
+    return normalized
 
 
 def operation_with_payload_value(operation: OperationResult, *, key: str, value: object) -> OperationResult:
@@ -348,6 +358,142 @@ def add_idea(paths: RuntimePaths, *, file: Path | str, daemon_running: bool) -> 
         applied=True,
         message="idea queued",
         payload={"path": copied.as_posix()},
+    )
+
+
+def compounding_promote(
+    paths: RuntimePaths,
+    *,
+    procedure_id: str,
+    changed_by: str,
+    reason: str,
+    daemon_running: bool,
+) -> OperationResult:
+    """Promote one procedure into broader-scope reuse directly or by mailbox."""
+
+    normalized_changed_by = normalize_lifecycle_actor(changed_by)
+    normalized_procedure_id = normalize_task_id(procedure_id, action_label="compounding promote")
+    if daemon_running:
+        envelope = write_command(
+            paths,
+            ControlCommand.COMPOUNDING_PROMOTE,
+            payload={
+                "procedure_id": normalized_procedure_id,
+                "changed_by": normalized_changed_by,
+                "reason": reason,
+            },
+        )
+        return OperationResult(
+            command_id=envelope.command_id,
+            mode="mailbox",
+            applied=True,
+            message="compounding_promote queued",
+            payload={
+                "action": "promote",
+                "procedure_id": normalized_procedure_id,
+                "changed_by": normalized_changed_by,
+                "reason": reason,
+            },
+        )
+    try:
+        result = promote_procedure(
+            paths,
+            procedure_id=normalized_procedure_id,
+            changed_by=normalized_changed_by,
+            reason=reason,
+        )
+    except ValueError as exc:
+        raise ControlError(str(exc)) from exc
+    payload: dict[str, object] = {
+        "action": "promote",
+        "procedure_id": result.procedure.artifact.procedure_id,
+        "changed_by": normalized_changed_by,
+        "reason": reason,
+        "artifact_path": result.procedure.artifact_path.as_posix(),
+        "retrieval_status": result.procedure.retrieval_status,
+    }
+    if result.source_procedure_id is not None:
+        payload["source_procedure_id"] = result.source_procedure_id
+    if result.source_artifact_path is not None:
+        payload["source_artifact_path"] = result.source_artifact_path.as_posix()
+    if result.lifecycle_record is not None:
+        payload["record_id"] = result.lifecycle_record.record.record_id
+        payload["record_path"] = result.lifecycle_record.path.as_posix()
+    return OperationResult(
+        mode="direct",
+        applied=result.applied,
+        message="procedure promoted" if result.applied else "procedure already promoted",
+        payload=payload,
+    )
+
+
+def compounding_deprecate(
+    paths: RuntimePaths,
+    *,
+    procedure_id: str,
+    changed_by: str,
+    reason: str,
+    replacement_procedure_id: str | None,
+    daemon_running: bool,
+) -> OperationResult:
+    """Deprecate one workspace-scope reusable procedure."""
+
+    normalized_changed_by = normalize_lifecycle_actor(changed_by)
+    normalized_procedure_id = normalize_task_id(procedure_id, action_label="compounding deprecate")
+    normalized_replacement = replacement_procedure_id.strip() if replacement_procedure_id is not None else None
+    if normalized_replacement == "":
+        normalized_replacement = None
+    if daemon_running:
+        envelope = write_command(
+            paths,
+            ControlCommand.COMPOUNDING_DEPRECATE,
+            payload={
+                "procedure_id": normalized_procedure_id,
+                "changed_by": normalized_changed_by,
+                "reason": reason,
+                "replacement_procedure_id": normalized_replacement,
+            },
+        )
+        return OperationResult(
+            command_id=envelope.command_id,
+            mode="mailbox",
+            applied=True,
+            message="compounding_deprecate queued",
+            payload={
+                "action": "deprecate",
+                "procedure_id": normalized_procedure_id,
+                "changed_by": normalized_changed_by,
+                "reason": reason,
+                "replacement_procedure_id": normalized_replacement,
+            },
+        )
+    try:
+        result = deprecate_procedure(
+            paths,
+            procedure_id=normalized_procedure_id,
+            changed_by=normalized_changed_by,
+            reason=reason,
+            replacement_procedure_id=normalized_replacement,
+        )
+    except ValueError as exc:
+        raise ControlError(str(exc)) from exc
+    payload: dict[str, object] = {
+        "action": "deprecate",
+        "procedure_id": result.procedure.artifact.procedure_id,
+        "changed_by": normalized_changed_by,
+        "reason": reason,
+        "replacement_procedure_id": normalized_replacement,
+        "artifact_path": result.procedure.artifact_path.as_posix(),
+        "retrieval_status": result.procedure.retrieval_status,
+    }
+    if result.lifecycle_record is not None:
+        payload["record_id"] = result.lifecycle_record.record.record_id
+        payload["record_path"] = result.lifecycle_record.path.as_posix()
+    return OperationResult(
+        mode="direct",
+        applied=result.applied,
+        message="procedure deprecated" if result.applied else "procedure already deprecated",
+        payload=payload,
     )
 
 

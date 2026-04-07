@@ -11,7 +11,13 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from .compiler import CompileTimeResolvedSnapshot
 from .config import ConfigApplyBoundary, ConfigSourceInfo, EngineConfig
-from .contract_compounding import ConsideredProcedure, InjectedProcedure, ProcedureInjectionBundle, ProcedureScope
+from .contract_compounding import (
+    ConsideredProcedure,
+    InjectedProcedure,
+    ProcedureInjectionBundle,
+    ProcedureLifecycleState,
+    ProcedureScope,
+)
 from .contracts import AuditGateDecision, CompletionDecision, ContractModel, ExecutionStatus, ResearchMode, ResearchStatus
 from .diagnostics import DiagnosticsPolicyEvidenceSnapshot
 from .events import EventRecord
@@ -743,6 +749,77 @@ class RunCompoundingReport(ContractModel):
     @property
     def selection_count(self) -> int:
         return len(self.procedure_selections)
+
+
+class CompoundingLifecycleRecordView(ContractModel):
+    """Operator-facing persisted lifecycle decision for one procedure."""
+
+    record_id: str
+    procedure_id: str
+    state: ProcedureLifecycleState
+    scope: ProcedureScope
+    changed_at: datetime
+    changed_by: str
+    reason: str
+    replacement_procedure_id: str | None = None
+    record_path: Path
+
+    @field_validator("changed_at", mode="before")
+    @classmethod
+    def normalize_changed_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+    @field_validator("record_path", mode="before")
+    @classmethod
+    def normalize_record_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingProcedureView(ContractModel):
+    """Inspectable compounding procedure plus effective lifecycle status."""
+
+    procedure_id: str
+    scope: ProcedureScope
+    source_run_id: str
+    source_stage: str
+    title: str
+    summary: str
+    artifact_path: Path
+    retrieval_status: Literal["eligible", "stale", "deprecated", "run_candidate"]
+    eligible_for_retrieval: bool
+    evidence_refs: tuple[str, ...] = ()
+    latest_lifecycle_record: CompoundingLifecycleRecordView | None = None
+    lifecycle_record_count: int = Field(default=0, ge=0)
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingProcedureListReport(ContractModel):
+    """Deterministic operator-facing list of governed procedures."""
+
+    config_path: Path
+    procedures: tuple[CompoundingProcedureView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingProcedureReport(ContractModel):
+    """Detailed operator-facing report for one governed procedure."""
+
+    config_path: Path
+    procedure: CompoundingProcedureView
+    lifecycle_records: tuple[CompoundingLifecycleRecordView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
 
 
 class OperationResult(ContractModel):

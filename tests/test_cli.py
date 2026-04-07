@@ -24,6 +24,8 @@ from millrace_engine.contracts import (
     ExecutionResearchHandoff,
     ModelProfileDefinition,
     PersistedObjectKind,
+    ProcedureLifecycleRecord,
+    ProcedureLifecycleState,
     ProcedureScope,
     ResearchStatus,
     ResearchRecoveryDecision,
@@ -285,6 +287,32 @@ def write_compounding_procedure(
         created_at="2026-04-07T18:00:00Z",
     )
     path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def write_compounding_lifecycle_record(
+    workspace: Path,
+    *,
+    procedure_id: str,
+    state: ProcedureLifecycleState,
+    changed_by: str = "cli.fixture",
+    reason: str = "fixture lifecycle decision",
+    replacement_procedure_id: str | None = None,
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "lifecycle"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    record = ProcedureLifecycleRecord(
+        record_id=f"record.{state.value}.{procedure_id.replace('.', '-')}",
+        procedure_id=procedure_id,
+        state=state,
+        scope=ProcedureScope.WORKSPACE,
+        changed_at="2026-04-07T19:00:00Z",
+        changed_by=changed_by,
+        reason=reason,
+        replacement_procedure_id=replacement_procedure_id,
+    )
+    path = target_dir / f"{record.record_id}.json"
+    path.write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -3354,6 +3382,12 @@ def test_cli_run_provenance_reports_compounding_summary(tmp_path: Path) -> None:
         summary="Apply the known builder fix sequence before continuing.",
         procedure_markdown="# Workspace Builder Procedure\n\nKeep the working tree coherent.\n",
     )
+    write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.selected",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="approved for builder reuse",
+    )
     script = write_compounding_stage_driver(tmp_path)
     engine = MillraceEngine(
         config_path,
@@ -3399,6 +3433,176 @@ def test_cli_run_provenance_reports_compounding_summary(tmp_path: Path) -> None:
     assert "Procedure selections:" in text_result.stdout
     assert "Injected: proc.workspace.builder.selected" in text_result.stdout
     assert "Considered: proc.workspace.builder.selected" in text_result.stdout
+
+
+def test_cli_compounding_procedures_list_and_show_reports_lifecycle_status(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-reviewed.json",
+        procedure_id="proc.workspace.builder.reviewed",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Reviewed Builder Procedure",
+        summary="Approved workspace reuse.",
+        procedure_markdown="Use the reviewed builder flow.",
+    )
+    write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.reviewed",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="review approved",
+    )
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-stale.json",
+        procedure_id="proc.workspace.builder.stale",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Stale Builder Procedure",
+        summary="Never reviewed for reuse.",
+        procedure_markdown="Should stay withheld.",
+    )
+
+    result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "procedures", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert [item["procedure_id"] for item in payload["procedures"]] == [
+        "proc.workspace.builder.reviewed",
+        "proc.workspace.builder.stale",
+    ]
+    assert payload["procedures"][0]["retrieval_status"] == "eligible"
+    assert payload["procedures"][1]["retrieval_status"] == "stale"
+
+    text_result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "procedures"])
+
+    assert text_result.exit_code == 0
+    assert "proc.workspace.builder.reviewed [workspace] status=eligible eligible=yes" in text_result.stdout
+    assert "proc.workspace.builder.stale [workspace] status=stale eligible=no" in text_result.stdout
+
+    show_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "compounding", "procedures", "show", "proc.workspace.builder.reviewed"],
+    )
+
+    assert show_result.exit_code == 0
+    assert "Procedure ID: proc.workspace.builder.reviewed" in show_result.stdout
+    assert "Lifecycle records:" in show_result.stdout
+    assert "review approved" in show_result.stdout
+
+
+def test_cli_compounding_procedure_promote_materializes_workspace_artifact_and_record(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    run_candidate_dir = workspace / "agents" / "compounding" / "procedures" / "run-123"
+    run_candidate_dir.mkdir(parents=True, exist_ok=True)
+    candidate_path = run_candidate_dir / "candidate.json"
+    candidate = ReusableProcedureArtifact(
+        procedure_id="proc.run.run-123.event-1.builder",
+        scope=ProcedureScope.RUN,
+        source_run_id="run-123",
+        source_stage=StageType.BUILDER,
+        title="Run Builder Candidate",
+        summary="Candidate for broader reuse.",
+        procedure_markdown="Use the stable builder flow.",
+        tags=("fixture",),
+        evidence_refs=("agents/runs/run-123/transition_history.jsonl",),
+        created_at="2026-04-07T18:00:00Z",
+    )
+    candidate_path.write_text(candidate.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "procedures",
+            "promote",
+            "proc.run.run-123.event-1.builder",
+            "--reason",
+            "reviewed for broader reuse",
+            "--changed-by",
+            "builder.qa",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["message"] == "procedure promoted"
+    assert payload["payload"]["procedure_id"] == "proc.workspace.run-123.event-1.builder"
+    workspace_path = workspace / "agents" / "compounding" / "procedures" / "proc.workspace.run-123.event-1.builder.json"
+    assert workspace_path.exists()
+    promoted_artifact = ReusableProcedureArtifact.model_validate_json(workspace_path.read_text(encoding="utf-8"))
+    assert promoted_artifact.scope is ProcedureScope.WORKSPACE
+    lifecycle_dir = workspace / "agents" / "compounding" / "lifecycle"
+    records = sorted(lifecycle_dir.glob("*.json"))
+    assert records
+    lifecycle_payload = ProcedureLifecycleRecord.model_validate_json(records[-1].read_text(encoding="utf-8"))
+    assert lifecycle_payload.procedure_id == "proc.workspace.run-123.event-1.builder"
+    assert lifecycle_payload.state is ProcedureLifecycleState.PROMOTED
+
+
+def test_cli_compounding_procedure_deprecate_queues_mailbox_when_daemon_running(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-reviewed.json",
+        procedure_id="proc.workspace.builder.reviewed",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Reviewed Builder Procedure",
+        summary="Approved workspace reuse.",
+        procedure_markdown="Use the reviewed builder flow.",
+    )
+    write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.reviewed",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="review approved",
+    )
+    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    runtime_state = RuntimeState(
+        process_running=True,
+        paused=False,
+        execution_status=ExecutionStatus.BUILDER_RUNNING,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-07T19:30:00Z",
+    )
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "procedures",
+            "deprecate",
+            "proc.workspace.builder.reviewed",
+            "--reason",
+            "unsafe after regression",
+            "--changed-by",
+            "operator.review",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "mailbox"
+    assert payload["message"] == "compounding_deprecate queued"
+    commands = sorted(paths.commands_incoming_dir.glob("*.json"))
+    assert len(commands) == 1
+    command_payload = json.loads(commands[0].read_text(encoding="utf-8"))
+    assert command_payload["command"] == "compounding_deprecate"
+    assert command_payload["payload"]["procedure_id"] == "proc.workspace.builder.reviewed"
+    assert command_payload["payload"]["reason"] == "unsafe after regression"
 
 
 def test_cli_run_provenance_survives_broken_live_registry_with_frozen_history_json(

@@ -15,6 +15,7 @@ from ..contract_compounding import (
 )
 from ..contract_core import StageType
 from ..paths import RuntimePaths
+from .lifecycle import load_retrievable_workspace_procedures
 
 
 _IMPLEMENTATION_SOURCE_STAGES: tuple[StageType, ...] = (
@@ -236,7 +237,7 @@ def _iter_candidate_artifacts(
     allowed_scopes: tuple[ProcedureScope, ...],
 ) -> Iterable[ReusableProcedureArtifact]:
     if ProcedureScope.WORKSPACE in allowed_scopes:
-        yield from _load_artifacts_from_directory(paths.compounding_procedures_dir)
+        yield from load_retrievable_workspace_procedures(paths)
     if ProcedureScope.RUN in allowed_scopes:
         yield from _load_artifacts_from_directory(paths.compounding_procedures_dir / run_id)
 

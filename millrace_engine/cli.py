@@ -12,6 +12,8 @@ import typer
 
 from .cli_rendering import (
     _asset_inventory_lines,
+    render_compounding_procedure,
+    render_compounding_procedures,
     _legacy_policy_lines,
     _legacy_unmapped_lines,
     _selection_explanation_lines,
@@ -33,7 +35,13 @@ from .cli_rendering import (
     render_upgrade_preview,
 )
 from .control import ConfigShowReport, ControlError, EngineControl
-from .control_models import InterviewListReport, InterviewMutationReport, InterviewQuestionReport
+from .control_models import (
+    CompoundingProcedureListReport,
+    CompoundingProcedureReport,
+    InterviewListReport,
+    InterviewMutationReport,
+    InterviewQuestionReport,
+)
 from .events import EventRecord
 
 
@@ -41,6 +49,8 @@ app = typer.Typer(add_completion=False, help="Control the Millrace runtime.")
 config_app = typer.Typer(help="Inspect or mutate runtime config.")
 queue_app = typer.Typer(help="Inspect visible execution queues.")
 queue_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work.")
+compounding_app = typer.Typer(help="Inspect governed reusable procedures.")
+compounding_procedures_app = typer.Typer(help="Inspect or mutate governed reusable procedures.")
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
@@ -49,6 +59,8 @@ supervisor_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued w
 app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
 queue_app.add_typer(queue_cleanup_app, name="cleanup")
+app.add_typer(compounding_app, name="compounding")
+compounding_app.add_typer(compounding_procedures_app, name="procedures")
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
@@ -515,6 +527,94 @@ def queue_root(
         json_mode=json_mode,
         detail=False,
     )
+
+
+@compounding_procedures_app.command("show")
+def compounding_procedure_show_command(
+    ctx: typer.Context,
+    procedure_id: Annotated[str, typer.Argument(help="Procedure id to inspect.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one governed reusable procedure plus its lifecycle history."""
+
+    report: CompoundingProcedureReport = _run_expected(
+        lambda: _control(ctx).compounding_procedure(procedure_id),
+        json_mode=json_mode,
+    )
+    render_compounding_procedure(report, json_mode=json_mode)
+
+
+@compounding_procedures_app.command("promote")
+def compounding_procedure_promote_command(
+    ctx: typer.Context,
+    procedure_id: Annotated[str, typer.Argument(help="Run-scoped or workspace procedure id to promote.")],
+    reason: Annotated[str, typer.Option("--reason", help="Why this procedure is approved for broader reuse.")],
+    changed_by: Annotated[
+        str,
+        typer.Option("--changed-by", help="Audit actor token for this review decision."),
+    ] = "cli",
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Promote one reusable procedure into workspace-scope governed reuse."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).compounding_promote(
+                procedure_id,
+                changed_by=changed_by,
+                reason=reason,
+            ),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@compounding_procedures_app.command("deprecate")
+def compounding_procedure_deprecate_command(
+    ctx: typer.Context,
+    procedure_id: Annotated[str, typer.Argument(help="Workspace procedure id to deprecate.")],
+    reason: Annotated[str, typer.Option("--reason", help="Why this procedure should be withheld.")],
+    replacement_procedure_id: Annotated[
+        str | None,
+        typer.Option("--replacement-procedure-id", help="Optional replacement workspace procedure id."),
+    ] = None,
+    changed_by: Annotated[
+        str,
+        typer.Option("--changed-by", help="Audit actor token for this review decision."),
+    ] = "cli",
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Deprecate one workspace-scope reusable procedure."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).compounding_deprecate(
+                procedure_id,
+                changed_by=changed_by,
+                reason=reason,
+                replacement_procedure_id=replacement_procedure_id,
+            ),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@compounding_procedures_app.callback(invoke_without_command=True)
+def compounding_procedures_root(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show governed reusable procedures and lifecycle status."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    report: CompoundingProcedureListReport = _run_expected(
+        lambda: _control(ctx).compounding_procedures(),
+        json_mode=json_mode,
+    )
+    render_compounding_procedures(report, json_mode=json_mode)
 
 
 @research_app.command("history")

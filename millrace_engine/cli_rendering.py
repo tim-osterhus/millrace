@@ -10,6 +10,8 @@ import typer
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .control import (
     AssetInventoryView,
+    CompoundingProcedureListReport,
+    CompoundingProcedureReport,
     OperationResult,
     QueueSnapshot,
     ResearchReport,
@@ -1003,6 +1005,62 @@ def render_log_events(events: list[EventRecord], *, json_mode: bool) -> None:
         typer.echo("No events.")
         return
     typer.echo("\n".join(render_event_record_line(event) for event in events))
+
+
+def render_compounding_procedures(report: CompoundingProcedureListReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    if not report.procedures:
+        typer.echo("No compounding procedures.")
+        return
+    lines: list[str] = []
+    for procedure in report.procedures:
+        lines.append(
+            f"{procedure.procedure_id} [{procedure.scope.value}] "
+            f"status={procedure.retrieval_status} eligible={'yes' if procedure.eligible_for_retrieval else 'no'}"
+        )
+        lines.append(f"  Title: {procedure.title}")
+        lines.append(f"  Source stage: {procedure.source_stage}")
+        lines.append(f"  Artifact: {procedure.artifact_path}")
+        if procedure.latest_lifecycle_record is not None:
+            lines.append(
+                "  Latest review: "
+                f"{procedure.latest_lifecycle_record.state.value} by {procedure.latest_lifecycle_record.changed_by}"
+            )
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_procedure(report: CompoundingProcedureReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    procedure = report.procedure
+    lines = [
+        f"Procedure ID: {procedure.procedure_id}",
+        f"Scope: {procedure.scope.value}",
+        f"Status: {procedure.retrieval_status}",
+        f"Eligible for retrieval: {'yes' if procedure.eligible_for_retrieval else 'no'}",
+        f"Title: {procedure.title}",
+        f"Source run: {procedure.source_run_id}",
+        f"Source stage: {procedure.source_stage}",
+        f"Artifact: {procedure.artifact_path}",
+        f"Summary: {procedure.summary}",
+    ]
+    if procedure.evidence_refs:
+        lines.append("Evidence refs:")
+        lines.extend(f"- {item}" for item in procedure.evidence_refs)
+    if report.lifecycle_records:
+        lines.append("Lifecycle records:")
+        for record in report.lifecycle_records:
+            line = (
+                f"- {record.state.value} at {record.changed_at.isoformat().replace('+00:00', 'Z')} "
+                f"by {record.changed_by}: {record.reason}"
+            )
+            if record.replacement_procedure_id is not None:
+                line += f" replacement={record.replacement_procedure_id}"
+            lines.append(line)
+    typer.echo("\n".join(lines))
 
 
 def render_follow_event(event: EventRecord, *, json_mode: bool) -> None:

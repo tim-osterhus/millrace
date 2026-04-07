@@ -10,11 +10,19 @@ import time
 from pydantic import ValidationError
 
 from .adapters.control_mailbox import ControlCommand, write_command
+from .compounding import (
+    discover_governed_procedures,
+    governed_procedure_for_id,
+    lifecycle_history_for_procedure,
+)
 from .config import LoadedConfig, build_runtime_paths
+from .contract_compounding import ProcedureScope
 from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
 from .control_actions import (
     add_idea as add_idea_operation,
     add_task as add_task_operation,
+    compounding_deprecate as compounding_deprecate_operation,
+    compounding_promote as compounding_promote_operation,
     lifecycle_action,
     normalize_supervisor_issuer,
     operation_with_payload_value,
@@ -41,6 +49,10 @@ from .control_models import (
     AssetInventoryView,
     AssetResolutionView,
     CompletionStateView,
+    CompoundingLifecycleRecordView,
+    CompoundingProcedureListReport,
+    CompoundingProcedureReport,
+    CompoundingProcedureView,
     ConfigShowReport,
     InterviewListReport,
     InterviewMutationReport,
@@ -162,6 +174,48 @@ def _persisted_state_migration_apply_payload(
         "wrote_state_file": report.wrote_state_file,
         "summary": report.summary,
     }
+
+
+def _compounding_lifecycle_record_view(
+    path: Path,
+    *,
+    record: object,
+) -> CompoundingLifecycleRecordView:
+    return CompoundingLifecycleRecordView(
+        record_id=getattr(record, "record_id"),
+        procedure_id=getattr(record, "procedure_id"),
+        state=getattr(record, "state"),
+        scope=getattr(record, "scope"),
+        changed_at=getattr(record, "changed_at"),
+        changed_by=getattr(record, "changed_by"),
+        reason=getattr(record, "reason"),
+        replacement_procedure_id=getattr(record, "replacement_procedure_id"),
+        record_path=path,
+    )
+
+
+def _compounding_procedure_view(procedure: object) -> CompoundingProcedureView:
+    latest_record = getattr(procedure, "latest_record")
+    latest_view = (
+        _compounding_lifecycle_record_view(latest_record.path, record=latest_record.record)
+        if latest_record is not None
+        else None
+    )
+    artifact = getattr(procedure, "artifact")
+    return CompoundingProcedureView(
+        procedure_id=artifact.procedure_id,
+        scope=artifact.scope,
+        source_run_id=artifact.source_run_id,
+        source_stage=artifact.source_stage.value,
+        title=artifact.title,
+        summary=artifact.summary,
+        artifact_path=getattr(procedure, "artifact_path"),
+        retrieval_status=getattr(procedure, "retrieval_status"),
+        eligible_for_retrieval=getattr(procedure, "eligible_for_retrieval"),
+        evidence_refs=artifact.evidence_refs,
+        latest_lifecycle_record=latest_view,
+        lifecycle_record_count=len(getattr(procedure, "lifecycle_records")),
+    )
 
 
 def _supervisor_allowed_actions(
@@ -600,6 +654,81 @@ class EngineControl:
             )
         except ValidationError as exc:
             raise ControlError(f"run provenance is invalid: {validation_error_message(exc)}") from exc
+
+    def compounding_procedures(self) -> CompoundingProcedureListReport:
+        """Return all discoverable governed procedures and lifecycle status."""
+
+        try:
+            procedures = discover_governed_procedures(self.paths)
+        except ValidationError as exc:
+            raise ControlError(f"compounding procedures are invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding procedures are invalid: {single_line_message(exc)}") from exc
+        return CompoundingProcedureListReport(
+            config_path=self.config_path,
+            procedures=tuple(_compounding_procedure_view(procedure) for procedure in procedures),
+        )
+
+    def compounding_procedure(self, procedure_id: str) -> CompoundingProcedureReport:
+        """Return one governed procedure plus lifecycle history."""
+
+        normalized_procedure_id = procedure_id.strip()
+        if not normalized_procedure_id:
+            raise ControlError("compounding_procedure requires a procedure_id")
+        try:
+            procedure = governed_procedure_for_id(self.paths, normalized_procedure_id, include_run_candidates=True)
+            history = (
+                lifecycle_history_for_procedure(self.paths, procedure.artifact.procedure_id)
+                if procedure.artifact.scope is ProcedureScope.WORKSPACE
+                else ()
+            )
+        except ValidationError as exc:
+            raise ControlError(f"compounding procedure is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding procedure is invalid: {single_line_message(exc)}") from exc
+        return CompoundingProcedureReport(
+            config_path=self.config_path,
+            procedure=_compounding_procedure_view(procedure),
+            lifecycle_records=tuple(
+                _compounding_lifecycle_record_view(item.path, record=item.record) for item in history
+            ),
+        )
+
+    def compounding_promote(
+        self,
+        procedure_id: str,
+        *,
+        changed_by: str = "cli",
+        reason: str,
+    ) -> OperationResult:
+        """Promote one reusable procedure into workspace-scope governed reuse."""
+
+        return compounding_promote_operation(
+            self.paths,
+            procedure_id=procedure_id,
+            changed_by=changed_by,
+            reason=reason,
+            daemon_running=self.is_daemon_running(),
+        )
+
+    def compounding_deprecate(
+        self,
+        procedure_id: str,
+        *,
+        changed_by: str = "cli",
+        reason: str,
+        replacement_procedure_id: str | None = None,
+    ) -> OperationResult:
+        """Deprecate one workspace-scope reusable procedure."""
+
+        return compounding_deprecate_operation(
+            self.paths,
+            procedure_id=procedure_id,
+            changed_by=changed_by,
+            reason=reason,
+            replacement_procedure_id=replacement_procedure_id,
+            daemon_running=self.is_daemon_running(),
+        )
 
     def config_show(self) -> ConfigShowReport:
         """Return the current config payload for rendering."""

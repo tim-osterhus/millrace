@@ -9,6 +9,10 @@ from typing import Protocol
 
 from .adapters.control_mailbox import ControlCommand, ControlCommandEnvelope
 from .config import LoadedConfig, load_engine_config
+from .control_actions import (
+    compounding_deprecate as compounding_deprecate_operation,
+    compounding_promote as compounding_promote_operation,
+)
 from .control_common import ControlError
 from .control_models import OperationResult
 from .control_mutations import (
@@ -101,6 +105,8 @@ def build_engine_mailbox_command_registry() -> EngineMailboxCommandRegistry:
             ControlCommand.QUEUE_REORDER: _handle_queue_reorder,
             ControlCommand.QUEUE_CLEANUP_REMOVE: _handle_queue_cleanup_remove,
             ControlCommand.QUEUE_CLEANUP_QUARANTINE: _handle_queue_cleanup_quarantine,
+            ControlCommand.COMPOUNDING_PROMOTE: _handle_compounding_promote,
+            ControlCommand.COMPOUNDING_DEPRECATE: _handle_compounding_deprecate,
         }
     )
 
@@ -310,4 +316,56 @@ def _handle_queue_cleanup_quarantine(
         envelope=envelope,
         record=record,
         message="queue cleanup quarantined task",
+    )
+
+
+def _handle_compounding_promote(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    procedure_id = envelope.payload.get("procedure_id")
+    changed_by = envelope.payload.get("changed_by", envelope.issuer)
+    reason = envelope.payload.get("reason", "")
+    if not isinstance(procedure_id, str) or not procedure_id.strip():
+        raise ControlError("compounding_promote requires a procedure_id")
+    if not isinstance(changed_by, str):
+        raise ControlError("compounding_promote requires a changed_by string")
+    if not isinstance(reason, str):
+        raise ControlError("compounding_promote requires a reason string")
+    return EngineMailboxCommandExecution(
+        operation=compounding_promote_operation(
+            context.hooks.get_paths(),
+            procedure_id=procedure_id,
+            changed_by=changed_by,
+            reason=reason,
+            daemon_running=False,
+        )
+    )
+
+
+def _handle_compounding_deprecate(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    procedure_id = envelope.payload.get("procedure_id")
+    changed_by = envelope.payload.get("changed_by", envelope.issuer)
+    reason = envelope.payload.get("reason", "")
+    replacement_procedure_id = envelope.payload.get("replacement_procedure_id")
+    if not isinstance(procedure_id, str) or not procedure_id.strip():
+        raise ControlError("compounding_deprecate requires a procedure_id")
+    if not isinstance(changed_by, str):
+        raise ControlError("compounding_deprecate requires a changed_by string")
+    if not isinstance(reason, str):
+        raise ControlError("compounding_deprecate requires a reason string")
+    if replacement_procedure_id is not None and not isinstance(replacement_procedure_id, str):
+        raise ControlError("compounding_deprecate replacement_procedure_id must be a string")
+    return EngineMailboxCommandExecution(
+        operation=compounding_deprecate_operation(
+            context.hooks.get_paths(),
+            procedure_id=procedure_id,
+            changed_by=changed_by,
+            reason=reason,
+            replacement_procedure_id=replacement_procedure_id,
+            daemon_running=False,
+        )
     )
