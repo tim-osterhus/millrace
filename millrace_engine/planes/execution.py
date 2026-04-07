@@ -45,6 +45,8 @@ from ..standard_runtime import compile_execution_runtime_selection
 from ..status import StatusChange
 from ..stages.base import ExecutionStage, StageExecutionError
 from .base import PlaneRuntime, StageCommandMap
+from .execution_flows import handle_qa_outcome as handle_qa_outcome_flow
+from .execution_flows import run_quickfix_loop as run_quickfix_loop_flow
 from .execution_recovery import (
     _RecoveryResult,
     create_blocker_bundle as create_blocker_bundle_helper,
@@ -704,144 +706,13 @@ class ExecutionPlane(PlaneRuntime):
         *,
         recovery_rounds: int,
     ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        max_attempts = self.config.execution.quickfix_max_attempts
-        last_result: StageResult | None = stage_results[-1] if stage_results else None
-        quickfix_stage = self.config.routing.quickfix_stage
-        verification_stage = self.config.routing.quickfix_verification_stage
-        self._mark_quickfix_artifact_active()
-
-        for attempt in range(1, max_attempts + 1):
-            self._emit_event(
-                EventType.QUICKFIX_ATTEMPT,
-                {
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
-                    "run_id": run_id,
-                    "task_id": task.task_id,
-                    "title": task.title,
-                },
-            )
-            hotfix_result = self._run_stage(quickfix_stage, task, run_id)
-            stage_results.append(hotfix_result)
-            last_result = hotfix_result
-            hotfix_status = ExecutionStatus(hotfix_result.status)
-            self._record_stage_transition(
-                hotfix_result,
-                task_before=task,
-                task_after=task,
-                routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
-                selected_edge_id=(
-                    "execution.hotfix.success.doublecheck"
-                    if hotfix_status is ExecutionStatus.BUILDER_COMPLETE
-                    else "execution.hotfix.failure.escalate"
-                ),
-                selected_edge_reason=(
-                    "hotfix completed, so doublecheck can verify the patch"
-                    if hotfix_status is ExecutionStatus.BUILDER_COMPLETE
-                    else f"hotfix ended with {hotfix_status.value}, so escalation is required"
-                ),
-                condition_inputs={"status": hotfix_status.value, "attempt": attempt},
-                condition_result=hotfix_status is ExecutionStatus.BUILDER_COMPLETE,
-            )
-            if hotfix_status is not ExecutionStatus.BUILDER_COMPLETE:
-                recovery = self._recover_or_quarantine(
-                    task,
-                    run_id=run_id,
-                    stage_label=quickfix_stage.value.title(),
-                    why=f"attempt={attempt} exit={hotfix_result.exit_code} status={hotfix_status.value}",
-                    stage_results=stage_results,
-                    failing_result=hotfix_result,
-                )
-                if recovery.action == "quarantine":
-                    return ExecutionStatus.IDLE, None, recovery.quarantined_task, recovery.diagnostics_dir, attempt
-                return self._resume_after_recovery(
-                    task,
-                    run_id=run_id,
-                    stage_results=stage_results,
-                    recovery_rounds=recovery_rounds + 1,
-                    diagnostics_dir=recovery.diagnostics_dir,
-                )
-
-            doublecheck_result = self._run_stage(verification_stage, task, run_id)
-            stage_results.append(doublecheck_result)
-            last_result = doublecheck_result
-            doublecheck_status = ExecutionStatus(doublecheck_result.status)
-            self._record_stage_transition(
-                doublecheck_result,
-                task_before=task,
-                task_after=(None if doublecheck_status is ExecutionStatus.QA_COMPLETE else task),
-                routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
-                selected_edge_id=(
-                    "execution.doublecheck.success.update"
-                    if doublecheck_status is ExecutionStatus.QA_COMPLETE
-                    else (
-                        "execution.doublecheck.quickfix.retry"
-                        if doublecheck_status is ExecutionStatus.QUICKFIX_NEEDED
-                        else "execution.doublecheck.failure.escalate"
-                    )
-                ),
-                selected_edge_reason=(
-                    "doublecheck passed, so the task can finish through update"
-                    if doublecheck_status is ExecutionStatus.QA_COMPLETE
-                    else (
-                        "doublecheck still needs a quickfix attempt"
-                        if doublecheck_status is ExecutionStatus.QUICKFIX_NEEDED
-                        else f"doublecheck ended with {doublecheck_status.value}, so escalation is required"
-                    )
-                ),
-                condition_inputs={"status": doublecheck_status.value, "attempt": attempt},
-                condition_result=doublecheck_status is ExecutionStatus.QA_COMPLETE,
-            )
-            if doublecheck_status is ExecutionStatus.QA_COMPLETE:
-                archived = self._complete_success_path(task, run_id, stage_results)
-                return ExecutionStatus.IDLE, archived, None, None, attempt
-            if doublecheck_status is ExecutionStatus.QUICKFIX_NEEDED:
-                continue
-
-            recovery = self._recover_or_quarantine(
-                task,
-                run_id=run_id,
-                stage_label=verification_stage.value.title(),
-                why=f"attempt={attempt} exit={doublecheck_result.exit_code} status={doublecheck_status.value}",
-                stage_results=stage_results,
-                failing_result=doublecheck_result,
-            )
-            if recovery.action == "quarantine":
-                return ExecutionStatus.IDLE, None, recovery.quarantined_task, recovery.diagnostics_dir, attempt
-            return self._resume_after_recovery(
-                task,
-                run_id=run_id,
-                stage_results=stage_results,
-                recovery_rounds=recovery_rounds + 1,
-                diagnostics_dir=recovery.diagnostics_dir,
-            )
-
-        self._emit_event(
-            EventType.QUICKFIX_EXHAUSTED,
-            {
-                "attempts": max_attempts,
-                "max_attempts": max_attempts,
-                "run_id": run_id,
-                "task_id": task.task_id,
-                "title": task.title,
-            },
-        )
-        recovery = self._recover_or_quarantine(
+        return run_quickfix_loop_flow(
+            self,
             task,
-            run_id=run_id,
-            stage_label="Quickfix",
-            why="Quickfix attempts exhausted (still QUICKFIX_NEEDED)",
+            run_id,
             stage_results=stage_results,
-            failing_result=last_result,
-        )
-        if recovery.action == "quarantine":
-            return ExecutionStatus.IDLE, None, recovery.quarantined_task, recovery.diagnostics_dir, max_attempts
-        return self._resume_after_recovery(
-            task,
-            run_id=run_id,
-            stage_results=stage_results,
-            recovery_rounds=recovery_rounds + 1,
-            diagnostics_dir=recovery.diagnostics_dir,
+            recovery_rounds=recovery_rounds,
+            routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
         )
 
     def _handle_qa_outcome(
@@ -854,61 +725,15 @@ class ExecutionPlane(PlaneRuntime):
         stage_label: str,
         recovery_rounds: int,
     ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        qa_status = ExecutionStatus(qa_result.status)
-        self._record_stage_transition(
-            qa_result,
-            task_before=task,
-            task_after=(None if qa_status is ExecutionStatus.QA_COMPLETE else task),
-            routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
-            selected_edge_id=(
-                "execution.qa.success.update"
-                if qa_status is ExecutionStatus.QA_COMPLETE
-                else (
-                    "execution.qa.quickfix.hotfix"
-                    if qa_status is ExecutionStatus.QUICKFIX_NEEDED
-                    else "execution.qa.failure.escalate"
-                )
-            ),
-            selected_edge_reason=(
-                "qa passed, so update can finalize the task"
-                if qa_status is ExecutionStatus.QA_COMPLETE
-                else (
-                    "qa requested a quickfix loop"
-                    if qa_status is ExecutionStatus.QUICKFIX_NEEDED
-                    else f"qa ended with {qa_status.value}, so escalation is required"
-                )
-            ),
-            condition_inputs={"status": qa_status.value},
-            condition_result=qa_status is ExecutionStatus.QA_COMPLETE,
-        )
-        if qa_status is ExecutionStatus.QA_COMPLETE:
-            archived = self._complete_success_path(task, run_id, stage_results)
-            return ExecutionStatus.IDLE, archived, None, None, 0
-        if qa_status is ExecutionStatus.QUICKFIX_NEEDED:
-            self._mark_quickfix_artifact_active()
-            return self._run_quickfix_loop(
-                task,
-                run_id,
-                stage_results,
-                recovery_rounds=recovery_rounds,
-            )
-
-        recovery = self._recover_or_quarantine(
+        return handle_qa_outcome_flow(
+            self,
             task,
             run_id=run_id,
+            stage_results=stage_results,
+            qa_result=qa_result,
             stage_label=stage_label,
-            why=f"exit={qa_result.exit_code} status={qa_status.value}",
-            stage_results=stage_results,
-            failing_result=qa_result,
-        )
-        if recovery.action == "quarantine":
-            return ExecutionStatus.IDLE, None, recovery.quarantined_task, recovery.diagnostics_dir, 0
-        return self._resume_after_recovery(
-            task,
-            run_id=run_id,
-            stage_results=stage_results,
-            recovery_rounds=recovery_rounds + 1,
-            diagnostics_dir=recovery.diagnostics_dir,
+            recovery_rounds=recovery_rounds,
+            routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
         )
 
     def _run_builder_success_sequence(
