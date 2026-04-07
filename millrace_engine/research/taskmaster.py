@@ -23,6 +23,13 @@ from ..paths import RuntimePaths
 from .dispatcher import CompiledResearchDispatch
 from .goalspec import GoalSpecExecutionError
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
+from .goalspec_persistence import _load_objective_profile_inputs
+from .goalspec_scope_diagnostics import (
+    build_goal_anchor_tokens,
+    evaluate_scope_divergence,
+    infer_goal_scope_kind,
+    write_scope_divergence_record,
+)
 from .parser_helpers import _markdown_section, _split_frontmatter_block
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from .persistence_helpers import _load_json_model, _write_json_model
@@ -707,6 +714,46 @@ def execute_taskmaster(
         )
         for phase_step_id, phase_step_description in phase_steps
     ).rstrip() + "\n"
+    _objective_state, profile = _load_objective_profile_inputs(paths)
+    scope_record = evaluate_scope_divergence(
+        run_id=run_id,
+        emitted_at=emitted_at,
+        goal_id=family_state.goal_id or frontmatter.get("idea_id", "").strip() or spec_id,
+        title=frontmatter.get("title", "").strip() or spec_id,
+        stage_name="taskmaster",
+        source_path=family_state.source_idea_path or reviewed_relative_path,
+        expected_scope=infer_goal_scope_kind(
+            title=frontmatter.get("title", "").strip() or spec_id,
+            source_body=reviewed_text,
+            semantic_summary=profile.semantic_profile.objective_summary,
+            capability_domains=tuple(profile.semantic_profile.capability_domains),
+        ),
+        goal_anchor_tokens=build_goal_anchor_tokens(
+            title=frontmatter.get("title", "").strip() or spec_id,
+            source_body=reviewed_text,
+            semantic_summary=profile.semantic_profile.objective_summary,
+            capability_domains=tuple(profile.semantic_profile.capability_domains),
+            progression_lines=tuple(profile.semantic_profile.progression_lines),
+        ),
+        surfaces=(
+            ("reviewed_spec", reviewed_text),
+            (
+                "task_surfaces",
+                "\n".join(
+                    (
+                        shard_text,
+                        "Files to touch:",
+                        *(f"- {path}" for path in files_to_touch),
+                    )
+                ),
+            ),
+        ),
+    )
+    if scope_record.decision == "blocked":
+        record_path = write_scope_divergence_record(paths, scope_record)
+        raise TaskmasterExecutionError(
+            f"Scope divergence blocked {spec_id} during taskmaster; diagnostic: {record_path}"
+        )
     write_text_atomic(shard_path, shard_text)
 
     task_titles = _validate_strict_shard(

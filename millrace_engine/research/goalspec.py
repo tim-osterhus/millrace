@@ -17,6 +17,7 @@ from .goalspec_helpers import (
     resolve_goal_source,
 )
 from .goalspec_semantic_profile import GoalSemanticProfile
+from .goalspec_scope_diagnostics import ScopeDivergenceRecord, ScopeSurfaceDiagnostic
 from .governance import InitialFamilyPolicyPinDecision
 from .specs import (
     GoalSpecDecompositionProfile,
@@ -460,6 +461,8 @@ __all__ = [
     "ObjectiveProfileSyncStateRecord",
     "SpecInterviewExecutionResult",
     "SpecInterviewRecord",
+    "ScopeDivergenceRecord",
+    "ScopeSurfaceDiagnostic",
     "SpecSynthesisExecutionResult",
     "SpecSynthesisRecord",
     "execute_spec_interview",

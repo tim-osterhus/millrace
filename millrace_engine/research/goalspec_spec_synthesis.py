@@ -32,6 +32,12 @@ from .goalspec_persistence import (
     _load_objective_profile_inputs,
     _updated_goal_spec_family_state,
 )
+from .goalspec_scope_diagnostics import (
+    build_goal_anchor_tokens,
+    evaluate_scope_divergence,
+    infer_goal_scope_kind,
+    write_scope_divergence_record,
+)
 from .goalspec_stage_rendering import (
     render_phase_spec,
     render_queue_spec,
@@ -228,6 +234,47 @@ def execute_spec_synthesis(
         objective_profile_path=objective_state.profile_path,
         planned_spec_ids=planned_spec_ids,
     )
+    scope_record = evaluate_scope_divergence(
+        run_id=run_id,
+        emitted_at=emitted_at,
+        goal_id=source.idea_id,
+        title=source.title,
+        stage_name="spec_synthesis",
+        source_path=source.relative_source_path,
+        expected_scope=infer_goal_scope_kind(
+            title=source.title,
+            source_body=source.body,
+            semantic_summary=profile.semantic_profile.objective_summary,
+            capability_domains=tuple(profile.semantic_profile.capability_domains),
+        ),
+        goal_anchor_tokens=build_goal_anchor_tokens(
+            title=source.title,
+            source_body=source.body,
+            semantic_summary=profile.semantic_profile.objective_summary,
+            capability_domains=tuple(profile.semantic_profile.capability_domains),
+            progression_lines=tuple(profile.semantic_profile.progression_lines),
+        ),
+        surfaces=(
+            (
+                "objective_profile",
+                "\n".join(
+                    (
+                        profile.semantic_profile.objective_summary,
+                        *profile.semantic_profile.capability_domains,
+                        *profile.semantic_profile.progression_lines,
+                        *profile.milestones,
+                    )
+                ),
+            ),
+            ("queue_spec", queue_spec_text),
+            ("phase_spec", phase_spec_text),
+        ),
+    )
+    if scope_record.decision == "blocked":
+        record_path = write_scope_divergence_record(paths, scope_record)
+        raise GoalSpecExecutionError(
+            f"Scope divergence blocked {spec_id} during spec_synthesis; diagnostic: {record_path}"
+        )
     expected_family_state = _build_goal_spec_family_state(
         paths=paths,
         source=source,

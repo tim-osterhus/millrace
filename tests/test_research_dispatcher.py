@@ -9,6 +9,8 @@ import sys
 import pytest
 
 import millrace_engine.planes.research as research_plane_module
+import millrace_engine.research.goalspec_scope_diagnostics as goalspec_scope_diagnostics_module
+import millrace_engine.research.goalspec_spec_synthesis as goalspec_spec_synthesis_module
 from millrace_engine.config import ConfigApplyBoundary, build_runtime_paths, load_engine_config
 from millrace_engine.contracts import (
     CrossPlaneParentRun,
@@ -2249,6 +2251,178 @@ def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_p
     assert "agents/specs/stable/golden/SPEC-403__modernize-goal-intake.md" in shard_text
     assert not reviewed_path.exists()
     assert (workspace / result.archived_path).exists()
+
+
+def test_scope_divergence_helper_blocks_severe_meta_scope_divergence() -> None:
+    anchor_tokens = goalspec_scope_diagnostics_module.build_goal_anchor_tokens(
+        title="Aura Workshop Vertical Slice",
+        source_body=(
+            "Build the first playable aura workshop vertical slice for the mod.\n"
+            "Aura collector gameplay.\n"
+            "Aura conduit routing.\n"
+            "Aura reservoir storage.\n"
+            "Progression from collection to conduit routing to infusion proof.\n"
+        ),
+        semantic_summary="Build the first playable aura workshop vertical slice for the mod.",
+        capability_domains=(
+            "Aura collector gameplay",
+            "Aura conduit routing",
+            "Aura reservoir storage",
+        ),
+        progression_lines=("Progression from collection to conduit routing to infusion proof.",),
+    )
+    record = goalspec_scope_diagnostics_module.evaluate_scope_divergence(
+        run_id="goalspec-scope-drift-501",
+        emitted_at=_dt("2026-04-07T15:00:00Z"),
+        goal_id="IDEA-501",
+        title="Aura Workshop Vertical Slice",
+        stage_name="spec_synthesis",
+        source_path="agents/ideas/staging/IDEA-501.md",
+        expected_scope="product",
+        goal_anchor_tokens=anchor_tokens,
+        surfaces=(
+            (
+                "queue_spec",
+                "\n".join(
+                    [
+                        "## Goals",
+                        "- Convert the goal into a traceable GoalSpec draft package.",
+                        "- Preserve completion manifest and objective profile traceability.",
+                        "- Prepare task generation and Spec Review handoff.",
+                    ]
+                ),
+            ),
+            (
+                "phase_spec",
+                "\n".join(
+                    [
+                        "## Objective",
+                        "- Carry the GoalSpec package into a reviewable runtime implementation slice.",
+                        "",
+                        "## Work Plan",
+                        "1. Validate objective profile and completion manifest traceability.",
+                        "2. Preserve phase spec and queue spec alignment for task generation.",
+                        "3. Hand the package to Spec Review.",
+                    ]
+                ),
+            ),
+        ),
+    )
+
+    assert record.decision == "blocked"
+    assert record.reason == "severe_product_scope_divergence"
+    severe_surfaces = {surface.surface_id for surface in record.surfaces if surface.severe}
+    assert severe_surfaces == {"queue_spec", "phase_spec"}
+
+
+def test_execute_spec_synthesis_fails_closed_when_scope_diagnostic_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-scope-drift-502"
+    emitted_at = _dt("2026-04-07T15:05:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-502\n"
+            "title: Aura Workshop Vertical Slice\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Workshop Vertical Slice\n\n"
+            "Build the first playable aura workshop vertical slice for the mod.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    monkeypatch.setattr(
+        goalspec_spec_synthesis_module,
+        "evaluate_scope_divergence",
+        lambda **_: goalspec_scope_diagnostics_module.ScopeDivergenceRecord(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            goal_id="IDEA-502",
+            title="Aura Workshop Vertical Slice",
+            stage_name="spec_synthesis",
+            source_path="agents/ideas/staging/IDEA-502.md",
+            expected_scope="product",
+            decision="blocked",
+            reason="severe_product_scope_divergence",
+            summary="Synthetic blocked diagnostic for fail-closed coverage.",
+            surfaces=(
+                goalspec_scope_diagnostics_module.ScopeSurfaceDiagnostic(
+                    surface_id="queue_spec",
+                    coverage_ratio=0.0,
+                    matched_goal_tokens=(),
+                    missing_goal_tokens=("aura", "collector"),
+                    meta_scope_hits=("goalspec", "completion manifest", "task generation"),
+                    severe=True,
+                    excerpt="Convert the goal into a traceable GoalSpec draft package.",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Scope divergence blocked SPEC-502 during spec_synthesis",
+    ):
+        execute_spec_synthesis(
+            paths,
+            _goal_active_request_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                path=staged_path,
+                status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+                node_id="spec_synthesis",
+                stage_kind_id="research.spec-synthesis",
+            ),
+            run_id=run_id,
+            completion_manifest=completion_manifest.draft_state,
+            emitted_at=emitted_at,
+        )
+
+    diagnostic_path = workspace / "agents" / ".research_runtime" / "goalspec" / "scope_divergence" / f"{run_id}__spec_synthesis.json"
+    diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+    assert diagnostic["decision"] == "blocked"
+    assert diagnostic["reason"] == "severe_product_scope_divergence"
 
 
 def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Path) -> None:
