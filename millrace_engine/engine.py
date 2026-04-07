@@ -8,14 +8,6 @@ from pathlib import Path
 from threading import RLock
 from typing import Literal
 
-from .adapters.control_mailbox import (
-    ControlCommand,
-    ControlCommandEnvelope,
-    MailboxCommandResult,
-    archive_command,
-    list_incoming_command_paths,
-    read_command,
-)
 from .adapters.file_watcher import FileWatcherAdapter, RuntimeInputEvent, RuntimeInputKind
 from .config import (
     ConfigApplyBoundary,
@@ -27,12 +19,7 @@ from .config import (
 from .contracts import CompletionDecision, ExecutionStatus, ResearchMode
 from .control_common import ControlError
 from .control_models import OperationResult, RuntimeState
-from .control_mutations import (
-    _assert_reload_safe,
-    append_task_to_backlog,
-    apply_native_config_value,
-    copy_idea_into_raw_queue,
-)
+from .control_mutations import _assert_reload_safe
 from .control_reports import (
     build_live_runtime_state,
     config_hash,
@@ -40,6 +27,7 @@ from .control_reports import (
     write_runtime_state,
 )
 from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEventSubscriber
+from .engine_mailbox_processor import EngineMailboxHooks, EngineMailboxProcessor
 from .planes.base import StageCommandMap
 from .planes.execution import ExecutionCycleResult, ExecutionPlane
 from .planes.research import ResearchPlane
@@ -115,6 +103,25 @@ class MillraceEngine:
                 payload=payload,
             )
         )
+        self.mailbox_processor = EngineMailboxProcessor(
+            config_path=self.config_path,
+            hooks=EngineMailboxHooks(
+                get_paths=lambda: self.paths,
+                get_loaded=lambda: self.loaded,
+                emit_event=lambda event_type, source, payload: self.event_bus.emit(
+                    event_type,
+                    source=source,
+                    payload=payload,
+                ),
+                queue_or_apply_reloaded_config=self._queue_or_apply_reloaded_config,
+                restart_file_watcher=self._restart_file_watcher,
+                consume_research_recovery_latch=self._consume_research_recovery_latch,
+                get_stop_requested=lambda: self.stop_requested,
+                set_stop_requested=self._set_stop_requested,
+                get_paused=lambda: self.paused,
+                set_pause_state=self._set_pause_state,
+            ),
+        )
         self.started_at: datetime | None = None
         self.paused = False
         self.pause_reason: str | None = None
@@ -126,6 +133,14 @@ class MillraceEngine:
     @property
     def state_path(self) -> Path:
         return self.paths.runtime_dir / "state.json"
+
+    def _set_stop_requested(self, requested: bool) -> None:
+        self.stop_requested = requested
+
+    def _set_pause_state(self, paused: bool, reason: str | None, run_id: str | None) -> None:
+        self.paused = paused
+        self.pause_reason = reason
+        self.pause_run_id = run_id
 
     def _install_loaded_config(self, loaded: LoadedConfig) -> None:
         self.loaded = loaded
@@ -592,7 +607,7 @@ class MillraceEngine:
             await self._reload_config_from_disk(trigger_path=event.path)
             return
         if event.kind is RuntimeInputKind.CONTROL_COMMAND_AVAILABLE:
-            await self._process_mailbox()
+            await self.mailbox_processor.process_mailbox()
             return
         if event.kind is RuntimeInputKind.IDEA_SUBMITTED:
             self.event_bus.emit(
@@ -656,7 +671,7 @@ class MillraceEngine:
 
     def _before_stage_boundary(self, stage: object) -> None:
         del stage
-        self._process_config_mailbox_between_stages()
+        self.mailbox_processor.process_config_mailbox_between_stages()
         self._apply_pending_config_if_due(ConfigApplyBoundary.STAGE_BOUNDARY)
 
     def _outage_bound_parameters(self, trigger: OutageTrigger) -> BoundExecutionParameters:
@@ -703,14 +718,14 @@ class MillraceEngine:
         if delay_seconds <= 0:
             await self._drain_input_queue()
             await self._ingest_poll_fallback_events()
-            await self._process_mailbox()
+            await self.mailbox_processor.process_mailbox()
             return
         loop = asyncio.get_running_loop()
         deadline = loop.time() + delay_seconds
         while not self.stop_requested and not self.paused:
             await self._drain_input_queue()
             await self._ingest_poll_fallback_events()
-            await self._process_mailbox()
+            await self.mailbox_processor.process_mailbox()
             if self.stop_requested or self.paused:
                 return
             remaining = deadline - loop.time()
@@ -956,205 +971,6 @@ class MillraceEngine:
         self._request_stop_if_completion_honored()
         return result
 
-    def _apply_config_command_sync(self, envelope: ControlCommandEnvelope) -> tuple[OperationResult, bool]:
-        if envelope.command is ControlCommand.RELOAD_CONFIG:
-            reloaded = load_engine_config(self.config_path)
-            _assert_reload_safe(self.loaded, reloaded)
-            return self._queue_or_apply_reloaded_config(reloaded, command_id=envelope.command_id)
-
-        if envelope.command is ControlCommand.SET_CONFIG:
-            key = str(envelope.payload.get("key", "")).strip()
-            value = str(envelope.payload.get("value", ""))
-            reloaded = apply_native_config_value(
-                self.config_path,
-                self.loaded,
-                key,
-                value,
-                reject_startup_only=True,
-            )
-            return self._queue_or_apply_reloaded_config(
-                reloaded,
-                command_id=envelope.command_id,
-                key=key,
-            )
-
-        raise ControlError(f"unsupported config command: {envelope.command.value}")
-
-    def _archive_mailbox_result(
-        self,
-        command_path: Path,
-        *,
-        envelope: ControlCommandEnvelope | None,
-        operation: OperationResult | None = None,
-        error: Exception | None = None,
-    ) -> None:
-        command_id = envelope.command_id if envelope is not None else command_path.stem
-        if error is None and operation is not None:
-            result = MailboxCommandResult.model_validate(
-                {
-                    "command_id": command_id,
-                    "processed_at": datetime.now(timezone.utc),
-                    "ok": True,
-                    "applied": operation.applied,
-                    "message": operation.message,
-                    "payload": operation.payload,
-                }
-            )
-            archive_command(
-                self.paths,
-                command_path,
-                envelope=envelope,
-                result=result,
-                failed=False,
-            )
-            self.event_bus.emit(
-                EventType.CONTROL_COMMAND_APPLIED,
-                source=EventSource.CONTROL,
-                payload={
-                    "command_id": command_id,
-                    "command": envelope.command.value if envelope is not None else None,
-                    "applied": operation.applied,
-                },
-            )
-            return
-
-        message = str(error) if error is not None else "unknown mailbox error"
-        result = MailboxCommandResult.model_validate(
-            {
-                "command_id": command_id,
-                "processed_at": datetime.now(timezone.utc),
-                "ok": False,
-                "applied": False,
-                "message": message,
-            }
-        )
-        archive_command(
-            self.paths,
-            command_path,
-            envelope=envelope,
-            result=result,
-            failed=True,
-        )
-        self.event_bus.emit(
-            EventType.CONTROL_COMMAND_APPLIED,
-            source=EventSource.CONTROL,
-            payload={"command_id": command_id, "ok": False, "message": message},
-        )
-
-    def _process_config_mailbox_between_stages(self) -> None:
-        for command_path in list_incoming_command_paths(self.paths):
-            envelope: ControlCommandEnvelope | None = None
-            try:
-                envelope = read_command(command_path)
-                if envelope.command not in {ControlCommand.RELOAD_CONFIG, ControlCommand.SET_CONFIG}:
-                    break
-                self.event_bus.emit(
-                    EventType.CONTROL_COMMAND_RECEIVED,
-                    source=EventSource.ADAPTER,
-                    payload={"command_id": envelope.command_id, "command": envelope.command.value},
-                )
-                operation, _ = self._apply_config_command_sync(envelope)
-                self._archive_mailbox_result(command_path, envelope=envelope, operation=operation)
-            except Exception as exc:  # noqa: BLE001 - mailbox failures must be archived
-                self._archive_mailbox_result(command_path, envelope=envelope, error=exc)
-
-    async def _apply_command(self, envelope: ControlCommandEnvelope) -> OperationResult:
-        if envelope.command is ControlCommand.STOP:
-            already_requested = self.stop_requested
-            self.stop_requested = True
-            return OperationResult(
-                mode="direct",
-                applied=not already_requested,
-                message="stop requested" if not already_requested else "stop already requested",
-            )
-
-        if envelope.command is ControlCommand.PAUSE:
-            if self.paused:
-                return OperationResult(mode="direct", applied=False, message="engine already paused")
-            self.paused = True
-            self.pause_reason = "manual"
-            self.pause_run_id = None
-            self.event_bus.emit(
-                EventType.ENGINE_PAUSED,
-                source=EventSource.CONTROL,
-                payload={"command_id": envelope.command_id},
-            )
-            return OperationResult(mode="direct", applied=True, message="engine paused")
-
-        if envelope.command is ControlCommand.RESUME:
-            if not self.paused:
-                return OperationResult(mode="direct", applied=False, message="engine already running")
-            self.paused = False
-            self.pause_reason = None
-            self.pause_run_id = None
-            self.event_bus.emit(
-                EventType.ENGINE_RESUMED,
-                source=EventSource.CONTROL,
-                payload={"command_id": envelope.command_id},
-            )
-            return OperationResult(mode="direct", applied=True, message="engine resumed")
-
-        if envelope.command in {ControlCommand.RELOAD_CONFIG, ControlCommand.SET_CONFIG}:
-            operation, restart_watcher = self._apply_config_command_sync(envelope)
-            if restart_watcher:
-                await self._restart_file_watcher()
-            return operation
-
-        if envelope.command is ControlCommand.ADD_TASK:
-            title = str(envelope.payload.get("title", "")).strip()
-            if not title:
-                raise ControlError("add_task requires a title")
-            card = append_task_to_backlog(
-                self.paths,
-                title=title,
-                body=envelope.payload.get("body"),
-                spec_id=envelope.payload.get("spec_id"),
-            )
-            thawed = self._consume_research_recovery_latch(
-                trigger="add_task",
-                command_id=envelope.command_id,
-            )
-            payload: dict[str, object] = {"task_id": card.task_id}
-            if thawed > 0:
-                payload["thawed_cards"] = thawed
-            return OperationResult(mode="direct", applied=True, message="task added", payload=payload)
-
-        if envelope.command is ControlCommand.ADD_IDEA:
-            file_value = envelope.payload.get("file")
-            if not isinstance(file_value, str) or not file_value.strip():
-                raise ControlError("add_idea requires a file path")
-            copied = copy_idea_into_raw_queue(self.paths, Path(file_value).expanduser().resolve())
-            return OperationResult(mode="direct", applied=True, message="idea queued", payload={"path": copied})
-
-        if envelope.command is ControlCommand.QUEUE_REORDER:
-            task_ids = envelope.payload.get("task_ids")
-            if not isinstance(task_ids, list) or not all(isinstance(item, str) for item in task_ids):
-                raise ControlError("queue_reorder requires a task_ids string list")
-            reordered = TaskQueue(self.paths).reorder(task_ids)
-            return OperationResult(
-                mode="direct",
-                applied=True,
-                message="queue reordered",
-                payload={"task_ids": [card.task_id for card in reordered]},
-            )
-
-        raise ControlError(f"unsupported control command: {envelope.command.value}")
-
-    async def _process_mailbox(self) -> None:
-        for command_path in list_incoming_command_paths(self.paths):
-            envelope: ControlCommandEnvelope | None = None
-            try:
-                envelope = read_command(command_path)
-                self.event_bus.emit(
-                    EventType.CONTROL_COMMAND_RECEIVED,
-                    source=EventSource.ADAPTER,
-                    payload={"command_id": envelope.command_id, "command": envelope.command.value},
-                )
-                operation = await self._apply_command(envelope)
-                self._archive_mailbox_result(command_path, envelope=envelope, operation=operation)
-            except Exception as exc:  # noqa: BLE001 - mailbox failures must be archived
-                self._archive_mailbox_result(command_path, envelope=envelope, error=exc)
-
     async def _run(self, *, mode: Literal["once", "daemon"]) -> RuntimeState:
         self.started_at = datetime.now(timezone.utc)
         self.paused = False
@@ -1206,7 +1022,7 @@ class MillraceEngine:
                 while not self.stop_requested:
                     await self._drain_input_queue()
                     await self._ingest_poll_fallback_events()
-                    await self._process_mailbox()
+                    await self.mailbox_processor.process_mailbox()
                     if self._apply_pending_config_if_due(ConfigApplyBoundary.CYCLE_BOUNDARY):
                         await self._restart_file_watcher()
                     self._sync_ready_research_dispatch(trigger="daemon-loop")
