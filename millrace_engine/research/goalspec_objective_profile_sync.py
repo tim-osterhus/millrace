@@ -20,9 +20,15 @@ from .goalspec_helpers import (
     _load_json_object,
     _relative_path,
     _slugify,
+    _split_frontmatter,
     _utcnow,
     _write_json_model,
     resolve_goal_source,
+)
+from .goalspec_semantic_profile import (
+    build_goal_semantic_profile,
+    discover_semantic_seed_path,
+    load_semantic_seed_document,
 )
 from .governance import apply_initial_family_policy_pin, build_queue_governor_report
 from .specs import load_goal_spec_family_state
@@ -46,13 +52,37 @@ def execute_objective_profile_sync(
     profile_json_path = paths.acceptance_profiles_dir / f"{profile_id}.json"
     profile_markdown_path = paths.acceptance_profiles_dir / f"{profile_id}.md"
     report_path = paths.reports_dir / "objective_profile_sync.md"
+    goal_intake_record_path = paths.goalspec_goal_intake_records_dir / f"{run_id}.json"
 
-    milestones = (
-        f"Normalize queued goal `{source.idea_id}` into a staged GoalSpec brief.",
-        "Persist objective-profile state that downstream spec synthesis can reference deterministically.",
+    semantic_goal_text = source.body
+    if goal_intake_record_path.exists():
+        goal_intake_payload = _load_json_object(goal_intake_record_path)
+        authoritative_goal_rel = str(
+            goal_intake_payload.get("archived_source_path") or goal_intake_payload.get("source_path") or ""
+        ).strip()
+        if authoritative_goal_rel:
+            authoritative_goal_path = paths.root / authoritative_goal_rel
+            if authoritative_goal_path.exists():
+                authoritative_goal_text = authoritative_goal_path.read_text(encoding="utf-8", errors="replace")
+                _, authoritative_goal_body = _split_frontmatter(authoritative_goal_text)
+                semantic_goal_text = authoritative_goal_body.strip() or authoritative_goal_text.strip()
+
+    semantic_seed_path = discover_semantic_seed_path(paths)
+    semantic_seed_payload = (
+        load_semantic_seed_document(semantic_seed_path) if semantic_seed_path is not None else None
     )
+    semantic_profile = build_goal_semantic_profile(
+        semantic_goal_text,
+        semantic_seed_payload=semantic_seed_payload,
+        semantic_seed_path=(
+            _relative_path(semantic_seed_path, relative_to=paths.root)
+            if semantic_seed_path is not None
+            else ""
+        ),
+    )
+    milestones = tuple(item.outcome for item in semantic_profile.milestones)
     hard_blockers = (
-        "Spec Review and task generation remain downstream after this draft synthesis pass.",
+        "Completion evidence, spec synthesis, and task generation remain downstream after this profile-sync pass.",
     )
 
     acceptance_profile = AcceptanceProfileRecord(
@@ -91,7 +121,6 @@ def execute_objective_profile_sync(
         ),
     )
 
-    goal_intake_record_path = paths.goalspec_goal_intake_records_dir / f"{run_id}.json"
     family_state = (
         load_goal_spec_family_state(paths.goal_spec_family_state_file)
         if paths.goal_spec_family_state_file.exists()
