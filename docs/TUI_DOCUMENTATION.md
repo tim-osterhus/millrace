@@ -254,9 +254,11 @@ It summarizes:
 - research status
 - backlog depth and active task
 - the latest visible run artifact
+- pending compounding governance review work
+- the most recent governed procedure/context-fact usage visible from local runs
 - basic route and stage information from the current runtime selection
 
-In operator mode, those signals land in metric cards plus runtime/latest-run/research/attention detail cards.
+In operator mode, those signals land in metric cards plus runtime/latest-run/research/governance/attention detail cards.
 
 Use `Overview` when you want the fastest single-screen answer to: "What is Millrace doing right now?"
 
@@ -573,6 +575,7 @@ The run detail modal summarizes:
 - compile time
 - frozen plan id and hash
 - selection and routing information
+- governed procedure creation plus procedure/context-fact usage counts when the run recorded them
 - stage labels
 - transition history summary
 - policy summary

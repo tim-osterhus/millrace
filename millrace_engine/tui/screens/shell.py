@@ -400,6 +400,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             runtime=state.runtime,
             queue=state.queue,
             research=state.research,
+            compounding=state.compounding,
             latest_run=self._latest_run_summary,
             failure=self._store.panel_failure(PanelId.OVERVIEW),
             display_mode=state.display_mode,

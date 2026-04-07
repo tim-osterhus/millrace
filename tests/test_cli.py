@@ -9,9 +9,11 @@ import pytest
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
+import millrace_engine.cli as cli_module
 from millrace_engine.cli import app
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import EngineControl
@@ -19,6 +21,9 @@ from millrace_engine.contracts import (
     AuditGateDecision,
     AuditGateDecisionCounts,
     CompletionDecision,
+    ContextFactArtifact,
+    ContextFactLifecycleState,
+    ContextFactScope,
     CrossPlaneParentRun,
     ExecutionStatus,
     ExecutionResearchHandoff,
@@ -316,6 +321,44 @@ def write_compounding_lifecycle_record(
     )
     path = target_dir / f"{record.record_id}.json"
     path.write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def write_context_fact(
+    workspace: Path,
+    *,
+    filename: str,
+    fact_id: str,
+    scope: ContextFactScope,
+    lifecycle_state: ContextFactLifecycleState,
+    source_stage: StageType,
+    title: str,
+    summary: str,
+    statement: str,
+    source_run_id: str = "source-run",
+    stale_reason: str | None = None,
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "context_facts"
+    if scope is ContextFactScope.RUN:
+        target_dir = target_dir / source_run_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    artifact = ContextFactArtifact(
+        fact_id=fact_id,
+        scope=scope,
+        lifecycle_state=lifecycle_state,
+        source_run_id=source_run_id,
+        source_stage=source_stage,
+        title=title,
+        statement=statement,
+        summary=summary,
+        tags=("fixture",),
+        evidence_refs=("agents/runs/source-run/transition_history.jsonl",),
+        created_at="2026-04-07T18:00:00Z",
+        observed_at="2026-04-07T18:30:00Z",
+        stale_reason=stale_reason,
+    )
+    path = target_dir / filename
+    path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -3486,11 +3529,61 @@ def test_cli_run_provenance_reports_compounding_summary(tmp_path: Path) -> None:
     text_result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id])
 
     assert text_result.exit_code == 0
-    assert "Compounding summary: created=2 selections=2" in text_result.stdout
+    assert "Compounding summary: created=2 procedure_selections=2 context_fact_selections=0" in text_result.stdout
     assert "Created procedures:" in text_result.stdout
     assert "Procedure selections:" in text_result.stdout
     assert "Injected: proc.workspace.builder.selected" in text_result.stdout
     assert "Considered: proc.workspace.builder.selected" in text_result.stdout
+
+
+def test_cli_run_provenance_renders_context_fact_selections(monkeypatch, tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+
+    class FakeControl:
+        def __init__(self, config_path: Path) -> None:
+            self.config_path = config_path
+
+        def run_provenance(self, run_id: str):
+            injected_fact = SimpleNamespace(fact_id="fact.workspace.builder.audit")
+            context_fact_selection = SimpleNamespace(
+                stage="builder",
+                node_id="builder",
+                considered_count=1,
+                injected_count=1,
+                considered_facts=(SimpleNamespace(fact_id="fact.workspace.builder.audit"),),
+                injected_facts=(injected_fact,),
+            )
+            return SimpleNamespace(
+                run_id=run_id,
+                selection=None,
+                selection_explanation=None,
+                current_preview=None,
+                current_preview_explanation=None,
+                current_preview_error=None,
+                routing_modes=("small",),
+                policy_hooks=None,
+                latest_policy_evidence=None,
+                integration_policy=None,
+                compounding=SimpleNamespace(
+                    created_count=0,
+                    selection_count=0,
+                    fact_selection_count=1,
+                    created_procedures=(),
+                    procedure_selections=(),
+                    context_fact_selections=(context_fact_selection,),
+                ),
+                compile_snapshot=None,
+                runtime_history=(),
+                snapshot_path=workspace / "agents" / "runs" / run_id / "resolved_snapshot.json",
+                transition_history_path=workspace / "agents" / "runs" / run_id / "transition_history.jsonl",
+            )
+
+    monkeypatch.setattr(cli_module, "EngineControl", FakeControl)
+
+    result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", "run-fixture"])
+    assert result.exit_code == 0
+    assert "Context fact selections:" in result.stdout
+    assert "Injected: fact.workspace.builder.audit" in result.stdout
 
 
 def test_cli_compounding_procedures_list_and_show_reports_lifecycle_status(tmp_path: Path) -> None:
@@ -3548,6 +3641,79 @@ def test_cli_compounding_procedures_list_and_show_reports_lifecycle_status(tmp_p
     assert "Procedure ID: proc.workspace.builder.reviewed" in show_result.stdout
     assert "Lifecycle records:" in show_result.stdout
     assert "review approved" in show_result.stdout
+
+
+def test_cli_compounding_context_facts_list_show_and_summary(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-reviewed.json",
+        procedure_id="proc.workspace.builder.reviewed",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Reviewed Builder Procedure",
+        summary="Approved workspace reuse.",
+        procedure_markdown="Use the reviewed builder flow.",
+    )
+    write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.reviewed",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="review approved",
+    )
+    write_context_fact(
+        workspace,
+        filename="workspace-eligible.json",
+        fact_id="fact.workspace.builder.reviewed",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.PROMOTED,
+        source_stage=StageType.BUILDER,
+        title="Reviewed builder fact",
+        summary="Approved builder knowledge.",
+        statement="Keep the builder audit trail coherent across retries.",
+    )
+    write_context_fact(
+        workspace,
+        filename="workspace-stale.json",
+        fact_id="fact.workspace.builder.stale",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.STALE,
+        source_stage=StageType.BUILDER,
+        title="Stale builder fact",
+        summary="Needs review before reuse.",
+        statement="Old builder observation pending review.",
+        stale_reason="awaiting operator review",
+    )
+
+    summary_result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "--json"])
+    assert summary_result.exit_code == 0
+    summary_payload = json.loads(summary_result.stdout)
+    assert summary_payload["procedure_pending_review"] == 0
+    assert summary_payload["context_fact_pending_review"] == 1
+    assert summary_payload["pending_governance_items"] == 1
+
+    list_result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "facts", "--json"])
+    assert list_result.exit_code == 0
+    list_payload = json.loads(list_result.stdout)
+    assert [item["fact_id"] for item in list_payload["facts"]] == [
+        "fact.workspace.builder.reviewed",
+        "fact.workspace.builder.stale",
+    ]
+    assert list_payload["facts"][0]["retrieval_status"] == "eligible"
+    assert list_payload["facts"][1]["retrieval_status"] == "stale"
+
+    text_list_result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "facts"])
+    assert text_list_result.exit_code == 0
+    assert "fact.workspace.builder.reviewed [workspace] status=eligible eligible=yes" in text_list_result.stdout
+    assert "fact.workspace.builder.stale [workspace] status=stale eligible=no" in text_list_result.stdout
+
+    show_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "compounding", "facts", "show", "fact.workspace.builder.stale"],
+    )
+    assert show_result.exit_code == 0
+    assert "Fact ID: fact.workspace.builder.stale" in show_result.stdout
+    assert "Stale reason: awaiting operator review" in show_result.stdout
 
 
 def test_cli_compounding_procedure_promote_materializes_workspace_artifact_and_record(tmp_path: Path) -> None:

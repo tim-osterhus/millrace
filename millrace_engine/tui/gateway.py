@@ -10,6 +10,7 @@ from ..control_reports import read_run_provenance
 from .gateway_views import (
     action_result_view,
     commit_action_result_view,
+    compounding_governance_view,
     config_overview_view,
     interview_action_result_view,
     publish_overview_view,
@@ -56,6 +57,7 @@ class RuntimeGateway:
             config = control.config_show()
             queue = control.queue_inspect()
             research = control.research_report()
+            compounding = control.compounding_governance_summary()
             interview = control.interview_list()
             research_activity = control.research_history(RESEARCH_ACTIVITY_LIMIT)
             events = control.logs(log_limit)
@@ -69,6 +71,7 @@ class RuntimeGateway:
                     recent_activity=research_activity,
                     interview_questions=interview.questions,
                 ),
+                compounding=compounding_governance_view(compounding),
                 events=event_log_view(events, refreshed_at=refreshed_at),
                 runs=runs_overview_view(control, observed_at=refreshed_at, read_provenance=read_run_provenance),
             )

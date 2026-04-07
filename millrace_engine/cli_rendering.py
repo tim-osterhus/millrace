@@ -10,6 +10,9 @@ import typer
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .control import (
     AssetInventoryView,
+    CompoundingContextFactListReport,
+    CompoundingContextFactReport,
+    CompoundingGovernanceSummaryView,
     CompoundingHarnessBenchmarkListReport,
     CompoundingHarnessBenchmarkReport,
     CompoundingHarnessCandidateListReport,
@@ -971,7 +974,9 @@ def render_run_provenance(report: RunProvenanceReport, *, json_mode: bool) -> No
     if report.compounding is not None:
         lines.append(
             "Compounding summary: "
-            f"created={report.compounding.created_count} selections={report.compounding.selection_count}"
+            f"created={report.compounding.created_count} "
+            f"procedure_selections={report.compounding.selection_count} "
+            f"context_fact_selections={report.compounding.fact_selection_count}"
         )
         if report.compounding.created_procedures:
             lines.append("Created procedures:")
@@ -999,6 +1004,19 @@ def render_run_provenance(report: RunProvenanceReport, *, json_mode: bool) -> No
                         "  Considered: "
                         + ", ".join(procedure.procedure_id for procedure in selection.considered_procedures)
                     )
+        if report.compounding.context_fact_selections:
+            lines.append("Context fact selections:")
+            for selection in report.compounding.context_fact_selections:
+                lines.append(
+                    f"- {selection.stage} ({selection.node_id}): "
+                    f"considered={selection.considered_count} injected={selection.injected_count}"
+                )
+                if selection.injected_facts:
+                    lines.append("  Injected: " + ", ".join(fact.fact_id for fact in selection.injected_facts))
+                elif selection.considered_facts:
+                    lines.append("  Injected: none")
+                if selection.considered_facts:
+                    lines.append("  Considered: " + ", ".join(fact.fact_id for fact in selection.considered_facts))
     lines.append(f"Runtime history records: {len(report.runtime_history)}")
     typer.echo("\n".join(lines))
 
@@ -1066,6 +1084,102 @@ def render_compounding_procedure(report: CompoundingProcedureReport, *, json_mod
             if record.replacement_procedure_id is not None:
                 line += f" replacement={record.replacement_procedure_id}"
             lines.append(line)
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_context_facts(report: CompoundingContextFactListReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    if not report.facts:
+        typer.echo("No compounding context facts.")
+        return
+    lines: list[str] = []
+    for fact in report.facts:
+        lines.append(
+            f"{fact.fact_id} [{fact.scope.value}] status={fact.retrieval_status} "
+            f"eligible={'yes' if fact.eligible_for_retrieval else 'no'}"
+        )
+        lines.append(f"  Title: {fact.title}")
+        lines.append(f"  Source stage: {fact.source_stage}")
+        lines.append(f"  Artifact: {fact.artifact_path}")
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_context_fact(report: CompoundingContextFactReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    fact = report.fact
+    lines = [
+        f"Fact ID: {fact.fact_id}",
+        f"Scope: {fact.scope.value}",
+        f"Lifecycle state: {fact.lifecycle_state.value}",
+        f"Status: {fact.retrieval_status}",
+        f"Eligible for retrieval: {'yes' if fact.eligible_for_retrieval else 'no'}",
+        f"Title: {fact.title}",
+        f"Source run: {fact.source_run_id}",
+        f"Source stage: {fact.source_stage}",
+        f"Artifact: {fact.artifact_path}",
+        f"Summary: {fact.summary}",
+        f"Statement: {fact.statement}",
+    ]
+    if fact.observed_at is not None:
+        lines.append(f"Observed at: {fact.observed_at.isoformat().replace('+00:00', 'Z')}")
+    if fact.tags:
+        lines.append("Tags:")
+        lines.extend(f"- {item}" for item in fact.tags)
+    if fact.evidence_refs:
+        lines.append("Evidence refs:")
+        lines.extend(f"- {item}" for item in fact.evidence_refs)
+    if fact.stale_reason is not None:
+        lines.append(f"Stale reason: {fact.stale_reason}")
+    if fact.supersedes_fact_id is not None:
+        lines.append(f"Supersedes fact: {fact.supersedes_fact_id}")
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_governance_summary(report: CompoundingGovernanceSummaryView, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Pending governance items: {report.pending_governance_items}",
+        (
+            "Procedures: "
+            f"total={report.procedure_total} eligible={report.procedure_eligible} "
+            f"pending_review={report.procedure_pending_review} deprecated={report.procedure_deprecated}"
+        ),
+        (
+            "Context facts: "
+            f"total={report.context_fact_total} eligible={report.context_fact_eligible} "
+            f"pending_review={report.context_fact_pending_review} deprecated={report.context_fact_deprecated}"
+        ),
+        (
+            "Harness candidates: "
+            f"total={report.harness_candidate_total} pending_review={report.harness_candidate_pending_review} "
+            f"accepted={report.harness_candidate_accepted} rejected={report.harness_candidate_rejected}"
+        ),
+        (
+            "Recommendations: "
+            f"total={report.recommendation_total} recommend={report.recommendation_pending} "
+            f"no_change={report.recommendation_no_change}"
+        ),
+        f"Benchmarks: total={report.benchmark_total}",
+    ]
+    if report.recent_usage_run_id is not None:
+        lines.append(
+            "Recent knowledge usage: "
+            f"run={report.recent_usage_run_id} procedures={report.recent_usage_procedure_count} "
+            f"context_facts={report.recent_usage_context_fact_count}"
+        )
+    else:
+        lines.append("Recent knowledge usage: none")
+    if report.latest_recommendation_id is not None and report.latest_recommendation_summary is not None:
+        lines.append(
+            "Latest recommendation: "
+            f"{report.latest_recommendation_id} :: {report.latest_recommendation_summary}"
+        )
     typer.echo("\n".join(lines))
 
 

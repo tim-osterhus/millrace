@@ -12,6 +12,9 @@ import typer
 
 from .cli_rendering import (
     _asset_inventory_lines,
+    render_compounding_context_fact,
+    render_compounding_context_facts,
+    render_compounding_governance_summary,
     render_compounding_harness_benchmark,
     render_compounding_harness_benchmarks,
     render_compounding_harness_candidate,
@@ -42,6 +45,8 @@ from .cli_rendering import (
 )
 from .control import ConfigShowReport, ControlError, EngineControl
 from .control_models import (
+    CompoundingContextFactListReport,
+    CompoundingContextFactReport,
     CompoundingHarnessBenchmarkListReport,
     CompoundingHarnessBenchmarkReport,
     CompoundingHarnessCandidateListReport,
@@ -62,6 +67,7 @@ config_app = typer.Typer(help="Inspect or mutate runtime config.")
 queue_app = typer.Typer(help="Inspect visible execution queues.")
 queue_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work.")
 compounding_app = typer.Typer(help="Inspect governed reusable procedures.")
+compounding_facts_app = typer.Typer(help="Inspect governed durable context facts.")
 compounding_procedures_app = typer.Typer(help="Inspect or mutate governed reusable procedures.")
 compounding_harness_app = typer.Typer(help="Inspect governed harness candidates and benchmark results.")
 compounding_harness_candidates_app = typer.Typer(help="Inspect governed harness candidates.")
@@ -77,6 +83,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
 queue_app.add_typer(queue_cleanup_app, name="cleanup")
 app.add_typer(compounding_app, name="compounding")
+compounding_app.add_typer(compounding_facts_app, name="facts")
 compounding_app.add_typer(compounding_procedures_app, name="procedures")
 compounding_app.add_typer(compounding_harness_app, name="harness")
 compounding_harness_app.add_typer(compounding_harness_candidates_app, name="candidates")
@@ -549,6 +556,50 @@ def queue_root(
         json_mode=json_mode,
         detail=False,
     )
+
+
+@compounding_app.callback(invoke_without_command=True)
+def compounding_root(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one compact compounding governance summary."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    report = _run_expected(lambda: _control(ctx).compounding_governance_summary(), json_mode=json_mode)
+    render_compounding_governance_summary(report, json_mode=json_mode)
+
+
+@compounding_facts_app.command("show")
+def compounding_context_fact_show_command(
+    ctx: typer.Context,
+    fact_id: Annotated[str, typer.Argument(help="Context fact id to inspect.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one governed durable context fact."""
+
+    report: CompoundingContextFactReport = _run_expected(
+        lambda: _control(ctx).compounding_context_fact(fact_id),
+        json_mode=json_mode,
+    )
+    render_compounding_context_fact(report, json_mode=json_mode)
+
+
+@compounding_facts_app.callback(invoke_without_command=True)
+def compounding_context_facts_root(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show governed durable context facts and retrieval status."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    report: CompoundingContextFactListReport = _run_expected(
+        lambda: _control(ctx).compounding_context_facts(),
+        json_mode=json_mode,
+    )
+    render_compounding_context_facts(report, json_mode=json_mode)
 
 
 @compounding_procedures_app.command("show")

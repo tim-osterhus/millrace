@@ -24,6 +24,7 @@ from .compounding import (
     run_harness_search,
 )
 from .config import LoadedConfig, build_runtime_paths
+from .context_facts import context_fact_for_id, discover_context_facts
 from .contract_compounding import ProcedureScope
 from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
 from .control_actions import (
@@ -57,6 +58,10 @@ from .control_models import (
     AssetInventoryView,
     AssetResolutionView,
     CompletionStateView,
+    CompoundingContextFactListReport,
+    CompoundingContextFactReport,
+    CompoundingContextFactView,
+    CompoundingGovernanceSummaryView,
     CompoundingLifecycleRecordView,
     CompoundingHarnessBenchmarkListReport,
     CompoundingHarnessBenchmarkReport,
@@ -283,6 +288,50 @@ def _compounding_harness_recommendation_view(result: object) -> CompoundingHarne
         created_by=recommendation.created_by,
         artifact_path=getattr(result, "path"),
     )
+
+
+def _compounding_context_fact_view(fact: object) -> CompoundingContextFactView:
+    artifact = getattr(fact, "artifact")
+    return CompoundingContextFactView(
+        fact_id=artifact.fact_id,
+        scope=artifact.scope,
+        lifecycle_state=artifact.lifecycle_state,
+        source_run_id=artifact.source_run_id,
+        source_stage=artifact.source_stage.value,
+        title=artifact.title,
+        statement=artifact.statement,
+        summary=artifact.summary,
+        retrieval_status=getattr(fact, "retrieval_status"),
+        eligible_for_retrieval=getattr(fact, "eligible_for_retrieval"),
+        tags=artifact.tags,
+        evidence_refs=artifact.evidence_refs,
+        observed_at=artifact.observed_at,
+        stale_reason=artifact.stale_reason,
+        supersedes_fact_id=artifact.supersedes_fact_id,
+        artifact_path=getattr(fact, "path"),
+    )
+
+
+def _latest_compounding_usage_summary(runs_dir: Path) -> tuple[str | None, int, int]:
+    if not runs_dir.exists():
+        return (None, 0, 0)
+    run_dirs = [path for path in runs_dir.iterdir() if path.is_dir() and not path.name.startswith(".")]
+    for run_dir in sorted(run_dirs, key=lambda item: item.name, reverse=True):
+        try:
+            report = read_run_provenance(run_dir)
+        except (ValidationError, ValueError, OSError):
+            continue
+        compounding = report.compounding if report is not None else None
+        if compounding is None:
+            continue
+        if compounding.injected_procedure_count <= 0 and compounding.injected_fact_count <= 0:
+            continue
+        return (
+            report.run_id,
+            compounding.injected_procedure_count,
+            compounding.injected_fact_count,
+        )
+    return (None, 0, 0)
 
 
 def _supervisor_allowed_actions(
@@ -759,6 +808,110 @@ class EngineControl:
             lifecycle_records=tuple(
                 _compounding_lifecycle_record_view(item.path, record=item.record) for item in history
             ),
+        )
+
+    def compounding_context_facts(self) -> CompoundingContextFactListReport:
+        """Return all discoverable durable context facts and retrieval status."""
+
+        try:
+            facts = discover_context_facts(self.paths, include_run_candidates=True)
+        except ValidationError as exc:
+            raise ControlError(f"compounding context facts are invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding context facts are invalid: {single_line_message(exc)}") from exc
+        return CompoundingContextFactListReport(
+            config_path=self.config_path,
+            facts=tuple(_compounding_context_fact_view(fact) for fact in facts),
+        )
+
+    def compounding_context_fact(self, fact_id: str) -> CompoundingContextFactReport:
+        """Return one durable context fact plus retrieval status."""
+
+        normalized_fact_id = fact_id.strip()
+        if not normalized_fact_id:
+            raise ControlError("compounding_context_fact requires a fact_id")
+        try:
+            fact = context_fact_for_id(self.paths, normalized_fact_id, include_run_candidates=True)
+        except ValidationError as exc:
+            raise ControlError(f"compounding context fact is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding context fact is invalid: {single_line_message(exc)}") from exc
+        return CompoundingContextFactReport(
+            config_path=self.config_path,
+            fact=_compounding_context_fact_view(fact),
+        )
+
+    def compounding_governance_summary(self) -> CompoundingGovernanceSummaryView:
+        """Return one compact cross-family governance summary."""
+
+        try:
+            procedures = discover_governed_procedures(self.paths)
+            facts = discover_context_facts(self.paths, include_run_candidates=True)
+            candidates = discover_harness_candidates(self.paths)
+            benchmarks = discover_harness_benchmark_results(self.paths)
+            recommendations = discover_harness_recommendations(self.paths)
+        except ValidationError as exc:
+            raise ControlError(f"compounding governance summary is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding governance summary is invalid: {single_line_message(exc)}") from exc
+
+        procedure_eligible = sum(1 for item in procedures if item.retrieval_status == "eligible")
+        procedure_pending_review = sum(1 for item in procedures if item.retrieval_status in {"stale", "run_candidate"})
+        procedure_deprecated = sum(1 for item in procedures if item.retrieval_status == "deprecated")
+
+        context_fact_eligible = sum(1 for item in facts if item.retrieval_status == "eligible")
+        context_fact_pending_review = sum(1 for item in facts if item.retrieval_status in {"stale", "run_candidate"})
+        context_fact_deprecated = sum(1 for item in facts if item.retrieval_status == "deprecated")
+
+        harness_candidate_pending_review = sum(1 for item in candidates if item.candidate.state.value == "candidate")
+        harness_candidate_accepted = sum(1 for item in candidates if item.candidate.state.value == "accepted")
+        harness_candidate_rejected = sum(1 for item in candidates if item.candidate.state.value == "rejected")
+
+        recommendation_pending = sum(
+            1 for item in recommendations if item.recommendation.disposition.value == "recommend"
+        )
+        recommendation_no_change = sum(
+            1 for item in recommendations if item.recommendation.disposition.value == "no_change"
+        )
+
+        latest_recommendation = recommendations[0] if recommendations else None
+        recent_usage_run_id, recent_usage_procedure_count, recent_usage_context_fact_count = (
+            _latest_compounding_usage_summary(self.paths.runs_dir)
+        )
+        pending_governance_items = (
+            procedure_pending_review
+            + context_fact_pending_review
+            + harness_candidate_pending_review
+            + recommendation_pending
+        )
+        return CompoundingGovernanceSummaryView(
+            config_path=self.config_path,
+            procedure_total=len(procedures),
+            procedure_eligible=procedure_eligible,
+            procedure_pending_review=procedure_pending_review,
+            procedure_deprecated=procedure_deprecated,
+            context_fact_total=len(facts),
+            context_fact_eligible=context_fact_eligible,
+            context_fact_pending_review=context_fact_pending_review,
+            context_fact_deprecated=context_fact_deprecated,
+            harness_candidate_total=len(candidates),
+            harness_candidate_pending_review=harness_candidate_pending_review,
+            harness_candidate_accepted=harness_candidate_accepted,
+            harness_candidate_rejected=harness_candidate_rejected,
+            benchmark_total=len(benchmarks),
+            recommendation_total=len(recommendations),
+            recommendation_pending=recommendation_pending,
+            recommendation_no_change=recommendation_no_change,
+            pending_governance_items=pending_governance_items,
+            latest_recommendation_id=(
+                latest_recommendation.recommendation.recommendation_id if latest_recommendation is not None else None
+            ),
+            latest_recommendation_summary=(
+                latest_recommendation.recommendation.summary if latest_recommendation is not None else None
+            ),
+            recent_usage_run_id=recent_usage_run_id,
+            recent_usage_procedure_count=recent_usage_procedure_count,
+            recent_usage_context_fact_count=recent_usage_context_fact_count,
         )
 
     def compounding_harness_candidates(self) -> CompoundingHarnessCandidateListReport:

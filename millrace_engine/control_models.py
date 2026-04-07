@@ -18,6 +18,14 @@ from .contract_compounding import (
     ProcedureLifecycleState,
     ProcedureScope,
 )
+from .contract_context_facts import (
+    ConsideredContextFact,
+    ContextFactArtifact,
+    ContextFactInjectionBundle,
+    ContextFactLifecycleState,
+    ContextFactScope,
+    InjectedContextFact,
+)
 from .contract_harness import (
     HarnessBenchmarkCostSummary,
     HarnessBenchmarkOutcome,
@@ -745,11 +753,55 @@ class RunProcedureSelectionView(ContractModel):
         )
 
 
+class RunContextFactSelectionView(ContractModel):
+    """Stage-level durable context-fact consideration and injection summary."""
+
+    event_id: str
+    node_id: str
+    stage: str
+    considered_count: int = Field(default=0, ge=0)
+    injected_count: int = Field(default=0, ge=0)
+    budget_characters: int = Field(default=0, ge=0)
+    used_characters: int = Field(default=0, ge=0)
+    truncated_count: int = Field(default=0, ge=0)
+    rule_stage: str | None = None
+    allowed_scopes: tuple[str, ...] = ()
+    allowed_source_stages: tuple[str, ...] = ()
+    considered_facts: tuple[ConsideredContextFact, ...] = ()
+    injected_facts: tuple[InjectedContextFact, ...] = ()
+
+    @classmethod
+    def from_bundle(
+        cls,
+        *,
+        event_id: str,
+        node_id: str,
+        stage: str,
+        bundle: ContextFactInjectionBundle,
+    ) -> "RunContextFactSelectionView":
+        return cls(
+            event_id=event_id,
+            node_id=node_id,
+            stage=stage,
+            considered_count=bundle.candidate_count,
+            injected_count=bundle.selected_count,
+            budget_characters=bundle.budget_characters,
+            used_characters=bundle.used_characters,
+            truncated_count=bundle.truncated_count,
+            rule_stage=bundle.rule.stage.value,
+            allowed_scopes=tuple(scope.value for scope in bundle.rule.allowed_scopes),
+            allowed_source_stages=tuple(stage.value for stage in bundle.rule.allowed_source_stages),
+            considered_facts=bundle.considered_facts,
+            injected_facts=bundle.facts,
+        )
+
+
 class RunCompoundingReport(ContractModel):
     """Structured compounding provenance surfaced through run provenance."""
 
     created_procedures: tuple[RunCreatedProcedureView, ...] = ()
     procedure_selections: tuple[RunProcedureSelectionView, ...] = ()
+    context_fact_selections: tuple[RunContextFactSelectionView, ...] = ()
 
     @property
     def created_count(self) -> int:
@@ -758,6 +810,18 @@ class RunCompoundingReport(ContractModel):
     @property
     def selection_count(self) -> int:
         return len(self.procedure_selections)
+
+    @property
+    def fact_selection_count(self) -> int:
+        return len(self.context_fact_selections)
+
+    @property
+    def injected_procedure_count(self) -> int:
+        return sum(selection.injected_count for selection in self.procedure_selections)
+
+    @property
+    def injected_fact_count(self) -> int:
+        return sum(selection.injected_count for selection in self.context_fact_selections)
 
 
 class CompoundingLifecycleRecordView(ContractModel):
@@ -824,6 +888,61 @@ class CompoundingProcedureReport(ContractModel):
     config_path: Path
     procedure: CompoundingProcedureView
     lifecycle_records: tuple[CompoundingLifecycleRecordView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingContextFactView(ContractModel):
+    """Inspectable durable context fact plus effective retrieval status."""
+
+    fact_id: str
+    scope: ContextFactScope
+    lifecycle_state: ContextFactLifecycleState
+    source_run_id: str
+    source_stage: str
+    title: str
+    statement: str
+    summary: str
+    retrieval_status: Literal["eligible", "stale", "deprecated", "run_candidate"]
+    eligible_for_retrieval: bool
+    tags: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    observed_at: datetime | None = None
+    stale_reason: str | None = None
+    supersedes_fact_id: str | None = None
+    artifact_path: Path
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def normalize_observed_at(cls, value: datetime | str | None) -> datetime | None:
+        return normalize_datetime(value)
+
+
+class CompoundingContextFactListReport(ContractModel):
+    """Deterministic operator-facing list of durable context facts."""
+
+    config_path: Path
+    facts: tuple[CompoundingContextFactView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingContextFactReport(ContractModel):
+    """Detailed operator-facing report for one durable context fact."""
+
+    config_path: Path
+    fact: CompoundingContextFactView
 
     @field_validator("config_path", mode="before")
     @classmethod
@@ -974,6 +1093,39 @@ class CompoundingHarnessRecommendationReport(ContractModel):
 
     config_path: Path
     recommendation: CompoundingHarnessRecommendationView
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingGovernanceSummaryView(ContractModel):
+    """Compact cross-family governance summary for operator inspection."""
+
+    config_path: Path
+    procedure_total: int = Field(default=0, ge=0)
+    procedure_eligible: int = Field(default=0, ge=0)
+    procedure_pending_review: int = Field(default=0, ge=0)
+    procedure_deprecated: int = Field(default=0, ge=0)
+    context_fact_total: int = Field(default=0, ge=0)
+    context_fact_eligible: int = Field(default=0, ge=0)
+    context_fact_pending_review: int = Field(default=0, ge=0)
+    context_fact_deprecated: int = Field(default=0, ge=0)
+    harness_candidate_total: int = Field(default=0, ge=0)
+    harness_candidate_pending_review: int = Field(default=0, ge=0)
+    harness_candidate_accepted: int = Field(default=0, ge=0)
+    harness_candidate_rejected: int = Field(default=0, ge=0)
+    benchmark_total: int = Field(default=0, ge=0)
+    recommendation_total: int = Field(default=0, ge=0)
+    recommendation_pending: int = Field(default=0, ge=0)
+    recommendation_no_change: int = Field(default=0, ge=0)
+    pending_governance_items: int = Field(default=0, ge=0)
+    latest_recommendation_id: str | None = None
+    latest_recommendation_summary: str | None = None
+    recent_usage_run_id: str | None = None
+    recent_usage_procedure_count: int = Field(default=0, ge=0)
+    recent_usage_context_fact_count: int = Field(default=0, ge=0)
 
     @field_validator("config_path", mode="before")
     @classmethod

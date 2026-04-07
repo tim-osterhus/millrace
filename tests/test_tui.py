@@ -46,6 +46,7 @@ from millrace_engine.tui.messages import (
 )
 from millrace_engine.tui.models import (
     ActionResultView,
+    CompoundingGovernanceOverviewView,
     ConfigFieldInputKind,
     ConfigFieldView,
     ConfigOverviewView,
@@ -68,9 +69,13 @@ from millrace_engine.tui.models import (
     ResearchAuditSummaryView,
     ResearchGovernanceOverviewView,
     ResearchOverviewView,
+    RunCompoundingView,
+    RunContextFactSelectionSummaryView,
+    RunCreatedProcedureSummaryView,
     RunDetailView,
     RunIntegrationSummaryView,
     RunPolicyEvidenceView,
+    RunProcedureSelectionSummaryView,
     RunSummaryView,
     RunTransitionView,
     RunsOverviewView,
@@ -1018,6 +1023,39 @@ def _sample_run_detail(*, run_id: str, observed_at: datetime) -> RunDetailView:
             available_execution_nodes=("builder", "qa"),
             reason="Builder routes to qa.",
         ),
+        compounding=RunCompoundingView(
+            created_count=1,
+            procedure_selection_count=1,
+            context_fact_selection_count=1,
+            injected_procedure_count=1,
+            injected_context_fact_count=1,
+            created_procedures=(
+                RunCreatedProcedureSummaryView(
+                    procedure_id="proc.run.run-modal-1.builder",
+                    scope="run",
+                    source_stage="builder",
+                    title="Builder repair procedure",
+                ),
+            ),
+            procedure_selections=(
+                RunProcedureSelectionSummaryView(
+                    stage="builder",
+                    node_id="builder",
+                    considered_count=1,
+                    injected_count=1,
+                    injected_ids=("proc.workspace.builder.reviewed",),
+                ),
+            ),
+            context_fact_selections=(
+                RunContextFactSelectionSummaryView(
+                    stage="builder",
+                    node_id="builder",
+                    considered_count=1,
+                    injected_count=1,
+                    injected_ids=("fact.workspace.builder.audit",),
+                ),
+            ),
+        ),
         transitions=(
             RunTransitionView(
                 event_id="evt-1",
@@ -1106,6 +1144,17 @@ def _sample_refresh_payload(
             completion_reason="marker_missing",
             updated_at=observed_at,
             next_poll_at=None,
+        ),
+        compounding=CompoundingGovernanceOverviewView(
+            pending_governance_items=3,
+            procedure_pending_review=1,
+            context_fact_pending_review=1,
+            harness_candidate_pending_review=1,
+            recommendation_pending=0,
+            latest_recommendation_summary="No change recommended for the current bounded search.",
+            recent_usage_run_id="smoke-standard",
+            recent_usage_procedure_count=1,
+            recent_usage_context_fact_count=1,
         ),
         events=EventLogView(events=(), last_loaded_at=observed_at),
         runs=runs,
@@ -1578,6 +1627,8 @@ def test_runtime_gateway_loads_shaped_snapshot_and_publish_status(tmp_path) -> N
     assert snapshot.queue.backlog[0].spec_id == "SPEC-HAPPY-PATH"
     assert snapshot.research is not None
     assert snapshot.research.status == "IDLE"
+    assert snapshot.compounding is not None
+    assert snapshot.compounding.pending_governance_items >= 0
     assert snapshot.events is not None
     assert snapshot.events.events == ()
     assert snapshot.runs is not None
@@ -1609,6 +1660,7 @@ def test_runtime_gateway_loads_sparse_snapshot_for_empty_backlog(tmp_path) -> No
     assert snapshot.queue.backlog == ()
     assert snapshot.research is not None
     assert snapshot.research.status == "IDLE"
+    assert snapshot.compounding is not None
     assert snapshot.events is not None
     assert snapshot.events.events == ()
     assert snapshot.runs is not None
@@ -1770,6 +1822,19 @@ def test_runtime_gateway_shapes_research_audit_governance_and_recent_activity(mo
                 )
             ]
 
+        def compounding_governance_summary(self):
+            return SimpleNamespace(
+                pending_governance_items=4,
+                procedure_pending_review=1,
+                context_fact_pending_review=1,
+                harness_candidate_pending_review=1,
+                recommendation_pending=1,
+                latest_recommendation_summary="Recommend bounded prompt override candidate.",
+                recent_usage_run_id="run-exec-1",
+                recent_usage_procedure_count=1,
+                recent_usage_context_fact_count=1,
+            )
+
         def interview_list(self):
             return SimpleNamespace(questions=())
 
@@ -1798,6 +1863,9 @@ def test_runtime_gateway_shapes_research_audit_governance_and_recent_activity(mo
     assert payload.research.governance is not None
     assert payload.research.governance.drift_status == "warning"
     assert payload.research.governance.recovery_status == "stalled"
+    assert payload.compounding is not None
+    assert payload.compounding.pending_governance_items == 4
+    assert payload.compounding.recent_usage_run_id == "run-exec-1"
     assert payload.research.recent_activity[0].category == "RSH"
     assert payload.research.recent_activity[0].run_id == "run-audit-1"
     assert payload.events is not None
@@ -1901,6 +1969,19 @@ def test_runtime_gateway_load_workspace_snapshot_includes_recent_runs(monkeypatc
         def logs(self, limit: int):
             return ()
 
+        def compounding_governance_summary(self):
+            return SimpleNamespace(
+                pending_governance_items=0,
+                procedure_pending_review=0,
+                context_fact_pending_review=0,
+                harness_candidate_pending_review=0,
+                recommendation_pending=0,
+                latest_recommendation_summary=None,
+                recent_usage_run_id=None,
+                recent_usage_procedure_count=0,
+                recent_usage_context_fact_count=0,
+            )
+
     def fake_read_run_provenance(run_dir: Path):
         if run_dir.name == "run-ok":
             frozen_plan = SimpleNamespace(
@@ -1988,22 +2069,26 @@ def test_status_bar_and_overview_panel_render_runtime_cockpit_summary() -> None:
         runtime=payload.runtime,
         queue=payload.queue,
         research=payload.research,
+        compounding=payload.compounding,
         latest_run=latest_run,
     )
     overview_text = overview.summary_text()
     assert "RUNTIME  stopped | mode once | exec IDLE | uptime --" in overview_text
     assert "NEXT     Example task" in overview_text
     assert "LATEST   WARN smoke-standard | sel mode.std | 00:00:00Z | stg 2 | hist no | transition history not present" in overview_text
+    assert "GOVERN  pending 3 | proc 1 | facts 1 | harness 1 | recs 0 | used smoke-standard p1/f1" in overview_text
     assert "ATTN     transition history not present | latest run metadata is incomplete" in overview_text
 
     overview.show_snapshot(
         runtime=payload.runtime,
         queue=payload.queue,
         research=payload.research,
+        compounding=payload.compounding,
         latest_run=latest_run,
         display_mode=DisplayMode.DEBUG,
     )
     debug_overview_text = overview.summary_text()
+    assert "GOVERN  pending 3 | proc 1 | facts 1 | harness 1 | recs 0 | used smoke-standard p1/f1" in debug_overview_text
     assert "WORK     queued 1 | deferred 0 | active none | next Example task" in debug_overview_text
     assert "LATEST   WARN smoke-standard" in debug_overview_text
 
@@ -2948,6 +3033,39 @@ def test_runtime_gateway_load_run_detail_maps_success_payload(monkeypatch, tmp_p
                     available_execution_nodes=("builder", "qa"),
                     reason="Builder routes to qa.",
                 ),
+                compounding=SimpleNamespace(
+                    created_count=1,
+                    selection_count=1,
+                    fact_selection_count=1,
+                    injected_procedure_count=1,
+                    injected_fact_count=1,
+                    created_procedures=(
+                        SimpleNamespace(
+                            procedure_id="proc.workspace.builder.reviewed",
+                            scope=SimpleNamespace(value="workspace"),
+                            source_stage="builder",
+                            title="Reviewed builder procedure",
+                        ),
+                    ),
+                    procedure_selections=(
+                        SimpleNamespace(
+                            stage="builder",
+                            node_id="builder",
+                            considered_count=1,
+                            injected_count=1,
+                            injected_procedures=(SimpleNamespace(procedure_id="proc.workspace.builder.reviewed"),),
+                        ),
+                    ),
+                    context_fact_selections=(
+                        SimpleNamespace(
+                            stage="builder",
+                            node_id="builder",
+                            considered_count=1,
+                            injected_count=1,
+                            injected_facts=(SimpleNamespace(fact_id="fact.workspace.builder.audit"),),
+                        ),
+                    ),
+                ),
                 compile_snapshot=SimpleNamespace(
                     created_at=datetime(2026, 3, 25, tzinfo=timezone.utc),
                     frozen_plan=SimpleNamespace(plan_id="frozen-plan:hash-123", content_hash="hash-123"),
@@ -3094,6 +3212,8 @@ def test_run_detail_modal_renders_loaded_provenance(monkeypatch, tmp_path) -> No
         body = _static_text(app.screen.query_one("#run-detail-body", Static))
         assert "PLAN    frozen-plan:run-modal-1" in body
         assert "HASH    run-modal-1-hash" in body
+        assert "COMPOUND created 1 | procedures 1/1 | facts 1/1" in body
+        assert "FACTS    builder (builder) considered 1 | injected fact.workspace.builder.audit" in body
         assert "POLICY  records 2 | latest PASS | hook pre_stage | evaluator execution_integration_policy" in body
         assert "INTEGRATION mode large_only | target qa | run no" in body
         assert "TRACE   /tmp/run-modal-1/transition_history.jsonl" in body

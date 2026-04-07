@@ -17,6 +17,7 @@ from ..publishing.staging import PublishCommitReport, PublishPreflightReport, St
 from .formatting import detail_items, runtime_event_view, stringify_value
 from .models import (
     ActionResultView,
+    CompoundingGovernanceOverviewView,
     ConfigFieldInputKind,
     ConfigFieldView,
     ConfigOverviewView,
@@ -30,9 +31,13 @@ from .models import (
     ResearchOverviewView,
     ResearchQueueFamilyView,
     ResearchQueueItemView,
+    RunCompoundingView,
+    RunContextFactSelectionSummaryView,
+    RunCreatedProcedureSummaryView,
     RunDetailView,
     RunIntegrationSummaryView,
     RunPolicyEvidenceView,
+    RunProcedureSelectionSummaryView,
     RunsOverviewView,
     RunSummaryView,
     RunTransitionView,
@@ -433,6 +438,22 @@ def research_governance_view(report: object) -> ResearchGovernanceOverviewView |
     return None
 
 
+def compounding_governance_view(report: object) -> CompoundingGovernanceOverviewView | None:
+    if report is None:
+        return None
+    return CompoundingGovernanceOverviewView(
+        pending_governance_items=int(getattr(report, "pending_governance_items", 0)),
+        procedure_pending_review=int(getattr(report, "procedure_pending_review", 0)),
+        context_fact_pending_review=int(getattr(report, "context_fact_pending_review", 0)),
+        harness_candidate_pending_review=int(getattr(report, "harness_candidate_pending_review", 0)),
+        recommendation_pending=int(getattr(report, "recommendation_pending", 0)),
+        latest_recommendation_summary=getattr(report, "latest_recommendation_summary", None),
+        recent_usage_run_id=getattr(report, "recent_usage_run_id", None),
+        recent_usage_procedure_count=int(getattr(report, "recent_usage_procedure_count", 0)),
+        recent_usage_context_fact_count=int(getattr(report, "recent_usage_context_fact_count", 0)),
+    )
+
+
 def governance_has_signal(view: ResearchGovernanceOverviewView) -> bool:
     return any(
         (
@@ -626,6 +647,54 @@ def integration_policy_view(integration: object | None) -> RunIntegrationSummary
     )
 
 
+def run_compounding_view(report: object | None) -> RunCompoundingView | None:
+    if report is None:
+        return None
+    created_procedures = tuple(
+        RunCreatedProcedureSummaryView(
+            procedure_id=str(getattr(item, "procedure_id")),
+            scope=str(getattr(getattr(item, "scope"), "value", getattr(item, "scope"))),
+            source_stage=str(getattr(item, "source_stage")),
+            title=str(getattr(item, "title")),
+        )
+        for item in getattr(report, "created_procedures")
+    )
+    procedure_selections = tuple(
+        RunProcedureSelectionSummaryView(
+            stage=str(getattr(item, "stage")),
+            node_id=str(getattr(item, "node_id")),
+            considered_count=int(getattr(item, "considered_count", 0)),
+            injected_count=int(getattr(item, "injected_count", 0)),
+            injected_ids=tuple(str(getattr(procedure, "procedure_id")) for procedure in getattr(item, "injected_procedures")),
+        )
+        for item in getattr(report, "procedure_selections")
+    )
+    context_fact_selections = tuple(
+        RunContextFactSelectionSummaryView(
+            stage=str(getattr(item, "stage")),
+            node_id=str(getattr(item, "node_id")),
+            considered_count=int(getattr(item, "considered_count", 0)),
+            injected_count=int(getattr(item, "injected_count", 0)),
+            injected_ids=tuple(str(getattr(fact, "fact_id")) for fact in getattr(item, "injected_facts")),
+        )
+        for item in getattr(report, "context_fact_selections")
+    )
+    return RunCompoundingView(
+        created_count=int(getattr(report, "created_count", len(created_procedures))),
+        procedure_selection_count=int(getattr(report, "selection_count", len(procedure_selections))),
+        context_fact_selection_count=int(getattr(report, "fact_selection_count", len(context_fact_selections))),
+        injected_procedure_count=int(
+            getattr(report, "injected_procedure_count", sum(item.injected_count for item in procedure_selections))
+        ),
+        injected_context_fact_count=int(
+            getattr(report, "injected_fact_count", sum(item.injected_count for item in context_fact_selections))
+        ),
+        created_procedures=created_procedures,
+        procedure_selections=procedure_selections,
+        context_fact_selections=context_fact_selections,
+    )
+
+
 def run_detail_view(report: object) -> RunDetailView:
     policy_hooks = getattr(report, "policy_hooks")
     compile_snapshot = getattr(report, "compile_snapshot")
@@ -680,6 +749,7 @@ def run_detail_view(report: object) -> RunDetailView:
         latest_policy_decision=(getattr(policy_hooks, "latest_decision") if policy_hooks is not None else None),
         latest_policy_evidence=policy_evidence_view(getattr(report, "latest_policy_evidence")),
         integration_policy=integration_policy_view(getattr(report, "integration_policy")),
+        compounding=run_compounding_view(getattr(report, "compounding")),
         transitions=transitions,
     )
 

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from .models import (
     ActionResultView,
+    CompoundingGovernanceOverviewView,
     ConfigOverviewView,
     DisplayMode,
     EventLogView,
@@ -43,6 +44,7 @@ class TUIState:
     config: ConfigOverviewView | None = None
     queue: QueueOverviewView | None = None
     research: ResearchOverviewView | None = None
+    compounding: CompoundingGovernanceOverviewView | None = None
     events: EventLogView | None = None
     publish: PublishOverviewView | None = None
     runs: RunsOverviewView | None = None
@@ -125,6 +127,7 @@ def reduce_refresh_success(
         config=(payload.config if payload.config is not None else state.config),
         queue=(payload.queue if payload.queue is not None else state.queue),
         research=(payload.research if payload.research is not None else state.research),
+        compounding=(payload.compounding if payload.compounding is not None else state.compounding),
         events=(payload.events if payload.events is not None else state.events),
         publish=(payload.publish if payload.publish is not None else state.publish),
         runs=(payload.runs if payload.runs is not None else state.runs),

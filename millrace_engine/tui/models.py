@@ -326,6 +326,19 @@ class ResearchGovernanceOverviewView:
 
 
 @dataclass(frozen=True, slots=True)
+class CompoundingGovernanceOverviewView:
+    pending_governance_items: int
+    procedure_pending_review: int
+    context_fact_pending_review: int
+    harness_candidate_pending_review: int
+    recommendation_pending: int
+    latest_recommendation_summary: str | None = None
+    recent_usage_run_id: str | None = None
+    recent_usage_procedure_count: int = 0
+    recent_usage_context_fact_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeEventView:
     event_type: str
     source: str
@@ -457,6 +470,44 @@ class RunIntegrationSummaryView:
 
 
 @dataclass(frozen=True, slots=True)
+class RunCreatedProcedureSummaryView:
+    procedure_id: str
+    scope: str
+    source_stage: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunProcedureSelectionSummaryView:
+    stage: str
+    node_id: str
+    considered_count: int
+    injected_count: int
+    injected_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RunContextFactSelectionSummaryView:
+    stage: str
+    node_id: str
+    considered_count: int
+    injected_count: int
+    injected_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RunCompoundingView:
+    created_count: int = 0
+    procedure_selection_count: int = 0
+    context_fact_selection_count: int = 0
+    injected_procedure_count: int = 0
+    injected_context_fact_count: int = 0
+    created_procedures: tuple[RunCreatedProcedureSummaryView, ...] = ()
+    procedure_selections: tuple[RunProcedureSelectionSummaryView, ...] = ()
+    context_fact_selections: tuple[RunContextFactSelectionSummaryView, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RunDetailView:
     run_id: str
     compiled_at: datetime | None
@@ -475,6 +526,7 @@ class RunDetailView:
     latest_policy_decision: str | None
     latest_policy_evidence: RunPolicyEvidenceView | None
     integration_policy: RunIntegrationSummaryView | None
+    compounding: RunCompoundingView | None
     transitions: tuple[RunTransitionView, ...]
 
 
@@ -512,6 +564,7 @@ class RefreshPayload:
     config: ConfigOverviewView | None = None
     queue: QueueOverviewView | None = None
     research: ResearchOverviewView | None = None
+    compounding: CompoundingGovernanceOverviewView | None = None
     events: EventLogView | None = None
     publish: PublishOverviewView | None = None
     runs: RunsOverviewView | None = None
@@ -523,6 +576,7 @@ class RefreshPayload:
             and self.config is None
             and self.queue is None
             and self.research is None
+            and self.compounding is None
             and self.events is None
             and self.publish is None
             and self.runs is None

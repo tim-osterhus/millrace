@@ -155,6 +155,8 @@ What it provides:
 - lifecycle actions for `start --once`, `start --daemon`, `pause`, `resume`, and `stop`
 - a command palette for common actions, including display-mode toggle and lifecycle controls
 - built-in keyboard help (`?`) and panel shortcuts (`1` through `7`)
+- read-only governance visibility for recent compounding knowledge usage and pending review items
+- concise run-detail drilldown that now includes procedure and context-fact usage summaries when present
 - the same runtime semantics as the CLI, including mailbox-safe daemon mutations and the same file-backed truth surfaces
 
 Use the TUI for day-to-day observation and control. Use the CLI when you want scriptable, one-shot commands or JSON output.
@@ -269,9 +271,14 @@ The TUI exposes the same actions through the command palette and keyboard-driven
 millrace --config millrace.toml logs --follow
 millrace --config millrace.toml run-provenance <run_id> --json
 millrace --config millrace.toml research history --json
+millrace --config millrace.toml compounding --json
+millrace --config millrace.toml compounding facts --json
+millrace --config millrace.toml compounding procedures --json
+millrace --config millrace.toml compounding harness recommendations --json
 ```
 
 The TUI keeps recent runs, filtered logs, and concise run-provenance drilldown in one place, including a run-detail modal from the Runs and Logs panels.
+The Overview panel also surfaces a compact governance card for pending compounding review work and the most recent governed knowledge usage visible from local run artifacts.
 
 When you want the old foreground-feed feel without leaving the shell, use TUI expanded mode instead of opening a second terminal just to run `logs --follow`.
 

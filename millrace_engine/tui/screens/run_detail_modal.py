@@ -172,6 +172,28 @@ class RunDetailModal(ModalScreen[None]):
             f"transitions {len(detail.transitions)}"
             f" | routes {', '.join(detail.routing_modes) if detail.routing_modes else 'none'}"
         )
+        if detail.compounding is not None:
+            compounding = detail.compounding
+            lines.append(
+                "COMPOUND "
+                f"created {compounding.created_count}"
+                f" | procedures {compounding.procedure_selection_count}/{compounding.injected_procedure_count}"
+                f" | facts {compounding.context_fact_selection_count}/{compounding.injected_context_fact_count}"
+            )
+            for created in compounding.created_procedures[:3]:
+                lines.append(f"CREATED  {created.procedure_id} [{created.scope}] stage {created.source_stage}")
+            for selection_summary in compounding.procedure_selections[:3]:
+                injected = ", ".join(selection_summary.injected_ids) if selection_summary.injected_ids else "none"
+                lines.append(
+                    f"PROC     {selection_summary.stage} ({selection_summary.node_id}) "
+                    f"considered {selection_summary.considered_count} | injected {injected}"
+                )
+            for selection_summary in compounding.context_fact_selections[:3]:
+                injected = ", ".join(selection_summary.injected_ids) if selection_summary.injected_ids else "none"
+                lines.append(
+                    f"FACTS    {selection_summary.stage} ({selection_summary.node_id}) "
+                    f"considered {selection_summary.considered_count} | injected {injected}"
+                )
         lines.extend(run_transition_summary_lines(detail.transitions))
         lines.extend(
             run_policy_summary_lines(

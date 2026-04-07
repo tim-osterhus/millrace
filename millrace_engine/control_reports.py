@@ -15,6 +15,7 @@ from .baseline_assets import packaged_baseline_asset, packaged_baseline_bundle_v
 from .compiler import CompileTimeResolvedSnapshot
 from .config import EngineConfig, LoadedConfig, build_runtime_paths
 from .contract_compounding import ProcedureInjectionBundle, ReusableProcedureArtifact
+from .contract_context_facts import ContextFactInjectionBundle
 from .contracts import (
     AuditGateDecision,
     CompletionDecision,
@@ -35,6 +36,7 @@ from .policies import (
     refresh_size_status,
 )
 from .provenance import (
+    CONTEXT_FACT_INJECTION_ATTRIBUTE,
     PROCEDURE_INJECTION_ATTRIBUTE,
     RuntimeTransitionRecord,
     latest_policy_transition_record,
@@ -63,6 +65,7 @@ from .control_models import (
     ResearchQueueFamilyView,
     RunCompoundingReport,
     RunCreatedProcedureView,
+    RunContextFactSelectionView,
     RunProvenanceReport,
     RunProcedureSelectionView,
     RuntimeState,
@@ -260,6 +263,7 @@ def _run_compounding_report(
     return RunCompoundingReport(
         created_procedures=created,
         procedure_selections=selections,
+        context_fact_selections=_context_fact_selection_views(runtime_history),
     )
 
 
@@ -302,6 +306,29 @@ def _procedure_selection_views(
             continue
         selections.append(
             RunProcedureSelectionView.from_bundle(
+                event_id=record.event_id,
+                node_id=record.node_id,
+                stage=bundle.stage.value,
+                bundle=bundle,
+            )
+        )
+    return tuple(selections)
+
+
+def _context_fact_selection_views(
+    runtime_history: tuple[RuntimeTransitionRecord, ...],
+) -> tuple[RunContextFactSelectionView, ...]:
+    selections: list[RunContextFactSelectionView] = []
+    for record in runtime_history:
+        raw_bundle = record.attributes.get(CONTEXT_FACT_INJECTION_ATTRIBUTE)
+        if not isinstance(raw_bundle, dict):
+            continue
+        try:
+            bundle = ContextFactInjectionBundle.model_validate(raw_bundle)
+        except ValidationError:
+            continue
+        selections.append(
+            RunContextFactSelectionView.from_bundle(
                 event_id=record.event_id,
                 node_id=record.node_id,
                 stage=bundle.stage.value,

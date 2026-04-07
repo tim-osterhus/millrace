@@ -9,7 +9,15 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ContentSwitcher, Static
 
-from ..models import DisplayMode, GatewayFailure, QueueOverviewView, QueueTaskView, ResearchOverviewView, RuntimeOverviewView
+from ..models import (
+    CompoundingGovernanceOverviewView,
+    DisplayMode,
+    GatewayFailure,
+    QueueOverviewView,
+    QueueTaskView,
+    ResearchOverviewView,
+    RuntimeOverviewView,
+)
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
 
 
@@ -126,6 +134,7 @@ class OverviewPanel(Static):
         self._runtime: RuntimeOverviewView | None = None
         self._queue: QueueOverviewView | None = None
         self._research: ResearchOverviewView | None = None
+        self._compounding: CompoundingGovernanceOverviewView | None = None
         self._latest_run: LatestRunSummary | None = None
         self._failure: GatewayFailure | None = None
         self._display_mode: DisplayMode = DisplayMode.OPERATOR
@@ -141,6 +150,7 @@ class OverviewPanel(Static):
                     yield self._detail_card("runtime", "Runtime")
                     yield self._detail_card("latest", "Latest run")
                     yield self._detail_card("research", "Research")
+                    yield self._detail_card("governance", "Governance")
                     yield self._detail_card("attention", "Attention")
             yield Static("", id="overview-debug", classes="overview-debug-body")
 
@@ -153,6 +163,7 @@ class OverviewPanel(Static):
         runtime: RuntimeOverviewView | None,
         queue: QueueOverviewView | None,
         research: ResearchOverviewView | None,
+        compounding: CompoundingGovernanceOverviewView | None,
         latest_run: LatestRunSummary | None,
         failure: GatewayFailure | None = None,
         display_mode: DisplayMode = DisplayMode.OPERATOR,
@@ -160,6 +171,7 @@ class OverviewPanel(Static):
         self._runtime = runtime
         self._queue = queue
         self._research = research
+        self._compounding = compounding
         self._latest_run = latest_run
         self._failure = failure
         self._display_mode = display_mode
@@ -208,6 +220,7 @@ class OverviewPanel(Static):
             self._update_detail("runtime", "Waiting for the runtime snapshot.", self._failure_summary())
             self._update_detail("latest", "No run snapshot yet", "latest run artifacts unavailable")
             self._update_detail("research", "Waiting for research snapshot", "research status unavailable")
+            self._update_detail("governance", "Waiting for governance snapshot", "compounding summary unavailable")
             self._update_attention_card()
             self._set_latest_state("state-info")
             return
@@ -250,6 +263,8 @@ class OverviewPanel(Static):
                 f"family {_runtime_label(research.selected_family)} | deferred {research.deferred_request_count}"
             )
         self._update_detail("research", research_headline, research_detail)
+        governance_headline, governance_detail = self._governance_card_content()
+        self._update_detail("governance", governance_headline, governance_detail)
         self._update_attention_card()
 
     def _update_metric(self, suffix: str, value: str, meta: str) -> None:
@@ -302,7 +317,36 @@ class OverviewPanel(Static):
             count = self._research.deferred_request_count
             label = "request" if count == 1 else "requests"
             return (f"Research deferred {count}", f"{count} deferred {label} waiting for operator follow-up", "state-warning")
+        if self._compounding is not None and self._compounding.pending_governance_items > 0:
+            pending = self._compounding.pending_governance_items
+            label = "item" if pending == 1 else "items"
+            return (
+                f"Governance pending {pending}",
+                f"{pending} governed knowledge {label} still need review",
+                "state-warning",
+            )
         return ("No immediate operator action", "runtime and latest run surfaces look stable", "state-calm")
+
+    def _governance_card_content(self) -> tuple[str, str]:
+        governance = self._compounding
+        if governance is None:
+            return ("waiting", "compounding summary not available")
+        headline = (
+            f"pending {governance.pending_governance_items}"
+            if governance.pending_governance_items > 0
+            else "no pending review"
+        )
+        fragments = [
+            f"proc {governance.procedure_pending_review}",
+            f"facts {governance.context_fact_pending_review}",
+            f"harness {governance.harness_candidate_pending_review}",
+            f"recs {governance.recommendation_pending}",
+        ]
+        if governance.recent_usage_run_id is not None:
+            fragments.append(
+                f"used {governance.recent_usage_run_id} p{governance.recent_usage_procedure_count}/f{governance.recent_usage_context_fact_count}"
+            )
+        return (headline, " | ".join(fragments))
 
     def _latest_run_card_content(self) -> tuple[str, str, str]:
         summary = self._latest_run
@@ -371,6 +415,7 @@ class OverviewPanel(Static):
             lines.append("RUNTIME  waiting for runtime snapshot")
             lines.append("LATEST   no run artifacts")
             lines.append("RESEARCH waiting for research snapshot")
+            lines.append("GOVERN  waiting for governance snapshot")
             lines.append("ATTN     waiting for snapshot")
             if self._failure is not None:
                 lines.append(f"STATE    {self._failure_summary()}")
@@ -403,6 +448,8 @@ class OverviewPanel(Static):
                 f"{runtime.research_status} | mode {self._research.current_mode} | family "
                 f"{_runtime_label(self._research.selected_family)} | deferred {self._research.deferred_request_count}"
             )
+        governance_headline, governance_detail = self._governance_card_content()
+        lines.append(f"GOVERN  {governance_headline} | {governance_detail}")
         attention_headline, attention_detail, _ = self._attention_card_content()
         lines.append(f"ATTN     {attention_headline} | {attention_detail}")
         return "\n".join(lines)
@@ -452,6 +499,8 @@ class OverviewPanel(Static):
                 f" | family {_runtime_label(research.selected_family)}"
                 f" | deferred {research.deferred_request_count}"
             )
+        governance_headline, governance_detail = self._governance_card_content()
+        lines.append(f"GOVERN  {governance_headline} | {governance_detail}")
         lines.append(
             "WORK     "
             f"queued {runtime.backlog_depth}"

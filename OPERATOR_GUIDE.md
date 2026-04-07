@@ -52,6 +52,7 @@ Use the CLI commands:
 - `logs`
 - `research`
 - `run-provenance`
+- `compounding`
 - `publish`
 - `config`
 
@@ -140,6 +141,7 @@ What the shell gives you:
 - lifecycle state signals in multiple places: sidebar daemon badge, top status strip, and notices
 - a command palette for lifecycle, publish, config, and panel actions
 - guided modals for add-task, add-idea, queue reorder, config edits, run detail, and publish confirmations
+- read-only governance visibility in Overview plus run-detail compounding summaries for recent procedure/context-fact usage
 - the same mailbox-safe daemon mutation rules used by the CLI
 
 Useful TUI controls:
@@ -277,6 +279,9 @@ Optional adapters may translate supervisor reports or structured events into loc
 millrace --config millrace.toml logs --follow
 millrace --config millrace.toml run-provenance <run_id> --json
 millrace --config millrace.toml research history --json
+millrace --config millrace.toml compounding --json
+millrace --config millrace.toml compounding facts --json
+millrace --config millrace.toml compounding harness recommendations --json
 ```
 
 Use:
@@ -284,12 +289,15 @@ Use:
 - `logs` for the structured event stream
 - `run-provenance` for one execution run's frozen plan, transitions, and evidence
 - `research --json` and `research history` for research-side state and recent research events
+- `compounding --json` for one compact governance summary across procedures, context facts, harness candidates, and recommendations
+- `compounding facts` plus the existing compounding procedure/harness subcommands for artifact-level governed reuse inspection
 
 In the TUI:
 
 - the Logs panel tails and filters the event stream
-- the Runs panel opens concise run detail backed by `run-provenance`
+- the Runs panel opens concise run detail backed by `run-provenance`, including governed procedure and context-fact usage when that run recorded it
 - the Research panel surfaces queue, status, governance, and recent activity snapshots
+- the Overview panel surfaces pending governed review work and the most recent governed knowledge usage summary without adding mutation controls
 
 Use expanded mode when you want the live stream to dominate the shell body. Keep using the compact Logs panel when filters, selection, and run-detail handoff matter more than full-height output.
 

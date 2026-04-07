@@ -286,18 +286,18 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "049352a1e1392524efb48a071f593f1edcfdaaf251e64d508eee0f33cea85d0a",
+      "sha256": "5bd3edb32c780cd9e6e264f172016bc34cf226ba8d6fe08e8cdbed4bbddfe057",
       "size": 15957,
-      "size_bytes": 16320,
+      "size_bytes": 17126,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "bab60f0393d113ade9ace62ae53965477701aba490d60977979f9c7d1a1d0316",
+      "sha256": "314fdee40a5394ef26fcabf38b03a64220db5b25f9609847d7b36780fadd6a25",
       "size": 18744,
-      "size_bytes": 19163,
+      "size_bytes": 19785,
       "source": "runtime"
     },
     {
@@ -1519,9 +1519,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
-      "sha256": "239a758794f848eebcb95053f6e2c7ec8364afc5e85e574922eed3c1a9613f88",
+      "sha256": "8cb4c51a97209757efa30173a087d3d0cd0f1a45e6827c7ef86bbbbd8e6356c0",
       "size": 24542,
-      "size_bytes": 24664,
+      "size_bytes": 24898,
       "source": "runtime"
     },
     {
