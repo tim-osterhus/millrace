@@ -14,7 +14,7 @@ from .assets.resolver import AssetFamilyEntry, AssetResolutionError, AssetResolv
 from .baseline_assets import packaged_baseline_asset, packaged_baseline_bundle_version
 from .compiler import CompileTimeResolvedSnapshot
 from .config import EngineConfig, LoadedConfig, build_runtime_paths
-from .contract_compounding import ProcedureInjectionBundle, ReusableProcedureArtifact
+from .contract_compounding import CompoundingFlushCheckpoint, ProcedureInjectionBundle, ReusableProcedureArtifact
 from .contract_context_facts import ContextFactInjectionBundle
 from .contracts import (
     AuditGateDecision,
@@ -36,6 +36,7 @@ from .policies import (
     refresh_size_status,
 )
 from .provenance import (
+    COMPOUNDING_FLUSH_ATTRIBUTE,
     CONTEXT_FACT_INJECTION_ATTRIBUTE,
     PROCEDURE_INJECTION_ATTRIBUTE,
     RuntimeTransitionRecord,
@@ -64,6 +65,7 @@ from .control_models import (
     QueueItemView,
     ResearchQueueFamilyView,
     RunCompoundingReport,
+    RunCompoundingFlushView,
     RunCreatedProcedureView,
     RunContextFactSelectionView,
     RunProvenanceReport,
@@ -259,11 +261,16 @@ def _run_compounding_report(
     created = _created_procedure_views(run_dir)
     selections = _procedure_selection_views(runtime_history)
     if not created and not selections:
-        return None
+        flushes = _compounding_flush_views(runtime_history)
+        if not flushes:
+            return None
+    else:
+        flushes = _compounding_flush_views(runtime_history)
     return RunCompoundingReport(
         created_procedures=created,
         procedure_selections=selections,
         context_fact_selections=_context_fact_selection_views(runtime_history),
+        flush_checkpoints=flushes,
     )
 
 
@@ -336,6 +343,28 @@ def _context_fact_selection_views(
             )
         )
     return tuple(selections)
+
+
+def _compounding_flush_views(
+    runtime_history: tuple[RuntimeTransitionRecord, ...],
+) -> tuple[RunCompoundingFlushView, ...]:
+    flushes: list[RunCompoundingFlushView] = []
+    for record in runtime_history:
+        raw_checkpoint = record.attributes.get(COMPOUNDING_FLUSH_ATTRIBUTE)
+        if not isinstance(raw_checkpoint, dict):
+            continue
+        try:
+            checkpoint = CompoundingFlushCheckpoint.model_validate(raw_checkpoint)
+        except ValidationError:
+            continue
+        flushes.append(
+            RunCompoundingFlushView.from_checkpoint(
+                event_id=record.event_id,
+                node_id=record.node_id,
+                checkpoint=checkpoint,
+            )
+        )
+    return tuple(flushes)
 
 
 def read_control_research_state(paths: RuntimePaths) -> ResearchRuntimeState | None:

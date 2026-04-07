@@ -1,6 +1,12 @@
 """Compounding helpers for runtime-owned governed reuse."""
 
 from .extraction import clear_run_scoped_procedure_candidates, persist_candidate_from_transition
+from .finalization import (
+    CompoundingFlushCheckpoint,
+    CompoundingFlushMilestone,
+    flush_milestone_for_transition,
+    flush_run_scoped_compounding_candidates,
+)
 from .harness import (
     discover_harness_benchmark_results,
     discover_harness_candidates,
@@ -30,6 +36,8 @@ from .retrieval import (
 )
 
 __all__ = [
+    "CompoundingFlushCheckpoint",
+    "CompoundingFlushMilestone",
     "build_injected_context_fact_bundle",
     "build_injected_procedure_bundle",
     "clear_run_scoped_procedure_candidates",
@@ -40,6 +48,8 @@ __all__ = [
     "discover_harness_candidates",
     "discover_harness_recommendations",
     "discover_workspace_procedures",
+    "flush_milestone_for_transition",
+    "flush_run_scoped_compounding_candidates",
     "governed_procedure_for_id",
     "harness_benchmark_result_for_id",
     "harness_candidate_for_id",

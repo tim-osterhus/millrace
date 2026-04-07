@@ -29,6 +29,7 @@ PROCEDURE_INJECTION_ATTRIBUTE = "procedure_injection"
 CONTEXT_FACT_INJECTION_ATTRIBUTE = "context_fact_injection"
 COMPOUNDING_PROFILE_ATTRIBUTE = "compounding_profile"
 COMPOUNDING_BUDGET_ATTRIBUTE = "compounding_budget"
+COMPOUNDING_FLUSH_ATTRIBUTE = "compounding_flush"
 RUNTIME_REBINDABLE_STAGE_FIELDS = frozenset(
     {
         StageOverrideField.MODEL_PROFILE_REF,

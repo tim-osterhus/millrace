@@ -13,6 +13,8 @@ from millrace_engine.context_facts import persist_context_fact
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import ControlError, EngineControl
 from millrace_engine.contracts import (
+    CompoundingFlushCheckpoint,
+    CompoundingFlushMilestone,
     ControlPlane,
     ContextFactArtifact,
     ContextFactLifecycleState,
@@ -566,6 +568,10 @@ def _policy_hook_records(records):
     return [record for record in records if record.policy_evaluation is not None]
 
 
+def _compounding_flush_records(records):
+    return [record for record in records if record.event_name == "execution.compounding.flush"]
+
+
 def _load_compounding_candidates(workspace: Path, run_id: str) -> list[ReusableProcedureArtifact]:
     candidate_dir = workspace / "agents/compounding/procedures" / run_id
     if not candidate_dir.exists():
@@ -573,6 +579,26 @@ def _load_compounding_candidates(workspace: Path, run_id: str) -> list[ReusableP
     return [
         ReusableProcedureArtifact.model_validate_json(path.read_text(encoding="utf-8"))
         for path in sorted(candidate_dir.glob("*.json"))
+    ]
+
+
+def _load_workspace_compounding_procedures(workspace: Path) -> list[ReusableProcedureArtifact]:
+    procedure_dir = workspace / "agents/compounding/procedures"
+    if not procedure_dir.exists():
+        return []
+    return [
+        ReusableProcedureArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+        for path in sorted(procedure_dir.glob("*.json"))
+    ]
+
+
+def _load_compounding_lifecycle_records(workspace: Path) -> list[ProcedureLifecycleRecord]:
+    lifecycle_dir = workspace / "agents/compounding/lifecycle"
+    if not lifecycle_dir.exists():
+        return []
+    return [
+        ProcedureLifecycleRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        for path in sorted(lifecycle_dir.glob("*.json"))
     ]
 
 
@@ -989,6 +1015,98 @@ def test_execution_plane_skips_compounding_candidates_for_unsupported_intermedia
     ]
     assert all(candidate.source_stage is not StageType.QA for candidate in candidates)
     assert all(candidate.source_stage is not StageType.HOTFIX for candidate in candidates)
+
+
+def test_execution_plane_stage_success_flushes_builder_candidate_without_waiting_for_closeout(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "needs_research")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.INTEGRATION: [sys.executable, str(script), "integration"],
+            StageType.QA: [sys.executable, str(script), "qa-blocked"],
+            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
+            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
+        },
+    )
+
+    result = plane.run_once()
+
+    assert result.run_id is not None
+    assert result.archived_task is None
+    workspace_procedures = _load_workspace_compounding_procedures(workspace)
+    assert [artifact.source_stage for artifact in workspace_procedures] == [StageType.BUILDER]
+    assert workspace_procedures[0].scope is ProcedureScope.WORKSPACE
+
+    lifecycle_records = _load_compounding_lifecycle_records(workspace)
+    assert [record.state for record in lifecycle_records] == [ProcedureLifecycleState.CANDIDATE]
+    assert lifecycle_records[0].changed_by == "runtime.compounding.stage_success"
+
+    records = read_transition_history(result.transition_history_path)
+    flush_records = _compounding_flush_records(records)
+    assert [record.node_id for record in flush_records] == ["builder"]
+    checkpoint = CompoundingFlushCheckpoint.model_validate(
+        flush_records[0].attributes["compounding_flush"]
+    )
+    assert checkpoint.milestone is CompoundingFlushMilestone.STAGE_SUCCESS
+    assert checkpoint.finalized_procedure_ids == tuple(
+        artifact.procedure_id for artifact in workspace_procedures
+    )
+
+
+def test_control_run_provenance_reports_compounding_flush_checkpoints_for_recovery_and_closeout(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-blocked-then-pass"],
+            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.run_id is not None
+    report = EngineControl(config_path).run_provenance(result.run_id)
+    workspace_procedures = _load_workspace_compounding_procedures(workspace)
+
+    assert report.compounding is not None
+    milestones = [checkpoint.milestone for checkpoint in report.compounding.flush_checkpoints]
+    assert CompoundingFlushMilestone.STAGE_SUCCESS in milestones
+    assert CompoundingFlushMilestone.RECOVERY_SUCCESS in milestones
+    assert CompoundingFlushMilestone.RUN_CLOSEOUT in milestones
+
+    recovery_checkpoint = next(
+        checkpoint
+        for checkpoint in report.compounding.flush_checkpoints
+        if checkpoint.milestone is CompoundingFlushMilestone.RECOVERY_SUCCESS
+    )
+    assert recovery_checkpoint.trigger_stage == "troubleshoot"
+    assert recovery_checkpoint.finalized_procedure_ids == tuple(
+        artifact.procedure_id
+        for artifact in workspace_procedures
+        if artifact.source_stage is StageType.TROUBLESHOOT
+    )
+
+    closeout_checkpoint = next(
+        checkpoint
+        for checkpoint in report.compounding.flush_checkpoints
+        if checkpoint.milestone is CompoundingFlushMilestone.RUN_CLOSEOUT
+    )
+    assert closeout_checkpoint.trigger_stage == "update"
 
 
 def test_execution_plane_records_policy_hooks_with_frozen_plan_facts(tmp_path: Path) -> None:

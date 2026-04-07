@@ -83,6 +83,48 @@ def load_retrievable_context_facts(paths: RuntimePaths) -> tuple[ContextFactArti
     )
 
 
+def workspace_candidate_fact_id_for(fact_id: str) -> str:
+    """Return the canonical workspace-scope review candidate id for one fact."""
+
+    normalized = fact_id.strip()
+    if normalized.startswith("fact.run."):
+        return f"fact.workspace.{normalized[len('fact.run.'):]}"
+    if normalized.startswith("fact.workspace."):
+        return normalized
+    if normalized.startswith("fact."):
+        return f"fact.workspace.{normalized[len('fact.'):]}"
+    return f"fact.workspace.{normalized}"
+
+
+def ensure_workspace_candidate_context_fact(
+    paths: RuntimePaths,
+    artifact: ContextFactArtifact,
+) -> str | None:
+    """Materialize one run-scoped context fact into workspace candidate review state."""
+
+    if artifact.scope is not ContextFactScope.RUN:
+        return None
+    if artifact.lifecycle_state is not ContextFactLifecycleState.CANDIDATE:
+        return None
+
+    workspace_fact_id = workspace_candidate_fact_id_for(artifact.fact_id)
+    target_path = paths.compounding_context_facts_dir / f"{_filename_token(workspace_fact_id)}.json"
+    if target_path.exists():
+        return None
+
+    workspace_artifact = artifact.model_copy(
+        update={
+            "fact_id": workspace_fact_id,
+            "scope": ContextFactScope.WORKSPACE,
+            "lifecycle_state": ContextFactLifecycleState.CANDIDATE,
+            "stale_reason": None,
+        }
+    )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(target_path, workspace_artifact.model_dump_json(indent=2) + "\n")
+    return workspace_fact_id
+
+
 def _stored_context_fact(path: Path, artifact: ContextFactArtifact) -> StoredContextFact:
     retrieval_status = _retrieval_status_for(artifact)
     return StoredContextFact(

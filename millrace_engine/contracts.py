@@ -67,6 +67,8 @@ from .contract_documents import (
 )
 from .contract_compounding import (
     COMPOUNDING_SCHEMA_VERSION,
+    CompoundingFlushCheckpoint,
+    CompoundingFlushMilestone,
     InjectedProcedure,
     ProcedureInjectionBundle,
     ProcedureLifecycleRecord,

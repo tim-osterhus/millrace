@@ -976,11 +976,14 @@ def render_run_provenance(report: RunProvenanceReport, *, json_mode: bool) -> No
                 for key, value in sorted(item.details.items()):
                     lines.append(f"  {key}={_detail_value_text(value)}")
     if report.compounding is not None:
+        flush_checkpoints = tuple(getattr(report.compounding, "flush_checkpoints", ()))
+        flush_count = int(getattr(report.compounding, "flush_count", len(flush_checkpoints)))
         lines.append(
             "Compounding summary: "
             f"created={report.compounding.created_count} "
             f"procedure_selections={report.compounding.selection_count} "
-            f"context_fact_selections={report.compounding.fact_selection_count}"
+            f"context_fact_selections={report.compounding.fact_selection_count} "
+            f"flush_checkpoints={flush_count}"
         )
         if report.compounding.created_procedures:
             lines.append("Created procedures:")
@@ -1021,6 +1024,15 @@ def render_run_provenance(report: RunProvenanceReport, *, json_mode: bool) -> No
                     lines.append("  Injected: none")
                 if selection.considered_facts:
                     lines.append("  Considered: " + ", ".join(fact.fact_id for fact in selection.considered_facts))
+        if flush_checkpoints:
+            lines.append("Compounding flush checkpoints:")
+            for checkpoint in flush_checkpoints:
+                lines.append(
+                    f"- {checkpoint.trigger_stage} ({checkpoint.node_id}): "
+                    f"milestone={checkpoint.milestone.value} "
+                    f"procedures={len(checkpoint.finalized_procedure_ids)} "
+                    f"context_facts={len(checkpoint.finalized_context_fact_ids)}"
+                )
     lines.append(f"Runtime history records: {len(report.runtime_history)}")
     typer.echo("\n".join(lines))
 

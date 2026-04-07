@@ -6,7 +6,12 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from ..compounding import clear_run_scoped_procedure_candidates, persist_candidate_from_transition
+from ..compounding import (
+    clear_run_scoped_procedure_candidates,
+    flush_milestone_for_transition,
+    flush_run_scoped_compounding_candidates,
+    persist_candidate_from_transition,
+)
 from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..config import StageConfig
 from ..contracts import ControlPlane as RuntimeControlPlane
@@ -23,11 +28,13 @@ from ..policies import (
 )
 from ..provenance import (
     BoundExecutionParameters,
+    COMPOUNDING_FLUSH_ATTRIBUTE,
     COMPOUNDING_BUDGET_ATTRIBUTE,
     COMPOUNDING_PROFILE_ATTRIBUTE,
     CONTEXT_FACT_INJECTION_ATTRIBUTE,
     ExecutionParameterRebindingRequest,
     PROCEDURE_INJECTION_ATTRIBUTE,
+    ROUTING_MODE_ATTRIBUTE,
     RuntimeProvenanceContext,
     TransitionHistoryStore,
     clear_transition_history,
@@ -535,7 +542,36 @@ def record_stage_transition(
         bound_execution_parameters=bound_parameters_from_result(plane, result),
         attributes=record_attributes,
     )
-    persist_candidate_from_transition(plane.paths, record, result)
+    candidate_path = persist_candidate_from_transition(plane.paths, record, result)
+    milestone = flush_milestone_for_transition(
+        stage=result.stage,
+        selected_edge_id=selected_edge_id,
+        candidate_created=candidate_path is not None,
+    )
+    if milestone is None:
+        return
+    checkpoint = flush_run_scoped_compounding_candidates(
+        plane.paths,
+        run_id=record.run_id,
+        trigger_stage=result.stage,
+        milestone=milestone,
+    )
+    plane.transition_history.append(
+        event_name="execution.compounding.flush",
+        source="execution_plane",
+        plane=ControlPlane.EXECUTION,
+        node_id=node_id,
+        kind_id=plane._kind_id_for_stage(result.stage),
+        outcome="success",
+        selected_edge_reason=f"compounding flush checkpoint: {milestone.value}",
+        active_task_before=record.active_task_before,
+        active_task_after=record.active_task_after,
+        bound_execution_parameters=record.bound_execution_parameters,
+        attributes={
+            ROUTING_MODE_ATTRIBUTE: routing_mode,
+            COMPOUNDING_FLUSH_ATTRIBUTE: checkpoint.model_dump(mode="json"),
+        },
+    )
 
 
 def run_stage(

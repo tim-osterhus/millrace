@@ -3595,6 +3595,7 @@ def test_cli_run_provenance_reports_compounding_summary(tmp_path: Path) -> None:
     assert "Compounding summary: created=2 procedure_selections=2 context_fact_selections=0" in text_result.stdout
     assert "Created procedures:" in text_result.stdout
     assert "Procedure selections:" in text_result.stdout
+    assert "Compounding flush checkpoints:" in text_result.stdout
     assert "Injected: proc.workspace.builder.selected" in text_result.stdout
     assert "Considered: proc.workspace.builder.selected" in text_result.stdout
 

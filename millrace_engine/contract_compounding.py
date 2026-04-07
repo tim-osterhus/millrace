@@ -61,6 +61,14 @@ class ProcedureUsageDisposition(str, Enum):
     SKIPPED = "skipped"
 
 
+class CompoundingFlushMilestone(str, Enum):
+    """Runtime milestone that finalized pending governed compounding artifacts."""
+
+    STAGE_SUCCESS = "stage_success"
+    RECOVERY_SUCCESS = "recovery_success"
+    RUN_CLOSEOUT = "run_closeout"
+
+
 class ProcedureRetrievalRule(ContractModel):
     """Stage-aware retrieval constraints for reusable procedures."""
 
@@ -303,3 +311,34 @@ class ProcedureLifecycleRecord(ContractModel):
     @classmethod
     def normalize_changed_at(cls, value: datetime | str) -> datetime:
         return _normalize_datetime(value)
+
+
+class CompoundingFlushCheckpoint(ContractModel):
+    """Inspectable runtime checkpoint for one governed-compounding flush."""
+
+    schema_version: Literal["1.0"] = COMPOUNDING_SCHEMA_VERSION
+    run_id: str
+    trigger_stage: StageType
+    milestone: CompoundingFlushMilestone
+    finalized_procedure_ids: tuple[str, ...] = ()
+    finalized_context_fact_ids: tuple[str, ...] = ()
+
+    @field_validator("run_id")
+    @classmethod
+    def validate_run_id(cls, value: str) -> str:
+        return _normalize_identifier(value, field_label="run_id") or ""
+
+    @field_validator("finalized_procedure_ids", "finalized_context_fact_ids", mode="before")
+    @classmethod
+    def normalize_identifier_sequences(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            identifier = _normalize_identifier(str(item), field_label="identifier sequence value")
+            if identifier is None or identifier in seen:
+                continue
+            seen.add(identifier)
+            normalized.append(identifier)
+        return tuple(normalized)

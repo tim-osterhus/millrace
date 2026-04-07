@@ -136,6 +136,51 @@ def lifecycle_history_for_procedure(
     return tuple(reversed(procedure.lifecycle_records))
 
 
+def workspace_candidate_procedure_id_for(procedure_id: str) -> str:
+    """Return the canonical workspace-scope review candidate id for one procedure."""
+
+    return _promoted_procedure_id_for(procedure_id)
+
+
+def ensure_workspace_candidate_procedure(
+    paths: RuntimePaths,
+    artifact: ReusableProcedureArtifact,
+    *,
+    changed_by: str,
+    reason: str,
+) -> str | None:
+    """Materialize one run-scoped procedure into workspace candidate review state."""
+
+    if artifact.scope is not ProcedureScope.RUN:
+        return None
+
+    workspace_procedure_id = workspace_candidate_procedure_id_for(artifact.procedure_id)
+    target_path = _workspace_artifact_path(paths, workspace_procedure_id)
+    if not target_path.exists():
+        workspace_artifact = artifact.model_copy(
+            update={
+                "procedure_id": workspace_procedure_id,
+                "scope": ProcedureScope.WORKSPACE,
+            }
+        )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(target_path, workspace_artifact.model_dump_json(indent=2) + "\n")
+
+    current = governed_procedure_for_id(paths, workspace_procedure_id, include_run_candidates=False)
+    if current.latest_record is not None:
+        return None
+
+    _persist_lifecycle_record(
+        paths,
+        procedure_id=workspace_procedure_id,
+        scope=ProcedureScope.WORKSPACE,
+        state=ProcedureLifecycleState.CANDIDATE,
+        changed_by=changed_by,
+        reason=reason,
+    )
+    return workspace_procedure_id
+
+
 def promote_procedure(
     paths: RuntimePaths,
     *,

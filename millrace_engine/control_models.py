@@ -12,6 +12,8 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from .compiler import CompileTimeResolvedSnapshot
 from .config import ConfigApplyBoundary, ConfigSourceInfo, EngineConfig
 from .contract_compounding import (
+    CompoundingFlushCheckpoint,
+    CompoundingFlushMilestone,
     ConsideredProcedure,
     InjectedProcedure,
     ProcedureInjectionBundle,
@@ -796,12 +798,41 @@ class RunContextFactSelectionView(ContractModel):
         )
 
 
+class RunCompoundingFlushView(ContractModel):
+    """Inspectable compounding flush checkpoint captured in runtime provenance."""
+
+    event_id: str
+    node_id: str
+    trigger_stage: str
+    milestone: CompoundingFlushMilestone
+    finalized_procedure_ids: tuple[str, ...] = ()
+    finalized_context_fact_ids: tuple[str, ...] = ()
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        *,
+        event_id: str,
+        node_id: str,
+        checkpoint: CompoundingFlushCheckpoint,
+    ) -> "RunCompoundingFlushView":
+        return cls(
+            event_id=event_id,
+            node_id=node_id,
+            trigger_stage=checkpoint.trigger_stage.value,
+            milestone=checkpoint.milestone,
+            finalized_procedure_ids=checkpoint.finalized_procedure_ids,
+            finalized_context_fact_ids=checkpoint.finalized_context_fact_ids,
+        )
+
+
 class RunCompoundingReport(ContractModel):
     """Structured compounding provenance surfaced through run provenance."""
 
     created_procedures: tuple[RunCreatedProcedureView, ...] = ()
     procedure_selections: tuple[RunProcedureSelectionView, ...] = ()
     context_fact_selections: tuple[RunContextFactSelectionView, ...] = ()
+    flush_checkpoints: tuple[RunCompoundingFlushView, ...] = ()
 
     @property
     def created_count(self) -> int:
@@ -822,6 +853,10 @@ class RunCompoundingReport(ContractModel):
     @property
     def injected_fact_count(self) -> int:
         return sum(selection.injected_count for selection in self.context_fact_selections)
+
+    @property
+    def flush_count(self) -> int:
+        return len(self.flush_checkpoints)
 
 
 class CompoundingLifecycleRecordView(ContractModel):
