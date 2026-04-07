@@ -29,6 +29,16 @@ class WorkspaceInitError(RuntimeError):
 
 
 _RUNTIME_OWNED_DIRECTORY_PATHS: tuple[PurePosixPath, ...] = (
+    PurePosixPath("agents/compounding"),
+    PurePosixPath("agents/compounding/benchmark_results"),
+    PurePosixPath("agents/compounding/context_facts"),
+    PurePosixPath("agents/compounding/harness_candidate_assets"),
+    PurePosixPath("agents/compounding/harness_candidates"),
+    PurePosixPath("agents/compounding/harness_recommendations"),
+    PurePosixPath("agents/compounding/harness_searches"),
+    PurePosixPath("agents/compounding/lifecycle"),
+    PurePosixPath("agents/compounding/procedures"),
+    PurePosixPath("agents/compounding/usage"),
     PurePosixPath("agents/diagnostics"),
     PurePosixPath("agents/historylog"),
     PurePosixPath("agents/ideas/ambiguous"),
@@ -47,6 +57,11 @@ _RUNTIME_OWNED_DIRECTORY_PATHS: tuple[PurePosixPath, ...] = (
     PurePosixPath("agents/ideas/raw"),
     PurePosixPath("agents/ideas/specs"),
     PurePosixPath("agents/ideas/specs_reviewed"),
+    PurePosixPath("agents/lab"),
+    PurePosixPath("agents/lab/harness_candidate_assets"),
+    PurePosixPath("agents/lab/harness_comparisons"),
+    PurePosixPath("agents/lab/harness_proposals"),
+    PurePosixPath("agents/lab/harness_requests"),
     PurePosixPath("agents/prompts/completed"),
     PurePosixPath("agents/runs"),
     PurePosixPath("agents/specs/decisions"),
@@ -114,6 +129,7 @@ class WorkspaceUpgradePreviewReport:
     would_update: tuple[str, ...]
     unchanged: tuple[str, ...]
     conflicting_paths: tuple[str, ...]
+    would_materialize_runtime_owned: tuple[str, ...]
     preserved_runtime_owned: tuple[str, ...]
     preserved_operator_owned: tuple[str, ...]
     persisted_state_migrations: tuple[PersistedStateMigrationPreviewReport, ...] = ()
@@ -134,6 +150,7 @@ class WorkspaceUpgradeApplyReport:
     updated_files: tuple[str, ...]
     unchanged: tuple[str, ...]
     conflicting_paths: tuple[str, ...]
+    materialized_runtime_owned: tuple[str, ...]
     preserved_runtime_owned: tuple[str, ...]
     preserved_operator_owned: tuple[str, ...]
     persisted_state_migrations: tuple[PersistedStateMigrationApplyReport, ...] = ()
@@ -339,6 +356,60 @@ def _materialize_runtime_owned_files(workspace_root: Path, *, force: bool) -> tu
     return created_count, overwritten_count
 
 
+def _runtime_owned_paths_to_materialize(workspace_root: Path) -> tuple[PurePosixPath, ...]:
+    paths: list[PurePosixPath] = []
+    for relative_path in _RUNTIME_OWNED_DIRECTORY_PATHS:
+        if not _destination_path(workspace_root, relative_path).exists():
+            paths.append(relative_path)
+    for relative_path, _ in _RUNTIME_OWNED_FILE_CONTENTS:
+        if not _destination_path(workspace_root, relative_path).exists():
+            paths.append(relative_path)
+    return tuple(sorted(paths, key=lambda value: (len(value.parts), value.as_posix())))
+
+
+def _runtime_owned_conflicting_paths(workspace_root: Path) -> tuple[str, ...]:
+    conflicts: set[str] = set()
+    for relative_path in _RUNTIME_OWNED_DIRECTORY_PATHS:
+        destination = _destination_path(workspace_root, relative_path)
+        if destination.exists() and not destination.is_dir():
+            conflicts.add(relative_path.as_posix())
+    for relative_path, _ in _RUNTIME_OWNED_FILE_CONTENTS:
+        destination = _destination_path(workspace_root, relative_path)
+        if destination.exists() and destination.is_dir():
+            conflicts.add(relative_path.as_posix())
+    return tuple(sorted(conflicts))
+
+
+def _materialize_missing_runtime_owned_directories(workspace_root: Path) -> tuple[str, ...]:
+    created: list[str] = []
+    for relative_path in _RUNTIME_OWNED_DIRECTORY_PATHS:
+        destination = _destination_path(workspace_root, relative_path)
+        if destination.exists():
+            if not destination.is_dir():
+                raise WorkspaceInitError(
+                    f"runtime-owned directory path is occupied by a file: {relative_path.as_posix()}"
+                )
+            continue
+        _ensure_directory(destination, display_path=relative_path.as_posix())
+        created.append(relative_path.as_posix())
+    return tuple(created)
+
+
+def _materialize_missing_runtime_owned_files(workspace_root: Path) -> tuple[str, ...]:
+    created: list[str] = []
+    for relative_path, contents in _RUNTIME_OWNED_FILE_CONTENTS:
+        destination = _destination_path(workspace_root, relative_path)
+        if destination.exists():
+            if destination.is_dir():
+                raise WorkspaceInitError(
+                    f"runtime-owned file path is occupied by a directory: {relative_path.as_posix()}"
+                )
+            continue
+        _write_runtime_owned_file(workspace_root, relative_path, contents, force=False)
+        created.append(relative_path.as_posix())
+    return tuple(created)
+
+
 def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradePlan:
     workspace_root = Path(destination).expanduser().resolve()
     _validate_workspace_root(workspace_root)
@@ -360,6 +431,7 @@ def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradeP
         destination_path = _destination_path(workspace_root, relative_path)
         if destination_path.exists() and not destination_path.is_dir():
             conflicting_paths.add(relative_path.as_posix())
+    conflicting_paths.update(_runtime_owned_conflicting_paths(workspace_root))
 
     would_create: list[str] = []
     would_update: list[str] = []
@@ -386,6 +458,9 @@ def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradeP
             )
             if _destination_path(workspace_root, relative_path).exists()
         )
+    )
+    would_materialize_runtime_owned = tuple(
+        path.as_posix() for path in _runtime_owned_paths_to_materialize(workspace_root)
     )
     manifest_file_path_set = set(manifest_file_paths)
     runtime_owned_file_path_set = {path for path, _ in _RUNTIME_OWNED_FILE_CONTENTS}
@@ -415,6 +490,7 @@ def _build_workspace_upgrade_plan(destination: Path | str) -> _WorkspaceUpgradeP
             would_update=tuple(would_update),
             unchanged=tuple(unchanged),
             conflicting_paths=tuple(sorted(conflicting_paths)),
+            would_materialize_runtime_owned=would_materialize_runtime_owned,
             preserved_runtime_owned=preserved_runtime_owned,
             preserved_operator_owned=preserved_operator_owned,
             persisted_state_migrations=persisted_state_migrations,
@@ -435,13 +511,16 @@ def apply_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradeApplyRep
     preview = plan.preview_report
     if preview.conflicting_paths:
         raise WorkspaceInitError(
-            "workspace upgrade blocked by conflicting manifest paths: "
+            "workspace upgrade blocked by conflicting managed paths: "
             + ", ".join(preview.conflicting_paths)
         )
 
     created_directory_count = _materialize_manifest_directories(
         plan.workspace_root,
         plan.manifest_directory_paths,
+    )
+    materialized_runtime_owned_directories = _materialize_missing_runtime_owned_directories(
+        plan.workspace_root
     )
     create_targets = {PurePosixPath(path) for path in preview.would_create}
     update_targets = {PurePosixPath(path) for path in preview.would_update}
@@ -455,6 +534,7 @@ def apply_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradeApplyRep
         if relative_path in update_targets:
             _write_manifest_file(plan.workspace_root, relative_path, force=True)
             updated_file_count += 1
+    materialized_runtime_owned_files = _materialize_missing_runtime_owned_files(plan.workspace_root)
     runtime_paths = RuntimePaths.from_workspace(plan.workspace_root, plan.workspace_root / "agents")
     persisted_state_migrations = (
         apply_research_runtime_state_migration(
@@ -475,6 +555,10 @@ def apply_workspace_upgrade(destination: Path | str) -> WorkspaceUpgradeApplyRep
         updated_files=preview.would_update,
         unchanged=preview.unchanged,
         conflicting_paths=preview.conflicting_paths,
+        materialized_runtime_owned=(
+            *materialized_runtime_owned_directories,
+            *materialized_runtime_owned_files,
+        ),
         preserved_runtime_owned=preview.preserved_runtime_owned,
         preserved_operator_owned=preview.preserved_operator_owned,
         persisted_state_migrations=persisted_state_migrations,

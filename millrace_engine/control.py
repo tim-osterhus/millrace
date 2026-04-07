@@ -516,6 +516,7 @@ class EngineControl:
                 "would_update": report.would_update,
                 "unchanged": report.unchanged,
                 "conflicting_paths": report.conflicting_paths,
+                "would_materialize_runtime_owned": report.would_materialize_runtime_owned,
                 "preserved_runtime_owned": report.preserved_runtime_owned,
                 "preserved_operator_owned": report.preserved_operator_owned,
                 "persisted_state_migrations": tuple(
@@ -543,6 +544,7 @@ class EngineControl:
                 "updated_files": report.updated_files,
                 "unchanged": report.unchanged,
                 "conflicting_paths": report.conflicting_paths,
+                "materialized_runtime_owned": report.materialized_runtime_owned,
                 "preserved_runtime_owned": report.preserved_runtime_owned,
                 "preserved_operator_owned": report.preserved_operator_owned,
                 "persisted_state_migrations": tuple(

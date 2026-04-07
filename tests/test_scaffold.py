@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -92,6 +93,20 @@ def test_required_runtime_scaffold_paths_exist() -> None:
     for relative in iter_runtime_owned_workspace_files():
         assert relative not in manifest_paths, relative
 
+    runtime_owned_paths = set(iter_runtime_owned_workspace_directories())
+    for relative in (
+        "agents/compounding",
+        "agents/compounding/procedures",
+        "agents/compounding/context_facts",
+        "agents/compounding/harness_candidates",
+        "agents/compounding/harness_recommendations",
+        "agents/lab",
+        "agents/lab/harness_requests",
+        "agents/lab/harness_proposals",
+        "agents/lab/harness_comparisons",
+    ):
+        assert relative in runtime_owned_paths, relative
+
 
 def test_packaged_runtime_command_mailbox_paths_exist() -> None:
     for relative in (
@@ -176,6 +191,28 @@ def test_workspace_upgrade_preview_classifies_manifest_and_preserved_paths(tmp_p
     assert "agents/status.md" in report.preserved_runtime_owned
     assert "agents/local-notes.md" in report.preserved_operator_owned
     assert report.conflicting_paths == ()
+
+
+def test_workspace_upgrade_preview_reports_missing_runtime_owned_paths_without_mutation(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    shutil.rmtree(workspace / "agents" / "compounding")
+    shutil.rmtree(workspace / "agents" / "lab")
+    (workspace / "agents" / "gaps.md").unlink()
+
+    report = preview_workspace_upgrade(workspace)
+
+    assert "agents/compounding" in report.would_materialize_runtime_owned
+    assert "agents/compounding/procedures" in report.would_materialize_runtime_owned
+    assert "agents/lab" in report.would_materialize_runtime_owned
+    assert "agents/lab/harness_requests" in report.would_materialize_runtime_owned
+    assert "agents/gaps.md" in report.would_materialize_runtime_owned
+    assert not (workspace / "agents" / "compounding").exists()
+    assert not (workspace / "agents" / "lab").exists()
+    assert not (workspace / "agents" / "gaps.md").exists()
 
 
 def test_workspace_upgrade_preview_does_not_mutate_workspace_files(tmp_path: Path) -> None:
@@ -336,6 +373,28 @@ def test_workspace_upgrade_apply_refreshes_manifest_files_and_preserves_owned_fi
     assert (workspace / "notes.md").read_text(encoding="utf-8") == "keep me\n"
 
 
+def test_workspace_upgrade_apply_materializes_missing_runtime_owned_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    shutil.rmtree(workspace / "agents" / "compounding")
+    shutil.rmtree(workspace / "agents" / "lab")
+    (workspace / "agents" / "gaps.md").unlink()
+
+    report = apply_workspace_upgrade(workspace)
+
+    assert "agents/compounding" in report.materialized_runtime_owned
+    assert "agents/compounding/procedures" in report.materialized_runtime_owned
+    assert "agents/lab" in report.materialized_runtime_owned
+    assert "agents/lab/harness_requests" in report.materialized_runtime_owned
+    assert "agents/gaps.md" in report.materialized_runtime_owned
+    assert (workspace / "agents" / "compounding" / "procedures").is_dir()
+    assert (workspace / "agents" / "lab" / "harness_requests").is_dir()
+    assert (workspace / "agents" / "gaps.md").read_text(encoding="utf-8") == (
+        "# Gaps\n\nNo active gaps recorded.\n"
+    )
+
+
 def test_workspace_upgrade_apply_fails_before_mutation_on_conflicting_manifest_path(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
 
@@ -345,8 +404,28 @@ def test_workspace_upgrade_apply_fails_before_mutation_on_conflicting_manifest_p
     guide_path.unlink()
     guide_path.mkdir()
 
-    with pytest.raises(WorkspaceInitError, match="conflicting manifest paths"):
+    with pytest.raises(WorkspaceInitError, match="conflicting managed paths"):
         apply_workspace_upgrade(workspace)
 
     assert (workspace / "README.md").read_text(encoding="utf-8") == readme_before
     assert guide_path.is_dir()
+
+
+def test_workspace_upgrade_apply_fails_before_mutation_on_conflicting_runtime_owned_path(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+
+    initialize_workspace(workspace)
+    readme_before = (workspace / "README.md").read_text(encoding="utf-8")
+    shutil.rmtree(workspace / "agents" / "compounding")
+    (workspace / "agents" / "compounding").write_text("not a directory\n", encoding="utf-8")
+
+    preview = preview_workspace_upgrade(workspace)
+
+    assert "agents/compounding" in preview.conflicting_paths
+    with pytest.raises(WorkspaceInitError, match="conflicting managed paths"):
+        apply_workspace_upgrade(workspace)
+
+    assert (workspace / "README.md").read_text(encoding="utf-8") == readme_before
+    assert (workspace / "agents" / "compounding").is_file()

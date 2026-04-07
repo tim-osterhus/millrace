@@ -6,6 +6,7 @@ from threading import Thread
 import json
 import os
 import pytest
+import shutil
 import subprocess
 import sys
 import time
@@ -1581,6 +1582,7 @@ def test_cli_upgrade_preview_reports_manifest_deltas_without_mutation(tmp_path: 
     assert "README.md" in payload["payload"]["would_update"]
     assert "millrace.toml" in payload["payload"]["unchanged"]
     assert "agents/status.md" in payload["payload"]["preserved_runtime_owned"]
+    assert payload["payload"]["would_materialize_runtime_owned"] == []
     assert "notes.md" in payload["payload"]["preserved_operator_owned"]
     assert payload["payload"]["persisted_state_migrations"][0]["state_family"] == "research_runtime_state"
     assert payload["payload"]["persisted_state_migrations"][0]["action"] == "none"
@@ -1625,6 +1627,7 @@ def test_cli_upgrade_apply_reports_manifest_refresh_and_preserves_owned_files(tm
     assert payload["payload"]["workspace_root"] == destination.resolve().as_posix()
     assert "OPERATOR_GUIDE.md" in payload["payload"]["created_files"]
     assert "README.md" in payload["payload"]["updated_files"]
+    assert payload["payload"]["materialized_runtime_owned"] == []
     assert "agents/status.md" in payload["payload"]["preserved_runtime_owned"]
     assert "notes.md" in payload["payload"]["preserved_operator_owned"]
     assert payload["payload"]["persisted_state_migrations"][0]["action"] == "none"
@@ -1648,6 +1651,49 @@ def test_cli_upgrade_apply_human_output_explains_apply_scope(tmp_path: Path) -> 
     assert "Persisted-state migration:" in result.stdout
     assert "Updated files:" in result.stdout
     assert "- README.md" in result.stdout
+
+
+def test_cli_upgrade_preview_reports_missing_runtime_owned_path_materialization(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    shutil.rmtree(destination / "agents" / "compounding")
+    shutil.rmtree(destination / "agents" / "lab")
+    (destination / "agents" / "gaps.md").unlink()
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert "agents/compounding" in payload["payload"]["would_materialize_runtime_owned"]
+    assert "agents/lab/harness_requests" in payload["payload"]["would_materialize_runtime_owned"]
+    assert "agents/gaps.md" in payload["payload"]["would_materialize_runtime_owned"]
+    assert not (destination / "agents" / "compounding").exists()
+    assert not (destination / "agents" / "gaps.md").exists()
+
+
+def test_cli_upgrade_apply_materializes_missing_runtime_owned_paths(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    shutil.rmtree(destination / "agents" / "compounding")
+    shutil.rmtree(destination / "agents" / "lab")
+    (destination / "agents" / "gaps.md").unlink()
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert "agents/compounding" in payload["payload"]["materialized_runtime_owned"]
+    assert "agents/lab/harness_requests" in payload["payload"]["materialized_runtime_owned"]
+    assert "agents/gaps.md" in payload["payload"]["materialized_runtime_owned"]
+    assert (destination / "agents" / "compounding" / "procedures").is_dir()
+    assert (destination / "agents" / "lab" / "harness_requests").is_dir()
+    assert (destination / "agents" / "gaps.md").read_text(encoding="utf-8") == (
+        "# Gaps\n\nNo active gaps recorded.\n"
+    )
 
 
 def test_cli_upgrade_preview_reports_explicit_research_state_rewrite(tmp_path: Path) -> None:
@@ -1731,9 +1777,26 @@ def test_cli_upgrade_apply_fails_on_conflicting_manifest_path_without_mutation(t
     result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply"])
 
     assert result.exit_code == 1
-    assert "conflicting manifest paths" in result.stdout + result.stderr
+    assert "conflicting managed paths" in result.output
     assert (destination / "README.md").read_text(encoding="utf-8") == readme_before
     assert guide_path.is_dir()
+
+
+def test_cli_upgrade_apply_fails_on_conflicting_runtime_owned_path_without_mutation(tmp_path: Path) -> None:
+    destination = tmp_path / "upgrade-workspace"
+    workspace_result = EngineControl.init_workspace(destination)
+
+    assert workspace_result.applied is True
+    readme_before = (destination / "README.md").read_text(encoding="utf-8")
+    shutil.rmtree(destination / "agents" / "compounding")
+    (destination / "agents" / "compounding").write_text("not a directory\n", encoding="utf-8")
+
+    result = RUNNER.invoke(app, ["--config", str(destination / "millrace.toml"), "upgrade", "--apply"])
+
+    assert result.exit_code == 1
+    assert "conflicting managed paths" in result.output
+    assert (destination / "README.md").read_text(encoding="utf-8") == readme_before
+    assert (destination / "agents" / "compounding").is_file()
 
 
 def test_cli_package_docs_state_default_research_bootstrap_contract() -> None:
