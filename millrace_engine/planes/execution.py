@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from ..config import EngineConfig
 from ..contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ExecutionStatus, StageResult, StageType, TaskCard
-from ..compiler import CompileStatus, FrozenRunPlan, FrozenStagePlan
+from ..compiler import FrozenRunPlan, FrozenStagePlan
 from ..events import EventType
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -39,14 +39,17 @@ from ..provenance import (
     read_transition_history,
 )
 from ..compiler_rebinding import FrozenExecutionParameterBinder
-from ..queue import load_research_recovery_latch
 from ..run_ids import timestamped_slug_id
-from ..standard_runtime import compile_execution_runtime_selection
 from ..status import StatusChange
 from ..stages.base import ExecutionStage, StageExecutionError
 from .base import PlaneRuntime, StageCommandMap
-from .execution_flows import handle_qa_outcome as handle_qa_outcome_flow
-from .execution_flows import run_quickfix_loop as run_quickfix_loop_flow
+from .execution_flows import (
+    handle_qa_outcome as handle_qa_outcome_flow,
+    run_builder_success_sequence as run_builder_success_sequence_flow,
+    run_execution_cycle as run_execution_cycle_flow,
+    run_full_task_path as run_full_task_path_flow,
+    run_quickfix_loop as run_quickfix_loop_flow,
+)
 from .execution_recovery import (
     _RecoveryResult,
     create_blocker_bundle as create_blocker_bundle_helper,
@@ -55,12 +58,7 @@ from .execution_recovery import (
     resume_after_recovery as resume_after_recovery_helper,
     write_blocker_entry as write_blocker_entry_helper,
 )
-from .execution_routing import (
-    execution_plan as execution_plan_helper,
-    resume_from_completed_status as resume_from_completed_status_helper,
-    run_frozen_plan as run_frozen_plan_helper,
-    stage_plan as stage_plan_helper,
-)
+from .execution_routing import stage_plan as stage_plan_helper
 from .execution_runtime import (
     apply_active_config_rebindings as apply_active_config_rebindings_helper,
     bound_parameters_for_node as bound_parameters_for_node_helper,
@@ -744,66 +742,14 @@ class ExecutionPlane(PlaneRuntime):
         *,
         recovery_rounds: int,
     ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        for stage_type in self._selected_builder_sequence(task):
-            if stage_type is StageType.INTEGRATION:
-                integration_result = self._run_stage(stage_type, task, run_id)
-                stage_results.append(integration_result)
-                integration_status = ExecutionStatus(integration_result.status)
-                self._record_stage_transition(
-                    integration_result,
-                    task_before=task,
-                    task_after=task,
-                    routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
-                    selected_edge_id=(
-                        "execution.integration.success.qa"
-                        if integration_status is ExecutionStatus.INTEGRATION_COMPLETE
-                        else "execution.integration.failure.escalate"
-                    ),
-                    selected_edge_reason=(
-                        "integration completed, so qa can continue"
-                        if integration_status is ExecutionStatus.INTEGRATION_COMPLETE
-                        else f"integration ended with {integration_status.value}, so escalation is required"
-                    ),
-                    condition_inputs={"status": integration_status.value},
-                    condition_result=integration_status is ExecutionStatus.INTEGRATION_COMPLETE,
-                )
-                if integration_status is not ExecutionStatus.INTEGRATION_COMPLETE:
-                    recovery = self._recover_or_quarantine(
-                        task,
-                        run_id=run_id,
-                        stage_label=stage_type.value.title(),
-                        why=f"exit={integration_result.exit_code} status={integration_status.value}",
-                        stage_results=stage_results,
-                        failing_result=integration_result,
-                    )
-                    if recovery.action == "quarantine":
-                        return ExecutionStatus.IDLE, None, recovery.quarantined_task, recovery.diagnostics_dir, 0
-                    return self._resume_after_recovery(
-                        task,
-                        run_id=run_id,
-                        stage_results=stage_results,
-                        recovery_rounds=recovery_rounds + 1,
-                        diagnostics_dir=recovery.diagnostics_dir,
-                    )
-                continue
-
-            if stage_type is StageType.QA:
-                qa_result = self._run_stage(stage_type, task, run_id)
-                stage_results.append(qa_result)
-                return self._handle_qa_outcome(
-                    task,
-                    run_id=run_id,
-                    stage_results=stage_results,
-                    qa_result=qa_result,
-                    stage_label=stage_type.value.upper(),
-                    recovery_rounds=recovery_rounds,
-                )
-
-            raise StageExecutionError(
-                f"unsupported builder success stage in routing config: {stage_type.value}"
-            )
-
-        raise StageExecutionError("builder success sequence must include qa")
+        return run_builder_success_sequence_flow(
+            self,
+            task,
+            run_id,
+            stage_results,
+            recovery_rounds=recovery_rounds,
+            routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
+        )
 
     def _run_full_task_path(
         self,
@@ -813,273 +759,14 @@ class ExecutionPlane(PlaneRuntime):
         *,
         recovery_rounds: int = 0,
     ) -> tuple[ExecutionStatus, TaskCard | None, TaskCard | None, Path | None, int]:
-        builder_result = self._run_stage(StageType.BUILDER, task, run_id)
-        stage_results.append(builder_result)
-        builder_status = ExecutionStatus(builder_result.status)
-        next_edge = "execution.builder.failure.escalate"
-        next_reason = f"builder ended with {builder_status.value}, so escalation is required"
-        condition_inputs: dict[str, object] = {"status": builder_status.value}
-        if builder_status is ExecutionStatus.BUILDER_COMPLETE:
-            next_stage = self._integration_context(task).builder_success_target
-            next_edge = f"execution.builder.success.{next_stage}"
-            next_reason = f"builder completed, so {next_stage} is the next stage"
-            condition_inputs["builder_success_target"] = next_stage
-        self._record_stage_transition(
-            builder_result,
-            task_before=task,
-            task_after=task,
-            routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
-            selected_edge_id=next_edge,
-            selected_edge_reason=next_reason,
-            condition_inputs=condition_inputs,
-            condition_result=builder_status is ExecutionStatus.BUILDER_COMPLETE,
-        )
-        if builder_status is not ExecutionStatus.BUILDER_COMPLETE:
-            recovery = self._recover_or_quarantine(
-                task,
-                run_id=run_id,
-                stage_label="Builder",
-                why=f"exit={builder_result.exit_code} status={builder_status.value}",
-                stage_results=stage_results,
-                failing_result=builder_result,
-            )
-            if recovery.action == "quarantine":
-                return ExecutionStatus.IDLE, None, recovery.quarantined_task, recovery.diagnostics_dir, 0
-            return self._resume_after_recovery(
-                task,
-                run_id=run_id,
-                stage_results=stage_results,
-                recovery_rounds=recovery_rounds + 1,
-                diagnostics_dir=recovery.diagnostics_dir,
-            )
-
-        return self._run_builder_success_sequence(
+        return run_full_task_path_flow(
+            self,
             task,
             run_id,
             stage_results,
             recovery_rounds=recovery_rounds,
+            routing_mode=ROUTING_MODE_FIXED_V1_FALLBACK,
         )
 
     def run_once(self) -> ExecutionCycleResult:
-        """Run one execution-plane cycle in `--once` mode."""
-
-        # Refresh stage and policy dependencies so direct in-memory config tweaks
-        # take effect at the next cycle boundary before we freeze a new run plan.
-        self.reconfigure(self.config, self.paths)
-        current_status = self.status_store.read()
-        if not isinstance(current_status, ExecutionStatus):
-            raise StageExecutionError("execution plane requires execution status markers")
-
-        stage_results: list[StageResult] = []
-        promoted_task: TaskCard | None = None
-        archived_task: TaskCard | None = None
-        quarantined_task: TaskCard | None = None
-        diagnostics_dir: Path | None = None
-        self.transition_history = None
-        self._active_frozen_plan = None
-        self._runtime_parameter_binder = None
-        self._resolved_frozen_stages = {}
-        self.runtime_provenance = RuntimeProvenanceContext()
-        self._policy_routing_mode = None
-        self._cycle_integration_context = None
-        self._last_research_handoff = None
-        self._quickfix_artifact_active_for_cycle = current_status is ExecutionStatus.QUICKFIX_NEEDED
-        self.policy_evaluations = []
-
-        active_task = self.queue.active_task()
-        if current_status is ExecutionStatus.IDLE and active_task is None:
-            if self.queue.backlog_empty():
-                self._refresh_size_status(None)
-                self._emit_event(
-                    EventType.BACKLOG_EMPTY,
-                    {
-                        "backlog_depth": 0,
-                        "run_update_on_empty": self.config.execution.run_update_on_empty,
-                    },
-                )
-                if self.config.execution.run_update_on_empty:
-                    run_id = self._new_run_id(None, "update-empty")
-                    history = start_transition_history_helper(self, run_id)
-                    final_status = self._run_empty_backlog_sequence(run_id, stage_results)
-                    return ExecutionCycleResult(
-                        run_id=run_id,
-                        final_status=final_status,
-                        stage_results=stage_results,
-                        update_only=True,
-                        transition_history_path=history.history_path,
-                        research_handoff=self._last_research_handoff,
-                    )
-                return ExecutionCycleResult(run_id=None, final_status=ExecutionStatus.IDLE)
-
-            promoted_task = self.queue.promote_next()
-            if promoted_task is not None:
-                self._emit_event(
-                    EventType.TASK_PROMOTED,
-                    {
-                        "task_id": promoted_task.task_id,
-                        "title": promoted_task.title,
-                    },
-                )
-            active_task = promoted_task
-
-        size_view = self._refresh_size_status(active_task)
-
-        if current_status is ExecutionStatus.NEEDS_RESEARCH and active_task is None:
-            latch = load_research_recovery_latch(self.paths.research_recovery_latch_file)
-            self.status_store.transition(ExecutionStatus.IDLE)
-            return ExecutionCycleResult(
-                run_id=None,
-                final_status=ExecutionStatus.IDLE,
-                diagnostics_dir=latch.diag_dir if latch is not None else None,
-                research_handoff=self._last_research_handoff,
-            )
-
-        if active_task is None:
-            raise StageExecutionError("execution plane cannot continue without an active task")
-
-        active_task, size_view = self._maybe_adaptive_upscope_small_task(
-            active_task=active_task,
-            current_status=current_status,
-            size_view=size_view,
-        )
-
-        if current_status is ExecutionStatus.NEEDS_RESEARCH:
-            quarantined_task = self._quarantine_task(
-                active_task,
-                run_id=self._new_run_id(active_task, "resume-needs-research"),
-                stage_label="Resume",
-                why="status marker NEEDS_RESEARCH at loop start",
-                diagnostics_dir=self.paths.diagnostics_dir,
-                consult_result=None,
-            )
-            return ExecutionCycleResult(
-                run_id=None,
-                final_status=ExecutionStatus.IDLE,
-                promoted_task=promoted_task,
-                quarantined_task=quarantined_task,
-                diagnostics_dir=self.paths.diagnostics_dir,
-                research_handoff=self._last_research_handoff,
-            )
-
-        run_id = self._new_run_id(active_task, "task")
-        compile_result = compile_execution_runtime_selection(
-            self.config,
-            self.paths,
-            run_id=run_id,
-            size_latch=size_view.latched_as.value,
-            current_status=current_status,
-            task_complexity=active_task.complexity,
-            resolve_assets=True,
-        )
-        if compile_result.status is not CompileStatus.OK or compile_result.plan is None or compile_result.snapshot is None:
-            diagnostics = "; ".join(diagnostic.message for diagnostic in compile_result.diagnostics) or (
-                "standard frozen-plan compile failed without diagnostics"
-            )
-            raise StageExecutionError(f"execution-plane frozen plan compile failed: {diagnostics}")
-        self._active_frozen_plan = compile_result.plan
-        self._initialize_parameter_binder()
-        self.runtime_provenance = compile_result.snapshot.runtime_provenance_context()
-        history = start_transition_history_helper(self, run_id)
-
-        if current_status in {ExecutionStatus.IDLE, ExecutionStatus.BLOCKED, ExecutionStatus.NET_WAIT}:
-            self._policy_routing_mode = ROUTING_MODE_FROZEN_PLAN
-            cycle_records = self._evaluate_cycle_boundary_policy(
-                run_id=run_id,
-                current_status=current_status,
-                active_task=active_task,
-            )
-            self._cycle_integration_context = execution_integration_context_from_records(cycle_records)
-            usage_context = execution_usage_budget_context_from_records(cycle_records)
-            if usage_context is not None and usage_context.pause_requested:
-                return ExecutionCycleResult(
-                    run_id=run_id,
-                    final_status=current_status,
-                    stage_results=stage_results,
-                    promoted_task=promoted_task,
-                    transition_history_path=history.history_path,
-                    pause_requested=True,
-                    pause_reason=usage_context.reason,
-                )
-            final_status, archived_task, quarantined_task, diagnostics_dir, quickfix_attempts = run_frozen_plan_helper(
-                self,
-                active_task,
-                run_id=run_id,
-                stage_results=stage_results,
-                start_node_id=execution_plan_helper(self).entry_node_id,
-                transition_reason_prefix="frozen execution plan",
-                routing_mode=ROUTING_MODE_FROZEN_PLAN,
-            )
-            pacing_delay_seconds = 0
-            if archived_task is not None:
-                pacing_delay_seconds = self._apply_inter_task_delay(stage_results)
-            return ExecutionCycleResult(
-                run_id=run_id,
-                final_status=final_status,
-                stage_results=stage_results,
-                promoted_task=promoted_task,
-                archived_task=archived_task,
-                quarantined_task=quarantined_task,
-                diagnostics_dir=diagnostics_dir,
-                quickfix_attempts=quickfix_attempts,
-                transition_history_path=history.history_path,
-                research_handoff=self._last_research_handoff,
-                pacing_delay_seconds=pacing_delay_seconds,
-            )
-
-        if current_status in {
-            ExecutionStatus.BUILDER_COMPLETE,
-            ExecutionStatus.INTEGRATION_COMPLETE,
-            ExecutionStatus.QA_COMPLETE,
-            ExecutionStatus.QUICKFIX_NEEDED,
-            ExecutionStatus.TROUBLESHOOT_COMPLETE,
-            ExecutionStatus.CONSULT_COMPLETE,
-            ExecutionStatus.UPDATE_COMPLETE,
-            ExecutionStatus.LARGE_PLAN_COMPLETE,
-            ExecutionStatus.LARGE_EXECUTE_COMPLETE,
-            ExecutionStatus.LARGE_REASSESS_COMPLETE,
-            ExecutionStatus.LARGE_REFACTOR_COMPLETE,
-        }:
-            self._policy_routing_mode = ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME
-            cycle_records = self._evaluate_cycle_boundary_policy(
-                run_id=run_id,
-                current_status=current_status,
-                active_task=active_task,
-            )
-            self._cycle_integration_context = execution_integration_context_from_records(cycle_records)
-            usage_context = execution_usage_budget_context_from_records(cycle_records)
-            if usage_context is not None and usage_context.pause_requested:
-                return ExecutionCycleResult(
-                    run_id=run_id,
-                    final_status=current_status,
-                    promoted_task=promoted_task,
-                    stage_results=stage_results,
-                    transition_history_path=history.history_path,
-                    pause_requested=True,
-                    pause_reason=usage_context.reason,
-                )
-            final_status, archived_task, quarantined_task, diagnostics_dir, quickfix_attempts = resume_from_completed_status_helper(
-                self,
-                active_task,
-                run_id=run_id,
-                stage_results=stage_results,
-                status=current_status,
-                routing_mode_frozen_plan_legacy_resume=ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME,
-            )
-            pacing_delay_seconds = 0
-            if archived_task is not None:
-                pacing_delay_seconds = self._apply_inter_task_delay(stage_results)
-            return ExecutionCycleResult(
-                run_id=run_id,
-                final_status=final_status,
-                promoted_task=promoted_task,
-                stage_results=stage_results,
-                archived_task=archived_task,
-                quarantined_task=quarantined_task,
-                diagnostics_dir=diagnostics_dir,
-                quickfix_attempts=quickfix_attempts,
-                transition_history_path=history.history_path,
-                research_handoff=self._last_research_handoff,
-                pacing_delay_seconds=pacing_delay_seconds,
-            )
-
-        raise StageExecutionError(f"execution plane does not support resume from {current_status.value}")
+        return run_execution_cycle_flow(self)
