@@ -18,6 +18,8 @@ from .control_actions import (
     lifecycle_action,
     normalize_supervisor_issuer,
     operation_with_payload_value,
+    queue_cleanup_quarantine as queue_cleanup_quarantine_operation,
+    queue_cleanup_remove as queue_cleanup_remove_operation,
     queue_reorder as queue_reorder_operation,
     supervisor_add_task as supervisor_add_task_operation,
     supervisor_lifecycle_action,
@@ -700,6 +702,26 @@ class EngineControl:
         return queue_reorder_operation(
             self.paths,
             task_ids=task_ids,
+            daemon_running=self.is_daemon_running(),
+        )
+
+    def queue_cleanup_remove(self, task_id: str, *, reason: str) -> OperationResult:
+        """Remove one visible queued task through the local cleanup path."""
+
+        return queue_cleanup_remove_operation(
+            self.paths,
+            task_id=task_id,
+            reason=reason,
+            daemon_running=self.is_daemon_running(),
+        )
+
+    def queue_cleanup_quarantine(self, task_id: str, *, reason: str) -> OperationResult:
+        """Quarantine one visible queued task through the local cleanup path."""
+
+        return queue_cleanup_quarantine_operation(
+            self.paths,
+            task_id=task_id,
+            reason=reason,
             daemon_running=self.is_daemon_running(),
         )
 

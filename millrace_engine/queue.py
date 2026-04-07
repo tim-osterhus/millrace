@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 import fcntl
 import json
 import time
@@ -55,6 +56,18 @@ class QueueLockTimeoutError(QueueError):
 
 class QueueMergeConflictError(QueueStateError):
     """Raised when a prepared pending-family merge no longer matches live files."""
+
+
+@dataclass(frozen=True, slots=True)
+class QueueCleanupRecord:
+    """One bounded queued-work cleanup result."""
+
+    action: Literal["remove", "quarantine"]
+    task: TaskCard
+    source_store: Literal["active", "backlog"]
+    destination_store: Literal["backburner"]
+    reason: str
+    cleaned_at: datetime
 
 
 def _sha256_text(text: str) -> str:
@@ -123,6 +136,13 @@ class TaskQueue:
         preamble = document.preamble or self._default_preamble(path)
         write_text_atomic(path, render_task_store(TaskStoreDocument(preamble=preamble, cards=document.cards)))
 
+    def _visible_store_label(self, path: Path) -> Literal["active", "backlog"]:
+        if path == self.paths.tasks_file:
+            return "active"
+        if path == self.paths.backlog_file:
+            return "backlog"
+        raise QueueStateError(f"unsupported cleanup store: {path.name}")
+
     def _read_active_document(self) -> TaskStoreDocument:
         document = self._read_store(self.paths.tasks_file)
         if len(document.cards) > 1:
@@ -151,6 +171,44 @@ class TaskQueue:
         for store_path in (self.paths.tasks_file, self.paths.backlog_file, self.paths.taskspending_file):
             cards.extend(card for card in self._read_store(store_path).cards if card.spec_id == remediation_spec_id)
         return tuple(cards)
+
+    def _find_visible_task(self, task_id: str) -> tuple[Path, TaskStoreDocument, int, TaskCard]:
+        normalized_task_id = task_id.strip()
+        if not normalized_task_id:
+            raise QueueStateError("queue cleanup requires a task id")
+
+        matches: list[tuple[Path, TaskStoreDocument, int, TaskCard]] = []
+        for store_path in (self.paths.tasks_file, self.paths.backlog_file):
+            document = self._read_store(store_path)
+            for index, card in enumerate(document.cards):
+                if card.task_id == normalized_task_id:
+                    matches.append((store_path, document, index, card))
+
+        if not matches:
+            raise QueueEmptyError(f"queued task not found: {normalized_task_id}")
+        if len(matches) > 1:
+            raise QueueStateError(f"queued task appears in multiple visible stores: {normalized_task_id}")
+        return matches[0]
+
+    def _render_cleanup_record(
+        self,
+        *,
+        action: Literal["remove", "quarantine"],
+        source_store: Literal["active", "backlog"],
+        reason: str,
+        cleaned_at: datetime,
+        task: TaskCard,
+    ) -> str:
+        cleaned_at_label = cleaned_at.isoformat().replace("+00:00", "Z")
+        lines = [
+            f"<!-- queue_cleanup:{action}:start {task.task_id} -->",
+            f"<!-- cleaned_at: {cleaned_at_label} -->",
+            f"<!-- source_store: {source_store} -->",
+            f"<!-- reason: {reason} -->",
+            task.render_markdown(),
+            f"<!-- queue_cleanup:{action}:end {task.task_id} -->",
+        ]
+        return "\n\n".join(lines)
 
     def backlog_empty(self) -> bool:
         """Return True when the backlog file has no visible task cards."""
@@ -212,6 +270,61 @@ class TaskQueue:
                 ),
             )
             return tuple(reordered_cards)
+
+    def cleanup(
+        self,
+        task_id: str,
+        *,
+        action: Literal["remove", "quarantine"],
+        reason: str,
+    ) -> QueueCleanupRecord:
+        """Remove one visible queued task and append one bounded cleanup record."""
+
+        normalized_reason = " ".join(reason.strip().split())
+        if not normalized_reason:
+            raise QueueStateError("queue cleanup requires a reason")
+
+        with self._locked():
+            store_path, document, index, card = self._find_visible_task(task_id)
+            remaining_cards = list(document.cards)
+            removed_card = remaining_cards.pop(index)
+            cleaned_at = datetime.now(timezone.utc)
+            source_store = self._visible_store_label(store_path)
+            cleanup_record = self._render_cleanup_record(
+                action=action,
+                source_store=source_store,
+                reason=normalized_reason,
+                cleaned_at=cleaned_at,
+                task=removed_card,
+            )
+
+            self._write_store(
+                store_path,
+                TaskStoreDocument(preamble=document.preamble, cards=remaining_cards),
+            )
+            updated_backburner = append_markdown_block(
+                self._read_text(self.paths.backburner_file),
+                cleanup_record,
+            )
+            write_text_atomic(self.paths.backburner_file, updated_backburner)
+            return QueueCleanupRecord(
+                action=action,
+                task=removed_card,
+                source_store=source_store,
+                destination_store="backburner",
+                reason=normalized_reason,
+                cleaned_at=cleaned_at,
+            )
+
+    def remove_task(self, task_id: str, *, reason: str) -> QueueCleanupRecord:
+        """Remove one visible queued task and retain an audit trail."""
+
+        return self.cleanup(task_id, action="remove", reason=reason)
+
+    def quarantine_task(self, task_id: str, *, reason: str) -> QueueCleanupRecord:
+        """Quarantine one visible queued task into backburner with a cleanup record."""
+
+        return self.cleanup(task_id, action="quarantine", reason=reason)
 
     def merge_pending_family(
         self,

@@ -40,12 +40,14 @@ from .events import EventRecord
 app = typer.Typer(add_completion=False, help="Control the Millrace runtime.")
 config_app = typer.Typer(help="Inspect or mutate runtime config.")
 queue_app = typer.Typer(help="Inspect visible execution queues.")
+queue_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work.")
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
 supervisor_app = typer.Typer(help="External supervisor report surfaces.")
 app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
+queue_app.add_typer(queue_cleanup_app, name="cleanup")
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
@@ -451,6 +453,48 @@ def queue_reorder_command(
         raise typer.BadParameter("provide at least one task id to reorder")
     render_operation(
         _run_expected(lambda: _control(ctx).queue_reorder(task_ids), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@queue_cleanup_app.command("remove")
+def queue_cleanup_remove_command(
+    ctx: typer.Context,
+    task_id: Annotated[str, typer.Argument(help="Visible active or backlog task id to remove.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the queued task is being removed."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Remove one visible queued task and retain a bounded cleanup trail."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).queue_cleanup_remove(task_id, reason=reason),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@queue_cleanup_app.command("quarantine")
+def queue_cleanup_quarantine_command(
+    ctx: typer.Context,
+    task_id: Annotated[str, typer.Argument(help="Visible active or backlog task id to quarantine.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the queued task is being quarantined."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Quarantine one visible queued task into backburner with a cleanup trail."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).queue_cleanup_quarantine(task_id, reason=reason),
+            json_mode=json_mode,
+        ),
         json_mode=json_mode,
     )
 

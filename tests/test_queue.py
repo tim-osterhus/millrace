@@ -412,6 +412,50 @@ def test_thaw_requires_visible_recovery_work_matching_the_remediation_spec(tmp_p
     ).read_text(encoding="utf-8")
 
 
+def test_cleanup_remove_rewrites_backlog_and_records_cleanup_trail(tmp_path: Path) -> None:
+    queue, workspace = make_queue(tmp_path)
+    backlog_path = workspace / "agents/tasksbacklog.md"
+    backlog_path.write_text(f"# Task Backlog\n\n{TASK_ALPHA}\n\n{TASK_BETA}", encoding="utf-8")
+    backlog_cards = parse_task_cards(backlog_path.read_text(encoding="utf-8"))
+
+    record = queue.remove_task(backlog_cards[1].task_id, reason="invalid duplicate backlog task")
+
+    assert record.action == "remove"
+    assert record.source_store == "backlog"
+    assert record.destination_store == "backburner"
+    assert record.task.title == "Build queue operations"
+    assert record.reason == "invalid duplicate backlog task"
+
+    remaining = parse_task_cards(backlog_path.read_text(encoding="utf-8"))
+    assert [card.title for card in remaining] == ["Implement status store"]
+
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "queue_cleanup:remove:start" in backburner_text
+    assert "source_store: backlog" in backburner_text
+    assert "reason: invalid duplicate backlog task" in backburner_text
+    assert "Build queue operations" in backburner_text
+
+
+def test_cleanup_quarantine_clears_active_task_and_records_cleanup_trail(tmp_path: Path) -> None:
+    queue, workspace = make_queue(tmp_path)
+    (workspace / "agents/tasks.md").write_text(f"# Active Task\n\n{TASK_ALPHA}", encoding="utf-8")
+    active_card = queue.active_task()
+    assert active_card is not None
+
+    record = queue.quarantine_task(active_card.task_id, reason="obsolete active task after operator review")
+
+    assert record.action == "quarantine"
+    assert record.source_store == "active"
+    assert record.destination_store == "backburner"
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "queue_cleanup:quarantine:start" in backburner_text
+    assert "source_store: active" in backburner_text
+    assert "reason: obsolete active task after operator review" in backburner_text
+    assert "Implement status store" in backburner_text
+
+
 def test_merge_pending_family_updates_backlog_and_clears_pending_surfaces(tmp_path: Path) -> None:
     queue, workspace = make_queue(tmp_path)
     backlog_path = workspace / "agents/tasksbacklog.md"

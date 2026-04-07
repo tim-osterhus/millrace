@@ -82,6 +82,66 @@ def queue_reorder(
     )
 
 
+def queue_cleanup_remove(
+    paths: RuntimePaths,
+    *,
+    task_id: str,
+    reason: str,
+    daemon_running: bool,
+) -> OperationResult:
+    """Remove one visible queued task through the local cleanup path."""
+
+    if daemon_running:
+        raise ControlError("queue cleanup remove requires the daemon to be stopped")
+    try:
+        record = TaskQueue(paths).remove_task(task_id, reason=reason)
+    except (FileNotFoundError, QueueError, ValueError) as exc:
+        raise queue_control_error(exc, prefix="queue cleanup remove failed") from exc
+    return OperationResult(
+        mode="direct",
+        applied=True,
+        message="queue cleanup removed task",
+        payload={
+            "task_id": record.task.task_id,
+            "title": record.task.title,
+            "source_store": record.source_store,
+            "destination_store": record.destination_store,
+            "reason": record.reason,
+            "cleanup_action": record.action,
+        },
+    )
+
+
+def queue_cleanup_quarantine(
+    paths: RuntimePaths,
+    *,
+    task_id: str,
+    reason: str,
+    daemon_running: bool,
+) -> OperationResult:
+    """Quarantine one visible queued task through the local cleanup path."""
+
+    if daemon_running:
+        raise ControlError("queue cleanup quarantine requires the daemon to be stopped")
+    try:
+        record = TaskQueue(paths).quarantine_task(task_id, reason=reason)
+    except (FileNotFoundError, QueueError, ValueError) as exc:
+        raise queue_control_error(exc, prefix="queue cleanup quarantine failed") from exc
+    return OperationResult(
+        mode="direct",
+        applied=True,
+        message="queue cleanup quarantined task",
+        payload={
+            "task_id": record.task.task_id,
+            "title": record.task.title,
+            "source_store": record.source_store,
+            "destination_store": record.destination_store,
+            "reason": record.reason,
+            "cleanup_action": record.action,
+        },
+    )
+
+
 def supervisor_queue_reorder(
     paths: RuntimePaths,
     *,

@@ -2709,6 +2709,68 @@ def test_cli_queue_reorder_uses_mailbox_when_daemon_is_running(tmp_path: Path) -
     assert not thread.is_alive()
 
 
+def test_cli_queue_cleanup_remove_records_backburner_audit_trail(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+
+    RUNNER.invoke(app, ["--config", str(config_path), "add-task", "Cleanup first task"])
+    RUNNER.invoke(app, ["--config", str(config_path), "add-task", "Cleanup second task"])
+    backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "queue",
+            "cleanup",
+            "remove",
+            backlog[0].task_id,
+            "--reason",
+            "invalid queued work",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "direct"
+    assert payload["message"] == "queue cleanup removed task"
+    assert payload["payload"]["task_id"] == backlog[0].task_id
+    assert payload["payload"]["source_store"] == "backlog"
+    assert payload["payload"]["destination_store"] == "backburner"
+    assert payload["payload"]["cleanup_action"] == "remove"
+    assert payload["payload"]["reason"] == "invalid queued work"
+
+    remaining = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert [card.title for card in remaining] == ["Cleanup second task"]
+
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "queue_cleanup:remove:start" in backburner_text
+    assert backlog[0].task_id in backburner_text
+    assert "invalid queued work" in backburner_text
+
+
+def test_cli_queue_cleanup_unknown_task_fails_without_traceback(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+
+    result = run_cli_subprocess(
+        workspace,
+        "--config",
+        str(config_path),
+        "queue",
+        "cleanup",
+        "remove",
+        "missing-task-id",
+        "--reason",
+        "invalid queued work",
+    )
+
+    assert_cli_subprocess_failure(
+        result,
+        stderr_prefix="queue cleanup remove failed: queued task not found: missing-task-id",
+    )
+
+
 def test_cli_supervisor_add_task_records_issuer_in_direct_mode(tmp_path: Path) -> None:
     workspace, config_path = runtime_workspace(tmp_path)
 

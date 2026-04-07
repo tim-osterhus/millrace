@@ -40,7 +40,7 @@ If you are acting as an external report-polling harness instead of the local wor
 - Start with CLI JSON inspection when the runtime state is unknown or when you need machine-readable evidence for a later action.
 - Use the TUI when you want an interactive local control shell over the same runtime authority for monitoring, guided intake, and daemon control.
 - Seed ideas and tasks with outcome-first wording; do not tell Millrace to run GoalSpec, Spec Review, Taskmaster, audit, or other internal stages in the intake body.
-- If the CLI does not ship a cleanup path yet, stop at diagnosis and escalation instead of inventing file-level cleanup.
+- Use `queue cleanup remove` or `queue cleanup quarantine` for invalid or obsolete queued work instead of editing task-store files directly.
 
 ## Command Inventory
 
@@ -85,6 +85,8 @@ millrace --config millrace.toml add-task "Example task" --body "# Notes"
 millrace --config millrace.toml add-task "Example task" --spec-id "<spec-id>"
 millrace --config millrace.toml add-idea /absolute/path/to/idea.md
 millrace --config millrace.toml queue reorder <task-id> <task-id> ...
+millrace --config millrace.toml queue cleanup remove <task-id> --reason "Invalid duplicate task"
+millrace --config millrace.toml queue cleanup quarantine <task-id> --reason "Obsolete task after review"
 ```
 
 ### External Supervisor
@@ -130,7 +132,7 @@ millrace --config millrace.toml publish commit --push --json
 - If the daemon is running, expect mutating commands to route through the mailbox instead of applying immediately.
 - Use `research --json`, `research history`, and `run-provenance` instead of shell-loop logs.
 - When you submit an idea or task, describe the desired outcome and repo surface instead of Millrace routing or stage instructions.
-- If a supported cleanup command does not exist yet, diagnose with CLI or TUI evidence and escalate instead of editing runtime-owned files by hand.
+- Use `queue cleanup remove` or `queue cleanup quarantine` when invalid queued tasks must be corrected; keep direct file edits as manual-repair-only escalation.
 - Explain config changes in terms of both what changes and when the boundary applies.
 - Use the runtime's config boundary vocabulary when it matters: `live_immediate`, `stage_boundary`, `cycle_boundary`, and `startup_only`.
 - Keep scheduling, messaging, wakeups, and multi-workspace registry outside Millrace core.
@@ -176,8 +178,9 @@ Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime 
 
 1. Run `millrace --config millrace.toml queue inspect --json`.
 2. If backlog order is wrong, use `millrace --config millrace.toml queue reorder <task-id> <task-id> ...`.
-3. If the intake body is contaminated with Millrace internals, rewrite it into outcome-first wording before adding or re-adding work.
-4. If needed, read `agents/tasks.md` and `agents/tasksbacklog.md`.
+3. If a queued task is invalid or obsolete, use `queue cleanup remove` or `queue cleanup quarantine` with an explicit `--reason`.
+4. If the intake body is contaminated with Millrace internals, rewrite it into outcome-first wording before adding or re-adding work.
+5. If needed, read `agents/tasks.md`, `agents/tasksbacklog.md`, and `agents/tasksbackburner.md`.
 
 ### Daemon Control
 
