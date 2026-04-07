@@ -2253,6 +2253,249 @@ def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_p
     assert (workspace / result.archived_path).exists()
 
 
+def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_path: Path) -> None:
+    workspace, config, paths, synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-e2e-product-701",
+        emitted_at=_dt("2026-04-07T16:00:00Z"),
+        title="Aura Workshop Vertical Slice",
+        body=(
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura Collector\n"
+            "- Aura Conduit\n"
+            "- Aura Reservoir\n"
+            "- Aura Infuser\n"
+            "- infused weapon payoff\n\n"
+            "## Progression Lines\n"
+            "- Progression from crafting to aura routing to infusion.\n"
+            "- Automated validation covers registration, aura behavior, infusion correctness, and the happy path.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+
+    acceptance_profile_path = next((workspace / "agents" / "reports" / "acceptance_profiles").glob("*.json"))
+    acceptance_profile = json.loads(acceptance_profile_path.read_text(encoding="utf-8"))
+    assert acceptance_profile["semantic_profile"]["objective_summary"] == (
+        "Build the first playable aura workshop vertical slice for the mod."
+    )
+    assert "Aura Collector" in acceptance_profile["semantic_profile"]["capability_domains"]
+    assert "GoalSpec" not in " ".join(acceptance_profile["milestones"])
+
+    queue_spec_text = (workspace / synthesis.golden_spec_path).read_text(encoding="utf-8")
+    phase_spec_text = (workspace / synthesis.phase_spec_path).read_text(encoding="utf-8")
+    assert "Aura Collector" in queue_spec_text
+    assert "Aura Infuser" in queue_spec_text
+    assert "GoalSpec draft package" not in queue_spec_text
+    assert "crafting to aura routing to infusion" in phase_spec_text
+    assert "reviewable runtime implementation slice" not in phase_spec_text
+
+    reviewed_text = reviewed_path.read_text(encoding="utf-8")
+    reviewed_text = _replace_markdown_section(
+        reviewed_text,
+        "Dependencies",
+        "\n".join(
+            [
+                "## Dependencies",
+                "- Product implementation: `src/main/java/com/example/aura/AuraCollectorBlock.java`",
+                "- Product implementation: `src/main/java/com/example/aura/AuraInfuserBlock.java`",
+                "- Verification: `src/test/java/com/example/aura/AuraWorkshopFlowTest.java`",
+            ]
+        ),
+    )
+    reviewed_path.write_text(reviewed_text, encoding="utf-8")
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-e2e-product-701",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-e2e-product-701",
+            emitted_at=_dt("2026-04-07T16:00:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-e2e-product-701",
+        emitted_at=_dt("2026-04-07T16:00:00Z"),
+    )
+
+    shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
+    assert "AuraCollectorBlock.java" in shard_text
+    assert "AuraInfuserBlock.java" in shard_text
+    assert "AuraWorkshopFlowTest.java" in shard_text
+    assert "agents/specs/stable/golden/SPEC-701__aura-workshop-vertical-slice.md" in shard_text
+    assert "agents/ideas/archive/SPEC-701__aura-workshop-vertical-slice.md" in shard_text
+    assert "GoalSpec draft package" not in shard_text
+    assert "task queue maintenance" not in shard_text
+
+
+def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-e2e-collapse-702"
+    emitted_at = _dt("2026-04-07T16:10:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-702\n"
+            "title: Aura Workshop Vertical Slice\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Workshop Vertical Slice\n\n"
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura Collector\n"
+            "- Aura Conduit\n"
+            "- Aura Reservoir\n"
+            "- Aura Infuser\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    monkeypatch.setattr(
+        goalspec_spec_synthesis_module,
+        "render_queue_spec",
+        lambda **_: "\n".join(
+            [
+                "## Goals",
+                "- Convert the goal into a traceable GoalSpec draft package.",
+                "- Preserve completion manifest and objective profile traceability.",
+                "- Prepare task generation and Spec Review handoff.",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        goalspec_spec_synthesis_module,
+        "render_phase_spec",
+        lambda **_: "\n".join(
+            [
+                "## Objective",
+                "- Carry the GoalSpec package into a reviewable runtime implementation slice.",
+                "",
+                "## Work Plan",
+                "1. Validate objective profile and completion manifest traceability.",
+                "2. Preserve phase spec and queue spec alignment for task generation.",
+                "3. Hand the package to Spec Review.",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        goalspec_spec_synthesis_module,
+        "evaluate_scope_divergence",
+        lambda **_: goalspec_scope_diagnostics_module.ScopeDivergenceRecord(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            goal_id="IDEA-702",
+            title="Aura Workshop Vertical Slice",
+            stage_name="spec_synthesis",
+            source_path="agents/ideas/staging/IDEA-702__aura-workshop-vertical-slice.md",
+            expected_scope="product",
+            decision="blocked",
+            reason="severe_product_scope_divergence",
+            summary="Deliberate meta collapse replaced product outputs with GoalSpec administration surfaces.",
+            surfaces=(
+                goalspec_scope_diagnostics_module.ScopeSurfaceDiagnostic(
+                    surface_id="queue_spec",
+                    coverage_ratio=0.0,
+                    matched_goal_tokens=(),
+                    missing_goal_tokens=("aura", "collector", "conduit", "reservoir", "infuser"),
+                    meta_scope_hits=("goalspec", "completion manifest", "task generation"),
+                    severe=True,
+                    excerpt="Convert the goal into a traceable GoalSpec draft package.",
+                ),
+                goalspec_scope_diagnostics_module.ScopeSurfaceDiagnostic(
+                    surface_id="phase_spec",
+                    coverage_ratio=0.0,
+                    matched_goal_tokens=(),
+                    missing_goal_tokens=("aura", "collector", "conduit", "reservoir", "infuser"),
+                    meta_scope_hits=("goalspec", "traceability", "phase spec"),
+                    severe=True,
+                    excerpt="Carry the GoalSpec package into a reviewable runtime implementation slice.",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Scope divergence blocked SPEC-702 during spec_synthesis",
+    ):
+        execute_spec_synthesis(
+            paths,
+            _goal_active_request_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                path=staged_path,
+                status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+                node_id="spec_synthesis",
+                stage_kind_id="research.spec-synthesis",
+            ),
+            run_id=run_id,
+            completion_manifest=completion_manifest.draft_state,
+            emitted_at=emitted_at,
+        )
+
+    diagnostic_path = workspace / "agents" / ".research_runtime" / "goalspec" / "scope_divergence" / f"{run_id}__spec_synthesis.json"
+    diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+    assert diagnostic["decision"] == "blocked"
+    assert diagnostic["reason"] == "severe_product_scope_divergence"
+    assert not any((workspace / "agents" / "taskspending").glob("SPEC-702*.md"))
+    assert not any((workspace / "agents" / "ideas" / "archive").glob("SPEC-702*.md"))
+    assert not any((workspace / "agents" / "ideas" / "specs").glob("SPEC-702*.md"))
+
+
 def test_scope_divergence_helper_blocks_severe_meta_scope_divergence() -> None:
     anchor_tokens = goalspec_scope_diagnostics_module.build_goal_anchor_tokens(
         title="Aura Workshop Vertical Slice",
