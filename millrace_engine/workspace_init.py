@@ -36,6 +36,7 @@ _RUNTIME_OWNED_DIRECTORY_PATHS: tuple[PurePosixPath, ...] = (
     PurePosixPath("agents/compounding/harness_candidates"),
     PurePosixPath("agents/compounding/harness_recommendations"),
     PurePosixPath("agents/compounding/harness_searches"),
+    PurePosixPath("agents/compounding/indexes"),
     PurePosixPath("agents/compounding/lifecycle"),
     PurePosixPath("agents/compounding/procedures"),
     PurePosixPath("agents/compounding/usage"),

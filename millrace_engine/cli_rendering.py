@@ -19,6 +19,7 @@ from .control import (
     CompoundingHarnessCandidateReport,
     CompoundingHarnessRecommendationListReport,
     CompoundingHarnessRecommendationReport,
+    CompoundingOrientationReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     OperationResult,
@@ -1196,6 +1197,61 @@ def render_compounding_governance_summary(report: CompoundingGovernanceSummaryVi
             "Latest recommendation: "
             f"{report.latest_recommendation_id} :: {report.latest_recommendation_summary}"
         )
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_orientation(report: CompoundingOrientationReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        report.secondary_surface_note,
+        (
+            "Index artifact: "
+            f"{report.index_artifact.path} "
+            f"generated={report.index_artifact.generated_at.isoformat().replace('+00:00', 'Z')} "
+            f"entries={report.index_artifact.item_count}"
+        ),
+        (
+            "Relationship artifact: "
+            f"{report.relationship_artifact.path} "
+            f"generated={report.relationship_artifact.generated_at.isoformat().replace('+00:00', 'Z')} "
+            f"clusters={report.relationship_artifact.item_count}"
+        ),
+        "Family counts: "
+        + (", ".join(f"{key}={report.family_counts[key]}" for key in sorted(report.family_counts)) or "none"),
+        "Relationship counts: "
+        + (", ".join(f"{key}={report.cluster_counts[key]}" for key in sorted(report.cluster_counts)) or "none"),
+    ]
+    if report.query is not None:
+        lines.append(f"Query: {report.query}")
+    if report.entries:
+        lines.append("Matching entries:")
+        for entry in report.entries:
+            source_bits = []
+            if entry.source_run_id is not None:
+                source_bits.append(f"run={entry.source_run_id}")
+            if entry.source_stage is not None:
+                source_bits.append(f"stage={entry.source_stage}")
+            source_suffix = f" {' '.join(source_bits)}" if source_bits else ""
+            lines.append(
+                f"- {entry.entry_id} [{entry.family.value} {entry.status}] {entry.label}{source_suffix}"
+            )
+            lines.append(f"  Artifact: {entry.artifact_path}")
+            if entry.related_ids:
+                lines.append(f"  Related: {', '.join(entry.related_ids)}")
+    else:
+        lines.append("Matching entries: none")
+    if report.relationship_clusters:
+        lines.append("Relationship summaries:")
+        for cluster in report.relationship_clusters:
+            lines.append(f"- {cluster.cluster_id} [{cluster.kind.value}] {cluster.label}")
+            lines.append(f"  Summary: {cluster.summary}")
+            lines.append(f"  Members: {', '.join(cluster.member_ids) or 'none'}")
+            if cluster.shared_terms:
+                lines.append(f"  Shared terms: {', '.join(cluster.shared_terms)}")
+    else:
+        lines.append("Relationship summaries: none")
     typer.echo("\n".join(lines))
 
 

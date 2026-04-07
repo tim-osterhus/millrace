@@ -66,6 +66,7 @@ class RuntimePaths:
     compounding_dir: Path
     compounding_procedures_dir: Path
     compounding_context_facts_dir: Path
+    compounding_indexes_dir: Path
     compounding_usage_records_dir: Path
     compounding_lifecycle_records_dir: Path
     compounding_harness_candidates_dir: Path
@@ -173,6 +174,7 @@ class RuntimePaths:
             compounding_dir=compounding_dir,
             compounding_procedures_dir=compounding_dir / "procedures",
             compounding_context_facts_dir=compounding_dir / "context_facts",
+            compounding_indexes_dir=compounding_dir / "indexes",
             compounding_usage_records_dir=compounding_dir / "usage",
             compounding_lifecycle_records_dir=compounding_dir / "lifecycle",
             compounding_harness_candidates_dir=compounding_dir / "harness_candidates",

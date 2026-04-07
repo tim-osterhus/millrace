@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from .adapters.control_mailbox import ControlCommand, write_command
 from .compounding import (
+    build_compounding_orientation_snapshot,
     discover_governed_procedures,
     discover_harness_benchmark_results,
     discover_harness_candidates,
@@ -63,6 +64,10 @@ from .control_models import (
     CompoundingContextFactView,
     CompoundingGovernanceSummaryView,
     CompoundingLifecycleRecordView,
+    CompoundingOrientationArtifactView,
+    CompoundingOrientationEntryView,
+    CompoundingOrientationReport,
+    CompoundingRelationshipClusterView,
     CompoundingHarnessBenchmarkListReport,
     CompoundingHarnessBenchmarkReport,
     CompoundingHarnessBenchmarkView,
@@ -309,6 +314,42 @@ def _compounding_context_fact_view(fact: object) -> CompoundingContextFactView:
         stale_reason=artifact.stale_reason,
         supersedes_fact_id=artifact.supersedes_fact_id,
         artifact_path=getattr(fact, "path"),
+    )
+
+
+def _orientation_artifact_path(root: Path, artifact_ref: str) -> Path:
+    path = Path(artifact_ref)
+    return path if path.is_absolute() else (root / path).resolve()
+
+
+def _compounding_orientation_entry_view(root: Path, entry: object) -> CompoundingOrientationEntryView:
+    return CompoundingOrientationEntryView(
+        entry_id=getattr(entry, "entry_id"),
+        family=getattr(entry, "family"),
+        status=getattr(entry, "status"),
+        label=getattr(entry, "label"),
+        summary=getattr(entry, "summary"),
+        artifact_path=_orientation_artifact_path(root, getattr(entry, "artifact_ref")),
+        source_run_id=getattr(entry, "source_run_id"),
+        source_stage=(
+            getattr(getattr(entry, "source_stage"), "value")
+            if getattr(entry, "source_stage") is not None
+            else None
+        ),
+        tags=getattr(entry, "tags"),
+        evidence_refs=getattr(entry, "evidence_refs"),
+        related_ids=getattr(entry, "related_ids"),
+    )
+
+
+def _compounding_relationship_cluster_view(cluster: object) -> CompoundingRelationshipClusterView:
+    return CompoundingRelationshipClusterView(
+        cluster_id=getattr(cluster, "cluster_id"),
+        kind=getattr(cluster, "kind"),
+        label=getattr(cluster, "label"),
+        summary=getattr(cluster, "summary"),
+        member_ids=getattr(cluster, "member_ids"),
+        shared_terms=getattr(cluster, "shared_terms"),
     )
 
 
@@ -914,6 +955,44 @@ class EngineControl:
             recent_usage_run_id=recent_usage_run_id,
             recent_usage_procedure_count=recent_usage_procedure_count,
             recent_usage_context_fact_count=recent_usage_context_fact_count,
+        )
+
+    def compounding_orientation(self, *, query: str | None = None) -> CompoundingOrientationReport:
+        """Return derived index and relationship-summary artifacts for governed compounding."""
+
+        normalized_query = " ".join(query.strip().split()) if query is not None else None
+        if normalized_query == "":
+            normalized_query = None
+        try:
+            snapshot = build_compounding_orientation_snapshot(self.paths, query=normalized_query)
+        except ValidationError as exc:
+            raise ControlError(f"compounding orientation is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding orientation is invalid: {single_line_message(exc)}") from exc
+        return CompoundingOrientationReport(
+            config_path=self.config_path,
+            query=normalized_query,
+            secondary_surface_note=snapshot.index_artifact.secondary_surface_note,
+            index_artifact=CompoundingOrientationArtifactView(
+                path=snapshot.index_path,
+                generated_at=snapshot.index_artifact.generated_at,
+                item_count=len(snapshot.index_artifact.entries),
+            ),
+            relationship_artifact=CompoundingOrientationArtifactView(
+                path=snapshot.relationship_summary_path,
+                generated_at=snapshot.relationship_summary_artifact.generated_at,
+                item_count=len(snapshot.relationship_summary_artifact.clusters),
+            ),
+            family_counts=snapshot.index_artifact.family_counts,
+            cluster_counts=snapshot.relationship_summary_artifact.cluster_counts,
+            entries=tuple(
+                _compounding_orientation_entry_view(self.paths.root, entry)
+                for entry in snapshot.entries
+            ),
+            relationship_clusters=tuple(
+                _compounding_relationship_cluster_view(cluster)
+                for cluster in snapshot.relationship_clusters
+            ),
         )
 
     def compounding_harness_candidates(self) -> CompoundingHarnessCandidateListReport:

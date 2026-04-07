@@ -14,6 +14,8 @@ from .config import ConfigApplyBoundary, ConfigSourceInfo, EngineConfig
 from .contract_compounding import (
     CompoundingFlushCheckpoint,
     CompoundingFlushMilestone,
+    CompoundingKnowledgeFamily,
+    CompoundingRelationshipKind,
     ConsideredProcedure,
     InjectedProcedure,
     ProcedureInjectionBundle,
@@ -1166,6 +1168,80 @@ class CompoundingGovernanceSummaryView(ContractModel):
     @classmethod
     def normalize_config_path(cls, value: str | Path) -> Path:
         return Path(value)
+
+
+class CompoundingOrientationArtifactView(ContractModel):
+    """Inspectable generated orientation artifact metadata."""
+
+    path: Path
+    generated_at: datetime
+    item_count: int = Field(default=0, ge=0)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def normalize_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+    @field_validator("generated_at", mode="before")
+    @classmethod
+    def normalize_generated_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+
+class CompoundingOrientationEntryView(ContractModel):
+    """Operator-facing queryable entry from the derived compounding index."""
+
+    entry_id: str
+    family: CompoundingKnowledgeFamily
+    status: str
+    label: str
+    summary: str
+    artifact_path: Path
+    source_run_id: str | None = None
+    source_stage: str | None = None
+    tags: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    related_ids: tuple[str, ...] = ()
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingRelationshipClusterView(ContractModel):
+    """Operator-facing relationship-summary cluster from the derived orientation layer."""
+
+    cluster_id: str
+    kind: CompoundingRelationshipKind
+    label: str
+    summary: str
+    member_ids: tuple[str, ...] = ()
+    shared_terms: tuple[str, ...] = ()
+
+
+class CompoundingOrientationReport(ContractModel):
+    """Derived query-oriented navigation surface over governed compounding stores."""
+
+    config_path: Path
+    query: str | None = None
+    secondary_surface_note: str
+    index_artifact: CompoundingOrientationArtifactView
+    relationship_artifact: CompoundingOrientationArtifactView
+    family_counts: dict[str, int] = Field(default_factory=dict)
+    cluster_counts: dict[str, int] = Field(default_factory=dict)
+    entries: tuple[CompoundingOrientationEntryView, ...] = ()
+    relationship_clusters: tuple[CompoundingRelationshipClusterView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+    @field_validator("family_counts", "cluster_counts", mode="before")
+    @classmethod
+    def normalize_count_maps(cls, value: dict[str, int] | None) -> dict[str, int]:
+        return _normalized_count_map(value or {})
 
 
 class OperationResult(ContractModel):

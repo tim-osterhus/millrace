@@ -98,6 +98,7 @@ def test_required_runtime_scaffold_paths_exist() -> None:
         "agents/compounding",
         "agents/compounding/procedures",
         "agents/compounding/context_facts",
+        "agents/compounding/indexes",
         "agents/compounding/harness_candidates",
         "agents/compounding/harness_recommendations",
         "agents/lab",

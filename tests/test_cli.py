@@ -28,9 +28,16 @@ from millrace_engine.contracts import (
     CrossPlaneParentRun,
     ExecutionStatus,
     ExecutionResearchHandoff,
+    HarnessBenchmarkCostSummary,
+    HarnessBenchmarkOutcome,
+    HarnessBenchmarkOutcomeSummary,
+    HarnessBenchmarkResult,
+    HarnessBenchmarkStatus,
     HarnessCandidateArtifact,
     HarnessCandidateState,
     HarnessChangedSurfaceKind,
+    HarnessRecommendationArtifact,
+    HarnessRecommendationDisposition,
     ModelProfileDefinition,
     PersistedObjectKind,
     ProcedureLifecycleRecord,
@@ -279,6 +286,9 @@ def write_compounding_procedure(
     title: str,
     summary: str,
     procedure_markdown: str,
+    source_run_id: str = "source-run",
+    tags: tuple[str, ...] = ("fixture",),
+    evidence_refs: tuple[str, ...] = ("agents/runs/source-run/transition_history.jsonl",),
 ) -> Path:
     target_dir = workspace / "agents" / "compounding" / "procedures"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -286,13 +296,13 @@ def write_compounding_procedure(
     artifact = ReusableProcedureArtifact(
         procedure_id=procedure_id,
         scope=scope,
-        source_run_id="source-run",
+        source_run_id=source_run_id,
         source_stage=source_stage,
         title=title,
         summary=summary,
         procedure_markdown=procedure_markdown,
-        tags=("fixture",),
-        evidence_refs=("agents/runs/source-run/transition_history.jsonl",),
+        tags=tags,
+        evidence_refs=evidence_refs,
         created_at="2026-04-07T18:00:00Z",
     )
     path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -338,6 +348,8 @@ def write_context_fact(
     statement: str,
     source_run_id: str = "source-run",
     stale_reason: str | None = None,
+    tags: tuple[str, ...] = ("fixture",),
+    evidence_refs: tuple[str, ...] = ("agents/runs/source-run/transition_history.jsonl",),
 ) -> Path:
     target_dir = workspace / "agents" / "compounding" / "context_facts"
     if scope is ContextFactScope.RUN:
@@ -352,8 +364,8 @@ def write_context_fact(
         title=title,
         statement=statement,
         summary=summary,
-        tags=("fixture",),
-        evidence_refs=("agents/runs/source-run/transition_history.jsonl",),
+        tags=tags,
+        evidence_refs=evidence_refs,
         created_at="2026-04-07T18:00:00Z",
         observed_at="2026-04-07T18:30:00Z",
         stale_reason=stale_reason,
@@ -426,6 +438,76 @@ def write_harness_candidate(
         },
         reviewer_note="fixture candidate",
         created_at="2026-04-07T21:00:00Z",
+        created_by="cli.fixture",
+    )
+    path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def write_harness_benchmark_result(
+    workspace: Path,
+    *,
+    filename: str,
+    result_id: str,
+    candidate_id: str,
+    message: str = "Selection changed under governed_plus preview.",
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "benchmark_results"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / filename
+    artifact = HarnessBenchmarkResult(
+        result_id=result_id,
+        candidate_id=candidate_id,
+        baseline_ref="workspace.live",
+        benchmark_suite_ref="preview.standard.v1",
+        status=HarnessBenchmarkStatus.COMPLETE,
+        outcome=HarnessBenchmarkOutcome.CHANGED,
+        started_at="2026-04-07T21:05:00Z",
+        completed_at="2026-04-07T21:07:00Z",
+        outcome_summary=HarnessBenchmarkOutcomeSummary(
+            selection_changed=True,
+            changed_config_fields=("policies.compounding.profile",),
+            changed_stage_bindings=(),
+            baseline_mode_ref="baseline",
+            candidate_mode_ref="governed_plus",
+            message=message,
+        ),
+        cost_summary=HarnessBenchmarkCostSummary(
+            baseline_governed_plus_budget_characters=3200,
+            candidate_governed_plus_budget_characters=4800,
+            budget_delta_characters=1600,
+        ),
+        artifact_refs=(
+            "agents/compounding/benchmark_results/fixture.__baseline.json",
+            "agents/compounding/benchmark_results/fixture.__candidate.json",
+        ),
+    )
+    path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def write_harness_recommendation(
+    workspace: Path,
+    *,
+    filename: str,
+    recommendation_id: str,
+    candidate_id: str,
+    result_id: str,
+    summary: str = "Recommend the preview candidate after bounded benchmark review.",
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "harness_recommendations"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / filename
+    artifact = HarnessRecommendationArtifact(
+        recommendation_id=recommendation_id,
+        search_id="search.fixture",
+        disposition=HarnessRecommendationDisposition.RECOMMEND,
+        recommended_candidate_id=candidate_id,
+        recommended_result_id=result_id,
+        candidate_ids=(candidate_id,),
+        benchmark_result_ids=(result_id,),
+        summary=summary,
+        created_at="2026-04-07T21:09:00Z",
         created_by="cli.fixture",
     )
     path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -3778,6 +3860,101 @@ def test_cli_compounding_context_facts_list_show_and_summary(tmp_path: Path) -> 
     assert show_result.exit_code == 0
     assert "Fact ID: fact.workspace.builder.stale" in show_result.stdout
     assert "Stale reason: awaiting operator review" in show_result.stdout
+
+
+def test_cli_compounding_orient_generates_secondary_artifacts_and_filters_query(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-audit.json",
+        procedure_id="proc.workspace.builder.audit",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Reviewed Audit Procedure",
+        summary="Approved workspace audit reuse.",
+        procedure_markdown="Preserve the audit trail through builder retries.",
+        source_run_id="run-audit",
+        tags=("audit", "builder"),
+        evidence_refs=("agents/runs/run-audit/transition_history.jsonl",),
+    )
+    write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.audit",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="review approved",
+    )
+    write_context_fact(
+        workspace,
+        filename="workspace-audit.json",
+        fact_id="fact.workspace.builder.audit",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.PROMOTED,
+        source_stage=StageType.BUILDER,
+        title="Audit trail fact",
+        summary="Approved builder audit knowledge.",
+        statement="Keep the builder audit trail coherent across retries.",
+        source_run_id="run-audit",
+        tags=("audit", "builder"),
+        evidence_refs=("agents/runs/run-audit/transition_history.jsonl",),
+    )
+    write_harness_candidate(
+        workspace,
+        filename="candidate.fixture.json",
+        candidate_id="candidate.fixture",
+        profile="governed_plus",
+        budget_characters=4800,
+    )
+    write_harness_benchmark_result(
+        workspace,
+        filename="benchmark.fixture.json",
+        result_id="benchmark.fixture",
+        candidate_id="candidate.fixture",
+    )
+    write_harness_recommendation(
+        workspace,
+        filename="recommendation.fixture.json",
+        recommendation_id="recommendation.fixture",
+        candidate_id="candidate.fixture",
+        result_id="benchmark.fixture",
+    )
+
+    result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "compounding", "orient", "--query", "audit", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["secondary_surface_note"].endswith("source of truth.")
+    assert payload["family_counts"] == {
+        "context_fact": 1,
+        "harness_benchmark": 1,
+        "harness_candidate": 1,
+        "harness_recommendation": 1,
+        "procedure": 1,
+    }
+    assert payload["index_artifact"]["path"].endswith("agents/compounding/indexes/governed_store_index.json")
+    assert payload["relationship_artifact"]["path"].endswith("agents/compounding/indexes/relationship_summary.json")
+    assert {item["entry_id"] for item in payload["entries"]} == {
+        "fact.workspace.builder.audit",
+        "proc.workspace.builder.audit",
+    }
+    assert {item["kind"] for item in payload["relationship_clusters"]} >= {"source_run", "tag"}
+    assert (workspace / "agents" / "compounding" / "indexes" / "governed_store_index.json").is_file()
+    assert (workspace / "agents" / "compounding" / "indexes" / "relationship_summary.json").is_file()
+
+    text_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "compounding", "orient", "--query", "audit"],
+    )
+
+    assert text_result.exit_code == 0
+    assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in (
+        text_result.stdout
+    )
+    assert "Matching entries:" in text_result.stdout
+    assert "proc.workspace.builder.audit [procedure eligible] Reviewed Audit Procedure" in text_result.stdout
+    assert "fact.workspace.builder.audit [context_fact eligible] Audit trail fact" in text_result.stdout
 
 
 def test_cli_compounding_procedure_promote_materializes_workspace_artifact_and_record(tmp_path: Path) -> None:

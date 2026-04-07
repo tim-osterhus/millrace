@@ -21,6 +21,7 @@ from .cli_rendering import (
     render_compounding_harness_candidates,
     render_compounding_harness_recommendation,
     render_compounding_harness_recommendations,
+    render_compounding_orientation,
     render_compounding_procedure,
     render_compounding_procedures,
     _legacy_policy_lines,
@@ -53,6 +54,7 @@ from .control_models import (
     CompoundingHarnessCandidateReport,
     CompoundingHarnessRecommendationListReport,
     CompoundingHarnessRecommendationReport,
+    CompoundingOrientationReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     InterviewListReport,
@@ -569,6 +571,24 @@ def compounding_root(
         return
     report = _run_expected(lambda: _control(ctx).compounding_governance_summary(), json_mode=json_mode)
     render_compounding_governance_summary(report, json_mode=json_mode)
+
+
+@compounding_app.command("orient")
+def compounding_orient_command(
+    ctx: typer.Context,
+    query: Annotated[
+        str | None,
+        typer.Option("--query", help="Optional text filter over the derived orientation artifacts."),
+    ] = None,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Generate and inspect derived compounding index and relationship summaries."""
+
+    report: CompoundingOrientationReport = _run_expected(
+        lambda: _control(ctx).compounding_orientation(query=query),
+        json_mode=json_mode,
+    )
+    render_compounding_orientation(report, json_mode=json_mode)
 
 
 @compounding_facts_app.command("show")

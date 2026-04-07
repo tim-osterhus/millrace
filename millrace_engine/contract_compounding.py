@@ -69,6 +69,26 @@ class CompoundingFlushMilestone(str, Enum):
     RUN_CLOSEOUT = "run_closeout"
 
 
+class CompoundingKnowledgeFamily(str, Enum):
+    """Governed compounding family represented in derived orientation artifacts."""
+
+    PROCEDURE = "procedure"
+    CONTEXT_FACT = "context_fact"
+    HARNESS_CANDIDATE = "harness_candidate"
+    HARNESS_BENCHMARK = "harness_benchmark"
+    HARNESS_RECOMMENDATION = "harness_recommendation"
+
+
+class CompoundingRelationshipKind(str, Enum):
+    """Deterministic relationship cluster kind for orientation summaries."""
+
+    SOURCE_RUN = "source_run"
+    EVIDENCE_REF = "evidence_ref"
+    TAG = "tag"
+    BENCHMARK_CANDIDATE = "benchmark_candidate"
+    RECOMMENDATION_BUNDLE = "recommendation_bundle"
+
+
 class ProcedureRetrievalRule(ContractModel):
     """Stage-aware retrieval constraints for reusable procedures."""
 
@@ -342,3 +362,205 @@ class CompoundingFlushCheckpoint(ContractModel):
             seen.add(identifier)
             normalized.append(identifier)
         return tuple(normalized)
+
+
+class CompoundingKnowledgeIndexEntry(ContractModel):
+    """One derived orientation entry over a governed compounding artifact."""
+
+    schema_version: Literal["1.0"] = COMPOUNDING_SCHEMA_VERSION
+    entry_id: str
+    family: CompoundingKnowledgeFamily
+    status: str
+    label: str
+    summary: str
+    artifact_ref: str
+    source_run_id: str | None = None
+    source_stage: StageType | None = None
+    tags: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    related_ids: tuple[str, ...] = ()
+
+    @field_validator("entry_id", "source_run_id")
+    @classmethod
+    def validate_identifiers(cls, value: str | None, info: Any) -> str | None:
+        return _normalize_identifier(value, field_label=getattr(info, "field_name", "value"))
+
+    @field_validator("status", "label", "summary", "artifact_ref")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("tags", "evidence_refs", mode="before")
+    @classmethod
+    def normalize_text_sequences(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return _normalize_sequence([str(item) for item in value])
+
+    @field_validator("related_ids", mode="before")
+    @classmethod
+    def normalize_related_ids(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            identifier = _normalize_identifier(str(item), field_label="related_ids value")
+            if identifier is None or identifier in seen:
+                continue
+            seen.add(identifier)
+            normalized.append(identifier)
+        return tuple(normalized)
+
+
+class CompoundingKnowledgeIndexArtifact(ContractModel):
+    """Derived secondary index over governed compounding stores."""
+
+    schema_version: Literal["1.0"] = COMPOUNDING_SCHEMA_VERSION
+    generated_at: datetime
+    secondary_surface_note: str
+    source_families: tuple[str, ...] = ()
+    family_counts: dict[str, int] = Field(default_factory=dict)
+    entries: tuple[CompoundingKnowledgeIndexEntry, ...] = ()
+
+    @field_validator("generated_at", mode="before")
+    @classmethod
+    def normalize_generated_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator("secondary_surface_note")
+    @classmethod
+    def validate_secondary_surface_note(cls, value: str) -> str:
+        return _normalize_text(value, field_label="secondary_surface_note") or ""
+
+    @field_validator("source_families", mode="before")
+    @classmethod
+    def normalize_source_families(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return _normalize_sequence([str(item) for item in value])
+
+    @field_validator("family_counts", mode="before")
+    @classmethod
+    def normalize_family_counts(cls, value: dict[str, int] | None) -> dict[str, int]:
+        if not value:
+            return {}
+        normalized: dict[str, int] = {}
+        for key in sorted(value):
+            count = int(value[key])
+            if count < 0:
+                raise ValueError("family_counts values must be non-negative")
+            normalized[str(key)] = count
+        return normalized
+
+    @field_validator("entries", mode="before")
+    @classmethod
+    def normalize_entries(
+        cls,
+        value: tuple[CompoundingKnowledgeIndexEntry, ...]
+        | list[CompoundingKnowledgeIndexEntry]
+        | tuple[dict[str, Any], ...]
+        | list[dict[str, Any]]
+        | None,
+    ) -> tuple[CompoundingKnowledgeIndexEntry, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item if isinstance(item, CompoundingKnowledgeIndexEntry) else CompoundingKnowledgeIndexEntry.model_validate(item)
+            for item in value
+        )
+
+
+class CompoundingRelationshipCluster(ContractModel):
+    """One derived relationship cluster over governed compounding entries."""
+
+    schema_version: Literal["1.0"] = COMPOUNDING_SCHEMA_VERSION
+    cluster_id: str
+    kind: CompoundingRelationshipKind
+    label: str
+    summary: str
+    member_ids: tuple[str, ...] = ()
+    shared_terms: tuple[str, ...] = ()
+
+    @field_validator("cluster_id")
+    @classmethod
+    def validate_cluster_id(cls, value: str) -> str:
+        return _normalize_identifier(value, field_label="cluster_id") or ""
+
+    @field_validator("label", "summary")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("member_ids", mode="before")
+    @classmethod
+    def normalize_member_ids(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            identifier = _normalize_identifier(str(item), field_label="member_ids value")
+            if identifier is None or identifier in seen:
+                continue
+            seen.add(identifier)
+            normalized.append(identifier)
+        return tuple(normalized)
+
+    @field_validator("shared_terms", mode="before")
+    @classmethod
+    def normalize_shared_terms(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return _normalize_sequence([str(item) for item in value])
+
+
+class CompoundingRelationshipSummaryArtifact(ContractModel):
+    """Derived relationship summaries over the governed compounding index."""
+
+    schema_version: Literal["1.0"] = COMPOUNDING_SCHEMA_VERSION
+    generated_at: datetime
+    secondary_surface_note: str
+    index_artifact_ref: str
+    cluster_counts: dict[str, int] = Field(default_factory=dict)
+    clusters: tuple[CompoundingRelationshipCluster, ...] = ()
+
+    @field_validator("generated_at", mode="before")
+    @classmethod
+    def normalize_generated_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator("secondary_surface_note", "index_artifact_ref")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("cluster_counts", mode="before")
+    @classmethod
+    def normalize_cluster_counts(cls, value: dict[str, int] | None) -> dict[str, int]:
+        if not value:
+            return {}
+        normalized: dict[str, int] = {}
+        for key in sorted(value):
+            count = int(value[key])
+            if count < 0:
+                raise ValueError("cluster_counts values must be non-negative")
+            normalized[str(key)] = count
+        return normalized
+
+    @field_validator("clusters", mode="before")
+    @classmethod
+    def normalize_clusters(
+        cls,
+        value: tuple[CompoundingRelationshipCluster, ...]
+        | list[CompoundingRelationshipCluster]
+        | tuple[dict[str, Any], ...]
+        | list[dict[str, Any]]
+        | None,
+    ) -> tuple[CompoundingRelationshipCluster, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item if isinstance(item, CompoundingRelationshipCluster) else CompoundingRelationshipCluster.model_validate(item)
+            for item in value
+        )

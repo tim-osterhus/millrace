@@ -7,6 +7,7 @@ from .finalization import (
     flush_milestone_for_transition,
     flush_run_scoped_compounding_candidates,
 )
+from .orientation import build_compounding_orientation_snapshot
 from .harness import (
     discover_harness_benchmark_results,
     discover_harness_candidates,
@@ -40,6 +41,7 @@ __all__ = [
     "CompoundingFlushMilestone",
     "build_injected_context_fact_bundle",
     "build_injected_procedure_bundle",
+    "build_compounding_orientation_snapshot",
     "clear_run_scoped_procedure_candidates",
     "context_fact_retrieval_rule_for_stage",
     "deprecate_procedure",
