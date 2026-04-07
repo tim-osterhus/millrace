@@ -187,7 +187,7 @@ def test_validation_mode_standard_execution_plane_runs_minimal_task_via_shadowed
         )
 
     monkeypatch.setattr(
-        "millrace_engine.planes.execution.compile_execution_runtime_selection",
+        "millrace_engine.planes.execution_flows.cycle_runner.compile_execution_runtime_selection",
         _compile_shadowed_default_autonomous,
     )
 
