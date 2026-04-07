@@ -24,6 +24,7 @@ from ..policies import (
 from ..provenance import (
     BoundExecutionParameters,
     ExecutionParameterRebindingRequest,
+    PROCEDURE_INJECTION_ATTRIBUTE,
     RuntimeProvenanceContext,
     TransitionHistoryStore,
     clear_transition_history,
@@ -490,6 +491,9 @@ def record_stage_transition(
     status = ExecutionStatus(status_after)
     outcome = "success" if resolve_stage(plane, result.stage, node_id=node_id).is_success_status(status) else status.value.lower()
     record_attributes = {"routing_mode": routing_mode}
+    injection_payload = result.metadata.get("procedure_injection")
+    if isinstance(injection_payload, dict):
+        record_attributes[PROCEDURE_INJECTION_ATTRIBUTE] = injection_payload
     if attributes:
         record_attributes.update(attributes)
     record_attributes.setdefault(

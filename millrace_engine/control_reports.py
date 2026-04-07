@@ -14,6 +14,7 @@ from .assets.resolver import AssetFamilyEntry, AssetResolutionError, AssetResolv
 from .baseline_assets import packaged_baseline_asset, packaged_baseline_bundle_version
 from .compiler import CompileTimeResolvedSnapshot
 from .config import EngineConfig, LoadedConfig, build_runtime_paths
+from .contract_compounding import ProcedureInjectionBundle, ReusableProcedureArtifact
 from .contracts import (
     AuditGateDecision,
     CompletionDecision,
@@ -34,6 +35,7 @@ from .policies import (
     refresh_size_status,
 )
 from .provenance import (
+    PROCEDURE_INJECTION_ATTRIBUTE,
     RuntimeTransitionRecord,
     latest_policy_transition_record,
     policy_evaluation_records_from_transitions,
@@ -59,7 +61,10 @@ from .control_models import (
     PolicyHookSummary,
     QueueItemView,
     ResearchQueueFamilyView,
+    RunCompoundingReport,
+    RunCreatedProcedureView,
     RunProvenanceReport,
+    RunProcedureSelectionView,
     RuntimeState,
     SelectionExplanationView,
 )
@@ -235,11 +240,75 @@ def read_run_provenance(run_dir: Path) -> RunProvenanceReport | None:
         policy_hooks=_policy_hook_summary(runtime_history),
         latest_policy_evidence=build_policy_evidence_snapshot(latest_policy_record),
         integration_policy=execution_integration_context_from_records(policy_records),
+        compounding=_run_compounding_report(run_dir=run_dir, runtime_history=runtime_history),
         compile_snapshot=compile_snapshot,
         runtime_history=runtime_history,
         snapshot_path=snapshot_path if snapshot_path.exists() else None,
         transition_history_path=history_path if history_path.exists() else None,
     )
+
+
+def _run_compounding_report(
+    *,
+    run_dir: Path,
+    runtime_history: tuple[RuntimeTransitionRecord, ...],
+) -> RunCompoundingReport | None:
+    created = _created_procedure_views(run_dir)
+    selections = _procedure_selection_views(runtime_history)
+    if not created and not selections:
+        return None
+    return RunCompoundingReport(
+        created_procedures=created,
+        procedure_selections=selections,
+    )
+
+
+def _created_procedure_views(run_dir: Path) -> tuple[RunCreatedProcedureView, ...]:
+    candidate_dir = run_dir.parent.parent / "compounding" / "procedures" / run_dir.name
+    if not candidate_dir.exists():
+        return ()
+    created: list[RunCreatedProcedureView] = []
+    for path in sorted(candidate_dir.glob("*.json")):
+        try:
+            artifact = ReusableProcedureArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+        except ValidationError:
+            continue
+        created.append(
+            RunCreatedProcedureView(
+                procedure_id=artifact.procedure_id,
+                scope=artifact.scope,
+                source_stage=artifact.source_stage.value,
+                title=artifact.title,
+                summary=artifact.summary,
+                created_at=artifact.created_at,
+                artifact_path=path,
+                evidence_refs=artifact.evidence_refs,
+            )
+        )
+    return tuple(created)
+
+
+def _procedure_selection_views(
+    runtime_history: tuple[RuntimeTransitionRecord, ...],
+) -> tuple[RunProcedureSelectionView, ...]:
+    selections: list[RunProcedureSelectionView] = []
+    for record in runtime_history:
+        raw_bundle = record.attributes.get(PROCEDURE_INJECTION_ATTRIBUTE)
+        if not isinstance(raw_bundle, dict):
+            continue
+        try:
+            bundle = ProcedureInjectionBundle.model_validate(raw_bundle)
+        except ValidationError:
+            continue
+        selections.append(
+            RunProcedureSelectionView.from_bundle(
+                event_id=record.event_id,
+                node_id=record.node_id,
+                stage=bundle.stage.value,
+                bundle=bundle,
+            )
+        )
+    return tuple(selections)
 
 
 def read_control_research_state(paths: RuntimePaths) -> ResearchRuntimeState | None:

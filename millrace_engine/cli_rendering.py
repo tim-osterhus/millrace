@@ -960,6 +960,37 @@ def render_run_provenance(report: RunProvenanceReport, *, json_mode: bool) -> No
                 lines.append(f"- {item.kind.value}: {item.summary}")
                 for key, value in sorted(item.details.items()):
                     lines.append(f"  {key}={_detail_value_text(value)}")
+    if report.compounding is not None:
+        lines.append(
+            "Compounding summary: "
+            f"created={report.compounding.created_count} selections={report.compounding.selection_count}"
+        )
+        if report.compounding.created_procedures:
+            lines.append("Created procedures:")
+            for procedure in report.compounding.created_procedures:
+                lines.append(
+                    f"- {procedure.procedure_id} [{procedure.scope.value}] "
+                    f"stage={procedure.source_stage} path={procedure.artifact_path}"
+                )
+        if report.compounding.procedure_selections:
+            lines.append("Procedure selections:")
+            for selection in report.compounding.procedure_selections:
+                lines.append(
+                    f"- {selection.stage} ({selection.node_id}): "
+                    f"considered={selection.considered_count} injected={selection.injected_count}"
+                )
+                if selection.injected_procedures:
+                    lines.append(
+                        "  Injected: "
+                        + ", ".join(procedure.procedure_id for procedure in selection.injected_procedures)
+                    )
+                elif selection.considered_procedures:
+                    lines.append("  Injected: none")
+                if selection.considered_procedures:
+                    lines.append(
+                        "  Considered: "
+                        + ", ".join(procedure.procedure_id for procedure in selection.considered_procedures)
+                    )
     lines.append(f"Runtime history records: {len(report.runtime_history)}")
     typer.echo("\n".join(lines))
 

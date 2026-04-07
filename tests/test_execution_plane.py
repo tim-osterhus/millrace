@@ -1975,6 +1975,7 @@ def test_execution_stage_injects_workspace_scoped_procedures_with_stage_rules_an
     assert injection["candidate_count"] == 1
     assert injection["selected_count"] == 1
     assert injection["truncated_count"] == 1
+    assert injection["considered_procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
     assert injection["procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
     assert injection["procedures"][0]["source_stage"] == "builder"
     assert injection["procedures"][0]["scope"] == "workspace"
@@ -2003,8 +2004,65 @@ def test_execution_plane_injects_run_scoped_builder_candidate_into_later_qa_stag
     assert injection["stage"] == "qa"
     assert injection["candidate_count"] >= 1
     assert injection["selected_count"] >= 1
+    assert injection["considered_procedures"][0]["source_stage"] == "builder"
     assert injection["procedures"][0]["source_stage"] == "builder"
     assert injection["procedures"][0]["scope"] == "run"
+
+
+def test_control_run_provenance_reports_compounding_creation_and_selection_details(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-builder.json",
+        procedure_id="proc.workspace.builder.selected",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Workspace Builder Procedure",
+        summary="Apply the known builder fix sequence before continuing.",
+        procedure_markdown="# Workspace Builder Procedure\n\n" + ("Keep the working tree coherent.\n" * 180),
+    )
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-check-compounding-prompt"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.run_id is not None
+    report = EngineControl(config_path).run_provenance(result.run_id)
+
+    assert report.compounding is not None
+    assert [procedure.source_stage for procedure in report.compounding.created_procedures] == ["builder", "qa"]
+    assert report.compounding.procedure_selections
+    builder_selection = next(
+        selection for selection in report.compounding.procedure_selections if selection.stage == "builder"
+    )
+    qa_selection = next(
+        selection for selection in report.compounding.procedure_selections if selection.stage == "qa"
+    )
+    assert builder_selection.considered_count == 1
+    assert builder_selection.injected_count == 1
+    assert [procedure.procedure_id for procedure in builder_selection.considered_procedures] == [
+        "proc.workspace.builder.selected"
+    ]
+    assert [procedure.procedure_id for procedure in builder_selection.injected_procedures] == [
+        "proc.workspace.builder.selected"
+    ]
+    assert qa_selection.considered_count >= 1
+    assert qa_selection.injected_count >= 1
+    assert qa_selection.considered_procedures[0].scope.value == "run"
+    assert qa_selection.injected_procedures[0].scope.value == "run"
 
 
 def test_execution_stage_fails_deterministically_when_prompt_asset_is_missing(tmp_path: Path) -> None:

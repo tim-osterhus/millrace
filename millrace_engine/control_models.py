@@ -11,6 +11,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from .compiler import CompileTimeResolvedSnapshot
 from .config import ConfigApplyBoundary, ConfigSourceInfo, EngineConfig
+from .contract_compounding import ConsideredProcedure, InjectedProcedure, ProcedureInjectionBundle, ProcedureScope
 from .contracts import AuditGateDecision, CompletionDecision, ContractModel, ExecutionStatus, ResearchMode, ResearchStatus
 from .diagnostics import DiagnosticsPolicyEvidenceSnapshot
 from .events import EventRecord
@@ -496,6 +497,7 @@ class RunProvenanceReport(ContractModel):
     policy_hooks: PolicyHookSummary | None = None
     latest_policy_evidence: DiagnosticsPolicyEvidenceSnapshot | None = None
     integration_policy: ExecutionIntegrationContext | None = None
+    compounding: "RunCompoundingReport | None" = None
     compile_snapshot: CompileTimeResolvedSnapshot | None = None
     runtime_history: tuple[RuntimeTransitionRecord, ...] = ()
     snapshot_path: Path | None = None
@@ -660,6 +662,87 @@ class RunProvenanceReport(ContractModel):
         if self.routing_modes and self.routing_modes != self.expected_routing_modes():
             raise ValueError("routing_modes do not match the observed runtime history routing modes")
         return self
+
+
+class RunCreatedProcedureView(ContractModel):
+    """Operator-facing summary for one created run-scoped procedure artifact."""
+
+    procedure_id: str
+    scope: ProcedureScope
+    source_stage: str
+    title: str
+    summary: str
+    created_at: datetime
+    artifact_path: Path
+    evidence_refs: tuple[str, ...] = ()
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+
+class RunProcedureSelectionView(ContractModel):
+    """Stage-level compounding consideration and injection summary."""
+
+    event_id: str
+    node_id: str
+    stage: str
+    considered_count: int = Field(default=0, ge=0)
+    injected_count: int = Field(default=0, ge=0)
+    budget_characters: int = Field(default=0, ge=0)
+    used_characters: int = Field(default=0, ge=0)
+    truncated_count: int = Field(default=0, ge=0)
+    rule_stage: str | None = None
+    allowed_scopes: tuple[str, ...] = ()
+    allowed_source_stages: tuple[str, ...] = ()
+    considered_procedures: tuple[ConsideredProcedure, ...] = ()
+    injected_procedures: tuple[InjectedProcedure, ...] = ()
+
+    @classmethod
+    def from_bundle(
+        cls,
+        *,
+        event_id: str,
+        node_id: str,
+        stage: str,
+        bundle: ProcedureInjectionBundle,
+    ) -> "RunProcedureSelectionView":
+        return cls(
+            event_id=event_id,
+            node_id=node_id,
+            stage=stage,
+            considered_count=bundle.candidate_count,
+            injected_count=bundle.selected_count,
+            budget_characters=bundle.budget_characters,
+            used_characters=bundle.used_characters,
+            truncated_count=bundle.truncated_count,
+            rule_stage=bundle.rule.stage.value,
+            allowed_scopes=tuple(scope.value for scope in bundle.rule.allowed_scopes),
+            allowed_source_stages=tuple(stage.value for stage in bundle.rule.allowed_source_stages),
+            considered_procedures=bundle.considered_procedures,
+            injected_procedures=bundle.procedures,
+        )
+
+
+class RunCompoundingReport(ContractModel):
+    """Structured compounding provenance surfaced through run provenance."""
+
+    created_procedures: tuple[RunCreatedProcedureView, ...] = ()
+    procedure_selections: tuple[RunProcedureSelectionView, ...] = ()
+
+    @property
+    def created_count(self) -> int:
+        return len(self.created_procedures)
+
+    @property
+    def selection_count(self) -> int:
+        return len(self.procedure_selections)
 
 
 class OperationResult(ContractModel):

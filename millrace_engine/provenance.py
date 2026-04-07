@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 TRANSITION_HISTORY_SCHEMA_VERSION = "1.0"
 ROUTING_MODE_ATTRIBUTE = "routing_mode"
+PROCEDURE_INJECTION_ATTRIBUTE = "procedure_injection"
 RUNTIME_REBINDABLE_STAGE_FIELDS = frozenset(
     {
         StageOverrideField.MODEL_PROFILE_REF,
@@ -566,6 +567,7 @@ __all__ = [
     "clear_transition_history",
     "ExecutionParameterRebindingRequest",
     "FrozenPlanIdentity",
+    "PROCEDURE_INJECTION_ATTRIBUTE",
     "ROUTING_MODE_ATTRIBUTE",
     "RUNTIME_REBINDABLE_STAGE_FIELDS",
     "latest_policy_transition_record",

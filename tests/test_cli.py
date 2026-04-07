@@ -24,9 +24,11 @@ from millrace_engine.contracts import (
     ExecutionResearchHandoff,
     ModelProfileDefinition,
     PersistedObjectKind,
+    ProcedureScope,
     ResearchStatus,
     ResearchRecoveryDecision,
     RegistryObjectRef,
+    ReusableProcedureArtifact,
     StageType,
 )
 from millrace_engine.events import EventRecord, EventSource, EventType
@@ -254,6 +256,67 @@ def write_staging_manifest(workspace: Path, *, payload: str) -> None:
     manifest_path = workspace / "agents" / "staging_manifest.yml"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(payload, encoding="utf-8")
+
+
+def write_compounding_procedure(
+    workspace: Path,
+    *,
+    filename: str,
+    procedure_id: str,
+    scope: ProcedureScope,
+    source_stage: StageType,
+    title: str,
+    summary: str,
+    procedure_markdown: str,
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "procedures"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / filename
+    artifact = ReusableProcedureArtifact(
+        procedure_id=procedure_id,
+        scope=scope,
+        source_run_id="source-run",
+        source_stage=source_stage,
+        title=title,
+        summary=summary,
+        procedure_markdown=procedure_markdown,
+        tags=("fixture",),
+        evidence_refs=("agents/runs/source-run/transition_history.jsonl",),
+        created_at="2026-04-07T18:00:00Z",
+    )
+    path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def write_compounding_stage_driver(tmp_path: Path) -> Path:
+    script = tmp_path / "compounding_stage_driver.py"
+    script.write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "",
+                "import sys",
+                "",
+                "mode = sys.argv[1]",
+                "",
+                "def emit(marker: str, message: str) -> None:",
+                "    print(message)",
+                "    print(f'### {marker}')",
+                "    raise SystemExit(0)",
+                "",
+                "if mode == 'builder':",
+                "    emit('BUILDER_COMPLETE', 'Builder finished')",
+                "if mode == 'qa':",
+                "    emit('QA_COMPLETE', 'QA finished')",
+                "if mode == 'update-idle':",
+                "    emit('IDLE', 'Update finished')",
+                "raise SystemExit(1)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return script
 
 
 def write_interview_source(
@@ -3262,6 +3325,7 @@ def test_cli_run_provenance_reports_current_preview_separately_from_frozen_histo
     assert payload["current_preview"]["mode"]["title"] == "Workspace CLI preview shadow"
     assert payload["current_preview"]["stage_bindings"][0]["prompt_source_kind"] == "workspace"
     assert payload["current_preview_error"] is None
+    assert payload["compounding"] is None
 
     text_result = RUNNER.invoke(app, ["--config", str(context.config_path), "run-provenance", run_id])
 
@@ -3271,6 +3335,70 @@ def test_cli_run_provenance_reports_current_preview_separately_from_frozen_histo
     assert "Current live preview:" in text_result.stdout
     assert "  Selection scope: preview" in text_result.stdout
     assert "  Preview plan id:" in text_result.stdout
+
+
+def test_cli_run_provenance_reports_compounding_summary(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace('integration_mode = "large_only"', 'integration_mode = "never"', 1),
+        encoding="utf-8",
+    )
+    append_subprocess_stage_config(config_path)
+    write_compounding_procedure(
+        workspace,
+        filename="workspace-builder.json",
+        procedure_id="proc.workspace.builder.selected",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Workspace Builder Procedure",
+        summary="Apply the known builder fix sequence before continuing.",
+        procedure_markdown="# Workspace Builder Procedure\n\nKeep the working tree coherent.\n",
+    )
+    script = write_compounding_stage_driver(tmp_path)
+    engine = MillraceEngine(
+        config_path,
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+    )
+
+    engine.start(once=True)
+
+    run_dirs = sorted((workspace / "agents" / "runs").iterdir())
+    assert run_dirs
+    run_id = run_dirs[-1].name
+
+    result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id, "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["compounding"]["created_procedures"]
+    assert payload["compounding"]["procedure_selections"]
+    builder_selection = next(
+        selection
+        for selection in payload["compounding"]["procedure_selections"]
+        if selection["stage"] == "builder"
+    )
+    qa_selection = next(
+        selection
+        for selection in payload["compounding"]["procedure_selections"]
+        if selection["stage"] == "qa"
+    )
+    assert builder_selection["considered_procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
+    assert builder_selection["injected_procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
+    assert qa_selection["considered_procedures"][0]["scope"] == "run"
+    assert qa_selection["injected_procedures"][0]["scope"] == "run"
+
+    text_result = RUNNER.invoke(app, ["--config", str(config_path), "run-provenance", run_id])
+
+    assert text_result.exit_code == 0
+    assert "Compounding summary: created=2 selections=2" in text_result.stdout
+    assert "Created procedures:" in text_result.stdout
+    assert "Procedure selections:" in text_result.stdout
+    assert "Injected: proc.workspace.builder.selected" in text_result.stdout
+    assert "Considered: proc.workspace.builder.selected" in text_result.stdout
 
 
 def test_cli_run_provenance_survives_broken_live_registry_with_frozen_history_json(

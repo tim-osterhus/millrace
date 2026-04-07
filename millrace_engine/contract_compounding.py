@@ -137,17 +137,63 @@ class InjectedProcedure(ContractModel):
         return _normalize_sequence([str(item) for item in value])
 
 
+class ConsideredProcedure(ContractModel):
+    """One reusable procedure considered during stage-aware retrieval."""
+
+    procedure_id: str
+    scope: ProcedureScope
+    source_stage: StageType
+    title: str
+    summary: str
+    evidence_refs: tuple[str, ...] = ()
+
+    @field_validator("procedure_id")
+    @classmethod
+    def validate_procedure_id(cls, value: str) -> str:
+        return _normalize_identifier(value, field_label="procedure_id") or ""
+
+    @field_validator("title", "summary")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("evidence_refs", mode="before")
+    @classmethod
+    def normalize_evidence_refs(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return _normalize_sequence([str(item) for item in value])
+
+
 class ProcedureInjectionBundle(ContractModel):
     """Deterministic selection record for procedures injected into one stage context."""
 
     stage: StageType
     rule: ProcedureRetrievalRule
+    considered_procedures: tuple[ConsideredProcedure, ...] = ()
     procedures: tuple[InjectedProcedure, ...] = ()
     candidate_count: int = Field(default=0, ge=0)
     selected_count: int = Field(default=0, ge=0)
     budget_characters: int = Field(default=0, ge=0)
     used_characters: int = Field(default=0, ge=0)
     truncated_count: int = Field(default=0, ge=0)
+
+    @field_validator("considered_procedures", mode="before")
+    @classmethod
+    def normalize_considered_procedures(
+        cls,
+        value: tuple[ConsideredProcedure, ...]
+        | list[ConsideredProcedure]
+        | tuple[dict[str, Any], ...]
+        | list[dict[str, Any]]
+        | None,
+    ) -> tuple[ConsideredProcedure, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item if isinstance(item, ConsideredProcedure) else ConsideredProcedure.model_validate(item)
+            for item in value
+        )
 
     @field_validator("procedures", mode="before")
     @classmethod

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from ..contract_compounding import (
+    ConsideredProcedure,
     InjectedProcedure,
     ProcedureInjectionBundle,
     ProcedureRetrievalRule,
@@ -174,6 +175,7 @@ def build_injected_procedure_bundle(
     return ProcedureInjectionBundle(
         stage=stage,
         rule=rule,
+        considered_procedures=tuple(_considered_procedure(artifact) for artifact in candidates),
         procedures=tuple(selected),
         candidate_count=len(candidates),
         selected_count=len(selected),
@@ -254,6 +256,17 @@ def _candidate_sort_key(artifact: ReusableProcedureArtifact) -> tuple[int, float
     return (scope_priority, -created_at, artifact.procedure_id)
 
 
+def _considered_procedure(artifact: ReusableProcedureArtifact) -> ConsideredProcedure:
+    return ConsideredProcedure(
+        procedure_id=artifact.procedure_id,
+        scope=artifact.scope,
+        source_stage=artifact.source_stage,
+        title=artifact.title,
+        summary=artifact.summary,
+        evidence_refs=artifact.evidence_refs,
+    )
+
+
 def _build_injected_procedure(
     artifact: ReusableProcedureArtifact,
     *,
@@ -295,4 +308,3 @@ def _trim_procedure_markdown(markdown: str, budget: int) -> tuple[str | None, bo
     if not trimmed:
         trimmed = text[: budget - len(suffix)].rstrip()
     return f"{trimmed}{suffix}", True
-
