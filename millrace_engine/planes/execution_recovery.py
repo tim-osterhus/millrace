@@ -276,6 +276,7 @@ def recover_or_quarantine(
                 ),
                 condition_inputs={"status": stage_status.value},
                 condition_result=stage_status is ExecutionStatus.TROUBLESHOOT_COMPLETE,
+                attributes={"recovery_diagnostics_dir": diagnostics_dir.as_posix()},
             )
             if stage_status is ExecutionStatus.TROUBLESHOOT_COMPLETE:
                 return _RecoveryResult(action="resume", diagnostics_dir=diagnostics_dir)
@@ -306,6 +307,7 @@ def recover_or_quarantine(
                 queue_mutations_applied=(
                     () if stage_status is ExecutionStatus.CONSULT_COMPLETE else ("quarantine_task",)
                 ),
+                attributes={"recovery_diagnostics_dir": diagnostics_dir.as_posix()},
             )
             if stage_status is ExecutionStatus.CONSULT_COMPLETE:
                 return _RecoveryResult(action="resume", diagnostics_dir=diagnostics_dir)

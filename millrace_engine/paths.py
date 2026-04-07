@@ -63,6 +63,10 @@ class RuntimePaths:
     drift_control_policy_file: Path
     governance_canary_baseline_policy_file: Path
     research_runtime_dir: Path
+    compounding_dir: Path
+    compounding_procedures_dir: Path
+    compounding_usage_records_dir: Path
+    compounding_lifecycle_records_dir: Path
     goal_spec_family_state_file: Path
     goalspec_runtime_dir: Path
     goalspec_goal_intake_records_dir: Path
@@ -122,6 +126,7 @@ class RuntimePaths:
         audit_dir = resolved_agents_dir / "audit"
         policies_dir = resolved_agents_dir / "policies"
         research_runtime_dir = resolved_agents_dir / ".research_runtime"
+        compounding_dir = resolved_agents_dir / "compounding"
         goalspec_runtime_dir = research_runtime_dir / "goalspec"
         specs_dir = resolved_agents_dir / "specs"
         specs_stable_dir = specs_dir / "stable"
@@ -153,6 +158,10 @@ class RuntimePaths:
             drift_control_policy_file=policies_dir / "drift_control_policy.json",
             governance_canary_baseline_policy_file=policies_dir / "drift_control_policy.baseline.json",
             research_runtime_dir=research_runtime_dir,
+            compounding_dir=compounding_dir,
+            compounding_procedures_dir=compounding_dir / "procedures",
+            compounding_usage_records_dir=compounding_dir / "usage",
+            compounding_lifecycle_records_dir=compounding_dir / "lifecycle",
             goal_spec_family_state_file=research_runtime_dir / "spec_family_state.json",
             goalspec_runtime_dir=goalspec_runtime_dir,
             goalspec_goal_intake_records_dir=goalspec_runtime_dir / "goal_intake",

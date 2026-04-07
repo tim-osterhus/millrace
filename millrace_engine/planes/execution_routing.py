@@ -371,6 +371,9 @@ def run_frozen_plan(
                 f"exit={result.exit_code} status={result.status}",
                 result,
             )
+        transition_attributes: dict[str, object] | None = None
+        if diagnostics_dir is not None and node_id in {"troubleshoot", "consult"}:
+            transition_attributes = {"recovery_diagnostics_dir": diagnostics_dir.as_posix()}
         plane._record_stage_transition(
             result,
             task_before=task,
@@ -385,6 +388,7 @@ def run_frozen_plan(
             condition_inputs=condition_inputs,
             condition_result=condition_result,
             queue_mutations_applied=queue_mutations_applied,
+            attributes=transition_attributes,
         )
         if transition.to_node_id is not None:
             if transition.to_node_id == "builder" and node_id in {"troubleshoot", "consult"}:

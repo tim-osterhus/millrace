@@ -6,6 +6,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+from ..compounding import clear_run_scoped_procedure_candidates, persist_candidate_from_transition
 from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..config import StageConfig
 from ..contracts import ControlPlane as RuntimeControlPlane
@@ -455,6 +456,7 @@ def start_transition_history(plane: ExecutionRuntimePlane, run_id: str) -> Trans
 
     history_path = plane.paths.runs_dir / run_id / "transition_history.jsonl"
     clear_transition_history(history_path)
+    clear_run_scoped_procedure_candidates(plane.paths, run_id)
     plane.transition_history = TransitionHistoryStore(
         history_path,
         run_id=run_id,
@@ -494,7 +496,7 @@ def record_stage_transition(
         "compile_time_stage_parameter_key",
         runtime_stage_parameter_key(ControlPlane.EXECUTION, node_id),
     )
-    plane.transition_history.append(
+    record = plane.transition_history.append(
         event_name="execution.stage.transition",
         source="execution_plane",
         plane=ControlPlane.EXECUTION,
@@ -515,6 +517,7 @@ def record_stage_transition(
         bound_execution_parameters=bound_parameters_from_result(plane, result),
         attributes=record_attributes,
     )
+    persist_candidate_from_transition(plane.paths, record, result)
 
 
 def run_stage(

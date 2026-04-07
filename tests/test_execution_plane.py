@@ -18,6 +18,7 @@ from millrace_engine.contracts import (
     PersistedObjectKind,
     RegisteredStageKindDefinition,
     RegistryObjectRef,
+    ReusableProcedureArtifact,
     RunnerKind,
     StageType,
 )
@@ -148,6 +149,10 @@ def write_stage_driver(tmp_path: Path) -> Path:
                 "    emit('QA_COMPLETE', message='QA passed after recovery')",
                 "if mode == 'qa-blocked':",
                 "    emit('BLOCKED', message='QA is blocked')",
+                "if mode == 'qa-blocked-then-pass':",
+                "    if count == 1:",
+                "        emit('BLOCKED', message='QA is blocked')",
+                "    emit('QA_COMPLETE', message='QA passed after troubleshoot')",
                 "if mode == 'hotfix-builder':",
                 "    emit('BUILDER_COMPLETE', message='Hotfix applied')",
                 "if mode == 'doublecheck-qa':",
@@ -508,6 +513,16 @@ def _policy_hook_records(records):
     return [record for record in records if record.policy_evaluation is not None]
 
 
+def _load_compounding_candidates(workspace: Path, run_id: str) -> list[ReusableProcedureArtifact]:
+    candidate_dir = workspace / "agents/compounding/procedures" / run_id
+    if not candidate_dir.exists():
+        return []
+    return [
+        ReusableProcedureArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+        for path in sorted(candidate_dir.glob("*.json"))
+    ]
+
+
 def _prepend_task_metadata_lines(workspace: Path, *lines: str) -> None:
     backlog_path = workspace / "agents/tasksbacklog.md"
     original = backlog_path.read_text(encoding="utf-8")
@@ -736,6 +751,102 @@ def test_execution_plane_persists_transition_history_with_bound_parameters_and_p
     assert all(record.attributes["routing_mode"] == "frozen_plan" for record in stage_records)
     assert stage_records[-1].selected_edge_id == "execution.update.success.archive"
     assert stage_records[-1].queue_mutations_applied == ("archive_task",)
+
+
+def test_execution_plane_emits_run_scoped_compounding_candidates_for_supported_successes(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.run_id is not None
+    candidates = _load_compounding_candidates(workspace, result.run_id)
+
+    assert [candidate.source_stage for candidate in candidates] == [StageType.BUILDER, StageType.QA]
+    assert all(candidate.scope.value == "run" for candidate in candidates)
+    assert all(candidate.source_run_id == result.run_id for candidate in candidates)
+    assert all(
+        "agents/runs/" in ref and ref.endswith("transition_history.jsonl")
+        for candidate in candidates
+        for ref in candidate.evidence_refs[:1]
+    )
+    assert all("execution.builder.success.qa" not in candidate.summary or candidate.source_stage is StageType.BUILDER for candidate in candidates)
+
+
+def test_execution_plane_emits_recovery_candidate_with_diagnostics_reference_on_resume(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-blocked-then-pass"],
+            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.run_id is not None
+    assert result.diagnostics_dir is not None
+    candidates = _load_compounding_candidates(workspace, result.run_id)
+    troubleshoot_candidates = [candidate for candidate in candidates if candidate.source_stage is StageType.TROUBLESHOOT]
+
+    assert len(troubleshoot_candidates) == 1
+    assert result.diagnostics_dir.relative_to(workspace).as_posix() in troubleshoot_candidates[0].evidence_refs
+    assert "Recovery Diagnostics:" in troubleshoot_candidates[0].procedure_markdown
+
+
+def test_execution_plane_skips_compounding_candidates_for_unsupported_intermediate_outcomes(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-quickfix"],
+            StageType.HOTFIX: [sys.executable, str(script), "hotfix-builder"],
+            StageType.DOUBLECHECK: [sys.executable, str(script), "doublecheck-qa"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+        quickfix_max_attempts=1,
+    )
+
+    result = plane.run_once()
+
+    assert result.run_id is not None
+    candidates = _load_compounding_candidates(workspace, result.run_id)
+
+    assert [candidate.source_stage for candidate in candidates] == [
+        StageType.BUILDER,
+        StageType.DOUBLECHECK,
+    ]
+    assert all(candidate.source_stage is not StageType.QA for candidate in candidates)
+    assert all(candidate.source_stage is not StageType.HOTFIX for candidate in candidates)
 
 
 def test_execution_plane_records_policy_hooks_with_frozen_plan_facts(tmp_path: Path) -> None:

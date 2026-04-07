@@ -65,6 +65,15 @@ from .contract_documents import (
     StageResult,
     load_objective_contract,
 )
+from .contract_compounding import (
+    COMPOUNDING_SCHEMA_VERSION,
+    ProcedureLifecycleRecord,
+    ProcedureLifecycleState,
+    ProcedureScope,
+    ProcedureUsageDisposition,
+    ProcedureUsageRecord,
+    ReusableProcedureArtifact,
+)
 
 # Phase 01B loop-architecture contracts live in a dedicated module but remain
 # re-exported here to preserve the existing shared-contract import surface.

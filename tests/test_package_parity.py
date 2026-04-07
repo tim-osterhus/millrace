@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from millrace_engine import __version__
+from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import EngineControl
-from millrace_engine.config import load_engine_config
 from millrace_engine.contracts import StageType
 
 
@@ -261,6 +261,26 @@ def test_default_public_stage_prompt_assets_exist(tmp_path: Path) -> None:
         assert prompt_path is not None, stage.value
         assert prompt_path.exists(), prompt_path
         assert prompt_path.is_relative_to(live_agents_root), prompt_path
+
+
+def test_runtime_compounding_namespace_does_not_collide_with_packaged_skills(tmp_path: Path) -> None:
+    workspace = tmp_path / "compounding-namespace-workspace"
+    init_result = EngineControl.init_workspace(workspace)
+
+    assert init_result.applied is True
+
+    loaded = load_engine_config(workspace / "millrace.toml")
+    runtime_paths = build_runtime_paths(loaded.config)
+    packaged_skills_root = (MILLRACE_ROOT / "millrace_engine" / "assets" / "agents" / "skills").resolve()
+
+    assert packaged_skills_root.is_dir()
+    assert runtime_paths.compounding_dir == (workspace / "agents/compounding").resolve()
+    assert runtime_paths.compounding_procedures_dir == (
+        workspace / "agents/compounding/procedures"
+    ).resolve()
+    assert runtime_paths.compounding_dir != packaged_skills_root
+    assert runtime_paths.compounding_dir.parent == (workspace / "agents").resolve()
+    assert runtime_paths.compounding_dir.name == "compounding"
 
 
 def test_packaged_research_entrypoint_docs_match_shipped_python_runtime_contract() -> None:

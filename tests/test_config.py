@@ -19,6 +19,14 @@ from millrace_engine.config import (
     load_engine_config,
 )
 from millrace_engine.contracts import RunnerKind, StageContext, StageType, load_objective_contract
+from millrace_engine.contracts import (
+    ProcedureLifecycleRecord,
+    ProcedureLifecycleState,
+    ProcedureScope,
+    ProcedureUsageDisposition,
+    ProcedureUsageRecord,
+    ReusableProcedureArtifact,
+)
 from millrace_engine.paths import format_historylog_entry_name
 from tests.support import runtime_workspace
 
@@ -86,6 +94,16 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     ).resolve()
     assert paths.audit_completion_manifest_file == (
         workspace_root / "agents/audit/completion_manifest.json"
+    ).resolve()
+    assert paths.compounding_dir == (workspace_root / "agents/compounding").resolve()
+    assert paths.compounding_procedures_dir == (
+        workspace_root / "agents/compounding/procedures"
+    ).resolve()
+    assert paths.compounding_usage_records_dir == (
+        workspace_root / "agents/compounding/usage"
+    ).resolve()
+    assert paths.compounding_lifecycle_records_dir == (
+        workspace_root / "agents/compounding/lifecycle"
     ).resolve()
     assert paths.completion_manifest_plan_file == (
         workspace_root / "agents/reports/completion_manifest_plan.md"
@@ -194,6 +212,83 @@ def test_objective_contract_loader_rejects_malformed_typed_json() -> None:
                     "completion": {},
                 }
             )
+        )
+
+
+def test_compounding_contract_models_validate_and_normalize_payloads() -> None:
+    artifact = ReusableProcedureArtifact.model_validate(
+        {
+            "procedure_id": "proc.builder.quickfix.001",
+            "scope": "workspace",
+            "source_run_id": "run-001",
+            "source_stage": "builder",
+            "title": " Recover from missing imports ",
+            "summary": "Add the missing import before rerunning QA.",
+            "procedure_markdown": "1. Add the import.\n2. Re-run QA.",
+            "tags": ["python", "python", " quickfix "],
+            "evidence_refs": ["agents/runs/run-001/qa.md", "agents/runs/run-001/qa.md"],
+            "created_at": "2026-04-07T18:00:00Z",
+        }
+    )
+
+    usage = ProcedureUsageRecord.model_validate(
+        {
+            "usage_id": "usage:001",
+            "procedure_id": artifact.procedure_id,
+            "run_id": "run-002",
+            "stage": "qa",
+            "disposition": "injected",
+            "recorded_at": "2026-04-07T19:00:00Z",
+            "execution_ref": "stage-exec-001",
+        }
+    )
+
+    lifecycle = ProcedureLifecycleRecord.model_validate(
+        {
+            "record_id": "lifecycle:001",
+            "procedure_id": artifact.procedure_id,
+            "state": "promoted",
+            "scope": "workspace",
+            "changed_at": "2026-04-07T20:00:00Z",
+            "changed_by": "advisor",
+            "reason": "Validated across repeated runs.",
+        }
+    )
+
+    assert artifact.scope is ProcedureScope.WORKSPACE
+    assert artifact.source_stage is StageType.BUILDER
+    assert artifact.tags == ("python", "quickfix")
+    assert artifact.evidence_refs == ("agents/runs/run-001/qa.md",)
+    assert usage.disposition is ProcedureUsageDisposition.INJECTED
+    assert lifecycle.state is ProcedureLifecycleState.PROMOTED
+    assert lifecycle.model_dump(mode="json")["changed_at"] == "2026-04-07T20:00:00Z"
+
+
+def test_compounding_contract_models_reject_invalid_or_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        ReusableProcedureArtifact.model_validate(
+            {
+                "procedure_id": "bad id with spaces",
+                "source_run_id": "run-001",
+                "source_stage": "builder",
+                "title": "Broken",
+                "summary": "Broken",
+                "procedure_markdown": "Broken",
+                "created_at": "2026-04-07T18:00:00Z",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ProcedureUsageRecord.model_validate(
+            {
+                "usage_id": "usage:001",
+                "procedure_id": "proc.builder.quickfix.001",
+                "run_id": "run-002",
+                "stage": "qa",
+                "disposition": "skipped",
+                "recorded_at": "2026-04-07T19:00:00Z",
+                "unexpected": True,
+            }
         )
 
 
