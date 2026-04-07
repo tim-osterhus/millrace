@@ -9,10 +9,14 @@ import pytest
 
 from millrace_engine.compiler import CompileStatus, FrozenRunCompiler
 from millrace_engine.compounding import build_injected_procedure_bundle
+from millrace_engine.context_facts import persist_context_fact
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import ControlError, EngineControl
 from millrace_engine.contracts import (
     ControlPlane,
+    ContextFactArtifact,
+    ContextFactLifecycleState,
+    ContextFactScope,
     ExecutionStatus,
     LoopConfigDefinition,
     ModelProfileDefinition,
@@ -153,6 +157,24 @@ def write_stage_driver(tmp_path: Path) -> Path:
                 "        print('missing truncation marker')",
                 "        raise SystemExit(13)",
                 "    emit('BUILDER_COMPLETE', message='Builder saw injected procedures')",
+                "if mode == 'builder-check-governed-prompt':",
+                "    prompt = os.environ['MILLRACE_PROMPT']",
+                "    if 'Injected reusable procedures:' not in prompt:",
+                "        print('missing injected procedures heading')",
+                "        raise SystemExit(17)",
+                "    if 'Injected durable context facts:' not in prompt:",
+                "        print('missing injected facts heading')",
+                "        raise SystemExit(18)",
+                "    if 'Workspace Builder Procedure' not in prompt:",
+                "        print('missing procedure content')",
+                "        raise SystemExit(19)",
+                "    if 'Builder audit trail fact' not in prompt:",
+                "        print('missing pattern-matched fact title')",
+                "        raise SystemExit(20)",
+                "    if 'Generic broader fact' in prompt:",
+                "        print('unexpected broader fact after budget trim')",
+                "        raise SystemExit(21)",
+                "    emit('BUILDER_COMPLETE', message='Builder saw governed mixed context')",
                 "if mode == 'integration':",
                 "    emit('INTEGRATION_COMPLETE', message='Integration finished')",
                 "if mode == 'qa-complete':",
@@ -608,6 +630,39 @@ def _write_compounding_lifecycle_record(
     path = target_dir / f"{record.record_id}.json"
     path.write_text(record.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _write_context_fact(
+    workspace: Path,
+    *,
+    fact_id: str,
+    scope: ContextFactScope,
+    lifecycle_state: ContextFactLifecycleState,
+    source_run_id: str,
+    source_stage: StageType,
+    title: str,
+    statement: str,
+    summary: str,
+    created_at: str,
+    tags: tuple[str, ...] = (),
+) -> None:
+    loaded = load_engine_config(workspace / "millrace.toml")
+    paths = build_runtime_paths(loaded.config)
+    persist_context_fact(
+        paths,
+        ContextFactArtifact(
+            fact_id=fact_id,
+            scope=scope,
+            lifecycle_state=lifecycle_state,
+            source_run_id=source_run_id,
+            source_stage=source_stage,
+            title=title,
+            statement=statement,
+            summary=summary,
+            tags=tags,
+            created_at=created_at,
+        ),
+    )
 
 
 def _prepend_task_metadata_lines(workspace: Path, *lines: str) -> None:
@@ -2014,6 +2069,226 @@ def test_execution_stage_injects_workspace_scoped_procedures_with_stage_rules_an
     assert injection["procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
     assert injection["procedures"][0]["source_stage"] == "builder"
     assert injection["procedures"][0]["scope"] == "workspace"
+
+
+def test_execution_stage_governed_plus_injects_separate_fact_section_with_combined_budget(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+    loaded = load_engine_config(config_path)
+    config = loaded.config
+    config.paths.workspace = workspace
+    config.paths.agents_dir = workspace / "agents"
+    config.execution.integration_mode = "never"
+    config.policies.compounding.profile = "governed_plus"
+    config.policies.compounding.governed_plus_budget_characters = 2500
+    config.stages[StageType.BUILDER].runner = RunnerKind.SUBPROCESS
+    config.stages[StageType.BUILDER].model = "fixture-model"
+    config.stages[StageType.BUILDER].timeout_seconds = 30
+
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-builder.json",
+        procedure_id="proc.workspace.builder.selected",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Workspace Builder Procedure",
+        summary="Apply the known builder fix sequence before continuing.",
+        procedure_markdown="# Workspace Builder Procedure\n\n" + ("Step: keep the working tree coherent.\n" * 140),
+    )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.selected",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="reviewed for builder reuse",
+    )
+    _write_context_fact(
+        workspace,
+        fact_id="fact.workspace.builder.pattern",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.PROMOTED,
+        source_run_id="run-401",
+        source_stage=StageType.BUILDER,
+        title="Builder audit trail fact",
+        statement="Builder handoff must preserve the audit trail across any retry and repair flow. "
+        + ("Audit detail.\n" * 160),
+        summary="Preserve the builder audit trail.",
+        created_at="2026-04-07T22:00:00Z",
+        tags=("builder", "audit"),
+    )
+    _write_context_fact(
+        workspace,
+        fact_id="fact.workspace.builder.broader",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.PROMOTED,
+        source_run_id="run-402",
+        source_stage=StageType.BUILDER,
+        title="Generic broader fact",
+        statement="Archive the ledger snapshot after the nightly reconcile step.",
+        summary="Generic reminder that should lose to the explicit budget controller.",
+        created_at="2026-04-07T21:00:00Z",
+        tags=("ledger",),
+    )
+
+    plane = ExecutionPlane(
+        config,
+        build_runtime_paths(config),
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder-check-governed-prompt"],
+        },
+    )
+    task = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))[0]
+
+    result = plane._run_stage(StageType.BUILDER, task, "builder-governed-run")
+
+    assert result.status == "BUILDER_COMPLETE"
+    assert result.metadata["compounding_profile"] == "governed_plus"
+    assert result.metadata["procedure_injection"]["selected_count"] == 1
+    assert result.metadata["context_fact_injection"]["selected_count"] == 1
+    assert result.metadata["context_fact_injection"]["facts"][0]["selection_reason"] == "pattern_match"
+    assert result.metadata["compounding_budget"]["used_characters"] <= 2500
+    assert result.metadata["compounding_budget"]["fact_characters"] == result.metadata["context_fact_injection"][
+        "used_characters"
+    ]
+
+
+def test_execution_stage_governed_plus_clamps_procedure_injection_to_combined_budget(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+    loaded = load_engine_config(config_path)
+    config = loaded.config
+    config.paths.workspace = workspace
+    config.paths.agents_dir = workspace / "agents"
+    config.execution.integration_mode = "never"
+    config.policies.compounding.profile = "governed_plus"
+    config.policies.compounding.governed_plus_budget_characters = 1000
+    config.stages[StageType.BUILDER].runner = RunnerKind.SUBPROCESS
+    config.stages[StageType.BUILDER].model = "fixture-model"
+    config.stages[StageType.BUILDER].timeout_seconds = 30
+
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-builder.json",
+        procedure_id="proc.workspace.builder.selected",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Workspace Builder Procedure",
+        summary="Apply the known builder fix sequence before continuing.",
+        procedure_markdown="# Workspace Builder Procedure\n\n" + ("Step: keep the working tree coherent.\n" * 140),
+    )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.selected",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="reviewed for builder reuse",
+    )
+
+    plane = ExecutionPlane(
+        config,
+        build_runtime_paths(config),
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder-check-compounding-prompt"],
+        },
+    )
+    task = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))[0]
+
+    result = plane._run_stage(StageType.BUILDER, task, "builder-governed-low-budget-run")
+
+    assert result.status == "BUILDER_COMPLETE"
+    assert result.metadata["compounding_profile"] == "governed_plus"
+    assert result.metadata["procedure_injection"]["budget_characters"] == 1000
+    assert result.metadata["procedure_injection"]["used_characters"] <= 1000
+    assert result.metadata["compounding_budget"]["used_characters"] <= 1000
+    assert result.metadata["compounding_budget"]["procedure_characters"] == result.metadata["procedure_injection"][
+        "used_characters"
+    ]
+    assert result.metadata["compounding_budget"]["fact_characters"] == 0
+    assert "context_fact_injection" not in result.metadata
+
+
+def test_execution_plane_persists_governed_plus_context_fact_profile_and_budget_attributes(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    def _governed_plus_config(config) -> None:
+        config.policies.compounding.profile = "governed_plus"
+        config.policies.compounding.governed_plus_budget_characters = 2500
+
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-builder.json",
+        procedure_id="proc.workspace.builder.selected",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Workspace Builder Procedure",
+        summary="Apply the known builder fix sequence before continuing.",
+        procedure_markdown="# Workspace Builder Procedure\n\n" + ("Step: keep the working tree coherent.\n" * 140),
+    )
+    _write_compounding_lifecycle_record(
+        workspace,
+        procedure_id="proc.workspace.builder.selected",
+        state=ProcedureLifecycleState.PROMOTED,
+        reason="reviewed for builder reuse",
+    )
+    _write_context_fact(
+        workspace,
+        fact_id="fact.workspace.builder.pattern",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.PROMOTED,
+        source_run_id="run-411",
+        source_stage=StageType.BUILDER,
+        title="Builder audit trail fact",
+        statement="Builder handoff must preserve the audit trail across any retry and repair flow. "
+        + ("Audit detail.\n" * 160),
+        summary="Preserve the builder audit trail.",
+        created_at="2026-04-07T22:00:00Z",
+        tags=("builder", "audit"),
+    )
+    _write_context_fact(
+        workspace,
+        fact_id="fact.workspace.builder.broader",
+        scope=ContextFactScope.WORKSPACE,
+        lifecycle_state=ContextFactLifecycleState.PROMOTED,
+        source_run_id="run-412",
+        source_stage=StageType.BUILDER,
+        title="Generic broader fact",
+        statement="Archive the ledger snapshot after the nightly reconcile step.",
+        summary="Generic reminder that should lose to the explicit budget controller.",
+        created_at="2026-04-07T21:00:00Z",
+        tags=("ledger",),
+    )
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder-check-governed-prompt"],
+            StageType.QA: [sys.executable, str(script), "qa-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+        mutate_config=_governed_plus_config,
+    )
+
+    result = plane.run_once()
+
+    assert result.transition_history_path is not None
+    records = _stage_transition_records(read_transition_history(result.transition_history_path))
+    builder_record = next(record for record in records if record.node_id == "builder")
+
+    attributes = builder_record.attributes
+    assert attributes["procedure_injection"]["selected_count"] == 1
+    assert attributes["context_fact_injection"]["selected_count"] == 1
+    assert attributes["compounding_profile"] == "governed_plus"
+    assert attributes["compounding_budget"]["used_characters"] <= 2500
+    assert attributes["compounding_budget"]["fact_characters"] == attributes["context_fact_injection"][
+        "used_characters"
+    ]
 
 
 def test_compounding_retrieval_requires_explicit_promotion_and_withholds_deprecated_workspace_procedures(

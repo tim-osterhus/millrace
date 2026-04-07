@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from millrace_engine.compounding import build_injected_context_fact_bundle
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.context_facts import (
     context_fact_for_id,
@@ -122,3 +123,73 @@ def test_context_fact_store_resolves_fact_by_id(tmp_path: Path) -> None:
 
     assert stored.artifact == artifact
     assert stored.retrieval_status == "eligible"
+
+
+def test_context_fact_retrieval_prioritizes_run_scope_then_pattern_then_broader_scope(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    loaded = load_engine_config(config_path)
+    paths = build_runtime_paths(loaded.config)
+
+    persist_context_fact(
+        paths,
+        ContextFactArtifact(
+            fact_id="fact.workspace.builder.pattern",
+            scope=ContextFactScope.WORKSPACE,
+            lifecycle_state=ContextFactLifecycleState.PROMOTED,
+            source_run_id="run-301",
+            source_stage=StageType.BUILDER,
+            title="Builder audit trail",
+            statement="Preserve the builder audit trail across retries.",
+            summary="Audit trail must survive the builder path.",
+            tags=("builder", "audit"),
+            created_at="2026-04-07T20:30:00Z",
+        ),
+    )
+    persist_context_fact(
+        paths,
+        ContextFactArtifact(
+            fact_id="fact.workspace.builder.broader",
+            scope=ContextFactScope.WORKSPACE,
+            lifecycle_state=ContextFactLifecycleState.PROMOTED,
+            source_run_id="run-302",
+            source_stage=StageType.HOTFIX,
+            title="Nightly ledger note",
+            statement="Archive the ledger snapshot after the nightly reconcile step.",
+            summary="Unrelated archive reminder.",
+            created_at="2026-04-07T20:00:00Z",
+        ),
+    )
+    persist_context_fact(
+        paths,
+        ContextFactArtifact(
+            fact_id="fact.run.builder.current",
+            scope=ContextFactScope.RUN,
+            lifecycle_state=ContextFactLifecycleState.CANDIDATE,
+            source_run_id="run-777",
+            source_stage=StageType.BUILDER,
+            title="Current run builder finding",
+            statement="Current run found the failing audit edge.",
+            summary="Run-scoped builder finding.",
+            tags=("audit",),
+            created_at="2026-04-07T21:00:00Z",
+        ),
+    )
+
+    bundle = build_injected_context_fact_bundle(
+        paths,
+        run_id="run-777",
+        stage=StageType.QA,
+        task_text="Verify the builder audit trail before QA handoff.",
+    )
+
+    assert bundle is not None
+    assert [fact.fact_id for fact in bundle.considered_facts] == [
+        "fact.run.builder.current",
+        "fact.workspace.builder.pattern",
+        "fact.workspace.builder.broader",
+    ]
+    assert [fact.selection_reason.value for fact in bundle.considered_facts] == [
+        "run_scope",
+        "pattern_match",
+        "broader_scope",
+    ]

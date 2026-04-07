@@ -196,6 +196,7 @@ class ConfigBoundaries(MillraceRuntimeConfigModel):
         "execution.run_update_on_empty",
         "routing",
         "policies.search",
+        "policies.compounding",
         "policies.complexity",
         "policies.usage",
         "policies.network_guard",

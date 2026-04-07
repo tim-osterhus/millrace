@@ -79,9 +79,14 @@ from .contract_compounding import (
 )
 from .contract_context_facts import (
     CONTEXT_FACT_SCHEMA_VERSION,
+    ConsideredContextFact,
     ContextFactArtifact,
+    ContextFactInjectionBundle,
     ContextFactLifecycleState,
+    ContextFactRetrievalRule,
+    ContextFactSelectionReason,
     ContextFactScope,
+    InjectedContextFact,
 )
 
 # Phase 01B loop-architecture contracts live in a dedicated module but remain

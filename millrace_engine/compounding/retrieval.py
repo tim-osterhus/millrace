@@ -1,9 +1,10 @@
-"""Stage-aware procedure retrieval and bounded prompt injection helpers."""
+"""Stage-aware procedure and fact retrieval with bounded prompt injection."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+import re
 
 from ..contract_compounding import (
     ConsideredProcedure,
@@ -13,7 +14,17 @@ from ..contract_compounding import (
     ProcedureScope,
     ReusableProcedureArtifact,
 )
+from ..contract_context_facts import (
+    ConsideredContextFact,
+    ContextFactArtifact,
+    ContextFactInjectionBundle,
+    ContextFactRetrievalRule,
+    ContextFactScope,
+    ContextFactSelectionReason,
+    InjectedContextFact,
+)
 from ..contract_core import StageType
+from ..context_facts import discover_context_facts
 from ..paths import RuntimePaths
 from .lifecycle import load_retrievable_workspace_procedures
 
@@ -43,6 +54,7 @@ _UPDATE_SOURCE_STAGES: tuple[StageType, ...] = (
     StageType.TROUBLESHOOT,
     StageType.CONSULT,
 )
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]{4,}")
 
 _PROCEDURE_RETRIEVAL_RULES: dict[StageType, ProcedureRetrievalRule] = {
     StageType.BUILDER: ProcedureRetrievalRule(
@@ -131,6 +143,93 @@ _PROCEDURE_RETRIEVAL_RULES: dict[StageType, ProcedureRetrievalRule] = {
     ),
 }
 
+_CONTEXT_FACT_RETRIEVAL_RULES: dict[StageType, ContextFactRetrievalRule] = {
+    StageType.BUILDER: ContextFactRetrievalRule(
+        stage=StageType.BUILDER,
+        allowed_scopes=(ContextFactScope.WORKSPACE,),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.INTEGRATION: ContextFactRetrievalRule(
+        stage=StageType.INTEGRATION,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_VALIDATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.QA: ContextFactRetrievalRule(
+        stage=StageType.QA,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_VALIDATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.HOTFIX: ContextFactRetrievalRule(
+        stage=StageType.HOTFIX,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.DOUBLECHECK: ContextFactRetrievalRule(
+        stage=StageType.DOUBLECHECK,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_VALIDATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.TROUBLESHOOT: ContextFactRetrievalRule(
+        stage=StageType.TROUBLESHOOT,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.CONSULT: ContextFactRetrievalRule(
+        stage=StageType.CONSULT,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.UPDATE: ContextFactRetrievalRule(
+        stage=StageType.UPDATE,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_UPDATE_SOURCE_STAGES,
+        max_facts=1,
+        max_prompt_characters=700,
+    ),
+    StageType.LARGE_PLAN: ContextFactRetrievalRule(
+        stage=StageType.LARGE_PLAN,
+        allowed_scopes=(ContextFactScope.WORKSPACE,),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.LARGE_EXECUTE: ContextFactRetrievalRule(
+        stage=StageType.LARGE_EXECUTE,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.REASSESS: ContextFactRetrievalRule(
+        stage=StageType.REASSESS,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_VALIDATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+    StageType.REFACTOR: ContextFactRetrievalRule(
+        stage=StageType.REFACTOR,
+        allowed_scopes=(ContextFactScope.RUN, ContextFactScope.WORKSPACE),
+        allowed_source_stages=_IMPLEMENTATION_SOURCE_STAGES,
+        max_facts=2,
+        max_prompt_characters=1100,
+    ),
+}
+
 
 def procedure_retrieval_rule_for_stage(stage: StageType) -> ProcedureRetrievalRule | None:
     """Return the bounded retrieval rule for one execution stage."""
@@ -138,16 +237,29 @@ def procedure_retrieval_rule_for_stage(stage: StageType) -> ProcedureRetrievalRu
     return _PROCEDURE_RETRIEVAL_RULES.get(stage)
 
 
+def context_fact_retrieval_rule_for_stage(stage: StageType) -> ContextFactRetrievalRule | None:
+    """Return the bounded retrieval rule for durable context facts."""
+
+    return _CONTEXT_FACT_RETRIEVAL_RULES.get(stage)
+
+
 def build_injected_procedure_bundle(
     paths: RuntimePaths,
     *,
     run_id: str,
     stage: StageType,
+    max_total_characters: int | None = None,
 ) -> ProcedureInjectionBundle | None:
-    """Load eligible procedures and trim them to the stage-specific budget."""
+    """Load eligible procedures and trim them to stage and optional combined budgets."""
 
     rule = procedure_retrieval_rule_for_stage(stage)
     if rule is None:
+        return None
+
+    budget = rule.max_prompt_characters
+    if max_total_characters is not None:
+        budget = min(budget, max_total_characters)
+    if budget <= 0:
         return None
 
     candidates = _eligible_candidates(paths, run_id=run_id, rule=rule)
@@ -159,9 +271,9 @@ def build_injected_procedure_bundle(
     truncated_count = 0
 
     for artifact in candidates:
-        if len(selected) >= rule.max_procedures or used_characters >= rule.max_prompt_characters:
+        if len(selected) >= rule.max_procedures or used_characters >= budget:
             break
-        remaining = rule.max_prompt_characters - used_characters
+        remaining = budget - used_characters
         injected = _build_injected_procedure(artifact, remaining_characters=remaining)
         if injected is None:
             continue
@@ -180,7 +292,7 @@ def build_injected_procedure_bundle(
         procedures=tuple(selected),
         candidate_count=len(candidates),
         selected_count=len(selected),
-        budget_characters=rule.max_prompt_characters,
+        budget_characters=budget,
         used_characters=used_characters,
         truncated_count=truncated_count,
     )
@@ -212,6 +324,101 @@ def render_injected_procedure_block(bundle: ProcedureInjectionBundle | None) -> 
                 procedure.prompt_excerpt.rstrip(),
             ]
         )
+    return "\n".join(lines).rstrip()
+
+
+def build_injected_context_fact_bundle(
+    paths: RuntimePaths,
+    *,
+    run_id: str,
+    stage: StageType,
+    task_text: str = "",
+    max_total_characters: int | None = None,
+) -> ContextFactInjectionBundle | None:
+    """Load eligible facts and trim them to stage and combined-budget limits."""
+
+    rule = context_fact_retrieval_rule_for_stage(stage)
+    if rule is None:
+        return None
+
+    budget = rule.max_prompt_characters
+    if max_total_characters is not None:
+        budget = min(budget, max_total_characters)
+    if budget <= 0:
+        return None
+
+    candidates = _eligible_context_fact_candidates(paths, run_id=run_id, rule=rule, task_text=task_text)
+    if not candidates:
+        return None
+
+    selected: list[InjectedContextFact] = []
+    used_characters = 0
+    truncated_count = 0
+
+    for artifact, selection_reason in candidates:
+        if len(selected) >= rule.max_facts or used_characters >= budget:
+            break
+        remaining = budget - used_characters
+        injected = _build_injected_context_fact(
+            artifact,
+            selection_reason=selection_reason,
+            remaining_characters=remaining,
+        )
+        if injected is None:
+            continue
+        selected.append(injected)
+        used_characters += injected.injected_characters
+        if injected.truncated:
+            truncated_count += 1
+
+    if not selected:
+        return None
+
+    return ContextFactInjectionBundle(
+        stage=stage,
+        rule=rule,
+        considered_facts=tuple(
+            _considered_context_fact(artifact, selection_reason=selection_reason)
+            for artifact, selection_reason in candidates
+        ),
+        facts=tuple(selected),
+        candidate_count=len(candidates),
+        selected_count=len(selected),
+        budget_characters=budget,
+        used_characters=used_characters,
+        truncated_count=truncated_count,
+    )
+
+
+def render_injected_context_fact_block(bundle: ContextFactInjectionBundle | None) -> str:
+    """Render the prompt block for a bounded context-fact injection selection."""
+
+    if bundle is None or not bundle.facts:
+        return ""
+    lines = [
+        "Injected durable context facts:",
+        "",
+        (
+            "Treat these as bounded factual context recalled from prior governed runtime evidence. "
+            "Keep them separate from procedures and use them only when they materially help the current stage."
+        ),
+    ]
+    for index, fact in enumerate(bundle.facts, start=1):
+        tags = ", ".join(f"`{tag}`" for tag in fact.tags)
+        lines.extend(
+            [
+                "",
+                f"### Fact {index}: {fact.title}",
+                f"- Fact ID: `{fact.fact_id}`",
+                f"- Scope: `{fact.scope.value}`",
+                f"- Source stage: `{fact.source_stage.value}`",
+                f"- Selection reason: `{fact.selection_reason.value}`",
+                f"- Summary: {fact.summary}",
+            ]
+        )
+        if tags:
+            lines.append(f"- Tags: {tags}")
+        lines.extend(["", fact.statement_excerpt.rstrip()])
     return "\n".join(lines).rstrip()
 
 
@@ -309,3 +516,124 @@ def _trim_procedure_markdown(markdown: str, budget: int) -> tuple[str | None, bo
     if not trimmed:
         trimmed = text[: budget - len(suffix)].rstrip()
     return f"{trimmed}{suffix}", True
+
+
+def _eligible_context_fact_candidates(
+    paths: RuntimePaths,
+    *,
+    run_id: str,
+    rule: ContextFactRetrievalRule,
+    task_text: str,
+) -> list[tuple[ContextFactArtifact, ContextFactSelectionReason]]:
+    candidates: list[tuple[ContextFactArtifact, ContextFactSelectionReason]] = []
+    task_tokens = _match_tokens(f"{rule.stage.value} {task_text}")
+    for stored_fact in discover_context_facts(paths):
+        artifact = stored_fact.artifact
+        if artifact.scope not in rule.allowed_scopes:
+            continue
+        if artifact.source_stage not in rule.allowed_source_stages:
+            continue
+        if artifact.scope is ContextFactScope.WORKSPACE and not stored_fact.eligible_for_retrieval:
+            continue
+        if artifact.scope is ContextFactScope.RUN and artifact.source_run_id != run_id:
+            continue
+        selection_reason = _selection_reason_for_fact(artifact, task_tokens=task_tokens)
+        candidates.append((artifact, selection_reason))
+    candidates.sort(key=_context_fact_sort_key)
+    return candidates
+
+
+def _selection_reason_for_fact(
+    artifact: ContextFactArtifact,
+    *,
+    task_tokens: frozenset[str],
+) -> ContextFactSelectionReason:
+    if artifact.scope is ContextFactScope.RUN:
+        return ContextFactSelectionReason.RUN_SCOPE
+    artifact_tokens = _match_tokens(
+        " ".join((artifact.title, artifact.summary, artifact.statement, " ".join(artifact.tags)))
+    )
+    if task_tokens and artifact_tokens.intersection(task_tokens):
+        return ContextFactSelectionReason.PATTERN_MATCH
+    return ContextFactSelectionReason.BROADER_SCOPE
+
+
+def _context_fact_sort_key(
+    item: tuple[ContextFactArtifact, ContextFactSelectionReason],
+) -> tuple[int, int, float, str]:
+    artifact, selection_reason = item
+    scope_priority = 0 if artifact.scope is ContextFactScope.RUN else 1
+    selection_priority = {
+        ContextFactSelectionReason.RUN_SCOPE: 0,
+        ContextFactSelectionReason.PATTERN_MATCH: 1,
+        ContextFactSelectionReason.BROADER_SCOPE: 2,
+    }[selection_reason]
+    created_at = artifact.created_at.timestamp()
+    return (scope_priority, selection_priority, -created_at, artifact.fact_id)
+
+
+def _considered_context_fact(
+    artifact: ContextFactArtifact,
+    *,
+    selection_reason: ContextFactSelectionReason,
+) -> ConsideredContextFact:
+    return ConsideredContextFact(
+        fact_id=artifact.fact_id,
+        scope=artifact.scope,
+        source_stage=artifact.source_stage,
+        title=artifact.title,
+        summary=artifact.summary,
+        tags=artifact.tags,
+        evidence_refs=artifact.evidence_refs,
+        selection_reason=selection_reason,
+    )
+
+
+def _build_injected_context_fact(
+    artifact: ContextFactArtifact,
+    *,
+    selection_reason: ContextFactSelectionReason,
+    remaining_characters: int,
+) -> InjectedContextFact | None:
+    if remaining_characters <= 0:
+        return None
+    excerpt, truncated = _trim_context_fact_statement(artifact.statement, remaining_characters)
+    if excerpt is None:
+        return None
+    return InjectedContextFact(
+        fact_id=artifact.fact_id,
+        scope=artifact.scope,
+        source_stage=artifact.source_stage,
+        title=artifact.title,
+        summary=artifact.summary,
+        statement_excerpt=excerpt,
+        tags=artifact.tags,
+        evidence_refs=artifact.evidence_refs,
+        selection_reason=selection_reason,
+        original_characters=len(artifact.statement),
+        injected_characters=len(excerpt),
+        truncated=truncated,
+    )
+
+
+def _trim_context_fact_statement(statement: str, budget: int) -> tuple[str | None, bool]:
+    text = statement.strip()
+    if not text or budget <= 0:
+        return None, False
+    if len(text) <= budget:
+        return text, False
+
+    suffix = "\n\n[fact truncated to fit governed context budget]"
+    if budget <= len(suffix):
+        return None, True
+
+    trimmed = text[: budget - len(suffix)].rstrip()
+    if "\n" in trimmed:
+        trimmed = trimmed.rsplit("\n", 1)[0].rstrip()
+    if not trimmed:
+        trimmed = text[: budget - len(suffix)].rstrip()
+    return f"{trimmed}{suffix}", True
+
+
+def _match_tokens(text: str) -> frozenset[str]:
+    return frozenset(token.lower() for token in _TOKEN_RE.findall(text))

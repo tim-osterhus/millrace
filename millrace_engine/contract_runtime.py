@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from .contract_compounding import ProcedureInjectionBundle
+from .contract_context_facts import ContextFactInjectionBundle
 from .contract_core import (
     ContractModel,
     ExecutionStatus,
@@ -39,6 +40,8 @@ class StageContext(ContractModel):
     effort: ReasoningEffort | None = None
     prompt_to_stdin: bool = False
     procedure_injection: ProcedureInjectionBundle | None = None
+    context_fact_injection: ContextFactInjectionBundle | None = None
+    compounding_profile: str | None = None
 
     @field_validator("working_dir", "prompt_path", "status_fallback_path", mode="before")
     @classmethod
@@ -83,6 +86,25 @@ class StageContext(ContractModel):
         if isinstance(value, ProcedureInjectionBundle):
             return value
         return ProcedureInjectionBundle.model_validate(value)
+
+    @field_validator("context_fact_injection", mode="before")
+    @classmethod
+    def normalize_context_fact_injection(
+        cls, value: ContextFactInjectionBundle | dict[str, Any] | None
+    ) -> ContextFactInjectionBundle | None:
+        if value is None:
+            return None
+        if isinstance(value, ContextFactInjectionBundle):
+            return value
+        return ContextFactInjectionBundle.model_validate(value)
+
+    @field_validator("compounding_profile")
+    @classmethod
+    def normalize_compounding_profile(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
 
 
 class CodexUsageSummary(ContractModel):

@@ -241,6 +241,18 @@ class SearchPolicy(MillraceModel):
     research_exception: bool = False
 
 
+class CompoundingProfile(str, Enum):
+    BASELINE = "baseline"
+    COMPOUNDING = "compounding"
+    GOVERNED_PLUS = "governed_plus"
+    LAB = "lab"
+
+
+class CompoundingPolicy(MillraceModel):
+    profile: CompoundingProfile = CompoundingProfile.COMPOUNDING
+    governed_plus_budget_characters: int = Field(default=3200, ge=1)
+
+
 class ComplexityBand(str, Enum):
     MODERATE = "moderate"
     INVOLVED = "involved"
@@ -387,6 +399,7 @@ class OutagePolicy(MillraceModel):
 
 class PolicyConfig(MillraceModel):
     search: SearchPolicy = Field(default_factory=SearchPolicy)
+    compounding: CompoundingPolicy = Field(default_factory=CompoundingPolicy)
     complexity: ComplexityRoutingConfig = Field(default_factory=ComplexityRoutingConfig)
     usage: UsagePolicy = Field(default_factory=UsagePolicy)
     network_guard: NetworkGuardPolicy = Field(default_factory=NetworkGuardPolicy)

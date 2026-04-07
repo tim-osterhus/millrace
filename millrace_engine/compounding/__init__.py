@@ -11,14 +11,19 @@ from .lifecycle import (
     promote_procedure,
 )
 from .retrieval import (
+    build_injected_context_fact_bundle,
     build_injected_procedure_bundle,
+    context_fact_retrieval_rule_for_stage,
     procedure_retrieval_rule_for_stage,
+    render_injected_context_fact_block,
     render_injected_procedure_block,
 )
 
 __all__ = [
+    "build_injected_context_fact_bundle",
     "build_injected_procedure_bundle",
     "clear_run_scoped_procedure_candidates",
+    "context_fact_retrieval_rule_for_stage",
     "deprecate_procedure",
     "discover_governed_procedures",
     "discover_workspace_procedures",
@@ -28,5 +33,6 @@ __all__ = [
     "persist_candidate_from_transition",
     "promote_procedure",
     "procedure_retrieval_rule_for_stage",
+    "render_injected_context_fact_block",
     "render_injected_procedure_block",
 ]

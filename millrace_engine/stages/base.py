@@ -5,8 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from ..assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKind, ResolvedAsset
-from ..compounding import build_injected_procedure_bundle, render_injected_procedure_block
-from ..config import EngineConfig, StageConfig
+from ..compounding import (
+    build_injected_context_fact_bundle,
+    build_injected_procedure_bundle,
+    render_injected_context_fact_block,
+    render_injected_procedure_block,
+)
+from ..config import CompoundingProfile, EngineConfig, StageConfig
 from ..contracts import ExecutionStatus, RunnerKind, StageContext, StageResult, StageType, TaskCard
 from ..paths import RuntimePaths
 from ..provenance import BoundExecutionParameters
@@ -114,7 +119,13 @@ class ExecutionStage:
             return None
         return resolved.read_text(encoding="utf-8").strip()
 
-    def _prompt_for(self, task: TaskCard | None, *, procedure_prompt_block: str = "") -> str:
+    def _prompt_for(
+        self,
+        task: TaskCard | None,
+        *,
+        procedure_prompt_block: str = "",
+        context_fact_prompt_block: str = "",
+    ) -> str:
         prompt_lines: list[str] = []
         prompt_asset = self._prompt_asset_text()
         prompt_resolution = self._resolve_prompt_asset()
@@ -122,6 +133,8 @@ class ExecutionStage:
             prompt_lines.append(prompt_asset)
         if procedure_prompt_block:
             prompt_lines.append(procedure_prompt_block)
+        if context_fact_prompt_block:
+            prompt_lines.append(context_fact_prompt_block)
         prompt_lines.append(f"Stage: {self.stage_type.value}")
         if task is None:
             prompt_lines.append("No active task card.")
@@ -182,12 +195,39 @@ class ExecutionStage:
         prompt_resolution = self._resolve_prompt_asset()
         allow_search = self.stage_config.allow_search if allow_search_override is None else allow_search_override
         allow_network = True if allow_network_override is None else allow_network_override
-        procedure_injection = build_injected_procedure_bundle(
-            self.paths,
-            run_id=run_id,
-            stage=self.stage_type,
+        compounding_profile = self.config.policies.compounding.profile
+        governed_plus_budget = (
+            self.config.policies.compounding.governed_plus_budget_characters
+            if compounding_profile in {CompoundingProfile.GOVERNED_PLUS, CompoundingProfile.LAB}
+            else None
         )
-        procedure_prompt_block = render_injected_procedure_block(procedure_injection)
+        task_text = task.render_markdown() if task is not None else ""
+        procedure_injection = None
+        procedure_prompt_block = ""
+        context_fact_injection = None
+        context_fact_prompt_block = ""
+
+        if compounding_profile is not CompoundingProfile.BASELINE:
+            procedure_injection = build_injected_procedure_bundle(
+                self.paths,
+                run_id=run_id,
+                stage=self.stage_type,
+                max_total_characters=governed_plus_budget,
+            )
+            procedure_prompt_block = render_injected_procedure_block(procedure_injection)
+
+        if compounding_profile in {CompoundingProfile.GOVERNED_PLUS, CompoundingProfile.LAB}:
+            remaining_budget = self.config.policies.compounding.governed_plus_budget_characters
+            if procedure_injection is not None:
+                remaining_budget -= procedure_injection.used_characters
+            context_fact_injection = build_injected_context_fact_bundle(
+                self.paths,
+                run_id=run_id,
+                stage=self.stage_type,
+                task_text=task_text,
+                max_total_characters=remaining_budget,
+            )
+            context_fact_prompt_block = render_injected_context_fact_block(context_fact_injection)
 
         runner = self.runners[self.stage_config.runner]
         context = StageContext.model_validate(
@@ -195,7 +235,11 @@ class ExecutionStage:
                 "stage": self.stage_type,
                 "runner": self.stage_config.runner,
                 "model": self.stage_config.model,
-                "prompt": self._prompt_for(task, procedure_prompt_block=procedure_prompt_block),
+                "prompt": self._prompt_for(
+                    task,
+                    procedure_prompt_block=procedure_prompt_block,
+                    context_fact_prompt_block=context_fact_prompt_block,
+                ),
                 "working_dir": self.paths.root,
                 "run_id": run_id,
                 "timeout_seconds": self.stage_config.timeout_seconds,
@@ -211,6 +255,8 @@ class ExecutionStage:
                 "effort": self.stage_config.effort,
                 "env": dict(extra_env or {}),
                 "procedure_injection": procedure_injection,
+                "context_fact_injection": context_fact_injection,
+                "compounding_profile": compounding_profile.value,
             }
         )
         runner_result = runner.execute(context)
@@ -264,4 +310,21 @@ class ExecutionStage:
             metadata["asset_resolution"] = prompt_resolution.to_payload()
         if context.procedure_injection is not None:
             metadata["procedure_injection"] = context.procedure_injection.model_dump(mode="json")
+        if context.context_fact_injection is not None:
+            metadata["context_fact_injection"] = context.context_fact_injection.model_dump(mode="json")
+        if context.compounding_profile is not None:
+            procedure_characters = (
+                context.procedure_injection.used_characters if context.procedure_injection is not None else 0
+            )
+            fact_characters = (
+                context.context_fact_injection.used_characters if context.context_fact_injection is not None else 0
+            )
+            metadata["compounding_profile"] = context.compounding_profile
+            metadata["compounding_budget"] = {
+                "profile": context.compounding_profile,
+                "total_budget_characters": self.config.policies.compounding.governed_plus_budget_characters,
+                "procedure_characters": procedure_characters,
+                "fact_characters": fact_characters,
+                "used_characters": procedure_characters + fact_characters,
+            }
         return metadata

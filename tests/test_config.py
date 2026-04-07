@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 import millrace_engine.config_runtime as config_runtime
 from millrace_engine.config import (
+    CompoundingProfile,
     ConfigApplyBoundary,
     ComplexityBand,
     StageConfig,
@@ -21,8 +22,12 @@ from millrace_engine.config import (
 from millrace_engine.contracts import RunnerKind, StageContext, StageType, load_objective_contract
 from millrace_engine.contracts import (
     ContextFactArtifact,
+    ContextFactInjectionBundle,
     ContextFactLifecycleState,
+    ContextFactRetrievalRule,
+    ContextFactSelectionReason,
     ContextFactScope,
+    InjectedContextFact,
     InjectedProcedure,
     ProcedureInjectionBundle,
     ProcedureLifecycleRecord,
@@ -144,6 +149,80 @@ def test_stage_context_accepts_typed_procedure_injection_bundle(tmp_path: Path) 
             injected_characters=42,
             truncated=False,
         ),
+    )
+
+
+def test_stage_context_accepts_typed_context_fact_injection_bundle(tmp_path: Path) -> None:
+    context = StageContext.model_validate(
+        {
+            "stage": "builder",
+            "runner": "codex",
+            "model": "gpt-5.3-codex",
+            "working_dir": tmp_path,
+            "compounding_profile": "governed_plus",
+            "context_fact_injection": {
+                "stage": "builder",
+                "rule": {
+                    "stage": "builder",
+                    "allowed_scopes": ["workspace"],
+                    "allowed_source_stages": ["builder", "hotfix"],
+                    "max_facts": 2,
+                    "max_prompt_characters": 900,
+                },
+                "facts": [
+                    {
+                        "fact_id": "fact.workspace.builder.001",
+                        "scope": "workspace",
+                        "source_stage": "builder",
+                        "title": "Builder fact",
+                        "summary": "Preserve the generated audit trail.",
+                        "statement_excerpt": "The builder path must preserve the audit trail.",
+                        "tags": ["builder", "audit"],
+                        "selection_reason": "pattern_match",
+                        "original_characters": 47,
+                        "injected_characters": 47,
+                        "truncated": False,
+                    }
+                ],
+                "candidate_count": 1,
+                "selected_count": 1,
+                "budget_characters": 900,
+                "used_characters": 47,
+                "truncated_count": 0,
+            },
+        }
+    )
+
+    assert context.compounding_profile == "governed_plus"
+    assert context.context_fact_injection == ContextFactInjectionBundle(
+        stage=StageType.BUILDER,
+        rule=ContextFactRetrievalRule(
+            stage=StageType.BUILDER,
+            allowed_scopes=(ContextFactScope.WORKSPACE,),
+            allowed_source_stages=(StageType.BUILDER, StageType.HOTFIX),
+            max_facts=2,
+            max_prompt_characters=900,
+        ),
+        facts=(
+            InjectedContextFact(
+                fact_id="fact.workspace.builder.001",
+                scope=ContextFactScope.WORKSPACE,
+                source_stage=StageType.BUILDER,
+                title="Builder fact",
+                summary="Preserve the generated audit trail.",
+                statement_excerpt="The builder path must preserve the audit trail.",
+                tags=("builder", "audit"),
+                selection_reason=ContextFactSelectionReason.PATTERN_MATCH,
+                original_characters=47,
+                injected_characters=47,
+                truncated=False,
+            ),
+        ),
+        candidate_count=1,
+        selected_count=1,
+        budget_characters=900,
+        used_characters=47,
+        truncated_count=0,
     )
 
 
@@ -531,6 +610,35 @@ def test_native_config_loads_typed_complexity_routing_policy(tmp_path: Path) -> 
     assert loaded.config.boundaries.classify_field("policies.complexity") is ConfigApplyBoundary.STAGE_BOUNDARY
 
 
+def test_native_config_loads_typed_compounding_policy(tmp_path: Path) -> None:
+    config_path = tmp_path / "millrace.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[engine]",
+                'mode = "once"',
+                "",
+                "[paths]",
+                'workspace = "."',
+                'agents_dir = "agents"',
+                "",
+                "[policies.compounding]",
+                'profile = "governed_plus"',
+                "governed_plus_budget_characters = 2800",
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_engine_config(config_path)
+
+    assert loaded.config.policies.compounding.profile is CompoundingProfile.GOVERNED_PLUS
+    assert loaded.config.policies.compounding.governed_plus_budget_characters == 2800
+    assert loaded.config.boundaries.classify_field("policies.compounding") is ConfigApplyBoundary.STAGE_BOUNDARY
+
+
 def test_native_config_loads_typed_watcher_settings(tmp_path: Path) -> None:
     config_path = tmp_path / "millrace.toml"
     config_path.write_text(
@@ -643,6 +751,12 @@ def test_config_boundaries_classify_changed_fields_by_runtime_application_point(
     stage_fields = diff_config_fields(loaded.config, stage_config)
     assert stage_fields == ("execution.quickfix_max_attempts",)
     assert loaded.config.boundaries.classify_fields(stage_fields) is ConfigApplyBoundary.STAGE_BOUNDARY
+
+    compounding_config = loaded.config.model_copy(deep=True)
+    compounding_config.policies.compounding.profile = CompoundingProfile.GOVERNED_PLUS
+    compounding_fields = diff_config_fields(loaded.config, compounding_config)
+    assert compounding_fields == ("policies.compounding.profile",)
+    assert loaded.config.boundaries.classify_fields(compounding_fields) is ConfigApplyBoundary.STAGE_BOUNDARY
 
     cycle_config = loaded.config.model_copy(deep=True)
     cycle_config.engine.idle_mode = "poll"

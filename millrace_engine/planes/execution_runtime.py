@@ -23,6 +23,9 @@ from ..policies import (
 )
 from ..provenance import (
     BoundExecutionParameters,
+    COMPOUNDING_BUDGET_ATTRIBUTE,
+    COMPOUNDING_PROFILE_ATTRIBUTE,
+    CONTEXT_FACT_INJECTION_ATTRIBUTE,
     ExecutionParameterRebindingRequest,
     PROCEDURE_INJECTION_ATTRIBUTE,
     RuntimeProvenanceContext,
@@ -494,6 +497,17 @@ def record_stage_transition(
     injection_payload = result.metadata.get("procedure_injection")
     if isinstance(injection_payload, dict):
         record_attributes[PROCEDURE_INJECTION_ATTRIBUTE] = injection_payload
+    fact_injection_payload = result.metadata.get("context_fact_injection")
+    if isinstance(fact_injection_payload, dict):
+        record_attributes[CONTEXT_FACT_INJECTION_ATTRIBUTE] = fact_injection_payload
+    compounding_profile = result.metadata.get("compounding_profile")
+    if isinstance(compounding_profile, str):
+        profile_value = compounding_profile.strip()
+        if profile_value:
+            record_attributes[COMPOUNDING_PROFILE_ATTRIBUTE] = profile_value
+    compounding_budget_payload = result.metadata.get("compounding_budget")
+    if isinstance(compounding_budget_payload, dict):
+        record_attributes[COMPOUNDING_BUDGET_ATTRIBUTE] = compounding_budget_payload
     if attributes:
         record_attributes.update(attributes)
     record_attributes.setdefault(

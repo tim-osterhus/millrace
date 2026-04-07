@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 TRANSITION_HISTORY_SCHEMA_VERSION = "1.0"
 ROUTING_MODE_ATTRIBUTE = "routing_mode"
 PROCEDURE_INJECTION_ATTRIBUTE = "procedure_injection"
+CONTEXT_FACT_INJECTION_ATTRIBUTE = "context_fact_injection"
+COMPOUNDING_PROFILE_ATTRIBUTE = "compounding_profile"
+COMPOUNDING_BUDGET_ATTRIBUTE = "compounding_budget"
 RUNTIME_REBINDABLE_STAGE_FIELDS = frozenset(
     {
         StageOverrideField.MODEL_PROFILE_REF,
@@ -565,6 +568,9 @@ __all__ = [
     "AppliedExecutionParameterRebinding",
     "BoundExecutionParameters",
     "clear_transition_history",
+    "COMPOUNDING_BUDGET_ATTRIBUTE",
+    "COMPOUNDING_PROFILE_ATTRIBUTE",
+    "CONTEXT_FACT_INJECTION_ATTRIBUTE",
     "ExecutionParameterRebindingRequest",
     "FrozenPlanIdentity",
     "PROCEDURE_INJECTION_ATTRIBUTE",
