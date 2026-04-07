@@ -27,6 +27,17 @@ rationale = "Type-checking stays on the same bounded slice and uses --follow-imp
 runtime_limit = 500
 test_limit = 800
 
+[budgets.ratchet]
+runtime = [
+  "millrace_engine/planes/execution.py",
+]
+diff_base = "HEAD"
+
+[[budgets.temporary_exceptions.runtime]]
+path = "millrace_engine/engine_runtime_loop.py"
+owner = "batch-25-run-09"
+rationale = "Run 04 reduced engine.py to a composition shell, but the extracted runtime-loop seam remains oversized pending a narrower outage and pacing split."
+
 [budgets.exceptions]
 runtime = [
   "millrace_engine/cli.py",
@@ -38,7 +49,6 @@ runtime = [
   "millrace_engine/control_models.py",
   "millrace_engine/control_reports.py",
   "millrace_engine/diagnostics.py",
-  "millrace_engine/engine.py",
   "millrace_engine/health.py",
   "millrace_engine/loop_architecture_stage_contracts.py",
   "millrace_engine/materialization.py",
@@ -50,7 +60,6 @@ runtime = [
   "millrace_engine/provenance.py",
   "millrace_engine/registry.py",
   "millrace_engine/research/audit.py",
-  "millrace_engine/research/goalspec_stage_support.py",
   "millrace_engine/research/governance.py",
   "millrace_engine/research/incident_documents.py",
   "millrace_engine/research/incidents.py",

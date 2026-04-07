@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tomllib
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -32,10 +33,27 @@ class BudgetExceptions(TypedDict):
     tests: list[str]
 
 
+class TemporaryBudgetException(TypedDict):
+    path: str
+    owner: str
+    rationale: str
+
+
+class BudgetRatchetConfig(TypedDict):
+    runtime: list[str]
+    diff_base: str
+
+
+class BudgetTemporaryExceptions(TypedDict):
+    runtime: list[TemporaryBudgetException]
+
+
 class BudgetConfig(TypedDict):
     runtime_limit: int
     test_limit: int
     exceptions: BudgetExceptions
+    ratchet: BudgetRatchetConfig
+    temporary_exceptions: BudgetTemporaryExceptions
 
 
 class AllowedCycleConfig(TypedDict):
@@ -51,6 +69,14 @@ class GuardrailConfig(TypedDict):
     typecheck: TypecheckConfig
     budgets: BudgetConfig
     cycles: CycleConfig
+
+
+@dataclass(frozen=True)
+class ActiveBudgetException:
+    path: str
+    temporary: bool = False
+    owner: str | None = None
+    rationale: str | None = None
 
 
 def _load_config() -> GuardrailConfig:
@@ -110,23 +136,147 @@ def _budget_failures(
     return failures + [f"missing:{path}" for path in missing], stale_exceptions
 
 
+def _active_budget_exceptions(
+    configured: list[str],
+    temporary: list[TemporaryBudgetException],
+) -> dict[str, ActiveBudgetException]:
+    active = {path: ActiveBudgetException(path=path) for path in configured}
+    for entry in temporary:
+        active[entry["path"]] = ActiveBudgetException(
+            path=entry["path"],
+            temporary=True,
+            owner=entry["owner"],
+            rationale=entry["rationale"],
+        )
+    return active
+
+
+def _git_stdout(root: Path, *args: str) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        return None
+    return completed.stdout
+
+
+def _git_changed_paths(root: Path, *, base: str) -> set[str]:
+    changed: set[str] = set()
+    for args in (
+        ("diff", "--name-only", base, "--"),
+        ("ls-files", "--others", "--exclude-standard"),
+    ):
+        stdout = _git_stdout(root, *args)
+        if stdout is None:
+            continue
+        changed.update(path.strip() for path in stdout.splitlines() if path.strip())
+    return changed
+
+
+def _git_line_count(root: Path, *, revspec: str) -> int | None:
+    stdout = _git_stdout(root, "show", revspec)
+    if stdout is None:
+        return None
+    return len(stdout.splitlines())
+
+
+def _ratchet_failures(
+    *,
+    root: Path,
+    ratchet_paths: list[str],
+    active_exceptions: dict[str, ActiveBudgetException],
+    limit: int,
+    diff_base: str,
+) -> list[str]:
+    failures: list[str] = []
+    changed_paths = _git_changed_paths(root, base=diff_base)
+    for path in ratchet_paths:
+        file_path = root / path
+        if not file_path.is_file():
+            continue
+        current_lines = _line_count(file_path)
+        if current_lines <= limit or path not in changed_paths:
+            continue
+        baseline_lines = _git_line_count(root, revspec=f"{diff_base}:{path}")
+        if baseline_lines is None:
+            if path not in active_exceptions or not active_exceptions[path].temporary:
+                failures.append(
+                    f"new oversized orchestration file requires temporary exception: {path} "
+                    f"({current_lines}>{limit})"
+                )
+            continue
+        if current_lines >= baseline_lines:
+            failures.append(
+                f"same-change ratchet violation: {path} "
+                f"(current {current_lines} lines, baseline {baseline_lines} lines)"
+            )
+    return failures
+
+
+def _active_exception_notices(
+    *,
+    root: Path,
+    active_exceptions: dict[str, ActiveBudgetException],
+    limit: int,
+) -> list[str]:
+    notices: list[str] = []
+    for path, entry in sorted(active_exceptions.items()):
+        file_path = root / path
+        if not file_path.is_file():
+            continue
+        current_lines = _line_count(file_path)
+        if current_lines <= limit:
+            continue
+        if entry.temporary:
+            notices.append(
+                "temporary size-budget exception: "
+                f"{path} ({current_lines}>{limit}); owner={entry.owner}; rationale={entry.rationale}"
+            )
+        else:
+            notices.append(f"active size-budget exception: {path} ({current_lines}>{limit})")
+    return notices
+
+
 def _run_budgets(config: GuardrailConfig) -> int:
     budget_config = config["budgets"]
     exception_config = budget_config["exceptions"]
+    temporary_exception_config = budget_config["temporary_exceptions"]
+    runtime_active_exceptions = _active_budget_exceptions(
+        exception_config["runtime"],
+        temporary_exception_config["runtime"],
+    )
     runtime_failures, runtime_stale = _budget_failures(
         ROOT / "millrace_engine",
         limit=int(budget_config["runtime_limit"]),
-        exceptions=set(exception_config["runtime"]),
+        exceptions=set(runtime_active_exceptions),
     )
     test_failures, test_stale = _budget_failures(
         ROOT / "tests",
         limit=int(budget_config["test_limit"]),
         exceptions=set(exception_config["tests"]),
     )
+    ratchet_failures = _ratchet_failures(
+        root=ROOT,
+        ratchet_paths=budget_config["ratchet"]["runtime"],
+        active_exceptions=runtime_active_exceptions,
+        limit=int(budget_config["runtime_limit"]),
+        diff_base=budget_config["ratchet"]["diff_base"],
+    )
+    active_notices = _active_exception_notices(
+        root=ROOT,
+        active_exceptions=runtime_active_exceptions,
+        limit=int(budget_config["runtime_limit"]),
+    )
     stale = runtime_stale + test_stale
     for path in stale:
         print(f"stale size-budget exception: {path}", file=sys.stderr)
-    failures = runtime_failures + test_failures
+    for notice in active_notices:
+        print(notice, file=sys.stderr)
+    failures = runtime_failures + test_failures + ratchet_failures
     if failures:
         print("size-budget violations:", file=sys.stderr)
         for path in failures:
