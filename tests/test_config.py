@@ -20,8 +20,11 @@ from millrace_engine.config import (
 )
 from millrace_engine.contracts import RunnerKind, StageContext, StageType, load_objective_contract
 from millrace_engine.contracts import (
+    InjectedProcedure,
+    ProcedureInjectionBundle,
     ProcedureLifecycleRecord,
     ProcedureLifecycleState,
+    ProcedureRetrievalRule,
     ProcedureScope,
     ProcedureUsageDisposition,
     ProcedureUsageRecord,
@@ -75,6 +78,70 @@ def test_stage_context_default_timeout_matches_stage_defaults(tmp_path: Path) ->
     )
 
     assert context.timeout_seconds == 3600
+
+
+def test_stage_context_accepts_typed_procedure_injection_bundle(tmp_path: Path) -> None:
+    context = StageContext.model_validate(
+        {
+            "stage": "qa",
+            "runner": "codex",
+            "model": "gpt-5.3-codex",
+            "working_dir": tmp_path,
+            "procedure_injection": {
+                "stage": "qa",
+                "rule": {
+                    "stage": "qa",
+                    "allowed_scopes": ["run", "workspace"],
+                    "allowed_source_stages": ["builder", "qa"],
+                    "max_procedures": 2,
+                    "max_prompt_characters": 2400,
+                },
+                "procedures": [
+                    {
+                        "procedure_id": "proc.run.builder.001",
+                        "scope": "run",
+                        "source_stage": "builder",
+                        "title": "Builder Procedure",
+                        "summary": "Carry forward the builder fix sequence.",
+                        "prompt_excerpt": "1. Apply the builder fix.\n2. Re-run QA.",
+                        "evidence_refs": ["agents/runs/run-001/transition_history.jsonl"],
+                        "original_characters": 50,
+                        "injected_characters": 42,
+                        "truncated": False,
+                    }
+                ],
+                "candidate_count": 1,
+                "selected_count": 1,
+                "budget_characters": 2400,
+                "used_characters": 42,
+                "truncated_count": 0,
+            },
+        }
+    )
+
+    assert context.procedure_injection is not None
+    assert isinstance(context.procedure_injection, ProcedureInjectionBundle)
+    assert context.procedure_injection.rule == ProcedureRetrievalRule(
+        stage=StageType.QA,
+        allowed_scopes=(ProcedureScope.RUN, ProcedureScope.WORKSPACE),
+        allowed_source_stages=(StageType.BUILDER, StageType.QA),
+        max_procedures=2,
+        max_prompt_characters=2400,
+    )
+    assert context.procedure_injection.procedures == (
+        InjectedProcedure(
+            procedure_id="proc.run.builder.001",
+            scope=ProcedureScope.RUN,
+            source_stage=StageType.BUILDER,
+            title="Builder Procedure",
+            summary="Carry forward the builder fix sequence.",
+            prompt_excerpt="1. Apply the builder fix.\n2. Re-run QA.",
+            evidence_refs=("agents/runs/run-001/transition_history.jsonl",),
+            original_characters=50,
+            injected_characters=42,
+            truncated=False,
+        ),
+    )
 
 
 def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> None:

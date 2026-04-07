@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Literal
 import re
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from .contract_core import ContractModel, StageType, _normalize_datetime, _normalize_sequence
 
@@ -59,6 +59,107 @@ class ProcedureUsageDisposition(str, Enum):
     CONSIDERED = "considered"
     INJECTED = "injected"
     SKIPPED = "skipped"
+
+
+class ProcedureRetrievalRule(ContractModel):
+    """Stage-aware retrieval constraints for reusable procedures."""
+
+    stage: StageType
+    allowed_scopes: tuple[ProcedureScope, ...]
+    allowed_source_stages: tuple[StageType, ...]
+    max_procedures: int = Field(default=2, ge=1)
+    max_prompt_characters: int = Field(default=2400, ge=1)
+
+    @field_validator("allowed_scopes", mode="before")
+    @classmethod
+    def normalize_allowed_scopes(
+        cls, value: tuple[ProcedureScope, ...] | tuple[str, ...] | list[str] | list[ProcedureScope]
+    ) -> tuple[ProcedureScope, ...]:
+        if not value:
+            raise ValueError("allowed_scopes may not be empty")
+        normalized: list[ProcedureScope] = []
+        seen: set[ProcedureScope] = set()
+        for item in value:
+            scope = item if isinstance(item, ProcedureScope) else ProcedureScope(str(item).strip().lower())
+            if scope in seen:
+                continue
+            seen.add(scope)
+            normalized.append(scope)
+        return tuple(normalized)
+
+    @field_validator("allowed_source_stages", mode="before")
+    @classmethod
+    def normalize_allowed_source_stages(
+        cls, value: tuple[StageType, ...] | tuple[str, ...] | list[str] | list[StageType]
+    ) -> tuple[StageType, ...]:
+        if not value:
+            raise ValueError("allowed_source_stages may not be empty")
+        normalized: list[StageType] = []
+        seen: set[StageType] = set()
+        for item in value:
+            stage = item if isinstance(item, StageType) else StageType(str(item).strip().lower())
+            if stage in seen:
+                continue
+            seen.add(stage)
+            normalized.append(stage)
+        return tuple(normalized)
+
+
+class InjectedProcedure(ContractModel):
+    """One reusable procedure selected for stage-context injection."""
+
+    procedure_id: str
+    scope: ProcedureScope
+    source_stage: StageType
+    title: str
+    summary: str
+    prompt_excerpt: str
+    evidence_refs: tuple[str, ...] = ()
+    original_characters: int = Field(default=0, ge=0)
+    injected_characters: int = Field(default=0, ge=0)
+    truncated: bool = False
+
+    @field_validator("procedure_id")
+    @classmethod
+    def validate_procedure_id(cls, value: str) -> str:
+        return _normalize_identifier(value, field_label="procedure_id") or ""
+
+    @field_validator("title", "summary", "prompt_excerpt")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("evidence_refs", mode="before")
+    @classmethod
+    def normalize_evidence_refs(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return _normalize_sequence([str(item) for item in value])
+
+
+class ProcedureInjectionBundle(ContractModel):
+    """Deterministic selection record for procedures injected into one stage context."""
+
+    stage: StageType
+    rule: ProcedureRetrievalRule
+    procedures: tuple[InjectedProcedure, ...] = ()
+    candidate_count: int = Field(default=0, ge=0)
+    selected_count: int = Field(default=0, ge=0)
+    budget_characters: int = Field(default=0, ge=0)
+    used_characters: int = Field(default=0, ge=0)
+    truncated_count: int = Field(default=0, ge=0)
+
+    @field_validator("procedures", mode="before")
+    @classmethod
+    def normalize_procedures(
+        cls, value: tuple[InjectedProcedure, ...] | list[InjectedProcedure] | tuple[dict[str, Any], ...] | list[dict[str, Any]] | None
+    ) -> tuple[InjectedProcedure, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item if isinstance(item, InjectedProcedure) else InjectedProcedure.model_validate(item)
+            for item in value
+        )
 
 
 class ReusableProcedureArtifact(ContractModel):

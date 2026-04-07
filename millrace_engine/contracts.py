@@ -67,8 +67,11 @@ from .contract_documents import (
 )
 from .contract_compounding import (
     COMPOUNDING_SCHEMA_VERSION,
+    InjectedProcedure,
+    ProcedureInjectionBundle,
     ProcedureLifecycleRecord,
     ProcedureLifecycleState,
+    ProcedureRetrievalRule,
     ProcedureScope,
     ProcedureUsageDisposition,
     ProcedureUsageRecord,

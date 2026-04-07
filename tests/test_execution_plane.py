@@ -16,6 +16,7 @@ from millrace_engine.contracts import (
     LoopConfigDefinition,
     ModelProfileDefinition,
     PersistedObjectKind,
+    ProcedureScope,
     RegisteredStageKindDefinition,
     RegistryObjectRef,
     ReusableProcedureArtifact,
@@ -134,10 +135,37 @@ def write_stage_driver(tmp_path: Path) -> Path:
                 "        print('missing task title')",
                 "        raise SystemExit(8)",
                 "    emit('BUILDER_COMPLETE', message='Builder saw prompt asset')",
+                "if mode == 'builder-check-compounding-prompt':",
+                "    prompt = os.environ['MILLRACE_PROMPT']",
+                "    if 'Injected reusable procedures:' not in prompt:",
+                "        print('missing injected procedures heading')",
+                "        raise SystemExit(10)",
+                "    if 'Workspace Builder Procedure' not in prompt:",
+                "        print('missing selected workspace procedure')",
+                "        raise SystemExit(11)",
+                "    if 'proc.workspace.qa.ignored' in prompt:",
+                "        print('unexpected qa procedure in builder prompt')",
+                "        raise SystemExit(12)",
+                "    if 'procedure truncated to fit stage budget' not in prompt:",
+                "        print('missing truncation marker')",
+                "        raise SystemExit(13)",
+                "    emit('BUILDER_COMPLETE', message='Builder saw injected procedures')",
                 "if mode == 'integration':",
                 "    emit('INTEGRATION_COMPLETE', message='Integration finished')",
                 "if mode == 'qa-complete':",
                 "    emit('QA_COMPLETE', message='QA finished')",
+                "if mode == 'qa-check-compounding-prompt':",
+                "    prompt = os.environ['MILLRACE_PROMPT']",
+                "    if 'Injected reusable procedures:' not in prompt:",
+                "        print('missing injected procedures heading')",
+                "        raise SystemExit(14)",
+                "    if 'Builder execution candidate' not in prompt:",
+                "        print('missing builder candidate title')",
+                "        raise SystemExit(15)",
+                "    if 'Builder finished' not in prompt:",
+                "        print('missing builder procedure body')",
+                "        raise SystemExit(16)",
+                "    emit('QA_COMPLETE', message='QA saw injected procedures')",
                 "if mode == 'qa-missing':",
                 "    print('QA finished without a marker')",
                 "    raise SystemExit(0)",
@@ -521,6 +549,36 @@ def _load_compounding_candidates(workspace: Path, run_id: str) -> list[ReusableP
         ReusableProcedureArtifact.model_validate_json(path.read_text(encoding="utf-8"))
         for path in sorted(candidate_dir.glob("*.json"))
     ]
+
+
+def _write_compounding_procedure(
+    workspace: Path,
+    *,
+    filename: str,
+    procedure_id: str,
+    scope: ProcedureScope,
+    source_stage: StageType,
+    title: str,
+    summary: str,
+    procedure_markdown: str,
+) -> Path:
+    target_dir = workspace / "agents/compounding/procedures"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / filename
+    artifact = ReusableProcedureArtifact(
+        procedure_id=procedure_id,
+        scope=scope,
+        source_run_id="source-run",
+        source_stage=source_stage,
+        title=title,
+        summary=summary,
+        procedure_markdown=procedure_markdown,
+        tags=("fixture",),
+        evidence_refs=("agents/runs/source-run/transition_history.jsonl",),
+        created_at="2026-04-07T18:00:00Z",
+    )
+    path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def _prepend_task_metadata_lines(workspace: Path, *lines: str) -> None:
@@ -1862,6 +1920,91 @@ def test_execution_stage_loads_prompt_asset_contents_into_runner_prompt(tmp_path
     result = plane._run_stage(StageType.BUILDER, task, "prompt-fixture-run")
 
     assert result.status == "BUILDER_COMPLETE"
+    assert "procedure_injection" not in result.metadata
+
+
+def test_execution_stage_injects_workspace_scoped_procedures_with_stage_rules_and_budget(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+    loaded = load_engine_config(config_path)
+    config = loaded.config
+    config.paths.workspace = workspace
+    config.paths.agents_dir = workspace / "agents"
+    config.execution.integration_mode = "never"
+    config.stages[StageType.BUILDER].runner = RunnerKind.SUBPROCESS
+    config.stages[StageType.BUILDER].model = "fixture-model"
+    config.stages[StageType.BUILDER].timeout_seconds = 30
+
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-builder.json",
+        procedure_id="proc.workspace.builder.selected",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.BUILDER,
+        title="Workspace Builder Procedure",
+        summary="Apply the known builder fix sequence before continuing.",
+        procedure_markdown="# Workspace Builder Procedure\n\n" + ("Step: keep the working tree coherent.\n" * 180),
+    )
+    _write_compounding_procedure(
+        workspace,
+        filename="workspace-qa-ignored.json",
+        procedure_id="proc.workspace.qa.ignored",
+        scope=ProcedureScope.WORKSPACE,
+        source_stage=StageType.QA,
+        title="Workspace QA Procedure",
+        summary="This should not be injected into builder.",
+        procedure_markdown="Do not use this in builder.",
+    )
+
+    plane = ExecutionPlane(
+        config,
+        build_runtime_paths(config),
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder-check-compounding-prompt"],
+        },
+    )
+    task = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))[0]
+
+    result = plane._run_stage(StageType.BUILDER, task, "builder-compounding-run")
+
+    assert result.status == "BUILDER_COMPLETE"
+    injection = result.metadata["procedure_injection"]
+    assert injection["stage"] == "builder"
+    assert injection["candidate_count"] == 1
+    assert injection["selected_count"] == 1
+    assert injection["truncated_count"] == 1
+    assert injection["procedures"][0]["procedure_id"] == "proc.workspace.builder.selected"
+    assert injection["procedures"][0]["source_stage"] == "builder"
+    assert injection["procedures"][0]["scope"] == "workspace"
+
+
+def test_execution_plane_injects_run_scoped_builder_candidate_into_later_qa_stage(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-check-compounding-prompt"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.final_status is ExecutionStatus.IDLE
+    qa_result = next(stage for stage in result.stage_results if stage.stage is StageType.QA)
+    injection = qa_result.metadata["procedure_injection"]
+    assert injection["stage"] == "qa"
+    assert injection["candidate_count"] >= 1
+    assert injection["selected_count"] >= 1
+    assert injection["procedures"][0]["source_stage"] == "builder"
+    assert injection["procedures"][0]["scope"] == "run"
 
 
 def test_execution_stage_fails_deterministically_when_prompt_asset_is_missing(tmp_path: Path) -> None:

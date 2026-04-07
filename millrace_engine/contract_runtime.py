@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from .contract_compounding import ProcedureInjectionBundle
 from .contract_core import (
     ContractModel,
     ExecutionStatus,
@@ -37,6 +38,7 @@ class StageContext(ContractModel):
     allow_network: bool = True
     effort: ReasoningEffort | None = None
     prompt_to_stdin: bool = False
+    procedure_injection: ProcedureInjectionBundle | None = None
 
     @field_validator("working_dir", "prompt_path", "status_fallback_path", mode="before")
     @classmethod
@@ -70,6 +72,17 @@ class StageContext(ContractModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("procedure_injection", mode="before")
+    @classmethod
+    def normalize_procedure_injection(
+        cls, value: ProcedureInjectionBundle | dict[str, Any] | None
+    ) -> ProcedureInjectionBundle | None:
+        if value is None:
+            return None
+        if isinstance(value, ProcedureInjectionBundle):
+            return value
+        return ProcedureInjectionBundle.model_validate(value)
 
 
 class CodexUsageSummary(ContractModel):

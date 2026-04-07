@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from ..assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKind, ResolvedAsset
+from ..compounding import build_injected_procedure_bundle, render_injected_procedure_block
 from ..config import EngineConfig, StageConfig
 from ..contracts import ExecutionStatus, RunnerKind, StageContext, StageResult, StageType, TaskCard
 from ..paths import RuntimePaths
@@ -113,12 +114,14 @@ class ExecutionStage:
             return None
         return resolved.read_text(encoding="utf-8").strip()
 
-    def _prompt_for(self, task: TaskCard | None) -> str:
+    def _prompt_for(self, task: TaskCard | None, *, procedure_prompt_block: str = "") -> str:
         prompt_lines: list[str] = []
         prompt_asset = self._prompt_asset_text()
         prompt_resolution = self._resolve_prompt_asset()
         if prompt_asset:
             prompt_lines.append(prompt_asset)
+        if procedure_prompt_block:
+            prompt_lines.append(procedure_prompt_block)
         prompt_lines.append(f"Stage: {self.stage_type.value}")
         if task is None:
             prompt_lines.append("No active task card.")
@@ -179,6 +182,12 @@ class ExecutionStage:
         prompt_resolution = self._resolve_prompt_asset()
         allow_search = self.stage_config.allow_search if allow_search_override is None else allow_search_override
         allow_network = True if allow_network_override is None else allow_network_override
+        procedure_injection = build_injected_procedure_bundle(
+            self.paths,
+            run_id=run_id,
+            stage=self.stage_type,
+        )
+        procedure_prompt_block = render_injected_procedure_block(procedure_injection)
 
         runner = self.runners[self.stage_config.runner]
         context = StageContext.model_validate(
@@ -186,7 +195,7 @@ class ExecutionStage:
                 "stage": self.stage_type,
                 "runner": self.stage_config.runner,
                 "model": self.stage_config.model,
-                "prompt": self._prompt_for(task),
+                "prompt": self._prompt_for(task, procedure_prompt_block=procedure_prompt_block),
                 "working_dir": self.paths.root,
                 "run_id": run_id,
                 "timeout_seconds": self.stage_config.timeout_seconds,
@@ -201,6 +210,7 @@ class ExecutionStage:
                 "allow_network": allow_network,
                 "effort": self.stage_config.effort,
                 "env": dict(extra_env or {}),
+                "procedure_injection": procedure_injection,
             }
         )
         runner_result = runner.execute(context)
@@ -227,24 +237,31 @@ class ExecutionStage:
                 "stage": self.stage_type,
                 "status": terminal_status.value,
                 "exit_code": runner_result.exit_code,
-                "metadata": (
-                    {
-                        "asset_resolution": prompt_resolution.to_payload(),
-                        "bound_execution_parameters": bound_parameters.model_dump(mode="json"),
-                        "policy_execution_context": {
-                            "allow_search": context.allow_search,
-                            "allow_network": context.allow_network,
-                        },
-                    }
-                    if prompt_resolution is not None
-                    else {
-                        "bound_execution_parameters": bound_parameters.model_dump(mode="json"),
-                        "policy_execution_context": {
-                            "allow_search": context.allow_search,
-                            "allow_network": context.allow_network,
-                        },
-                    }
+                "metadata": self._result_metadata(
+                    prompt_resolution=prompt_resolution,
+                    bound_parameters=bound_parameters,
+                    context=context,
                 ),
                 "runner_result": runner_result,
             }
         )
+
+    def _result_metadata(
+        self,
+        *,
+        prompt_resolution: ResolvedAsset | None,
+        bound_parameters: BoundExecutionParameters,
+        context: StageContext,
+    ) -> dict[str, object]:
+        metadata: dict[str, object] = {
+            "bound_execution_parameters": bound_parameters.model_dump(mode="json"),
+            "policy_execution_context": {
+                "allow_search": context.allow_search,
+                "allow_network": context.allow_network,
+            },
+        }
+        if prompt_resolution is not None:
+            metadata["asset_resolution"] = prompt_resolution.to_payload()
+        if context.procedure_injection is not None:
+            metadata["procedure_injection"] = context.procedure_injection.model_dump(mode="json")
+        return metadata
