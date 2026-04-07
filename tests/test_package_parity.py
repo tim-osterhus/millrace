@@ -166,6 +166,11 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "This prompt assumes you are operating inside an initialized Millrace workspace" in advisor
     assert "install `millrace-ai`" in advisor
     assert "millrace init /absolute/path/to/workspace" in advisor
+    assert "## Supported Local Workflow" in advisor
+    assert "Start with CLI JSON inspection when the runtime state is unknown" in advisor
+    assert "Use the TUI when you want an interactive local control shell" in advisor
+    assert "do not tell Millrace to run GoalSpec, Spec Review, Taskmaster, audit, or other internal stages" in advisor
+    assert "If the CLI does not ship a cleanup path yet" in advisor
     assert "health --json" in advisor
     assert "OpenClaw Supervisor agent" in advisor
     assert "publish preflight --json" in advisor
