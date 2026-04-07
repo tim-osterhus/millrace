@@ -13,14 +13,10 @@ from ..paths import RuntimePaths
 from .goalspec import (
     AcceptanceProfileRecord,
     CompletionManifestDraftExecutionResult,
-    CompletionManifestDraftRecord,
     CompletionManifestDraftStateRecord,
-    GOALSPEC_ARTIFACT_SCHEMA_VERSION,
     GoalIntakeExecutionResult,
-    GoalIntakeRecord,
     GoalSource,
     ObjectiveProfileSyncExecutionResult,
-    ObjectiveProfileSyncRecord,
     ObjectiveProfileSyncStateRecord,
     SpecInterviewExecutionResult,
     SpecInterviewRecord,
@@ -31,12 +27,10 @@ from .goalspec import (
 from .goalspec_helpers import (
     GoalSpecExecutionError,
     _FRONTMATTER_BOUNDARY,
-    _archive_filename_for_execution,
     _first_paragraph,
     _isoformat_z,
     _load_json_model,
     _load_json_object,
-    _markdown_section,
     _relative_path,
     _resolve_path_token,
     _spec_id_for_goal,
@@ -45,8 +39,12 @@ from .goalspec_helpers import (
     _write_json_model,
     resolve_goal_source,
 )
+from .goalspec_completion_manifest_draft import execute_completion_manifest_draft as _execute_completion_manifest_draft
+from .goalspec_goal_intake import execute_goal_intake as _execute_goal_intake
+from .goalspec_objective_profile_sync import (
+    execute_objective_profile_sync as _execute_objective_profile_sync,
+)
 from .goalspec_persistence import (
-    _build_completion_manifest_draft_state,
     _build_goal_spec_family_state,
     _build_goal_spec_review_state,
     _load_objective_profile_inputs,
@@ -76,59 +74,6 @@ from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnersh
 
 
 _INTERVIEW_AMBIGUITY_MARKERS = ("tbd", "todo", "???", "needs decision")
-
-
-def _render_completion_manifest_report(
-    *,
-    run_id: str,
-    source: GoalSource,
-    draft_state: CompletionManifestDraftStateRecord,
-) -> str:
-    return "\n".join(
-        [
-            "# Completion Manifest Draft",
-            "",
-            f"- **Run-ID:** {run_id}",
-            f"- **Goal-ID:** {source.idea_id}",
-            f"- **Title:** {source.title}",
-            f"- **Source-Path:** `{source.relative_source_path}`",
-            "",
-            "## Acceptance Focus",
-            *(f"- {item}" for item in draft_state.acceptance_focus),
-            "",
-            "## Planned Outputs",
-            *(
-                f"- `{artifact.artifact_kind}`: `{artifact.path}` ({artifact.purpose})"
-                for artifact in draft_state.required_outputs
-            ),
-            "",
-            "## Open Questions",
-            *(f"- {item}" for item in draft_state.open_questions),
-            "",
-        ]
-    )
-
-
-def _render_completion_manifest_record(
-    *,
-    emitted_at: datetime,
-    run_id: str,
-    source: GoalSource,
-    objective_profile_path: str,
-    draft_path: str,
-    report_path: str,
-) -> CompletionManifestDraftRecord:
-    return CompletionManifestDraftRecord(
-        run_id=run_id,
-        emitted_at=emitted_at,
-        goal_id=source.idea_id,
-        title=source.title,
-        source_path=source.relative_source_path,
-        research_brief_path=source.relative_source_path,
-        draft_path=draft_path,
-        report_path=report_path,
-        objective_profile_path=objective_profile_path,
-    )
 
 
 def _render_spec_review_questions(
@@ -494,107 +439,9 @@ def execute_goal_intake(
     run_id: str,
     emitted_at: datetime | None = None,
 ) -> GoalIntakeExecutionResult:
-    """Normalize one queued goal into a durable staged idea plus runtime record."""
+    """Delegate Goal Intake execution to the dedicated tranche-one module."""
 
-    emitted_at = emitted_at or _utcnow()
-    source = resolve_goal_source(paths, checkpoint)
-    source_path = Path(source.source_path)
-    staged_slug = _slugify(source.title)
-    research_brief_path = paths.ideas_staging_dir / f"{source.idea_id}__{staged_slug}.md"
-
-    summary = _first_paragraph(source.body) or source.title
-    problem_statement = _markdown_section(source.body, "Problem Statement") or summary
-    scope = _markdown_section(source.body, "Scope") or "Preserve the queued goal scope for downstream spec synthesis."
-    constraints = _markdown_section(source.body, "Constraints") or "No additional constraints were extracted during deterministic Goal Intake."
-    unknowns = _markdown_section(source.body, "Unknowns Ledger") or "Downstream GoalSpec stages still need to refine acceptance details and decomposition boundaries."
-    evidence_lines = (
-        f"- Source artifact: `{source.relative_source_path}`",
-        "- Stage contract: `agents/_goal_intake.md`",
-    )
-    route_decision = (
-        "Ready for staging under the compiled GoalSpec loop. "
-        "Remaining assumptions are preserved explicitly for Objective Profile Sync and later spec synthesis. "
-        f"Repo evidence anchors: `{source.relative_source_path}`, `agents/_goal_intake.md`."
-    )
-
-    frontmatter_lines = [
-        _FRONTMATTER_BOUNDARY,
-        f"idea_id: {source.idea_id}",
-        f"title: {source.title}",
-        "status: staging",
-        f"updated_at: {_isoformat_z(emitted_at)}",
-        f"decomposition_profile: {source.decomposition_profile}",
-        f"goal_intake_run_id: {run_id}",
-        f"source_path: {source.relative_source_path}",
-        f"source_checksum_sha256: {source.checksum_sha256}",
-        f"artifact_schema_version: {GOALSPEC_ARTIFACT_SCHEMA_VERSION}",
-        _FRONTMATTER_BOUNDARY,
-        "",
-    ]
-    body_lines = [
-        "## Summary",
-        summary,
-        "",
-        "## Problem Statement",
-        problem_statement,
-        "",
-        "## Scope",
-        scope,
-        "",
-        "## Constraints",
-        constraints,
-        "",
-        "## Unknowns Ledger",
-        unknowns,
-        "",
-        "## Evidence",
-        *evidence_lines,
-        "",
-        "## Route Decision",
-        route_decision,
-        "",
-    ]
-    research_brief_path.parent.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(research_brief_path, "\n".join(frontmatter_lines + body_lines))
-
-    archived_source_path = ""
-    if source_path.parent == paths.ideas_raw_dir and source_path != research_brief_path:
-        archive_dir = paths.ideas_archive_dir / source_path.parent.name
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        archived_path = archive_dir / _archive_filename_for_execution(
-            source_path,
-            run_id=run_id,
-            checksum_sha256=source.checksum_sha256,
-        )
-        source_path.replace(archived_path)
-        archived_source_path = _relative_path(archived_path, relative_to=paths.root)
-
-    record = GoalIntakeRecord(
-        run_id=run_id,
-        emitted_at=emitted_at,
-        source_path=source.relative_source_path,
-        archived_source_path=archived_source_path,
-        research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
-        idea_id=source.idea_id,
-        title=source.title,
-        decomposition_profile=source.decomposition_profile,
-        source_checksum_sha256=source.checksum_sha256,
-    )
-    record_path = paths.goalspec_goal_intake_records_dir / f"{run_id}.json"
-    _write_json_model(record_path, record)
-
-    return GoalIntakeExecutionResult(
-        record_path=_relative_path(record_path, relative_to=paths.root),
-        archived_source_path=archived_source_path,
-        research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
-        queue_ownership=ResearchQueueOwnership(
-            family=ResearchQueueFamily.GOALSPEC,
-            queue_path=paths.ideas_staging_dir,
-            item_path=research_brief_path,
-            owner_token=run_id,
-            acquired_at=emitted_at,
-        ),
-    )
+    return _execute_goal_intake(paths, checkpoint, run_id=run_id, emitted_at=emitted_at)
 
 
 def execute_objective_profile_sync(
@@ -604,213 +451,9 @@ def execute_objective_profile_sync(
     run_id: str,
     emitted_at: datetime | None = None,
 ) -> ObjectiveProfileSyncExecutionResult:
-    """Materialize the current objective-profile surfaces from one staged research brief."""
+    """Delegate objective-profile sync execution to the dedicated tranche-one module."""
 
-    emitted_at = emitted_at or _utcnow()
-    source = resolve_goal_source(paths, checkpoint)
-    profile_slug = _slugify(source.idea_id or source.title)
-    profile_id = f"{profile_slug}-profile"
-    research_brief_path = Path(source.source_path)
-    profile_json_path = paths.acceptance_profiles_dir / f"{profile_id}.json"
-    profile_markdown_path = paths.acceptance_profiles_dir / f"{profile_id}.md"
-    report_path = paths.reports_dir / "objective_profile_sync.md"
-
-    milestones = (
-        f"Normalize queued goal `{source.idea_id}` into a staged GoalSpec brief.",
-        "Persist objective-profile state that downstream spec synthesis can reference deterministically.",
-    )
-    hard_blockers = (
-        "Spec Review and task generation remain downstream after this draft synthesis pass.",
-    )
-
-    acceptance_profile = AcceptanceProfileRecord(
-        profile_id=profile_id,
-        goal_id=source.idea_id,
-        title=source.title,
-        run_id=run_id,
-        updated_at=emitted_at,
-        source_path=source.relative_source_path,
-        research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
-        milestones=milestones,
-        hard_blockers=hard_blockers,
-    )
-    _write_json_model(profile_json_path, acceptance_profile)
-
-    profile_markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(
-        profile_markdown_path,
-        "\n".join(
-            [
-                f"# Acceptance Profile: {source.title}",
-                "",
-                f"- **Profile-ID:** {profile_id}",
-                f"- **Goal-ID:** {source.idea_id}",
-                f"- **Run-ID:** {run_id}",
-                f"- **Updated-At:** {_isoformat_z(emitted_at)}",
-                f"- **Source-Path:** `{source.relative_source_path}`",
-                "",
-                "## Milestones",
-                *(f"- {item}" for item in milestones),
-                "",
-                "## Hard Blockers",
-                *(f"- {item}" for item in hard_blockers),
-                "",
-            ]
-        ),
-    )
-
-    goal_intake_record_path = paths.goalspec_goal_intake_records_dir / f"{run_id}.json"
-    family_state = (
-        load_goal_spec_family_state(paths.goal_spec_family_state_file)
-        if paths.goal_spec_family_state_file.exists()
-        else None
-    )
-    family_policy_payload: dict[str, object] = {}
-    if paths.objective_family_policy_file.exists():
-        family_policy_payload = _load_json_object(paths.objective_family_policy_file)
-    family_policy_payload.update(
-        {
-            "schema_version": "1.0",
-            "family_cap_mode": "deterministic",
-            "initial_family_max_specs": 1,
-            "source_goal_id": source.idea_id,
-            "updated_at": _isoformat_z(emitted_at),
-        }
-    )
-    family_policy_payload, initial_family_policy_pin = apply_initial_family_policy_pin(
-        paths=paths,
-        current_policy_payload=family_policy_payload,
-        current_family_state=family_state,
-    )
-    write_text_atomic(
-        paths.objective_family_policy_file,
-        json.dumps(family_policy_payload, indent=2, sort_keys=True) + "\n",
-    )
-    queue_governor_report = build_queue_governor_report(
-        paths=paths,
-        goal_id=source.idea_id,
-        updated_at=emitted_at,
-        pin_decision=initial_family_policy_pin,
-    )
-    _write_json_model(paths.queue_governor_report_file, queue_governor_report)
-
-    profile_state = ObjectiveProfileSyncStateRecord(
-        profile_id=profile_id,
-        goal_id=source.idea_id,
-        title=source.title,
-        run_id=run_id,
-        updated_at=emitted_at,
-        source_path=source.relative_source_path,
-        research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
-        profile_path=_relative_path(profile_json_path, relative_to=paths.root),
-        profile_markdown_path=_relative_path(profile_markdown_path, relative_to=paths.root),
-        report_path=_relative_path(report_path, relative_to=paths.root),
-        goal_intake_record_path=_relative_path(goal_intake_record_path, relative_to=paths.root),
-        initial_family_policy_pin=initial_family_policy_pin,
-    )
-    _write_json_model(paths.objective_profile_sync_state_file, profile_state)
-
-    write_text_atomic(
-        report_path,
-        "\n".join(
-            [
-                "# Objective Profile Sync",
-                "",
-                f"- **Run-ID:** {run_id}",
-                f"- **Goal-ID:** {source.idea_id}",
-                f"- **Profile-ID:** {profile_id}",
-                f"- **Updated-At:** {_isoformat_z(emitted_at)}",
-                f"- **Source-Path:** `{source.relative_source_path}`",
-                f"- **Research-Brief:** `{_relative_path(research_brief_path, relative_to=paths.root)}`",
-                f"- **Profile-State:** `{_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root)}`",
-                "",
-                "## Outcome",
-                "Objective Profile Sync refreshed the canonical acceptance-profile and current objective state for downstream GoalSpec work.",
-                "",
-            ]
-        ),
-    )
-
-    _write_json_model(
-        paths.objective_contract_file,
-        ObjectiveContract(
-            objective_id=source.idea_id,
-            objective_root=".",
-            completion={
-                "authoritative_decision_file": "agents/reports/completion_decision.json",
-                "fallback_decision_file": "agents/reports/audit_gate_decision.json",
-                "require_task_store_cards_zero": True,
-                "require_open_gaps_zero": True,
-            },
-            seed_state={
-                "mode": "goal_spec_workspace",
-                "goal_id": source.idea_id,
-                "source_path": source.relative_source_path,
-            },
-            artifacts={
-                "strict_contract_file": _relative_path(paths.audit_strict_contract_file, relative_to=paths.root),
-                "objective_profile_state_file": _relative_path(
-                    paths.objective_profile_sync_state_file,
-                    relative_to=paths.root,
-                ),
-                "objective_profile_file": _relative_path(profile_json_path, relative_to=paths.root),
-                "objective_profile_markdown_file": _relative_path(profile_markdown_path, relative_to=paths.root),
-                "completion_manifest_file": _relative_path(paths.audit_completion_manifest_file, relative_to=paths.root),
-            },
-            objective_profile={
-                "profile_id": profile_id,
-                "goal_id": source.idea_id,
-                "title": source.title,
-                "source_path": source.relative_source_path,
-                "updated_at": _isoformat_z(emitted_at),
-                "profile_path": _relative_path(profile_json_path, relative_to=paths.root),
-                "profile_markdown_path": _relative_path(profile_markdown_path, relative_to=paths.root),
-                "research_brief_path": _relative_path(research_brief_path, relative_to=paths.root),
-                "report_path": _relative_path(report_path, relative_to=paths.root),
-                "goal_intake_record_path": _relative_path(goal_intake_record_path, relative_to=paths.root),
-            },
-        ),
-    )
-    _write_json_model(
-        paths.audit_strict_contract_file,
-        AcceptanceProfileRecord(
-            profile_id=profile_id,
-            goal_id=source.idea_id,
-            title=source.title,
-            run_id=run_id,
-            updated_at=emitted_at,
-            source_path=source.relative_source_path,
-            research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
-            milestones=milestones,
-            hard_blockers=hard_blockers,
-        ),
-    )
-    record = ObjectiveProfileSyncRecord(
-        run_id=run_id,
-        emitted_at=emitted_at,
-        goal_id=source.idea_id,
-        title=source.title,
-        source_path=source.relative_source_path,
-        research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
-        profile_state_path=_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root),
-        profile_path=_relative_path(profile_json_path, relative_to=paths.root),
-        profile_markdown_path=_relative_path(profile_markdown_path, relative_to=paths.root),
-        report_path=_relative_path(report_path, relative_to=paths.root),
-    )
-    record_path = paths.goalspec_objective_profile_sync_records_dir / f"{run_id}.json"
-    _write_json_model(record_path, record)
-
-    return ObjectiveProfileSyncExecutionResult(
-        record_path=_relative_path(record_path, relative_to=paths.root),
-        profile_state_path=_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root),
-        queue_ownership=ResearchQueueOwnership(
-            family=ResearchQueueFamily.GOALSPEC,
-            queue_path=paths.ideas_staging_dir,
-            item_path=research_brief_path,
-            owner_token=run_id,
-            acquired_at=emitted_at,
-        ),
-    )
+    return _execute_objective_profile_sync(paths, checkpoint, run_id=run_id, emitted_at=emitted_at)
 
 
 def execute_completion_manifest_draft(
@@ -820,83 +463,9 @@ def execute_completion_manifest_draft(
     run_id: str,
     emitted_at: datetime | None = None,
 ) -> CompletionManifestDraftExecutionResult:
-    """Draft the durable completion-manifest state needed before spec synthesis."""
+    """Delegate completion-manifest drafting to the dedicated tranche-one module."""
 
-    emitted_at = emitted_at or _utcnow()
-    source = resolve_goal_source(paths, checkpoint)
-    objective_state, profile = _load_objective_profile_inputs(paths)
-    spec_id = _spec_id_for_goal(source.idea_id)
-    record_path = paths.goalspec_completion_manifest_records_dir / f"{run_id}.json"
-    draft_path = _relative_path(paths.audit_completion_manifest_file, relative_to=paths.root)
-    report_path = _relative_path(paths.completion_manifest_plan_file, relative_to=paths.root)
-    draft_state = _build_completion_manifest_draft_state(
-        emitted_at=emitted_at,
-        run_id=run_id,
-        source=source,
-        objective_state=objective_state,
-        profile=profile,
-        spec_id=spec_id,
-        paths=paths,
-    )
-    if record_path.exists() and paths.audit_completion_manifest_file.exists() and paths.completion_manifest_plan_file.exists():
-        existing_record = _load_json_model(record_path, CompletionManifestDraftRecord)
-        existing_draft_state = _load_json_model(
-            paths.audit_completion_manifest_file,
-            CompletionManifestDraftStateRecord,
-        )
-        expected_draft_state = draft_state.model_copy(update={"updated_at": existing_draft_state.updated_at})
-        expected_record = _render_completion_manifest_record(
-            emitted_at=existing_record.emitted_at,
-            run_id=run_id,
-            source=source,
-            objective_profile_path=objective_state.profile_path,
-            draft_path=draft_path,
-            report_path=report_path,
-        )
-        expected_report = _render_completion_manifest_report(
-            run_id=run_id,
-            source=source,
-            draft_state=expected_draft_state,
-        )
-        if (
-            existing_record == expected_record
-            and existing_draft_state == expected_draft_state
-            and paths.completion_manifest_plan_file.read_text(encoding="utf-8") == expected_report
-        ):
-            return CompletionManifestDraftExecutionResult(
-                record_path=_relative_path(record_path, relative_to=paths.root),
-                draft_path=draft_path,
-                report_path=report_path,
-                objective_profile_path=objective_state.profile_path,
-                draft_state=existing_draft_state,
-            )
-
-    _write_json_model(paths.audit_completion_manifest_file, draft_state)
-    write_text_atomic(
-        paths.completion_manifest_plan_file,
-        _render_completion_manifest_report(
-            run_id=run_id,
-            source=source,
-            draft_state=draft_state,
-        ),
-    )
-
-    record = _render_completion_manifest_record(
-        emitted_at=emitted_at,
-        run_id=run_id,
-        source=source,
-        objective_profile_path=objective_state.profile_path,
-        draft_path=draft_path,
-        report_path=report_path,
-    )
-    _write_json_model(record_path, record)
-    return CompletionManifestDraftExecutionResult(
-        record_path=_relative_path(record_path, relative_to=paths.root),
-        draft_path=draft_path,
-        report_path=report_path,
-        objective_profile_path=objective_state.profile_path,
-        draft_state=draft_state,
-    )
+    return _execute_completion_manifest_draft(paths, checkpoint, run_id=run_id, emitted_at=emitted_at)
 
 
 def execute_spec_synthesis(
