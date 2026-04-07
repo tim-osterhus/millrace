@@ -25,6 +25,7 @@ from .contract_harness import (
     HarnessBenchmarkStatus,
     HarnessCandidateState,
     HarnessChangedSurface,
+    HarnessRecommendationDisposition,
 )
 from .contracts import AuditGateDecision, CompletionDecision, ContractModel, ExecutionStatus, ResearchMode, ResearchStatus
 from .diagnostics import DiagnosticsPolicyEvidenceSnapshot
@@ -923,6 +924,56 @@ class CompoundingHarnessBenchmarkReport(ContractModel):
 
     config_path: Path
     benchmark: CompoundingHarnessBenchmarkView
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessRecommendationView(ContractModel):
+    """Inspectable persisted harness recommendation artifact."""
+
+    recommendation_id: str
+    search_id: str
+    disposition: HarnessRecommendationDisposition
+    recommended_candidate_id: str | None = None
+    recommended_result_id: str | None = None
+    candidate_ids: tuple[str, ...] = ()
+    benchmark_result_ids: tuple[str, ...] = ()
+    summary: str
+    created_at: datetime
+    created_by: str
+    artifact_path: Path
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessRecommendationListReport(ContractModel):
+    """Deterministic operator-facing list of harness recommendations."""
+
+    config_path: Path
+    recommendations: tuple[CompoundingHarnessRecommendationView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessRecommendationReport(ContractModel):
+    """Detailed operator-facing report for one harness recommendation."""
+
+    config_path: Path
+    recommendation: CompoundingHarnessRecommendationView
 
     @field_validator("config_path", mode="before")
     @classmethod

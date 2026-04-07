@@ -16,6 +16,8 @@ from .cli_rendering import (
     render_compounding_harness_benchmarks,
     render_compounding_harness_candidate,
     render_compounding_harness_candidates,
+    render_compounding_harness_recommendation,
+    render_compounding_harness_recommendations,
     render_compounding_procedure,
     render_compounding_procedures,
     _legacy_policy_lines,
@@ -44,6 +46,8 @@ from .control_models import (
     CompoundingHarnessBenchmarkReport,
     CompoundingHarnessCandidateListReport,
     CompoundingHarnessCandidateReport,
+    CompoundingHarnessRecommendationListReport,
+    CompoundingHarnessRecommendationReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     InterviewListReport,
@@ -62,6 +66,8 @@ compounding_procedures_app = typer.Typer(help="Inspect or mutate governed reusab
 compounding_harness_app = typer.Typer(help="Inspect governed harness candidates and benchmark results.")
 compounding_harness_candidates_app = typer.Typer(help="Inspect governed harness candidates.")
 compounding_harness_benchmarks_app = typer.Typer(help="Inspect or run governed harness benchmarks.")
+compounding_harness_search_app = typer.Typer(help="Run bounded config/assets-only harness search.")
+compounding_harness_recommendations_app = typer.Typer(help="Inspect bounded harness recommendations.")
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
@@ -75,6 +81,8 @@ compounding_app.add_typer(compounding_procedures_app, name="procedures")
 compounding_app.add_typer(compounding_harness_app, name="harness")
 compounding_harness_app.add_typer(compounding_harness_candidates_app, name="candidates")
 compounding_harness_app.add_typer(compounding_harness_benchmarks_app, name="benchmarks")
+compounding_harness_app.add_typer(compounding_harness_search_app, name="search")
+compounding_harness_app.add_typer(compounding_harness_recommendations_app, name="recommendations")
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
@@ -712,6 +720,57 @@ def compounding_harness_benchmarks_root(
         json_mode=json_mode,
     )
     render_compounding_harness_benchmarks(report, json_mode=json_mode)
+
+
+@compounding_harness_search_app.command("run")
+def compounding_harness_search_run_command(
+    ctx: typer.Context,
+    created_by: Annotated[
+        str,
+        typer.Option("--created-by", help="Issuer recorded on generated search and recommendation artifacts."),
+    ] = "cli.search",
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Run one bounded config/assets-only harness search."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).compounding_harness_run_search(created_by=created_by),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@compounding_harness_recommendations_app.command("show")
+def compounding_harness_recommendation_show_command(
+    ctx: typer.Context,
+    recommendation_id: Annotated[str, typer.Argument(help="Harness recommendation id to inspect.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one persisted bounded harness recommendation."""
+
+    report: CompoundingHarnessRecommendationReport = _run_expected(
+        lambda: _control(ctx).compounding_harness_recommendation(recommendation_id),
+        json_mode=json_mode,
+    )
+    render_compounding_harness_recommendation(report, json_mode=json_mode)
+
+
+@compounding_harness_recommendations_app.callback(invoke_without_command=True)
+def compounding_harness_recommendations_root(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show persisted bounded harness recommendations."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    report: CompoundingHarnessRecommendationListReport = _run_expected(
+        lambda: _control(ctx).compounding_harness_recommendations(),
+        json_mode=json_mode,
+    )
+    render_compounding_harness_recommendations(report, json_mode=json_mode)
 
 
 @research_app.command("history")

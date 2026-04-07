@@ -14,6 +14,8 @@ from .control import (
     CompoundingHarnessBenchmarkReport,
     CompoundingHarnessCandidateListReport,
     CompoundingHarnessCandidateReport,
+    CompoundingHarnessRecommendationListReport,
+    CompoundingHarnessRecommendationReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     OperationResult,
@@ -1169,6 +1171,58 @@ def render_compounding_harness_benchmark(report: CompoundingHarnessBenchmarkRepo
     if benchmark.artifact_refs:
         lines.append("Artifacts:")
         lines.extend(f"- {item}" for item in benchmark.artifact_refs)
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_harness_recommendations(
+    report: CompoundingHarnessRecommendationListReport,
+    *,
+    json_mode: bool,
+) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    if not report.recommendations:
+        typer.echo("No compounding harness recommendations.")
+        return
+    lines: list[str] = []
+    for recommendation in report.recommendations:
+        lines.append(
+            f"{recommendation.recommendation_id} [{recommendation.disposition.value}] "
+            f"search={recommendation.search_id}"
+        )
+        lines.append(f"  Summary: {recommendation.summary}")
+        lines.append(f"  Artifact: {recommendation.artifact_path}")
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_harness_recommendation(
+    report: CompoundingHarnessRecommendationReport,
+    *,
+    json_mode: bool,
+) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    recommendation = report.recommendation
+    lines = [
+        f"Recommendation ID: {recommendation.recommendation_id}",
+        f"Search ID: {recommendation.search_id}",
+        f"Disposition: {recommendation.disposition.value}",
+        f"Summary: {recommendation.summary}",
+        f"Created by: {recommendation.created_by}",
+        f"Artifact: {recommendation.artifact_path}",
+    ]
+    if recommendation.recommended_candidate_id is not None:
+        lines.append(f"Recommended candidate: {recommendation.recommended_candidate_id}")
+    if recommendation.recommended_result_id is not None:
+        lines.append(f"Recommended benchmark: {recommendation.recommended_result_id}")
+    if recommendation.candidate_ids:
+        lines.append("Candidate ids:")
+        lines.extend(f"- {item}" for item in recommendation.candidate_ids)
+    if recommendation.benchmark_result_ids:
+        lines.append("Benchmark result ids:")
+        lines.extend(f"- {item}" for item in recommendation.benchmark_result_ids)
     typer.echo("\n".join(lines))
 
 

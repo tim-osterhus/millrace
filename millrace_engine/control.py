@@ -14,11 +14,14 @@ from .compounding import (
     discover_governed_procedures,
     discover_harness_benchmark_results,
     discover_harness_candidates,
+    discover_harness_recommendations,
     governed_procedure_for_id,
     harness_benchmark_result_for_id,
     harness_candidate_for_id,
+    harness_recommendation_for_id,
     lifecycle_history_for_procedure,
     run_harness_benchmark,
+    run_harness_search,
 )
 from .config import LoadedConfig, build_runtime_paths
 from .contract_compounding import ProcedureScope
@@ -61,6 +64,9 @@ from .control_models import (
     CompoundingHarnessCandidateListReport,
     CompoundingHarnessCandidateReport,
     CompoundingHarnessCandidateView,
+    CompoundingHarnessRecommendationListReport,
+    CompoundingHarnessRecommendationReport,
+    CompoundingHarnessRecommendationView,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     CompoundingProcedureView,
@@ -259,6 +265,23 @@ def _compounding_harness_benchmark_view(result: object) -> CompoundingHarnessBen
         outcome_summary=benchmark.outcome_summary,
         cost_summary=benchmark.cost_summary,
         artifact_refs=benchmark.artifact_refs,
+    )
+
+
+def _compounding_harness_recommendation_view(result: object) -> CompoundingHarnessRecommendationView:
+    recommendation = getattr(result, "recommendation")
+    return CompoundingHarnessRecommendationView(
+        recommendation_id=recommendation.recommendation_id,
+        search_id=recommendation.search_id,
+        disposition=recommendation.disposition,
+        recommended_candidate_id=recommendation.recommended_candidate_id,
+        recommended_result_id=recommendation.recommended_result_id,
+        candidate_ids=recommendation.candidate_ids,
+        benchmark_result_ids=recommendation.benchmark_result_ids,
+        summary=recommendation.summary,
+        created_at=recommendation.created_at,
+        created_by=recommendation.created_by,
+        artifact_path=getattr(result, "path"),
     )
 
 
@@ -823,6 +846,63 @@ class EngineControl:
                 "outcome": outcome.result.outcome.value,
                 "benchmark_suite_ref": outcome.result.benchmark_suite_ref,
             },
+        )
+
+    def compounding_harness_run_search(self, *, created_by: str = "cli.search") -> OperationResult:
+        """Run one bounded config/assets-only harness search."""
+
+        try:
+            outcome = run_harness_search(self.paths, self.loaded, created_by=created_by)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness search failed: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness search failed: {single_line_message(exc)}") from exc
+        return OperationResult(
+            mode="direct",
+            applied=True,
+            message="compounding harness search recorded",
+            payload={
+                "search_id": outcome.request.search_id,
+                "search_path": outcome.search_path.as_posix(),
+                "candidate_count": len(outcome.candidates),
+                "benchmark_count": len(outcome.benchmark_results),
+                "recommendation_id": outcome.recommendation.recommendation_id,
+                "recommendation_path": outcome.recommendation_path.as_posix(),
+                "disposition": outcome.recommendation.disposition.value,
+                "recommended_candidate_id": outcome.recommendation.recommended_candidate_id,
+                "recommended_result_id": outcome.recommendation.recommended_result_id,
+            },
+        )
+
+    def compounding_harness_recommendations(self) -> CompoundingHarnessRecommendationListReport:
+        """Return persisted bounded harness recommendations."""
+
+        try:
+            recommendations = discover_harness_recommendations(self.paths)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness recommendations are invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness recommendations are invalid: {single_line_message(exc)}") from exc
+        return CompoundingHarnessRecommendationListReport(
+            config_path=self.config_path,
+            recommendations=tuple(_compounding_harness_recommendation_view(item) for item in recommendations),
+        )
+
+    def compounding_harness_recommendation(self, recommendation_id: str) -> CompoundingHarnessRecommendationReport:
+        """Return one persisted bounded harness recommendation."""
+
+        normalized_recommendation_id = recommendation_id.strip()
+        if not normalized_recommendation_id:
+            raise ControlError("compounding_harness_recommendation requires a recommendation_id")
+        try:
+            recommendation = harness_recommendation_for_id(self.paths, normalized_recommendation_id)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness recommendation is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness recommendation is invalid: {single_line_message(exc)}") from exc
+        return CompoundingHarnessRecommendationReport(
+            config_path=self.config_path,
+            recommendation=_compounding_harness_recommendation_view(recommendation),
         )
 
     def compounding_promote(

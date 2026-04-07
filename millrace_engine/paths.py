@@ -69,7 +69,10 @@ class RuntimePaths:
     compounding_usage_records_dir: Path
     compounding_lifecycle_records_dir: Path
     compounding_harness_candidates_dir: Path
+    compounding_harness_candidate_assets_dir: Path
     compounding_benchmark_results_dir: Path
+    compounding_harness_search_requests_dir: Path
+    compounding_harness_recommendations_dir: Path
     goal_spec_family_state_file: Path
     goalspec_runtime_dir: Path
     goalspec_goal_intake_records_dir: Path
@@ -167,7 +170,10 @@ class RuntimePaths:
             compounding_usage_records_dir=compounding_dir / "usage",
             compounding_lifecycle_records_dir=compounding_dir / "lifecycle",
             compounding_harness_candidates_dir=compounding_dir / "harness_candidates",
+            compounding_harness_candidate_assets_dir=compounding_dir / "harness_candidate_assets",
             compounding_benchmark_results_dir=compounding_dir / "benchmark_results",
+            compounding_harness_search_requests_dir=compounding_dir / "harness_searches",
+            compounding_harness_recommendations_dir=compounding_dir / "harness_recommendations",
             goal_spec_family_state_file=research_runtime_dir / "spec_family_state.json",
             goalspec_runtime_dir=goalspec_runtime_dir,
             goalspec_goal_intake_records_dir=goalspec_runtime_dir / "goal_intake",

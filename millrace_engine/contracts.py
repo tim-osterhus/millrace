@@ -97,9 +97,14 @@ from .contract_harness import (
     HarnessBenchmarkStatus,
     HarnessCandidateArtifact,
     HarnessCandidateCompoundingPolicy,
+    HarnessCandidatePromptAssetOverride,
     HarnessCandidateState,
     HarnessChangedSurface,
     HarnessChangedSurfaceKind,
+    HarnessRecommendationArtifact,
+    HarnessRecommendationDisposition,
+    HarnessSearchAssetTarget,
+    HarnessSearchRequestArtifact,
 )
 
 # Phase 01B loop-architecture contracts live in a dedicated module but remain

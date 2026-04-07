@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal
 import re
 
 from pydantic import Field, field_validator
 
-from .contract_core import ContractModel, _normalize_datetime, _normalize_sequence
+from .contract_core import ContractModel, StageType, _normalize_datetime, _normalize_sequence
 
 
 HARNESS_SCHEMA_VERSION = "1.0"
@@ -54,6 +55,13 @@ class HarnessCandidateState(str, Enum):
     REJECTED = "rejected"
 
 
+class HarnessRecommendationDisposition(str, Enum):
+    """Conservative bounded-search recommendation outcome."""
+
+    RECOMMEND = "recommend"
+    NO_CHANGE = "no_change"
+
+
 class HarnessBenchmarkStatus(str, Enum):
     """Execution status for one bounded benchmark run."""
 
@@ -76,6 +84,24 @@ class HarnessCandidateCompoundingPolicy(ContractModel):
 
     profile: Literal["baseline", "compounding", "governed_plus", "lab"] = "compounding"
     governed_plus_budget_characters: int = Field(default=3200, ge=1)
+
+
+class HarnessCandidatePromptAssetOverride(ContractModel):
+    """Candidate-owned prompt asset override for one stage."""
+
+    stage: StageType
+    source_ref: str
+    candidate_prompt_file: Path
+
+    @field_validator("source_ref")
+    @classmethod
+    def validate_source_ref(cls, value: str) -> str:
+        return _normalize_text(value, field_label="source_ref") or ""
+
+    @field_validator("candidate_prompt_file", mode="before")
+    @classmethod
+    def normalize_candidate_prompt_file(cls, value: str | Path) -> Path:
+        return Path(value)
 
 
 class HarnessChangedSurface(ContractModel):
@@ -102,6 +128,7 @@ class HarnessCandidateArtifact(ContractModel):
     state: HarnessCandidateState = HarnessCandidateState.CANDIDATE
     changed_surfaces: tuple[HarnessChangedSurface, ...]
     compounding_policy_override: HarnessCandidateCompoundingPolicy | None = None
+    prompt_asset_overrides: tuple[HarnessCandidatePromptAssetOverride, ...] = ()
     reviewer_note: str | None = None
     created_at: datetime
     created_by: str
@@ -133,6 +160,113 @@ class HarnessCandidateArtifact(ContractModel):
             item if isinstance(item, HarnessChangedSurface) else HarnessChangedSurface.model_validate(item)
             for item in value
         )
+
+    @field_validator("prompt_asset_overrides", mode="before")
+    @classmethod
+    def normalize_prompt_asset_overrides(
+        cls,
+        value: tuple[HarnessCandidatePromptAssetOverride, ...]
+        | list[HarnessCandidatePromptAssetOverride]
+        | tuple[dict[str, Any], ...]
+        | list[dict[str, Any]]
+        | None,
+    ) -> tuple[HarnessCandidatePromptAssetOverride, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item
+            if isinstance(item, HarnessCandidatePromptAssetOverride)
+            else HarnessCandidatePromptAssetOverride.model_validate(item)
+            for item in value
+        )
+
+
+class HarnessSearchAssetTarget(ContractModel):
+    """One declared asset-level search target."""
+
+    stage: StageType
+    source_ref: str
+
+    @field_validator("source_ref")
+    @classmethod
+    def validate_source_ref(cls, value: str) -> str:
+        return _normalize_text(value, field_label="source_ref") or ""
+
+
+class HarnessSearchRequestArtifact(ContractModel):
+    """Persisted bounded config/assets-only search request."""
+
+    schema_version: Literal["1.0"] = HARNESS_SCHEMA_VERSION
+    search_id: str
+    baseline_ref: str
+    benchmark_suite_ref: str
+    config_variants: tuple[HarnessCandidateCompoundingPolicy, ...] = ()
+    asset_targets: tuple[HarnessSearchAssetTarget, ...] = ()
+    created_at: datetime
+    created_by: str
+
+    @field_validator("search_id")
+    @classmethod
+    def validate_search_id(cls, value: str) -> str:
+        return _normalize_identifier(value, field_label="search_id") or ""
+
+    @field_validator("baseline_ref", "benchmark_suite_ref", "created_by")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator("config_variants", mode="before")
+    @classmethod
+    def normalize_config_variants(
+        cls,
+        value: tuple[HarnessCandidateCompoundingPolicy, ...]
+        | list[HarnessCandidateCompoundingPolicy]
+        | tuple[dict[str, Any], ...]
+        | list[dict[str, Any]]
+        | None,
+    ) -> tuple[HarnessCandidateCompoundingPolicy, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item
+            if isinstance(item, HarnessCandidateCompoundingPolicy)
+            else HarnessCandidateCompoundingPolicy.model_validate(item)
+            for item in value
+        )
+
+    @field_validator("asset_targets", mode="before")
+    @classmethod
+    def normalize_asset_targets(
+        cls,
+        value: tuple[HarnessSearchAssetTarget, ...]
+        | list[HarnessSearchAssetTarget]
+        | tuple[dict[str, Any], ...]
+        | list[dict[str, Any]]
+        | None,
+    ) -> tuple[HarnessSearchAssetTarget, ...]:
+        if not value:
+            return ()
+        return tuple(
+            item if isinstance(item, HarnessSearchAssetTarget) else HarnessSearchAssetTarget.model_validate(item)
+            for item in value
+        )
+
+    @field_validator("asset_targets")
+    @classmethod
+    def validate_nonempty_scope(
+        cls,
+        value: tuple[HarnessSearchAssetTarget, ...],
+        info: Any,
+    ) -> tuple[HarnessSearchAssetTarget, ...]:
+        config_variants = getattr(info, "data", {}).get("config_variants", ())
+        if not config_variants and not value:
+            raise ValueError("search request must declare at least one config or asset target")
+        return value
 
 
 class HarnessBenchmarkOutcomeSummary(ContractModel):
@@ -200,6 +334,44 @@ class HarnessBenchmarkResult(ContractModel):
     @field_validator("artifact_refs", mode="before")
     @classmethod
     def normalize_artifact_refs(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return _normalize_sequence([str(item) for item in value])
+
+
+class HarnessRecommendationArtifact(ContractModel):
+    """Persisted bounded recommendation backed by benchmark evidence."""
+
+    schema_version: Literal["1.0"] = HARNESS_SCHEMA_VERSION
+    recommendation_id: str
+    search_id: str
+    disposition: HarnessRecommendationDisposition
+    recommended_candidate_id: str | None = None
+    recommended_result_id: str | None = None
+    candidate_ids: tuple[str, ...] = ()
+    benchmark_result_ids: tuple[str, ...] = ()
+    summary: str
+    created_at: datetime
+    created_by: str
+
+    @field_validator("recommendation_id", "search_id", "recommended_candidate_id", "recommended_result_id")
+    @classmethod
+    def validate_identifiers(cls, value: str | None, info: Any) -> str | None:
+        return _normalize_identifier(value, field_label=getattr(info, "field_name", "value"))
+
+    @field_validator("summary", "created_by")
+    @classmethod
+    def validate_text_fields(cls, value: str, info: Any) -> str:
+        return _normalize_text(value, field_label=getattr(info, "field_name", "value")) or ""
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator("candidate_ids", "benchmark_result_ids", mode="before")
+    @classmethod
+    def normalize_sequences(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
         if not value:
             return ()
         return _normalize_sequence([str(item) for item in value])

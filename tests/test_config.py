@@ -31,9 +31,13 @@ from millrace_engine.contracts import (
     HarnessBenchmarkResult,
     HarnessBenchmarkStatus,
     HarnessCandidateArtifact,
+    HarnessCandidatePromptAssetOverride,
     HarnessCandidateState,
     HarnessChangedSurface,
     HarnessChangedSurfaceKind,
+    HarnessRecommendationArtifact,
+    HarnessRecommendationDisposition,
+    HarnessSearchRequestArtifact,
     InjectedContextFact,
     InjectedProcedure,
     ProcedureInjectionBundle,
@@ -267,8 +271,17 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.compounding_harness_candidates_dir == (
         workspace_root / "agents/compounding/harness_candidates"
     ).resolve()
+    assert paths.compounding_harness_candidate_assets_dir == (
+        workspace_root / "agents/compounding/harness_candidate_assets"
+    ).resolve()
     assert paths.compounding_benchmark_results_dir == (
         workspace_root / "agents/compounding/benchmark_results"
+    ).resolve()
+    assert paths.compounding_harness_search_requests_dir == (
+        workspace_root / "agents/compounding/harness_searches"
+    ).resolve()
+    assert paths.compounding_harness_recommendations_dir == (
+        workspace_root / "agents/compounding/harness_recommendations"
     ).resolve()
     assert paths.completion_manifest_plan_file == (
         workspace_root / "agents/reports/completion_manifest_plan.md"
@@ -448,6 +461,13 @@ def test_harness_contract_models_validate_and_normalize_payloads() -> None:
                 "profile": "governed_plus",
                 "governed_plus_budget_characters": 2800,
             },
+            "prompt_asset_overrides": [
+                {
+                    "stage": "builder",
+                    "source_ref": "package:agents/_start.md",
+                    "candidate_prompt_file": "agents/compounding/harness_candidate_assets/search-001/builder.md",
+                }
+            ],
             "reviewer_note": " Bound review only ",
             "created_at": "2026-04-07T21:00:00Z",
             "created_by": "cli.fixture",
@@ -480,6 +500,41 @@ def test_harness_contract_models_validate_and_normalize_payloads() -> None:
             "artifact_refs": ["agents/compounding/benchmark_results/example-baseline.json"],
         }
     )
+    search = HarnessSearchRequestArtifact.model_validate(
+        {
+            "search_id": "search.20260407T211000Z",
+            "baseline_ref": "workspace.live",
+            "benchmark_suite_ref": "preview.standard.v1",
+            "config_variants": [
+                {
+                    "profile": "baseline",
+                    "governed_plus_budget_characters": 3200,
+                }
+            ],
+            "asset_targets": [
+                {
+                    "stage": "builder",
+                    "source_ref": "package:agents/_start.md",
+                }
+            ],
+            "created_at": "2026-04-07T21:10:00Z",
+            "created_by": "cli.search",
+        }
+    )
+    recommendation = HarnessRecommendationArtifact.model_validate(
+        {
+            "recommendation_id": "recommend.search.20260407T211000Z",
+            "search_id": search.search_id,
+            "disposition": "recommend",
+            "recommended_candidate_id": candidate.candidate_id,
+            "recommended_result_id": result.result_id,
+            "candidate_ids": [candidate.candidate_id],
+            "benchmark_result_ids": [result.result_id],
+            "summary": " Recommend the asset-backed candidate. ",
+            "created_at": "2026-04-07T21:10:30Z",
+            "created_by": "cli.search",
+        }
+    )
 
     assert candidate.state is HarnessCandidateState.CANDIDATE
     assert candidate.changed_surfaces == (
@@ -489,9 +544,19 @@ def test_harness_contract_models_validate_and_normalize_payloads() -> None:
             summary="Switch the profile into governed plus mode.",
         ),
     )
+    assert candidate.prompt_asset_overrides == (
+        HarnessCandidatePromptAssetOverride(
+            stage=StageType.BUILDER,
+            source_ref="package:agents/_start.md",
+            candidate_prompt_file=Path("agents/compounding/harness_candidate_assets/search-001/builder.md"),
+        ),
+    )
     assert result.status is HarnessBenchmarkStatus.COMPLETE
     assert result.outcome is HarnessBenchmarkOutcome.CHANGED
     assert result.model_dump(mode="json")["completed_at"] == "2026-04-07T21:05:05Z"
+    assert search.asset_targets[0].stage is StageType.BUILDER
+    assert recommendation.disposition is HarnessRecommendationDisposition.RECOMMEND
+    assert recommendation.summary == "Recommend the asset-backed candidate."
 
 
 def test_context_fact_contract_models_validate_and_normalize_payloads() -> None:

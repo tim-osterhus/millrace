@@ -388,6 +388,23 @@ def write_harness_candidate(
     return path
 
 
+def write_workspace_prompt_override(workspace: Path, *, relative_path: str, title: str) -> Path:
+    path = workspace / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                f"# {title}",
+                "",
+                "Workspace override used for bounded harness search tests.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def write_interview_source(
     workspace: Path,
     *,
@@ -3784,6 +3801,122 @@ def test_cli_compounding_harness_benchmark_rejects_unsupported_suite_ref(tmp_pat
     benchmark_payload = json.loads(benchmark_show_result.stdout)
     assert benchmark_payload["benchmark"]["status"] == "unsupported"
     assert "unsupported benchmark_suite_ref" in benchmark_payload["benchmark"]["outcome_summary"]["message"]
+
+
+def test_cli_compounding_harness_search_generates_asset_backed_recommendation(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_workspace_prompt_override(
+        workspace,
+        relative_path="agents/_start.md",
+        title="Workspace Builder Prompt Override",
+    )
+
+    run_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "search",
+            "run",
+            "--json",
+        ],
+    )
+
+    assert run_result.exit_code == 0
+    run_payload = json.loads(run_result.stdout)
+    assert run_payload["message"] == "compounding harness search recorded"
+    assert run_payload["payload"]["candidate_count"] >= 3
+    assert run_payload["payload"]["benchmark_count"] >= 3
+    assert run_payload["payload"]["recommended_candidate_id"] is not None
+    recommendation_id = run_payload["payload"]["recommendation_id"]
+    recommendation_path = Path(run_payload["payload"]["recommendation_path"])
+    assert recommendation_path.exists()
+
+    recommendation_list_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "recommendations",
+            "--json",
+        ],
+    )
+
+    assert recommendation_list_result.exit_code == 0
+    recommendation_list_payload = json.loads(recommendation_list_result.stdout)
+    assert recommendation_list_payload["recommendations"][0]["recommendation_id"] == recommendation_id
+    assert recommendation_list_payload["recommendations"][0]["disposition"] == "recommend"
+
+    recommendation_show_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "recommendations",
+            "show",
+            recommendation_id,
+            "--json",
+        ],
+    )
+
+    assert recommendation_show_result.exit_code == 0
+    recommendation_payload = json.loads(recommendation_show_result.stdout)
+    assert recommendation_payload["recommendation"]["recommended_candidate_id"] is not None
+    assert recommendation_payload["recommendation"]["benchmark_result_ids"]
+    assert any(
+        candidate_id.startswith("harness.search.search.")
+        for candidate_id in recommendation_payload["recommendation"]["candidate_ids"]
+    )
+
+    candidate_list_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "candidates",
+            "--json",
+        ],
+    )
+
+    assert candidate_list_result.exit_code == 0
+    candidate_list_payload = json.loads(candidate_list_result.stdout)
+    assert any(
+        any(surface["kind"] == "prompt_asset" for surface in candidate["changed_surfaces"])
+        for candidate in candidate_list_payload["candidates"]
+    )
+
+
+def test_cli_compounding_harness_search_records_benchmark_backed_recommendation_without_asset_override(
+    tmp_path: Path,
+) -> None:
+    _workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+
+    run_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "search",
+            "run",
+            "--json",
+        ],
+    )
+
+    assert run_result.exit_code == 0
+    run_payload = json.loads(run_result.stdout)
+    assert run_payload["payload"]["candidate_count"] >= 3
+    assert run_payload["payload"]["benchmark_count"] >= 3
+    assert run_payload["payload"]["recommendation_id"].startswith("recommend.search.")
 
 
 def test_cli_run_provenance_survives_broken_live_registry_with_frozen_history_json(
