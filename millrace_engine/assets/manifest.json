@@ -288,8 +288,8 @@
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "82ebe8a5098b49465805f7730c270e68260d5c60d18695edbf5395ae8d45f438",
-      "size_bytes": 17540,
+      "sha256": "4caf7966429d7cffb195620bf061c302471db05b31893360d810f618193044ee",
+      "size_bytes": 18548,
       "source": "runtime"
     },
     {
@@ -1328,8 +1328,8 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "e43eacbc3014c75dff275bdd8682d1b41d6cd85c3a8c587f3a0f588021d35ab0",
-      "size_bytes": 49444,
+      "sha256": "92e7f4076bffed0a639dd07ec5177975d078b8e680523bb67e970c39e03d005f",
+      "size_bytes": 51846,
       "source": "runtime"
     },
     {

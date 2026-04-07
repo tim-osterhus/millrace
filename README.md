@@ -85,6 +85,13 @@ An initialized workspace created by `millrace init /absolute/path/to/workspace` 
 - Workspace-first assets: workspace files override packaged defaults when present; packaged assets are the fallback.
 - Frozen per-run plans: before a standard execution run, Millrace resolves the selected mode and loop, applies workspace overrides, and freezes the effective plan under `agents/runs/<run_id>/`.
 
+The runtime is also split by ownership internally, not just by product surface:
+
+- `millrace_engine/engine.py` is the composition shell; config reload/apply lives in `engine_config_coordinator.py`, mailbox dispatch lives in `engine_mailbox_processor.py` plus `engine_mailbox_command_handlers.py`, and daemon loop/watcher coordination lives in `engine_runtime_loop.py`.
+- `millrace_engine/planes/execution.py` keeps cycle composition while `planes/execution_flows/` owns the quickfix, QA, builder-success, and full-task cycle families.
+- `millrace_engine/research/goalspec_stage_support.py` is a thin GoalSpec facade over per-stage executors such as `goalspec_goal_intake.py`, `goalspec_spec_synthesis.py`, `goalspec_spec_interview.py`, and `goalspec_spec_review.py`, with shared rendering in `goalspec_stage_rendering.py`.
+- `tools/repo_guardrails.py` enforces size budgets and same-change ratchets for orchestration-heavy files so those seams do not silently collapse back into long-lived exception zones.
+
 ## Quick Start
 
 Install the published package:

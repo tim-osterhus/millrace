@@ -115,6 +115,14 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert 'interview_policy = "off"' in readme
     assert "Release verification is narrower than source-checkout contributor verification" in readme
     assert "upgrade --apply" in readme
+    assert "`engine_config_coordinator.py`" in readme
+    assert "`engine_mailbox_processor.py`" in readme
+    assert "`engine_runtime_loop.py`" in readme
+    assert "`planes/execution_flows/`" in readme
+    assert "`millrace_engine/research/goalspec_stage_support.py`" in readme
+    assert "`goalspec_stage_rendering.py`" in readme
+    assert "`tools/repo_guardrails.py`" in readme
+    assert "same-change ratchets" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -136,9 +144,38 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
     assert "structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`" in runtime_deep_dive
     assert "the markdown files remain the instruction layer" in runtime_deep_dive
+    assert "`engine_runtime.py`: shared engine runtime dependency bundle" in runtime_deep_dive
+    assert "`engine_config_coordinator.py`: config reload/apply/rollback coordinator" in runtime_deep_dive
+    assert "`engine_mailbox_processor.py`: daemon mailbox intake, dispatch, and archive coordinator" in runtime_deep_dive
+    assert "`engine_runtime_loop.py`: daemon-loop, watcher, wakeup, and post-cycle control coordinator" in runtime_deep_dive
+    assert "`execution_flows/`: quickfix, QA, builder-success, and cycle-runner flow-family modules" in runtime_deep_dive
+    assert "`goalspec_stage_support.py` remains as a thin routing/re-export facade" in runtime_deep_dive
+    assert "`tools/repo_guardrails.py`" in runtime_deep_dive
+    assert "same-change ratchets" in runtime_deep_dive
 
     tui_doc = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
     assert "## External Supervisor Boundary" in tui_doc
+
+    for relative in (
+        "millrace_engine/engine_config_coordinator.py",
+        "millrace_engine/engine_mailbox_processor.py",
+        "millrace_engine/engine_mailbox_command_handlers.py",
+        "millrace_engine/engine_runtime.py",
+        "millrace_engine/engine_runtime_loop.py",
+        "millrace_engine/planes/execution_flows/builder_flow.py",
+        "millrace_engine/planes/execution_flows/qa_flow.py",
+        "millrace_engine/planes/execution_flows/quickfix_flow.py",
+        "millrace_engine/planes/execution_flows/cycle_runner.py",
+        "millrace_engine/research/goalspec_goal_intake.py",
+        "millrace_engine/research/goalspec_objective_profile_sync.py",
+        "millrace_engine/research/goalspec_completion_manifest_draft.py",
+        "millrace_engine/research/goalspec_spec_synthesis.py",
+        "millrace_engine/research/goalspec_spec_interview.py",
+        "millrace_engine/research/goalspec_spec_review.py",
+        "millrace_engine/research/goalspec_stage_rendering.py",
+        "tools/repo_guardrails.py",
+    ):
+        assert (MILLRACE_ROOT / relative).exists(), relative
 
 
 def test_default_public_stage_prompt_assets_exist(tmp_path: Path) -> None:

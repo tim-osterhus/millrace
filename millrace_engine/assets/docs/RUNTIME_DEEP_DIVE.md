@@ -76,7 +76,12 @@ Key modules:
 - `control.py`: operator-facing control API and runtime-state helpers
 - `health.py`: deterministic workspace bootstrap/system-check reporting for operator preflight
 - `workspace_init.py`: packaged-bundle workspace scaffolding helpers used by `millrace init`
-- `engine.py`: async-owned runtime supervisor
+- `engine.py`: async-owned runtime supervisor and composition shell
+- `engine_runtime.py`: shared engine runtime dependency bundle
+- `engine_config_coordinator.py`: config reload/apply/rollback coordinator
+- `engine_mailbox_processor.py`: daemon mailbox intake, dispatch, and archive coordinator
+- `engine_mailbox_command_handlers.py`: bounded mailbox command handler family
+- `engine_runtime_loop.py`: daemon-loop, watcher, wakeup, and post-cycle control coordinator
 - `config.py`: typed config model plus native and legacy config loading
 - `paths.py`: canonical resolved path model rooted at the configured workspace
 - `contracts.py`: shared enums and immutable contract models, plus the stable re-export surface for Phase 01B loop-architecture schemas
@@ -106,13 +111,16 @@ Key modules:
   - `file_watcher.py`: watchdog/poll local intake adapter
 - `planes/`
   - `base.py`: shared plane/runtime abstractions
-  - `execution.py`: execution-plane routing state machine
+  - `execution.py`: execution-plane cycle composition over explicit flow families
+  - `execution_flows/`: quickfix, QA, builder-success, and cycle-runner flow-family modules
   - `research.py`: compiled-dispatch research supervisor with `stub` compatibility mode
 - `stages/`
   - `base.py`: stage execution framework
   - execution stage handlers including `builder`, `integrate`, `qa`, `hotfix`, `doublecheck`, `troubleshoot`, `consult`, `update`, `large_plan`, `large_execute`, `reassess`, and `refactor`
 - `research/`
   - research queue discovery, dispatcher, supervisor lifecycle/progression/request helpers, and executed research-stage implementations (goalspec, incident, audit, taskmaster, taskaudit, governance, provenance)
+  - GoalSpec stage execution is split by stage family: `goalspec_goal_intake.py`, `goalspec_objective_profile_sync.py`, `goalspec_completion_manifest_draft.py`, `goalspec_spec_synthesis.py`, `goalspec_spec_interview.py`, and `goalspec_spec_review.py`
+  - `goalspec_stage_support.py` remains as a thin routing/re-export facade, while `goalspec_stage_rendering.py` owns shared rendering helpers
 - `publishing/`
   - staging-manifest parsing plus sync/preflight/commit helpers for the publish surface
 - `tui/`
@@ -644,9 +652,9 @@ It:
 
 ## 12. Execution Plane
 
-`planes/execution.py` is the core execution state machine.
+`planes/execution.py` is the execution-plane composition surface.
 
-It is where task routing decisions live.
+It keeps the top-level task-routing and cycle decisions legible while delegating the main flow families into `planes/execution_flows/`.
 
 ### 12.1 High-Level Job
 
@@ -661,6 +669,14 @@ For one execution cycle, it decides:
 - whether to troubleshoot
 - whether to consult
 - whether to quarantine for research
+
+The current ownership split is:
+
+- `execution.py`: top-level run-cycle composition and state-machine entrypoints
+- `execution_flows/quickfix_flow.py`: quickfix loop and repair routing
+- `execution_flows/qa_flow.py`: QA outcome handling and post-QA escalation decisions
+- `execution_flows/builder_flow.py`: builder-success sequencing and full-task continuation
+- `execution_flows/cycle_runner.py`: full-task cycle execution across the frozen plan
 
 ### 12.2 Core Standard Happy Path
 
@@ -1125,7 +1141,16 @@ If the daemon is running, these become mailbox commands instead so one owner pro
 
 ## 21. Engine Supervisor
 
-`engine.py` is the async-owned runtime supervisor.
+`engine.py` is the async-owned runtime supervisor and composition shell.
+
+The current ownership split is:
+
+- `engine.py`: lifecycle wiring, shared runtime state, and collaborator composition
+- `engine_config_coordinator.py`: config reload/apply/rollback and watcher reconfiguration decisions
+- `engine_mailbox_processor.py`: mailbox command intake, dispatch, archive, and result production
+- `engine_mailbox_command_handlers.py`: individual mailbox command handlers
+- `engine_runtime_loop.py`: daemon loop, wakeups, watcher replacement, startup sync, and post-cycle control handling
+- `engine_runtime.py`: typed runtime dependency bundle shared across those collaborators
 
 ### 21.1 Construction
 
@@ -1315,6 +1340,8 @@ When the operator starts daemon mode from the TUI, the shell launches the same s
 ## 24. Tests and Fixtures
 
 The test suite is under `millrace/tests/`.
+
+Repo maintenance guardrails live alongside the runtime in `tools/repo_guardrails.py`. They are part of the public validation story for this package-first repo because they enforce runtime/test size budgets, stale-exception detection, and same-change ratchets on configured orchestration-heavy files.
 
 ### 24.1 Test Helper Layer
 
