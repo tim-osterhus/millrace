@@ -273,6 +273,7 @@
       "family": "docs",
       "path": "ADVISOR.md",
       "sha256": "243867aa7fb1b72c299426df877cee1de65aa899672fc69bad47fcaa2d7ff9b5",
+      "size": 7126,
       "size_bytes": 7126,
       "source": "runtime"
     },
@@ -281,6 +282,7 @@
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
       "sha256": "efeace1056891ee14a90061d8df23f689a61de96a3375697e3de781a18adafec",
+      "size": 15874,
       "size_bytes": 15874,
       "source": "runtime"
     },
@@ -289,6 +291,7 @@
       "family": "docs",
       "path": "README.md",
       "sha256": "4caf7966429d7cffb195620bf061c302471db05b31893360d810f618193044ee",
+      "size": 18548,
       "size_bytes": 18548,
       "source": "runtime"
     },
@@ -297,6 +300,7 @@
       "family": "entrypoints",
       "path": "agents/_audit_gatekeeper.md",
       "sha256": "11cfe83f5df26badba717aa9825a8121d7ab9e74500463e816ce3e8c61333aae",
+      "size": 2359,
       "size_bytes": 2359,
       "source": "reference"
     },
@@ -305,6 +309,7 @@
       "family": "entrypoints",
       "path": "agents/_audit_intake.md",
       "sha256": "52d59642d80519cb030d32a4efda92aaba65e4c7fdae9edc335f4466bbc4d8c5",
+      "size": 6008,
       "size_bytes": 6008,
       "source": "reference"
     },
@@ -313,6 +318,7 @@
       "family": "entrypoints",
       "path": "agents/_audit_validate.md",
       "sha256": "dccab7495cdbe1f9eb5eb0a3f62e118d6710b630cb536ff784a8532941a5d32f",
+      "size": 3855,
       "size_bytes": 3855,
       "source": "reference"
     },
@@ -321,6 +327,7 @@
       "family": "entrypoints",
       "path": "agents/_check.md",
       "sha256": "3235adf23c04953311de56b8b766dda414504f748d1989589c908347e66cec11",
+      "size": 2932,
       "size_bytes": 2932,
       "source": "runtime"
     },
@@ -329,6 +336,7 @@
       "family": "entrypoints",
       "path": "agents/_clarify.md",
       "sha256": "e1907ec7ad0346c9f2ea28546db77e17ae864ed5a8bb443101d709a6c59f7a3b",
+      "size": 3948,
       "size_bytes": 3948,
       "source": "reference"
     },
@@ -337,6 +345,7 @@
       "family": "entrypoints",
       "path": "agents/_consult.md",
       "sha256": "6d7320b7fe40609091a244c60223f30169a654b337ab8e6a042cd4e3a5f0e4fb",
+      "size": 1678,
       "size_bytes": 1678,
       "source": "runtime"
     },
@@ -345,6 +354,7 @@
       "family": "entrypoints",
       "path": "agents/_contractor.md",
       "sha256": "d04fe78564cc8f85ea267a04c2f4b0bec9d966f52b0daeeb7ec7a4a51841ace2",
+      "size": 4208,
       "size_bytes": 4208,
       "source": "reference"
     },
@@ -353,6 +363,7 @@
       "family": "entrypoints",
       "path": "agents/_critic.md",
       "sha256": "8fd101de5be7be60631862f08e68a974ca1191d774b5fbdb20227782d67d514b",
+      "size": 2615,
       "size_bytes": 2615,
       "source": "reference"
     },
@@ -361,6 +372,7 @@
       "family": "entrypoints",
       "path": "agents/_designer.md",
       "sha256": "01a77ab0a1ffab4e1077eac8d45660781f521f5b88ec6bb466a7fa2b4be74aeb",
+      "size": 2770,
       "size_bytes": 2770,
       "source": "reference"
     },
@@ -369,6 +381,7 @@
       "family": "entrypoints",
       "path": "agents/_doublecheck.md",
       "sha256": "4897d6993bdabc4d25c95aae8eec87e03cb35d0aea45e71911c553229c689b67",
+      "size": 2566,
       "size_bytes": 2566,
       "source": "runtime"
     },
@@ -377,6 +390,7 @@
       "family": "entrypoints",
       "path": "agents/_goal_intake.md",
       "sha256": "7940fd7a82583629629b44a2f63eb426373ba8b50bffbc2d1cc41a4b708f7ef7",
+      "size": 3133,
       "size_bytes": 3133,
       "source": "reference"
     },
@@ -385,6 +399,7 @@
       "family": "entrypoints",
       "path": "agents/_hotfix.md",
       "sha256": "325d36f5047d7d4181e7d9417f0d9312f9794c9a4ddb841b0a65dbc3366ebb95",
+      "size": 1808,
       "size_bytes": 1808,
       "source": "runtime"
     },
@@ -393,6 +408,7 @@
       "family": "entrypoints",
       "path": "agents/_incident_archive.md",
       "sha256": "a5d99585cb4adcc81f45a7f667c7699b78eb017550ed74d4f2585b168322eb23",
+      "size": 1805,
       "size_bytes": 1805,
       "source": "reference"
     },
@@ -401,6 +417,7 @@
       "family": "entrypoints",
       "path": "agents/_incident_intake.md",
       "sha256": "483a82af1a646cff0722a8d238dcb02ccfab72d82921dbc76b583ff459f2ae29",
+      "size": 2703,
       "size_bytes": 2703,
       "source": "reference"
     },
@@ -409,6 +426,7 @@
       "family": "entrypoints",
       "path": "agents/_incident_resolve.md",
       "sha256": "56cc4d62484ed5c2b8161a5f1d77efe82101a6e28609d9d05e9b09556b7521b9",
+      "size": 3056,
       "size_bytes": 3056,
       "source": "reference"
     },
@@ -417,6 +435,7 @@
       "family": "entrypoints",
       "path": "agents/_integrate.md",
       "sha256": "8d3669316ee34886adc88ed4fa6b7863ad425d0394b03fda90201e9c2c43dbe9",
+      "size": 2948,
       "size_bytes": 2948,
       "source": "runtime"
     },
@@ -425,6 +444,7 @@
       "family": "entrypoints",
       "path": "agents/_mechanic.md",
       "sha256": "a2ef55e3921b3c317bb9b94ccd701e6abae3e512b195ff4c6422852576d779e7",
+      "size": 3106,
       "size_bytes": 3106,
       "source": "reference"
     },
@@ -432,8 +452,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_objective_profile_sync.md",
-      "sha256": "12cc8563c85e169ae12f67113412602c70ac6276012a5d453c2730238ae2d00c",
-      "size_bytes": 4618,
+      "sha256": "b3e9d7e74e91df005d0269cbea4dc69e1970f0bb36750b1c136d45d14e270ee1",
+      "size": 4398,
+      "size_bytes": 4398,
       "source": "reference"
     },
     {
@@ -441,6 +462,7 @@
       "family": "entrypoints",
       "path": "agents/_qa_execute.md",
       "sha256": "5844829502f016922da9294ca5465c8947ec3e48599e0a61e394c5ed084c46f5",
+      "size": 1741,
       "size_bytes": 1741,
       "source": "reference"
     },
@@ -449,6 +471,7 @@
       "family": "entrypoints",
       "path": "agents/_qa_plan.md",
       "sha256": "189b8af44d2dbef402621ec25f505faa99d3dc5a05125f53255c448c824d506a",
+      "size": 1464,
       "size_bytes": 1464,
       "source": "reference"
     },
@@ -457,6 +480,7 @@
       "family": "entrypoints",
       "path": "agents/_refactor.md",
       "sha256": "4841ab33cd71302d3eaef71f61327bcd05a2722da51c16b7058c801a4681ac38",
+      "size": 2192,
       "size_bytes": 2192,
       "source": "reference"
     },
@@ -465,6 +489,7 @@
       "family": "entrypoints",
       "path": "agents/_spec_interview.md",
       "sha256": "789ac875b5eadfc8489a2ef9d7a0f0199ba410b8f024fb1516c9e1f4dce67332",
+      "size": 877,
       "size_bytes": 877,
       "source": "runtime"
     },
@@ -473,6 +498,7 @@
       "family": "entrypoints",
       "path": "agents/_spec_review.md",
       "sha256": "67967da101992856e42fc565da0ae8a362b72b925bb1094850c0a732cd5c0790",
+      "size": 3439,
       "size_bytes": 3439,
       "source": "reference"
     },
@@ -480,8 +506,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_spec_synthesis.md",
-      "sha256": "3b2dfdadc2d514c0105ab2066fd7d524d980c3281834fa30ef3cba51143c0341",
-      "size_bytes": 9042,
+      "sha256": "c2b1472fe70dbcd0bb06a92fd6c165386effea6bf5ba98d846e12f8c9a28a83c",
+      "size": 9260,
+      "size_bytes": 9260,
       "source": "reference"
     },
     {
@@ -489,6 +516,7 @@
       "family": "entrypoints",
       "path": "agents/_start.md",
       "sha256": "a72cd91a29d62bf34c07544910e12f4e3a840a790b42a8673d18a825666e237a",
+      "size": 3126,
       "size_bytes": 3126,
       "source": "runtime"
     },
@@ -497,6 +525,7 @@
       "family": "entrypoints",
       "path": "agents/_start_large_execute.md",
       "sha256": "970cc24c2f81691973d2ef432a5bd82394b452e63e2d2d84d0802f82d3c7b181",
+      "size": 1500,
       "size_bytes": 1500,
       "source": "reference"
     },
@@ -505,6 +534,7 @@
       "family": "entrypoints",
       "path": "agents/_start_large_plan.md",
       "sha256": "e65f629d7e67d26fe88ff7eb7b31f1db24b680369b90b8ad86f535582ba9da57",
+      "size": 1975,
       "size_bytes": 1975,
       "source": "reference"
     },
@@ -513,6 +543,7 @@
       "family": "entrypoints",
       "path": "agents/_taskaudit.md",
       "sha256": "803f0bd8e9f79c6652a8f919c3b5e22bd499fd9208956c4317a56919979ba0cf",
+      "size": 8819,
       "size_bytes": 8819,
       "source": "reference"
     },
@@ -520,8 +551,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_taskmaster.md",
-      "sha256": "61d98940633cc075aa554323a06b784de52b32e46783411ad2ebc6297e3a8dca",
-      "size_bytes": 12244,
+      "sha256": "d10c2d01a3a7f7e981d07484b6355e68b0813a32578acde6b1bc04569c03087e",
+      "size": 11745,
+      "size_bytes": 11745,
       "source": "reference"
     },
     {
@@ -529,6 +561,7 @@
       "family": "entrypoints",
       "path": "agents/_troubleshoot.md",
       "sha256": "aee31f58033dd8c4188a52f957311b233c42ec9b788025397b5e28e8b963b5f7",
+      "size": 2601,
       "size_bytes": 2601,
       "source": "runtime"
     },
@@ -537,6 +570,7 @@
       "family": "entrypoints",
       "path": "agents/_update.md",
       "sha256": "2dbe50a320b62d9fdd8ee866c9f3df72897c33b50d78e6087462e8cde9ad055a",
+      "size": 1886,
       "size_bytes": 1886,
       "source": "runtime"
     },
@@ -545,6 +579,7 @@
       "family": "audit",
       "path": "agents/audit/completion_manifest.json",
       "sha256": "7bc436af70ee8803f1f017f6ab8443de4618effc333636ca18b68e0d575f3fc2",
+      "size": 465,
       "size_bytes": 465,
       "source": "reference"
     },
@@ -553,6 +588,7 @@
       "family": "audit",
       "path": "agents/audit/strict_contract.json",
       "sha256": "aabd5f4bc5f03aaa5a01f05e6cd531a30fa4140a332e73a96b2949db44766373",
+      "size": 322,
       "size_bytes": 322,
       "source": "reference"
     },
@@ -561,6 +597,7 @@
       "family": "ideas",
       "path": "agents/ideas/audit/README.md",
       "sha256": "b79526560f3038f2be14304737a668e89f7a9454e1b44d5913ecef7e1995aa98",
+      "size": 465,
       "size_bytes": 465,
       "source": "reference"
     },
@@ -569,6 +606,7 @@
       "family": "ideas",
       "path": "agents/ideas/incidents/README.md",
       "sha256": "6be3cc13b00c450edd90edc543ebb03fc7f9c282a74dae9a2981008dddb3739d",
+      "size": 1222,
       "size_bytes": 1222,
       "source": "reference"
     },
@@ -577,6 +615,7 @@
       "family": "objective",
       "path": "agents/objective/contract.schema.json",
       "sha256": "8582c218367a4f3f1fbfc9e83dc02a8a654f46049cea266b5bde41f74d9edbc0",
+      "size": 4272,
       "size_bytes": 4272,
       "source": "reference"
     },
@@ -585,6 +624,7 @@
       "family": "objective",
       "path": "agents/objective/contract.yaml",
       "sha256": "1044e2402612540a13831024f5d40cbb053a39611345f06e72f0c2006e8b04cf",
+      "size": 1067,
       "size_bytes": 1067,
       "source": "reference"
     },
@@ -593,6 +633,7 @@
       "family": "options",
       "path": "agents/options/integrate/integrate_option.md",
       "sha256": "56e6b42c8f65dc4f8b787010d564ae098294913d3eccb71358fe42d95570e851",
+      "size": 4628,
       "size_bytes": 4628,
       "source": "reference"
     },
@@ -601,6 +642,7 @@
       "family": "options",
       "path": "agents/options/permission/perm_config.md",
       "sha256": "002725f75cb26231d959aa6079fbe3e0d9fa5f80516111d566f449baadf19f9b",
+      "size": 1648,
       "size_bytes": 1648,
       "source": "reference"
     },
@@ -609,6 +651,7 @@
       "family": "options",
       "path": "agents/options/troubleshoot/_troubleshoot.md",
       "sha256": "d1b79535893c9bd2986ebae64dca35f2c683f2b8163d6604aef87fa08485b30e",
+      "size": 9097,
       "size_bytes": 9097,
       "source": "reference"
     },
@@ -617,6 +660,7 @@
       "family": "options",
       "path": "agents/options/troubleshoot/troubleshoot_option.md",
       "sha256": "cdc596ab3e329ddd1f9ce13dd0b9717a38f463448991900f0c713f5748ca681f",
+      "size": 3368,
       "size_bytes": 3368,
       "source": "reference"
     },
@@ -625,6 +669,7 @@
       "family": "options",
       "path": "agents/options/ui-verify/README.md",
       "sha256": "b176b696d2e1a3129fd07f76394f4c3885e99b46b18824cd83e954b61b62ce5b",
+      "size": 521,
       "size_bytes": 521,
       "source": "reference"
     },
@@ -633,6 +678,7 @@
       "family": "options",
       "path": "agents/options/ui-verify/run_playwright_ui_verify.ps1",
       "sha256": "0977c00bbfc1dad72cbc3c2e748fcfc9f92920c33ba708726107953188faf26d",
+      "size": 5019,
       "size_bytes": 5019,
       "source": "reference"
     },
@@ -641,6 +687,7 @@
       "family": "options",
       "path": "agents/options/ui-verify/run_playwright_ui_verify.sh",
       "sha256": "25292983f072169a4226b6c6a234b00157f948310e698979cb7ea02ec1231065",
+      "size": 5504,
       "size_bytes": 5504,
       "source": "reference"
     },
@@ -649,6 +696,7 @@
       "family": "options",
       "path": "agents/options/ui-verify/ui_verify_option.md",
       "sha256": "d3e8fa9541ab8b0eade684b7359d89f807c32d33a507ca14b7c71fc7393c2dd2",
+      "size": 3749,
       "size_bytes": 3749,
       "source": "reference"
     },
@@ -657,6 +705,7 @@
       "family": "options",
       "path": "agents/options/update/update_option.md",
       "sha256": "c81adf126283dc2c6de293c47f5e386e4f22bf31bb4538b6ee42a888467ba86f",
+      "size": 1181,
       "size_bytes": 1181,
       "source": "reference"
     },
@@ -665,6 +714,7 @@
       "family": "workspace",
       "path": "agents/outline.md",
       "sha256": "7797a2e7f57758a14d0b55b6a159c3027cbcfecebf50120a33ee1fbacf25ed9c",
+      "size": 1450,
       "size_bytes": 1450,
       "source": "reference"
     },
@@ -673,6 +723,7 @@
       "family": "prompts",
       "path": "agents/prompts/builder_cycle.md",
       "sha256": "4f243c5c3ebc6843d447a6765740b7e256de8b2e3b03b046d4c958f3d5055c94",
+      "size": 4034,
       "size_bytes": 4034,
       "source": "reference"
     },
@@ -681,6 +732,7 @@
       "family": "prompts",
       "path": "agents/prompts/consult_cycle.md",
       "sha256": "3d1b99af75093cb19f079d5fb47d5ae110d6da3ae005cf63cc7d42eec097e5fa",
+      "size": 2368,
       "size_bytes": 2368,
       "source": "reference"
     },
@@ -689,6 +741,7 @@
       "family": "prompts",
       "path": "agents/prompts/create_prompt.md",
       "sha256": "074a2a7e456bf0a0d9b26628647cc124785fe273a07caacef99f677f275b42f8",
+      "size": 2848,
       "size_bytes": 2848,
       "source": "reference"
     },
@@ -697,6 +750,7 @@
       "family": "prompts",
       "path": "agents/prompts/decompose.md",
       "sha256": "0eb05ffd192d31074d4f2e62aefaf5345968d58e1c58cb7c62d098b28dbde7c7",
+      "size": 6689,
       "size_bytes": 6689,
       "source": "reference"
     },
@@ -705,6 +759,7 @@
       "family": "prompts",
       "path": "agents/prompts/large_update.md",
       "sha256": "1e41b5b2794395bb6f31aa3861df52ca7a1f8acbd09b5b15908244dd80bff2f9",
+      "size": 2672,
       "size_bytes": 2672,
       "source": "reference"
     },
@@ -713,6 +768,7 @@
       "family": "prompts",
       "path": "agents/prompts/qa_cycle.md",
       "sha256": "f70dbc7e3d4a7b7df4aa5b5df2131e1aa13c7a0f530a2af7a71fb02ec6ce14a4",
+      "size": 3688,
       "size_bytes": 3688,
       "source": "reference"
     },
@@ -721,6 +777,7 @@
       "family": "prompts",
       "path": "agents/prompts/qa_execute_cycle.md",
       "sha256": "ca51a08a57c4f6b25fbdfac54714d8f17e84a7305cc004870e5eb23ccec3bad9",
+      "size": 1570,
       "size_bytes": 1570,
       "source": "reference"
     },
@@ -729,6 +786,7 @@
       "family": "prompts",
       "path": "agents/prompts/qa_plan_cycle.md",
       "sha256": "c75009f696ef7cb89f1b6faef80d3df98f4a1a5ef249eafe4712bcd962997faa",
+      "size": 1173,
       "size_bytes": 1173,
       "source": "reference"
     },
@@ -737,6 +795,7 @@
       "family": "prompts",
       "path": "agents/prompts/quickfix.md",
       "sha256": "d39c7d25fbbf8773e0ae816663a94fb81533c4e27e85a2f9aba41b8237ac3d24",
+      "size": 1200,
       "size_bytes": 1200,
       "source": "reference"
     },
@@ -745,6 +804,7 @@
       "family": "prompts",
       "path": "agents/prompts/reassess.md",
       "sha256": "22a8694dd5dcad4f00bb488aa264181fbc1c65e8eb814f20fb362328e7cbafe2",
+      "size": 2761,
       "size_bytes": 2761,
       "source": "reference"
     },
@@ -753,6 +813,7 @@
       "family": "prompts",
       "path": "agents/prompts/role_create.md",
       "sha256": "e7540171ad1ed1402d86f50f961b36d21d3ba8474a8c1c8fda2fe4a3e6bd9f9a",
+      "size": 996,
       "size_bytes": 996,
       "source": "reference"
     },
@@ -761,6 +822,7 @@
       "family": "prompts",
       "path": "agents/prompts/roleplay.md",
       "sha256": "d612eb5bb68d64ecd88ebcdab406e1ebbc6669b3c93a2b4f14aad444d9517bb2",
+      "size": 1763,
       "size_bytes": 1763,
       "source": "reference"
     },
@@ -769,6 +831,7 @@
       "family": "prompts",
       "path": "agents/prompts/run_prompt.md",
       "sha256": "18666e1762fc400d3b061d81bb4e8e723512b877f695cfaecab395ce9fadced4",
+      "size": 2236,
       "size_bytes": 2236,
       "source": "reference"
     },
@@ -777,6 +840,7 @@
       "family": "prompts",
       "path": "agents/prompts/skill_issue.md",
       "sha256": "66e3fa46c488495a4c96f2caaae93fde5818d1b363fef3c4307e39f59c7ca2ec",
+      "size": 2462,
       "size_bytes": 2462,
       "source": "reference"
     },
@@ -785,6 +849,7 @@
       "family": "prompts",
       "path": "agents/prompts/small_update.md",
       "sha256": "c06111fb7f8475df634ef953b1b01fba8272371263b704247b208fea4205b5d9",
+      "size": 1535,
       "size_bytes": 1535,
       "source": "reference"
     },
@@ -793,6 +858,7 @@
       "family": "prompts",
       "path": "agents/prompts/taskmaster_decompose.md",
       "sha256": "a49c46b77cc2e341c462901fd6269dc197dfe60323a1eaf14c549b542c920faa",
+      "size": 1787,
       "size_bytes": 1787,
       "source": "reference"
     },
@@ -801,6 +867,7 @@
       "family": "prompts",
       "path": "agents/prompts/tasks/README.md",
       "sha256": "f2952be90fc1dce512b80d5406da2569159fdea828abfb4e175d784f3a735794",
+      "size": 861,
       "size_bytes": 861,
       "source": "reference"
     },
@@ -809,6 +876,7 @@
       "family": "reference",
       "path": "agents/reference/README.md",
       "sha256": "848eae80854fa880f6da6797daaf81ea1ea0030fa89b5014c0f2ae191cc1a4cd",
+      "size": 975,
       "size_bytes": 975,
       "source": "reference"
     },
@@ -817,6 +885,7 @@
       "family": "reference",
       "path": "agents/reference/index.md",
       "sha256": "9a86662e37e0b04da33dbca543ab25d7f2d62e7be8aa58110fe49266bea2b294",
+      "size": 299,
       "size_bytes": 299,
       "source": "reference"
     },
@@ -825,6 +894,7 @@
       "family": "reports",
       "path": "agents/reports/README.md",
       "sha256": "372f773260d76482d7a7f814a7cc6cc4111732c671a8e096e750aa9721cda053",
+      "size": 804,
       "size_bytes": 804,
       "source": "reference"
     },
@@ -833,6 +903,7 @@
       "family": "workspace",
       "path": "agents/research_troubleshooting.md",
       "sha256": "4449565276f87e747e6280f5891bd26a17e7d86aeebfddccd422e6613fdd8549",
+      "size": 2965,
       "size_bytes": 2965,
       "source": "reference"
     },
@@ -841,6 +912,7 @@
       "family": "roles",
       "path": "agents/roles/backend-systems-engineer.md",
       "sha256": "5f4e149b92766c67f608b350cc0e951a9946621e6c5dc4e66688f55d128934d6",
+      "size": 728,
       "size_bytes": 728,
       "source": "reference"
     },
@@ -849,6 +921,7 @@
       "family": "roles",
       "path": "agents/roles/documentation-writer.md",
       "sha256": "9de56178981c7586bea7a72c758bfaf10a40d4e274df2fb46b7c99c2b86055b7",
+      "size": 577,
       "size_bytes": 577,
       "source": "reference"
     },
@@ -857,6 +930,7 @@
       "family": "roles",
       "path": "agents/roles/frontend-integrator.md",
       "sha256": "0aadf0ff86ff3b47f9be5b6fd6f4b01a1333bbe7eeea6685a9bb92048d3aea36",
+      "size": 691,
       "size_bytes": 691,
       "source": "reference"
     },
@@ -865,6 +939,7 @@
       "family": "roles",
       "path": "agents/roles/fullstack-glue-specialist.md",
       "sha256": "5260a3c3244612ac70a3fff09ca574e3b42fa6c8178cb9b5acfdc65fd7041590",
+      "size": 627,
       "size_bytes": 627,
       "source": "reference"
     },
@@ -873,6 +948,7 @@
       "family": "roles",
       "path": "agents/roles/infra-devops-engineer.md",
       "sha256": "f3292d2d9e017f42e4905252d246d2d111d226ed10b5ef08d2917533891f2a58",
+      "size": 785,
       "size_bytes": 785,
       "source": "reference"
     },
@@ -881,6 +957,7 @@
       "family": "roles",
       "path": "agents/roles/integration-steward.md",
       "sha256": "48975d350a4ee6a03a8131f3ca5806a444ddfa9e906449fae25305eb2fe88930",
+      "size": 4944,
       "size_bytes": 4944,
       "source": "reference"
     },
@@ -889,6 +966,7 @@
       "family": "roles",
       "path": "agents/roles/planner-architect.md",
       "sha256": "266bb6eb61d31c8631dc24cdb7f44cd92a587cc4398b4a8d223340523b5c5044",
+      "size": 420,
       "size_bytes": 420,
       "source": "reference"
     },
@@ -897,6 +975,7 @@
       "family": "roles",
       "path": "agents/roles/qa-test-engineer.md",
       "sha256": "f2a0875d83e1c693b8da7afcd8e63cea078181987617e5adebd98932538110dc",
+      "size": 763,
       "size_bytes": 763,
       "source": "reference"
     },
@@ -905,6 +984,7 @@
       "family": "roles",
       "path": "agents/roles/research-articulator.md",
       "sha256": "ac7e72d14b6964777b2c33b817c51f5f21d5976e6747e3efb1234b44d92f31a0",
+      "size": 597,
       "size_bytes": 597,
       "source": "reference"
     },
@@ -913,6 +993,7 @@
       "family": "roles",
       "path": "agents/roles/research-clarifier.md",
       "sha256": "53c02f00ed5d2bdbe8dcd7a21c004f55c75731b06915806e97e802e3b82caf23",
+      "size": 585,
       "size_bytes": 585,
       "source": "reference"
     },
@@ -921,6 +1002,7 @@
       "family": "roles",
       "path": "agents/roles/research-phase-critic.md",
       "sha256": "f92f1a9372fada116e7a0db2e6ecfd96adb23a1b51599c0852d5c31629146f52",
+      "size": 533,
       "size_bytes": 533,
       "source": "reference"
     },
@@ -929,6 +1011,7 @@
       "family": "roles",
       "path": "agents/roles/research-phase-designer.md",
       "sha256": "52ef3c5b0e0cd6fd5e3e408df623c732795fd5d15e916c135ed48f83e045a3db",
+      "size": 646,
       "size_bytes": 646,
       "source": "reference"
     },
@@ -937,6 +1020,7 @@
       "family": "roles",
       "path": "agents/roles/research-router.md",
       "sha256": "2a35b8f0f30c1360c04983cf0b77ddfeaec98c8499a7f75dbfc64a0fccf5cf45",
+      "size": 521,
       "size_bytes": 521,
       "source": "reference"
     },
@@ -945,6 +1029,7 @@
       "family": "roles",
       "path": "agents/roles/research-spec-critic.md",
       "sha256": "e1ecda5c466e3a22a2fe77c04b31d44298e885cfd4ebfcbb8f394c5efea0b7e6",
+      "size": 453,
       "size_bytes": 453,
       "source": "reference"
     },
@@ -953,6 +1038,7 @@
       "family": "roles",
       "path": "agents/roles/research-spec-designer.md",
       "sha256": "74c511f63db2f08ecef8bbef8fc53a7a7cc2ecbc66955f40275f05ff5d59e4ca",
+      "size": 475,
       "size_bytes": 475,
       "source": "reference"
     },
@@ -961,6 +1047,7 @@
       "family": "roles",
       "path": "agents/roles/security-engineer.md",
       "sha256": "c204e7dfae465e74f3c577756a26356cb5ceb21143f4b17329a6a62b07906265",
+      "size": 420,
       "size_bytes": 420,
       "source": "reference"
     },
@@ -969,6 +1056,7 @@
       "family": "skills",
       "path": "agents/skills/README.md",
       "sha256": "b32845a439ced7bfe3c11cb67aa5292ee459be55f7a2c7850733874bb9ebad68",
+      "size": 3765,
       "size_bytes": 3765,
       "source": "reference"
     },
@@ -977,6 +1065,7 @@
       "family": "skills",
       "path": "agents/skills/_examples_template.md",
       "sha256": "cc85462a7eb64184ad4571f4d46807467c864454fce58f1eb7a3fd6db4066800",
+      "size": 2152,
       "size_bytes": 2152,
       "source": "reference"
     },
@@ -985,6 +1074,7 @@
       "family": "skills",
       "path": "agents/skills/_skill_template.md",
       "sha256": "b47e891b2699c2a1bb4a603a0fb2d934b4750a6ff291e0dde0748f3d3f4a7c73",
+      "size": 6220,
       "size_bytes": 6220,
       "source": "reference"
     },
@@ -993,6 +1083,7 @@
       "family": "skills",
       "path": "agents/skills/acceptance-profile-contract/EXAMPLES.md",
       "sha256": "4362961bb0756beda5d4d5ea99fb8dc074927a245e4d0222937267ce82cc8970",
+      "size": 2446,
       "size_bytes": 2446,
       "source": "reference"
     },
@@ -1001,6 +1092,7 @@
       "family": "skills",
       "path": "agents/skills/acceptance-profile-contract/SKILL.md",
       "sha256": "60f629fc3216236b89f66d765fbcfb89376255f7e5b4cadd1b119cc08fc33073",
+      "size": 6255,
       "size_bytes": 6255,
       "source": "reference"
     },
@@ -1009,6 +1101,7 @@
       "family": "skills",
       "path": "agents/skills/advisor-architecture-sanity-check/EXAMPLES.md",
       "sha256": "27dae041e2ca88458b79ed8487c03ba45d73ea039ae96cbe22926cdf685a2343",
+      "size": 1027,
       "size_bytes": 1027,
       "source": "reference"
     },
@@ -1017,6 +1110,7 @@
       "family": "skills",
       "path": "agents/skills/advisor-architecture-sanity-check/SKILL.md",
       "sha256": "3b322ea528c42d3ecedb4bc26387845b0f30ae0aa7d66f15c0b57f2d72eef6ff",
+      "size": 4923,
       "size_bytes": 4923,
       "source": "reference"
     },
@@ -1025,6 +1119,7 @@
       "family": "skills",
       "path": "agents/skills/advisor-plan-pushback/EXAMPLES.md",
       "sha256": "9df0893ea48c0bff43cff8f334a8e7a1ea74063fb46b33dad2ce35139aa8b661",
+      "size": 957,
       "size_bytes": 957,
       "source": "reference"
     },
@@ -1033,6 +1128,7 @@
       "family": "skills",
       "path": "agents/skills/advisor-plan-pushback/SKILL.md",
       "sha256": "dd7ee4205c587e314b4a03b04205795da03e5c3b1ddda3a23bad313deee1a6fb",
+      "size": 4713,
       "size_bytes": 4713,
       "source": "reference"
     },
@@ -1041,6 +1137,7 @@
       "family": "skills",
       "path": "agents/skills/codebase-audit-doc/EXAMPLES.md",
       "sha256": "0f34ba059ace4f687a9095d6d25e53c4c329444d0128999688994463baac8a13",
+      "size": 4841,
       "size_bytes": 4841,
       "source": "reference"
     },
@@ -1049,6 +1146,7 @@
       "family": "skills",
       "path": "agents/skills/codebase-audit-doc/SKILL.md",
       "sha256": "64d29916b0c29678cb1231f9f526beb70f7ded11be2d098f9a2bb7d4e7890e17",
+      "size": 6946,
       "size_bytes": 6946,
       "source": "reference"
     },
@@ -1057,6 +1155,7 @@
       "family": "skills",
       "path": "agents/skills/codebase-safe-cleanup/EXAMPLES.md",
       "sha256": "e3c76a899ac5d1854b7f812b4f87775866d0bd028f35260e57e07b4a9abcf7b9",
+      "size": 4338,
       "size_bytes": 4338,
       "source": "reference"
     },
@@ -1065,6 +1164,7 @@
       "family": "skills",
       "path": "agents/skills/codebase-safe-cleanup/SKILL.md",
       "sha256": "cc1734e7e6b86b76c5443bd1576a8c27c0cc5e64b06d443c38cb7c7399f70888",
+      "size": 8468,
       "size_bytes": 8468,
       "source": "reference"
     },
@@ -1073,6 +1173,7 @@
       "family": "skills",
       "path": "agents/skills/compose-stack-change-protocol/EXAMPLES.md",
       "sha256": "fb032c67135389afbe31740346cd4969bbe4c65eda6565b3d1c51d2de1503c1e",
+      "size": 3434,
       "size_bytes": 3434,
       "source": "reference"
     },
@@ -1081,6 +1182,7 @@
       "family": "skills",
       "path": "agents/skills/compose-stack-change-protocol/SKILL.md",
       "sha256": "dd1db19384c9678085a3270bdf95560f1b5ad47eb6ce3c350dcc85e9853d563a",
+      "size": 6060,
       "size_bytes": 6060,
       "source": "reference"
     },
@@ -1089,6 +1191,7 @@
       "family": "skills",
       "path": "agents/skills/frontend-review/EXAMPLES.md",
       "sha256": "fc22b863fcff1bffe052198adc0c3ed77ec4881121431b2022938d7e7ad1e293",
+      "size": 6595,
       "size_bytes": 6595,
       "source": "reference"
     },
@@ -1097,6 +1200,7 @@
       "family": "skills",
       "path": "agents/skills/frontend-review/SKILL.md",
       "sha256": "dbf176068ceac2183372f23eb97868fb77a4a80f40bb97f31f223d95b911ddf7",
+      "size": 5913,
       "size_bytes": 5913,
       "source": "reference"
     },
@@ -1105,6 +1209,7 @@
       "family": "skills",
       "path": "agents/skills/frontend-review/reference.md",
       "sha256": "9c71d2b9175d4ed78dec9c591a06be4920b610566ac91704d4f86da699f96a6a",
+      "size": 4334,
       "size_bytes": 4334,
       "source": "reference"
     },
@@ -1113,6 +1218,7 @@
       "family": "skills",
       "path": "agents/skills/historylog-entry-high-signal/EXAMPLES.md",
       "sha256": "2b8c372725ddd2506c4aa15a20fee4baedae68d5267791946c8482d567323a0c",
+      "size": 3560,
       "size_bytes": 3560,
       "source": "reference"
     },
@@ -1121,6 +1227,7 @@
       "family": "skills",
       "path": "agents/skills/historylog-entry-high-signal/SKILL.md",
       "sha256": "6751d749d3a7cfff9df632a5c3dfd18d85ba4ed606c60a561f7a780d148483bd",
+      "size": 6319,
       "size_bytes": 6319,
       "source": "reference"
     },
@@ -1129,6 +1236,7 @@
       "family": "skills",
       "path": "agents/skills/lint_skills.py",
       "sha256": "74c32a6c1ce83c5522543b0af9a2b5ce347745be9f2e154a29518538aef460ad",
+      "size": 6362,
       "size_bytes": 6362,
       "source": "reference"
     },
@@ -1137,6 +1245,7 @@
       "family": "skills",
       "path": "agents/skills/playwright-ui-verification/EXAMPLES.md",
       "sha256": "bcbe017f9d51dae1359e918a30d538abedea7801eb7c504af4f0266986bec30b",
+      "size": 13899,
       "size_bytes": 13899,
       "source": "reference"
     },
@@ -1145,6 +1254,7 @@
       "family": "skills",
       "path": "agents/skills/playwright-ui-verification/SKILL.md",
       "sha256": "b9dc4dd25227c74a325ec7ac597aa59e669f47b97c554ddc7362aabeaa7540c7",
+      "size": 8043,
       "size_bytes": 8043,
       "source": "reference"
     },
@@ -1153,6 +1263,7 @@
       "family": "skills",
       "path": "agents/skills/skills_index.md",
       "sha256": "ab474751b6a3542d442933b7459a9017311bdb282f22ba4a9559efbfae44eb48",
+      "size": 3605,
       "size_bytes": 3605,
       "source": "reference"
     },
@@ -1161,6 +1272,7 @@
       "family": "skills",
       "path": "agents/skills/small-diff-discipline/EXAMPLES.md",
       "sha256": "c10e508577f5c1af900f3f353b44e640c80eb80ae947b0e9f95d986f70530f3b",
+      "size": 3480,
       "size_bytes": 3480,
       "source": "reference"
     },
@@ -1169,6 +1281,7 @@
       "family": "skills",
       "path": "agents/skills/small-diff-discipline/SKILL.md",
       "sha256": "85133c9ac9238539e922e5c6b590891bcc108a8a5f459721cd9a452b296a8daa",
+      "size": 6563,
       "size_bytes": 6563,
       "source": "reference"
     },
@@ -1177,6 +1290,7 @@
       "family": "skills",
       "path": "agents/skills/spec-writing-research-core/EXAMPLES.md",
       "sha256": "307b539e3a5242118355ff12222856f03d8f0f14252f2478444c8adcb49aa9b1",
+      "size": 3528,
       "size_bytes": 3528,
       "source": "reference"
     },
@@ -1185,6 +1299,7 @@
       "family": "skills",
       "path": "agents/skills/spec-writing-research-core/SKILL.md",
       "sha256": "fa6229c0c704860b4f6a2c513bc1eb22646598bdcf655cef782eaf39c837b07a",
+      "size": 9265,
       "size_bytes": 9265,
       "source": "reference"
     },
@@ -1193,6 +1308,7 @@
       "family": "skills",
       "path": "agents/skills/task-card-authoring-repo-exact/EXAMPLES.md",
       "sha256": "4c07e03170ee7b37e916a6e655643dc634912f6c31cc3d0e1811e6d86b65ab43",
+      "size": 5410,
       "size_bytes": 5410,
       "source": "reference"
     },
@@ -1201,6 +1317,7 @@
       "family": "skills",
       "path": "agents/skills/task-card-authoring-repo-exact/SKILL.md",
       "sha256": "4e61ddc6da4694d2da73e7676c4376b8158c620880c1a72fd29bedb79c654815",
+      "size": 11568,
       "size_bytes": 11568,
       "source": "reference"
     },
@@ -1209,6 +1326,7 @@
       "family": "specs",
       "path": "agents/specs/README.md",
       "sha256": "d97c86d938db0e404e6cd4d488cd1b6e6371192be0c35b8b5b34784d0b529e45",
+      "size": 894,
       "size_bytes": 894,
       "source": "reference"
     },
@@ -1217,6 +1335,7 @@
       "family": "specs",
       "path": "agents/specs/governance/README.md",
       "sha256": "8cdaf977115d31076f2f9884457e48259f55f1e68c9e03d9a5d4f3113f4721f2",
+      "size": 721,
       "size_bytes": 721,
       "source": "reference"
     },
@@ -1225,6 +1344,7 @@
       "family": "specs",
       "path": "agents/specs/governance/decision_log_schema.json",
       "sha256": "1cd4957a0bce5e2e68c99fdb7b4169777410395937717d320268f898f6c25a55",
+      "size": 339,
       "size_bytes": 339,
       "source": "reference"
     },
@@ -1233,6 +1353,7 @@
       "family": "specs",
       "path": "agents/specs/governance/golden_versions.json",
       "sha256": "5dfedc9a291c0d607e262f0979c8fe9126293475eecb4c059bb34529c76f3d57",
+      "size": 132,
       "size_bytes": 132,
       "source": "reference"
     },
@@ -1241,6 +1362,7 @@
       "family": "specs",
       "path": "agents/specs/governance/spec_quality_state.json",
       "sha256": "afaed101c157a64cb32319d796fdd82f601245bfb0d68aeb6c8a06825f5d26dc",
+      "size": 143,
       "size_bytes": 143,
       "source": "reference"
     },
@@ -1249,6 +1371,7 @@
       "family": "specs",
       "path": "agents/specs/index.json",
       "sha256": "c9eab62cc2be071ebad1b8916a3070ed49dbea5d5d6564f64f075fd5c9e74bb7",
+      "size": 74,
       "size_bytes": 74,
       "source": "reference"
     },
@@ -1257,6 +1380,7 @@
       "family": "specs",
       "path": "agents/specs/stable/golden/README.md",
       "sha256": "6206d1715c4fc9e71d62d4f63ccc1d1ce3597ef6a0ca39358bed674bb6898dee",
+      "size": 524,
       "size_bytes": 524,
       "source": "reference"
     },
@@ -1265,6 +1389,7 @@
       "family": "specs",
       "path": "agents/specs/stable/phase/README.md",
       "sha256": "7809938c3287e59758a79e3c1250709e8c20ff75fe6221232717d6e1fe898098",
+      "size": 566,
       "size_bytes": 566,
       "source": "reference"
     },
@@ -1273,6 +1398,7 @@
       "family": "specs",
       "path": "agents/specs/templates/audit_template.md",
       "sha256": "a35cfb44bce7f6a3caa2526b280833fef6d1272de7927d80119b5777b5031afe",
+      "size": 791,
       "size_bytes": 791,
       "source": "reference"
     },
@@ -1281,6 +1407,7 @@
       "family": "specs",
       "path": "agents/specs/templates/blocker_template.md",
       "sha256": "831cbebda50ccb5278bfc674b27da6bf0b7246a1218b7a425d9b85fe9079f313",
+      "size": 716,
       "size_bytes": 716,
       "source": "reference"
     },
@@ -1289,6 +1416,7 @@
       "family": "specs",
       "path": "agents/specs/templates/golden_spec_template.md",
       "sha256": "57ac80c872165501ec81732a3c123d9fd6e1edeb0b89b9f28ff4f14b9831c799",
+      "size": 2527,
       "size_bytes": 2527,
       "source": "reference"
     },
@@ -1297,6 +1425,7 @@
       "family": "specs",
       "path": "agents/specs/templates/incident_spec_template.md",
       "sha256": "d7b0aee811e697a8a52ff242987a3c1d95bf4ac22564477b6352aabb5e5a9759",
+      "size": 3214,
       "size_bytes": 3214,
       "source": "reference"
     },
@@ -1305,6 +1434,7 @@
       "family": "specs",
       "path": "agents/specs/templates/phase_spec_template.md",
       "sha256": "423e118d7c436105db95f86735acf8df30b044764af873bc4fd403b00aa71d56",
+      "size": 2223,
       "size_bytes": 2223,
       "source": "reference"
     },
@@ -1313,6 +1443,7 @@
       "family": "workspace",
       "path": "agents/staging_manifest.yml",
       "sha256": "8b26d616d7529ee350213abde1086a903d7cb1ad0b380269db22cc87e907b582",
+      "size": 110,
       "size_bytes": 110,
       "source": "reference"
     },
@@ -1321,6 +1452,7 @@
       "family": "workspace",
       "path": "agents/status_contract.md",
       "sha256": "5544213a299c10f31a3660528d72df98178aac2f7064aa56664b6c65cf22baab",
+      "size": 6714,
       "size_bytes": 6714,
       "source": "reference"
     },
@@ -1329,6 +1461,7 @@
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
       "sha256": "92e7f4076bffed0a639dd07ec5177975d078b8e680523bb67e970c39e03d005f",
+      "size": 51846,
       "size_bytes": 51846,
       "source": "runtime"
     },
@@ -1337,6 +1470,7 @@
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
       "sha256": "f140e14949494b8155dd31119cffe61319d6f89920b6987aeca8422c199e553e",
+      "size": 24542,
       "size_bytes": 24542,
       "source": "runtime"
     },
@@ -1345,6 +1479,7 @@
       "family": "config",
       "path": "millrace.toml",
       "sha256": "28144c67e4c9d9f49fe9e39ca491a217787fed05d8c598e47cc3557eea9e5365",
+      "size": 394,
       "size_bytes": 394,
       "source": "runtime"
     }

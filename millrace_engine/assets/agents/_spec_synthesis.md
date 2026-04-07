@@ -36,8 +36,10 @@ Replace the old phase `critic -> designer -> clarify` relay with one synthesis s
 - spec template contracts:
   - `agents/specs/templates/golden_spec_template.md`
   - `agents/specs/templates/phase_spec_template.md`
-- spec-family state tool:
-  - `agents/tools/spec_family_state.py`
+- shipped family-state/runtime ownership:
+  - `millrace_engine/research/goalspec_spec_synthesis.py`
+  - `millrace_engine/research/goalspec_persistence.py`
+  - `millrace_engine/research/specs.py`
 - spec-family runtime state:
   - `agents/.research_runtime/spec_family_state.json`
 - existing decision/question artifacts may be consulted if present, but this stage owns a fresh synthesis pass
@@ -79,7 +81,7 @@ Use the synced acceptance profile for sanity checks and final-audit preparation,
    - `agents/specs/stable/phase/<spec_id>__phase-<nn>.md`
 4. Unified synthesis record (updated or overwritten in place):
    - `agents/specs/decisions/<source_slug>__spec-synthesis.md`
-5. Updated family state via `agents/tools/spec_family_state.py`:
+5. Updated family state via the shipped Python GoalSpec runtime helpers in `millrace_engine/research/goalspec_spec_synthesis.py` and `millrace_engine/research/specs.py`:
    - family state must record the emitted spec
    - family state must record whether additional specs are still expected
    - if later specs are clearly required, they must appear as `planned` entries in family state
@@ -113,6 +115,7 @@ Before finalizing:
 - ensure the package is decomposition-ready, not merely traceable
 - split oversized campaigns into multiple dependent queue specs when one spec family would remain too coarse
 - do not emit more than one new queue spec in the same run
+- preserve product-scope anchors strongly enough that the shipped scope diagnostics in `millrace_engine/research/goalspec_scope_diagnostics.py` do not classify the emitted package as severe meta drift
 - do not mark the family complete while major deferred capability areas remain outside both:
   - the emitted spec for this run, and
   - the planned spec list recorded in family state
@@ -134,7 +137,7 @@ If these gates cannot be satisfied safely, block instead of emitting a misleadin
 
 ## Family-state contract
 
-Use `agents/tools/spec_family_state.py` to update `agents/.research_runtime/spec_family_state.json`.
+Use the shipped GoalSpec family-state helpers in `millrace_engine/research/goalspec_spec_synthesis.py`, `millrace_engine/research/goalspec_persistence.py`, and `millrace_engine/research/specs.py` to update `agents/.research_runtime/spec_family_state.json`.
 
 Minimum required state actions per successful run:
 
@@ -147,12 +150,12 @@ Minimum required state actions per successful run:
 7. Set `family_complete=off` when more specs remain.
 8. Set `family_complete=on` only when no further specs are expected.
 
-Example command shapes:
+The runtime must perform the equivalent state transitions deterministically:
 
-- `python3 agents/tools/spec_family_state.py init --state agents/.research_runtime/spec_family_state.json --goal-file <source_idea_path> --source-idea-path <source_idea_path>`
-- `python3 agents/tools/spec_family_state.py upsert-spec --state agents/.research_runtime/spec_family_state.json --spec-file agents/ideas/specs/<spec_id>__<slug>.md --status emitted --queue-path agents/ideas/specs/<spec_id>__<slug>.md --set-active`
-- `python3 agents/tools/spec_family_state.py upsert-spec --state agents/.research_runtime/spec_family_state.json --spec-id <future_spec_id> --status planned --depends-on-spec <upstream_spec_id>`
-- `python3 agents/tools/spec_family_state.py set-family-complete --state agents/.research_runtime/spec_family_state.json on|off`
+- initialize family state for the current source idea before the first emitted spec
+- upsert the emitted spec as `emitted` and mark it active for this run
+- record later known specs as `planned` only during the first frozen initial-family declaration
+- set `family_complete` on or off based on whether further specs remain
 
 ## Source transition
 

@@ -47,34 +47,19 @@ This is a **research-stage** entrypoint:
 2) Resolve the source goal path:
    - use `OBJECTIVE_PROFILE_SYNC_SOURCE_PATH` when set
    - otherwise use `agents/ideas/goal/base_goal.md`
-3) Run the deterministic sync tool exactly once:
+3) Run the shipped Objective Profile Sync stage exactly once through the Python GoalSpec runtime surface.
+   - packaged runtime ownership: `millrace_engine/research/goalspec_objective_profile_sync.py`
+   - semantic-profile extraction and optional seed loading: `millrace_engine/research/goalspec_semantic_profile.py`
+   - family-policy derivation and initial-family pinning: `millrace_engine/research/goalspec_family_policy.py` and `millrace_engine/research/governance.py`
+   - the stage must materialize the required outputs listed above, including refreshed `agents/objective/contract.yaml` and `agents/audit/strict_contract.json`
 
-```bash
-python3 agents/tools/objective_profile_sync.py \
-  --goal-file "${OBJECTIVE_PROFILE_SYNC_SOURCE_PATH:-agents/ideas/goal/base_goal.md}" \
-  --completion-manifest agents/audit/completion_manifest.json \
-  --objective-contract agents/objective/contract.yaml \
-  --strict-contract agents/audit/strict_contract.json \
-  --family-policy agents/objective/family_policy.json \
-  --spec-family-state "${OBJECTIVE_PROFILE_SYNC_SPEC_FAMILY_STATE_PATH:-agents/.research_runtime/spec_family_state.json}" \
-  --state-file agents/objective/profile_sync_state.json \
-  --report-file agents/reports/objective_profile_sync.md \
-  --acceptance-dir agents/reports/acceptance_profiles \
-  --command-contract-report agents/reports/command_contract.json \
-  --completion-decision agents/reports/completion_decision.json
-```
-
-4) Validate the synced outputs:
+4) Validate the synced outputs against the shipped runtime contract:
 
 ```bash
 python3 -m json.tool agents/objective/profile_sync_state.json >/dev/null
 python3 -m json.tool agents/objective/family_policy.json >/dev/null
-python3 agents/tools/validate_objective_contract.py \
-  --schema agents/objective/contract.schema.json \
-  --contract agents/objective/contract.yaml \
-  --strict-contract agents/audit/strict_contract.json \
-  --command-contract-report agents/reports/command_contract.json \
-  --output agents/reports/objective_profile_sync_contract_validation.json >/dev/null
+python3 -c "from pathlib import Path; assert Path('agents/objective/contract.yaml').exists(); assert Path('agents/audit/strict_contract.json').exists()"
+python3 -c "from pathlib import Path; assert Path('agents/reports/objective_profile_sync.md').exists(); assert any(Path('agents/reports/acceptance_profiles').glob('*.json'))"
 ```
 
 5) Verify at least one acceptance profile JSON exists under `agents/reports/acceptance_profiles/`.

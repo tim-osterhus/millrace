@@ -22,6 +22,36 @@ PUBLIC_DOC_PARITY_PATHS = {
     "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
     "docs/TUI_DOCUMENTATION.md": "docs/TUI_DOCUMENTATION.md",
 }
+PACKAGED_RESEARCH_CONTRACT_PATHS = {
+    "agents/_objective_profile_sync.md": {
+        "absent": (
+            "agents/tools/objective_profile_sync.py",
+            "agents/tools/validate_objective_contract.py",
+        ),
+        "present": (
+            "millrace_engine/research/goalspec_objective_profile_sync.py",
+            "millrace_engine/research/goalspec_semantic_profile.py",
+            "millrace_engine/research/governance.py",
+        ),
+    },
+    "agents/_spec_synthesis.md": {
+        "absent": ("agents/tools/spec_family_state.py",),
+        "present": (
+            "millrace_engine/research/goalspec_spec_synthesis.py",
+            "millrace_engine/research/goalspec_persistence.py",
+            "millrace_engine/research/specs.py",
+            "millrace_engine/research/goalspec_scope_diagnostics.py",
+        ),
+    },
+    "agents/_taskmaster.md": {
+        "absent": (
+            "agents/tools/toposort_specs.py",
+            "agents/tools/dedupe_tasks.py",
+            "agents/tools/lint_task_cards.py",
+        ),
+        "present": ("millrace_engine/research/taskmaster.py",),
+    },
+}
 PUBLIC_EXECUTION_STAGES = (
     StageType.BUILDER,
     StageType.INTEGRATION,
@@ -193,6 +223,17 @@ def test_default_public_stage_prompt_assets_exist(tmp_path: Path) -> None:
         assert prompt_path is not None, stage.value
         assert prompt_path.exists(), prompt_path
         assert prompt_path.is_relative_to(live_agents_root), prompt_path
+
+
+def test_packaged_research_entrypoint_docs_match_shipped_python_runtime_contract() -> None:
+    assets_root = MILLRACE_ROOT / "millrace_engine" / "assets"
+
+    for relative_path, expectations in PACKAGED_RESEARCH_CONTRACT_PATHS.items():
+        contents = (assets_root / relative_path).read_text(encoding="utf-8")
+        for marker in expectations["absent"]:
+            assert marker not in contents, f"{relative_path} still references absent helper {marker}"
+        for marker in expectations["present"]:
+            assert marker in contents, f"{relative_path} missing shipped runtime seam {marker}"
 
 
 def test_packaged_tests_do_not_reference_repo_external_fixtures() -> None:

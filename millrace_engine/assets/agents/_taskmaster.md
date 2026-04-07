@@ -16,16 +16,16 @@ You are the Taskmaster. Your job is to process exactly one spec per run and gene
 
 ## Deterministic tooling contract
 
-- `agents/tools/toposort_specs.py` performs dependency + effort ordering.
-- `agents/tools/dedupe_tasks.py` performs `Spec-ID` dedupe scans across task stores and acquires `TASK_STORE_LOCK_FILE` (default `agents/.tmp/task_store.lock`) with deterministic timeout failure (`--lock-timeout-secs` / `TASK_STORE_LOCK_TIMEOUT_SECS`).
-- `agents/tools/lint_task_cards.py` enforces strict task-card contract before handoff.
-- Exit code contract for tooling:
+- shipped runtime ownership: `millrace_engine/research/taskmaster.py`
+- the shipped Python runtime performs the equivalent dependency ordering, `Spec-ID` dedupe scan across task stores, strict task-card validation, and open-product guardrail enforcement inside `execute_taskmaster`
+- runtime validation/result handling should treat failures as deterministic stage errors with the same contract severity that the older tool exit codes represented
+- Exit code contract from the older helper tooling, preserved here as the effective severity model for the shipped runtime:
   - `0` success
   - `2` usage/config error
   - `3` I/O error
   - `4` parse error or lock-timeout contention
   - `5` validation failure
-- Lint envelope + schema flags must be passed to `lint_task_cards.py`:
+- Runtime validation must honor the same lint envelope and schema flags that the older `lint_task_cards.py` surface documented:
   - `TASKMASTER_MIN_CARDS_PER_SPEC` (default `1`; fallback only when a spec lacks explicit `decomposition_profile`)
   - `TASKMASTER_MAX_CARDS_PER_SPEC` (`0` disables max cap)
   - `TASKMASTER_TARGET_CARDS_PER_SPEC` (`0` disables fallback per-spec target)
@@ -95,7 +95,7 @@ Prerequisite policy (deterministic):
 
 ## Dependency ordering
 
-Build order from each spec's frontmatter via `agents/tools/toposort_specs.py`:
+Build order from each spec's frontmatter via the shipped Taskmaster runtime ordering logic in `millrace_engine/research/taskmaster.py`:
 - `depends_on_specs`
 - `effort`
 
@@ -113,7 +113,7 @@ Do not retry such specs in this run.
 
 ## Dedupe rule
 
-Before generating cards for a spec, run `agents/tools/dedupe_tasks.py --spec-id <spec_id>` across task stores listed above.
+Before generating cards for a spec, the shipped Taskmaster runtime must perform the equivalent `Spec-ID` dedupe scan across task stores listed above.
 If found in active stores (`tasks.md`, `tasksbacklog.md`, `taskspending.md`), skip generation for that spec.
 If found only in `tasksarchive.md`, generate follow-up cards only when the queued spec contains explicit reopen intent (`reopen_reason` metadata or equivalent). Otherwise skip generation.
 
@@ -168,8 +168,8 @@ Before handoff, run lint against the current shard path:
 - preferred: `TASKMASTER_OUTPUT_SHARD_PATH`
 - fallback: `agents/taskspending/<spec_id>.md`
 
-Example command shape:
-- `agents/tools/lint_task_cards.py "$TASKMASTER_OUTPUT_SHARD_PATH" --strict "$TASKCARD_FORMAT_STRICT" --min-cards-per-spec "$TASKMASTER_MIN_CARDS_PER_SPEC" --max-cards-per-spec "$TASKMASTER_MAX_CARDS_PER_SPEC" --target-cards-per-spec "$TASKMASTER_TARGET_CARDS_PER_SPEC" --min-total-cards "$TASKMASTER_MIN_TOTAL_CARDS" --target-total-cards "$TASKMASTER_TARGET_TOTAL_CARDS" --target-shortfall-mode "$TASKCARD_TARGET_SHORTFALL_MODE" --complexity-profile "$TASKMASTER_COMPLEXITY_PROFILE_RESOLVED" --enforce-execution-template "$TASKCARD_ENFORCE_EXECUTION_TEMPLATE" --phase-workplan-coverage "$TASKCARD_PHASE_WORKPLAN_COVERAGE" --max-phase-steps-per-card "$TASKCARD_MAX_PHASE_STEPS_PER_CARD" --scope-lint "$TASKCARD_SCOPE_LINT" $([ -n "${TASKCARD_SPEC_COUNT_OVERRIDES_FILE:-}" ] && printf -- '--spec-card-count-overrides %s ' "${TASKCARD_SPEC_COUNT_OVERRIDES_FILE}") --forbid-external-network-commands "$([ \"${RESEARCH_ALLOW_SEARCH:-off}\" = \"off\" ] && echo on || echo off)"`
+Shipped runtime equivalence:
+- `millrace_engine/research/taskmaster.py` must validate the current shard against the effective strictness, card-count, schema, phase-coverage, scope-lint, and external-network-command rules before handoff
 
 Deterministic handling:
 - Treat outputs outside the effective card-count envelope (`min`/`max`) as lint fail.
