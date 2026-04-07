@@ -12,8 +12,13 @@ from pydantic import ValidationError
 from .adapters.control_mailbox import ControlCommand, write_command
 from .compounding import (
     discover_governed_procedures,
+    discover_harness_benchmark_results,
+    discover_harness_candidates,
     governed_procedure_for_id,
+    harness_benchmark_result_for_id,
+    harness_candidate_for_id,
     lifecycle_history_for_procedure,
+    run_harness_benchmark,
 )
 from .config import LoadedConfig, build_runtime_paths
 from .contract_compounding import ProcedureScope
@@ -50,6 +55,12 @@ from .control_models import (
     AssetResolutionView,
     CompletionStateView,
     CompoundingLifecycleRecordView,
+    CompoundingHarnessBenchmarkListReport,
+    CompoundingHarnessBenchmarkReport,
+    CompoundingHarnessBenchmarkView,
+    CompoundingHarnessCandidateListReport,
+    CompoundingHarnessCandidateReport,
+    CompoundingHarnessCandidateView,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     CompoundingProcedureView,
@@ -215,6 +226,39 @@ def _compounding_procedure_view(procedure: object) -> CompoundingProcedureView:
         evidence_refs=artifact.evidence_refs,
         latest_lifecycle_record=latest_view,
         lifecycle_record_count=len(getattr(procedure, "lifecycle_records")),
+    )
+
+
+def _compounding_harness_candidate_view(candidate: object) -> CompoundingHarnessCandidateView:
+    artifact = getattr(candidate, "candidate")
+    return CompoundingHarnessCandidateView(
+        candidate_id=artifact.candidate_id,
+        name=artifact.name,
+        baseline_ref=artifact.baseline_ref,
+        benchmark_suite_ref=artifact.benchmark_suite_ref,
+        state=artifact.state,
+        changed_surfaces=artifact.changed_surfaces,
+        has_compounding_policy_override=artifact.compounding_policy_override is not None,
+        reviewer_note=artifact.reviewer_note,
+        created_at=artifact.created_at,
+        created_by=artifact.created_by,
+        artifact_path=getattr(candidate, "path"),
+    )
+
+
+def _compounding_harness_benchmark_view(result: object) -> CompoundingHarnessBenchmarkView:
+    benchmark = getattr(result, "result")
+    return CompoundingHarnessBenchmarkView(
+        result_id=benchmark.result_id,
+        candidate_id=benchmark.candidate_id,
+        benchmark_suite_ref=benchmark.benchmark_suite_ref,
+        status=benchmark.status,
+        outcome=benchmark.outcome,
+        completed_at=benchmark.completed_at,
+        result_path=getattr(result, "path"),
+        outcome_summary=benchmark.outcome_summary,
+        cost_summary=benchmark.cost_summary,
+        artifact_refs=benchmark.artifact_refs,
     )
 
 
@@ -692,6 +736,93 @@ class EngineControl:
             lifecycle_records=tuple(
                 _compounding_lifecycle_record_view(item.path, record=item.record) for item in history
             ),
+        )
+
+    def compounding_harness_candidates(self) -> CompoundingHarnessCandidateListReport:
+        """Return all discoverable governed harness candidates."""
+
+        try:
+            candidates = discover_harness_candidates(self.paths)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness candidates are invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness candidates are invalid: {single_line_message(exc)}") from exc
+        return CompoundingHarnessCandidateListReport(
+            config_path=self.config_path,
+            candidates=tuple(_compounding_harness_candidate_view(candidate) for candidate in candidates),
+        )
+
+    def compounding_harness_candidate(self, candidate_id: str) -> CompoundingHarnessCandidateReport:
+        """Return one governed harness candidate plus recent benchmark results."""
+
+        normalized_candidate_id = candidate_id.strip()
+        if not normalized_candidate_id:
+            raise ControlError("compounding_harness_candidate requires a candidate_id")
+        try:
+            candidate = harness_candidate_for_id(self.paths, normalized_candidate_id)
+            benchmarks = discover_harness_benchmark_results(self.paths, candidate_id=normalized_candidate_id)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness candidate is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness candidate is invalid: {single_line_message(exc)}") from exc
+        return CompoundingHarnessCandidateReport(
+            config_path=self.config_path,
+            candidate=_compounding_harness_candidate_view(candidate),
+            recent_benchmarks=tuple(_compounding_harness_benchmark_view(item) for item in benchmarks[:5]),
+        )
+
+    def compounding_harness_benchmarks(self, *, candidate_id: str | None = None) -> CompoundingHarnessBenchmarkListReport:
+        """Return persisted harness benchmark results."""
+
+        try:
+            benchmarks = discover_harness_benchmark_results(self.paths, candidate_id=candidate_id)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness benchmarks are invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness benchmarks are invalid: {single_line_message(exc)}") from exc
+        return CompoundingHarnessBenchmarkListReport(
+            config_path=self.config_path,
+            benchmarks=tuple(_compounding_harness_benchmark_view(item) for item in benchmarks),
+        )
+
+    def compounding_harness_benchmark(self, result_id: str) -> CompoundingHarnessBenchmarkReport:
+        """Return one persisted harness benchmark result."""
+
+        normalized_result_id = result_id.strip()
+        if not normalized_result_id:
+            raise ControlError("compounding_harness_benchmark requires a result_id")
+        try:
+            benchmark = harness_benchmark_result_for_id(self.paths, normalized_result_id)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness benchmark is invalid: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness benchmark is invalid: {single_line_message(exc)}") from exc
+        return CompoundingHarnessBenchmarkReport(
+            config_path=self.config_path,
+            benchmark=_compounding_harness_benchmark_view(benchmark),
+        )
+
+    def compounding_harness_run_benchmark(self, candidate_id: str) -> OperationResult:
+        """Run one bounded harness benchmark for a governed candidate."""
+
+        try:
+            outcome = run_harness_benchmark(self.paths, self.loaded, candidate_id=candidate_id)
+        except ValidationError as exc:
+            raise ControlError(f"compounding harness benchmark failed: {validation_error_message(exc)}") from exc
+        except ValueError as exc:
+            raise ControlError(f"compounding harness benchmark failed: {single_line_message(exc)}") from exc
+        return OperationResult(
+            mode="direct",
+            applied=True,
+            message="compounding harness benchmark recorded",
+            payload={
+                "candidate_id": outcome.result.candidate_id,
+                "result_id": outcome.result.result_id,
+                "result_path": outcome.result_path.as_posix(),
+                "status": outcome.result.status.value,
+                "outcome": outcome.result.outcome.value,
+                "benchmark_suite_ref": outcome.result.benchmark_suite_ref,
+            },
         )
 
     def compounding_promote(

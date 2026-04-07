@@ -18,6 +18,14 @@ from .contract_compounding import (
     ProcedureLifecycleState,
     ProcedureScope,
 )
+from .contract_harness import (
+    HarnessBenchmarkCostSummary,
+    HarnessBenchmarkOutcome,
+    HarnessBenchmarkOutcomeSummary,
+    HarnessBenchmarkStatus,
+    HarnessCandidateState,
+    HarnessChangedSurface,
+)
 from .contracts import AuditGateDecision, CompletionDecision, ContractModel, ExecutionStatus, ResearchMode, ResearchStatus
 from .diagnostics import DiagnosticsPolicyEvidenceSnapshot
 from .events import EventRecord
@@ -815,6 +823,106 @@ class CompoundingProcedureReport(ContractModel):
     config_path: Path
     procedure: CompoundingProcedureView
     lifecycle_records: tuple[CompoundingLifecycleRecordView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessCandidateView(ContractModel):
+    """Inspectable governed harness candidate artifact."""
+
+    candidate_id: str
+    name: str
+    baseline_ref: str
+    benchmark_suite_ref: str
+    state: HarnessCandidateState
+    changed_surfaces: tuple[HarnessChangedSurface, ...] = ()
+    has_compounding_policy_override: bool
+    reviewer_note: str | None = None
+    created_at: datetime
+    created_by: str
+    artifact_path: Path
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_created_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessCandidateListReport(ContractModel):
+    """Deterministic operator-facing list of harness candidates."""
+
+    config_path: Path
+    candidates: tuple[CompoundingHarnessCandidateView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessBenchmarkView(ContractModel):
+    """Inspectable persisted harness benchmark result."""
+
+    result_id: str
+    candidate_id: str
+    benchmark_suite_ref: str
+    status: HarnessBenchmarkStatus
+    outcome: HarnessBenchmarkOutcome
+    completed_at: datetime
+    result_path: Path
+    outcome_summary: HarnessBenchmarkOutcomeSummary
+    cost_summary: HarnessBenchmarkCostSummary
+    artifact_refs: tuple[str, ...] = ()
+
+    @field_validator("completed_at", mode="before")
+    @classmethod
+    def normalize_completed_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+    @field_validator("result_path", mode="before")
+    @classmethod
+    def normalize_result_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessCandidateReport(ContractModel):
+    """Detailed operator-facing report for one harness candidate."""
+
+    config_path: Path
+    candidate: CompoundingHarnessCandidateView
+    recent_benchmarks: tuple[CompoundingHarnessBenchmarkView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessBenchmarkListReport(ContractModel):
+    """Deterministic operator-facing list of benchmark results."""
+
+    config_path: Path
+    benchmarks: tuple[CompoundingHarnessBenchmarkView, ...] = ()
+
+    @field_validator("config_path", mode="before")
+    @classmethod
+    def normalize_config_path(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class CompoundingHarnessBenchmarkReport(ContractModel):
+    """Detailed operator-facing report for one benchmark result."""
+
+    config_path: Path
+    benchmark: CompoundingHarnessBenchmarkView
 
     @field_validator("config_path", mode="before")
     @classmethod

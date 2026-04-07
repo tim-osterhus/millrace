@@ -27,6 +27,13 @@ from millrace_engine.contracts import (
     ContextFactRetrievalRule,
     ContextFactSelectionReason,
     ContextFactScope,
+    HarnessBenchmarkOutcome,
+    HarnessBenchmarkResult,
+    HarnessBenchmarkStatus,
+    HarnessCandidateArtifact,
+    HarnessCandidateState,
+    HarnessChangedSurface,
+    HarnessChangedSurfaceKind,
     InjectedContextFact,
     InjectedProcedure,
     ProcedureInjectionBundle,
@@ -257,6 +264,12 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.compounding_lifecycle_records_dir == (
         workspace_root / "agents/compounding/lifecycle"
     ).resolve()
+    assert paths.compounding_harness_candidates_dir == (
+        workspace_root / "agents/compounding/harness_candidates"
+    ).resolve()
+    assert paths.compounding_benchmark_results_dir == (
+        workspace_root / "agents/compounding/benchmark_results"
+    ).resolve()
     assert paths.completion_manifest_plan_file == (
         workspace_root / "agents/reports/completion_manifest_plan.md"
     ).resolve()
@@ -416,6 +429,71 @@ def test_compounding_contract_models_validate_and_normalize_payloads() -> None:
     assert lifecycle.model_dump(mode="json")["changed_at"] == "2026-04-07T20:00:00Z"
 
 
+def test_harness_contract_models_validate_and_normalize_payloads() -> None:
+    candidate = HarnessCandidateArtifact.model_validate(
+        {
+            "candidate_id": "harness.candidate.compounding-001",
+            "name": " Governed Plus Budget Trial ",
+            "baseline_ref": "workspace.live",
+            "benchmark_suite_ref": "preview.standard.v1",
+            "state": "candidate",
+            "changed_surfaces": [
+                {
+                    "kind": "config",
+                    "target": "policies.compounding.profile",
+                    "summary": "Switch the profile into governed plus mode.",
+                }
+            ],
+            "compounding_policy_override": {
+                "profile": "governed_plus",
+                "governed_plus_budget_characters": 2800,
+            },
+            "reviewer_note": " Bound review only ",
+            "created_at": "2026-04-07T21:00:00Z",
+            "created_by": "cli.fixture",
+        }
+    )
+
+    result = HarnessBenchmarkResult.model_validate(
+        {
+            "result_id": "bench.20260407T210500Z.harness-candidate-compounding-001",
+            "candidate_id": candidate.candidate_id,
+            "baseline_ref": candidate.baseline_ref,
+            "benchmark_suite_ref": candidate.benchmark_suite_ref,
+            "status": "complete",
+            "outcome": "changed",
+            "started_at": "2026-04-07T21:05:00Z",
+            "completed_at": "2026-04-07T21:05:05Z",
+            "outcome_summary": {
+                "selection_changed": False,
+                "changed_config_fields": ["policies.compounding.profile"],
+                "changed_stage_bindings": [],
+                "baseline_mode_ref": "mode.standard@1.0.0",
+                "candidate_mode_ref": "mode.standard@1.0.0",
+                "message": "Candidate changes compounding policy only.",
+            },
+            "cost_summary": {
+                "baseline_governed_plus_budget_characters": 3200,
+                "candidate_governed_plus_budget_characters": 2800,
+                "budget_delta_characters": -400,
+            },
+            "artifact_refs": ["agents/compounding/benchmark_results/example-baseline.json"],
+        }
+    )
+
+    assert candidate.state is HarnessCandidateState.CANDIDATE
+    assert candidate.changed_surfaces == (
+        HarnessChangedSurface(
+            kind=HarnessChangedSurfaceKind.CONFIG,
+            target="policies.compounding.profile",
+            summary="Switch the profile into governed plus mode.",
+        ),
+    )
+    assert result.status is HarnessBenchmarkStatus.COMPLETE
+    assert result.outcome is HarnessBenchmarkOutcome.CHANGED
+    assert result.model_dump(mode="json")["completed_at"] == "2026-04-07T21:05:05Z"
+
+
 def test_context_fact_contract_models_validate_and_normalize_payloads() -> None:
     artifact = ContextFactArtifact.model_validate(
         {
@@ -514,6 +592,20 @@ def test_compounding_contract_models_reject_invalid_or_extra_fields() -> None:
                 "disposition": "skipped",
                 "recorded_at": "2026-04-07T19:00:00Z",
                 "unexpected": True,
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        HarnessCandidateArtifact.model_validate(
+            {
+                "candidate_id": "bad id with spaces",
+                "name": "Broken Candidate",
+                "baseline_ref": "workspace.live",
+                "benchmark_suite_ref": "preview.standard.v1",
+                "state": "candidate",
+                "changed_surfaces": [],
+                "created_at": "2026-04-07T21:00:00Z",
+                "created_by": "cli.fixture",
             }
         )
 

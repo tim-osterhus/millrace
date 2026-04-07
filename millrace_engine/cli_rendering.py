@@ -10,6 +10,10 @@ import typer
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .control import (
     AssetInventoryView,
+    CompoundingHarnessBenchmarkListReport,
+    CompoundingHarnessBenchmarkReport,
+    CompoundingHarnessCandidateListReport,
+    CompoundingHarnessCandidateReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     OperationResult,
@@ -1060,6 +1064,111 @@ def render_compounding_procedure(report: CompoundingProcedureReport, *, json_mod
             if record.replacement_procedure_id is not None:
                 line += f" replacement={record.replacement_procedure_id}"
             lines.append(line)
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_harness_candidates(report: CompoundingHarnessCandidateListReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    if not report.candidates:
+        typer.echo("No compounding harness candidates.")
+        return
+    lines: list[str] = []
+    for candidate in report.candidates:
+        lines.append(
+            f"{candidate.candidate_id} [{candidate.state.value}] baseline={candidate.baseline_ref} "
+            f"suite={candidate.benchmark_suite_ref}"
+        )
+        lines.append(f"  Name: {candidate.name}")
+        lines.append(f"  Artifact: {candidate.artifact_path}")
+        lines.append(
+            "  Changed surfaces: "
+            + ", ".join(f"{item.kind.value}:{item.target}" for item in candidate.changed_surfaces)
+        )
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_harness_candidate(report: CompoundingHarnessCandidateReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    candidate = report.candidate
+    lines = [
+        f"Candidate ID: {candidate.candidate_id}",
+        f"State: {candidate.state.value}",
+        f"Name: {candidate.name}",
+        f"Baseline ref: {candidate.baseline_ref}",
+        f"Benchmark suite ref: {candidate.benchmark_suite_ref}",
+        f"Compounding override: {'yes' if candidate.has_compounding_policy_override else 'no'}",
+        f"Created by: {candidate.created_by}",
+        f"Artifact: {candidate.artifact_path}",
+    ]
+    if candidate.reviewer_note is not None:
+        lines.append(f"Reviewer note: {candidate.reviewer_note}")
+    if candidate.changed_surfaces:
+        lines.append("Changed surfaces:")
+        lines.extend(f"- {item.kind.value}:{item.target} :: {item.summary}" for item in candidate.changed_surfaces)
+    if report.recent_benchmarks:
+        lines.append("Recent benchmarks:")
+        for benchmark in report.recent_benchmarks:
+            lines.append(
+                f"- {benchmark.result_id} [{benchmark.status.value}] outcome={benchmark.outcome.value} "
+                f"selection_changed={'yes' if benchmark.outcome_summary.selection_changed else 'no'}"
+            )
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_harness_benchmarks(report: CompoundingHarnessBenchmarkListReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    if not report.benchmarks:
+        typer.echo("No compounding harness benchmarks.")
+        return
+    lines: list[str] = []
+    for benchmark in report.benchmarks:
+        lines.append(
+            f"{benchmark.result_id} [{benchmark.status.value}] candidate={benchmark.candidate_id} "
+            f"outcome={benchmark.outcome.value}"
+        )
+        lines.append(
+            f"  Selection changed: {'yes' if benchmark.outcome_summary.selection_changed else 'no'} "
+            f"budget_delta={benchmark.cost_summary.budget_delta_characters}"
+        )
+        lines.append(f"  Result: {benchmark.result_path}")
+    typer.echo("\n".join(lines))
+
+
+def render_compounding_harness_benchmark(report: CompoundingHarnessBenchmarkReport, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    benchmark = report.benchmark
+    lines = [
+        f"Benchmark ID: {benchmark.result_id}",
+        f"Candidate ID: {benchmark.candidate_id}",
+        f"Status: {benchmark.status.value}",
+        f"Outcome: {benchmark.outcome.value}",
+        f"Benchmark suite ref: {benchmark.benchmark_suite_ref}",
+        f"Completed at: {benchmark.completed_at.isoformat().replace('+00:00', 'Z')}",
+        f"Result: {benchmark.result_path}",
+        f"Selection changed: {'yes' if benchmark.outcome_summary.selection_changed else 'no'}",
+        f"Changed config fields: {', '.join(benchmark.outcome_summary.changed_config_fields) or 'none'}",
+        f"Changed stage bindings: {', '.join(benchmark.outcome_summary.changed_stage_bindings) or 'none'}",
+        f"Baseline mode: {benchmark.outcome_summary.baseline_mode_ref}",
+        f"Candidate mode: {benchmark.outcome_summary.candidate_mode_ref}",
+        f"Summary: {benchmark.outcome_summary.message}",
+        (
+            "Cost summary: "
+            f"baseline={benchmark.cost_summary.baseline_governed_plus_budget_characters} "
+            f"candidate={benchmark.cost_summary.candidate_governed_plus_budget_characters} "
+            f"delta={benchmark.cost_summary.budget_delta_characters}"
+        ),
+    ]
+    if benchmark.artifact_refs:
+        lines.append("Artifacts:")
+        lines.extend(f"- {item}" for item in benchmark.artifact_refs)
     typer.echo("\n".join(lines))
 
 

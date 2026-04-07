@@ -88,6 +88,19 @@ from .contract_context_facts import (
     ContextFactScope,
     InjectedContextFact,
 )
+from .contract_harness import (
+    HARNESS_SCHEMA_VERSION,
+    HarnessBenchmarkCostSummary,
+    HarnessBenchmarkOutcome,
+    HarnessBenchmarkOutcomeSummary,
+    HarnessBenchmarkResult,
+    HarnessBenchmarkStatus,
+    HarnessCandidateArtifact,
+    HarnessCandidateCompoundingPolicy,
+    HarnessCandidateState,
+    HarnessChangedSurface,
+    HarnessChangedSurfaceKind,
+)
 
 # Phase 01B loop-architecture contracts live in a dedicated module but remain
 # re-exported here to preserve the existing shared-contract import surface.

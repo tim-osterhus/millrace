@@ -1,6 +1,13 @@
 """Compounding helpers for runtime-owned governed reuse."""
 
 from .extraction import clear_run_scoped_procedure_candidates, persist_candidate_from_transition
+from .harness import (
+    discover_harness_benchmark_results,
+    discover_harness_candidates,
+    harness_benchmark_result_for_id,
+    harness_candidate_for_id,
+    run_harness_benchmark,
+)
 from .lifecycle import (
     deprecate_procedure,
     discover_governed_procedures,
@@ -26,8 +33,12 @@ __all__ = [
     "context_fact_retrieval_rule_for_stage",
     "deprecate_procedure",
     "discover_governed_procedures",
+    "discover_harness_benchmark_results",
+    "discover_harness_candidates",
     "discover_workspace_procedures",
     "governed_procedure_for_id",
+    "harness_benchmark_result_for_id",
+    "harness_candidate_for_id",
     "lifecycle_history_for_procedure",
     "load_retrievable_workspace_procedures",
     "persist_candidate_from_transition",
@@ -35,4 +46,5 @@ __all__ = [
     "procedure_retrieval_rule_for_stage",
     "render_injected_context_fact_block",
     "render_injected_procedure_block",
+    "run_harness_benchmark",
 ]

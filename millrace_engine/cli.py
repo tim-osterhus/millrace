@@ -12,6 +12,10 @@ import typer
 
 from .cli_rendering import (
     _asset_inventory_lines,
+    render_compounding_harness_benchmark,
+    render_compounding_harness_benchmarks,
+    render_compounding_harness_candidate,
+    render_compounding_harness_candidates,
     render_compounding_procedure,
     render_compounding_procedures,
     _legacy_policy_lines,
@@ -36,6 +40,10 @@ from .cli_rendering import (
 )
 from .control import ConfigShowReport, ControlError, EngineControl
 from .control_models import (
+    CompoundingHarnessBenchmarkListReport,
+    CompoundingHarnessBenchmarkReport,
+    CompoundingHarnessCandidateListReport,
+    CompoundingHarnessCandidateReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     InterviewListReport,
@@ -51,6 +59,9 @@ queue_app = typer.Typer(help="Inspect visible execution queues.")
 queue_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work.")
 compounding_app = typer.Typer(help="Inspect governed reusable procedures.")
 compounding_procedures_app = typer.Typer(help="Inspect or mutate governed reusable procedures.")
+compounding_harness_app = typer.Typer(help="Inspect governed harness candidates and benchmark results.")
+compounding_harness_candidates_app = typer.Typer(help="Inspect governed harness candidates.")
+compounding_harness_benchmarks_app = typer.Typer(help="Inspect or run governed harness benchmarks.")
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
@@ -61,6 +72,9 @@ app.add_typer(queue_app, name="queue")
 queue_app.add_typer(queue_cleanup_app, name="cleanup")
 app.add_typer(compounding_app, name="compounding")
 compounding_app.add_typer(compounding_procedures_app, name="procedures")
+compounding_app.add_typer(compounding_harness_app, name="harness")
+compounding_harness_app.add_typer(compounding_harness_candidates_app, name="candidates")
+compounding_harness_app.add_typer(compounding_harness_benchmarks_app, name="benchmarks")
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
@@ -615,6 +629,89 @@ def compounding_procedures_root(
         json_mode=json_mode,
     )
     render_compounding_procedures(report, json_mode=json_mode)
+
+
+@compounding_harness_candidates_app.command("show")
+def compounding_harness_candidate_show_command(
+    ctx: typer.Context,
+    candidate_id: Annotated[str, typer.Argument(help="Harness candidate id to inspect.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one governed harness candidate plus recent benchmark history."""
+
+    report: CompoundingHarnessCandidateReport = _run_expected(
+        lambda: _control(ctx).compounding_harness_candidate(candidate_id),
+        json_mode=json_mode,
+    )
+    render_compounding_harness_candidate(report, json_mode=json_mode)
+
+
+@compounding_harness_candidates_app.callback(invoke_without_command=True)
+def compounding_harness_candidates_root(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show governed harness candidates."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    report: CompoundingHarnessCandidateListReport = _run_expected(
+        lambda: _control(ctx).compounding_harness_candidates(),
+        json_mode=json_mode,
+    )
+    render_compounding_harness_candidates(report, json_mode=json_mode)
+
+
+@compounding_harness_benchmarks_app.command("run")
+def compounding_harness_benchmark_run_command(
+    ctx: typer.Context,
+    candidate_id: Annotated[str, typer.Argument(help="Harness candidate id to benchmark.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Run one bounded benchmark for a governed harness candidate."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).compounding_harness_run_benchmark(candidate_id),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@compounding_harness_benchmarks_app.command("show")
+def compounding_harness_benchmark_show_command(
+    ctx: typer.Context,
+    result_id: Annotated[str, typer.Argument(help="Harness benchmark result id to inspect.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show one persisted governed harness benchmark result."""
+
+    report: CompoundingHarnessBenchmarkReport = _run_expected(
+        lambda: _control(ctx).compounding_harness_benchmark(result_id),
+        json_mode=json_mode,
+    )
+    render_compounding_harness_benchmark(report, json_mode=json_mode)
+
+
+@compounding_harness_benchmarks_app.callback(invoke_without_command=True)
+def compounding_harness_benchmarks_root(
+    ctx: typer.Context,
+    candidate_id: Annotated[
+        str | None,
+        typer.Option("--candidate-id", help="Optional harness candidate id filter."),
+    ] = None,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show persisted governed harness benchmark results."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    report: CompoundingHarnessBenchmarkListReport = _run_expected(
+        lambda: _control(ctx).compounding_harness_benchmarks(candidate_id=candidate_id),
+        json_mode=json_mode,
+    )
+    render_compounding_harness_benchmarks(report, json_mode=json_mode)
 
 
 @research_app.command("history")

@@ -22,6 +22,9 @@ from millrace_engine.contracts import (
     CrossPlaneParentRun,
     ExecutionStatus,
     ExecutionResearchHandoff,
+    HarnessCandidateArtifact,
+    HarnessCandidateState,
+    HarnessChangedSurfaceKind,
     ModelProfileDefinition,
     PersistedObjectKind,
     ProcedureLifecycleRecord,
@@ -345,6 +348,44 @@ def write_compounding_stage_driver(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return script
+
+
+def write_harness_candidate(
+    workspace: Path,
+    *,
+    filename: str,
+    candidate_id: str,
+    profile: str,
+    budget_characters: int,
+    baseline_ref: str = "workspace.live",
+    benchmark_suite_ref: str = "preview.standard.v1",
+) -> Path:
+    target_dir = workspace / "agents" / "compounding" / "harness_candidates"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / filename
+    artifact = HarnessCandidateArtifact(
+        candidate_id=candidate_id,
+        name="Governed Plus Preview Trial",
+        baseline_ref=baseline_ref,
+        benchmark_suite_ref=benchmark_suite_ref,
+        state=HarnessCandidateState.CANDIDATE,
+        changed_surfaces=(
+            {
+                "kind": HarnessChangedSurfaceKind.CONFIG.value,
+                "target": "policies.compounding.profile",
+                "summary": "Switch compounding policy for bounded preview benchmarking.",
+            },
+        ),
+        compounding_policy_override={
+            "profile": profile,
+            "governed_plus_budget_characters": budget_characters,
+        },
+        reviewer_note="fixture candidate",
+        created_at="2026-04-07T21:00:00Z",
+        created_by="cli.fixture",
+    )
+    path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def write_interview_source(
@@ -3603,6 +3644,146 @@ def test_cli_compounding_procedure_deprecate_queues_mailbox_when_daemon_running(
     assert command_payload["command"] == "compounding_deprecate"
     assert command_payload["payload"]["procedure_id"] == "proc.workspace.builder.reviewed"
     assert command_payload["payload"]["reason"] == "unsafe after regression"
+
+
+def test_cli_compounding_harness_list_show_run_and_report_benchmark(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_harness_candidate(
+        workspace,
+        filename="governed-plus-trial.json",
+        candidate_id="harness.candidate.compounding-001",
+        profile="governed_plus",
+        budget_characters=2800,
+    )
+
+    list_result = RUNNER.invoke(app, ["--config", str(config_path), "compounding", "harness", "candidates", "--json"])
+
+    assert list_result.exit_code == 0
+    list_payload = json.loads(list_result.stdout)
+    assert [item["candidate_id"] for item in list_payload["candidates"]] == [
+        "harness.candidate.compounding-001"
+    ]
+    assert list_payload["candidates"][0]["has_compounding_policy_override"] is True
+
+    show_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "candidates",
+            "show",
+            "harness.candidate.compounding-001",
+        ],
+    )
+
+    assert show_result.exit_code == 0
+    assert "Candidate ID: harness.candidate.compounding-001" in show_result.stdout
+    assert "Changed surfaces:" in show_result.stdout
+
+    run_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "benchmarks",
+            "run",
+            "harness.candidate.compounding-001",
+            "--json",
+        ],
+    )
+
+    assert run_result.exit_code == 0
+    run_payload = json.loads(run_result.stdout)
+    assert run_payload["message"] == "compounding harness benchmark recorded"
+    result_id = run_payload["payload"]["result_id"]
+    result_path = Path(run_payload["payload"]["result_path"])
+    assert result_path.exists()
+
+    benchmark_list_result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "compounding", "harness", "benchmarks", "--json"],
+    )
+
+    assert benchmark_list_result.exit_code == 0
+    benchmark_list_payload = json.loads(benchmark_list_result.stdout)
+    assert benchmark_list_payload["benchmarks"][0]["result_id"] == result_id
+    assert benchmark_list_payload["benchmarks"][0]["outcome_summary"]["selection_changed"] is False
+    assert (
+        benchmark_list_payload["benchmarks"][0]["cost_summary"]["budget_delta_characters"] == -400
+    )
+
+    benchmark_show_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "benchmarks",
+            "show",
+            result_id,
+        ],
+    )
+
+    assert benchmark_show_result.exit_code == 0
+    assert f"Benchmark ID: {result_id}" in benchmark_show_result.stdout
+    assert "Selection changed: no" in benchmark_show_result.stdout
+    assert "delta=-400" in benchmark_show_result.stdout
+
+
+def test_cli_compounding_harness_benchmark_rejects_unsupported_suite_ref(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    write_harness_candidate(
+        workspace,
+        filename="unsupported-suite.json",
+        candidate_id="harness.candidate.unsupported-suite",
+        profile="governed_plus",
+        budget_characters=2800,
+        benchmark_suite_ref="preview.custom.v1",
+    )
+
+    run_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "benchmarks",
+            "run",
+            "harness.candidate.unsupported-suite",
+            "--json",
+        ],
+    )
+
+    assert run_result.exit_code == 0
+    run_payload = json.loads(run_result.stdout)
+    result_id = run_payload["payload"]["result_id"]
+    assert run_payload["payload"]["status"] == "unsupported"
+    assert run_payload["payload"]["outcome"] == "unsupported"
+
+    benchmark_show_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "compounding",
+            "harness",
+            "benchmarks",
+            "show",
+            result_id,
+            "--json",
+        ],
+    )
+
+    assert benchmark_show_result.exit_code == 0
+    benchmark_payload = json.loads(benchmark_show_result.stdout)
+    assert benchmark_payload["benchmark"]["status"] == "unsupported"
+    assert "unsupported benchmark_suite_ref" in benchmark_payload["benchmark"]["outcome_summary"]["message"]
 
 
 def test_cli_run_provenance_survives_broken_live_registry_with_frozen_history_json(
