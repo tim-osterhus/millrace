@@ -180,6 +180,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "This file is for agents acting as the external one-workspace supervisor" in supervisor
     assert OPERATIONS_SKILL_PATH in supervisor
     assert "supervisor report --json" in supervisor
+    assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in supervisor
+    assert "poll frequency, heartbeat strategy, and wakeup delivery" in supervisor
     assert 'supervisor add-task "Example task" --issuer <name> --json' in supervisor
     assert "Use `ADVISOR.md` instead" in supervisor
 
@@ -192,6 +194,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
+    assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in runtime_deep_dive
     assert "structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`" in runtime_deep_dive
     assert "the markdown files remain the instruction layer" in runtime_deep_dive
     assert "`engine_runtime.py`: shared engine runtime dependency bundle" in runtime_deep_dive

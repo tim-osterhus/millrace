@@ -18,7 +18,7 @@ Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequ
 ## Role
 
 - poll one workspace through the machine-readable supervisor report
-- interpret attention state and decide whether action is needed
+- interpret `attention_reason`, `attention_summary`, and `allowed_actions` to decide whether action is needed
 - issue safe supervisor mutations with explicit issuer attribution
 - keep cadence, wakeups, messaging, and multi-workspace portfolio logic outside Millrace core
 
@@ -45,6 +45,13 @@ millrace --config millrace.toml supervisor add-task "Example task" --issuer <nam
 millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
 ```
 
+## Attention Handling
+
+- Treat `attention_reason`, `attention_summary`, and `allowed_actions` from `supervisor report --json` as the supported machine-readable decision surface.
+- When `attention_reason` is `none`, keep the workspace on the current external polling or heartbeat schedule.
+- When `attention_reason` is non-`none`, decide whether to wait, message, escalate, or issue one of the listed supervisor-safe actions.
+- Keep poll intervals, heartbeat checks, wakeups, and outbound messaging policy in the external harness, layered over Millrace-owned report and event truth.
+
 ## Runtime Rules
 
 - Treat `supervisor report --json` as the primary observation surface.
@@ -52,16 +59,17 @@ millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ...
 - Keep runtime-owned files read-only during normal supervision.
 - Do not write `agents/.runtime/commands/incoming/`, mailbox files, or task-store files directly.
 - Do not use this role to own wakeups, scheduling, outbound messaging, or multi-workspace coordination inside Millrace itself.
+- Do not turn Millrace into the cadence source of truth; the harness chooses poll frequency, heartbeat strategy, and wakeup delivery.
 - If you need local operator-shell diagnosis or non-supervisor mutation flows, hand off to `ADVISOR.md`.
 
 ## External Supervisor Workflow
 
 1. Run `millrace --config millrace.toml supervisor report --json`.
-2. Inspect the machine-readable attention reasons and current lifecycle state.
+2. Inspect `attention_reason`, `attention_summary`, `allowed_actions`, and the current lifecycle state.
 3. If action is required, use the matching `supervisor ... --issuer <name> --json` command.
 4. Re-run `supervisor report --json` or `status --detail --json` to confirm the result.
 5. Escalate when the required action is outside the supported supervisor contract.
 
 ## Boundary Reminder
 
-Millrace owns one-workspace runtime truth. External supervisor harnesses may poll, decide, and issue issuer-attributed actions, but they must not bypass the control plane or synthesize extra runtime-owned orchestration surfaces inside the workspace.
+Millrace owns one-workspace runtime truth. External supervisor harnesses may poll, decide, and issue issuer-attributed actions, but they must not bypass the control plane or synthesize extra runtime-owned orchestration surfaces inside the workspace. Poll cadence, heartbeat policy, wakeup routing, and outbound messaging remain external harness concerns layered over Millrace-owned reports and events.

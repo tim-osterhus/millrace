@@ -1301,9 +1301,9 @@ The supported compatibility seam is intentionally narrow:
 - `millrace --config millrace.toml supervisor report --json` for consolidated observation
 - `millrace --config millrace.toml supervisor ... --issuer <name> --json` for attributable control actions
 
-That report collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons without requiring the harness to synthesize raw runtime files.
+That report collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons without requiring the harness to synthesize raw runtime files. External harnesses should treat `attention_reason`, `attention_summary`, and `allowed_actions` as the supported machine-readable decision surface.
 
-Scheduling, messaging, wakeups, and multi-workspace portfolio logic stay outside the core runtime. External harnesses must not write `agents/.runtime/commands/incoming/` or other engine-owned files directly during normal supervision.
+Scheduling, messaging, wakeups, and multi-workspace portfolio logic stay outside the core runtime. Poll cadence, heartbeat strategy, and wakeup delivery remain harness policy layered over Millrace-owned reports and events. External harnesses must not write `agents/.runtime/commands/incoming/` or other engine-owned files directly during normal supervision.
 
 ## 23. Foreground vs Daemon Behavior
 

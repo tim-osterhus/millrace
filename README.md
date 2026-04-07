@@ -290,7 +290,7 @@ Millrace supports explicit OpenClaw and external-supervisor compatibility one wo
 millrace --config millrace.toml supervisor report --json
 ```
 
-That report is the supported first-pass decision surface for one workspace. It collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons into one payload without requiring raw runtime-file synthesis.
+That report is the supported first-pass decision surface for one workspace. It collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons into one payload without requiring raw runtime-file synthesis. External harnesses should treat `attention_reason`, `attention_summary`, and `allowed_actions` as the supported machine-readable trigger for wait/message/escalate/act decisions.
 
 If the harness decides action is needed, use the supported supervisor-safe CLI path with explicit issuer attribution:
 
@@ -302,7 +302,7 @@ millrace --config millrace.toml supervisor add-task "Example task" --issuer <nam
 millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
 ```
 
-Scheduling, messaging, wakeups, and multi-workspace registry stay outside Millrace core. Millrace owns one-workspace runtime truth, event history, and safe action semantics; the external harness owns cadence, portfolio ordering, and outbound communication.
+Scheduling, messaging, wakeups, and multi-workspace registry stay outside Millrace core. Millrace owns one-workspace runtime truth, event history, and safe action semantics; the external harness owns cadence, heartbeat policy, portfolio ordering, and outbound communication.
 
 Optional adapters may translate `supervisor report`, research/status surfaces, or structured events into wakeups, webhooks, or inbox items, but they remain edge layers over Millrace-owned truth. This keeps the OpenClaw/Supervisor compatibility seam attributable and file-safe. Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime files directly during normal supervision.
 
