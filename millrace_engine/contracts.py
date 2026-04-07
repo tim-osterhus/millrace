@@ -77,6 +77,12 @@ from .contract_compounding import (
     ProcedureUsageRecord,
     ReusableProcedureArtifact,
 )
+from .contract_context_facts import (
+    CONTEXT_FACT_SCHEMA_VERSION,
+    ContextFactArtifact,
+    ContextFactLifecycleState,
+    ContextFactScope,
+)
 
 # Phase 01B loop-architecture contracts live in a dedicated module but remain
 # re-exported here to preserve the existing shared-contract import surface.

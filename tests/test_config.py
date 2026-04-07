@@ -20,6 +20,9 @@ from millrace_engine.config import (
 )
 from millrace_engine.contracts import RunnerKind, StageContext, StageType, load_objective_contract
 from millrace_engine.contracts import (
+    ContextFactArtifact,
+    ContextFactLifecycleState,
+    ContextFactScope,
     InjectedProcedure,
     ProcedureInjectionBundle,
     ProcedureLifecycleRecord,
@@ -165,6 +168,9 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.compounding_dir == (workspace_root / "agents/compounding").resolve()
     assert paths.compounding_procedures_dir == (
         workspace_root / "agents/compounding/procedures"
+    ).resolve()
+    assert paths.compounding_context_facts_dir == (
+        workspace_root / "agents/compounding/context_facts"
     ).resolve()
     assert paths.compounding_usage_records_dir == (
         workspace_root / "agents/compounding/usage"
@@ -329,6 +335,80 @@ def test_compounding_contract_models_validate_and_normalize_payloads() -> None:
     assert usage.disposition is ProcedureUsageDisposition.INJECTED
     assert lifecycle.state is ProcedureLifecycleState.PROMOTED
     assert lifecycle.model_dump(mode="json")["changed_at"] == "2026-04-07T20:00:00Z"
+
+
+def test_context_fact_contract_models_validate_and_normalize_payloads() -> None:
+    artifact = ContextFactArtifact.model_validate(
+        {
+            "fact_id": "fact.workspace.build.001",
+            "scope": "workspace",
+            "lifecycle_state": "promoted",
+            "source_run_id": "run-101",
+            "source_stage": "builder",
+            "title": " Build root requires editable install ",
+            "statement": "The Millrace source tree requires `pip install -e '.[dev]'` before local test runs.",
+            "summary": "Local source-checkout verification depends on the editable dev install.",
+            "tags": ["python", " python ", "packaging"],
+            "evidence_refs": ["docs/setup.md", "docs/setup.md"],
+            "created_at": "2026-04-07T18:00:00Z",
+            "observed_at": "2026-04-07T18:15:00Z",
+        }
+    )
+
+    stale = ContextFactArtifact.model_validate(
+        {
+            "fact_id": "fact.workspace.qa.001",
+            "scope": "workspace",
+            "lifecycle_state": "stale",
+            "source_run_id": "run-102",
+            "source_stage": "qa",
+            "title": "Old QA baseline",
+            "statement": "The previous QA baseline no longer reflects current failures.",
+            "summary": "The fact remains recorded but should not be reused until refreshed.",
+            "created_at": "2026-04-07T19:00:00Z",
+            "stale_reason": "Superseded by newer validation evidence.",
+        }
+    )
+
+    assert artifact.scope is ContextFactScope.WORKSPACE
+    assert artifact.lifecycle_state is ContextFactLifecycleState.PROMOTED
+    assert artifact.tags == ("python", "packaging")
+    assert artifact.evidence_refs == ("docs/setup.md",)
+    assert stale.lifecycle_state is ContextFactLifecycleState.STALE
+    assert stale.model_dump(mode="json")["created_at"] == "2026-04-07T19:00:00Z"
+
+
+def test_context_fact_contract_models_reject_invalid_or_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        ContextFactArtifact.model_validate(
+            {
+                "fact_id": "fact.workspace.invalid.001",
+                "scope": "workspace",
+                "lifecycle_state": "stale",
+                "source_run_id": "run-001",
+                "source_stage": "builder",
+                "title": "Broken",
+                "statement": "Broken",
+                "summary": "Broken",
+                "created_at": "2026-04-07T18:00:00Z",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ContextFactArtifact.model_validate(
+            {
+                "fact_id": "bad id with spaces",
+                "scope": "workspace",
+                "lifecycle_state": "promoted",
+                "source_run_id": "run-001",
+                "source_stage": "builder",
+                "title": "Broken",
+                "statement": "Broken",
+                "summary": "Broken",
+                "created_at": "2026-04-07T18:00:00Z",
+                "unexpected": True,
+            }
+        )
 
 
 def test_compounding_contract_models_reject_invalid_or_extra_fields() -> None:

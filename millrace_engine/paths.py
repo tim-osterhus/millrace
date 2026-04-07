@@ -65,6 +65,7 @@ class RuntimePaths:
     research_runtime_dir: Path
     compounding_dir: Path
     compounding_procedures_dir: Path
+    compounding_context_facts_dir: Path
     compounding_usage_records_dir: Path
     compounding_lifecycle_records_dir: Path
     goal_spec_family_state_file: Path
@@ -160,6 +161,7 @@ class RuntimePaths:
             research_runtime_dir=research_runtime_dir,
             compounding_dir=compounding_dir,
             compounding_procedures_dir=compounding_dir / "procedures",
+            compounding_context_facts_dir=compounding_dir / "context_facts",
             compounding_usage_records_dir=compounding_dir / "usage",
             compounding_lifecycle_records_dir=compounding_dir / "lifecycle",
             goal_spec_family_state_file=research_runtime_dir / "spec_family_state.json",
