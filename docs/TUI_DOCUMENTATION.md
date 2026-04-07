@@ -74,6 +74,7 @@ If OpenClaw or another external supervisor harness is coordinating Millrace work
 millrace --config millrace.toml supervisor report --json
 millrace --config millrace.toml supervisor pause --issuer <name> --json
 millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
+millrace --config millrace.toml supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json
 ```
 
 The TUI can observe and act through the same control plane for a local operator, but it is not the remote harness interface and it should not replace the attributable supervisor contract.

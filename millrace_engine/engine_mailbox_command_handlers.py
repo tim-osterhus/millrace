@@ -99,6 +99,8 @@ def build_engine_mailbox_command_registry() -> EngineMailboxCommandRegistry:
             ControlCommand.ADD_TASK: _handle_add_task,
             ControlCommand.ADD_IDEA: _handle_add_idea,
             ControlCommand.QUEUE_REORDER: _handle_queue_reorder,
+            ControlCommand.QUEUE_CLEANUP_REMOVE: _handle_queue_cleanup_remove,
+            ControlCommand.QUEUE_CLEANUP_QUARANTINE: _handle_queue_cleanup_quarantine,
         }
     )
 
@@ -244,4 +246,68 @@ def _handle_queue_reorder(
             message="queue reordered",
             payload={"task_ids": [card.task_id for card in reordered]},
         )
+    )
+
+
+def _read_queue_cleanup_payload(
+    envelope: ControlCommandEnvelope,
+    *,
+    action_label: str,
+) -> tuple[str, str]:
+    task_id = envelope.payload.get("task_id")
+    reason = envelope.payload.get("reason")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ControlError(f"{action_label} requires a task id")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ControlError("queue cleanup requires a reason")
+    return task_id.strip(), reason
+
+
+def _queue_cleanup_execution(
+    *,
+    envelope: ControlCommandEnvelope,
+    record,
+    message: str,
+) -> EngineMailboxCommandExecution:
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(
+            mode="direct",
+            applied=True,
+            message=message,
+            payload={
+                "task_id": record.task.task_id,
+                "title": record.task.title,
+                "source_store": record.source_store,
+                "destination_store": record.destination_store,
+                "reason": record.reason,
+                "cleanup_action": record.action,
+                "issuer": envelope.issuer,
+            },
+        )
+    )
+
+
+def _handle_queue_cleanup_remove(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    task_id, reason = _read_queue_cleanup_payload(envelope, action_label="queue cleanup remove")
+    record = TaskQueue(context.hooks.get_paths()).remove_task(task_id, reason=reason)
+    return _queue_cleanup_execution(
+        envelope=envelope,
+        record=record,
+        message="queue cleanup removed task",
+    )
+
+
+def _handle_queue_cleanup_quarantine(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    task_id, reason = _read_queue_cleanup_payload(envelope, action_label="queue cleanup quarantine")
+    record = TaskQueue(context.hooks.get_paths()).quarantine_task(task_id, reason=reason)
+    return _queue_cleanup_execution(
+        envelope=envelope,
+        record=record,
+        message="queue cleanup quarantined task",
     )

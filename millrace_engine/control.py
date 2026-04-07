@@ -22,6 +22,8 @@ from .control_actions import (
     queue_cleanup_remove as queue_cleanup_remove_operation,
     queue_reorder as queue_reorder_operation,
     supervisor_add_task as supervisor_add_task_operation,
+    supervisor_queue_cleanup_quarantine as supervisor_queue_cleanup_quarantine_operation,
+    supervisor_queue_cleanup_remove as supervisor_queue_cleanup_remove_operation,
     supervisor_lifecycle_action,
     supervisor_queue_reorder as supervisor_queue_reorder_operation,
 )
@@ -162,10 +164,22 @@ def _persisted_state_migration_apply_payload(
     }
 
 
-def _supervisor_allowed_actions(runtime: RuntimeState, *, backlog_depth: int) -> tuple[SupervisorAction, ...]:
+def _supervisor_allowed_actions(
+    runtime: RuntimeState,
+    *,
+    backlog_depth: int,
+    active_task_present: bool,
+) -> tuple[SupervisorAction, ...]:
     actions: list[SupervisorAction] = [SupervisorAction.ADD_TASK]
     if backlog_depth > 1:
         actions.append(SupervisorAction.QUEUE_REORDER)
+    if active_task_present or backlog_depth > 0:
+        actions.extend(
+            (
+                SupervisorAction.QUEUE_CLEANUP_REMOVE,
+                SupervisorAction.QUEUE_CLEANUP_QUARANTINE,
+            )
+        )
     if runtime.process_running:
         actions.append(SupervisorAction.STOP)
         actions.append(SupervisorAction.RESUME if runtime.paused else SupervisorAction.PAUSE)
@@ -522,6 +536,7 @@ class EngineControl:
             allowed_actions=_supervisor_allowed_actions(
                 status.runtime,
                 backlog_depth=status.runtime.backlog_depth,
+                active_task_present=status.active_task is not None,
             ),
             recent_events=recent_events,
         )
@@ -731,6 +746,28 @@ class EngineControl:
         return supervisor_queue_reorder_operation(
             self.paths,
             task_ids=task_ids,
+            issuer=issuer,
+            daemon_running=self.is_daemon_running(),
+        )
+
+    def supervisor_queue_cleanup_remove(self, task_id: str, *, reason: str, issuer: str) -> OperationResult:
+        """Remove one visible queued task through the supervisor-safe cleanup path."""
+
+        return supervisor_queue_cleanup_remove_operation(
+            self.paths,
+            task_id=task_id,
+            reason=reason,
+            issuer=issuer,
+            daemon_running=self.is_daemon_running(),
+        )
+
+    def supervisor_queue_cleanup_quarantine(self, task_id: str, *, reason: str, issuer: str) -> OperationResult:
+        """Quarantine one visible queued task through the supervisor-safe cleanup path."""
+
+        return supervisor_queue_cleanup_quarantine_operation(
+            self.paths,
+            task_id=task_id,
+            reason=reason,
             issuer=issuer,
             daemon_running=self.is_daemon_running(),
         )

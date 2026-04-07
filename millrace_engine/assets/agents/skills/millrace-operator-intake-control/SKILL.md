@@ -20,6 +20,7 @@ Goal:
 Use when (triggers):
 - before `millrace add-idea`, `millrace add-task`, or `millrace supervisor add-task`
 - before `millrace queue reorder` or `millrace supervisor queue-reorder`
+- before `millrace queue cleanup ...` or `millrace supervisor cleanup ...`
 - when deciding whether the caller is an Advisor or Supervisor
 - when an intake draft starts naming stages like GoalSpec, Spec Review, Taskmaster, audit, or quickfix
 
@@ -32,7 +33,7 @@ Do NOT use when (non-goals):
 - Prefer the smallest supported command surface over raw file edits.
 - Keep runtime-owned files read-only during normal operation.
 - Use issuer-attributed supervisor commands for external harness mutations.
-- If a supported cleanup path does not exist yet, diagnose and escalate; do not invent one by editing runtime state directly.
+- Use shipped cleanup commands for queued-work correction, and do not invent broader file-deletion flows by editing runtime state directly.
 
 ## Inputs this Skill expects
 Required:
@@ -84,6 +85,9 @@ Progress:
 - Queue ordering:
   - local: `millrace --config millrace.toml queue reorder <task-id> <task-id> ...`
   - external: `millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json`
+- Cleanup:
+  - local: `millrace --config millrace.toml queue cleanup remove|quarantine <task-id> --reason "..."`
+  - external: `millrace --config millrace.toml supervisor cleanup remove|quarantine <task-id> --issuer <name> --reason "..." --json`
 - Lifecycle:
   - local: `start`, `pause`, `resume`, `stop`
   - external: `supervisor pause`, `supervisor resume`, `supervisor stop` with `--issuer`
@@ -103,7 +107,7 @@ Reject or rewrite the draft if it:
 
 ### 5) Check cleanup and mutation boundaries
 - Do not edit `agents/.runtime/`, mailbox files, task stores, or runtime status files directly during normal operation.
-- Do not improvise delete/discard flows that the CLI does not yet ship.
+- Use only the shipped cleanup commands for queued-work correction.
 - If the requested action is cleanup without a supported command, stop at diagnosis and escalation instead of mutating files by hand.
 
 ### 6) Hand off the final command/body

@@ -148,6 +148,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "ADVISOR.md" in readme
     assert "OpenClaw-style supervisor agents" in readme
     assert "millrace --config /absolute/path/to/workspace/millrace.toml health --json" in readme
+    assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in readme
     assert '[research] mode = "stub"' in readme
     assert 'interview_policy = "off"' in readme
     assert "Release verification is narrower than source-checkout contributor verification" in readme
@@ -170,7 +171,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "Start with CLI JSON inspection when the runtime state is unknown" in advisor
     assert "Use the TUI when you want an interactive local control shell" in advisor
     assert "do not tell Millrace to run GoalSpec, Spec Review, Taskmaster, audit, or other internal stages" in advisor
-    assert "If the CLI does not ship a cleanup path yet" in advisor
+    assert 'queue cleanup remove <task-id> --reason "Invalid duplicate task"' in advisor
+    assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in advisor
     assert "health --json" in advisor
     assert "OpenClaw Supervisor agent" in advisor
     assert "publish preflight --json" in advisor
@@ -183,10 +185,22 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in supervisor
     assert "poll frequency, heartbeat strategy, and wakeup delivery" in supervisor
     assert 'supervisor add-task "Example task" --issuer <name> --json' in supervisor
+    assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in supervisor
     assert "Use `ADVISOR.md` instead" in supervisor
+
+    skill = (
+        MILLRACE_ROOT
+        / "millrace_engine"
+        / "assets"
+        / "agents/skills/millrace-operator-intake-control/SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "before `millrace queue cleanup ...` or `millrace supervisor cleanup ...`" in skill
+    assert "local: `millrace --config millrace.toml queue cleanup remove|quarantine" in skill
+    assert "external: `millrace --config millrace.toml supervisor cleanup remove|quarantine" in skill
 
     operator_guide = (MILLRACE_ROOT / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
     assert "OpenClaw or another external supervisor harness" in operator_guide
+    assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in operator_guide
     assert '[research] mode = "stub"' in operator_guide
     assert 'interview_policy = "off"' in operator_guide
     assert "Release CI verifies a narrower contract than a contributor source checkout" in operator_guide
@@ -195,6 +209,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
     assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in runtime_deep_dive
+    assert "supervisor cleanup remove|quarantine" in runtime_deep_dive
     assert "structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`" in runtime_deep_dive
     assert "the markdown files remain the instruction layer" in runtime_deep_dive
     assert "`engine_runtime.py`: shared engine runtime dependency bundle" in runtime_deep_dive

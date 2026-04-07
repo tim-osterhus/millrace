@@ -1193,16 +1193,34 @@ def test_cli_subgroup_help_does_not_require_config_file(tmp_path: Path) -> None:
         ["--config", str(missing_config), "health", "--help"],
         ["--config", str(missing_config), "config", "--help"],
         ["--config", str(missing_config), "queue", "--help"],
+        ["--config", str(missing_config), "queue", "cleanup", "--help"],
         ["--config", str(missing_config), "queue", "reorder", "--help"],
         ["--config", str(missing_config), "research", "--help"],
         ["--config", str(missing_config), "research", "history", "--help"],
         ["--config", str(missing_config), "supervisor", "--help"],
         ["--config", str(missing_config), "supervisor", "add-task", "--help"],
+        ["--config", str(missing_config), "supervisor", "cleanup", "--help"],
         ["--config", str(missing_config), "logs", "--help"],
     ):
         result = RUNNER.invoke(app, args)
         assert result.exit_code == 0
         assert "Usage:" in result.stdout
+
+
+def test_cli_cleanup_help_lists_local_and_supervisor_variants(tmp_path: Path) -> None:
+    missing_config = tmp_path / "missing.toml"
+
+    queue_help = RUNNER.invoke(app, ["--config", str(missing_config), "queue", "cleanup", "--help"])
+    assert queue_help.exit_code == 0
+    assert "remove" in queue_help.stdout
+    assert "quarantine" in queue_help.stdout
+    assert "invalid queued work" in queue_help.stdout
+
+    supervisor_help = RUNNER.invoke(app, ["--config", str(missing_config), "supervisor", "cleanup", "--help"])
+    assert supervisor_help.exit_code == 0
+    assert "remove" in supervisor_help.stdout
+    assert "quarantine" in supervisor_help.stdout
+    assert "issuer attribution" in supervisor_help.stdout
 
 
 def test_cli_start_once_help_and_docs_describe_research_split_phase_contract(tmp_path: Path) -> None:
@@ -2798,9 +2816,45 @@ def test_cli_supervisor_add_task_records_issuer_in_direct_mode(tmp_path: Path) -
     assert [card.title for card in backlog] == ["Supervisor direct task"]
 
 
-def test_engine_control_supervisor_queue_reorder_and_lifecycle_preserve_issuer_in_direct_mode(tmp_path: Path) -> None:
+def test_engine_control_supervisor_cleanup_queue_reorder_and_lifecycle_preserve_issuer_in_direct_mode(
+    tmp_path: Path,
+) -> None:
     workspace, config_path = runtime_workspace(tmp_path)
     control = EngineControl(config_path)
+
+    control.add_task("First direct supervisor task")
+    control.add_task("Second direct supervisor task")
+    backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+
+    remove_result = control.supervisor_queue_cleanup_remove(
+        backlog[0].task_id,
+        reason="duplicate queued task",
+        issuer="openclaw",
+    )
+    assert remove_result.mode == "direct"
+    assert remove_result.message == "queue cleanup removed task"
+    assert remove_result.payload["issuer"] == "openclaw"
+    assert remove_result.payload["task_id"] == backlog[0].task_id
+    assert remove_result.payload["cleanup_action"] == "remove"
+
+    backlog_after_remove = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert [card.title for card in backlog_after_remove] == ["Second direct supervisor task"]
+
+    quarantine_result = control.supervisor_queue_cleanup_quarantine(
+        backlog_after_remove[0].task_id,
+        reason="needs operator follow-up",
+        issuer="openclaw",
+    )
+    assert quarantine_result.mode == "direct"
+    assert quarantine_result.message == "queue cleanup quarantined task"
+    assert quarantine_result.payload["issuer"] == "openclaw"
+    assert quarantine_result.payload["task_id"] == backlog_after_remove[0].task_id
+    assert quarantine_result.payload["cleanup_action"] == "quarantine"
+
+    assert parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert backlog[0].task_id in backburner_text
+    assert backlog_after_remove[0].task_id in backburner_text
 
     control.add_task("First direct supervisor task")
     control.add_task("Second direct supervisor task")
@@ -2907,6 +2961,62 @@ def test_cli_supervisor_mailbox_actions_preserve_issuer_in_processed_archive(tmp
         == ["Supervisor mailbox second", "Supervisor mailbox first"]
     )
 
+    reordered_backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    cleanup_remove_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "supervisor",
+            "cleanup",
+            "remove",
+            reordered_backlog[0].task_id,
+            "--issuer",
+            "openclaw",
+            "--reason",
+            "duplicate queued work",
+            "--json",
+        ],
+    )
+    assert cleanup_remove_result.exit_code == 0, cleanup_remove_result.output
+    assert json.loads(cleanup_remove_result.stdout)["payload"]["issuer"] == "openclaw"
+    wait_for(
+        lambda: [
+            card.title
+            for card in parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+        ]
+        == ["Supervisor mailbox first"]
+    )
+
+    remaining_backlog = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    cleanup_quarantine_result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "supervisor",
+            "cleanup",
+            "quarantine",
+            remaining_backlog[0].task_id,
+            "--issuer",
+            "openclaw",
+            "--reason",
+            "stale after review",
+            "--json",
+        ],
+    )
+    assert cleanup_quarantine_result.exit_code == 0, cleanup_quarantine_result.output
+    cleanup_payload = json.loads(cleanup_quarantine_result.stdout)
+    assert cleanup_payload["payload"]["issuer"] == "openclaw"
+    assert cleanup_payload["payload"]["cleanup_action"] == "quarantine"
+    wait_for(
+        lambda: parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
+    )
+    wait_for(
+        lambda: "stale after review"
+        in (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    )
+
     stop_result = RUNNER.invoke(
         app,
         ["--config", str(config_path), "supervisor", "stop", "--issuer", "openclaw", "--json"],
@@ -2918,15 +3028,21 @@ def test_cli_supervisor_mailbox_actions_preserve_issuer_in_processed_archive(tmp
     assert not thread.is_alive()
 
     archives = read_archived_command_payloads(processed_dir)
-    assert len(archives) == 5
+    assert len(archives) == 7
     assert [archive["envelope"]["command"] for archive in archives] == [
         "pause",
         "add_task",
         "add_task",
         "queue_reorder",
+        "queue_cleanup_remove",
+        "queue_cleanup_quarantine",
         "stop",
     ]
     assert all(archive["envelope"]["issuer"] == "openclaw" for archive in archives)
+    assert archives[4]["result"]["payload"]["cleanup_action"] == "remove"
+    assert archives[5]["result"]["payload"]["cleanup_action"] == "quarantine"
+    assert archives[4]["result"]["payload"]["issuer"] == "openclaw"
+    assert archives[5]["result"]["payload"]["issuer"] == "openclaw"
 
 
 def test_cli_supervisor_resume_preserves_issuer_in_processed_archive(tmp_path: Path) -> None:
@@ -4323,5 +4439,9 @@ def test_cli_supervisor_report_renders_json(tmp_path: Path) -> None:
     assert payload["schema_version"] == "1.0"
     assert payload["attention_reason"] == "idle_with_pending_work"
     assert payload["backlog_depth"] == 1
-    assert payload["allowed_actions"] == ["add_task"]
+    assert payload["allowed_actions"] == [
+        "add_task",
+        "queue_cleanup_remove",
+        "queue_cleanup_quarantine",
+    ]
     assert payload["recent_events"] == []

@@ -100,6 +100,8 @@ millrace --config millrace.toml supervisor resume --issuer <name> --json
 millrace --config millrace.toml supervisor stop --issuer <name> --json
 millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
 millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
+millrace --config millrace.toml supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json
+millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer <name> --reason "Needs follow-up" --json
 ```
 
 ### Configuration
@@ -128,6 +130,7 @@ millrace --config millrace.toml publish commit --push --json
 - Prefer CLI `--json` surfaces for machine-readable inspection before you mutate runtime state.
 - Use the TUI for interactive local monitoring and control over the same control plane; it does not bypass runtime safety rules.
 - If you are acting as an external supervisor, prefer `supervisor report --json` plus `supervisor ... --issuer <name>` instead of raw mailbox files.
+- When an external supervisor needs to correct invalid queued work, use `supervisor cleanup remove` or `supervisor cleanup quarantine` so issuer attribution survives direct and daemon-mailbox paths.
 - Prefer `logs` over manual tailing when the structured event stream is what you need.
 - If the daemon is running, expect mutating commands to route through the mailbox instead of applying immediately.
 - Use `research --json`, `research history`, and `run-provenance` instead of shell-loop logs.
@@ -179,8 +182,9 @@ Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime 
 1. Run `millrace --config millrace.toml queue inspect --json`.
 2. If backlog order is wrong, use `millrace --config millrace.toml queue reorder <task-id> <task-id> ...`.
 3. If a queued task is invalid or obsolete, use `queue cleanup remove` or `queue cleanup quarantine` with an explicit `--reason`.
-4. If the intake body is contaminated with Millrace internals, rewrite it into outcome-first wording before adding or re-adding work.
-5. If needed, read `agents/tasks.md`, `agents/tasksbacklog.md`, and `agents/tasksbackburner.md`.
+4. If an external harness owns the correction, use `supervisor cleanup remove` or `supervisor cleanup quarantine` with `--issuer` instead of local cleanup commands.
+5. If the intake body is contaminated with Millrace internals, rewrite it into outcome-first wording before adding or re-adding work.
+6. If needed, read `agents/tasks.md`, `agents/tasksbacklog.md`, and `agents/tasksbackburner.md`.
 
 ### Daemon Control
 

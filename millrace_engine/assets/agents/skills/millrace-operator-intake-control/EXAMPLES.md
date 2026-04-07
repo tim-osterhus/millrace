@@ -57,13 +57,13 @@
 
 **Date**: 2026-04-07
 
-**Problem**: An external supervisor-style caller needed to observe state and queue work but was about to use local-operator commands or raw runtime files instead of the supported supervisor contract.
+**Problem**: An external supervisor-style caller needed to observe state, queue work, and clean up invalid queued work but was about to use local-operator commands or raw runtime files instead of the supported supervisor contract.
 
 **Impact**: Bypassing the supervisor seam would have lost issuer attribution and risked unsafely mutating runtime-owned state.
 
 **Cause**: The role boundary between local Advisor operation and external Supervisor control was not treated as a first-class command-selection rule.
 
-**Fix**: Start with `millrace --config millrace.toml supervisor report --json`, then use the matching `supervisor ... --issuer <name> --json` command for any mutation.
+**Fix**: Start with `millrace --config millrace.toml supervisor report --json`, then use the matching `supervisor ... --issuer <name> --json` command for any mutation, including `supervisor cleanup remove|quarantine` when queued work must be corrected.
 
 **Prevention**: External harnesses should treat `supervisor report --json` plus issuer-attributed supervisor actions as the only normal mutation surface.
 

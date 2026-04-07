@@ -20,6 +20,7 @@ Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequ
 - poll one workspace through the machine-readable supervisor report
 - interpret `attention_reason`, `attention_summary`, and `allowed_actions` to decide whether action is needed
 - issue safe supervisor mutations with explicit issuer attribution
+- correct invalid or obsolete queued work through the bounded supervisor cleanup path
 - keep cadence, wakeups, messaging, and multi-workspace portfolio logic outside Millrace core
 
 ## Command Inventory
@@ -43,6 +44,8 @@ millrace --config millrace.toml supervisor resume --issuer <name> --json
 millrace --config millrace.toml supervisor stop --issuer <name> --json
 millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
 millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
+millrace --config millrace.toml supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json
+millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer <name> --reason "Needs operator follow-up" --json
 ```
 
 ## Attention Handling
@@ -56,6 +59,7 @@ millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ...
 
 - Treat `supervisor report --json` as the primary observation surface.
 - Use only `supervisor ... --issuer <name>` for external mutations.
+- Use `supervisor cleanup remove` or `supervisor cleanup quarantine` when invalid queued work must be corrected without losing issuer attribution.
 - Keep runtime-owned files read-only during normal supervision.
 - Do not write `agents/.runtime/commands/incoming/`, mailbox files, or task-store files directly.
 - Do not use this role to own wakeups, scheduling, outbound messaging, or multi-workspace coordination inside Millrace itself.
@@ -66,7 +70,7 @@ millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ...
 
 1. Run `millrace --config millrace.toml supervisor report --json`.
 2. Inspect `attention_reason`, `attention_summary`, `allowed_actions`, and the current lifecycle state.
-3. If action is required, use the matching `supervisor ... --issuer <name> --json` command.
+3. If action is required, use the matching `supervisor ... --issuer <name> --json` command, including `supervisor cleanup remove|quarantine` for bounded queued-work correction.
 4. Re-run `supervisor report --json` or `status --detail --json` to confirm the result.
 5. Escalate when the required action is outside the supported supervisor contract.
 

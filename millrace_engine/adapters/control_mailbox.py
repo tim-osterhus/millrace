@@ -24,6 +24,8 @@ class ControlCommand(str, Enum):
     ADD_TASK = "add_task"
     ADD_IDEA = "add_idea"
     QUEUE_REORDER = "queue_reorder"
+    QUEUE_CLEANUP_REMOVE = "queue_cleanup_remove"
+    QUEUE_CLEANUP_QUARANTINE = "queue_cleanup_quarantine"
 
 
 def _normalize_datetime(value: datetime | str) -> datetime:

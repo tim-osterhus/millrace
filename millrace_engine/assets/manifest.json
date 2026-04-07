@@ -277,36 +277,36 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "14eb6519d07079e654101cf23e88bb0b35ebffcbf1d8a01cf9b8c52dd659f1ff",
+      "sha256": "418bc2db7ca97522faffbf0110717da99dbb3e5854b341d2d680b91cf71db195",
       "size": 8910,
-      "size_bytes": 9305,
+      "size_bytes": 9913,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "227bd678f5d18964b6857b68b4106b20dae8dfa164a0df7fb6442b215614ffea",
+      "sha256": "28042b94008496d0288b98db28c99eacabb33aa1ddad22065e37aa49cce287f5",
       "size": 15957,
-      "size_bytes": 15957,
+      "size_bytes": 16210,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "1db92f4d6e25942703dbab8ca4b85770cbccd43155b6f9785e619fbedec6d8c4",
+      "sha256": "ef2dce16c1f4af4144cd8b1ed75d1ec456f7a930bc77bb1505d5d1bf0fc54650",
       "size": 18744,
-      "size_bytes": 18744,
+      "size_bytes": 18997,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "SUPERVISOR.md",
-      "sha256": "343b0683a4a0ede8fc5da92b63eb020086bab4498e32cb5c20213fe7aa3d682d",
+      "sha256": "dffd4fb8177a5134341b73c8685349401905f4862c319d3915378fc6712e03f7",
       "size": 4451,
-      "size_bytes": 4451,
+      "size_bytes": 5022,
       "source": "runtime"
     },
     {
@@ -1276,18 +1276,18 @@
       "category": "skill_examples",
       "family": "skills",
       "path": "agents/skills/millrace-operator-intake-control/EXAMPLES.md",
-      "sha256": "97aad5a6d9e25932a168c24d9f0b01666f88c9b484f2b9259b69f06e1833a1d1",
+      "sha256": "26a6a1911c53f4ebdd08302a744e5739574b1f8a3d15af5a05bc598173b9418d",
       "size": 3739,
-      "size_bytes": 3739,
+      "size_bytes": 3855,
       "source": "runtime"
     },
     {
       "category": "skill_definition",
       "family": "skills",
       "path": "agents/skills/millrace-operator-intake-control/SKILL.md",
-      "sha256": "945bf383b4b9744a0b2f716cc65c743fe87c2ba22672f0a7c4955f6a3c5231c0",
+      "sha256": "14ccdbeaf009cd35125d74d1d4d55a73bebda9901844e222c35ac91226ceae02",
       "size": 7462,
-      "size_bytes": 7462,
+      "size_bytes": 7793,
       "source": "runtime"
     },
     {
@@ -1510,18 +1510,18 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "992f48d5d0f81b9d053686dfbbe6c426ec6bf64c79f958f87f64d54669d491b0",
+      "sha256": "6693462525086ee0c9fe43032409183a1561bb2bf40f34e00869399ce5cd0136",
       "size": 52117,
-      "size_bytes": 52117,
+      "size_bytes": 52293,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
-      "sha256": "f140e14949494b8155dd31119cffe61319d6f89920b6987aeca8422c199e553e",
+      "sha256": "239a758794f848eebcb95053f6e2c7ec8364afc5e85e574922eed3c1a9613f88",
       "size": 24542,
-      "size_bytes": 24542,
+      "size_bytes": 24664,
       "source": "runtime"
     },
     {

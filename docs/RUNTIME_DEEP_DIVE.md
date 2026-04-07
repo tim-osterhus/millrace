@@ -1300,6 +1300,7 @@ The supported compatibility seam is intentionally narrow:
 
 - `millrace --config millrace.toml supervisor report --json` for consolidated observation
 - `millrace --config millrace.toml supervisor ... --issuer <name> --json` for attributable control actions
+- `millrace --config millrace.toml supervisor cleanup remove|quarantine ... --issuer <name> --reason <text> --json` for bounded queued-work correction with issuer preservation
 
 That report collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons without requiring the harness to synthesize raw runtime files. External harnesses should treat `attention_reason`, `attention_summary`, and `allowed_actions` as the supported machine-readable decision surface.
 

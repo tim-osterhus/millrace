@@ -41,6 +41,15 @@ def queue_summary(paths: RuntimePaths):
     return TaskQueue(paths)
 
 
+def normalize_task_id(task_id: str, *, action_label: str) -> str:
+    """Return one validated task identifier for queue mutations."""
+
+    normalized = task_id.strip()
+    if not normalized:
+        raise ControlError(f"{action_label} requires a task id")
+    return normalized
+
+
 def queue_reorder(
     paths: RuntimePaths,
     *,
@@ -172,6 +181,82 @@ def supervisor_queue_reorder(
         )
     return operation_with_payload_value(
         queue_reorder(paths, task_ids=requested_ids, daemon_running=False),
+        key="issuer",
+        value=normalized_issuer,
+    )
+
+
+def supervisor_queue_cleanup_remove(
+    paths: RuntimePaths,
+    *,
+    task_id: str,
+    reason: str,
+    issuer: str,
+    daemon_running: bool,
+) -> OperationResult:
+    """Remove one visible queued task through the supervisor-safe cleanup path."""
+
+    normalized_issuer = normalize_supervisor_issuer(issuer)
+    normalized_task_id = normalize_task_id(task_id, action_label="queue cleanup remove")
+    if daemon_running:
+        envelope = write_command(
+            paths,
+            ControlCommand.QUEUE_CLEANUP_REMOVE,
+            payload={"task_id": normalized_task_id, "reason": reason},
+            issuer=normalized_issuer,
+        )
+        return OperationResult(
+            command_id=envelope.command_id,
+            mode="mailbox",
+            applied=True,
+            message="queue_cleanup_remove queued",
+            payload={
+                "task_id": normalized_task_id,
+                "reason": reason,
+                "cleanup_action": "remove",
+                "issuer": normalized_issuer,
+            },
+        )
+    return operation_with_payload_value(
+        queue_cleanup_remove(paths, task_id=normalized_task_id, reason=reason, daemon_running=False),
+        key="issuer",
+        value=normalized_issuer,
+    )
+
+
+def supervisor_queue_cleanup_quarantine(
+    paths: RuntimePaths,
+    *,
+    task_id: str,
+    reason: str,
+    issuer: str,
+    daemon_running: bool,
+) -> OperationResult:
+    """Quarantine one visible queued task through the supervisor-safe cleanup path."""
+
+    normalized_issuer = normalize_supervisor_issuer(issuer)
+    normalized_task_id = normalize_task_id(task_id, action_label="queue cleanup quarantine")
+    if daemon_running:
+        envelope = write_command(
+            paths,
+            ControlCommand.QUEUE_CLEANUP_QUARANTINE,
+            payload={"task_id": normalized_task_id, "reason": reason},
+            issuer=normalized_issuer,
+        )
+        return OperationResult(
+            command_id=envelope.command_id,
+            mode="mailbox",
+            applied=True,
+            message="queue_cleanup_quarantine queued",
+            payload={
+                "task_id": normalized_task_id,
+                "reason": reason,
+                "cleanup_action": "quarantine",
+                "issuer": normalized_issuer,
+            },
+        )
+    return operation_with_payload_value(
+        queue_cleanup_quarantine(paths, task_id=normalized_task_id, reason=reason, daemon_running=False),
         key="issuer",
         value=normalized_issuer,
     )

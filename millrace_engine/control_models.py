@@ -358,6 +358,8 @@ class SupervisorAction(str, Enum):
     RESUME = "resume"
     ADD_TASK = "add_task"
     QUEUE_REORDER = "queue_reorder"
+    QUEUE_CLEANUP_REMOVE = "queue_cleanup_remove"
+    QUEUE_CLEANUP_QUARANTINE = "queue_cleanup_quarantine"
     STOP = "stop"
 
 

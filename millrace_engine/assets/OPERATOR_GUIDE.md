@@ -261,6 +261,8 @@ millrace --config millrace.toml supervisor resume --issuer <name> --json
 millrace --config millrace.toml supervisor stop --issuer <name> --json
 millrace --config millrace.toml supervisor add-task "Example task" --issuer <name> --json
 millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json
+millrace --config millrace.toml supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json
+millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer <name> --reason "Needs operator follow-up" --json
 ```
 
 Scheduling, messaging, wakeups, and multi-workspace registry remain external-harness concerns. The harness sets poll cadence and heartbeat policy; Millrace does not become the portfolio scheduler.

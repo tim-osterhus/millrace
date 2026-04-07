@@ -45,6 +45,7 @@ research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
 supervisor_app = typer.Typer(help="External supervisor report surfaces.")
+supervisor_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work with issuer attribution.")
 app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
 queue_app.add_typer(queue_cleanup_app, name="cleanup")
@@ -52,6 +53,7 @@ app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
 app.add_typer(supervisor_app, name="supervisor")
+supervisor_app.add_typer(supervisor_cleanup_app, name="cleanup")
 
 
 @dataclass(frozen=True, slots=True)
@@ -641,6 +643,58 @@ def supervisor_queue_reorder_command(
     render_operation(
         _run_expected(
             lambda: _control(ctx).supervisor_queue_reorder(task_ids, issuer=issuer),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_cleanup_app.command("remove")
+def supervisor_queue_cleanup_remove_command(
+    ctx: typer.Context,
+    task_id: Annotated[str, typer.Argument(help="Visible active or backlog task id to remove.")],
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the queued task is being removed."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Remove one visible queued task through the supervisor-safe cleanup path."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).supervisor_queue_cleanup_remove(
+                task_id,
+                reason=reason,
+                issuer=issuer,
+            ),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_cleanup_app.command("quarantine")
+def supervisor_queue_cleanup_quarantine_command(
+    ctx: typer.Context,
+    task_id: Annotated[str, typer.Argument(help="Visible active or backlog task id to quarantine.")],
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the queued task is being quarantined."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Quarantine one visible queued task through the supervisor-safe cleanup path."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).supervisor_queue_cleanup_quarantine(
+                task_id,
+                reason=reason,
+                issuer=issuer,
+            ),
             json_mode=json_mode,
         ),
         json_mode=json_mode,
