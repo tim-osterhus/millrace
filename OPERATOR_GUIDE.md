@@ -72,6 +72,8 @@ millrace --config /absolute/path/to/workspace/millrace.toml health --json
 millrace --config /absolute/path/to/workspace/millrace.toml doctor
 ```
 
+If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.5.1`.
+
 The initialized workspace ships with real default model ids for the Codex runner, including `gpt-5.3-codex` and `gpt-5.2`. Those defaults are not placeholders, but they still rely on the local runner environment being usable.
 
 The first-run research contract is also deliberate: a fresh workspace starts with `[research] mode = "stub"` and `interview_policy = "off"`. Research reporting and queues are present, but real GoalSpec, incident, and audit progression are not active until you intentionally reconfigure research away from the stub baseline.
