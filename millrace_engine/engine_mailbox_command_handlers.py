@@ -1,0 +1,247 @@
+"""Registry-backed mailbox command handlers for the runtime engine."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from .adapters.control_mailbox import ControlCommand, ControlCommandEnvelope
+from .config import LoadedConfig, load_engine_config
+from .control_common import ControlError
+from .control_models import OperationResult
+from .control_mutations import (
+    _assert_reload_safe,
+    append_task_to_backlog,
+    apply_native_config_value,
+    copy_idea_into_raw_queue,
+)
+from .events import EventSource, EventType
+from .paths import RuntimePaths
+from .queue import TaskQueue
+
+
+class EngineMailboxHookSet(Protocol):
+    """Minimal hook surface required by mailbox command handlers."""
+
+    def get_paths(self) -> RuntimePaths: ...
+
+    def get_loaded(self) -> LoadedConfig: ...
+
+    def emit_event(self, event_type: EventType, source: EventSource, payload: dict[str, object]) -> None: ...
+
+    def queue_or_apply_reloaded_config(
+        self,
+        loaded: LoadedConfig,
+        command_id: str | None,
+        key: str | None,
+    ) -> tuple[OperationResult, bool]: ...
+
+    def consume_research_recovery_latch(self, **kwargs: object) -> int: ...
+
+    def get_stop_requested(self) -> bool: ...
+
+    def set_stop_requested(self, requested: bool) -> None: ...
+
+    def get_paused(self) -> bool: ...
+
+    def set_pause_state(self, paused: bool, reason: str | None, run_id: str | None) -> None: ...
+
+
+@dataclass(frozen=True)
+class EngineMailboxCommandContext:
+    """Immutable runtime context shared across mailbox handlers."""
+
+    config_path: Path
+    hooks: EngineMailboxHookSet
+
+
+@dataclass(frozen=True)
+class EngineMailboxCommandExecution:
+    """Result of handling one mailbox command."""
+
+    operation: OperationResult
+    restart_file_watcher: bool = False
+
+
+EngineMailboxCommandHandler = Callable[[EngineMailboxCommandContext, ControlCommandEnvelope], EngineMailboxCommandExecution]
+
+
+class EngineMailboxCommandRegistry:
+    """Bounded registry that owns mailbox command-family dispatch."""
+
+    def __init__(self, handlers: Mapping[ControlCommand, EngineMailboxCommandHandler]) -> None:
+        self._handlers = dict(handlers)
+
+    def dispatch(
+        self,
+        context: EngineMailboxCommandContext,
+        envelope: ControlCommandEnvelope,
+    ) -> EngineMailboxCommandExecution:
+        try:
+            handler = self._handlers[envelope.command]
+        except KeyError as exc:
+            raise ControlError(f"unsupported control command: {envelope.command.value}") from exc
+        return handler(context, envelope)
+
+
+def build_engine_mailbox_command_registry() -> EngineMailboxCommandRegistry:
+    """Create the default mailbox command registry."""
+
+    return EngineMailboxCommandRegistry(
+        {
+            ControlCommand.STOP: _handle_stop,
+            ControlCommand.PAUSE: _handle_pause,
+            ControlCommand.RESUME: _handle_resume,
+            ControlCommand.RELOAD_CONFIG: _handle_reload_config,
+            ControlCommand.SET_CONFIG: _handle_set_config,
+            ControlCommand.ADD_TASK: _handle_add_task,
+            ControlCommand.ADD_IDEA: _handle_add_idea,
+            ControlCommand.QUEUE_REORDER: _handle_queue_reorder,
+        }
+    )
+
+
+def _handle_stop(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    already_requested = context.hooks.get_stop_requested()
+    context.hooks.set_stop_requested(True)
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(
+            mode="direct",
+            applied=not already_requested,
+            message="stop requested" if not already_requested else "stop already requested",
+        )
+    )
+
+
+def _handle_pause(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    if context.hooks.get_paused():
+        return EngineMailboxCommandExecution(
+            operation=OperationResult(mode="direct", applied=False, message="engine already paused")
+        )
+    context.hooks.set_pause_state(True, "manual", None)
+    context.hooks.emit_event(
+        EventType.ENGINE_PAUSED,
+        EventSource.CONTROL,
+        {"command_id": envelope.command_id},
+    )
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(mode="direct", applied=True, message="engine paused")
+    )
+
+
+def _handle_resume(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    if not context.hooks.get_paused():
+        return EngineMailboxCommandExecution(
+            operation=OperationResult(mode="direct", applied=False, message="engine already running")
+        )
+    context.hooks.set_pause_state(False, None, None)
+    context.hooks.emit_event(
+        EventType.ENGINE_RESUMED,
+        EventSource.CONTROL,
+        {"command_id": envelope.command_id},
+    )
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(mode="direct", applied=True, message="engine resumed")
+    )
+
+
+def _handle_reload_config(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    reloaded = load_engine_config(context.config_path)
+    _assert_reload_safe(context.hooks.get_loaded(), reloaded)
+    operation, restart_watcher = context.hooks.queue_or_apply_reloaded_config(
+        reloaded,
+        command_id=envelope.command_id,
+        key=None,
+    )
+    return EngineMailboxCommandExecution(operation=operation, restart_file_watcher=restart_watcher)
+
+
+def _handle_set_config(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    key = str(envelope.payload.get("key", "")).strip()
+    value = str(envelope.payload.get("value", ""))
+    reloaded = apply_native_config_value(
+        context.config_path,
+        context.hooks.get_loaded(),
+        key,
+        value,
+        reject_startup_only=True,
+    )
+    operation, restart_watcher = context.hooks.queue_or_apply_reloaded_config(
+        reloaded,
+        command_id=envelope.command_id,
+        key=key,
+    )
+    return EngineMailboxCommandExecution(operation=operation, restart_file_watcher=restart_watcher)
+
+
+def _handle_add_task(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    title = str(envelope.payload.get("title", "")).strip()
+    if not title:
+        raise ControlError("add_task requires a title")
+    card = append_task_to_backlog(
+        context.hooks.get_paths(),
+        title=title,
+        body=envelope.payload.get("body"),
+        spec_id=envelope.payload.get("spec_id"),
+    )
+    thawed = context.hooks.consume_research_recovery_latch(
+        trigger="add_task",
+        command_id=envelope.command_id,
+    )
+    payload: dict[str, object] = {"task_id": card.task_id}
+    if thawed > 0:
+        payload["thawed_cards"] = thawed
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(mode="direct", applied=True, message="task added", payload=payload)
+    )
+
+
+def _handle_add_idea(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    file_value = envelope.payload.get("file")
+    if not isinstance(file_value, str) or not file_value.strip():
+        raise ControlError("add_idea requires a file path")
+    copied = copy_idea_into_raw_queue(context.hooks.get_paths(), Path(file_value).expanduser().resolve())
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(mode="direct", applied=True, message="idea queued", payload={"path": copied})
+    )
+
+
+def _handle_queue_reorder(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    task_ids = envelope.payload.get("task_ids")
+    if not isinstance(task_ids, list) or not all(isinstance(item, str) for item in task_ids):
+        raise ControlError("queue_reorder requires a task_ids string list")
+    reordered = TaskQueue(context.hooks.get_paths()).reorder(task_ids)
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(
+            mode="direct",
+            applied=True,
+            message="queue reordered",
+            payload={"task_ids": [card.task_id for card in reordered]},
+        )
+    )

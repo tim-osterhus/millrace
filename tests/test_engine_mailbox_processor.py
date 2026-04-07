@@ -7,6 +7,10 @@ from pathlib import Path
 from millrace_engine.adapters.control_mailbox import ControlCommand, write_command
 from millrace_engine.config import LoadedConfig, build_runtime_paths, load_engine_config
 from millrace_engine.control_models import OperationResult
+from millrace_engine.engine_mailbox_command_handlers import (
+    EngineMailboxCommandContext,
+    build_engine_mailbox_command_registry,
+)
 from millrace_engine.engine_mailbox_processor import EngineMailboxHooks, EngineMailboxProcessor
 from millrace_engine.events import EventSource, EventType
 from millrace_engine.paths import RuntimePaths
@@ -24,6 +28,7 @@ class _MailboxHarness:
         self.pause_reason: str | None = None
         self.pause_run_id: str | None = None
         self.restart_count = 0
+        self.should_restart_watcher = False
         self.latch_calls: list[dict[str, object]] = []
 
     def hooks(self) -> EngineMailboxHooks:
@@ -54,7 +59,10 @@ class _MailboxHarness:
         payload: dict[str, object] = {"command_id": command_id}
         if key is not None:
             payload["key"] = key
-        return OperationResult(mode="direct", applied=True, message="config handled", payload=payload), False
+        return (
+            OperationResult(mode="direct", applied=True, message="config handled", payload=payload),
+            self.should_restart_watcher,
+        )
 
     async def _restart_file_watcher(self) -> None:
         self.restart_count += 1
@@ -120,3 +128,61 @@ def test_engine_mailbox_processor_archives_failed_command_results(tmp_path: Path
         EventType.CONTROL_COMMAND_RECEIVED,
         EventType.CONTROL_COMMAND_APPLIED,
     ]
+
+
+def test_engine_mailbox_command_registry_dispatches_lifecycle_and_task_families(tmp_path: Path) -> None:
+    _, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    harness = _MailboxHarness(config_path)
+    registry = build_engine_mailbox_command_registry()
+    context = EngineMailboxCommandContext(config_path=config_path, hooks=harness.hooks())
+
+    pause_execution = registry.dispatch(
+        context,
+        write_command(harness.paths, ControlCommand.PAUSE).model_copy(update={"command_id": "pause-command"}),
+    )
+    assert pause_execution.operation.message == "engine paused"
+    assert pause_execution.operation.applied is True
+    assert harness.paused is True
+    assert harness.events == [
+        (
+            EventType.ENGINE_PAUSED,
+            EventSource.CONTROL,
+            {"command_id": "pause-command"},
+        )
+    ]
+
+    add_task_execution = registry.dispatch(
+        context,
+        write_command(
+            harness.paths,
+            ControlCommand.ADD_TASK,
+            payload={"title": "Registry task"},
+        ).model_copy(update={"command_id": "add-task-command"}),
+    )
+    backlog_path = harness.paths.backlog_file
+    assert add_task_execution.operation.message == "task added"
+    assert add_task_execution.operation.applied is True
+    assert "Registry task" in backlog_path.read_text(encoding="utf-8")
+    assert harness.latch_calls[-1]["trigger"] == "add_task"
+
+
+def test_engine_mailbox_command_registry_marks_config_restart_requests(tmp_path: Path) -> None:
+    _, config_path = load_workspace_fixture(tmp_path, "config_hotswap")
+    harness = _MailboxHarness(config_path)
+    harness.should_restart_watcher = True
+    registry = build_engine_mailbox_command_registry()
+    context = EngineMailboxCommandContext(config_path=config_path, hooks=harness.hooks())
+
+    execution = registry.dispatch(
+        context,
+        write_command(
+            harness.paths,
+            ControlCommand.SET_CONFIG,
+            payload={"key": "watchers.debounce_seconds", "value": "2"},
+        ).model_copy(update={"command_id": "config-command"}),
+    )
+
+    assert execution.operation.message == "config handled"
+    assert execution.operation.applied is True
+    assert execution.operation.payload == {"command_id": "config-command", "key": "watchers.debounce_seconds"}
+    assert execution.restart_file_watcher is True
