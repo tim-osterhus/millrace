@@ -18,6 +18,7 @@ MILLRACE_ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_DOC_PARITY_PATHS = {
     "README.md": "README.md",
     "ADVISOR.md": "ADVISOR.md",
+    "SUPERVISOR.md": "SUPERVISOR.md",
     "OPERATOR_GUIDE.md": "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
     "docs/TUI_DOCUMENTATION.md": "docs/TUI_DOCUMENTATION.md",
@@ -65,6 +66,7 @@ PUBLIC_EXECUTION_STAGES = (
 EXTERNAL_FIXTURE_PATH = "/".join(
     ("ref-framework", "millrace-temp-main", "agents", "tools", "fixtures")
 )
+OPERATIONS_SKILL_PATH = "agents/skills/millrace-operator-intake-control/SKILL.md"
 
 
 def _pyproject_payload() -> dict[str, object]:
@@ -104,6 +106,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "README.md",
         "docs/RUNTIME_DEEP_DIVE.md",
         "ADVISOR.md",
+        "SUPERVISOR.md",
         "OPERATOR_GUIDE.md",
         "docs/TUI_DOCUMENTATION.md",
     ):
@@ -113,6 +116,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     for relative in (
         "README.md",
         "ADVISOR.md",
+        "SUPERVISOR.md",
         "OPERATOR_GUIDE.md",
         "docs/RUNTIME_DEEP_DIVE.md",
         "docs/TUI_DOCUMENTATION.md",
@@ -123,9 +127,12 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     manifest = json.loads((assets_root / "manifest.json").read_text(encoding="utf-8"))
     manifest_paths = {entry["path"] for entry in manifest["files"]}
     assert "README.md" in manifest_paths
+    assert "SUPERVISOR.md" in manifest_paths
     assert "OPERATOR_GUIDE.md" in manifest_paths
     assert "docs/RUNTIME_DEEP_DIVE.md" in manifest_paths
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths
+    assert OPERATIONS_SKILL_PATH in manifest_paths
+    assert "agents/skills/millrace-operator-intake-control/EXAMPLES.md" in manifest_paths
     _assert_public_docs_match_packaged_copies()
 
     readme = (MILLRACE_ROOT / "README.md").read_text(encoding="utf-8")
@@ -162,6 +169,14 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "health --json" in advisor
     assert "OpenClaw Supervisor agent" in advisor
     assert "publish preflight --json" in advisor
+    assert OPERATIONS_SKILL_PATH in advisor
+
+    supervisor = (MILLRACE_ROOT / "SUPERVISOR.md").read_text(encoding="utf-8")
+    assert "This file is for agents acting as the external one-workspace supervisor" in supervisor
+    assert OPERATIONS_SKILL_PATH in supervisor
+    assert "supervisor report --json" in supervisor
+    assert 'supervisor add-task "Example task" --issuer <name> --json' in supervisor
+    assert "Use `ADVISOR.md` instead" in supervisor
 
     operator_guide = (MILLRACE_ROOT / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")
     assert "OpenClaw or another external supervisor harness" in operator_guide
@@ -234,6 +249,21 @@ def test_packaged_research_entrypoint_docs_match_shipped_python_runtime_contract
             assert marker not in contents, f"{relative_path} still references absent helper {marker}"
         for marker in expectations["present"]:
             assert marker in contents, f"{relative_path} missing shipped runtime seam {marker}"
+
+
+def test_advisor_and_supervisor_entrypoints_explicitly_load_shared_operations_skill() -> None:
+    assets_root = MILLRACE_ROOT / "millrace_engine" / "assets"
+
+    public_advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
+    public_supervisor = (MILLRACE_ROOT / "SUPERVISOR.md").read_text(encoding="utf-8")
+    packaged_advisor = (assets_root / "agents" / "_advisor.md").read_text(encoding="utf-8")
+    packaged_supervisor = (assets_root / "agents" / "_supervisor.md").read_text(encoding="utf-8")
+
+    for contents in (public_advisor, public_supervisor, packaged_advisor, packaged_supervisor):
+        assert OPERATIONS_SKILL_PATH in contents
+
+    assert "SUPERVISOR.md" in packaged_advisor
+    assert "ADVISOR.md" in packaged_supervisor
 
 
 def test_packaged_tests_do_not_reference_repo_external_fixtures() -> None:

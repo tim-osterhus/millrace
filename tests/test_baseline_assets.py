@@ -28,6 +28,7 @@ REQUIRED_BUNDLE_PATHS = (
     "README.md",
     "docs/RUNTIME_DEEP_DIVE.md",
     "ADVISOR.md",
+    "SUPERVISOR.md",
     "OPERATOR_GUIDE.md",
     "docs/TUI_DOCUMENTATION.md",
     "millrace.toml",
@@ -47,6 +48,8 @@ REQUIRED_BUNDLE_PATHS = (
     "agents/roles/qa-test-engineer.md",
     "agents/skills/spec-writing-research-core/SKILL.md",
     "agents/skills/playwright-ui-verification/SKILL.md",
+    "agents/skills/millrace-operator-intake-control/SKILL.md",
+    "agents/skills/millrace-operator-intake-control/EXAMPLES.md",
     "agents/objective/contract.yaml",
     "agents/objective/contract.schema.json",
     "agents/audit/completion_manifest.json",
@@ -58,6 +61,7 @@ REQUIRED_BUNDLE_PATHS = (
 RUNTIME_DOC_PATHS = (
     "README.md",
     "ADVISOR.md",
+    "SUPERVISOR.md",
     "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md",
     "docs/TUI_DOCUMENTATION.md",
@@ -85,6 +89,7 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
     "ADVISOR.md": (
         "This file is for agents acting as the operator shell",
         "This prompt assumes you are operating inside an initialized Millrace workspace",
+        "agents/skills/millrace-operator-intake-control/SKILL.md",
         "### Workspace Setup",
         "### External Supervisor",
         "health --json",
@@ -94,6 +99,14 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "Do not write `agents/.runtime/commands/incoming/`",
         "run-provenance <run-id> --json",
         "config show --json",
+    ),
+    "SUPERVISOR.md": (
+        "This file is for agents acting as the external one-workspace supervisor",
+        "agents/skills/millrace-operator-intake-control/SKILL.md",
+        "supervisor report --json",
+        "supervisor pause --issuer <name> --json",
+        "supervisor add-task \"Example task\" --issuer <name> --json",
+        "Use `ADVISOR.md` instead",
     ),
     "OPERATOR_GUIDE.md": (
         "## External Supervisor Workflow",

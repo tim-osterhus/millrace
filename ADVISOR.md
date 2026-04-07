@@ -20,6 +20,13 @@ python3 -m millrace_engine --config millrace.toml ...
 
 Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequence. Use `docs/RUNTIME_DEEP_DIVE.md` when you need architecture details.
 
+Before you seed work, reorder queues, or choose a command family, load the shared Millrace operations skill:
+
+- `agents/skills/millrace-operator-intake-control/SKILL.md`
+- load `agents/skills/millrace-operator-intake-control/EXAMPLES.md` only when you need concrete good/bad patterns or failure-mode examples
+
+If you are acting as an external report-polling harness instead of the local workspace operator shell, stop and use `SUPERVISOR.md` instead of this advisor entrypoint.
+
 ## Role
 
 - inspect runtime state

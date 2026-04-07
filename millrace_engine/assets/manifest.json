@@ -214,6 +214,11 @@
     {
       "category": "directory",
       "family": "skills",
+      "path": "agents/skills/millrace-operator-intake-control"
+    },
+    {
+      "category": "directory",
+      "family": "skills",
       "path": "agents/skills/playwright-ui-verification"
     },
     {
@@ -272,9 +277,9 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "243867aa7fb1b72c299426df877cee1de65aa899672fc69bad47fcaa2d7ff9b5",
-      "size": 7126,
-      "size_bytes": 7126,
+      "sha256": "e55515a93ce5a20fb29c18e87fa9eab457cfb3dd275f1d7ccdf92c41a6b2e53a",
+      "size": 7605,
+      "size_bytes": 7605,
       "source": "runtime"
     },
     {
@@ -294,6 +299,24 @@
       "size": 18548,
       "size_bytes": 18548,
       "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "SUPERVISOR.md",
+      "sha256": "577b5212cf706866a4bffd90e38e195cf54066fb288deb6012de37bf32f4f768",
+      "size": 3511,
+      "size_bytes": 3511,
+      "source": "runtime"
+    },
+    {
+      "category": "research_entrypoint",
+      "family": "entrypoints",
+      "path": "agents/_advisor.md",
+      "sha256": "4f981ab3e0110ab83f191bd8acbbbcdf596bc63b056b729d7ae7c7d91a42c69b",
+      "size": 411,
+      "size_bytes": 411,
+      "source": "reference"
     },
     {
       "category": "research_entrypoint",
@@ -536,6 +559,15 @@
       "sha256": "e65f629d7e67d26fe88ff7eb7b31f1db24b680369b90b8ad86f535582ba9da57",
       "size": 1975,
       "size_bytes": 1975,
+      "source": "reference"
+    },
+    {
+      "category": "research_entrypoint",
+      "family": "entrypoints",
+      "path": "agents/_supervisor.md",
+      "sha256": "7e3717bfe58c651932cb2c4040af59322783a1bf5bbbe0e95f3c473a7b3f3547",
+      "size": 375,
+      "size_bytes": 375,
       "source": "reference"
     },
     {
@@ -1243,6 +1275,24 @@
     {
       "category": "skill_examples",
       "family": "skills",
+      "path": "agents/skills/millrace-operator-intake-control/EXAMPLES.md",
+      "sha256": "97aad5a6d9e25932a168c24d9f0b01666f88c9b484f2b9259b69f06e1833a1d1",
+      "size": 3739,
+      "size_bytes": 3739,
+      "source": "runtime"
+    },
+    {
+      "category": "skill_definition",
+      "family": "skills",
+      "path": "agents/skills/millrace-operator-intake-control/SKILL.md",
+      "sha256": "945bf383b4b9744a0b2f716cc65c743fe87c2ba22672f0a7c4955f6a3c5231c0",
+      "size": 7462,
+      "size_bytes": 7462,
+      "source": "runtime"
+    },
+    {
+      "category": "skill_examples",
+      "family": "skills",
       "path": "agents/skills/playwright-ui-verification/EXAMPLES.md",
       "sha256": "bcbe017f9d51dae1359e918a30d538abedea7801eb7c504af4f0266986bec30b",
       "size": 13899,
@@ -1262,9 +1312,9 @@
       "category": "skill_support",
       "family": "skills",
       "path": "agents/skills/skills_index.md",
-      "sha256": "ab474751b6a3542d442933b7459a9017311bdb282f22ba4a9559efbfae44eb48",
-      "size": 3605,
-      "size_bytes": 3605,
+      "sha256": "c1c1e60fe901c83dc4a3d230b004b2ad3a54a17ebbdaa013382830ff12e61c1d",
+      "size": 3951,
+      "size_bytes": 3951,
       "source": "reference"
     },
     {
