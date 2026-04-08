@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal
 import json
@@ -425,17 +426,42 @@ class ResearchRuntimeState(ContractModel):
             return True
         return observed_at >= self.next_poll_at
 
-from .research_state_store import (
-    PersistedStateMigrationApplyReport,
-    PersistedStateMigrationPreviewReport,
-    ResearchStateStore,
-    apply_research_runtime_state_migration,
-    clear_research_runtime_lock,
-    load_research_runtime_state,
-    preview_research_runtime_state_migration,
-    rebind_research_runtime_state,
-    write_research_runtime_state,
-)
+def _research_state_store_module():
+    return import_module(".research_state_store", __package__)
+
+
+def load_research_runtime_state(*args, **kwargs):
+    return _research_state_store_module().load_research_runtime_state(*args, **kwargs)
+
+
+def write_research_runtime_state(*args, **kwargs):
+    return _research_state_store_module().write_research_runtime_state(*args, **kwargs)
+
+
+def preview_research_runtime_state_migration(*args, **kwargs):
+    return _research_state_store_module().preview_research_runtime_state_migration(*args, **kwargs)
+
+
+def apply_research_runtime_state_migration(*args, **kwargs):
+    return _research_state_store_module().apply_research_runtime_state_migration(*args, **kwargs)
+
+
+def clear_research_runtime_lock(*args, **kwargs):
+    return _research_state_store_module().clear_research_runtime_lock(*args, **kwargs)
+
+
+def rebind_research_runtime_state(*args, **kwargs):
+    return _research_state_store_module().rebind_research_runtime_state(*args, **kwargs)
+
+
+def __getattr__(name: str):
+    if name in {
+        "PersistedStateMigrationApplyReport",
+        "PersistedStateMigrationPreviewReport",
+        "ResearchStateStore",
+    }:
+        return getattr(_research_state_store_module(), name)
+    raise AttributeError(name)
 
 
 __all__ = [

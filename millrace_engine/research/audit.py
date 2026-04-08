@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 import json
 import re
 
@@ -23,26 +24,7 @@ from ..contracts import (
 )
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
-from .audit_gate_helpers import _evaluate_completion_gate
-from .audit_remediation_helpers import _persist_audit_remediation
 from .parser_helpers import _extract_heading_title, _parse_frontmatter_block
-from .audit_storage_helpers import (
-    _audit_record_path,
-    _audit_remediation_record_path,
-    _audited_source_path,
-    _execution_report_path,
-    _load_json_model,
-    _relative_path,
-    _resolve_path_token,
-    _validate_record_path,
-    _write_audit_history,
-    _write_audit_summary,
-    _write_json_model,
-    load_audit_remediation_record,
-    load_audit_summary,
-)
-if TYPE_CHECKING:
-    from .state import ResearchCheckpoint
 
 
 _SECTION_HEADING_RE = re.compile(r"^##+\s+(?P<title>.+?)\s*$")
@@ -56,6 +38,78 @@ _PACKAGED_STRICT_CONTRACT_REF = "packaged:agents/audit/strict_contract.json"
 _PACKAGED_COMPLETION_MANIFEST_REF = "packaged:agents/audit/completion_manifest.json"
 _PACKAGED_OBJECTIVE_CONTRACT_REF = "packaged:agents/objective/contract.yaml"
 _AUDIT_HISTORY_RETENTION_KEEP = 100
+
+
+def _audit_gate_helpers_module():
+    return import_module(".audit_gate_helpers", __package__)
+
+
+def _audit_remediation_helpers_module():
+    return import_module(".audit_remediation_helpers", __package__)
+
+
+def _audit_storage_helpers_module():
+    return import_module(".audit_storage_helpers", __package__)
+
+
+def _evaluate_completion_gate(*args, **kwargs):
+    return _audit_gate_helpers_module()._evaluate_completion_gate(*args, **kwargs)
+
+
+def _persist_audit_remediation(*args, **kwargs):
+    return _audit_remediation_helpers_module()._persist_audit_remediation(*args, **kwargs)
+
+
+def _audit_record_path(*args, **kwargs):
+    return _audit_storage_helpers_module()._audit_record_path(*args, **kwargs)
+
+
+def _audit_remediation_record_path(*args, **kwargs):
+    return _audit_storage_helpers_module()._audit_remediation_record_path(*args, **kwargs)
+
+
+def _audited_source_path(*args, **kwargs):
+    return _audit_storage_helpers_module()._audited_source_path(*args, **kwargs)
+
+
+def _execution_report_path(*args, **kwargs):
+    return _audit_storage_helpers_module()._execution_report_path(*args, **kwargs)
+
+
+def _load_json_model(*args, **kwargs):
+    return _audit_storage_helpers_module()._load_json_model(*args, **kwargs)
+
+
+def _relative_path(*args, **kwargs):
+    return _audit_storage_helpers_module()._relative_path(*args, **kwargs)
+
+
+def _resolve_path_token(*args, **kwargs):
+    return _audit_storage_helpers_module()._resolve_path_token(*args, **kwargs)
+
+
+def _validate_record_path(*args, **kwargs):
+    return _audit_storage_helpers_module()._validate_record_path(*args, **kwargs)
+
+
+def _write_audit_history(*args, **kwargs):
+    return _audit_storage_helpers_module()._write_audit_history(*args, **kwargs)
+
+
+def _write_audit_summary(*args, **kwargs):
+    return _audit_storage_helpers_module()._write_audit_summary(*args, **kwargs)
+
+
+def _write_json_model(*args, **kwargs):
+    return _audit_storage_helpers_module()._write_json_model(*args, **kwargs)
+
+
+def load_audit_remediation_record(*args, **kwargs):
+    return _audit_storage_helpers_module().load_audit_remediation_record(*args, **kwargs)
+
+
+def load_audit_summary(*args, **kwargs):
+    return _audit_storage_helpers_module().load_audit_summary(*args, **kwargs)
 
 
 def _normalize_required_text(value: str, *, field_name: str) -> str:

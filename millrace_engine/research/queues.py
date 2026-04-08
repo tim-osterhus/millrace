@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from importlib import import_module
 from pathlib import Path
 from typing import Literal
 import re
@@ -12,9 +13,7 @@ from pydantic import field_validator
 
 from ..contracts import ContractModel, ControlPlane, ExecutionStatus, _normalize_datetime, _normalize_path
 from ..paths import RuntimePaths
-from .audit import AuditLifecycleStatus, AuditQueueRecord, load_audit_queue_record
 from .blockers import BlockerQueueRecord, load_blocker_records
-from .incidents import IncidentDocument, load_incident_document
 from .state import ResearchQueueFamily, ResearchQueueOwnership, ResearchQueueSnapshot
 
 
@@ -100,9 +99,9 @@ class ResearchQueueItem(ContractModel):
     source_status: ExecutionStatus | None = None
     incident_path: Path | None = None
     stage_blocked: str | None = None
-    incident_document: IncidentDocument | None = None
+    incident_document: object | None = None
     blocker_record: BlockerQueueRecord | None = None
-    audit_record: AuditQueueRecord | None = None
+    audit_record: object | None = None
 
     @field_validator("item_key", "title")
     @classmethod
@@ -201,7 +200,16 @@ class ResearchQueueDiscovery(ContractModel):
             last_scanned_at=last_scanned_at,
         )
 
-from .research_queue_discovery import discover_research_queues, research_queue_roots
+def _research_queue_discovery_module():
+    return import_module(".research_queue_discovery", __package__)
+
+
+def discover_research_queues(*args, **kwargs):
+    return _research_queue_discovery_module().discover_research_queues(*args, **kwargs)
+
+
+def research_queue_roots(*args, **kwargs):
+    return _research_queue_discovery_module().research_queue_roots(*args, **kwargs)
 
 
 __all__ = [

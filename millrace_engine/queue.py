@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from importlib import import_module
 from pathlib import Path
 from typing import Literal, Sequence
 import fcntl
@@ -36,6 +37,10 @@ DEFAULT_STORE_PREAMBLES = {
 
 DEFAULT_LOCK_TIMEOUT_SECONDS = 15.0
 LOCK_RETRY_SLEEP_SECONDS = 0.05
+
+
+def _research_incidents_module():
+    return import_module(".research.incidents", __package__)
 
 
 class QueueError(RuntimeError):
@@ -470,15 +475,13 @@ class TaskQueue:
         """Quarantine the active task and freeze backlog state for research handoff."""
 
         with self._locked():
-            from .research.incidents import record_incident_recurrence, resolve_deduplicated_incident_path
-
             active_card = self._resolve_active_card(card)
             active_document = self._read_active_document()
             backlog_document = self._read_store(self.paths.backlog_file)
             fingerprint = self._active_task_fingerprint()
             canonical_incident_path = incident_path
             if status is ExecutionStatus.NEEDS_RESEARCH:
-                canonical_incident_path = resolve_deduplicated_incident_path(
+                canonical_incident_path = _research_incidents_module().resolve_deduplicated_incident_path(
                     self.paths,
                     fingerprint=fingerprint,
                     failure_signature=failure_signature,
@@ -557,7 +560,7 @@ class TaskQueue:
             write_text_atomic(self.paths.blocker_file, updated_blocker)
             write_research_recovery_latch(self.paths.research_recovery_latch_file, latch)
             if status is ExecutionStatus.NEEDS_RESEARCH:
-                record_incident_recurrence(
+                _research_incidents_module().record_incident_recurrence(
                     self.paths,
                     fingerprint=fingerprint,
                     failure_signature=failure_signature,

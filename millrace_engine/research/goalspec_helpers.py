@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
 import re
 
@@ -164,8 +165,6 @@ def _canonical_goal_path_from_frontmatter(paths: RuntimePaths, frontmatter: dict
 def resolve_goal_source(paths: RuntimePaths, checkpoint: ResearchCheckpoint):
     """Resolve the current GoalSpec source artifact from checkpoint state."""
 
-    from .goalspec import GoalSource
-
     candidate_paths: list[Path] = []
     if checkpoint.owned_queues:
         item_path = checkpoint.owned_queues[0].item_path
@@ -198,7 +197,7 @@ def resolve_goal_source(paths: RuntimePaths, checkpoint: ResearchCheckpoint):
     canonical_source_path = _canonical_goal_path_from_frontmatter(paths, frontmatter) or source_path
     canonical_text = canonical_source_path.read_text(encoding="utf-8", errors="replace")
     _, canonical_body = _split_frontmatter(canonical_text)
-    return GoalSource(
+    return import_module(".goalspec", __package__).GoalSource(
         current_artifact_path=source_path.as_posix(),
         current_artifact_relative_path=_relative_path(source_path, relative_to=paths.root),
         canonical_source_path=canonical_source_path.as_posix(),

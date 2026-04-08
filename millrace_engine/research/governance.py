@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -18,9 +19,6 @@ from .specs import (
     GoalSpecFamilySpecState,
     GoalSpecFamilyState,
 )
-
-if TYPE_CHECKING:
-    from .goalspec import SpecSynthesisRecord
 
 
 GOVERNANCE_REPORT_SCHEMA_VERSION = "1.0"
@@ -39,6 +37,14 @@ def _normalize_required_text(value: str, *, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} may not be empty")
     return normalized
+
+
+def _goalspec_delivery_integrity_module():
+    return import_module(".goalspec_delivery_integrity", __package__)
+
+
+def _research_progress_watchdog_module():
+    return import_module(".research_progress_watchdog", __package__)
 
 
 def _normalize_token_sequence(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -1037,8 +1043,20 @@ def _spec_violation_codes(
     return tuple(violations)
 
 
-from .goalspec_delivery_integrity import evaluate_goalspec_delivery_integrity, sync_goalspec_delivery_integrity
-from .research_progress_watchdog import evaluate_progress_watchdog, sync_progress_watchdog
+def evaluate_goalspec_delivery_integrity(*args, **kwargs):
+    return _goalspec_delivery_integrity_module().evaluate_goalspec_delivery_integrity(*args, **kwargs)
+
+
+def sync_goalspec_delivery_integrity(*args, **kwargs):
+    return _goalspec_delivery_integrity_module().sync_goalspec_delivery_integrity(*args, **kwargs)
+
+
+def evaluate_progress_watchdog(*args, **kwargs):
+    return _research_progress_watchdog_module().evaluate_progress_watchdog(*args, **kwargs)
+
+
+def sync_progress_watchdog(*args, **kwargs):
+    return _research_progress_watchdog_module().sync_progress_watchdog(*args, **kwargs)
 
 
 __all__ = [

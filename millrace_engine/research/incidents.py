@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from ..contracts import ContractModel
 from ..paths import RuntimePaths
@@ -27,36 +28,89 @@ from .incident_documents import (
     load_incident_document,
     parse_incident_document,
 )
-from .incident_intake_helpers import (
-    incident_source_exists,
-    incident_source_on_disk,
-    materialize_incident_source,
-    move_incident as _move_incident,
-    queue_ownership_for_incident_path as _queue_ownership_for_incident_path,
-    resolve_incident_source,
-    target_incident_path as _target_incident_path,
-)
-from .incident_remediation_helpers import (
-    load_incident_remediation_record as _load_incident_remediation_record,
-    write_incident_remediation_bundle as _write_incident_remediation_bundle,
-)
-from .incident_state_helpers import (
-    incident_archive_evidence_paths as _incident_archive_evidence_paths,
-    lineages_context as _lineage_context,
-    persist_recovery_decision as _persist_recovery_decision,
-    updated_lineage_record as _updated_lineage_record,
-)
 from .normalization_helpers import _normalize_optional_text_or_none, _normalize_required_text
 from .path_helpers import _relative_path, _resolve_path_token
 from .persistence_helpers import _load_json_object, _sha256_text, _write_json_model as _shared_write_json_model
 
-if TYPE_CHECKING:
-    from .dispatcher import CompiledResearchDispatch
-    from .state import ResearchCheckpoint, ResearchQueueOwnership
-
 
 def _write_json_model(path: Path, model: ContractModel) -> None:
     _shared_write_json_model(path, model, create_parent=True)
+
+
+def _incident_intake_helpers_module():
+    return import_module(".incident_intake_helpers", __package__)
+
+
+def _incident_remediation_helpers_module():
+    return import_module(".incident_remediation_helpers", __package__)
+
+
+def _incident_state_helpers_module():
+    return import_module(".incident_state_helpers", __package__)
+
+
+def _state_module():
+    return import_module(".state", __package__)
+
+
+def _taskaudit_module():
+    return import_module(".taskaudit", __package__)
+
+
+def _taskmaster_module():
+    return import_module(".taskmaster", __package__)
+
+
+def incident_source_exists(*args, **kwargs):
+    return _incident_intake_helpers_module().incident_source_exists(*args, **kwargs)
+
+
+def incident_source_on_disk(*args, **kwargs):
+    return _incident_intake_helpers_module().incident_source_on_disk(*args, **kwargs)
+
+
+def materialize_incident_source(*args, **kwargs):
+    return _incident_intake_helpers_module().materialize_incident_source(*args, **kwargs)
+
+
+def _move_incident(*args, **kwargs):
+    return _incident_intake_helpers_module().move_incident(*args, **kwargs)
+
+
+def _queue_ownership_for_incident_path(*args, **kwargs):
+    return _incident_intake_helpers_module().queue_ownership_for_incident_path(*args, **kwargs)
+
+
+def resolve_incident_source(*args, **kwargs):
+    return _incident_intake_helpers_module().resolve_incident_source(*args, **kwargs)
+
+
+def _target_incident_path(*args, **kwargs):
+    return _incident_intake_helpers_module().target_incident_path(*args, **kwargs)
+
+
+def _load_incident_remediation_record(*args, **kwargs):
+    return _incident_remediation_helpers_module().load_incident_remediation_record(*args, **kwargs)
+
+
+def _write_incident_remediation_bundle(*args, **kwargs):
+    return _incident_remediation_helpers_module().write_incident_remediation_bundle(*args, **kwargs)
+
+
+def _incident_archive_evidence_paths(*args, **kwargs):
+    return _incident_state_helpers_module().incident_archive_evidence_paths(*args, **kwargs)
+
+
+def _lineage_context(*args, **kwargs):
+    return _incident_state_helpers_module().lineages_context(*args, **kwargs)
+
+
+def _persist_recovery_decision(*args, **kwargs):
+    return _incident_state_helpers_module().persist_recovery_decision(*args, **kwargs)
+
+
+def _updated_lineage_record(*args, **kwargs):
+    return _incident_state_helpers_module().updated_lineage_record(*args, **kwargs)
 
 
 class IncidentExecutionError(RuntimeError):
@@ -501,11 +555,8 @@ def execute_incident_task_generation(
 ) -> IncidentTaskGenerationExecutionResult:
     """Run Taskmaster and Taskaudit for an incident-produced remediation package."""
 
-    from .state import ResearchQueueFamily, ResearchQueueOwnership
-    from .taskaudit import execute_taskaudit
-    from .taskmaster import execute_taskmaster
-
     emitted_at = emitted_at or datetime.now(timezone.utc)
+    state_module = _state_module()
     record_path = _resolve_path_token(
         remediation_record_path or _incident_remediation_record_path(paths, run_id=run_id),
         relative_to=paths.root,
@@ -518,8 +569,8 @@ def execute_incident_task_generation(
             "stage_kind_id": "research.taskmaster",
             "updated_at": emitted_at,
             "owned_queues": (
-                ResearchQueueOwnership(
-                    family=ResearchQueueFamily.GOALSPEC,
+                state_module.ResearchQueueOwnership(
+                    family=state_module.ResearchQueueFamily.GOALSPEC,
                     queue_path=reviewed_spec_path.parent,
                     item_path=reviewed_spec_path,
                     owner_token=run_id,
@@ -528,14 +579,14 @@ def execute_incident_task_generation(
             ),
         }
     )
-    taskmaster_result = execute_taskmaster(
+    taskmaster_result = _taskmaster_module().execute_taskmaster(
         paths,
         taskmaster_checkpoint,
         dispatch=dispatch,
         run_id=run_id,
         emitted_at=emitted_at,
     )
-    taskaudit_result = execute_taskaudit(
+    taskaudit_result = _taskaudit_module().execute_taskaudit(
         paths,
         run_id=run_id,
         emitted_at=emitted_at,
