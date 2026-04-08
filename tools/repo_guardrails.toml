@@ -56,8 +56,6 @@ runtime = [
   "millrace_engine/policies/sizing.py",
   "millrace_engine/provenance.py",
   "millrace_engine/registry.py",
-  "millrace_engine/research/audit.py",
-  "millrace_engine/research/governance.py",
   "millrace_engine/research/incident_documents.py",
   "millrace_engine/research/incidents.py",
   "millrace_engine/research/interview.py",
