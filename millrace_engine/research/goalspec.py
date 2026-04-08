@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from importlib import import_module
 from pathlib import Path
 from typing import Literal
 
@@ -627,16 +628,80 @@ class SpecReviewExecutionResult(ContractModel):
     family_state_path: str
     queue_ownership: ResearchQueueOwnership
 
-from .goalspec_stage_support import (
-    execute_completion_manifest_draft,
-    execute_goal_intake,
-    execute_objective_profile_sync,
-    execute_spec_interview,
-    execute_spec_review,
-    execute_spec_synthesis,
-    next_stage_for_success,
-    research_stage_for_node,
-)
+
+def _goalspec_stage_support_module():
+    return import_module(".goalspec_stage_support", __package__)
+
+
+def research_stage_for_node(plan, node_id):
+    return _goalspec_stage_support_module().research_stage_for_node(plan, node_id)
+
+
+def next_stage_for_success(plan, node_id):
+    return _goalspec_stage_support_module().next_stage_for_success(plan, node_id)
+
+
+def execute_goal_intake(paths, checkpoint, *, run_id, emitted_at=None):
+    return _goalspec_stage_support_module().execute_goal_intake(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+
+def execute_objective_profile_sync(paths, checkpoint, *, run_id, emitted_at=None):
+    return _goalspec_stage_support_module().execute_objective_profile_sync(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+
+def execute_completion_manifest_draft(paths, checkpoint, *, run_id, emitted_at=None):
+    return _goalspec_stage_support_module().execute_completion_manifest_draft(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+
+def execute_spec_synthesis(
+    paths,
+    checkpoint,
+    *,
+    run_id,
+    completion_manifest=None,
+    emitted_at=None,
+):
+    return _goalspec_stage_support_module().execute_spec_synthesis(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=emitted_at,
+    )
+
+
+def execute_spec_interview(paths, checkpoint, *, run_id, policy, emitted_at=None):
+    return _goalspec_stage_support_module().execute_spec_interview(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        policy=policy,
+        emitted_at=emitted_at,
+    )
+
+
+def execute_spec_review(paths, checkpoint, *, run_id, emitted_at=None):
+    return _goalspec_stage_support_module().execute_spec_review(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
 
 
 __all__ = [
