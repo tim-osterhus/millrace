@@ -67,6 +67,26 @@ def _build_product_hard_blockers(*, title: str, semantic_profile: object) -> tup
     return (implementation_gap, verification_gap)
 
 
+def _semantic_hygiene_diagnostic_lines(semantic_profile: object) -> tuple[str, ...]:
+    rejected_candidates = tuple(getattr(semantic_profile, "rejected_candidates", ()) or ())
+    if not rejected_candidates:
+        return ("- No control-plane candidates were rejected during semantic extraction.",)
+
+    lines: list[str] = []
+    for item in rejected_candidates:
+        candidate = str(getattr(item, "candidate", "")).strip()
+        surface = str(getattr(item, "surface", "")).replace("_", " ").strip()
+        reason = str(getattr(item, "reason", "")).replace("_", " ").strip()
+        if not candidate:
+            continue
+        descriptor_parts = [part for part in (surface, reason) if part]
+        if descriptor_parts:
+            lines.append(f"- `{candidate}` ({'; '.join(descriptor_parts)})")
+        else:
+            lines.append(f"- `{candidate}`")
+    return tuple(lines) or ("- No control-plane candidates were rejected during semantic extraction.",)
+
+
 def execute_objective_profile_sync(
     paths: RuntimePaths,
     checkpoint: ResearchCheckpoint,
@@ -159,6 +179,9 @@ def execute_objective_profile_sync(
                 *(f"- {item}" for item in semantic_profile.progression_lines),
                 *(["- No explicit progression lines were detected."] if not semantic_profile.progression_lines else []),
                 "",
+                "## Semantic Hygiene Diagnostics",
+                *_semantic_hygiene_diagnostic_lines(semantic_profile),
+                "",
                 "## Milestones",
                 *(f"- {item}" for item in milestones),
                 "",
@@ -241,6 +264,9 @@ def execute_objective_profile_sync(
                     f"- **Initial-Family-Max-Specs:** "
                     f"`{int(family_policy_payload.get('initial_family_max_specs', 0) or 0)}`"
                 ),
+                "",
+                "## Semantic Hygiene Diagnostics",
+                *_semantic_hygiene_diagnostic_lines(semantic_profile),
                 "",
                 "## Outcome",
                 "Objective Profile Sync refreshed the canonical acceptance-profile and current objective state for downstream GoalSpec work.",

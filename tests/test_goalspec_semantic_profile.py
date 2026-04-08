@@ -27,6 +27,23 @@ Minimal in-game teaching.
 Automated validation for registration, aura behavior, infusion correctness, and the happy path.
 """
 
+SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """# Support Ticket Service
+
+Build the first usable support-ticket web app for a Python service.
+
+## Capability Domains
+- Ticket creation API
+- Agent inbox triage dashboard
+- Stage contract
+- agents/ideas/staging
+- support-ticket/phase_spec.md
+
+## Progression Lines
+- Progression from ticket intake to assignment to resolution confirmation.
+- objective_profile_sync
+- agents/_goal_intake.md
+"""
+
 
 def test_build_goal_semantic_profile_extracts_product_scoped_content() -> None:
     profile = build_goal_semantic_profile(PRODUCT_GOAL_TEXT)
@@ -53,6 +70,26 @@ def test_build_goal_semantic_profile_extracts_product_scoped_content() -> None:
     assert "aura routing to infusion" in milestone_text
     assert "GoalSpec" not in milestone_text
     assert "objective-profile" not in milestone_text
+
+
+def test_build_goal_semantic_profile_rejects_control_plane_candidates_across_domains() -> None:
+    profile = build_goal_semantic_profile(SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE)
+
+    assert profile.objective_summary == "Build the first usable support-ticket web app for a Python service."
+    assert profile.capability_domains == (
+        "Ticket creation API",
+        "Agent inbox triage dashboard",
+    )
+    assert profile.progression_lines == (
+        "Progression from ticket intake to assignment to resolution confirmation.",
+    )
+    assert {(item.candidate, item.reason) for item in profile.rejected_candidates} == {
+        ("Stage contract", "administrative_language"),
+        ("agents/ideas/staging", "path_shaped"),
+        ("support-ticket/phase_spec.md", "path_shaped"),
+        ("objective_profile_sync", "administrative_language"),
+        ("agents/_goal_intake.md", "path_shaped"),
+    }
 
 
 def test_seed_document_json_and_yaml_normalization(tmp_path: Path) -> None:
@@ -119,6 +156,40 @@ def test_seed_document_json_and_yaml_normalization(tmp_path: Path) -> None:
     assert yaml_profile.capability_domains == ("Aura Collector", "Aura Conduit")
     assert [item.id for item in yaml_profile.milestones] == ["SEED-FOUNDATION"]
     assert yaml_profile.milestones[0].capability_scope == ("Aura Collector", "Aura Conduit")
+
+
+def test_seed_document_filters_control_plane_candidates_and_records_diagnostics() -> None:
+    profile = build_goal_semantic_profile(
+        PRODUCT_GOAL_TEXT,
+        semantic_seed_payload={
+            "capability_domains": [
+                "Aura Collector",
+                "agents/ideas/specs",
+                "goal_intake",
+            ],
+            "progression_lines": [
+                "From collection to storage to infusion.",
+                "agents/_goal_intake.md",
+            ],
+            "milestones": [
+                {
+                    "id": "SEED-FOUNDATION",
+                    "outcome": "Establish aura collection and storage.",
+                    "capability_scope": ["Aura Collector", "phase spec"],
+                }
+            ],
+        },
+    )
+
+    assert profile.capability_domains == ("Aura Collector",)
+    assert profile.progression_lines == ("From collection to storage to infusion.",)
+    assert profile.milestones[0].capability_scope == ("Aura Collector",)
+    assert {(item.candidate, item.reason) for item in profile.rejected_candidates} >= {
+        ("agents/ideas/specs", "path_shaped"),
+        ("goal_intake", "administrative_language"),
+        ("agents/_goal_intake.md", "path_shaped"),
+        ("phase spec", "administrative_language"),
+    }
 
 
 def test_seed_milestones_reject_duplicate_ids() -> None:

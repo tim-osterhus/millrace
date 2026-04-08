@@ -70,6 +70,29 @@ Progression from solo crafting to coordinated combat trials.
 Automated validation for registration, aura behavior, infusion correctness, boss unlocks, and encounter completion.
 """
 
+SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """---
+idea_id: IDEA-PY-NOISE-001
+title: Support Ticket Service
+decomposition_profile: moderate
+---
+
+# Support Ticket Service
+
+Build the first usable support-ticket web app for a Python service.
+
+## Capability Domains
+- Ticket creation API
+- Agent inbox triage dashboard
+- Stage contract
+- agents/ideas/staging
+- support-ticket/phase_spec.md
+
+## Progression Lines
+- Progression from ticket intake to assignment to resolution confirmation.
+- objective_profile_sync
+- agents/_goal_intake.md
+"""
+
 
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -230,6 +253,34 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert "Aura Collector" in synced_markdown
     assert "## Objective Summary" in synced_markdown
     assert "## Capability Domains" in synced_markdown
+
+
+def test_execute_objective_profile_sync_surfaces_rejected_control_plane_candidates(tmp_path: Path) -> None:
+    _, _, _, synced_profile, synced_markdown, _ = _run_objective_profile_sync(
+        tmp_path=tmp_path,
+        goal_text=SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE,
+        run_id="goalspec-support-noise-001",
+        emitted_at=_dt("2026-04-07T12:05:00Z"),
+    )
+
+    assert synced_profile["semantic_profile"]["capability_domains"] == [
+        "Ticket creation API",
+        "Agent inbox triage dashboard",
+    ]
+    assert synced_profile["semantic_profile"]["progression_lines"] == [
+        "Progression from ticket intake to assignment to resolution confirmation."
+    ]
+    assert {(item["candidate"], item["reason"]) for item in synced_profile["semantic_profile"]["rejected_candidates"]} == {
+        ("Stage contract", "administrative_language"),
+        ("agents/ideas/staging", "path_shaped"),
+        ("support-ticket/phase_spec.md", "path_shaped"),
+        ("objective_profile_sync", "administrative_language"),
+        ("agents/_goal_intake.md", "path_shaped"),
+    }
+    assert "## Semantic Hygiene Diagnostics" in synced_markdown
+    assert "`Stage contract` (capability domain; administrative language)" in synced_markdown
+    assert "`agents/ideas/staging` (capability domain; path shaped)" in synced_markdown
+    assert "Support Ticket Service" in synced_markdown
 
 
 def test_execute_objective_profile_sync_preserves_canonical_lineage_on_staged_revisit(tmp_path: Path) -> None:

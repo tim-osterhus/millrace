@@ -26,20 +26,61 @@ DEFAULT_SEMANTIC_SEED_FILENAMES = (
 
 _CAPABILITY_HEADING_TOKENS = ("capability", "focus", "feature", "deliverable", "scope")
 _PROGRESSION_HEADING_TOKENS = ("progression", "flow", "journey", "ladder")
-_ADMIN_LANGUAGE_TOKENS = (
-    "goalspec",
-    "objective profile",
-    "objective-profile",
-    "completion manifest",
-    "spec review",
-    "traceability",
-    "task generation",
-    "taskmaster",
-    "queue spec",
-    "phase spec",
-    "golden spec",
-    "research plane",
+_EXACT_ADMIN_LABELS = frozenset(
+    {
+        "agents",
+        "archive",
+        "audit",
+        "goal intake",
+        "goal_intake",
+        "ideas",
+        "objective",
+        "objective profile sync",
+        "objective_profile_sync",
+        "raw",
+        "reports",
+        "spec review",
+        "spec synthesis",
+        "spec_review",
+        "spec_synthesis",
+        "specs",
+        "specs reviewed",
+        "specs_reviewed",
+        "staging",
+        "taskaudit",
+        "taskmaster",
+        "tasksbacklog",
+        "taskspending",
+    }
 )
+_ADMIN_LANGUAGE_TOKENS = (
+    "canonical source",
+    "checkpoint",
+    "completion manifest",
+    "current artifact",
+    "dispatch",
+    "frontmatter",
+    "goal intake",
+    "golden spec",
+    "objective profile",
+    "phase spec",
+    "queue family",
+    "queue root",
+    "queue spec",
+    "research plane",
+    "route decision",
+    "semantic seed",
+    "source artifact",
+    "spec review",
+    "spec synthesis",
+    "stage contract",
+    "task generation",
+    "taskaudit",
+    "taskmaster",
+    "trace metadata",
+    "traceability",
+)
+_CONTROL_DOC_FILENAME_RE = re.compile(r"\b[a-z0-9._-]+\.(?:md|json|ya?ml|toml)\b", re.IGNORECASE)
 
 
 class SemanticProfileMilestone(ContractModel):
@@ -65,6 +106,19 @@ class SemanticProfileMilestone(ContractModel):
         return _normalize_text_sequence(value)
 
 
+class SemanticProfileRejectedCandidate(ContractModel):
+    """One rejected semantic candidate plus the filter reason."""
+
+    candidate: str
+    surface: Literal["capability_domain", "progression_line"]
+    reason: Literal["administrative_language", "path_shaped"]
+
+    @field_validator("candidate", mode="before")
+    @classmethod
+    def normalize_candidate(cls, value: str | Path | None) -> str:
+        return _normalize_required_text(value, field_name="candidate")
+
+
 class GoalSemanticProfile(ContractModel):
     """Deterministic semantic profile derived from goal text or an optional seed."""
 
@@ -73,6 +127,7 @@ class GoalSemanticProfile(ContractModel):
     capability_domains: tuple[str, ...] = ()
     progression_lines: tuple[str, ...] = ()
     milestones: tuple[SemanticProfileMilestone, ...]
+    rejected_candidates: tuple[SemanticProfileRejectedCandidate, ...] = ()
     semantic_seed_path: str = ""
 
     @field_validator("objective_summary")
@@ -96,6 +151,10 @@ class GoalSemanticProfile(ContractModel):
     @classmethod
     def normalize_semantic_seed_path(cls, value: str | Path | None) -> str:
         return _normalize_optional_text(value)
+
+
+def _normalize_admin_probe(text: str) -> str:
+    return re.sub(r"[\s_-]+", " ", text.casefold()).strip()
 
 
 def discover_semantic_seed_path(paths: RuntimePaths) -> Path | None:
@@ -271,8 +330,10 @@ def build_goal_semantic_profile(
     """Build a normalized semantic profile from goal text plus an optional seed."""
 
     heuristic_summary = extract_objective_summary(goal_text)
-    heuristic_domains = extract_capability_domains(goal_text)
-    heuristic_progression = extract_progression_lines(goal_text)
+    heuristic_domains, heuristic_domain_rejections = extract_capability_domains_with_diagnostics(goal_text)
+    heuristic_progression, heuristic_progression_rejections = extract_progression_lines_with_diagnostics(goal_text)
+    rejected_candidates = list(heuristic_domain_rejections)
+    rejected_candidates.extend(heuristic_progression_rejections)
 
     if semantic_seed_payload is None:
         return GoalSemanticProfile(
@@ -285,17 +346,29 @@ def build_goal_semantic_profile(
                 capability_domains=heuristic_domains,
                 progression_lines=heuristic_progression,
             ),
+            rejected_candidates=_dedupe_rejected_candidates(rejected_candidates),
         )
 
     objective_summary = _normalize_optional_text(
         semantic_seed_payload.get("objective")
         or semantic_seed_payload.get("objective_summary")
     ) or heuristic_summary
-    capability_domains = _normalize_raw_string_list(
-        semantic_seed_payload.get("capability_domains") or semantic_seed_payload.get("focus_bullets")
-    ) or heuristic_domains
-    progression_lines = _normalize_raw_string_list(semantic_seed_payload.get("progression_lines")) or heuristic_progression
-    milestones = _normalize_seed_milestones(semantic_seed_payload.get("milestones"))
+    seed_capability_domains, seed_domain_rejections = _filter_semantic_candidates(
+        _normalize_raw_string_list(
+            semantic_seed_payload.get("capability_domains") or semantic_seed_payload.get("focus_bullets")
+        ),
+        surface="capability_domain",
+    )
+    rejected_candidates.extend(seed_domain_rejections)
+    capability_domains = seed_capability_domains or heuristic_domains
+    seed_progression_lines, seed_progression_rejections = _filter_semantic_candidates(
+        _normalize_raw_string_list(semantic_seed_payload.get("progression_lines")),
+        surface="progression_line",
+    )
+    rejected_candidates.extend(seed_progression_rejections)
+    progression_lines = seed_progression_lines or heuristic_progression
+    milestones, seed_milestone_rejections = _normalize_seed_milestones(semantic_seed_payload.get("milestones"))
+    rejected_candidates.extend(seed_milestone_rejections)
     if not milestones:
         milestones = _heuristic_milestones(
             objective_summary=objective_summary,
@@ -309,6 +382,7 @@ def build_goal_semantic_profile(
         capability_domains=capability_domains,
         progression_lines=progression_lines,
         milestones=milestones,
+        rejected_candidates=_dedupe_rejected_candidates(rejected_candidates),
         semantic_seed_path=semantic_seed_path,
     )
 
@@ -345,34 +419,86 @@ def extract_objective_summary(goal_text: str) -> str:
 def extract_capability_domains(goal_text: str) -> tuple[str, ...]:
     """Extract product capability domains from the goal text."""
 
-    explicit = _extract_bullets_from_sections(goal_text, heading_tokens=_CAPABILITY_HEADING_TOKENS)
+    explicit, _ = extract_capability_domains_with_diagnostics(goal_text)
+    return explicit
+
+
+def extract_capability_domains_with_diagnostics(
+    goal_text: str,
+) -> tuple[tuple[str, ...], tuple[SemanticProfileRejectedCandidate, ...]]:
+    """Extract product capability domains plus rejected-candidate diagnostics."""
+
+    explicit, rejected = _extract_bullets_from_sections(
+        goal_text,
+        heading_tokens=_CAPABILITY_HEADING_TOKENS,
+        surface="capability_domain",
+    )
     if explicit:
-        return explicit
+        return explicit, rejected
 
     bullets: list[str] = []
+    fallback_rejections: list[SemanticProfileRejectedCandidate] = []
     for raw in goal_text.splitlines():
         stripped = raw.strip()
         if not _is_bullet(stripped):
             continue
         bullet = _normalize_bullet_line(stripped)
-        if not bullet or _looks_administrative(bullet):
+        if not bullet:
+            continue
+        rejection_reason = _semantic_candidate_rejection_reason(bullet)
+        if rejection_reason is not None:
+            fallback_rejections.append(
+                SemanticProfileRejectedCandidate(
+                    candidate=bullet,
+                    surface="capability_domain",
+                    reason=rejection_reason,
+                )
+            )
             continue
         bullets.append(bullet)
-    return _normalize_text_sequence(bullets[:6])
+    return _normalize_text_sequence(bullets[:6]), _dedupe_rejected_candidates((*rejected, *fallback_rejections))
 
 
 def extract_progression_lines(goal_text: str) -> tuple[str, ...]:
     """Extract goal lines that describe user or capability progression."""
 
-    explicit = _extract_bullets_from_sections(goal_text, heading_tokens=_PROGRESSION_HEADING_TOKENS)
+    explicit, _ = extract_progression_lines_with_diagnostics(goal_text)
+    return explicit
+
+
+def extract_progression_lines_with_diagnostics(
+    goal_text: str,
+) -> tuple[tuple[str, ...], tuple[SemanticProfileRejectedCandidate, ...]]:
+    """Extract progression lines plus rejected-candidate diagnostics."""
+
+    explicit, rejected = _extract_bullets_from_sections(
+        goal_text,
+        heading_tokens=_PROGRESSION_HEADING_TOKENS,
+        surface="progression_line",
+    )
     if explicit:
-        return explicit
+        return explicit, rejected
 
     matches: list[str] = []
+    fallback_rejections: list[SemanticProfileRejectedCandidate] = []
     for raw in goal_text.splitlines():
         line = _normalize_text_line(raw)
         lowered = line.casefold()
-        if not line or _looks_administrative(line):
+        if not line:
+            continue
+        rejection_reason = _semantic_candidate_rejection_reason(line)
+        if rejection_reason is not None:
+            if "progression" in lowered or "journey" in lowered or "ladder" in lowered or re.search(
+                r"\bfrom\b.+\bto\b.+\bto\b",
+                lowered,
+            ):
+                fallback_rejections.append(
+                    SemanticProfileRejectedCandidate(
+                        candidate=line,
+                        surface="progression_line",
+                        reason=rejection_reason,
+                    )
+                )
             continue
         if "progression" in lowered or "journey" in lowered or "ladder" in lowered:
             matches.append(line)
@@ -380,33 +506,52 @@ def extract_progression_lines(goal_text: str) -> tuple[str, ...]:
         if re.search(r"\bfrom\b.+\bto\b.+\bto\b", lowered):
             matches.append(line)
             continue
-    return _normalize_text_sequence(matches)
+    return _normalize_text_sequence(matches), _dedupe_rejected_candidates((*rejected, *fallback_rejections))
 
 
-def _extract_bullets_from_sections(goal_text: str, *, heading_tokens: tuple[str, ...]) -> tuple[str, ...]:
+def _extract_bullets_from_sections(
+    goal_text: str,
+    *,
+    heading_tokens: tuple[str, ...],
+    surface: Literal["capability_domain", "progression_line"],
+) -> tuple[tuple[str, ...], tuple[SemanticProfileRejectedCandidate, ...]]:
     collected: list[str] = []
+    rejected: list[SemanticProfileRejectedCandidate] = []
     capture = False
+    saw_candidate = False
     for raw in goal_text.splitlines():
         stripped = raw.strip()
         if stripped.startswith("#"):
             heading = stripped.lstrip("#").strip().casefold()
             capture = any(token in heading for token in heading_tokens)
+            saw_candidate = False
             continue
         if not capture:
             continue
         if not stripped:
-            if collected:
+            if saw_candidate:
                 break
             continue
         if not _is_bullet(stripped):
-            if collected:
+            if saw_candidate:
                 break
             continue
+        saw_candidate = True
         bullet = _normalize_bullet_line(stripped)
-        if not bullet or _looks_administrative(bullet):
+        if not bullet:
+            continue
+        rejection_reason = _semantic_candidate_rejection_reason(bullet)
+        if rejection_reason is not None:
+            rejected.append(
+                SemanticProfileRejectedCandidate(
+                    candidate=bullet,
+                    surface=surface,
+                    reason=rejection_reason,
+                )
+            )
             continue
         collected.append(bullet)
-    return _normalize_text_sequence(collected)
+    return _normalize_text_sequence(collected), _dedupe_rejected_candidates(rejected)
 
 
 def _heuristic_milestones(
@@ -455,13 +600,16 @@ def _heuristic_milestones(
     return tuple(milestones)
 
 
-def _normalize_seed_milestones(raw: Any) -> tuple[SemanticProfileMilestone, ...]:
+def _normalize_seed_milestones(
+    raw: Any,
+) -> tuple[tuple[SemanticProfileMilestone, ...], tuple[SemanticProfileRejectedCandidate, ...]]:
     if raw is None:
-        return ()
+        return (), ()
     if not isinstance(raw, list):
         raise ValueError("semantic seed milestones must be a list")
 
     milestones: list[SemanticProfileMilestone] = []
+    rejected: list[SemanticProfileRejectedCandidate] = []
     seen_ids: set[str] = set()
     for index, item in enumerate(raw, start=1):
         if isinstance(item, str):
@@ -471,9 +619,11 @@ def _normalize_seed_milestones(raw: Any) -> tuple[SemanticProfileMilestone, ...]
         elif isinstance(item, dict):
             milestone_id = _normalize_optional_text(item.get("id")) or f"SEED-{index:03d}"
             outcome = _normalize_optional_text(item.get("outcome") or item.get("title") or item.get("summary"))
-            capability_scope = _normalize_raw_string_list(
-                item.get("capability_scope") or item.get("capability_domains")
+            capability_scope, scope_rejections = _filter_semantic_candidates(
+                _normalize_raw_string_list(item.get("capability_scope") or item.get("capability_domains")),
+                surface="capability_domain",
             )
+            rejected.extend(scope_rejections)
         else:
             raise ValueError("semantic seed milestone entries must be strings or objects")
         milestone = SemanticProfileMilestone(
@@ -485,7 +635,7 @@ def _normalize_seed_milestones(raw: Any) -> tuple[SemanticProfileMilestone, ...]
             raise ValueError(f"semantic seed milestone id `{milestone.id}` is duplicated")
         seen_ids.add(milestone.id)
         milestones.append(milestone)
-    return tuple(milestones)
+    return tuple(milestones), _dedupe_rejected_candidates(rejected)
 
 
 def _normalize_raw_string_list(raw: Any) -> tuple[str, ...]:
@@ -535,6 +685,62 @@ def _is_bullet(line: str) -> bool:
     return line.startswith("- ") or line.startswith("* ")
 
 
-def _looks_administrative(text: str) -> bool:
-    lowered = text.casefold()
-    return any(token in lowered for token in _ADMIN_LANGUAGE_TOKENS)
+def _filter_semantic_candidates(
+    candidates: tuple[str, ...],
+    *,
+    surface: Literal["capability_domain", "progression_line"],
+) -> tuple[tuple[str, ...], tuple[SemanticProfileRejectedCandidate, ...]]:
+    accepted: list[str] = []
+    rejected: list[SemanticProfileRejectedCandidate] = []
+    for candidate in candidates:
+        normalized_candidate = _normalize_optional_text(candidate)
+        if not normalized_candidate:
+            continue
+        rejection_reason = _semantic_candidate_rejection_reason(normalized_candidate)
+        if rejection_reason is not None:
+            rejected.append(
+                SemanticProfileRejectedCandidate(
+                    candidate=normalized_candidate,
+                    surface=surface,
+                    reason=rejection_reason,
+                )
+            )
+            continue
+        accepted.append(normalized_candidate)
+    return _normalize_text_sequence(accepted), _dedupe_rejected_candidates(rejected)
+
+
+def _dedupe_rejected_candidates(
+    candidates: list[SemanticProfileRejectedCandidate] | tuple[SemanticProfileRejectedCandidate, ...],
+) -> tuple[SemanticProfileRejectedCandidate, ...]:
+    ordered: list[SemanticProfileRejectedCandidate] = []
+    seen: set[tuple[str, str, str]] = set()
+    for candidate in candidates:
+        key = (
+            candidate.candidate.casefold(),
+            candidate.surface,
+            candidate.reason,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(candidate)
+    return tuple(ordered)
+
+
+def _semantic_candidate_rejection_reason(
+    text: str,
+) -> Literal["administrative_language", "path_shaped"] | None:
+    if not text:
+        return None
+    if "`" in text or "/" in text or "\\" in text:
+        return "path_shaped"
+
+    probe = _normalize_admin_probe(text)
+    if probe in _EXACT_ADMIN_LABELS:
+        return "administrative_language"
+    if any(_normalize_admin_probe(token) in probe for token in _ADMIN_LANGUAGE_TOKENS):
+        return "administrative_language"
+    if _CONTROL_DOC_FILENAME_RE.search(text):
+        return "administrative_language"
+    return None
