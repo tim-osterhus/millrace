@@ -7,7 +7,8 @@ import re
 from typing import Literal
 
 from .goalspec import AcceptanceProfileRecord, CompletionManifestDraftSurface, GoalSource
-from .goalspec_helpers import _slugify
+from .goalspec_helpers import GoalSpecExecutionError, _slugify
+from .goalspec_scope_diagnostics import infer_goal_scope_kind
 
 
 RepoKind = Literal["millrace_python_runtime", "minecraft_fabric_mod", "python_product", "generic_product"]
@@ -26,6 +27,61 @@ _FRAMEWORK_HINTS = (
     "queue governor",
     "millrace",
 )
+_PLANNING_EXACT_ADMIN_LABELS = frozenset(
+    {
+        "agents",
+        "archive",
+        "audit",
+        "goal intake",
+        "goal_intake",
+        "ideas",
+        "objective",
+        "objective profile sync",
+        "objective_profile_sync",
+        "raw",
+        "reports",
+        "spec review",
+        "spec synthesis",
+        "spec_review",
+        "spec_synthesis",
+        "specs",
+        "specs reviewed",
+        "specs_reviewed",
+        "staging",
+        "taskaudit",
+        "taskmaster",
+        "tasksbacklog",
+        "taskspending",
+    }
+)
+_PLANNING_ADMIN_LANGUAGE_TOKENS = (
+    "canonical source",
+    "checkpoint",
+    "completion manifest",
+    "current artifact",
+    "dispatch",
+    "frontmatter",
+    "goal intake",
+    "golden spec",
+    "objective profile",
+    "phase spec",
+    "queue family",
+    "queue root",
+    "queue spec",
+    "research plane",
+    "route decision",
+    "semantic seed",
+    "source artifact",
+    "spec review",
+    "spec synthesis",
+    "stage contract",
+    "task generation",
+    "taskaudit",
+    "taskmaster",
+    "trace metadata",
+    "traceability",
+)
+_CONTROL_DOC_FILENAME_RE = re.compile(r"\b[a-z0-9._-]+\.(?:md|json|ya?ml|toml)\b", re.IGNORECASE)
 _MINECRAFT_HINTS = (
     "minecraft",
     "fabric",
@@ -88,6 +144,15 @@ class GoalProductPlan:
     verification_commands: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PlanningContaminationFinding:
+    """One semantic label the planner refuses to trust for product-scoped goals."""
+
+    source: Literal["objective_summary", "capability_domain", "progression_line"]
+    label: str
+    reason: Literal["administrative_language", "path_shaped"]
+
+
 def infer_repo_kind(*, source: GoalSource, profile: AcceptanceProfileRecord) -> RepoKind:
     """Infer one bounded repo kind from the product objective."""
 
@@ -111,6 +176,7 @@ def infer_repo_kind(*, source: GoalSource, profile: AcceptanceProfileRecord) -> 
 def derive_goal_product_plan(*, source: GoalSource, profile: AcceptanceProfileRecord) -> GoalProductPlan:
     """Build a deterministic product plan for the current goal."""
 
+    _raise_if_contaminated_planning_inputs(source=source, profile=profile)
     repo_kind = infer_repo_kind(source=source, profile=profile)
     if repo_kind == "millrace_python_runtime":
         return _millrace_python_runtime_plan(source=source, profile=profile)
@@ -171,6 +237,74 @@ def _token_words(text: str) -> tuple[str, ...]:
 def _contains_hint(text: str, hint: str) -> bool:
     pattern = r"\b" + re.escape(hint.casefold()) + r"\b"
     return re.search(pattern, text.casefold()) is not None
+
+
+def _normalize_admin_probe(text: str) -> str:
+    return re.sub(r"[\s_-]+", " ", text.casefold()).strip()
+
+
+def _planning_label_rejection_reason(text: str) -> Literal["administrative_language", "path_shaped"] | None:
+    if not text:
+        return None
+    if "`" in text or "/" in text or "\\" in text:
+        return "path_shaped"
+    probe = _normalize_admin_probe(text)
+    if probe in _PLANNING_EXACT_ADMIN_LABELS:
+        return "administrative_language"
+    if any(_normalize_admin_probe(token) in probe for token in _PLANNING_ADMIN_LANGUAGE_TOKENS):
+        return "administrative_language"
+    if _CONTROL_DOC_FILENAME_RE.search(text):
+        return "administrative_language"
+    return None
+
+
+def _collect_planning_contamination_findings(
+    *,
+    profile: AcceptanceProfileRecord,
+) -> tuple[PlanningContaminationFinding, ...]:
+    findings: list[PlanningContaminationFinding] = []
+    for source_kind, values in (
+        ("objective_summary", (profile.semantic_profile.objective_summary,)),
+        ("capability_domain", tuple(profile.semantic_profile.capability_domains)),
+        ("progression_line", tuple(profile.semantic_profile.progression_lines)),
+    ):
+        for value in values:
+            normalized = value.strip()
+            if not normalized:
+                continue
+            rejection_reason = _planning_label_rejection_reason(normalized)
+            if rejection_reason is None:
+                continue
+            findings.append(
+                PlanningContaminationFinding(
+                    source=source_kind,
+                    label=normalized,
+                    reason=rejection_reason,
+                )
+            )
+    return tuple(findings)
+
+
+def _raise_if_contaminated_planning_inputs(*, source: GoalSource, profile: AcceptanceProfileRecord) -> None:
+    expected_scope = infer_goal_scope_kind(
+        title=source.title,
+        source_body=source.canonical_body,
+        semantic_summary="",
+        capability_domains=(),
+    )
+    if expected_scope != "product":
+        return
+    findings = _collect_planning_contamination_findings(profile=profile)
+    if not findings:
+        return
+    summary = "; ".join(
+        f"{finding.source}=`{finding.label}` ({finding.reason.replace('_', ' ')})"
+        for finding in findings
+    )
+    raise GoalSpecExecutionError(
+        "Planner refused contaminated semantic labels for a product-scoped goal: "
+        f"{summary}"
+    )
 
 
 def _camel_case(label: str) -> str:

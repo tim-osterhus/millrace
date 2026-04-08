@@ -2946,6 +2946,88 @@ def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_ba
     assert list((workspace / "agents" / "taskspending").glob("*")) == []
 
 
+def test_completion_manifest_planning_guard_fails_closed_on_contaminated_semantic_labels(tmp_path: Path) -> None:
+    workspace, _config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-plan-guard-712"
+    emitted_at = _dt("2026-04-07T16:05:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-PY-712\n"
+            "title: Support Ticket Service\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Support Ticket Service\n\n"
+            "Build the first usable support-ticket web app for a Python service.\n\n"
+            "## Capability Domains\n"
+            "- Ticket creation API\n"
+            "- Agent inbox triage dashboard\n\n"
+            "## Progression Lines\n"
+            "- Progression from ticket intake to assignment to resolution confirmation.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    objective_sync = execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    profile_state = json.loads((workspace / objective_sync.profile_state_path).read_text(encoding="utf-8"))
+    profile_path = workspace / profile_state["profile_path"]
+    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    profile_payload["semantic_profile"]["objective_summary"] = "GoalSpec planning surface"
+    profile_payload["semantic_profile"]["capability_domains"] = [
+        "Stage contract",
+        "agents/ideas/staging",
+    ]
+    profile_payload["semantic_profile"]["progression_lines"] = ["agents/_goal_intake.md"]
+    profile_payload["semantic_profile"]["rejected_candidates"] = []
+    profile_payload["milestones"] = ["Preserve traceability."]
+    profile_path.write_text(json.dumps(profile_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Planner refused contaminated semantic labels for a product-scoped goal",
+    ) as excinfo:
+        execute_completion_manifest_draft(
+            paths,
+            _goal_active_request_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                path=staged_path,
+                node_id="spec_synthesis",
+                stage_kind_id="research.spec-synthesis",
+            ),
+            run_id=run_id,
+            emitted_at=emitted_at,
+        )
+
+    assert "Stage contract" in str(excinfo.value)
+    assert "agents/ideas/staging" in str(excinfo.value)
+    assert not paths.audit_completion_manifest_file.exists()
+    assert not paths.completion_manifest_plan_file.exists()
+
+
 def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_handoff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
