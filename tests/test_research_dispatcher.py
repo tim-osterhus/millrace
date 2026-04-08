@@ -662,6 +662,59 @@ def test_auto_selection_uses_auto_mode_and_goal_family(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("queue_relative_path", "body", "expected_entry_node"),
+    [
+        (
+            "agents/ideas/raw/goal.md",
+            "---\nidea_id: IDEA-ENTRY-RAW\ntitle: Raw Goal\n---\n\n# Raw Goal\n\nRaw seed.\n",
+            "goal_intake",
+        ),
+        (
+            "agents/ideas/staging/IDEA-ENTRY-STAGE__staged-goal.md",
+            "---\nidea_id: IDEA-ENTRY-STAGE\ntitle: Staged Goal\n---\n\n# Staged Goal\n\nStaged brief.\n",
+            "objective_profile_sync",
+        ),
+        (
+            "agents/ideas/specs/SPEC-ENTRY-001__queued-spec.md",
+            "---\nspec_id: SPEC-ENTRY-001\ntitle: Queued Spec\n---\n\n# Queued Spec\n\nQueued review work.\n",
+            "spec_review",
+        ),
+        (
+            "agents/ideas/specs_reviewed/SPEC-ENTRY-002__reviewed-spec.md",
+            "---\nspec_id: SPEC-ENTRY-002\ntitle: Reviewed Spec\n---\n\n# Reviewed Spec\n\nReady for taskmaster.\n",
+            "taskmaster",
+        ),
+    ],
+)
+def test_goalspec_queue_roots_route_to_owned_entry_stage(
+    tmp_path: Path,
+    queue_relative_path: str,
+    body: str,
+    expected_entry_node: str,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    _write_queue_file(workspace / queue_relative_path, body)
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+
+    assert selection is not None
+    assert selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+    assert selection.entry_node_id == expected_entry_node
+
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id=f"route-{expected_entry_node}",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    assert dispatch.entry_stage.node_id == expected_entry_node
+    assert dispatch.checkpoint().node_id == expected_entry_node
+
+
+@pytest.mark.parametrize(
     ("mode", "expected_mode_id", "expected_entry_node"),
     [
         (ResearchMode.GOALSPEC, "mode.research_goalspec", "goal_intake"),
@@ -874,6 +927,43 @@ def test_research_plane_run_ready_work_executes_auto_goalspec_stages_through_tas
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
     assert len(backlog.cards) == 4
     assert all(card.spec_id == "SPEC-AUTO-42" for card in backlog.cards)
+
+
+def test_research_plane_staging_dispatch_never_reenters_goal_intake(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-STAGE-LOOP__staged-goal.md"
+    _write_queue_file(
+        staged_path,
+        "---\nidea_id: IDEA-STAGE-LOOP\ntitle: Stage Resume Goal\n---\n\n# Stage Resume Goal\n\nResume downstream.\n",
+    )
+    plane = ResearchPlane(config, paths)
+
+    def _unexpected_goal_intake(*args: object, **kwargs: object) -> object:
+        raise AssertionError("staging queue item unexpectedly re-entered goal_intake")
+
+    def _expected_objective_profile_sync_failure(*args: object, **kwargs: object) -> object:
+        raise research_plane_module.GoalSpecExecutionError("synthetic objective profile sync failure")
+
+    monkeypatch.setattr(research_plane_module, "execute_goal_intake", _unexpected_goal_intake)
+    monkeypatch.setattr(
+        research_plane_module,
+        "execute_objective_profile_sync",
+        _expected_objective_profile_sync_failure,
+    )
+
+    with pytest.raises(research_plane_module.GoalSpecExecutionError, match="synthetic objective profile sync failure"):
+        plane.run_ready_work(run_id="goalspec-stage-loop", resolve_assets=False)
+
+    snapshot = plane.snapshot_state()
+    assert snapshot.current_mode is ResearchRuntimeMode.GOALSPEC
+    assert snapshot.retry_state is not None
+    assert snapshot.retry_state.last_failure_reason == "synthetic objective profile sync failure"
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "objective_profile_sync"
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
 
 
 def test_research_plane_run_ready_work_preserves_blocker_handoff_lineage_on_incident_queue_execution(
@@ -1108,6 +1198,51 @@ def test_research_plane_resumes_checkpoint_when_queue_input_disappears(tmp_path:
     assert snapshot.checkpoint is not None
     assert snapshot.checkpoint.checkpoint_id == "research-auto-run"
     assert plane.status_store.read() is ResearchStatus.INCIDENT_INTAKE_RUNNING
+
+
+def test_research_plane_resumes_goalspec_checkpoint_at_owned_downstream_stage(tmp_path: Path) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-RESUME-001__staged-goal.md"
+    _write_queue_file(
+        staged_path,
+        "---\nidea_id: IDEA-RESUME-001\ntitle: Resume Staged Goal\n---\n\n# Resume Staged Goal\n\nStaged brief.\n",
+    )
+    plane = ResearchPlane(config, paths)
+    emitted_at = _dt("2026-04-07T12:00:00Z")
+    checkpoint = _goal_queue_checkpoint(
+        run_id="goalspec-stage-resume",
+        emitted_at=emitted_at,
+        queue_path=paths.ideas_staging_dir,
+        item_path=staged_path,
+        status=ResearchStatus.OBJECTIVE_PROFILE_SYNC_RUNNING,
+        node_id="objective_profile_sync",
+        stage_kind_id="research.objective-profile-sync",
+    )
+    plane.state = plane.state.model_copy(
+        update={
+            "current_mode": ResearchRuntimeMode.GOALSPEC,
+            "queue_snapshot": plane.state.queue_snapshot.model_copy(
+                update={
+                    "goalspec_ready": True,
+                    "selected_family": ResearchQueueFamily.GOALSPEC,
+                    "ownerships": checkpoint.owned_queues,
+                }
+            ),
+            "checkpoint": checkpoint,
+        }
+    )
+
+    dispatch = plane.dispatch_ready_work(resolve_assets=False)
+
+    assert dispatch is not None
+    assert dispatch.run_id == "goalspec-stage-resume"
+    assert dispatch.selection.entry_node_id == "objective_profile_sync"
+    assert dispatch.entry_stage.node_id == "objective_profile_sync"
+    snapshot = plane.snapshot_state()
+    assert snapshot.mode_reason == "resume-from-checkpoint"
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "objective_profile_sync"
+    assert plane.status_store.read() is ResearchStatus.OBJECTIVE_PROFILE_SYNC_RUNNING
 
 
 def test_research_plane_no_work_tracks_configured_auto_mode(tmp_path: Path) -> None:
@@ -1370,6 +1505,8 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     goal_intake_record = json.loads(goal_intake_record_path.read_text(encoding="utf-8"))
     assert goal_intake_record["schema_version"] == "1.0"
     assert goal_intake_record["run_id"] == "goalspec-run-42"
+    assert goal_intake_record["canonical_source_path"] == archived_rel_path
+    assert goal_intake_record["current_artifact_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
     assert goal_intake_record["source_path"] == "agents/ideas/raw/goal.md"
     assert goal_intake_record["archived_source_path"] == archived_rel_path
     assert goal_intake_record["research_brief_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
@@ -1377,6 +1514,9 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     profile_state = json.loads(profile_state_path.read_text(encoding="utf-8"))
     assert profile_state["schema_version"] == "1.0"
     assert profile_state["run_id"] == "goalspec-run-42"
+    assert profile_state["canonical_source_path"] == archived_rel_path
+    assert profile_state["current_artifact_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
+    assert profile_state["source_path"] == archived_rel_path
     assert profile_state["goal_intake_record_path"] == (
         "agents/.research_runtime/goalspec/goal_intake/goalspec-run-42.json"
     )
@@ -1385,12 +1525,18 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     profile_json = json.loads(profile_json_path.read_text(encoding="utf-8"))
     assert profile_json["goal_id"] == "IDEA-42"
     assert profile_json["run_id"] == "goalspec-run-42"
+    assert profile_json["canonical_source_path"] == archived_rel_path
+    assert profile_json["current_artifact_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
+    assert profile_json["source_path"] == archived_rel_path
     assert profile_json["research_brief_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
     assert any(downstream_pending_text in item for item in profile_json["hard_blockers"])
 
     completion_manifest = json.loads(completion_manifest_path.read_text(encoding="utf-8"))
     assert completion_manifest["artifact_type"] == "completion_manifest_draft"
     assert completion_manifest["goal_id"] == "IDEA-42"
+    assert completion_manifest["canonical_source_path"] == archived_rel_path
+    assert completion_manifest["current_artifact_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
+    assert completion_manifest["source_path"] == archived_rel_path
     assert completion_manifest["repo_kind"] == "millrace_python_runtime"
     assert completion_manifest["objective_profile_path"] == "agents/reports/acceptance_profiles/idea-42-profile.json"
     assert any(downstream_pending_text in item for item in completion_manifest["open_questions"])
@@ -1418,6 +1564,9 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     spec_record = json.loads(spec_record_path.read_text(encoding="utf-8"))
     assert spec_record["artifact_type"] == "spec_synthesis"
     assert spec_record["spec_id"] == "SPEC-42"
+    assert spec_record["canonical_source_path"] == archived_rel_path
+    assert spec_record["current_artifact_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
+    assert spec_record["source_path"] == archived_rel_path
     assert spec_record["queue_spec_path"] == "agents/ideas/specs/SPEC-42__modernize-goal-intake.md"
     assert spec_record["decision_path"] == "agents/specs/decisions/IDEA-42__modernize-goal-intake__spec-synthesis.md"
 

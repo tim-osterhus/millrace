@@ -71,6 +71,7 @@ class ResearchDispatchSelection(ContractModel):
     configured_mode: ResearchMode
     runtime_mode: ResearchRuntimeMode
     selected_mode_ref: RegistryObjectRef
+    entry_node_id: str
     queue_snapshot: ResearchQueueSnapshot
     reason: str
 
@@ -86,6 +87,11 @@ class ResearchDispatchSelection(ContractModel):
     @classmethod
     def validate_reason(cls, value: str) -> str:
         return _normalize_required_text(value, field_name="reason")
+
+    @field_validator("entry_node_id")
+    @classmethod
+    def validate_entry_node_id(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="entry_node_id")
 
     @model_validator(mode="after")
     def validate_mode_alignment(self) -> "ResearchDispatchSelection":
@@ -131,7 +137,7 @@ class CompiledResearchDispatch(ContractModel):
 
     @property
     def entry_stage(self) -> FrozenStagePlan:
-        entry_node_id = self.research_plan.entry_node_id
+        entry_node_id = self.selection.entry_node_id
         for stage in self.research_plan.stages:
             if stage.node_id == entry_node_id:
                 return stage
@@ -174,6 +180,10 @@ def resolve_research_dispatch_selection(
             configured_mode=configured_mode,
             runtime_mode=runtime_mode,
             selected_mode_ref=_MODE_REF_BY_RUNTIME_MODE[runtime_mode],
+            entry_node_id=_selection_entry_node_id(
+                runtime_mode=runtime_mode,
+                queue_discovery=queue_discovery,
+            ),
             queue_snapshot=queue_discovery.to_snapshot(
                 last_scanned_at=scanned_at,
                 selected_family=selected_family,
@@ -190,6 +200,10 @@ def resolve_research_dispatch_selection(
         configured_mode=configured_mode,
         runtime_mode=runtime_mode,
         selected_mode_ref=_MODE_REF_BY_RUNTIME_MODE[runtime_mode],
+        entry_node_id=_selection_entry_node_id(
+            runtime_mode=runtime_mode,
+            queue_discovery=queue_discovery,
+        ),
         queue_snapshot=queue_discovery.to_snapshot(
             last_scanned_at=scanned_at,
             selected_family=selected_family,
@@ -261,6 +275,36 @@ def _ready_or_none(
     family: ResearchQueueFamily,
 ) -> ResearchQueueFamily | None:
     return family if queue_discovery.family_scan(family).ready else None
+
+
+def _selection_entry_node_id(
+    *,
+    runtime_mode: ResearchRuntimeMode,
+    queue_discovery: ResearchQueueDiscovery,
+) -> str:
+    if runtime_mode is ResearchRuntimeMode.GOALSPEC:
+        return _goalspec_entry_node_id(queue_discovery)
+    if runtime_mode is ResearchRuntimeMode.INCIDENT:
+        return "incident_intake"
+    if runtime_mode is ResearchRuntimeMode.AUDIT:
+        return "audit_intake"
+    raise ResearchDispatchError(f"unsupported research runtime mode for entry routing: {runtime_mode.value}")
+
+
+def _goalspec_entry_node_id(queue_discovery: ResearchQueueDiscovery) -> str:
+    item = queue_discovery.family_scan(ResearchQueueFamily.GOALSPEC).first_item
+    if item is None:
+        return "goal_intake"
+    queue_path = item.queue_path.as_posix()
+    if queue_path.endswith("/ideas/raw"):
+        return "goal_intake"
+    if queue_path.endswith("/ideas/staging"):
+        return "objective_profile_sync"
+    if queue_path.endswith("/ideas/specs"):
+        return "spec_review"
+    if queue_path.endswith("/ideas/specs_reviewed"):
+        return "taskmaster"
+    return "goal_intake"
 
 
 def _resolve_auto_candidate(

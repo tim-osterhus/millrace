@@ -200,6 +200,52 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert "## Capability Domains" in synced_markdown
 
 
+def test_execute_objective_profile_sync_preserves_canonical_lineage_on_staged_revisit(tmp_path: Path) -> None:
+    workspace, paths = _configured_goal_runtime(tmp_path)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    first_run_id = "goalspec-first-pass"
+    revisit_run_id = "goalspec-revisit-pass"
+    emitted_at = _dt("2026-04-07T12:20:00Z")
+
+    _write_queue_file(raw_goal_path, PRODUCT_GOAL_TEXT)
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=first_run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=first_run_id,
+        emitted_at=emitted_at,
+    )
+
+    staged_path = workspace / goal_intake.research_brief_path
+    staged_text = staged_path.read_text(encoding="utf-8")
+    staged_text = staged_text.replace(
+        "## Summary\nBuild a compact aura-themed Minecraft mod vertical slice for a first playable release.\n",
+        "## Summary\nNormalize queued goal into daemon resume metadata only.\n",
+    )
+    staged_path.write_text(staged_text, encoding="utf-8")
+
+    result = execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(run_id=revisit_run_id, emitted_at=emitted_at, path=staged_path),
+        run_id=revisit_run_id,
+        emitted_at=emitted_at,
+    )
+    acceptance_profile = json.loads((workspace / result.profile_state_path).read_text(encoding="utf-8"))
+    synced_profile = json.loads((workspace / acceptance_profile["profile_path"]).read_text(encoding="utf-8"))
+
+    assert acceptance_profile["canonical_source_path"].startswith("agents/ideas/archive/raw/goal__goalspec-first-pass__")
+    assert acceptance_profile["current_artifact_path"] == goal_intake.research_brief_path
+    assert acceptance_profile["source_path"] == acceptance_profile["canonical_source_path"]
+    assert synced_profile["canonical_source_path"] == acceptance_profile["canonical_source_path"]
+    assert synced_profile["current_artifact_path"] == goal_intake.research_brief_path
+    assert "Aura Collector" in " ".join(synced_profile["milestones"])
+    assert "daemon resume metadata only" not in synced_profile["semantic_profile"]["objective_summary"]
+
+
 def test_execute_objective_profile_sync_prefers_workspace_semantic_seed(tmp_path: Path) -> None:
     workspace, paths = _configured_goal_runtime(tmp_path)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"

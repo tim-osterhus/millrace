@@ -631,6 +631,7 @@ class ResearchPlane:
             configured_mode=self.config.research.mode,
             runtime_mode=checkpoint.mode,
             selected_mode_ref=_MODE_REF_BY_RUNTIME_MODE[checkpoint.mode],
+            entry_node_id=checkpoint.node_id,
             queue_snapshot=discovery.to_snapshot(
                 ownerships=checkpoint.owned_queues,
                 last_scanned_at=observed_at,

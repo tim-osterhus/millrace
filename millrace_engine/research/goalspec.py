@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 from ..contracts import ContractModel, SpecInterviewPolicy, _normalize_datetime
 from .goalspec_helpers import (
@@ -31,6 +31,10 @@ GOALSPEC_ARTIFACT_SCHEMA_VERSION = "1.0"
 class GoalSource(ContractModel):
     """Normalized source metadata for one GoalSpec intake artifact."""
 
+    current_artifact_path: str
+    current_artifact_relative_path: str
+    canonical_source_path: str
+    canonical_relative_source_path: str
     source_path: str
     relative_source_path: str
     queue_family: ResearchQueueFamily = ResearchQueueFamily.GOALSPEC
@@ -39,15 +43,49 @@ class GoalSource(ContractModel):
     decomposition_profile: GoalSpecDecompositionProfile = "simple"
     frontmatter: dict[str, str] = {}
     body: str
+    canonical_body: str
     checksum_sha256: str
 
-    @field_validator("source_path", "relative_source_path", "idea_id", "title", "checksum_sha256")
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        current_path = str(payload.get("current_artifact_path") or payload.get("source_path") or "").strip()
+        current_relative_path = str(
+            payload.get("current_artifact_relative_path") or payload.get("relative_source_path") or ""
+        ).strip()
+        canonical_path = str(payload.get("canonical_source_path") or current_path).strip()
+        canonical_relative_path = str(
+            payload.get("canonical_relative_source_path") or current_relative_path or canonical_path
+        ).strip()
+        payload.setdefault("source_path", current_path)
+        payload.setdefault("relative_source_path", current_relative_path)
+        payload.setdefault("current_artifact_path", current_path)
+        payload.setdefault("current_artifact_relative_path", current_relative_path)
+        payload.setdefault("canonical_source_path", canonical_path)
+        payload.setdefault("canonical_relative_source_path", canonical_relative_path)
+        payload.setdefault("canonical_body", payload.get("body") or "")
+        return payload
+
+    @field_validator(
+        "current_artifact_path",
+        "current_artifact_relative_path",
+        "canonical_source_path",
+        "canonical_relative_source_path",
+        "source_path",
+        "relative_source_path",
+        "idea_id",
+        "title",
+        "checksum_sha256",
+    )
     @classmethod
     def validate_required_text(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "value")
         return _normalize_required_text(value, field_name=field_name)
 
-    @field_validator("body")
+    @field_validator("body", "canonical_body")
     @classmethod
     def normalize_body(cls, value: str) -> str:
         normalized = value.strip()
@@ -63,6 +101,8 @@ class GoalIntakeRecord(ContractModel):
     artifact_type: Literal["goal_intake"] = "goal_intake"
     run_id: str
     emitted_at: datetime
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     archived_source_path: str = ""
     research_brief_path: str
@@ -71,6 +111,25 @@ class GoalIntakeRecord(ContractModel):
     decomposition_profile: GoalSpecDecompositionProfile = "simple"
     source_checksum_sha256: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(
+            payload.get("canonical_source_path")
+            or payload.get("archived_source_path")
+            or payload.get("source_path")
+            or ""
+        ).strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
+
     @field_validator("emitted_at", mode="before")
     @classmethod
     def normalize_emitted_at(cls, value: datetime | str) -> datetime:
@@ -78,6 +137,8 @@ class GoalIntakeRecord(ContractModel):
 
     @field_validator(
         "run_id",
+        "canonical_source_path",
+        "current_artifact_path",
         "source_path",
         "research_brief_path",
         "idea_id",
@@ -104,18 +165,43 @@ class AcceptanceProfileRecord(ContractModel):
     title: str
     run_id: str
     updated_at: datetime
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     research_brief_path: str
     semantic_profile: GoalSemanticProfile
     milestones: tuple[str, ...]
     hard_blockers: tuple[str, ...]
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
+
     @field_validator("updated_at", mode="before")
     @classmethod
     def normalize_updated_at(cls, value: datetime | str) -> datetime:
         return _normalize_datetime(value)
 
-    @field_validator("profile_id", "goal_id", "title", "run_id", "source_path", "research_brief_path")
+    @field_validator(
+        "profile_id",
+        "goal_id",
+        "title",
+        "run_id",
+        "canonical_source_path",
+        "current_artifact_path",
+        "source_path",
+        "research_brief_path",
+    )
     @classmethod
     def validate_required_text(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "value")
@@ -131,6 +217,8 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
     title: str
     run_id: str
     updated_at: datetime
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     research_brief_path: str
     profile_path: str
@@ -138,6 +226,20 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
     report_path: str
     goal_intake_record_path: str
     initial_family_policy_pin: InitialFamilyPolicyPinDecision | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
 
     @field_validator("updated_at", mode="before")
     @classmethod
@@ -149,6 +251,8 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
         "goal_id",
         "title",
         "run_id",
+        "canonical_source_path",
+        "current_artifact_path",
         "source_path",
         "research_brief_path",
         "profile_path",
@@ -171,12 +275,28 @@ class ObjectiveProfileSyncRecord(ContractModel):
     emitted_at: datetime
     goal_id: str
     title: str
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     research_brief_path: str
     profile_state_path: str
     profile_path: str
     profile_markdown_path: str
     report_path: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
 
     @field_validator("emitted_at", mode="before")
     @classmethod
@@ -187,6 +307,8 @@ class ObjectiveProfileSyncRecord(ContractModel):
         "run_id",
         "goal_id",
         "title",
+        "canonical_source_path",
+        "current_artifact_path",
         "source_path",
         "research_brief_path",
         "profile_state_path",
@@ -255,6 +377,8 @@ class CompletionManifestDraftStateRecord(ContractModel):
     title: str
     run_id: str
     updated_at: datetime
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     research_brief_path: str
     objective_profile_state_path: str
@@ -268,6 +392,20 @@ class CompletionManifestDraftStateRecord(ContractModel):
     implementation_surfaces: tuple[CompletionManifestDraftSurface, ...]
     verification_surfaces: tuple[CompletionManifestDraftSurface, ...]
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
+
     @field_validator("updated_at", mode="before")
     @classmethod
     def normalize_updated_at(cls, value: datetime | str) -> datetime:
@@ -278,6 +416,8 @@ class CompletionManifestDraftStateRecord(ContractModel):
         "goal_id",
         "title",
         "run_id",
+        "canonical_source_path",
+        "current_artifact_path",
         "source_path",
         "research_brief_path",
         "objective_profile_state_path",
@@ -301,11 +441,27 @@ class CompletionManifestDraftRecord(ContractModel):
     emitted_at: datetime
     goal_id: str
     title: str
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     research_brief_path: str
     draft_path: str
     report_path: str
     objective_profile_path: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
 
     @field_validator("emitted_at", mode="before")
     @classmethod
@@ -316,6 +472,8 @@ class CompletionManifestDraftRecord(ContractModel):
         "run_id",
         "goal_id",
         "title",
+        "canonical_source_path",
+        "current_artifact_path",
         "source_path",
         "research_brief_path",
         "draft_path",
@@ -348,6 +506,8 @@ class SpecSynthesisRecord(ContractModel):
     goal_id: str
     spec_id: str
     title: str
+    canonical_source_path: str
+    current_artifact_path: str
     source_path: str
     research_brief_path: str
     objective_profile_path: str
@@ -357,6 +517,20 @@ class SpecSynthesisRecord(ContractModel):
     phase_spec_path: str
     decision_path: str
     family_state_path: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
 
     @field_validator("emitted_at", mode="before")
     @classmethod
@@ -368,6 +542,8 @@ class SpecSynthesisRecord(ContractModel):
         "goal_id",
         "spec_id",
         "title",
+        "canonical_source_path",
+        "current_artifact_path",
         "source_path",
         "research_brief_path",
         "objective_profile_path",

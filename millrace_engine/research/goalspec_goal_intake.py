@@ -37,6 +37,18 @@ def execute_goal_intake(
     source_path = Path(source.source_path)
     staged_slug = _slugify(source.title)
     research_brief_path = paths.ideas_staging_dir / f"{source.idea_id}__{staged_slug}.md"
+    archived_source_path = ""
+    canonical_source_path = source.current_artifact_relative_path
+    if source_path.parent == paths.ideas_raw_dir and source_path != research_brief_path:
+        archive_dir = paths.ideas_archive_dir / source_path.parent.name
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archived_path = archive_dir / _archive_filename_for_execution(
+            source_path,
+            run_id=run_id,
+            checksum_sha256=source.checksum_sha256,
+        )
+        archived_source_path = _relative_path(archived_path, relative_to=paths.root)
+        canonical_source_path = archived_source_path
 
     summary = _first_paragraph(source.body) or source.title
     problem_statement = _markdown_section(source.body, "Problem Statement") or summary
@@ -68,6 +80,7 @@ def execute_goal_intake(
         f"decomposition_profile: {source.decomposition_profile}",
         f"goal_intake_run_id: {run_id}",
         f"source_path: {source.relative_source_path}",
+        f"canonical_source_path: {canonical_source_path}",
         f"source_checksum_sha256: {source.checksum_sha256}",
         f"artifact_schema_version: {GOALSPEC_ARTIFACT_SCHEMA_VERSION}",
         _FRONTMATTER_BOUNDARY,
@@ -99,21 +112,15 @@ def execute_goal_intake(
     research_brief_path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(research_brief_path, "\n".join(frontmatter_lines + body_lines))
 
-    archived_source_path = ""
     if source_path.parent == paths.ideas_raw_dir and source_path != research_brief_path:
-        archive_dir = paths.ideas_archive_dir / source_path.parent.name
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        archived_path = archive_dir / _archive_filename_for_execution(
-            source_path,
-            run_id=run_id,
-            checksum_sha256=source.checksum_sha256,
-        )
+        archived_path = paths.root / archived_source_path
         source_path.replace(archived_path)
-        archived_source_path = _relative_path(archived_path, relative_to=paths.root)
 
     record = GoalIntakeRecord(
         run_id=run_id,
         emitted_at=emitted_at,
+        canonical_source_path=canonical_source_path,
+        current_artifact_path=_relative_path(research_brief_path, relative_to=paths.root),
         source_path=source.relative_source_path,
         archived_source_path=archived_source_path,
         research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),

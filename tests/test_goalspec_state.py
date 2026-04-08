@@ -217,7 +217,9 @@ def test_completion_manifest_state_tracks_artifacts_and_product_surfaces_separat
             "title": "Aura Workshop Vertical Slice",
             "run_id": "goalspec-run-42",
             "updated_at": "2026-04-07T12:00:00Z",
-            "source_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
+            "canonical_source_path": "agents/ideas/archive/raw/goal__goalspec-run-42__abc123def456.md",
+            "current_artifact_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
+            "source_path": "agents/ideas/archive/raw/goal__goalspec-run-42__abc123def456.md",
             "research_brief_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
             "objective_profile_state_path": "agents/objective/profile_sync_state.json",
             "objective_profile_path": "agents/reports/acceptance_profiles/idea-42-profile.json",
@@ -250,6 +252,8 @@ def test_completion_manifest_state_tracks_artifacts_and_product_surfaces_separat
         }
     )
 
+    assert state.canonical_source_path.startswith("agents/ideas/archive/")
+    assert state.current_artifact_path.startswith("agents/ideas/staging/")
     assert state.required_artifacts[0].path.startswith("agents/")
     assert state.implementation_surfaces[0].path.startswith("src/")
     assert state.verification_surfaces[0].path.startswith("src/test/")

@@ -80,17 +80,20 @@ def execute_objective_profile_sync(
     source = resolve_goal_source(paths, checkpoint)
     profile_slug = _slugify(source.idea_id or source.title)
     profile_id = f"{profile_slug}-profile"
-    research_brief_path = Path(source.source_path)
+    research_brief_path = Path(source.current_artifact_path)
     profile_json_path = paths.acceptance_profiles_dir / f"{profile_id}.json"
     profile_markdown_path = paths.acceptance_profiles_dir / f"{profile_id}.md"
     report_path = paths.reports_dir / "objective_profile_sync.md"
     goal_intake_record_path = paths.goalspec_goal_intake_records_dir / f"{run_id}.json"
 
-    semantic_goal_text = source.body
+    semantic_goal_text = source.canonical_body
     if goal_intake_record_path.exists():
         goal_intake_payload = _load_json_object(goal_intake_record_path)
         authoritative_goal_rel = str(
-            goal_intake_payload.get("archived_source_path") or goal_intake_payload.get("source_path") or ""
+            goal_intake_payload.get("canonical_source_path")
+            or goal_intake_payload.get("archived_source_path")
+            or goal_intake_payload.get("source_path")
+            or ""
         ).strip()
         if authoritative_goal_rel:
             authoritative_goal_path = paths.root / authoritative_goal_rel
@@ -121,7 +124,9 @@ def execute_objective_profile_sync(
         title=source.title,
         run_id=run_id,
         updated_at=emitted_at,
-        source_path=source.relative_source_path,
+        canonical_source_path=source.canonical_relative_source_path,
+        current_artifact_path=source.current_artifact_relative_path,
+        source_path=source.canonical_relative_source_path,
         research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
         semantic_profile=semantic_profile,
         milestones=milestones,
@@ -140,7 +145,8 @@ def execute_objective_profile_sync(
                 f"- **Goal-ID:** {source.idea_id}",
                 f"- **Run-ID:** {run_id}",
                 f"- **Updated-At:** {_isoformat_z(emitted_at)}",
-                f"- **Source-Path:** `{source.relative_source_path}`",
+                f"- **Canonical-Source-Path:** `{source.canonical_relative_source_path}`",
+                f"- **Current-Artifact-Path:** `{source.current_artifact_relative_path}`",
                 "",
                 "## Objective Summary",
                 semantic_profile.objective_summary,
@@ -201,7 +207,9 @@ def execute_objective_profile_sync(
         title=source.title,
         run_id=run_id,
         updated_at=emitted_at,
-        source_path=source.relative_source_path,
+        canonical_source_path=source.canonical_relative_source_path,
+        current_artifact_path=source.current_artifact_relative_path,
+        source_path=source.canonical_relative_source_path,
         research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
         profile_path=_relative_path(profile_json_path, relative_to=paths.root),
         profile_markdown_path=_relative_path(profile_markdown_path, relative_to=paths.root),
@@ -221,7 +229,8 @@ def execute_objective_profile_sync(
                 f"- **Goal-ID:** {source.idea_id}",
                 f"- **Profile-ID:** {profile_id}",
                 f"- **Updated-At:** {_isoformat_z(emitted_at)}",
-                f"- **Source-Path:** `{source.relative_source_path}`",
+                f"- **Canonical-Source-Path:** `{source.canonical_relative_source_path}`",
+                f"- **Current-Artifact-Path:** `{source.current_artifact_relative_path}`",
                 f"- **Research-Brief:** `{_relative_path(research_brief_path, relative_to=paths.root)}`",
                 (
                     f"- **Profile-State:** "
@@ -254,7 +263,7 @@ def execute_objective_profile_sync(
             seed_state={
                 "mode": "goal_spec_workspace",
                 "goal_id": source.idea_id,
-                "source_path": source.relative_source_path,
+                "source_path": source.canonical_relative_source_path,
             },
             artifacts={
                 "strict_contract_file": _relative_path(paths.audit_strict_contract_file, relative_to=paths.root),
@@ -272,7 +281,9 @@ def execute_objective_profile_sync(
                 "profile_id": profile_id,
                 "goal_id": source.idea_id,
                 "title": source.title,
-                "source_path": source.relative_source_path,
+                "source_path": source.canonical_relative_source_path,
+                "canonical_source_path": source.canonical_relative_source_path,
+                "current_artifact_path": source.current_artifact_relative_path,
                 "updated_at": _isoformat_z(emitted_at),
                 "profile_path": _relative_path(profile_json_path, relative_to=paths.root),
                 "profile_markdown_path": _relative_path(profile_markdown_path, relative_to=paths.root),
@@ -298,7 +309,9 @@ def execute_objective_profile_sync(
             title=source.title,
             run_id=run_id,
             updated_at=emitted_at,
-            source_path=source.relative_source_path,
+            canonical_source_path=source.canonical_relative_source_path,
+            current_artifact_path=source.current_artifact_relative_path,
+            source_path=source.canonical_relative_source_path,
             research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
             semantic_profile=semantic_profile,
             milestones=milestones,
@@ -310,7 +323,9 @@ def execute_objective_profile_sync(
         emitted_at=emitted_at,
         goal_id=source.idea_id,
         title=source.title,
-        source_path=source.relative_source_path,
+        canonical_source_path=source.canonical_relative_source_path,
+        current_artifact_path=source.current_artifact_relative_path,
+        source_path=source.canonical_relative_source_path,
         research_brief_path=_relative_path(research_brief_path, relative_to=paths.root),
         profile_state_path=_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root),
         profile_path=_relative_path(profile_json_path, relative_to=paths.root),

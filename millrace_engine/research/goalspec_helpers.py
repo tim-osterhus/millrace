@@ -130,6 +130,37 @@ def _normalize_decomposition_profile(value: str | None) -> GoalSpecDecomposition
     return normalized  # type: ignore[return-value]
 
 
+def _canonical_goal_path_from_frontmatter(paths: RuntimePaths, frontmatter: dict[str, str]) -> Path | None:
+    canonical_relative_path = str(frontmatter.get("canonical_source_path") or "").strip()
+    if canonical_relative_path:
+        candidate = _resolve_path_token(canonical_relative_path, relative_to=paths.root)
+        if candidate.exists():
+            return candidate
+
+    goal_intake_run_id = str(frontmatter.get("goal_intake_run_id") or "").strip()
+    if goal_intake_run_id:
+        record_path = paths.goalspec_goal_intake_records_dir / f"{goal_intake_run_id}.json"
+        if record_path.exists():
+            record_payload = _load_json_object(record_path)
+            candidate_relative_path = str(
+                record_payload.get("canonical_source_path")
+                or record_payload.get("archived_source_path")
+                or record_payload.get("source_path")
+                or ""
+            ).strip()
+            if candidate_relative_path:
+                candidate = _resolve_path_token(candidate_relative_path, relative_to=paths.root)
+                if candidate.exists():
+                    return candidate
+
+    source_relative_path = str(frontmatter.get("source_path") or "").strip()
+    if source_relative_path:
+        candidate = _resolve_path_token(source_relative_path, relative_to=paths.root)
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def resolve_goal_source(paths: RuntimePaths, checkpoint: ResearchCheckpoint):
     """Resolve the current GoalSpec source artifact from checkpoint state."""
 
@@ -153,8 +184,8 @@ def resolve_goal_source(paths: RuntimePaths, checkpoint: ResearchCheckpoint):
     if source_path is None:
         raise GoalSpecExecutionError("GoalSpec checkpoint has no existing source artifact to execute")
 
-    text = source_path.read_text(encoding="utf-8", errors="replace")
-    frontmatter, body = _split_frontmatter(text)
+    current_text = source_path.read_text(encoding="utf-8", errors="replace")
+    frontmatter, body = _split_frontmatter(current_text)
     idea_id = (
         frontmatter.get("idea_id")
         or frontmatter.get("goal_id")
@@ -164,13 +195,21 @@ def resolve_goal_source(paths: RuntimePaths, checkpoint: ResearchCheckpoint):
     )
     title = frontmatter.get("title") or _first_heading(body) or source_path.stem.replace("-", " ").replace("_", " ")
     decomposition_profile = _normalize_decomposition_profile(frontmatter.get("decomposition_profile"))
+    canonical_source_path = _canonical_goal_path_from_frontmatter(paths, frontmatter) or source_path
+    canonical_text = canonical_source_path.read_text(encoding="utf-8", errors="replace")
+    _, canonical_body = _split_frontmatter(canonical_text)
     return GoalSource(
+        current_artifact_path=source_path.as_posix(),
+        current_artifact_relative_path=_relative_path(source_path, relative_to=paths.root),
+        canonical_source_path=canonical_source_path.as_posix(),
+        canonical_relative_source_path=_relative_path(canonical_source_path, relative_to=paths.root),
         source_path=source_path.as_posix(),
         relative_source_path=_relative_path(source_path, relative_to=paths.root),
         idea_id=idea_id,
         title=_normalize_required_text(title, field_name="title"),
         decomposition_profile=decomposition_profile,
         frontmatter=frontmatter,
-        body=body.strip() or text.strip(),
-        checksum_sha256=_sha256_text(text),
+        body=body.strip() or current_text.strip(),
+        canonical_body=canonical_body.strip() or canonical_text.strip(),
+        checksum_sha256=_sha256_text(current_text),
     )

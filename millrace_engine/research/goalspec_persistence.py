@@ -69,7 +69,7 @@ def _build_completion_manifest_draft_state(
     queue_spec_path = paths.ideas_specs_dir / f"{spec_id}__{slug}.md"
     golden_spec_path = paths.specs_stable_golden_dir / f"{spec_id}__{slug}.md"
     phase_spec_path = paths.specs_stable_phase_dir / f"{spec_id}__phase-01.md"
-    decision_path = paths.specs_decisions_dir / f"{Path(source.source_path).stem}__spec-synthesis.md"
+    decision_path = paths.specs_decisions_dir / f"{Path(source.current_artifact_path).stem}__spec-synthesis.md"
     product_plan = derive_goal_product_plan(source=source, profile=profile)
     open_questions = profile.hard_blockers or (
         "Spec Review and task generation remain downstream after this draft synthesis pass.",
@@ -80,8 +80,10 @@ def _build_completion_manifest_draft_state(
         title=source.title,
         run_id=run_id,
         updated_at=emitted_at,
-        source_path=source.relative_source_path,
-        research_brief_path=source.relative_source_path,
+        canonical_source_path=source.canonical_relative_source_path,
+        current_artifact_path=source.current_artifact_relative_path,
+        source_path=source.canonical_relative_source_path,
+        research_brief_path=source.current_artifact_relative_path,
         objective_profile_state_path=_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root),
         objective_profile_path=objective_state.profile_path,
         completion_manifest_plan_path=_relative_path(paths.completion_manifest_plan_file, relative_to=paths.root),
@@ -143,7 +145,7 @@ def _build_goal_spec_family_state(
     if not next_state.goal_id or next_state.goal_id != source.idea_id:
         next_state = GoalSpecFamilyState(
             goal_id=source.idea_id,
-            source_idea_path=source.relative_source_path,
+            source_idea_path=source.canonical_relative_source_path,
             family_phase="initial_family",
             family_complete=True,
             active_spec_id="",
@@ -191,7 +193,7 @@ def _build_goal_spec_family_state(
     next_state = next_state.model_copy(
         update={
             "goal_id": source.idea_id,
-            "source_idea_path": source.relative_source_path,
+            "source_idea_path": source.canonical_relative_source_path,
             "family_phase": "initial_family",
             "family_complete": family_complete,
             "active_spec_id": spec_id,
@@ -208,7 +210,7 @@ def _build_goal_spec_family_state(
                     next_state,
                     repo_root=paths.root,
                     trigger_spec_id=spec_id,
-                    goal_file=_resolve_path_token(source.source_path, relative_to=paths.root),
+                    goal_file=_resolve_path_token(source.canonical_source_path, relative_to=paths.root),
                     policy_path=paths.objective_family_policy_file,
                     policy_payload=policy_payload,
                     frozen_at=emitted_at,
