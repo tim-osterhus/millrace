@@ -165,6 +165,38 @@ def _run_objective_profile_sync(
     return workspace, paths, acceptance_profile, synced_profile, synced_markdown, family_policy
 
 
+def test_execute_goal_intake_moves_trace_metadata_to_frontmatter(tmp_path: Path) -> None:
+    workspace, paths = _configured_goal_runtime(tmp_path)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-trace-split-001"
+    emitted_at = _dt("2026-04-07T11:50:00Z")
+
+    _write_queue_file(raw_goal_path, PRODUCT_GOAL_TEXT)
+    result = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    staged_text = (workspace / result.research_brief_path).read_text(encoding="utf-8")
+
+    assert "trace_source_artifact_path: agents/ideas/raw/goal.md" in staged_text
+    assert "trace_stage_contract_path: agents/_goal_intake.md" in staged_text
+    assert "Source artifact" not in staged_text
+    assert "Stage contract" not in staged_text
+    assert "compiled GoalSpec loop" not in staged_text
+    assert "## Evidence" in staged_text
+    assert "No additional product evidence was provided." in staged_text
+    assert "## Route Decision" in staged_text
+    assert "Ready for staging now." in staged_text
+
+
 def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path: Path) -> None:
     _, _, acceptance_profile, synced_profile, synced_markdown, family_policy = _run_objective_profile_sync(
         tmp_path=tmp_path,

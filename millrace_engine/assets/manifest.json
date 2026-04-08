@@ -412,9 +412,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_goal_intake.md",
-      "sha256": "7940fd7a82583629629b44a2f63eb426373ba8b50bffbc2d1cc41a4b708f7ef7",
+      "sha256": "83cc57b4696a1990acd94af77ebc5c2cc3b5839620eb0e14a82ca4caa72eb376",
       "size": 3133,
-      "size_bytes": 3133,
+      "size_bytes": 3512,
       "source": "reference"
     },
     {

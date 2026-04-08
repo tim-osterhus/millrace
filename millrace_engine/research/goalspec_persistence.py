@@ -145,7 +145,7 @@ def _build_goal_spec_family_state(
     if not next_state.goal_id or next_state.goal_id != source.idea_id:
         next_state = GoalSpecFamilyState(
             goal_id=source.idea_id,
-            source_idea_path=source.canonical_relative_source_path,
+            source_idea_path=source.current_artifact_relative_path,
             family_phase="initial_family",
             family_complete=True,
             active_spec_id="",
@@ -193,7 +193,7 @@ def _build_goal_spec_family_state(
     next_state = next_state.model_copy(
         update={
             "goal_id": source.idea_id,
-            "source_idea_path": source.canonical_relative_source_path,
+            "source_idea_path": source.current_artifact_relative_path,
             "family_phase": "initial_family",
             "family_complete": family_complete,
             "active_spec_id": spec_id,

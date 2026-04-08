@@ -1901,6 +1901,46 @@ def test_execute_goal_intake_archives_same_queue_filename_to_distinct_execution_
     assert second_result.archived_source_path == second_archived_rel
 
 
+def test_execute_goal_intake_keeps_trace_metadata_out_of_semantic_body(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-run-trace-201"
+    emitted_at = _dt("2026-03-21T12:10:00Z")
+    goal_text = (
+        "---\n"
+        "idea_id: IDEA-TRACE-201\n"
+        "title: Goal Intake Trace Split\n"
+        "---\n\n"
+        "# Goal Intake Trace Split\n\n"
+        "Keep staged idea semantics product-facing.\n"
+    )
+
+    _write_queue_file(raw_goal_path, goal_text)
+    result = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    staged_text = (workspace / result.research_brief_path).read_text(encoding="utf-8")
+
+    assert "trace_source_artifact_path: agents/ideas/raw/goal.md" in staged_text
+    assert "trace_stage_contract_path: agents/_goal_intake.md" in staged_text
+    assert "Source artifact" not in staged_text
+    assert "Stage contract" not in staged_text
+    assert "compiled GoalSpec loop" not in staged_text
+    assert "## Evidence" in staged_text
+    assert "No additional product evidence was provided." in staged_text
+    assert "## Route Decision" in staged_text
+    assert "Ready for staging now." in staged_text
+
+
 def test_execute_objective_profile_sync_pins_frozen_family_policy_fields(tmp_path: Path) -> None:
     workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"

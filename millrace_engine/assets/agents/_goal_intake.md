@@ -49,6 +49,7 @@ Replace the old `articulate -> analyze` relay with one bounded stage that conver
 Write exactly one staged idea artifact to `agents/ideas/staging/` with:
 
 - frontmatter including `idea_id`, `title`, `status: staging`, `updated_at`
+- frontmatter trace fields for source lineage and stage-contract metadata, so control-plane evidence stays out of semantic body sections
 - sections:
   - `## Summary`
   - `## Problem Statement`
@@ -61,10 +62,13 @@ Write exactly one staged idea artifact to `agents/ideas/staging/` with:
 The `## Route Decision` section must state:
 - why the idea is ready for staging now
 - what assumptions or prerequisites remain
-- at least two concrete repo evidence anchors
 
 The staged idea frontmatter must also include:
 - `decomposition_profile: trivial|simple|moderate|involved|complex|massive`
+- `trace_source_artifact_path`
+- `trace_stage_contract_path`
+
+The `## Evidence` and `## Route Decision` sections are semantic-bearing sections. Keep them product-facing. Do not place `Source artifact`, `Stage contract`, queue paths, or similar control-plane trace text in those sections.
 
 Sizing rule:
 - If the source goal clearly targets a language/runtime platform, build system, distributed service, or other multi-domain autonomy campaign, bias upward and preserve that scope explicitly instead of leaving size to downstream heuristics.

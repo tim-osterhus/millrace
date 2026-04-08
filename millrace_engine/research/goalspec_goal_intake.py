@@ -23,6 +23,9 @@ from .goalspec_helpers import (
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
 
 
+_GOAL_INTAKE_STAGE_CONTRACT_PATH = "agents/_goal_intake.md"
+
+
 def execute_goal_intake(
     paths: RuntimePaths,
     checkpoint: ResearchCheckpoint,
@@ -61,14 +64,10 @@ def execute_goal_intake(
     unknowns = _markdown_section(
         source.body, "Unknowns Ledger"
     ) or "Downstream GoalSpec stages still need to refine acceptance details and decomposition boundaries."
-    evidence_lines = (
-        f"- Source artifact: `{source.relative_source_path}`",
-        "- Stage contract: `agents/_goal_intake.md`",
-    )
+    evidence = _markdown_section(source.body, "Evidence") or "No additional product evidence was provided."
     route_decision = (
-        "Ready for staging under the compiled GoalSpec loop. "
-        "Remaining assumptions are preserved explicitly for Objective Profile Sync and later spec synthesis. "
-        f"Repo evidence anchors: `{source.relative_source_path}`, `agents/_goal_intake.md`."
+        "Ready for staging now. "
+        "Remaining assumptions are preserved explicitly in the unknowns ledger for Objective Profile Sync and later spec synthesis."
     )
 
     frontmatter_lines = [
@@ -82,6 +81,8 @@ def execute_goal_intake(
         f"source_path: {source.relative_source_path}",
         f"canonical_source_path: {canonical_source_path}",
         f"source_checksum_sha256: {source.checksum_sha256}",
+        f"trace_source_artifact_path: {source.relative_source_path}",
+        f"trace_stage_contract_path: {_GOAL_INTAKE_STAGE_CONTRACT_PATH}",
         f"artifact_schema_version: {GOALSPEC_ARTIFACT_SCHEMA_VERSION}",
         _FRONTMATTER_BOUNDARY,
         "",
@@ -103,7 +104,7 @@ def execute_goal_intake(
         unknowns,
         "",
         "## Evidence",
-        *evidence_lines,
+        evidence,
         "",
         "## Route Decision",
         route_decision,
