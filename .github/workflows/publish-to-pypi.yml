@@ -31,47 +31,184 @@ jobs:
 
       - name: Smoke install built wheel against the release core contract
         run: |
+          set -euo pipefail
           python -m venv .publish-smoke
           .publish-smoke/bin/python -m pip install --upgrade pip
           .publish-smoke/bin/python -m pip install dist/*.whl
           .publish-smoke/bin/millrace --help
-          rm -rf /tmp/millrace-publish-smoke /tmp/millrace-publish-smoke-bin
-          mkdir -p /tmp/millrace-publish-smoke-bin
-          printf '#!/bin/sh\nexit 0\n' > /tmp/millrace-publish-smoke-bin/codex
-          chmod +x /tmp/millrace-publish-smoke-bin/codex
-          export PATH="/tmp/millrace-publish-smoke-bin:$PATH"
-          .publish-smoke/bin/millrace init /tmp/millrace-publish-smoke --json
-          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml health --json > /tmp/millrace-publish-smoke-health.json
-          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml doctor --json > /tmp/millrace-publish-smoke-doctor.json
-          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml add-task "Release smoke task" --json > /tmp/millrace-publish-smoke-add-task.json
-          .publish-smoke/bin/millrace --config /tmp/millrace-publish-smoke/millrace.toml queue inspect --json > /tmp/millrace-publish-smoke-queue.json
-          .publish-smoke/bin/python - <<'PY'
-          import json
+          export SMOKE_ROOT="/tmp/millrace-publish-smoke"
+          export SMOKE_BIN="$SMOKE_ROOT/bin"
+          export EXEC_WORKSPACE="$SMOKE_ROOT/execution"
+          export RESEARCH_WORKSPACE="$SMOKE_ROOT/research"
+          export PUBLISH_WORKSPACE="$SMOKE_ROOT/publish"
+          export STAGING_REPO="$SMOKE_ROOT/staging-repo"
+          rm -rf "$SMOKE_ROOT"
+          mkdir -p "$SMOKE_BIN"
+          cat > "$SMOKE_BIN/codex" <<'PY'
+          #!/usr/bin/env python3
+          from __future__ import annotations
+
+          import os
+          import sys
           from pathlib import Path
 
-          health_payload = json.loads(Path("/tmp/millrace-publish-smoke-health.json").read_text(encoding="utf-8"))
-          doctor_payload = json.loads(Path("/tmp/millrace-publish-smoke-doctor.json").read_text(encoding="utf-8"))
-          add_task_payload = json.loads(Path("/tmp/millrace-publish-smoke-add-task.json").read_text(encoding="utf-8"))
-          queue_payload = json.loads(Path("/tmp/millrace-publish-smoke-queue.json").read_text(encoding="utf-8"))
+          STAGE_RESULTS = {
+              "builder": ("builder complete", "BUILDER_COMPLETE"),
+              "integration": ("integration complete", "INTEGRATION_COMPLETE"),
+              "qa": ("qa complete", "QA_COMPLETE"),
+              "hotfix": ("hotfix complete", "HOTFIX_COMPLETE"),
+              "doublecheck": ("doublecheck complete", "QA_COMPLETE"),
+              "troubleshoot": ("troubleshoot complete", "TROUBLESHOOT_COMPLETE"),
+              "consult": ("consult complete", "CONSULT_COMPLETE"),
+              "update": ("update complete", "UPDATE_COMPLETE"),
+          }
 
-          assert health_payload["bootstrap_ready"] is True, health_payload
-          assert health_payload["config_source_kind"] == "native_toml", health_payload
+          def output_path_from_args(argv: list[str]) -> Path | None:
+              for index, token in enumerate(argv[:-1]):
+                  if token == "-o":
+                      return Path(argv[index + 1])
+              return None
 
-          assert doctor_payload["bootstrap_ready"] is True, doctor_payload
-          assert doctor_payload["execution_ready"] is True, doctor_payload
+          stage = os.environ.get("MILLRACE_STAGE", "")
+          if stage not in STAGE_RESULTS:
+              print(f"unsupported release smoke stage: {stage}", file=sys.stderr)
+              raise SystemExit(9)
+
+          message, marker = STAGE_RESULTS[stage]
+          payload = f"{message}\n### {marker}\n"
+          sys.stdout.write(payload)
+
+          output_path = output_path_from_args(sys.argv[1:])
+          if output_path is not None:
+              output_path.write_text(payload, encoding="utf-8")
+          PY
+          chmod +x "$SMOKE_BIN/codex"
+          export PATH="$SMOKE_BIN:$PATH"
+
+          .publish-smoke/bin/millrace init "$EXEC_WORKSPACE" --json
+          .publish-smoke/bin/millrace --config "$EXEC_WORKSPACE/millrace.toml" health --json > /tmp/millrace-publish-smoke-exec-health.json
+          .publish-smoke/bin/millrace --config "$EXEC_WORKSPACE/millrace.toml" doctor --json > /tmp/millrace-publish-smoke-exec-doctor.json
+          .publish-smoke/bin/millrace --config "$EXEC_WORKSPACE/millrace.toml" add-task "Release smoke task" --json > /tmp/millrace-publish-smoke-exec-add-task.json
+          .publish-smoke/bin/millrace --config "$EXEC_WORKSPACE/millrace.toml" start --once --json > /tmp/millrace-publish-smoke-exec-start.json
+          .publish-smoke/bin/millrace --config "$EXEC_WORKSPACE/millrace.toml" queue inspect --json > /tmp/millrace-publish-smoke-exec-queue.json
+
+          .publish-smoke/bin/millrace init "$RESEARCH_WORKSPACE" --json
+          .publish-smoke/bin/python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from pathlib import Path
+
+          workspace = Path(os.environ["RESEARCH_WORKSPACE"])
+          config_path = workspace / "millrace.toml"
+          config_text = config_path.read_text(encoding="utf-8")
+          config_path.write_text(config_text.replace('mode = "stub"', 'mode = "auto"', 1), encoding="utf-8")
+          raw_dir = workspace / "agents" / "ideas" / "raw"
+          raw_dir.mkdir(parents=True, exist_ok=True)
+          (raw_dir / "goal.md").write_text("# goal\n", encoding="utf-8")
+          PY
+          .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" start --once --json > /tmp/millrace-publish-smoke-research-start.json
+          .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" research --json > /tmp/millrace-publish-smoke-research-report.json
+          .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" queue inspect --json > /tmp/millrace-publish-smoke-research-queue.json
+          .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" supervisor report --recent-events 20 --json > /tmp/millrace-publish-smoke-research-supervisor.json
+
+          mkdir -p "$STAGING_REPO"
+          git -C "$STAGING_REPO" init
+          git -C "$STAGING_REPO" config user.email tests@example.com
+          git -C "$STAGING_REPO" config user.name "Millrace Tests"
+          .publish-smoke/bin/millrace init "$PUBLISH_WORKSPACE" --json
+          .publish-smoke/bin/millrace --config "$PUBLISH_WORKSPACE/millrace.toml" publish sync --staging-repo-dir "$STAGING_REPO" --json > /tmp/millrace-publish-smoke-publish-sync.json
+          .publish-smoke/bin/millrace --config "$PUBLISH_WORKSPACE/millrace.toml" publish preflight --staging-repo-dir "$STAGING_REPO" --message "Release smoke publish preflight" --no-push --json > /tmp/millrace-publish-smoke-publish-preflight.json
+
+          .publish-smoke/bin/python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+
+          exec_health_payload = json.loads(Path("/tmp/millrace-publish-smoke-exec-health.json").read_text(encoding="utf-8"))
+          exec_doctor_payload = json.loads(Path("/tmp/millrace-publish-smoke-exec-doctor.json").read_text(encoding="utf-8"))
+          exec_add_task_payload = json.loads(Path("/tmp/millrace-publish-smoke-exec-add-task.json").read_text(encoding="utf-8"))
+          exec_start_payload = json.loads(Path("/tmp/millrace-publish-smoke-exec-start.json").read_text(encoding="utf-8"))
+          exec_queue_payload = json.loads(Path("/tmp/millrace-publish-smoke-exec-queue.json").read_text(encoding="utf-8"))
+          research_start_payload = json.loads(Path("/tmp/millrace-publish-smoke-research-start.json").read_text(encoding="utf-8"))
+          research_report_payload = json.loads(Path("/tmp/millrace-publish-smoke-research-report.json").read_text(encoding="utf-8"))
+          research_queue_payload = json.loads(Path("/tmp/millrace-publish-smoke-research-queue.json").read_text(encoding="utf-8"))
+          research_supervisor_payload = json.loads(
+              Path("/tmp/millrace-publish-smoke-research-supervisor.json").read_text(encoding="utf-8")
+          )
+          publish_sync_payload = json.loads(Path("/tmp/millrace-publish-smoke-publish-sync.json").read_text(encoding="utf-8"))
+          publish_preflight_payload = json.loads(
+              Path("/tmp/millrace-publish-smoke-publish-preflight.json").read_text(encoding="utf-8")
+          )
+
+          exec_workspace = Path(os.environ["EXEC_WORKSPACE"])
+          exec_events = [
+              json.loads(line)
+              for line in (exec_workspace / "agents" / "engine_events.log").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          ]
+          exec_archive_text = (exec_workspace / "agents" / "tasksarchive.md").read_text(encoding="utf-8")
+
+          assert exec_health_payload["bootstrap_ready"] is True, exec_health_payload
+          assert exec_health_payload["config_source_kind"] == "native_toml", exec_health_payload
+
+          assert exec_doctor_payload["bootstrap_ready"] is True, exec_doctor_payload
+          assert exec_doctor_payload["execution_ready"] is True, exec_doctor_payload
           assert any(
               entry["executable"] == "codex" and entry["available"] is True
-              for entry in doctor_payload["runner_prerequisites"]
-          ), doctor_payload
+              for entry in exec_doctor_payload["runner_prerequisites"]
+          ), exec_doctor_payload
 
-          assert add_task_payload["applied"] is True, add_task_payload
-          assert add_task_payload["message"] == "task added", add_task_payload
-          assert add_task_payload["payload"]["task_id"], add_task_payload
+          assert exec_add_task_payload["applied"] is True, exec_add_task_payload
+          assert exec_add_task_payload["message"] == "task added", exec_add_task_payload
+          assert exec_add_task_payload["payload"]["task_id"], exec_add_task_payload
 
-          assert queue_payload["backlog_depth"] == 1, queue_payload
-          assert queue_payload["active_task"] is None, queue_payload
-          assert queue_payload["next_task"]["title"] == "Release smoke task", queue_payload
-          assert queue_payload["backlog"][0]["title"] == "Release smoke task", queue_payload
+          assert exec_start_payload["execution_status"] == "IDLE", exec_start_payload
+          assert exec_start_payload["backlog_depth"] == 0, exec_start_payload
+          assert exec_queue_payload["backlog_depth"] == 0, exec_queue_payload
+          assert exec_queue_payload["active_task"] is None, exec_queue_payload
+          assert exec_queue_payload["next_task"] is None, exec_queue_payload
+          assert "Release smoke task" in exec_archive_text, exec_archive_text
+          assert any(
+              event["type"] == "execution.stage.started" and event["payload"].get("stage") == "builder"
+              for event in exec_events
+          ), exec_events
+          assert any(
+              event["type"] == "execution.stage.started" and event["payload"].get("stage") == "qa"
+              for event in exec_events
+          ), exec_events
+          assert any(
+              event["type"] == "execution.stage.started" and event["payload"].get("stage") == "update"
+              for event in exec_events
+          ), exec_events
+          assert any(event["type"] == "execution.task.archived" for event in exec_events), exec_events
+
+          assert research_start_payload["backlog_depth"] >= 1, research_start_payload
+          assert research_report_payload["configured_mode"] == "auto", research_report_payload
+          assert research_report_payload["runtime"]["cycle_count"] >= 1, research_report_payload
+          assert research_report_payload["runtime"]["last_mode"] == "GOALSPEC", research_report_payload
+          assert research_queue_payload["backlog_depth"] >= 1, research_queue_payload
+          assert research_queue_payload["next_task"] is not None, research_queue_payload
+          assert research_supervisor_payload["attention_reason"] == "idle_with_pending_work", research_supervisor_payload
+          assert research_supervisor_payload["backlog_depth"] >= 1, research_supervisor_payload
+          assert research_supervisor_payload["next_task"] is not None, research_supervisor_payload
+          assert any(
+              event["type"] == "research.mode.selected"
+              for event in research_supervisor_payload["recent_events"]
+          ), research_supervisor_payload
+          assert any(
+              event["type"] == "research.dispatch.compiled"
+              for event in research_supervisor_payload["recent_events"]
+          ), research_supervisor_payload
+
+          assert any(entry["path"] == "agents" and entry["action"] == "synced" for entry in publish_sync_payload["entries"]), publish_sync_payload
+          assert "README.md" in publish_sync_payload["selection"]["required_paths"], publish_sync_payload
+          assert publish_preflight_payload["status"] == "ready", publish_preflight_payload
+          assert publish_preflight_payload["commit_allowed"] is True, publish_preflight_payload
+          assert publish_preflight_payload["skip_reason"] == "push_disabled", publish_preflight_payload
+          assert "README.md" in publish_preflight_payload["changed_paths"], publish_preflight_payload
           PY
 
       - name: Upload built distributions
