@@ -354,6 +354,7 @@ class ResearchGovernanceReport(ContractModel):
     queue_governor: QueueGovernorReport
     governance_canary: GovernanceCanaryReport
     drift: DriftStatusReport
+    goalspec_delivery_integrity: "GoalSpecDeliveryIntegrityReport"
     progress_watchdog: "ProgressWatchdogReport"
 
 
@@ -471,6 +472,107 @@ class ProgressWatchdogState(ContractModel):
         if field_name == "reason" and not text:
             raise ValueError("reason may not be empty")
         return text
+
+
+class GoalSpecDeliveryIntegrityReport(ContractModel):
+    """Explainable delivery-integrity view for emitted GoalSpec families."""
+
+    schema_version: Literal["1.0"] = GOVERNANCE_REPORT_SCHEMA_VERSION
+    updated_at: datetime | None = None
+    report_path: str = ""
+    state_path: str = ""
+    spec_family_state_path: str = ""
+    status: Literal["not_applicable", "healthy", "failed"] = "not_applicable"
+    reason: str
+    goal_id: str = ""
+    active_spec_id: str = ""
+    emitted_spec_ids: tuple[str, ...] = ()
+    pending_shard_count: int = Field(default=0, ge=0)
+    merged_backlog_handoff: bool = False
+    queue_item_path: str = ""
+    queue_path: str = ""
+    queue_goal_id: str = ""
+    entry_node_id: str = ""
+    violation_codes: tuple[str, ...] = ()
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def normalize_updated_at(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator(
+        "report_path",
+        "state_path",
+        "spec_family_state_path",
+        "reason",
+        "goal_id",
+        "active_spec_id",
+        "queue_item_path",
+        "queue_path",
+        "queue_goal_id",
+        "entry_node_id",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        if isinstance(value, Path):
+            return value.as_posix()
+        text = _normalize_optional_text(value)
+        if field_name == "reason" and not text:
+            raise ValueError("reason may not be empty")
+        return text
+
+    @field_validator("emitted_spec_ids", "violation_codes", mode="before")
+    @classmethod
+    def normalize_sequences(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if value in (None, ""):
+            return ()
+        return _normalize_token_sequence(tuple(str(item) for item in value))
+
+
+class GoalSpecDeliveryIntegrityState(ContractModel):
+    """Persisted delivery-integrity state written by the engine/report surface."""
+
+    schema_version: Literal["1.0"] = GOVERNANCE_REPORT_SCHEMA_VERSION
+    updated_at: datetime | None = None
+    status: Literal["not_applicable", "healthy", "failed"] = "not_applicable"
+    reason: str
+    goal_id: str = ""
+    active_spec_id: str = ""
+    emitted_spec_ids: tuple[str, ...] = ()
+    pending_shard_count: int = Field(default=0, ge=0)
+    merged_backlog_handoff: bool = False
+    violation_codes: tuple[str, ...] = ()
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def normalize_updated_at(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator("reason", "goal_id", "active_spec_id", mode="before")
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        if isinstance(value, Path):
+            return value.as_posix()
+        text = _normalize_optional_text(value)
+        if field_name == "reason" and not text:
+            raise ValueError("reason may not be empty")
+        return text
+
+    @field_validator("emitted_spec_ids", "violation_codes", mode="before")
+    @classmethod
+    def normalize_sequences(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if value in (None, ""):
+            return ()
+        return _normalize_token_sequence(tuple(str(item) for item in value))
 
 
 def resolve_family_governor_state(
@@ -895,10 +997,12 @@ def build_research_governance_report(paths: RuntimePaths) -> ResearchGovernanceR
         )
     else:
         progress_watchdog = sync_progress_watchdog(paths=paths, allow_regeneration=False)
+    goalspec_delivery_integrity = sync_goalspec_delivery_integrity(paths=paths)
     return ResearchGovernanceReport(
         queue_governor=queue_governor,
         governance_canary=evaluate_governance_canary(paths=paths),
         drift=evaluate_family_policy_drift(paths=paths, current_family_state=current_family_state),
+        goalspec_delivery_integrity=goalspec_delivery_integrity,
         progress_watchdog=progress_watchdog,
     )
 
@@ -933,6 +1037,7 @@ def _spec_violation_codes(
     return tuple(violations)
 
 
+from .goalspec_delivery_integrity import evaluate_goalspec_delivery_integrity, sync_goalspec_delivery_integrity
 from .research_progress_watchdog import evaluate_progress_watchdog, sync_progress_watchdog
 
 
@@ -940,6 +1045,8 @@ __all__ = [
     "DEFAULT_PINNED_FAMILY_POLICY_FIELDS",
     "DriftControlPolicy",
     "DriftStatusReport",
+    "GoalSpecDeliveryIntegrityReport",
+    "GoalSpecDeliveryIntegrityState",
     "GoalSpecGovernanceError",
     "GovernanceCanaryReport",
     "InitialFamilyPlanGuardDecision",
@@ -953,6 +1060,7 @@ __all__ = [
     "build_queue_governor_report",
     "build_research_governance_report",
     "SpecSynthesisIdempotencyDecision",
+    "evaluate_goalspec_delivery_integrity",
     "evaluate_family_policy_drift",
     "evaluate_governance_canary",
     "evaluate_progress_watchdog",
@@ -962,5 +1070,6 @@ __all__ = [
     "load_drift_control_policy",
     "load_queue_governor_report",
     "resolve_family_governor_state",
+    "sync_goalspec_delivery_integrity",
     "sync_progress_watchdog",
 ]

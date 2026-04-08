@@ -27,7 +27,11 @@ from millrace_engine.events import EventBus, EventRecord, EventSource, EventType
 from millrace_engine.markdown import parse_task_store
 from millrace_engine.planes.research import ResearchLockUnavailableError, ResearchPlane
 from millrace_engine.queue import TaskQueue, load_research_recovery_latch
-from millrace_engine.research import CompiledResearchDispatchError, entry_stage_type_for_dispatch
+from millrace_engine.research import (
+    build_research_governance_report,
+    CompiledResearchDispatchError,
+    entry_stage_type_for_dispatch,
+)
 from millrace_engine.research.dispatcher import (
     UnsupportedResearchQueueCombinationError,
     compile_research_dispatch,
@@ -300,6 +304,84 @@ def _prepare_reviewed_spec_for_taskmaster(
     )
     reviewed_path = workspace / review.reviewed_path
     return workspace, config, paths, synthesis, reviewed_path
+
+
+def _prepare_emitted_spec_family(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    emitted_at: datetime,
+    title: str,
+    body: str,
+    decomposition_profile: str = "simple",
+    idea_id: str | None = None,
+) -> tuple[Path, object, object, object, Path, Path]:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    suffix = run_id.rsplit("-", 1)[-1]
+    resolved_idea_id = idea_id or f"IDEA-{suffix.upper()}"
+    goal_text = (
+        "---\n"
+        f"idea_id: {resolved_idea_id}\n"
+        f"title: {title}\n"
+        f"decomposition_profile: {decomposition_profile}\n"
+        "---\n\n"
+        f"# {title}\n\n"
+        f"{body}\n"
+    )
+    _write_queue_file(raw_goal_path, goal_text)
+
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    return workspace, config, paths, synthesis, workspace / synthesis.queue_spec_path, staged_path
 
 
 def _configure_auto_blocker_runtime(
@@ -1683,6 +1765,112 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     ]
 
 
+def test_research_plane_blocks_same_family_earlier_stage_recycling_after_spec_emission(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, queue_spec_path, _staged_path = _prepare_emitted_spec_family(
+        tmp_path,
+        run_id="goalspec-recycle-601",
+        emitted_at=_dt("2026-04-07T17:00:00Z"),
+        title="Aura Workshop Vertical Slice",
+        body="Build the first playable aura workshop vertical slice for the mod.",
+        decomposition_profile="moderate",
+        idea_id="IDEA-601",
+    )
+    assert queue_spec_path.exists()
+    recycled_raw_path = workspace / "agents" / "ideas" / "raw" / "goal-recycled.md"
+    _write_queue_file(
+        recycled_raw_path,
+        (
+            "---\n"
+            "idea_id: IDEA-601\n"
+            "title: Aura Workshop Vertical Slice\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Workshop Vertical Slice\n\n"
+            "Rediscovered raw goal after spec emission.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="emitted specs recycled into goal_intake",
+    ):
+        plane.run_ready_work(run_id="goalspec-recycle-blocked", resolve_assets=False)
+
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    integrity_report = json.loads(
+        (workspace / "agents" / ".tmp" / "goalspec_delivery_integrity_report.json").read_text(encoding="utf-8")
+    )
+    assert integrity_report["status"] == "failed"
+    assert integrity_report["reason"] == "same-family-earlier-stage-recycling-after-spec-emission"
+    assert integrity_report["goal_id"] == "IDEA-601"
+    assert integrity_report["queue_item_path"] == "agents/ideas/raw/goal-recycled.md"
+
+
+def test_research_plane_blocks_silent_emitted_family_non_delivery_and_surfaces_it_in_governance(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, queue_spec_path, staged_path = _prepare_emitted_spec_family(
+        tmp_path,
+        run_id="goalspec-stalled-602",
+        emitted_at=_dt("2026-04-07T17:05:00Z"),
+        title="Support Ticket Service",
+        body="Build the first usable support-ticket web app for a Python service.",
+        decomposition_profile="moderate",
+        idea_id="IDEA-602",
+    )
+    queue_spec_path.unlink()
+    staged_path.unlink()
+    plane = ResearchPlane(config, paths)
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="no active GoalSpec queue item, pending shard, or merged Taskaudit backlog handoff",
+    ):
+        plane.dispatch_ready_work(resolve_assets=False)
+
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    integrity_report = json.loads(
+        (workspace / "agents" / ".tmp" / "goalspec_delivery_integrity_report.json").read_text(encoding="utf-8")
+    )
+    assert integrity_report["status"] == "failed"
+    assert integrity_report["reason"] == "emitted-specs-without-queue-or-handoff"
+    governance = build_research_governance_report(paths)
+    assert governance.goalspec_delivery_integrity.status == "failed"
+    assert governance.goalspec_delivery_integrity.reason == "emitted-specs-without-queue-or-handoff"
+    assert governance.goalspec_delivery_integrity.goal_id == "IDEA-602"
+
+
+def test_research_plane_keeps_normal_downstream_goalspec_progression_healthy_after_spec_emission(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, queue_spec_path, staged_path = _prepare_emitted_spec_family(
+        tmp_path,
+        run_id="goalspec-healthy-603",
+        emitted_at=_dt("2026-04-07T17:10:00Z"),
+        title="Modernize Goal Intake",
+        body="Create real GoalSpec intake and objective sync stages.",
+        idea_id="IDEA-603",
+    )
+    assert queue_spec_path.exists()
+    staged_path.unlink()
+    plane = ResearchPlane(config, paths)
+
+    dispatch = plane.dispatch_ready_work(resolve_assets=False)
+
+    assert dispatch is not None
+    assert dispatch.selection.entry_node_id == "spec_review"
+    assert plane.status_store.read() is ResearchStatus.SPEC_REVIEW_RUNNING
+    integrity_report = json.loads(
+        (workspace / "agents" / ".tmp" / "goalspec_delivery_integrity_report.json").read_text(encoding="utf-8")
+    )
+    assert integrity_report["status"] == "healthy"
+    assert integrity_report["reason"] == "same-family-downstream-goalspec-queue-ready"
+    plane.shutdown()
+
+
 def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_path: Path) -> None:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
@@ -1758,10 +1946,16 @@ def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answ
         raw_goal_path,
         "---\n"
         "idea_id: IDEA-88\n"
-        "title: Interview Block And Resume\n"
+        "title: Support Ticket Escalation Console\n"
+        "decomposition_profile: moderate\n"
         "---\n\n"
-        "# Interview Block And Resume\n\n"
-        "Exercise operator-needed interview pause/resume.\n",
+        "# Support Ticket Escalation Console\n\n"
+        "Build the first operator console for a support-ticket service.\n\n"
+        "## Capability Domains\n"
+        "- Ticket escalation dashboard\n"
+        "- Manager approval workflow\n\n"
+        "## Progression Lines\n"
+        "- Move from ticket intake to escalation approval to agent resolution confirmation.\n",
     )
     plane = ResearchPlane(config, paths)
     original_execute_spec_synthesis = research_plane_module.execute_spec_synthesis
@@ -1771,7 +1965,7 @@ def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answ
         queue_spec_path = workspace / result.queue_spec_path
         queue_spec_path.write_text(
             queue_spec_path.read_text(encoding="utf-8")
-            + "\n## Interview Override\n- TODO: Confirm the rollout gate for this design.\n",
+            + "\n## Interview Override\n- TODO: Confirm whether VIP escalations require manager approval before assignment.\n",
             encoding="utf-8",
         )
         return result
@@ -1803,7 +1997,7 @@ def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answ
     answer_interview_question(
         paths,
         question_id=questions[0].question_id,
-        text="Rollout stays operator-controlled until the review checklist is complete.",
+        text="VIP escalations require manager approval before the console can assign an agent.",
     )
 
     plane.sync_runtime(trigger="operator-answer", resolve_assets=False)
@@ -2051,21 +2245,21 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     raw_goal_text = (
         "---\n"
         "idea_id: IDEA-201\n"
-        "title: Preserve GoalSpec Idempotency\n"
+        "title: Support Ticket Escalation Console\n"
         "decomposition_profile: moderate\n"
         "---\n"
         "\n"
-        "# Preserve GoalSpec Idempotency\n\n"
-        "Exercise restart-safe synthesis reuse for a product-scoped GoalSpec modernization.\n\n"
+        "# Support Ticket Escalation Console\n\n"
+        "Build the first operator console for a support-ticket service.\n\n"
         "## Capability Domains\n"
-        "- Goal intake artifact capture\n"
-        "- Objective profile sync persistence\n\n"
+        "- Ticket intake API\n"
+        "- Escalation approval dashboard\n\n"
         "## Progression Lines\n"
-        "- Move from raw goal intake to staged product brief to synced objective profile.\n"
+        "- Move from customer ticket intake to escalation approval to agent resolution confirmation.\n"
     )
     emitted_at = _dt("2026-03-21T12:00:00Z")
     run_id = "goalspec-idempotent-201"
-    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-201__preserve-goalspec-idempotency.md"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-201__support-ticket-escalation-console.md"
 
     _write_queue_file(raw_goal_path, raw_goal_text)
     execute_goal_intake(
@@ -2149,16 +2343,14 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
 
     assert second_result == first_result
     assert "Deliver the product outcome captured in `IDEA-201`" in first_queue_text
-    assert "- Goal intake artifact capture" in first_queue_text
+    assert "- Ticket intake API" in first_queue_text
     assert "Keep measurable validation and bounded output expectations attached to the synthesized slice" in first_queue_text
     assert "Convert `IDEA-201` into a traceable GoalSpec draft package." not in first_queue_text
     assert "Persist completion-manifest drafting state before spec output" not in first_queue_text
     assert "Carry the drafted GoalSpec package into a reviewable runtime implementation slice." not in first_phase_text
     assert "Deliver the first bounded product capability slice for `IDEA-201`" in first_phase_text
     assert "Implement the first bounded capability slice" not in first_phase_text
-    assert "## Implementation Surfaces" in first_phase_text
-    assert "millrace_engine/research/goalspec_goal_intake.py" in first_phase_text
-    assert "tests/test_research_dispatcher.py" in first_phase_text
+    _assert_product_grounded_stage_artifacts(first_queue_text, first_phase_text)
     assert "smallest bounded spec slice" in first_decision_text
     assert "GoalSpec traceability" not in first_decision_text
     assert "Planned later specs: none" in first_decision_text
@@ -3366,7 +3558,20 @@ def test_execute_spec_interview_auto_resolves_repo_answerable_spec(tmp_path: Pat
 
     _write_queue_file(
         raw_goal_path,
-        "---\nidea_id: IDEA-42\ntitle: Auto Answerable Interview\n---\n\n# Auto Answerable Interview\n\nKeep upstream traceability intact.\n",
+        (
+            "---\n"
+            "idea_id: IDEA-42\n"
+            "title: Support Ticket Agent Inbox\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Support Ticket Agent Inbox\n\n"
+            "Build the first service-agent inbox panel for a support-ticket web app.\n\n"
+            "## Capability Domains\n"
+            "- Ticket inbox list\n"
+            "- Customer history sidebar\n\n"
+            "## Progression Lines\n"
+            "- Move from incoming ticket triage to customer-history review to assignment confirmation.\n"
+        ),
     )
     goal_intake = execute_goal_intake(
         paths,

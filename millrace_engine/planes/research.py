@@ -40,6 +40,10 @@ from ..research.goalspec import (
     execute_spec_synthesis,
     next_stage_for_success,
 )
+from ..research.goalspec_delivery_integrity import (
+    delivery_integrity_error_message,
+    sync_goalspec_delivery_integrity,
+)
 from ..research.incidents import (
     IncidentExecutionError,
     execute_incident_archive,
@@ -377,12 +381,32 @@ class ResearchPlane:
             self._record_dispatch_failure(exc, discovery=discovery, failed_at=started_at)
             raise
         if selection is None:
+            delivery_integrity = sync_goalspec_delivery_integrity(
+                paths=self.paths,
+                queue_discovery=discovery,
+                observed_at=started_at,
+            )
+            if delivery_integrity.status == "failed":
+                error = GoalSpecExecutionError(delivery_integrity_error_message(delivery_integrity))
+                self._record_dispatch_failure(error, discovery=discovery, failed_at=started_at)
+                raise error
             self._record_no_dispatchable_work(
                 discovery=discovery,
                 observed_at=started_at,
                 reason="no-dispatchable-research-work",
             )
             return None
+
+        delivery_integrity = sync_goalspec_delivery_integrity(
+            paths=self.paths,
+            queue_discovery=discovery,
+            entry_node_id=selection.entry_node_id,
+            observed_at=started_at,
+        )
+        if delivery_integrity.status == "failed":
+            error = GoalSpecExecutionError(delivery_integrity_error_message(delivery_integrity))
+            self._record_dispatch_failure(error, discovery=discovery, failed_at=started_at)
+            raise error
 
         self._emit(
             EventType.RESEARCH_MODE_SELECTED,
