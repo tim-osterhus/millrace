@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import re
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .goalspec import SpecReviewExecutionResult
 from .goalspec_helpers import (
     GoalSpecExecutionError,
+    _markdown_section,
     _load_json_model,
     _load_json_object,
     _relative_path,
@@ -21,14 +23,23 @@ from .goalspec_helpers import (
 )
 from .goalspec_persistence import (
     _build_goal_spec_review_state,
+    _load_objective_profile_inputs,
     _stable_spec_paths_for_review,
 )
+from .goalspec_product_planning import (
+    find_abstract_phase_steps,
+    is_product_surface_path,
+    minimum_phase_step_count,
+    surface_paths,
+)
+from .goalspec_scope_diagnostics import infer_goal_scope_kind
 from .goalspec_stage_rendering import (
     render_spec_review_decision,
     render_spec_review_questions,
 )
 from .specs import (
     GoalSpecLineageRecord,
+    GoalSpecReviewFinding,
     GoalSpecReviewRecord,
     load_goal_spec_family_state,
     load_stable_spec_registry,
@@ -36,6 +47,140 @@ from .specs import (
     write_goal_spec_family_state,
 )
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
+
+_NUMBERED_LINE_RE = re.compile(r"^\d+\.\s+(.*\S)\s*$")
+_BACKTICKED_TOKEN_RE = re.compile(r"`([^`\n]+)`")
+
+
+def _phase_steps(phase_text: str) -> tuple[str, ...]:
+    work_plan = _markdown_section(phase_text, "Work Plan")
+    steps: list[str] = []
+    for raw_line in work_plan.splitlines():
+        match = _NUMBERED_LINE_RE.match(raw_line.strip())
+        if match is None:
+            continue
+        steps.append(" ".join(match.group(1).split()))
+    return tuple(steps)
+
+
+def _repo_paths(text: str) -> tuple[str, ...]:
+    paths: list[str] = []
+    for match in _BACKTICKED_TOKEN_RE.finditer(text):
+        token = match.group(1).strip()
+        if not token or " " in token or token.startswith(("http://", "https://", "/", "~")):
+            continue
+        if "/" not in token and "." not in Path(token).name:
+            continue
+        paths.append(token)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped.append(path)
+    return tuple(deduped)
+
+
+def _review_findings(
+    *,
+    paths: RuntimePaths,
+    source_body: str,
+    source_title: str,
+    decomposition_profile: str,
+    stable_spec_paths: tuple[Path, ...],
+) -> tuple[GoalSpecReviewFinding, ...]:
+    phase_paths = tuple(path for path in stable_spec_paths if "/phase/" in _relative_path(path, relative_to=paths.root))
+    phase_steps: list[str] = []
+    phase_path_tokens: list[str] = []
+    for phase_path in phase_paths:
+        phase_text = phase_path.read_text(encoding="utf-8")
+        phase_steps.extend(_phase_steps(phase_text))
+        phase_path_tokens.extend(_repo_paths(phase_text))
+
+    findings: list[GoalSpecReviewFinding] = []
+    minimum_steps = minimum_phase_step_count(decomposition_profile)
+    if len(phase_steps) < minimum_steps:
+        findings.append(
+            GoalSpecReviewFinding(
+                finding_id="REV-DECOMPOSITION-DENSITY",
+                severity="blocker",
+                summary=(
+                    f"Phase package defines {len(phase_steps)} numbered Work Plan step(s), "
+                    f"below the active `{decomposition_profile or 'simple'}` floor of {minimum_steps}."
+                ),
+                artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
+            )
+        )
+
+    abstract_steps = find_abstract_phase_steps(tuple(phase_steps))
+    if abstract_steps:
+        findings.append(
+            GoalSpecReviewFinding(
+                finding_id="REV-ABSTRACT-PHASE-STEPS",
+                severity="blocker",
+                summary=(
+                    "Phase plan still contains abstract or handoff-oriented work items: "
+                    + "; ".join(abstract_steps[:3])
+                ),
+                artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
+            )
+        )
+
+    objective_state, profile = _load_objective_profile_inputs(paths)
+    expected_scope = infer_goal_scope_kind(
+        title=source_title,
+        source_body=source_body,
+        semantic_summary=profile.semantic_profile.objective_summary,
+        capability_domains=tuple(profile.semantic_profile.capability_domains),
+    )
+    if expected_scope == "product":
+        completion_manifest_payload = (
+            _load_json_object(paths.audit_completion_manifest_file)
+            if paths.audit_completion_manifest_file.exists()
+            else {}
+        )
+        implementation_surfaces = tuple(
+            str(item.get("path", "")).strip()
+            for item in completion_manifest_payload.get("implementation_surfaces", [])
+            if isinstance(item, dict)
+        )
+        verification_surfaces = tuple(
+            str(item.get("path", "")).strip()
+            for item in completion_manifest_payload.get("verification_surfaces", [])
+            if isinstance(item, dict)
+        )
+        product_surface_paths = tuple(
+            path
+            for path in (*implementation_surfaces, *verification_surfaces, *phase_path_tokens)
+            if path
+        )
+        if not any(is_product_surface_path(path) for path in product_surface_paths):
+            findings.append(
+                GoalSpecReviewFinding(
+                    finding_id="REV-PRODUCT-SURFACES",
+                    severity="blocker",
+                    summary=(
+                        "Open product objective still lacks concrete non-`agents/*` implementation or "
+                        "verification surfaces in the manifest and phase package."
+                    ),
+                    artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
+                )
+            )
+        if not implementation_surfaces or not verification_surfaces:
+            findings.append(
+                GoalSpecReviewFinding(
+                    finding_id="REV-SURFACE-SEPARATION",
+                    severity="blocker",
+                    summary=(
+                        "Completion manifest is missing explicit implementation or verification surfaces, "
+                        "so Taskmaster would still need to guess product scope."
+                    ),
+                    artifact_path=_relative_path(paths.audit_completion_manifest_file, relative_to=paths.root),
+                )
+            )
+
+    return tuple(findings)
 
 
 def execute_spec_review(
@@ -64,20 +209,25 @@ def execute_spec_review(
     lineage_path = paths.goalspec_lineage_dir / f"{spec_id}.json"
     stable_spec_paths = _stable_spec_paths_for_review(paths, spec_id=spec_id)
     relative_stable_spec_paths = tuple(_relative_path(path, relative_to=paths.root) for path in stable_spec_paths)
-    review_status = "no_material_delta"
     review_timestamp = emitted_at
     queue_spec_text = _resolve_path_token(source.source_path, relative_to=paths.root).read_text(
         encoding="utf-8",
         errors="replace",
     )
+    findings = _review_findings(
+        paths=paths,
+        source_body=source.body,
+        source_title=source.title,
+        decomposition_profile=source.decomposition_profile,
+        stable_spec_paths=stable_spec_paths,
+    )
+    review_status = "blocked" if findings else "no_material_delta"
+    finding_summaries = tuple(finding.summary for finding in findings)
 
     if (
         record_path.exists()
         and questions_path.exists()
         and decision_path.exists()
-        and reviewed_path.exists()
-        and lineage_path.exists()
-        and paths.specs_index_file.exists()
     ):
         existing_review_record = _load_json_model(record_path, GoalSpecReviewRecord)
         if existing_review_record.reviewed_at is not None:
@@ -90,6 +240,7 @@ def execute_spec_review(
             title=source.title,
             queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),
             stable_spec_paths=relative_stable_spec_paths,
+            findings=finding_summaries,
         )
         expected_decision = render_spec_review_decision(
             reviewed_at=review_timestamp,
@@ -98,64 +249,86 @@ def execute_spec_review(
             spec_id=spec_id,
             title=source.title,
             review_status=review_status,
-            reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
+            reviewed_path=(
+                _relative_path(reviewed_path, relative_to=paths.root)
+                if reviewed_path.exists()
+                else _relative_path(queue_spec_path, relative_to=paths.root)
+            ),
             stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
             lineage_path=_relative_path(lineage_path, relative_to=paths.root),
+            findings=finding_summaries,
         )
-        expected_family_state, lineage_record = _build_goal_spec_review_state(
-            paths=paths,
-            spec_id=spec_id,
-            goal_id=source.idea_id,
-            queue_spec_path=queue_spec_path,
-            reviewed_path=reviewed_path,
-            questions_path=questions_path,
-            decision_path=decision_path,
-            stable_spec_paths=stable_spec_paths,
-            review_status=review_status,
-            emitted_at=review_timestamp,
-        )
-        current_family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
-        stable_registry = load_stable_spec_registry(paths.specs_index_file)
-        if (
-            existing_review_record
-            == GoalSpecReviewRecord(
+        if findings:
+            if (
+                existing_review_record
+                == GoalSpecReviewRecord(
+                    spec_id=spec_id,
+                    review_status=review_status,
+                    questions_path=_relative_path(questions_path, relative_to=paths.root),
+                    decision_path=_relative_path(decision_path, relative_to=paths.root),
+                    reviewed_path="",
+                    reviewed_at=review_timestamp,
+                    findings=findings,
+                )
+                and questions_path.read_text(encoding="utf-8") == expected_questions
+                and decision_path.read_text(encoding="utf-8") == expected_decision
+            ):
+                raise GoalSpecExecutionError(
+                    f"Spec Review blocked {spec_id}; resolve the recorded decomposition findings before Taskmaster"
+                )
+        elif reviewed_path.exists() and lineage_path.exists() and paths.specs_index_file.exists():
+            expected_family_state, lineage_record = _build_goal_spec_review_state(
+                paths=paths,
                 spec_id=spec_id,
+                goal_id=source.idea_id,
+                queue_spec_path=queue_spec_path,
+                reviewed_path=reviewed_path,
+                questions_path=questions_path,
+                decision_path=decision_path,
+                stable_spec_paths=stable_spec_paths,
                 review_status=review_status,
-                questions_path=_relative_path(questions_path, relative_to=paths.root),
-                decision_path=_relative_path(decision_path, relative_to=paths.root),
-                reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
-                reviewed_at=review_timestamp,
-                findings=(),
+                emitted_at=review_timestamp,
             )
-            and GoalSpecLineageRecord.model_validate(_load_json_object(lineage_path)) == lineage_record
-            and current_family_state == expected_family_state
-            and questions_path.read_text(encoding="utf-8") == expected_questions
-            and decision_path.read_text(encoding="utf-8") == expected_decision
-            and reviewed_path.read_text(encoding="utf-8") == queue_spec_text
-            and {entry.spec_path for entry in stable_registry.stable_specs} >= set(relative_stable_spec_paths)
-        ):
-            return SpecReviewExecutionResult(
-                record_path=_relative_path(record_path, relative_to=paths.root),
-                questions_path=_relative_path(questions_path, relative_to=paths.root),
-                decision_path=_relative_path(decision_path, relative_to=paths.root),
-                reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
-                lineage_path=_relative_path(lineage_path, relative_to=paths.root),
-                stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
-                family_state_path=_relative_path(paths.goal_spec_family_state_file, relative_to=paths.root),
-                queue_ownership=ResearchQueueOwnership(
-                    family=ResearchQueueFamily.GOALSPEC,
-                    queue_path=paths.ideas_specs_reviewed_dir,
-                    item_path=reviewed_path,
-                    owner_token=run_id,
-                    acquired_at=review_timestamp,
-                ),
-            )
+            current_family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
+            stable_registry = load_stable_spec_registry(paths.specs_index_file)
+            if (
+                existing_review_record
+                == GoalSpecReviewRecord(
+                    spec_id=spec_id,
+                    review_status=review_status,
+                    questions_path=_relative_path(questions_path, relative_to=paths.root),
+                    decision_path=_relative_path(decision_path, relative_to=paths.root),
+                    reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
+                    reviewed_at=review_timestamp,
+                    findings=(),
+                )
+                and GoalSpecLineageRecord.model_validate(_load_json_object(lineage_path)) == lineage_record
+                and current_family_state == expected_family_state
+                and questions_path.read_text(encoding="utf-8") == expected_questions
+                and decision_path.read_text(encoding="utf-8") == expected_decision
+                and reviewed_path.read_text(encoding="utf-8") == queue_spec_text
+                and {entry.spec_path for entry in stable_registry.stable_specs} >= set(relative_stable_spec_paths)
+            ):
+                return SpecReviewExecutionResult(
+                    record_path=_relative_path(record_path, relative_to=paths.root),
+                    questions_path=_relative_path(questions_path, relative_to=paths.root),
+                    decision_path=_relative_path(decision_path, relative_to=paths.root),
+                    reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
+                    lineage_path=_relative_path(lineage_path, relative_to=paths.root),
+                    stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
+                    family_state_path=_relative_path(paths.goal_spec_family_state_file, relative_to=paths.root),
+                    queue_ownership=ResearchQueueOwnership(
+                        family=ResearchQueueFamily.GOALSPEC,
+                        queue_path=paths.ideas_specs_reviewed_dir,
+                        item_path=reviewed_path,
+                        owner_token=run_id,
+                        acquired_at=review_timestamp,
+                    ),
+                )
 
     questions_path.parent.mkdir(parents=True, exist_ok=True)
     decision_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.parent.mkdir(parents=True, exist_ok=True)
-    lineage_path.parent.mkdir(parents=True, exist_ok=True)
-    reviewed_path.parent.mkdir(parents=True, exist_ok=True)
 
     write_text_atomic(
         questions_path,
@@ -167,6 +340,7 @@ def execute_spec_review(
             title=source.title,
             queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),
             stable_spec_paths=relative_stable_spec_paths,
+            findings=finding_summaries,
         ),
     )
     write_text_atomic(
@@ -178,11 +352,36 @@ def execute_spec_review(
             spec_id=spec_id,
             title=source.title,
             review_status=review_status,
-            reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
+            reviewed_path=(
+                _relative_path(reviewed_path, relative_to=paths.root)
+                if not findings
+                else _relative_path(queue_spec_path, relative_to=paths.root)
+            ),
             stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
             lineage_path=_relative_path(lineage_path, relative_to=paths.root),
+            findings=finding_summaries,
         ),
     )
+
+    if findings:
+        _write_json_model(
+            record_path,
+            GoalSpecReviewRecord(
+                spec_id=spec_id,
+                review_status=review_status,
+                questions_path=_relative_path(questions_path, relative_to=paths.root),
+                decision_path=_relative_path(decision_path, relative_to=paths.root),
+                reviewed_path="",
+                reviewed_at=review_timestamp,
+                findings=findings,
+            ),
+        )
+        raise GoalSpecExecutionError(
+            f"Spec Review blocked {spec_id}; resolve the recorded decomposition findings before Taskmaster"
+        )
+
+    lineage_path.parent.mkdir(parents=True, exist_ok=True)
+    reviewed_path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(reviewed_path, queue_spec_text)
     source_path = _resolve_path_token(source.source_path, relative_to=paths.root)
     if source_path != reviewed_path and source_path.exists():

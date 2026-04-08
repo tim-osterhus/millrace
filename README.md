@@ -13,7 +13,7 @@ python3 -m pip install millrace-ai
 ```
 
 This installs the `millrace` command. Create a workspace with `millrace init ...`; `millrace.toml` and `agents/` live inside that initialized workspace, not at the public repo root.
-If you need the exact `v0.6.0` release, install `millrace-ai==0.6.0`.
+If you need the exact `v0.6.1` release, install `millrace-ai==0.6.1`.
 
 Fresh-workspace research is explicit by default: the shipped baseline config starts with `[research] mode = "stub"` and `interview_policy = "off"`. A new workspace still includes the research plane and its reporting surfaces, but first-run research only records deferred breadcrumbs until you deliberately reconfigure research to a non-stub mode.
 
@@ -90,7 +90,7 @@ The runtime is also split by ownership internally, not just by product surface:
 
 - `millrace_engine/engine.py` is the composition shell; config reload/apply lives in `engine_config_coordinator.py`, mailbox dispatch lives in `engine_mailbox_processor.py` plus `engine_mailbox_command_handlers.py`, and daemon loop/watcher coordination lives in `engine_runtime_loop.py`.
 - `millrace_engine/planes/execution.py` keeps cycle composition while `planes/execution_flows/` owns the quickfix, QA, builder-success, and full-task cycle families.
-- `millrace_engine/research/goalspec_stage_support.py` is a thin GoalSpec facade over per-stage executors such as `goalspec_goal_intake.py`, `goalspec_spec_synthesis.py`, `goalspec_spec_interview.py`, and `goalspec_spec_review.py`, with shared rendering in `goalspec_stage_rendering.py`.
+- `millrace_engine/research/goalspec_stage_support.py` is a thin GoalSpec facade over per-stage executors such as `goalspec_goal_intake.py`, `goalspec_objective_profile_sync.py`, `goalspec_completion_manifest_draft.py`, `goalspec_spec_synthesis.py`, `goalspec_spec_interview.py`, and `goalspec_spec_review.py`, with shared rendering in `goalspec_stage_rendering.py`.
 - `tools/repo_guardrails.py` enforces size budgets and same-change ratchets for orchestration-heavy files so those seams do not silently collapse back into long-lived exception zones.
 
 ## Governed Compounding Model
@@ -116,7 +116,7 @@ Install the published package:
 python3 -m pip install millrace-ai
 ```
 
-For a version-pinned install of this release, use `python3 -m pip install millrace-ai==0.6.0`.
+For a version-pinned install of this release, use `python3 -m pip install millrace-ai==0.6.1`.
 
 Create and inspect a workspace:
 
@@ -255,6 +255,8 @@ millrace --config millrace.toml add-idea /absolute/path/to/idea.md
 ```
 
 `add-task` appends an execution task to the backlog. `add-idea` copies a source markdown file into `agents/ideas/raw/` for research-side intake.
+
+When research is active, one raw idea follows a deterministic staged funnel: `goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis -> optional spec_interview -> spec_review -> taskmaster`, and `taskaudit` merges only when the current initial-family declaration is complete. The completion manifest keeps governance artifacts separate from implementation surfaces and verification surfaces so the emitted queue spec, phase spec, and task cards stay product-grounded. Projects can also pin semantic milestones with `agents/objective/semantic_profile_seed.json`, `.yaml`, or `.yml`.
 
 If GoalSpec interview mode is enabled, research can pause after synthesis with one durable pending interview question under `agents/specs/questions/`. The feature is optional and file-backed: Millrace records the question and recommended answer on disk, then waits for operator input before continuing review/task decomposition.
 

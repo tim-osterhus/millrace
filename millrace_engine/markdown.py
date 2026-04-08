@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 import os
@@ -91,12 +92,16 @@ def append_markdown_block(existing_text: str, block: str) -> str:
 def write_text_atomic(path: Path, text: str) -> None:
     """Atomically rewrite a utf-8 text file."""
 
+    name = path.name
+    if len(name) > 32:
+        digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
+        name = f"{name[:16]}.{digest}"
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(
         "w",
         encoding="utf-8",
         dir=path.parent,
-        prefix=f".{path.name}.",
+        prefix=f".{name}.",
         suffix=".tmp",
         delete=False,
     ) as handle:

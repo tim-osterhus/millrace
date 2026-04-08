@@ -15,6 +15,7 @@ from .goalspec_helpers import (
     _first_paragraph,
     _isoformat_z,
 )
+from .goalspec_product_planning import derive_goal_product_plan
 
 
 def _dedupe_ordered(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -54,8 +55,28 @@ def _acceptance_focus(completion_manifest: CompletionManifestDraftStateRecord) -
     return _dedupe_ordered(tuple(completion_manifest.acceptance_focus))
 
 
-def _required_output_paths(completion_manifest: CompletionManifestDraftStateRecord) -> tuple[str, ...]:
-    return _dedupe_ordered([artifact.path for artifact in completion_manifest.required_outputs])
+def _required_artifact_paths(completion_manifest: CompletionManifestDraftStateRecord) -> tuple[str, ...]:
+    return _dedupe_ordered([artifact.path for artifact in completion_manifest.required_artifacts])
+
+
+def _implementation_surface_paths(completion_manifest: CompletionManifestDraftStateRecord) -> tuple[str, ...]:
+    return _dedupe_ordered([surface.path for surface in completion_manifest.implementation_surfaces])
+
+
+def _verification_surface_paths(completion_manifest: CompletionManifestDraftStateRecord) -> tuple[str, ...]:
+    return _dedupe_ordered([surface.path for surface in completion_manifest.verification_surfaces])
+
+
+def _render_surface_lines(
+    values: tuple[object, ...],
+    *,
+    empty_message: str,
+) -> list[str]:
+    lines = [
+        f"- `{getattr(value, 'path')}` ({getattr(value, 'purpose')})"
+        for value in values
+    ]
+    return lines or [f"- {empty_message}"]
 
 
 def _format_domain_sentence(domains: tuple[str, ...]) -> str:
@@ -82,9 +103,25 @@ def render_queue_spec(
     capability_domains = _capability_domains(profile)
     progression_lines = _progression_lines(profile)
     acceptance_focus = _acceptance_focus(completion_manifest)
-    required_output_paths = _required_output_paths(completion_manifest)
+    required_artifact_paths = _required_artifact_paths(completion_manifest)
+    implementation_surface_paths = _implementation_surface_paths(completion_manifest)
+    verification_surface_paths = _verification_surface_paths(completion_manifest)
+    product_plan = derive_goal_product_plan(source=source, profile=profile)
     milestone_lines = [f"- {item}" for item in profile.milestones] or [f"- Deliver {summary}."]
     hard_blocker_lines = [f"- {item}" for item in profile.hard_blockers] or ["- No explicit blockers were recorded."]
+    implementation_surface_lines = _render_surface_lines(
+        tuple(completion_manifest.implementation_surfaces),
+        empty_message="No implementation surfaces were declared.",
+    )
+    verification_surface_lines = _render_surface_lines(
+        tuple(completion_manifest.verification_surfaces),
+        empty_message="No verification surfaces were declared.",
+    )
+    required_artifact_lines = _render_surface_lines(
+        tuple(completion_manifest.required_artifacts),
+        empty_message="No governance artifacts were declared.",
+    )
+    implementation_plan_lines = [f"{index}. {step}" for index, step in enumerate(product_plan.phase_steps[:3], start=1)]
     timestamp = _isoformat_z(emitted_at)
     return "\n".join(
         [
@@ -124,25 +161,41 @@ def render_queue_spec(
             "",
             "## Scope",
             "### In Scope",
-            f"- Product-facing implementation and verification work for {_format_domain_sentence(capability_domains)}.",
+            f"- Product-facing implementation for {_format_domain_sentence(capability_domains)}.",
             (
                 f"- Acceptance and progression coverage for {progression_lines[0]}."
                 if progression_lines
                 else "- Acceptance and verification coverage for the profiled product objective."
             ),
             (
-                f"- Bounded repo deltas needed to satisfy these outputs: {', '.join(f'`{path}`' for path in required_output_paths)}."
-                if required_output_paths
-                else "- Bounded repo deltas required to satisfy the profiled product objective."
+                f"- Implementation surfaces: {', '.join(f'`{path}`' for path in implementation_surface_paths)}."
+                if implementation_surface_paths
+                else "- Implementation surfaces remain bounded to the profiled product objective."
+            ),
+            (
+                f"- Verification surfaces: {', '.join(f'`{path}`' for path in verification_surface_paths)}."
+                if verification_surface_paths
+                else "- Verification surfaces remain bounded to the profiled product objective."
             ),
             "",
             "### Out of Scope",
             "- Approval, merge, or backlog handoff.",
             "- Additional capability families beyond this bounded synthesized slice.",
+            "- Governance-artifact maintenance outside traceability/reference preservation.",
             "",
             "## Capability Domains",
             *(f"- {item}" for item in capability_domains),
             *(["- No explicit capability domains were detected."] if not capability_domains else []),
+            "",
+            "## Product Surfaces",
+            "### Implementation Surfaces",
+            *implementation_surface_lines,
+            "",
+            "### Verification Surfaces",
+            *verification_surface_lines,
+            "",
+            "## Governance Artifacts",
+            *required_artifact_lines,
             "",
             "## Decomposition Readiness",
             (
@@ -151,6 +204,7 @@ def render_queue_spec(
                 else "- The first bounded product slice preserves the profiled objective summary and milestone ladder."
             ),
             f"- Declared decomposition profile: `{source.decomposition_profile}`.",
+            f"- Repo-kind plan: `{completion_manifest.repo_kind}`.",
             "- Later review/task-generation stages remain downstream of this synthesized product slice.",
             "",
             "## Constraints",
@@ -159,9 +213,7 @@ def render_queue_spec(
             "- Avoid pulling Spec Review or task generation into this run.",
             "",
             "## Implementation Plan",
-            "1. Implement the bounded product capability slice carried by the staged goal and semantic milestones.",
-            "2. Add or adjust verification coverage for the profiled acceptance focus and progression path.",
-            "3. Persist the bounded synthesized package and decision record for downstream review.",
+            *implementation_plan_lines,
             "",
             "## Requirements Traceability (Req-ID Matrix)",
             (
@@ -196,12 +248,15 @@ def render_queue_spec(
                 if progression_lines
                 else []
             ),
-            "- `python3 -c \"from pathlib import Path; assert Path('agents/audit/completion_manifest.json').exists(); assert Path('agents/reports/acceptance_profiles').exists()\"`",
-            "- `python3 -c \"from pathlib import Path; assert any(Path('agents/specs/stable/golden').glob('*.md')); assert any(Path('agents/specs/stable/phase').glob('*.md'))\"`",
+            *(f"- `{command}`" for command in product_plan.verification_commands),
             "",
             "## Dependencies",
             f"- Objective profile: `{objective_state.profile_path}`",
             f"- Completion manifest draft: `{completion_manifest_path}`",
+            *(
+                f"- Governance artifact: `{path}`"
+                for path in required_artifact_paths
+            ),
             "",
             "## Risks and Mitigations",
             "- Risk: later stages may require additional capability decomposition. Mitigation: family state remains explicit and bounded for later runs.",
@@ -238,8 +293,20 @@ def render_phase_spec(
     capability_domains = _capability_domains(profile)
     progression_lines = _progression_lines(profile)
     acceptance_focus = _acceptance_focus(completion_manifest)
-    required_output_paths = _required_output_paths(completion_manifest)
+    implementation_surface_paths = _implementation_surface_paths(completion_manifest)
+    verification_surface_paths = _verification_surface_paths(completion_manifest)
+    required_artifact_paths = _required_artifact_paths(completion_manifest)
+    product_plan = derive_goal_product_plan(source=source, profile=profile)
     planned_spec_lines = [f"- `{spec_id}`" for spec_id in planned_spec_ids] or ["- None."]
+    implementation_surface_lines = _render_surface_lines(
+        tuple(completion_manifest.implementation_surfaces),
+        empty_message="No implementation surfaces were declared.",
+    )
+    verification_surface_lines = _render_surface_lines(
+        tuple(completion_manifest.verification_surfaces),
+        empty_message="No verification surfaces were declared.",
+    )
+    work_plan_lines = [f"{index}. {step}" for index, step in enumerate(product_plan.phase_steps, start=1)]
     return "\n".join(
         [
             _FRONTMATTER_BOUNDARY,
@@ -271,27 +338,29 @@ def render_phase_spec(
                 else "- Verification coverage for the profiled product objective."
             ),
             (
-                f"- Repo deltas required to satisfy these outputs: {', '.join(f'`{path}`' for path in required_output_paths)}."
-                if required_output_paths
+                f"- Implementation surfaces: {', '.join(f'`{path}`' for path in implementation_surface_paths)}."
+                if implementation_surface_paths
                 else "- Repo deltas required to satisfy the bounded product slice."
+            ),
+            (
+                f"- Verification surfaces: {', '.join(f'`{path}`' for path in verification_surface_paths)}."
+                if verification_surface_paths
+                else "- Verification surfaces required to prove the bounded product slice."
             ),
             "",
             "### Out of Scope",
             "- Spec Review decisions and task-card generation.",
             "- Product capability slices reserved for later planned specs in the same bounded family.",
+            "- Governance-artifact editing except for trace references.",
+            "",
+            "## Implementation Surfaces",
+            *implementation_surface_lines,
+            "",
+            "## Verification Surfaces",
+            *verification_surface_lines,
             "",
             "## Work Plan",
-            (
-                f"1. Implement the first bounded capability slice centered on {progression_lines[0]}."
-                if progression_lines
-                else "1. Implement the first bounded capability slice from the synced product objective."
-            ),
-            (
-                f"2. Add or update proof for the highest-priority acceptance checks: {'; '.join(acceptance_focus[:3])}."
-                if acceptance_focus
-                else "2. Add or update proof for the profiled product acceptance path."
-            ),
-            "3. Close this phase with bounded handoff evidence and explicit family-state continuity for downstream review.",
+            *work_plan_lines,
             "",
             "## Requirements Traceability (Req-ID)",
             (
@@ -305,14 +374,15 @@ def render_phase_spec(
             (
                 "- The first emitted slice can advance the highest-priority capability path without absorbing later planned slices (confidence: inferred)."
             ),
+            f"- Repo-kind planning remains bounded to `{completion_manifest.repo_kind}` surfaces (confidence: inferred).",
             "",
             "## Structured Decision Log",
             "| decision_id | phase_key | phase_priority | status | owner | rationale | timestamp |",
             "| --- | --- | --- | --- | --- | --- | --- |",
-            f"| DEC-PHASE-001 | PHASE_01 | P1 | proposed | research | Keep the first phase bounded to one product capability slice plus its verification closure | {timestamp} |",
+            f"| DEC-PHASE-001 | PHASE_01 | P1 | proposed | research | Keep the first phase bounded to concrete implementation and verification surfaces before decomposition | {timestamp} |",
             "",
             "## Interrogation Notes",
-            "- This phase keeps the first emitted spec decomposition-ready by separating the immediate product slice from later planned family work.",
+            "- This phase keeps the first emitted spec decomposition-ready by naming concrete repo surfaces before Taskmaster runs.",
             "",
             "## Verification",
             *(
@@ -324,7 +394,7 @@ def render_phase_spec(
                 if progression_lines
                 else []
             ),
-            "- Confirm emitted artifacts and family state remain mutually traceable.",
+            *(f"- `{command}`" for command in product_plan.verification_commands),
             "",
             "## Exit Criteria",
             "- The first bounded product slice is implemented or explicitly specified with measurable proof expectations and no family-scope drift.",
@@ -336,6 +406,11 @@ def render_phase_spec(
             "",
             "## Risks",
             "- Broad goals may still require later planned slices; those must stay within the frozen bounded family or route to remediation later.",
+            (
+                f"- Governance artifacts remain references only: {', '.join(f'`{path}`' for path in required_artifact_paths)}."
+                if required_artifact_paths
+                else "- Governance artifacts remain references only."
+            ),
             "",
         ]
     )
@@ -437,8 +512,12 @@ def render_spec_review_questions(
     title: str,
     queue_spec_path: str,
     stable_spec_paths: tuple[str, ...],
+    findings: tuple[str, ...],
 ) -> str:
     stable_lines = [f"- `{path}`" for path in stable_spec_paths] or ["- No stable spec copies were discovered."]
+    finding_lines = [f"- {finding}" for finding in findings] or [
+        "- No blocking findings; the package is decomposition-ready as written."
+    ]
     return "\n".join(
         [
             "# Spec Review Questions",
@@ -451,7 +530,7 @@ def render_spec_review_questions(
             f"- **Queue-Spec:** `{queue_spec_path}`",
             "",
             "## Critic Findings",
-            "- No material delta was required to make this package decomposition-ready.",
+            *finding_lines,
             "",
             "## Stable Spec Inputs",
             *stable_lines,
@@ -471,7 +550,16 @@ def render_spec_review_decision(
     reviewed_path: str,
     stable_registry_path: str,
     lineage_path: str,
+    findings: tuple[str, ...],
 ) -> str:
+    finding_lines = [f"- {finding}" for finding in findings] or [
+        "- No blocking findings were recorded during decomposition review."
+    ]
+    decision_line = (
+        "- Approved for downstream decomposition without material spec edits in this run."
+        if review_status != "blocked"
+        else "- Blocked before downstream decomposition until the listed review findings are resolved."
+    )
     return "\n".join(
         [
             "# Spec Review Decision",
@@ -487,7 +575,10 @@ def render_spec_review_decision(
             f"- **Lineage-Record:** `{lineage_path}`",
             "",
             "## Decision",
-            "- Approved for downstream decomposition without material spec edits in this run.",
+            decision_line,
+            "",
+            "## Findings",
+            *finding_lines,
             "",
         ]
     )

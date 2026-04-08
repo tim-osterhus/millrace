@@ -1038,6 +1038,21 @@ In non-stub modes, the supervisor:
 
 AUTO mode intentionally allows only one ready queue group at a time (incident, goalspec, or audit) to keep dispatch deterministic.
 
+### 17.3A GoalSpec Staged Contract
+
+When GoalSpec is active, the shipped staged funnel is:
+
+- `goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis -> optional spec_interview -> spec_review -> taskmaster`
+- `taskaudit` runs only when the current initial-family declaration is complete
+
+The important contract details are:
+
+- objective-profile sync may read `agents/objective/semantic_profile_seed.json`, `agents/objective/semantic_profile_seed.yaml`, or `agents/objective/semantic_profile_seed.yml` to pin workspace-local capability milestones
+- the completion manifest keeps governance artifacts separate from product implementation surfaces and verification surfaces
+- spec synthesis may freeze an initial-family plan with planned later specs instead of forcing one oversized spec
+- spec review blocks traceable but still too-coarse packages before Taskmaster runs
+- Taskmaster emits product-first per-spec shards, and Taskaudit is the only stage that merges a completed family into backlog
+
 ### 17.4 Stub Compatibility Path
 
 In `stub` mode, accepted events are still persisted as deferred requests, and breadcrumb JSON files under `.deferred/` remain available for compatibility/migration.

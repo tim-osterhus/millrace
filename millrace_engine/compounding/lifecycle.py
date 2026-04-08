@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from typing import Literal
 import re
@@ -402,7 +403,11 @@ def _promoted_procedure_id_for(procedure_id: str) -> str:
 
 
 def _filename_token(value: str) -> str:
-    return _FILENAME_TOKEN_RE.sub("-", value.strip()).strip("-") or "procedure"
+    normalized = _FILENAME_TOKEN_RE.sub("-", value.strip()).strip("-") or "procedure"
+    if len(normalized) <= 96:
+        return normalized
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"{normalized[:83]}.{digest}"
 
 
 def _lifecycle_sort_key(item: StoredProcedureLifecycleRecord) -> tuple[float, str]:

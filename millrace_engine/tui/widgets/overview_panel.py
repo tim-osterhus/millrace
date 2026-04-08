@@ -163,7 +163,7 @@ class OverviewPanel(Static):
         runtime: RuntimeOverviewView | None,
         queue: QueueOverviewView | None,
         research: ResearchOverviewView | None,
-        compounding: CompoundingGovernanceOverviewView | None,
+        compounding: CompoundingGovernanceOverviewView | None = None,
         latest_run: LatestRunSummary | None,
         failure: GatewayFailure | None = None,
         display_mode: DisplayMode = DisplayMode.OPERATOR,

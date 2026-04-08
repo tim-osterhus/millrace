@@ -88,7 +88,7 @@ millrace --config /absolute/path/to/workspace/millrace.toml health --json
 millrace --config /absolute/path/to/workspace/millrace.toml doctor
 ```
 
-If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.6.0`.
+If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.6.1`.
 
 The initialized workspace ships with real default model ids for the Codex runner, including `gpt-5.3-codex` and `gpt-5.2`. Those defaults are not placeholders, but they still rely on the local runner environment being usable.
 
@@ -218,6 +218,8 @@ millrace --config millrace.toml queue reorder <task-id> <task-id> ...
 ```
 
 Use `add-task` for execution backlog work. Use `add-idea` to feed research-side intake through `agents/ideas/raw/`.
+
+When research is active, one raw idea follows a deterministic staged funnel: `goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis -> optional spec_interview -> spec_review -> taskmaster`, and `taskaudit` merges only when the current initial-family declaration is complete. The completion manifest keeps governance artifacts separate from implementation surfaces and verification surfaces so the emitted queue spec, phase spec, and task cards stay product-grounded. Projects can also pin semantic milestones with `agents/objective/semantic_profile_seed.json`, `.yaml`, or `.yml`.
 
 In the TUI, use the Add Task and Add Idea modals. Queue reorder is available from the Queue panel.
 

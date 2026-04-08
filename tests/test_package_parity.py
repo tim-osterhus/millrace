@@ -158,6 +158,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`engine_runtime_loop.py`" in readme
     assert "`planes/execution_flows/`" in readme
     assert "`millrace_engine/research/goalspec_stage_support.py`" in readme
+    assert "`goalspec_completion_manifest_draft.py`" in readme
     assert "`goalspec_stage_rendering.py`" in readme
     assert "`tools/repo_guardrails.py`" in readme
     assert "same-change ratchets" in readme
@@ -167,6 +168,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "compounding orient --query builder" in readme
     assert "compounding lint" in readme
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in readme
+    assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in readme
+    assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -217,6 +220,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "compounding orient --query builder" in operator_guide
     assert "compounding lint" in operator_guide
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in operator_guide
+    assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in operator_guide
+    assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 5.7 Governed Compounding Operating Model" in runtime_deep_dive
@@ -238,6 +243,10 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`goalspec_stage_support.py` remains as a thin routing/re-export facade" in runtime_deep_dive
     assert "`tools/repo_guardrails.py`" in runtime_deep_dive
     assert "same-change ratchets" in runtime_deep_dive
+    assert "### 17.3A GoalSpec Staged Contract" in runtime_deep_dive
+    assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in runtime_deep_dive
+    assert "semantic_profile_seed.yaml" in runtime_deep_dive
+    assert "Taskmaster emits product-first per-spec shards" in runtime_deep_dive
 
     tui_doc = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
     assert "## External Supervisor Boundary" in tui_doc

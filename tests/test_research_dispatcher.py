@@ -100,6 +100,57 @@ def _replace_markdown_section(document: str, heading: str, replacement: str) -> 
     return updated + suffix.lstrip("\n")
 
 
+def _field_block_lines(body: str, field_name: str) -> tuple[str, ...]:
+    marker = f"- **{field_name}:**"
+    lines: list[str] = []
+    capture = False
+    for raw_line in body.splitlines():
+        stripped = raw_line.rstrip()
+        if stripped == marker:
+            capture = True
+            continue
+        if not capture:
+            continue
+        if stripped.startswith("- **"):
+            break
+        if stripped.strip():
+            lines.append(stripped.strip().lstrip("- ").strip("`"))
+    return tuple(lines)
+
+
+def _assert_product_grounded_stage_artifacts(queue_spec_text: str, phase_spec_text: str) -> None:
+    queue_lower = queue_spec_text.casefold()
+    phase_lower = phase_spec_text.casefold()
+
+    assert "## Product Surfaces" in queue_spec_text
+    assert "## Governance Artifacts" in queue_spec_text
+    assert "## Implementation Surfaces" in phase_spec_text
+    assert "## Verification Surfaces" in phase_spec_text
+    assert "goalspec draft package" not in queue_lower
+    assert "task queue maintenance" not in queue_lower
+    assert "reviewable runtime implementation slice" not in phase_lower
+    assert "implement the first bounded capability slice" not in phase_lower
+    assert "add or update proof" not in phase_lower
+    assert "close this phase with bounded handoff evidence" not in phase_lower
+
+
+def _assert_product_first_task_cards(cards: object) -> None:
+    bodies = [card.body for card in cards]
+    assert bodies
+
+    for body in bodies:
+        files_to_touch = _field_block_lines(body, "Files to touch")
+        assert files_to_touch
+        assert any(not path.startswith("agents/") for path in files_to_touch)
+        assert not all(path.startswith("agents/") for path in files_to_touch)
+        lowered = body.casefold()
+        assert "goalspec draft package" not in lowered
+        assert "task queue maintenance" not in lowered
+        assert "implement the first bounded capability slice" not in lowered
+        assert "add or update proof" not in lowered
+        assert "close this phase with bounded handoff evidence" not in lowered
+
+
 def _goal_queue_checkpoint(
     *,
     run_id: str,
@@ -821,7 +872,7 @@ def test_research_plane_run_ready_work_executes_auto_goalspec_stages_through_tas
         workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / "goalspec-auto-run.json"
     ).exists()
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
-    assert len(backlog.cards) == 3
+    assert len(backlog.cards) == 4
     assert all(card.spec_id == "SPEC-AUTO-42" for card in backlog.cards)
 
 
@@ -1255,13 +1306,15 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert family_state_path.exists()
     assert paths.taskspending_file.read_text(encoding="utf-8") == pending_scaffold
     backlog = parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file)
-    assert [card.spec_id for card in backlog.cards] == ["SPEC-42", "SPEC-42", "SPEC-42"]
+    assert [card.spec_id for card in backlog.cards] == ["SPEC-42", "SPEC-42", "SPEC-42", "SPEC-42"]
     assert [card.title.split(" - ", 1)[0] for card in backlog.cards] == [
         "SPEC-42 PHASE_01.1",
         "SPEC-42 PHASE_01.2",
         "SPEC-42 PHASE_01.3",
+        "SPEC-42 PHASE_01.4",
     ]
     assert [card.requirement_ids for card in backlog.cards] == [
+        ("REQ-001", "REQ-002"),
         ("REQ-001", "REQ-002"),
         ("REQ-001", "REQ-002"),
         ("REQ-001", "REQ-002"),
@@ -1270,6 +1323,16 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
         ("AC-001", "AC-002"),
         ("AC-001", "AC-002"),
         ("AC-001", "AC-002"),
+        ("AC-001", "AC-002"),
+    ]
+    assert [_field_block_lines(card.body, "Files to touch") for card in backlog.cards] == [
+        ("millrace_engine/research/goalspec_goal_intake.py",),
+        (
+            "millrace_engine/research/goalspec_objective_profile_sync.py",
+            "millrace_engine/research/goalspec_stage_support.py",
+        ),
+        ("tests/test_research_dispatcher.py", "tests/test_goalspec_state.py"),
+        ("tests/test_research_dispatcher.py", "tests/test_goalspec_state.py"),
     ]
 
     finished_text = finished_source_path.read_text(encoding="utf-8")
@@ -1296,8 +1359,13 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert downstream_pending_text in completion_manifest_path.read_text(encoding="utf-8")
     assert downstream_pending_text in completion_report_path.read_text(encoding="utf-8")
     assert downstream_pending_text in archived_reviewed_path.read_text(encoding="utf-8")
-    assert "No material delta" in review_questions_path.read_text(encoding="utf-8")
+    assert "No blocking findings; the package is decomposition-ready as written." in review_questions_path.read_text(
+        encoding="utf-8"
+    )
     assert "`no_material_delta`" in review_decision_path.read_text(encoding="utf-8")
+    assert "Approved for downstream decomposition without material spec edits in this run." in review_decision_path.read_text(
+        encoding="utf-8"
+    )
 
     goal_intake_record = json.loads(goal_intake_record_path.read_text(encoding="utf-8"))
     assert goal_intake_record["schema_version"] == "1.0"
@@ -1323,9 +1391,24 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     completion_manifest = json.loads(completion_manifest_path.read_text(encoding="utf-8"))
     assert completion_manifest["artifact_type"] == "completion_manifest_draft"
     assert completion_manifest["goal_id"] == "IDEA-42"
+    assert completion_manifest["repo_kind"] == "millrace_python_runtime"
     assert completion_manifest["objective_profile_path"] == "agents/reports/acceptance_profiles/idea-42-profile.json"
     assert any(downstream_pending_text in item for item in completion_manifest["open_questions"])
-    assert completion_manifest["required_outputs"][0]["path"] == "agents/ideas/specs/SPEC-42__modernize-goal-intake.md"
+    assert [artifact["path"] for artifact in completion_manifest["required_artifacts"]] == [
+        "agents/ideas/specs/SPEC-42__modernize-goal-intake.md",
+        "agents/specs/stable/golden/SPEC-42__modernize-goal-intake.md",
+        "agents/specs/stable/phase/SPEC-42__phase-01.md",
+        "agents/specs/decisions/IDEA-42__modernize-goal-intake__spec-synthesis.md",
+    ]
+    assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
+        "millrace_engine/research/goalspec_goal_intake.py",
+        "millrace_engine/research/goalspec_objective_profile_sync.py",
+        "millrace_engine/research/goalspec_stage_support.py",
+    ]
+    assert [surface["path"] for surface in completion_manifest["verification_surfaces"]] == [
+        "tests/test_research_dispatcher.py",
+        "tests/test_goalspec_state.py",
+    ]
 
     completion_record = json.loads(completion_record_path.read_text(encoding="utf-8"))
     assert completion_record["artifact_type"] == "completion_manifest_draft_record"
@@ -1396,12 +1479,18 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert taskmaster_record["shard_path"] == "agents/taskspending/SPEC-42.md"
     assert taskmaster_record["finished_source_path"] == "agents/ideas/finished/IDEA-42__modernize-goal-intake.md"
     assert taskmaster_record["acceptance_id_source"] == "derived_from_requirements"
-    assert taskmaster_record["card_count"] == 3
+    assert taskmaster_record["card_count"] == 4
     assert taskmaster_record["profile_selection"]["selected_mode_ref"]["id"] == "mode.research_goalspec"
     assert taskmaster_record["profile_selection"]["task_authoring_profile_ref"]["id"] == "task_authoring.narrow"
     assert taskmaster_record["profile_selection"]["selection_path"] == "mode.task_authoring_profile_ref"
     assert taskmaster_record["profile_selection"]["lookup_path"] == "mode.task_authoring_profile_lookup_ref"
     assert taskmaster_record["profile_selection"]["selection_source"] == "mode"
+    assert [title.split(" - ", 1)[0] for title in taskmaster_record["task_titles"]] == [
+        "SPEC-42 PHASE_01.1",
+        "SPEC-42 PHASE_01.2",
+        "SPEC-42 PHASE_01.3",
+        "SPEC-42 PHASE_01.4",
+    ]
 
     taskaudit_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
     assert taskaudit_record["artifact_type"] == "taskaudit_final_family_merge"
@@ -1409,9 +1498,9 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert taskaudit_record["pending_path"] == "agents/taskspending.md"
     assert taskaudit_record["backlog_path"] == "agents/tasksbacklog.md"
     assert taskaudit_record["provenance_path"] == "agents/task_provenance.json"
-    assert taskaudit_record["pending_card_count"] == 3
+    assert taskaudit_record["pending_card_count"] == 4
     assert taskaudit_record["backlog_card_count_before"] == 0
-    assert taskaudit_record["backlog_card_count_after"] == 3
+    assert taskaudit_record["backlog_card_count_after"] == 4
     assert taskaudit_record["merged_spec_ids"] == ["SPEC-42"]
     assert taskaudit_record["shard_paths"] == ["agents/taskspending/SPEC-42.md"]
 
@@ -1420,6 +1509,8 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert "agents/ideas/finished/IDEA-42__modernize-goal-intake.md" in backlog_text
     assert "agents/ideas/specs_reviewed/SPEC-42__modernize-goal-intake.md" not in backlog_text
     assert "agents/ideas/staging/IDEA-42__modernize-goal-intake.md" not in backlog_text
+    assert "millrace_engine/research/goalspec_goal_intake.py" in backlog_text
+    assert "tests/test_research_dispatcher.py" in backlog_text
 
     task_provenance = json.loads(task_provenance_path.read_text(encoding="utf-8"))
     assert [entry["source_file"] for entry in task_provenance["sources"]] == [
@@ -1427,17 +1518,19 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
         "agents/tasksbacklog.md",
         "agents/tasksarchive.md",
     ]
+    assert task_provenance["sources"][1]["card_count"] == 4
     assert task_provenance["taskaudit"]["record_path"] == "agents/.research_runtime/goalspec/taskaudit/goalspec-run-42.json"
     assert task_provenance["taskaudit"]["run_id"] == "goalspec-run-42"
     assert task_provenance["taskaudit"]["pending_path"] == "agents/taskspending.md"
     assert task_provenance["taskaudit"]["pending_shards"] == ["agents/taskspending/SPEC-42.md"]
-    assert task_provenance["taskaudit"]["pending_card_count"] == 3
-    assert task_provenance["taskaudit"]["merged_backlog_card_count"] == 3
+    assert task_provenance["taskaudit"]["pending_card_count"] == 4
+    assert task_provenance["taskaudit"]["merged_backlog_card_count"] == 4
     assert task_provenance["taskaudit"]["merged_spec_ids"] == ["SPEC-42"]
     assert [entry["title"].split(" - ", 1)[0] for entry in task_provenance["task_cards"]] == [
         "SPEC-42 PHASE_01.1",
         "SPEC-42 PHASE_01.2",
         "SPEC-42 PHASE_01.3",
+        "SPEC-42 PHASE_01.4",
     ]
 
 
@@ -1499,7 +1592,7 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
     ).exists()
     assert not (workspace / "agents" / "taskspending" / "SPEC-77.md").exists()
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
-    assert len(backlog.cards) == 3
+    assert len(backlog.cards) == 4
 
 
 def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answer(
@@ -1873,7 +1966,10 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     assert "Persist completion-manifest drafting state before spec output" not in first_queue_text
     assert "Carry the drafted GoalSpec package into a reviewable runtime implementation slice." not in first_phase_text
     assert "Deliver the first bounded product capability slice for `IDEA-201`" in first_phase_text
-    assert "Implement the first bounded capability slice" in first_phase_text
+    assert "Implement the first bounded capability slice" not in first_phase_text
+    assert "## Implementation Surfaces" in first_phase_text
+    assert "millrace_engine/research/goalspec_goal_intake.py" in first_phase_text
+    assert "tests/test_research_dispatcher.py" in first_phase_text
     assert "smallest bounded spec slice" in first_decision_text
     assert "GoalSpec traceability" not in first_decision_text
     assert "Planned later specs: none" in first_decision_text
@@ -2085,7 +2181,132 @@ def test_execute_spec_synthesis_respects_single_spec_family_cap_for_broad_goal(t
     assert "Planned later specs: none" in decision_text
 
 
-def test_execute_taskmaster_rejects_agents_only_shard_for_open_product_objective(tmp_path: Path) -> None:
+def test_execute_spec_review_blocks_abstract_phase_plan_before_taskmaster(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-block-301"
+    emitted_at = _dt("2026-04-07T13:30:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-301\n"
+            "title: Aura Workshop Vertical Slice\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Workshop Vertical Slice\n\n"
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura Collector\n"
+            "- Aura Conduit\n\n"
+            "## Progression Lines\n"
+            "- Progression from crafting to aura routing to first playable proof.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    phase_path = workspace / synthesis.phase_spec_path
+    phase_text = phase_path.read_text(encoding="utf-8")
+    phase_text = _replace_markdown_section(
+        phase_text,
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                "1. Implement the first bounded capability slice.",
+                "2. Add or update proof for the acceptance path.",
+                "3. Close this phase with bounded handoff evidence.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+    queue_spec_path = workspace / synthesis.queue_spec_path
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-301",
+    ):
+        execute_spec_review(
+            paths,
+            _goal_queue_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                queue_path=queue_spec_path.parent,
+                item_path=queue_spec_path,
+                status=ResearchStatus.SPEC_REVIEW_RUNNING,
+                node_id="spec_review",
+                stage_kind_id="research.spec-review",
+            ),
+            run_id=run_id,
+            emitted_at=emitted_at,
+        )
+
+    review_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "spec_review"
+            / f"{run_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert review_record["review_status"] == "blocked"
+    assert any("Phase package defines 3 numbered Work Plan step" in item["summary"] for item in review_record["findings"])
+    assert any("abstract or handoff-oriented work items" in item["summary"] for item in review_record["findings"])
+    assert queue_spec_path.exists()
+    assert not (workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name).exists()
+
+
+def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:
     workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
         tmp_path,
         run_id="goalspec-taskmaster-product-401",
@@ -2112,30 +2333,35 @@ def test_execute_taskmaster_rejects_agents_only_shard_for_open_product_objective
         resolve_assets=False,
     )
 
-    with pytest.raises(
-        TaskmasterExecutionError,
-        match="open product objective into agents/\\*-only artifact surfaces",
-    ):
-        execute_taskmaster(
-            paths,
-            _goal_queue_checkpoint(
-                run_id="goalspec-taskmaster-product-401",
-                emitted_at=_dt("2026-04-07T14:00:00Z"),
-                queue_path=reviewed_path.parent,
-                item_path=reviewed_path,
-                status=ResearchStatus.TASKMASTER_RUNNING,
-                node_id="taskmaster",
-                stage_kind_id="research.taskmaster",
-            ),
-            dispatch=dispatch,
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
             run_id="goalspec-taskmaster-product-401",
             emitted_at=_dt("2026-04-07T14:00:00Z"),
-        )
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskmaster-product-401",
+        emitted_at=_dt("2026-04-07T14:00:00Z"),
+    )
 
-    assert reviewed_path.exists()
-    assert not (workspace / "agents" / "ideas" / "archive" / reviewed_path.name).exists()
+    shard = parse_task_store((workspace / result.shard_path).read_text(encoding="utf-8"), source_file=workspace / result.shard_path)
+    assert any("src/main/java/com/example/aura/" in card.body for card in shard.cards)
+    assert any("src/test/java/com/example/aura/" in card.body for card in shard.cards)
+    for card in shard.cards:
+        files_to_touch = _field_block_lines(card.body, "Files to touch")
+        assert files_to_touch
+        assert any(not path.startswith("agents/") for path in files_to_touch)
+        assert not all(path.startswith("agents/") for path in files_to_touch)
+
+    assert not reviewed_path.exists()
+    assert (workspace / result.archived_path).exists()
     family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
-    assert family_state["specs"]["SPEC-401"]["status"] == "reviewed"
+    assert family_state["specs"]["SPEC-401"]["status"] == "decomposed"
 
 
 def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_names_repo_paths(
@@ -2200,6 +2426,7 @@ def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_na
     shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
     assert "src/aura/collector.py" in shard_text
     assert "tests/test_aura_collector.py" in shard_text
+    assert "src/main/java/com/example/aura/" in shard_text
     assert not reviewed_path.exists()
     assert (workspace / result.archived_path).exists()
 
@@ -2248,6 +2475,8 @@ def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_p
     )
 
     shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
+    assert "millrace_engine/research/goalspec_goal_intake.py" in shard_text
+    assert "tests/test_research_dispatcher.py" in shard_text
     assert "agents/specs/stable/golden/SPEC-403__modernize-goal-intake.md" in shard_text
     assert not reviewed_path.exists()
     assert (workspace / result.archived_path).exists()
@@ -2340,6 +2569,192 @@ def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_pat
     assert "agents/ideas/archive/SPEC-701__aura-workshop-vertical-slice.md" in shard_text
     assert "GoalSpec draft package" not in shard_text
     assert "task queue maintenance" not in shard_text
+
+
+def test_research_plane_run_ready_work_keeps_aura_seed_product_grounded_through_first_family_shard(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-AURA-710\n"
+            "title: Aura Workshop Vertical Slice\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Workshop Vertical Slice\n\n"
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura Collector\n"
+            "- Aura Conduit\n"
+            "- Aura Reservoir\n"
+            "- Aura Infuser\n"
+            "- infused weapon payoff\n\n"
+            "## Progression Lines\n"
+            "- Progression from crafting to aura routing to infusion.\n"
+            "- Automated validation covers registration, aura behavior, infusion correctness, and the happy path.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = plane.run_ready_work(run_id="goalspec-aura-auto-710", resolve_assets=False)
+
+    assert dispatch is not None
+    assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert plane.snapshot_state().queue_snapshot.selected_family is None
+
+    completion_manifest = json.loads((workspace / "agents" / "audit" / "completion_manifest.json").read_text(encoding="utf-8"))
+    assert completion_manifest["repo_kind"] == "minecraft_fabric_mod"
+    assert any(
+        path.startswith("src/main/java/com/example/aura/")
+        for path in (surface["path"] for surface in completion_manifest["implementation_surfaces"])
+    )
+    assert any(
+        path.startswith("src/main/resources/data/aura/")
+        for path in (surface["path"] for surface in completion_manifest["implementation_surfaces"])
+    )
+    assert any(
+        path.startswith("src/test/java/com/example/aura/")
+        for path in (surface["path"] for surface in completion_manifest["verification_surfaces"])
+    )
+    assert any(
+        path.startswith("src/gametest/java/com/example/aura/")
+        for path in (surface["path"] for surface in completion_manifest["verification_surfaces"])
+    )
+
+    golden_spec_text = (
+        workspace / "agents" / "specs" / "stable" / "golden" / "SPEC-AURA-710__aura-workshop-vertical-slice.md"
+    ).read_text(encoding="utf-8")
+    phase_spec_text = (
+        workspace / "agents" / "specs" / "stable" / "phase" / "SPEC-AURA-710__phase-01.md"
+    ).read_text(encoding="utf-8")
+    _assert_product_grounded_stage_artifacts(golden_spec_text, phase_spec_text)
+    assert "src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java" in golden_spec_text
+    assert "src/main/resources/data/aura/recipes/aura_core.json" in phase_spec_text
+
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    assert family_state["family_complete"] is False
+    assert family_state["spec_order"] == ["SPEC-AURA-710", "SPEC-AURA-710-02", "SPEC-AURA-710-03"]
+    assert family_state["specs"]["SPEC-AURA-710"]["status"] == "decomposed"
+    assert family_state["specs"]["SPEC-AURA-710-02"]["status"] == "planned"
+    assert family_state["specs"]["SPEC-AURA-710-03"]["status"] == "planned"
+
+    taskmaster_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "taskmaster"
+            / "goalspec-aura-auto-710.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert taskmaster_record["card_count"] == 5
+    assert not (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "taskaudit"
+        / "goalspec-aura-auto-710.json"
+    ).exists()
+
+    backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
+    assert backlog.cards == []
+
+    shard = parse_task_store(
+        (workspace / "agents" / "taskspending" / "SPEC-AURA-710.md").read_text(encoding="utf-8"),
+        source_file=workspace / "agents" / "taskspending" / "SPEC-AURA-710.md",
+    )
+    assert len(shard.cards) == 5
+    _assert_product_first_task_cards(shard.cards)
+    assert any("AuraWorkshopVerticalSliceGameTest.java" in card.body for card in shard.cards)
+
+
+def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_backlog(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-PY-711\n"
+            "title: Support Ticket Service\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Support Ticket Service\n\n"
+            "Build the first usable support-ticket web app for a Python service.\n\n"
+            "## Capability Domains\n"
+            "- Ticket creation API\n"
+            "- Agent inbox triage dashboard\n"
+            "- Escalation notifications\n\n"
+            "## Progression Lines\n"
+            "- Progression from ticket intake to assignment to resolution confirmation.\n"
+            "- Automated validation covers API behavior and core service flow.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = plane.run_ready_work(run_id="goalspec-python-auto-711", resolve_assets=False)
+
+    assert dispatch is not None
+    assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+    assert plane.status_store.read() is ResearchStatus.IDLE
+
+    completion_manifest = json.loads((workspace / "agents" / "audit" / "completion_manifest.json").read_text(encoding="utf-8"))
+    assert completion_manifest["repo_kind"] == "python_product"
+    assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
+        "src/support-ticket-service/api.py",
+        "src/support-ticket-service/service.py",
+        "src/support-ticket-service/models.py",
+    ]
+    assert [surface["path"] for surface in completion_manifest["verification_surfaces"]] == [
+        "tests/test_support-ticket-service_api.py",
+        "tests/test_support-ticket-service_service.py",
+    ]
+
+    golden_spec_text = (
+        workspace / "agents" / "specs" / "stable" / "golden" / "SPEC-PY-711__support-ticket-service.md"
+    ).read_text(encoding="utf-8")
+    phase_spec_text = (
+        workspace / "agents" / "specs" / "stable" / "phase" / "SPEC-PY-711__phase-01.md"
+    ).read_text(encoding="utf-8")
+    _assert_product_grounded_stage_artifacts(golden_spec_text, phase_spec_text)
+    assert "src/support-ticket-service/api.py" in golden_spec_text
+    assert "tests/test_support-ticket-service_api.py" in phase_spec_text
+
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    assert family_state["family_complete"] is True
+    assert family_state["spec_order"] == ["SPEC-PY-711"]
+    assert family_state["specs"]["SPEC-PY-711"]["status"] == "decomposed"
+
+    taskaudit_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "taskaudit"
+            / "goalspec-python-auto-711.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert taskaudit_record["status"] == "merged"
+    assert taskaudit_record["pending_card_count"] == 4
+    assert taskaudit_record["backlog_card_count_after"] == 4
+
+    backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
+    assert len(backlog.cards) == 4
+    _assert_product_first_task_cards(backlog.cards)
+    assert any("src/support-ticket-service/api.py" in card.body for card in backlog.cards)
+    assert any("tests/test_support-ticket-service_service.py" in card.body for card in backlog.cards)
+
+    assert (workspace / "agents" / "taskspending.md").read_text(encoding="utf-8") == "# Tasks Pending\n"
+    assert list((workspace / "agents" / "taskspending").glob("*")) == []
 
 
 def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_handoff(

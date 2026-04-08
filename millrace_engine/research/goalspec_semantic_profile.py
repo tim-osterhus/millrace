@@ -121,13 +121,145 @@ def load_semantic_seed_document(path: Path) -> dict[str, Any]:
 
     try:
         import yaml  # type: ignore
-    except ImportError as exc:  # pragma: no cover - test env includes YAML support
-        raise ValueError(f"unable to parse semantic seed {path.as_posix()} without PyYAML") from exc
+    except ImportError:
+        payload = _load_simple_yaml_document(text)
+    else:
+        payload = yaml.safe_load(text)
 
-    payload = yaml.safe_load(text)
     if isinstance(payload, dict):
         return payload
     raise ValueError(f"semantic seed {path.as_posix()} must contain a JSON or YAML object")
+
+
+def _load_simple_yaml_document(text: str) -> dict[str, Any]:
+    """Parse the limited YAML subset used by semantic seed documents."""
+
+    lines = _yaml_nonempty_lines(text)
+    if not lines:
+        return {}
+    payload, index = _parse_yaml_block(lines, start=0, indent=lines[0][0])
+    if index != len(lines):
+        raise ValueError("semantic seed YAML contains trailing content")
+    if not isinstance(payload, dict):
+        raise ValueError("semantic seed YAML must contain a top-level object")
+    return payload
+
+
+def _yaml_nonempty_lines(text: str) -> list[tuple[int, str]]:
+    lines: list[tuple[int, str]] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent % 2 != 0:
+            raise ValueError("semantic seed YAML indentation must use two-space multiples")
+        lines.append((indent, stripped))
+    return lines
+
+
+def _parse_yaml_block(
+    lines: list[tuple[int, str]],
+    *,
+    start: int,
+    indent: int,
+) -> tuple[dict[str, Any] | list[Any], int]:
+    if start >= len(lines):
+        raise ValueError("semantic seed YAML block is incomplete")
+    _, content = lines[start]
+    if content.startswith("- "):
+        return _parse_yaml_list(lines, start=start, indent=indent)
+    return _parse_yaml_mapping(lines, start=start, indent=indent)
+
+
+def _parse_yaml_mapping(
+    lines: list[tuple[int, str]],
+    *,
+    start: int,
+    indent: int,
+) -> tuple[dict[str, Any], int]:
+    payload: dict[str, Any] = {}
+    index = start
+    while index < len(lines):
+        current_indent, content = lines[index]
+        if current_indent < indent:
+            break
+        if current_indent != indent:
+            raise ValueError("semantic seed YAML has inconsistent indentation")
+        if content.startswith("- "):
+            break
+        if ":" not in content:
+            raise ValueError(f"semantic seed YAML mapping entry is invalid: {content}")
+        key, raw_value = content.split(":", 1)
+        key = key.strip()
+        raw_value = raw_value.strip()
+        index += 1
+        if raw_value:
+            payload[key] = _parse_yaml_scalar(raw_value)
+            continue
+        if index >= len(lines) or lines[index][0] <= current_indent:
+            payload[key] = ""
+            continue
+        child, index = _parse_yaml_block(lines, start=index, indent=lines[index][0])
+        payload[key] = child
+    return payload, index
+
+
+def _parse_yaml_list(
+    lines: list[tuple[int, str]],
+    *,
+    start: int,
+    indent: int,
+) -> tuple[list[Any], int]:
+    payload: list[Any] = []
+    index = start
+    while index < len(lines):
+        current_indent, content = lines[index]
+        if current_indent < indent:
+            break
+        if current_indent != indent:
+            raise ValueError("semantic seed YAML has inconsistent indentation")
+        if not content.startswith("- "):
+            break
+        item_content = content[2:].strip()
+        index += 1
+        if not item_content:
+            if index >= len(lines) or lines[index][0] <= current_indent:
+                payload.append("")
+                continue
+            child, index = _parse_yaml_block(lines, start=index, indent=lines[index][0])
+            payload.append(child)
+            continue
+        if ":" not in item_content:
+            payload.append(_parse_yaml_scalar(item_content))
+            continue
+        key, raw_value = item_content.split(":", 1)
+        mapping_item: dict[str, Any] = {key.strip(): _parse_yaml_scalar(raw_value.strip()) if raw_value.strip() else ""}
+        if index < len(lines) and lines[index][0] > current_indent:
+            child, index = _parse_yaml_block(lines, start=index, indent=lines[index][0])
+            if raw_value.strip():
+                if not isinstance(child, dict):
+                    raise ValueError("semantic seed YAML list item continuation must be a mapping")
+                mapping_item.update(child)
+            else:
+                mapping_item[key.strip()] = child
+        payload.append(mapping_item)
+    return payload, index
+
+
+def _parse_yaml_scalar(value: str) -> Any:
+    lowered = value.lower()
+    if lowered == "null":
+        return None
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    if re.fullmatch(r"-?\d+", value):
+        return int(value)
+    return value
 
 
 def build_goal_semantic_profile(

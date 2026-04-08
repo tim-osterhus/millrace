@@ -38,14 +38,27 @@ def _render_completion_manifest_report(
             f"- **Goal-ID:** {source.idea_id}",
             f"- **Title:** {source.title}",
             f"- **Source-Path:** `{source.relative_source_path}`",
+            f"- **Repo-Kind:** `{draft_state.repo_kind}`",
             "",
             "## Acceptance Focus",
             *(f"- {item}" for item in draft_state.acceptance_focus),
             "",
-            "## Planned Outputs",
+            "## Required Artifacts",
             *(
                 f"- `{artifact.artifact_kind}`: `{artifact.path}` ({artifact.purpose})"
-                for artifact in draft_state.required_outputs
+                for artifact in draft_state.required_artifacts
+            ),
+            "",
+            "## Implementation Surfaces",
+            *(
+                f"- `{surface.surface_kind}`: `{surface.path}` ({surface.purpose})"
+                for surface in draft_state.implementation_surfaces
+            ),
+            "",
+            "## Verification Surfaces",
+            *(
+                f"- `{surface.surface_kind}`: `{surface.path}` ({surface.purpose})"
+                for surface in draft_state.verification_surfaces
             ),
             "",
             "## Open Questions",

@@ -231,6 +231,20 @@ class CompletionManifestDraftArtifact(ContractModel):
         return _normalize_required_text(value, field_name=field_name)
 
 
+class CompletionManifestDraftSurface(ContractModel):
+    """One product implementation or verification surface captured in the manifest."""
+
+    surface_kind: str
+    path: str
+    purpose: str
+
+    @field_validator("surface_kind", "path", "purpose")
+    @classmethod
+    def validate_required_text(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        return _normalize_required_text(value, field_name=field_name)
+
+
 class CompletionManifestDraftStateRecord(ContractModel):
     """Canonical completion-manifest draft state for the current GoalSpec source."""
 
@@ -247,9 +261,12 @@ class CompletionManifestDraftStateRecord(ContractModel):
     objective_profile_path: str
     completion_manifest_plan_path: str
     goal_intake_record_path: str
+    repo_kind: str
     acceptance_focus: tuple[str, ...]
     open_questions: tuple[str, ...]
-    required_outputs: tuple[CompletionManifestDraftArtifact, ...]
+    required_artifacts: tuple[CompletionManifestDraftArtifact, ...]
+    implementation_surfaces: tuple[CompletionManifestDraftSurface, ...]
+    verification_surfaces: tuple[CompletionManifestDraftSurface, ...]
 
     @field_validator("updated_at", mode="before")
     @classmethod
@@ -267,6 +284,7 @@ class CompletionManifestDraftStateRecord(ContractModel):
         "objective_profile_path",
         "completion_manifest_plan_path",
         "goal_intake_record_path",
+        "repo_kind",
     )
     @classmethod
     def validate_required_text(cls, value: str, info: object) -> str:
@@ -448,6 +466,7 @@ from .goalspec_stage_support import (
 __all__ = [
     "AcceptanceProfileRecord",
     "CompletionManifestDraftArtifact",
+    "CompletionManifestDraftSurface",
     "CompletionManifestDraftExecutionResult",
     "CompletionManifestDraftRecord",
     "CompletionManifestDraftStateRecord",

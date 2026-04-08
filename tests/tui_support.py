@@ -15,9 +15,13 @@ from millrace_engine.paths import RuntimePaths
 from millrace_engine.research.interview import create_manual_interview_question
 from millrace_engine.tui.app import MillraceTUIApplication
 from millrace_engine.tui.models import (
+    RunCompoundingView,
+    RunContextFactSelectionSummaryView,
+    RunCreatedProcedureSummaryView,
     RunDetailView,
     RunIntegrationSummaryView,
     RunPolicyEvidenceView,
+    RunProcedureSelectionSummaryView,
     RunTransitionView,
     SelectionDecisionView,
     SelectionSummaryView,
@@ -302,6 +306,39 @@ def sample_run_detail(*, run_id: str = "smoke-standard", observed_at: datetime |
             effective_sequence=("builder", "qa"),
             available_execution_nodes=("builder", "qa"),
             reason="Builder routes to qa.",
+        ),
+        compounding=RunCompoundingView(
+            created_count=1,
+            procedure_selection_count=1,
+            context_fact_selection_count=1,
+            injected_procedure_count=1,
+            injected_context_fact_count=1,
+            created_procedures=(
+                RunCreatedProcedureSummaryView(
+                    procedure_id=f"proc.run.{run_id}.builder",
+                    scope="run",
+                    source_stage="builder",
+                    title="Builder repair procedure",
+                ),
+            ),
+            procedure_selections=(
+                RunProcedureSelectionSummaryView(
+                    stage="builder",
+                    node_id="builder",
+                    considered_count=1,
+                    injected_count=1,
+                    injected_ids=("proc.workspace.builder.reviewed",),
+                ),
+            ),
+            context_fact_selections=(
+                RunContextFactSelectionSummaryView(
+                    stage="builder",
+                    node_id="builder",
+                    considered_count=1,
+                    injected_count=1,
+                    injected_ids=("fact.workspace.builder.audit",),
+                ),
+            ),
         ),
         transitions=(
             RunTransitionView(

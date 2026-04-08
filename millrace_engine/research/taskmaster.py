@@ -21,7 +21,7 @@ from ..markdown import parse_task_store, write_text_atomic
 from ..materialization import ArchitectureMaterializer, MaterializationError
 from ..paths import RuntimePaths
 from .dispatcher import CompiledResearchDispatch
-from .goalspec import GoalSpecExecutionError
+from .goalspec import CompletionManifestDraftStateRecord, GoalSpecExecutionError
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
 from .goalspec_persistence import _load_objective_profile_inputs
 from .goalspec_scope_diagnostics import (
@@ -213,6 +213,31 @@ def _strict_files_to_touch(
     return _dedupe(filtered)
 
 
+def _completion_manifest_surface_paths(paths: RuntimePaths) -> tuple[str, ...]:
+    if not paths.audit_completion_manifest_file.exists():
+        return ()
+    manifest = _load_json_model(paths.audit_completion_manifest_file, CompletionManifestDraftStateRecord)
+    ordered = [
+        *[surface.path for surface in manifest.implementation_surfaces],
+        *[surface.path for surface in manifest.verification_surfaces],
+    ]
+    return _dedupe([path for path in ordered if path and not path.startswith("agents/")])
+
+
+def _phase_step_files_to_touch(
+    phase_step_description: str,
+    *,
+    default_paths: tuple[str, ...],
+) -> tuple[str, ...]:
+    step_paths = _extract_repo_relative_paths(phase_step_description)
+    non_agent_paths = tuple(path for path in step_paths if not path.startswith("agents/"))
+    if non_agent_paths:
+        return non_agent_paths
+    if step_paths:
+        return step_paths
+    return default_paths
+
+
 def _task_card_files_to_touch(body: str) -> tuple[str, ...]:
     lines = _field_block_lines(body, "Files to touch")
     return _dedupe([line.strip().strip("-* ").strip("`") for line in lines])
@@ -303,8 +328,8 @@ def _render_task_card(
     steps_block = "\n".join(
         [
             f"  1. Implement `{phase_step_id}` by executing this bounded slice: {phase_step_description}.",
-            f"  2. Preserve strict traceability for `{spec_id}` across the reviewed and stable spec artifacts before handoff.",
-            "  3. Run the listed verification commands and keep the shard ready for Taskaudit without editing task stores.",
+            f"  2. Keep the touched product surfaces aligned with the reviewed `{spec_id}` acceptance scope instead of expanding into unrelated repo areas.",
+            "  3. Run the listed product verification commands and leave task-store/governance artifacts untouched unless trace metadata truly needs refresh.",
         ]
     )
     verification_block = "\n".join(f"  - `{command}`" for command in verification_commands)
@@ -660,6 +685,7 @@ def execute_taskmaster(
 
     dependency_paths = _dependency_paths(reviewed_text)
     verification_commands = _verification_commands(reviewed_text)
+    product_surface_paths = _completion_manifest_surface_paths(paths)
     archived_path = paths.ideas_archive_dir / reviewed_spec_path.name
     archived_relative_path = _relative_path(archived_path, relative_to=paths.root)
     path_replacements = {reviewed_relative_path: archived_relative_path}
@@ -670,7 +696,7 @@ def execute_taskmaster(
         )
         path_replacements[family_state.source_idea_path] = finished_source_relative_path
     dependency_paths = _rewrite_emitted_task_paths(dependency_paths, replacements=path_replacements)
-    files_to_touch = _rewrite_emitted_task_paths(
+    default_files_to_touch = _rewrite_emitted_task_paths(
         _strict_files_to_touch(
             reviewed_path=reviewed_relative_path,
             stable_spec_paths=stable_spec_paths,
@@ -678,7 +704,11 @@ def execute_taskmaster(
         ),
         replacements=path_replacements,
     )
-    if not files_to_touch:
+    product_default_files_to_touch = _rewrite_emitted_task_paths(
+        product_surface_paths,
+        replacements=path_replacements,
+    )
+    if not default_files_to_touch and not product_default_files_to_touch:
         raise TaskmasterExecutionError(f"Taskmaster could not resolve Files to touch for {spec_id}")
     enforce_open_product_lane = _is_open_product_objective(
         family_phase=family_state.family_phase,
@@ -698,6 +728,7 @@ def execute_taskmaster(
         else ""
     )
 
+    task_dependencies = _dedupe([archived_relative_path, *dependency_paths, *stable_spec_paths])
     shard_text = "\n\n".join(
         _render_task_card(
             emitted_at=emitted_at,
@@ -708,52 +739,67 @@ def execute_taskmaster(
             acceptance_ids=acceptance_ids,
             phase_step_id=phase_step_id,
             phase_step_description=phase_step_description,
-            files_to_touch=files_to_touch,
+            files_to_touch=_phase_step_files_to_touch(
+                phase_step_description,
+                default_paths=(
+                    product_default_files_to_touch
+                    if enforce_open_product_lane and product_default_files_to_touch
+                    else default_files_to_touch
+                ),
+            ),
             verification_commands=verification_commands,
-            dependencies=dependency_paths or phase_relative_paths,
+            dependencies=task_dependencies,
         )
         for phase_step_id, phase_step_description in phase_steps
     ).rstrip() + "\n"
-    _objective_state, profile = _load_objective_profile_inputs(paths)
-    scope_record = evaluate_scope_divergence(
-        run_id=run_id,
-        emitted_at=emitted_at,
-        goal_id=family_state.goal_id or frontmatter.get("idea_id", "").strip() or spec_id,
-        title=frontmatter.get("title", "").strip() or spec_id,
-        stage_name="taskmaster",
-        source_path=family_state.source_idea_path or reviewed_relative_path,
-        expected_scope=infer_goal_scope_kind(
+    if paths.objective_profile_sync_state_file.exists():
+        _objective_state, profile = _load_objective_profile_inputs(paths)
+        scope_record = evaluate_scope_divergence(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            goal_id=family_state.goal_id or frontmatter.get("idea_id", "").strip() or spec_id,
             title=frontmatter.get("title", "").strip() or spec_id,
-            source_body=reviewed_text,
-            semantic_summary=profile.semantic_profile.objective_summary,
-            capability_domains=tuple(profile.semantic_profile.capability_domains),
-        ),
-        goal_anchor_tokens=build_goal_anchor_tokens(
-            title=frontmatter.get("title", "").strip() or spec_id,
-            source_body=reviewed_text,
-            semantic_summary=profile.semantic_profile.objective_summary,
-            capability_domains=tuple(profile.semantic_profile.capability_domains),
-            progression_lines=tuple(profile.semantic_profile.progression_lines),
-        ),
-        surfaces=(
-            ("reviewed_spec", reviewed_text),
-            (
-                "task_surfaces",
-                "\n".join(
-                    (
-                        shard_text,
-                        "Files to touch:",
-                        *(f"- {path}" for path in files_to_touch),
-                    )
+            stage_name="taskmaster",
+            source_path=family_state.source_idea_path or reviewed_relative_path,
+            expected_scope=infer_goal_scope_kind(
+                title=frontmatter.get("title", "").strip() or spec_id,
+                source_body=reviewed_text,
+                semantic_summary=profile.semantic_profile.objective_summary,
+                capability_domains=tuple(profile.semantic_profile.capability_domains),
+            ),
+            goal_anchor_tokens=build_goal_anchor_tokens(
+                title=frontmatter.get("title", "").strip() or spec_id,
+                source_body=reviewed_text,
+                semantic_summary=profile.semantic_profile.objective_summary,
+                capability_domains=tuple(profile.semantic_profile.capability_domains),
+                progression_lines=tuple(profile.semantic_profile.progression_lines),
+            ),
+            surfaces=(
+                ("reviewed_spec", reviewed_text),
+                (
+                    "task_surfaces",
+                    "\n".join(
+                        (
+                            shard_text,
+                            "Files to touch:",
+                            *(
+                                f"- {path}"
+                                for path in (
+                                    product_default_files_to_touch
+                                    if enforce_open_product_lane and product_default_files_to_touch
+                                    else default_files_to_touch
+                                )
+                            ),
+                        )
+                    ),
                 ),
             ),
-        ),
-    )
-    if scope_record.decision == "blocked":
-        record_path = write_scope_divergence_record(paths, scope_record)
-        raise TaskmasterExecutionError(
-            f"Scope divergence blocked {spec_id} during taskmaster; diagnostic: {record_path}"
         )
+        if scope_record.decision == "blocked":
+            record_path = write_scope_divergence_record(paths, scope_record)
+            raise TaskmasterExecutionError(
+                f"Scope divergence blocked {spec_id} during taskmaster; diagnostic: {record_path}"
+            )
     write_text_atomic(shard_path, shard_text)
 
     task_titles = _validate_strict_shard(

@@ -39,7 +39,11 @@ from millrace_engine.research.specs import (
     stable_spec_metadata_from_file,
     write_goal_spec_family_state,
 )
-from millrace_engine.research.goalspec import CompletionManifestDraftStateRecord, SpecSynthesisRecord
+from millrace_engine.research.goalspec import (
+    CompletionManifestDraftStateRecord,
+    CompletionManifestDraftSurface,
+    SpecSynthesisRecord,
+)
 from millrace_engine.research.taskmaster import (
     TASKMASTER_ARTIFACT_SCHEMA_VERSION,
     TaskAuthoringProfileSelection,
@@ -66,6 +70,7 @@ from millrace_engine.research.taskaudit import (
         ("evaluate_initial_family_plan_guard", evaluate_initial_family_plan_guard),
         ("resolve_family_governor_state", resolve_family_governor_state),
         ("CompletionManifestDraftStateRecord", CompletionManifestDraftStateRecord),
+        ("CompletionManifestDraftSurface", CompletionManifestDraftSurface),
         ("SpecSynthesisRecord", SpecSynthesisRecord),
         ("TASKMASTER_ARTIFACT_SCHEMA_VERSION", TASKMASTER_ARTIFACT_SCHEMA_VERSION),
         ("TaskAuthoringProfileSelection", TaskAuthoringProfileSelection),
@@ -202,6 +207,52 @@ def test_goal_spec_family_state_validates_and_round_trips_with_frozen_initial_pl
     assert plan.family_policy_sha256
     assert json.loads(plan.model_dump_json())["completed_at"] == ""
     assert load_goal_spec_family_state(state_path) == persisted
+
+
+def test_completion_manifest_state_tracks_artifacts_and_product_surfaces_separately() -> None:
+    state = CompletionManifestDraftStateRecord.model_validate(
+        {
+            "draft_id": "idea-42-completion-manifest",
+            "goal_id": "IDEA-42",
+            "title": "Aura Workshop Vertical Slice",
+            "run_id": "goalspec-run-42",
+            "updated_at": "2026-04-07T12:00:00Z",
+            "source_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
+            "research_brief_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
+            "objective_profile_state_path": "agents/objective/profile_sync_state.json",
+            "objective_profile_path": "agents/reports/acceptance_profiles/idea-42-profile.json",
+            "completion_manifest_plan_path": "agents/reports/completion_manifest_plan.md",
+            "goal_intake_record_path": "agents/.research_runtime/goalspec/goal_intake/goalspec-run-42.json",
+            "repo_kind": "minecraft_fabric_mod",
+            "acceptance_focus": ["Collector works", "Flow validates"],
+            "open_questions": ["Implementation remains open."],
+            "required_artifacts": [
+                {
+                    "artifact_kind": "queue_spec",
+                    "path": "agents/ideas/specs/SPEC-42__aura-workshop-vertical-slice.md",
+                    "purpose": "Primary queue spec for downstream review.",
+                }
+            ],
+            "implementation_surfaces": [
+                {
+                    "surface_kind": "registration",
+                    "path": "src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java",
+                    "purpose": "Register the first playable aura content.",
+                }
+            ],
+            "verification_surfaces": [
+                {
+                    "surface_kind": "flow_test",
+                    "path": "src/test/java/com/example/aura/AuraWorkshopVerticalSliceFlowTest.java",
+                    "purpose": "Lock the bounded gameplay flow.",
+                }
+            ],
+        }
+    )
+
+    assert state.required_artifacts[0].path.startswith("agents/")
+    assert state.implementation_surfaces[0].path.startswith("src/")
+    assert state.verification_surfaces[0].path.startswith("src/test/")
 
 
 def test_goal_spec_family_state_rejects_specs_without_matching_spec_order() -> None:

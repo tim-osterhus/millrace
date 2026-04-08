@@ -146,6 +146,7 @@ from .taskaudit import (
 from .goalspec import (
     AcceptanceProfileRecord,
     CompletionManifestDraftArtifact,
+    CompletionManifestDraftSurface,
     CompletionManifestDraftExecutionResult,
     CompletionManifestDraftRecord,
     CompletionManifestDraftStateRecord,
@@ -229,6 +230,7 @@ __all__ = [
     "ResearchGovernanceReport",
     "SpecSynthesisIdempotencyDecision",
     "CompletionManifestDraftArtifact",
+    "CompletionManifestDraftSurface",
     "CompletionManifestDraftExecutionResult",
     "CompletionManifestDraftRecord",
     "CompletionManifestDraftStateRecord",

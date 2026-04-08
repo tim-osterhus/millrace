@@ -20,6 +20,7 @@ from .goalspec_helpers import (
     _resolve_path_token,
     _slugify,
 )
+from .goalspec_product_planning import derive_goal_product_plan
 from .governance import (
     evaluate_initial_family_plan_guard,
     resolve_family_governor_state,
@@ -69,6 +70,7 @@ def _build_completion_manifest_draft_state(
     golden_spec_path = paths.specs_stable_golden_dir / f"{spec_id}__{slug}.md"
     phase_spec_path = paths.specs_stable_phase_dir / f"{spec_id}__phase-01.md"
     decision_path = paths.specs_decisions_dir / f"{Path(source.source_path).stem}__spec-synthesis.md"
+    product_plan = derive_goal_product_plan(source=source, profile=profile)
     open_questions = profile.hard_blockers or (
         "Spec Review and task generation remain downstream after this draft synthesis pass.",
     )
@@ -84,9 +86,10 @@ def _build_completion_manifest_draft_state(
         objective_profile_path=objective_state.profile_path,
         completion_manifest_plan_path=_relative_path(paths.completion_manifest_plan_file, relative_to=paths.root),
         goal_intake_record_path=objective_state.goal_intake_record_path,
+        repo_kind=product_plan.repo_kind,
         acceptance_focus=profile.milestones,
         open_questions=open_questions,
-        required_outputs=(
+        required_artifacts=(
             CompletionManifestDraftArtifact(
                 artifact_kind="queue_spec",
                 path=_relative_path(queue_spec_path, relative_to=paths.root),
@@ -108,6 +111,8 @@ def _build_completion_manifest_draft_state(
                 purpose="Critic/designer/clarifier synthesis summary for traceability.",
             ),
         ),
+        implementation_surfaces=product_plan.implementation_surfaces,
+        verification_surfaces=product_plan.verification_surfaces,
     )
 
 

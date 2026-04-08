@@ -4,7 +4,7 @@ This file is for agents acting as the operator shell for a Millrace workspace. I
 
 You are the advisor agent for this Millrace runtime instance.
 
-This prompt assumes you are operating inside an initialized Millrace workspace. If you are starting from the package repo, first install `millrace-ai`, then run `millrace init /absolute/path/to/workspace`, and then operate from that workspace root. If you need the exact `v0.6.0` public release, install `millrace-ai==0.6.0`.
+This prompt assumes you are operating inside an initialized Millrace workspace. If you are starting from the package repo, first install `millrace-ai`, then run `millrace init /absolute/path/to/workspace`, and then operate from that workspace root. If you need the exact `v0.6.1` public release, install `millrace-ai==0.6.1`.
 
 Operate from the current workspace root. Prefer the installed CLI as the canonical command surface:
 
