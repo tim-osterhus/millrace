@@ -277,7 +277,7 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "c9bc11bb365490ba2398064a6aaf0fc0c9e9289cd6f3275cabedd8f0f934ef0e",
+      "sha256": "299cd6b699abe91769e535169d64a778be1db89fd678bf524343453c5f5aaf43",
       "size": 8910,
       "size_bytes": 9990,
       "source": "runtime"
@@ -286,7 +286,7 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "4ff575442638fae586b880e5eb683cfff88ae82e009d4d0dd336c6c36e76d936",
+      "sha256": "366f4f0d27783a3e5963ed51c2ee5a4eed9ee13ebf948394d59165fb360744a1",
       "size": 19879,
       "size_bytes": 19879,
       "source": "runtime"
@@ -295,7 +295,7 @@
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "7f1f1ff88f3a5b5f404af53b16b0a234c550280cc76cf1a92f8f771bd4e6db94",
+      "sha256": "c45550010a5cb54206d4cbea974f3d6907fcde8b9497179f37c209f2c0c2ef38",
       "size": 22645,
       "size_bytes": 22645,
       "source": "runtime"

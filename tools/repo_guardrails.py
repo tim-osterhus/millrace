@@ -79,6 +79,12 @@ class ActiveBudgetException:
     rationale: str | None = None
 
 
+@dataclass(frozen=True)
+class CycleStatus:
+    unexpected: tuple[tuple[str, ...], ...]
+    stale_allowed: tuple[tuple[str, ...], ...]
+
+
 def _load_config() -> GuardrailConfig:
     return cast(GuardrailConfig, tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8")))
 
@@ -373,20 +379,26 @@ def _tarjan_scc(nodes: set[str], edges: dict[str, set[str]]) -> list[tuple[str, 
     return sorted(components, key=lambda item: (-len(item), item))
 
 
-def _run_cycles(config: GuardrailConfig) -> int:
+def _cycle_status(config: GuardrailConfig) -> CycleStatus:
     allowed = {tuple(sorted(entry["modules"])) for entry in config["cycles"]["allowed"]}
     modules, edges = _module_graph()
     observed = set(_tarjan_scc(modules, edges))
-    failures = sorted(observed - allowed)
-    stale = sorted(allowed - observed)
-    for component in stale:
+    return CycleStatus(
+        unexpected=tuple(sorted(observed - allowed)),
+        stale_allowed=tuple(sorted(allowed - observed)),
+    )
+
+
+def _run_cycles(config: GuardrailConfig) -> int:
+    status = _cycle_status(config)
+    for component in status.stale_allowed:
         print(
-            "stale cycle exception: " + ", ".join(component),
+            "stale allowed cycle: " + ", ".join(component),
             file=sys.stderr,
         )
-    if failures:
+    if status.unexpected:
         print("unexpected import cycles:", file=sys.stderr)
-        for component in failures:
+        for component in status.unexpected:
             print("  - " + ", ".join(component), file=sys.stderr)
         return 1
     return 0

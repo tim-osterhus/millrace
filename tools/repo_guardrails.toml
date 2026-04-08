@@ -85,33 +85,6 @@ tests = [
 
 [[cycles.allowed]]
 modules = [
-  "millrace_engine.queue",
-  "millrace_engine.research.audit",
-  "millrace_engine.research.audit_gate_helpers",
-  "millrace_engine.research.audit_remediation_helpers",
-  "millrace_engine.research.audit_storage_helpers",
-  "millrace_engine.research.dispatcher",
-  "millrace_engine.research.goalspec",
-  "millrace_engine.research.goalspec_helpers",
-  "millrace_engine.research.goalspec_persistence",
-  "millrace_engine.research.goalspec_stage_support",
-  "millrace_engine.research.governance",
-  "millrace_engine.research.incident_intake_helpers",
-  "millrace_engine.research.incident_remediation_helpers",
-  "millrace_engine.research.incident_state_helpers",
-  "millrace_engine.research.incidents",
-  "millrace_engine.research.interview",
-  "millrace_engine.research.queues",
-  "millrace_engine.research.research_progress_watchdog",
-  "millrace_engine.research.research_queue_discovery",
-  "millrace_engine.research.research_state_store",
-  "millrace_engine.research.state",
-  "millrace_engine.research.taskaudit",
-  "millrace_engine.research.taskmaster",
-]
-
-[[cycles.allowed]]
-modules = [
   "millrace_engine.compiler_models",
   "millrace_engine.compiler_rebinding",
 ]
