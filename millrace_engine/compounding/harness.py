@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-import json
-import re
 
 from ..assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKind
 from ..config import CompoundingProfile, LoadedConfig, diff_config_fields
@@ -30,7 +30,6 @@ from ..contract_harness import (
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from ..standard_runtime import preview_standard_runtime_selection
-
 
 DEFAULT_HARNESS_BASELINE_REF = "workspace.live"
 DEFAULT_HARNESS_BENCHMARK_SUITE_REF = "preview.standard.v1"

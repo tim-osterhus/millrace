@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-import json
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -20,7 +20,11 @@ from .specs import (
 )
 
 if TYPE_CHECKING:
-    from .incident_documents import IncidentDocument, IncidentFixSpecRecord, IncidentRemediationRecord
+    from .incident_documents import (
+        IncidentDocument,
+        IncidentFixSpecRecord,
+        IncidentRemediationRecord,
+    )
 
 
 def incident_fix_spec_record(
@@ -31,8 +35,18 @@ def incident_fix_spec_record(
 ) -> "IncidentFixSpecRecord":
     """Derive the remediation-spec path family for one resolved incident."""
 
-    from .incident_document_rendering import _scope_summary_for_incident, _slugify, _spec_id_for_incident
-    from .incident_documents import IncidentFixSpecRecord, _extract_markdown_field, _markdown_section, _parse_frontmatter, _strip_ticks
+    from .incident_document_rendering import (
+        _scope_summary_for_incident,
+        _slugify,
+        _spec_id_for_incident,
+    )
+    from .incident_documents import (
+        IncidentFixSpecRecord,
+        _extract_markdown_field,
+        _markdown_section,
+        _parse_frontmatter,
+        _strip_ticks,
+    )
     from .path_helpers import _relative_path, _resolve_path_token
 
     incident_text = incident_path.read_text(encoding="utf-8")

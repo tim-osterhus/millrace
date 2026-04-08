@@ -8,7 +8,12 @@ from typing import Any, Callable, TypeVar
 
 from pydantic import ValidationError
 
-from ..control_common import ControlError, expected_error_message, single_line_message, validation_error_message
+from ..control_common import (
+    ControlError,
+    expected_error_message,
+    single_line_message,
+    validation_error_message,
+)
 from .formatting import runtime_event_view
 from .models import EventLogView, FailureCategory, GatewayFailure, GatewayResult
 

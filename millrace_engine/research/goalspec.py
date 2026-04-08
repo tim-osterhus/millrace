@@ -17,14 +17,13 @@ from .goalspec_helpers import (
     _normalize_required_text,
     resolve_goal_source,
 )
-from .goalspec_semantic_profile import GoalSemanticProfile
 from .goalspec_scope_diagnostics import ScopeDivergenceRecord, ScopeSurfaceDiagnostic
+from .goalspec_semantic_profile import GoalSemanticProfile
 from .governance import InitialFamilyPolicyPinDecision
 from .specs import (
     GoalSpecDecompositionProfile,
 )
 from .state import ResearchQueueFamily, ResearchQueueOwnership
-
 
 GOALSPEC_ARTIFACT_SCHEMA_VERSION = "1.0"
 

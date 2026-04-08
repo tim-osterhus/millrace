@@ -186,7 +186,10 @@ def evaluate_governance_canary(*, paths: RuntimePaths) -> GovernanceCanaryReport
 def build_research_governance_report(paths: RuntimePaths) -> ResearchGovernanceReport:
     """Load additive governance visibility for the research report surface."""
 
-    from .goalspec_delivery_integrity import load_goalspec_delivery_integrity_report, sync_goalspec_delivery_integrity
+    from .goalspec_delivery_integrity import (
+        load_goalspec_delivery_integrity_report,
+        sync_goalspec_delivery_integrity,
+    )
     from .research_progress_watchdog import sync_progress_watchdog
 
     queue_governor = load_queue_governor_report(paths.queue_governor_report_file)

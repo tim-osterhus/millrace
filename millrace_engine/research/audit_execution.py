@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
-import json
 
 from ..baseline_assets import packaged_baseline_asset
 from ..contracts import AuditContract, AuditExecutionFinding, AuditExecutionReport, ResearchStatus

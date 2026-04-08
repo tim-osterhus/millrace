@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from ..contract_compounding import CompoundingFlushCheckpoint, CompoundingFlushMilestone, ReusableProcedureArtifact
+from ..context_facts import ensure_workspace_candidate_context_fact
+from ..contract_compounding import (
+    CompoundingFlushCheckpoint,
+    CompoundingFlushMilestone,
+    ReusableProcedureArtifact,
+)
 from ..contract_context_facts import ContextFactArtifact
 from ..contract_core import StageType
-from ..context_facts import ensure_workspace_candidate_context_fact
 from ..paths import RuntimePaths
 from .lifecycle import ensure_workspace_candidate_procedure
-
 
 _RECOVERY_SUCCESS_EDGE_IDS = frozenset(
     {

@@ -6,8 +6,8 @@ from .manifest import LoadedStagingManifest, StagingManifest, load_staging_manif
 from .staging import (
     PublishCommitReport,
     PublishPreflightReport,
-    StagingSelectionReport,
     StagingPublishError,
+    StagingSelectionReport,
     StagingSyncEntry,
     StagingSyncReport,
     commit_staging_repo,

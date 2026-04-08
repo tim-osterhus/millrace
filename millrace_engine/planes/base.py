@@ -8,7 +8,6 @@ from pathlib import Path
 from ..config import EngineConfig
 from ..paths import RuntimePaths
 
-
 StageCommandSpec = Sequence[str] | None
 StageCommandMap = Mapping[object, StageCommandSpec]
 

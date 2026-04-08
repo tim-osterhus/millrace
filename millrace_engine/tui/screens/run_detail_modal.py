@@ -11,7 +11,12 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
 
-from ..formatting import format_timestamp, run_integration_summary_lines, run_policy_summary_lines, run_transition_summary_lines
+from ..formatting import (
+    format_timestamp,
+    run_integration_summary_lines,
+    run_policy_summary_lines,
+    run_transition_summary_lines,
+)
 from ..gateway import RuntimeGateway
 from ..models import FailureCategory, GatewayFailure, GatewayResult, RunDetailView
 from ..workers import gateway_failure_from_exception

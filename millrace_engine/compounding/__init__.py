@@ -7,8 +7,6 @@ from .finalization import (
     flush_milestone_for_transition,
     flush_run_scoped_compounding_candidates,
 )
-from .integrity import build_compounding_integrity_report
-from .orientation import build_compounding_orientation_snapshot
 from .harness import (
     discover_harness_benchmark_results,
     discover_harness_candidates,
@@ -17,9 +15,10 @@ from .harness import (
     harness_benchmark_result_for_id,
     harness_candidate_for_id,
     harness_recommendation_for_id,
-    run_harness_search,
     run_harness_benchmark,
+    run_harness_search,
 )
+from .integrity import build_compounding_integrity_report
 from .lifecycle import (
     deprecate_procedure,
     discover_governed_procedures,
@@ -30,6 +29,7 @@ from .lifecycle import (
     load_retrievable_workspace_procedures,
     promote_procedure,
 )
+from .orientation import build_compounding_orientation_snapshot
 from .retrieval import (
     build_injected_context_fact_bundle,
     build_injected_procedure_bundle,

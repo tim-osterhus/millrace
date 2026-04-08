@@ -20,7 +20,10 @@ from .goalspec_helpers import (
     _write_json_model,
     resolve_goal_source,
 )
-from .goalspec_persistence import _build_completion_manifest_draft_state, _load_objective_profile_inputs
+from .goalspec_persistence import (
+    _build_completion_manifest_draft_state,
+    _load_objective_profile_inputs,
+)
 from .state import ResearchCheckpoint
 
 

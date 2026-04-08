@@ -9,7 +9,6 @@ from importlib.resources.abc import Traversable
 from pathlib import PurePosixPath
 from typing import Any, cast
 
-
 _ASSET_PACKAGE = "millrace_engine.assets"
 _MANIFEST_NAME = "manifest.json"
 

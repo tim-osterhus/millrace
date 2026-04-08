@@ -16,8 +16,8 @@ from ..widgets.research_panel import ResearchPanel
 from ..widgets.runs_panel import RunsPanel
 from .add_idea_modal import AddIdeaModal, AddIdeaRequest
 from .add_task_modal import AddTaskModal, AddTaskRequest
-from .confirm_modal import ConfirmModal
 from .config_edit_modal import ConfigEditModal, ConfigEditRequest
+from .confirm_modal import ConfirmModal
 from .help_modal import HelpModal
 from .interview_modal import InterviewModal, InterviewResolutionRequest
 from .run_detail_modal import RunDetailModal

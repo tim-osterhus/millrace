@@ -22,7 +22,6 @@ from .goalspec_helpers import (
 )
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
 
-
 _GOAL_INTAKE_STAGE_CONTRACT_PATH = "agents/_goal_intake.md"
 
 

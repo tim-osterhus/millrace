@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-import json
-import re
 
 from pydantic import ValidationError
 
@@ -14,7 +14,8 @@ from ..contracts import CompletionDecision, ContractModel, ResearchStatus
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .path_helpers import _relative_path, _resolve_path_token
-from .persistence_helpers import _load_json_model, _write_json_model as _shared_write_json_model
+from .persistence_helpers import _load_json_model
+from .persistence_helpers import _write_json_model as _shared_write_json_model
 
 if TYPE_CHECKING:
     from .audit import AuditGateDecision, AuditQueueRecord, AuditRemediationRecord, AuditSummary

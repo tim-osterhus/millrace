@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
+from datetime import datetime
 from pathlib import Path
 
 from ..contracts import ObjectiveContract
@@ -15,6 +15,7 @@ from .goalspec import (
     ObjectiveProfileSyncRecord,
     ObjectiveProfileSyncStateRecord,
 )
+from .goalspec_family_policy import derive_objective_family_policy
 from .goalspec_helpers import (
     _isoformat_z,
     _load_json_object,
@@ -25,7 +26,6 @@ from .goalspec_helpers import (
     _write_json_model,
     resolve_goal_source,
 )
-from .goalspec_family_policy import derive_objective_family_policy
 from .goalspec_semantic_profile import (
     build_goal_semantic_profile,
     discover_semantic_seed_path,

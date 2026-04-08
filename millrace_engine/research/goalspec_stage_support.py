@@ -15,11 +15,13 @@ from .goalspec import (
     SpecReviewExecutionResult,
     SpecSynthesisExecutionResult,
 )
+from .goalspec_completion_manifest_draft import (
+    execute_completion_manifest_draft as _execute_completion_manifest_draft,
+)
+from .goalspec_goal_intake import execute_goal_intake as _execute_goal_intake
 from .goalspec_helpers import (
     GoalSpecExecutionError,
 )
-from .goalspec_completion_manifest_draft import execute_completion_manifest_draft as _execute_completion_manifest_draft
-from .goalspec_goal_intake import execute_goal_intake as _execute_goal_intake
 from .goalspec_objective_profile_sync import (
     execute_objective_profile_sync as _execute_objective_profile_sync,
 )

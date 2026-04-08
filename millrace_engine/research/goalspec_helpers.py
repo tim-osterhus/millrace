@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
-import re
 
 from ..contracts import ContractModel
 from ..paths import RuntimePaths
@@ -13,18 +13,25 @@ from .dispatcher import ResearchDispatchError
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
 from .parser_helpers import (
     _markdown_section as _shared_markdown_section,
+)
+from .parser_helpers import (
     _split_frontmatter_block as _shared_split_frontmatter_block,
 )
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from .persistence_helpers import (
     _load_json_model as _shared_load_json_model,
+)
+from .persistence_helpers import (
     _load_json_object as _shared_load_json_object,
+)
+from .persistence_helpers import (
     _sha256_text,
+)
+from .persistence_helpers import (
     _write_json_model as _shared_write_json_model,
 )
 from .specs import GoalSpecDecompositionProfile
 from .state import ResearchCheckpoint
-
 
 _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 _FRONTMATTER_BOUNDARY = "---"

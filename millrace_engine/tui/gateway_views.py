@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from pydantic import ValidationError
 
@@ -40,8 +40,8 @@ from .models import (
     RunProcedureSelectionSummaryView,
     RunsOverviewView,
     RunSummaryView,
-    RunTransitionView,
     RuntimeOverviewView,
+    RunTransitionView,
     SelectionDecisionView,
     SelectionSummaryView,
 )

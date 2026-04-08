@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
-import json
 
 import typer
 
 from .cli_rendering import (
     _asset_inventory_lines,
+    _legacy_policy_lines,
+    _legacy_unmapped_lines,
+    _selection_explanation_lines,
+    _selection_lines,
     render_compounding_context_fact,
     render_compounding_context_facts,
     render_compounding_governance_summary,
@@ -25,10 +29,6 @@ from .cli_rendering import (
     render_compounding_orientation,
     render_compounding_procedure,
     render_compounding_procedures,
-    _legacy_policy_lines,
-    _legacy_unmapped_lines,
-    _selection_explanation_lines,
-    _selection_lines,
     render_doctor,
     render_follow_event,
     render_health,
@@ -64,7 +64,6 @@ from .control_models import (
     InterviewQuestionReport,
 )
 from .events import EventRecord
-
 
 app = typer.Typer(add_completion=False, help="Control the Millrace runtime.")
 config_app = typer.Typer(help="Inspect or mutate runtime config.")

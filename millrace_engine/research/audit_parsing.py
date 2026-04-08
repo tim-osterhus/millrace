@@ -7,7 +7,6 @@ import re
 from .audit_models import _normalize_optional_text
 from .parser_helpers import _parse_frontmatter_block
 
-
 _SECTION_HEADING_RE = re.compile(r"^##+\s+(?P<title>.+?)\s*$")
 _LIST_MARKER_RE = re.compile(r"^(?:[-*]|\d+\.)\s+")
 _WHITESPACE_RE = re.compile(r"\s+")

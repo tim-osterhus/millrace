@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Literal
-import re
 
 from pydantic import BaseModel, ConfigDict
-
 
 CARD_HEADING_RE = re.compile(r"^##\s*(\d{4}-\d{2}-\d{2})\s*[—-]\s*(.+?)\s*$")
 FIELD_LINE_RE = re.compile(r"^\s*(?:[-*]\s*)?\*\*(.+?):\*\*\s*(.*)$")

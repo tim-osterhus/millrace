@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-import re
 
 from pydantic import Field, field_validator
 
 from ..contracts import (
     ACCEPTANCE_ID_RE,
-    ContractModel,
     FIELD_LINE_RE,
     REQUIREMENT_ID_RE,
+    ContractModel,
     RegistryObjectRef,
     _normalize_datetime,
 )
@@ -22,7 +22,6 @@ from ..materialization import ArchitectureMaterializer, MaterializationError
 from ..paths import RuntimePaths
 from .dispatcher import CompiledResearchDispatch
 from .goalspec import CompletionManifestDraftStateRecord, GoalSpecExecutionError
-from .normalization_helpers import _normalize_optional_text, _normalize_required_text
 from .goalspec_persistence import _load_objective_profile_inputs
 from .goalspec_scope_diagnostics import (
     build_goal_anchor_tokens,
@@ -30,12 +29,12 @@ from .goalspec_scope_diagnostics import (
     infer_goal_scope_kind,
     write_scope_divergence_record,
 )
+from .normalization_helpers import _normalize_optional_text, _normalize_required_text
 from .parser_helpers import _markdown_section, _split_frontmatter_block
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from .persistence_helpers import _load_json_model, _write_json_model
 from .specs import GoalSpecLineageRecord, load_goal_spec_family_state, write_goal_spec_family_state
 from .state import ResearchCheckpoint
-
 
 TASKMASTER_ARTIFACT_SCHEMA_VERSION = "1.0"
 _FRONTMATTER_BOUNDARY = "---"
@@ -480,7 +479,7 @@ def _finish_source_idea(paths: RuntimePaths, family_state_path: str, *, emitted_
     if frontmatter:
         frontmatter["status"] = "finished"
         ordered = [f"{key}: {value}" for key, value in frontmatter.items()]
-        text = f"---\n" + "\n".join(ordered) + f"\n---\n{body}"
+        text = "---\n" + "\n".join(ordered) + f"\n---\n{body}"
     write_text_atomic(finished_path, text)
     source_path.unlink()
     return _relative_path(finished_path, relative_to=paths.root)

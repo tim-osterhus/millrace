@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from time import monotonic
 from typing import Callable
-import sys
 
 from pydantic import Field, field_validator
 

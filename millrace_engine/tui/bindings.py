@@ -6,7 +6,6 @@ from textual.binding import Binding
 
 from .models import PANELS
 
-
 NAVIGATION_GROUP = Binding.Group("Panels", compact=True)
 FOCUS_GROUP = Binding.Group("Focus", compact=True)
 

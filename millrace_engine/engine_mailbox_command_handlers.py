@@ -11,6 +11,8 @@ from .adapters.control_mailbox import ControlCommand, ControlCommandEnvelope
 from .config import LoadedConfig, load_engine_config
 from .control_actions import (
     compounding_deprecate as compounding_deprecate_operation,
+)
+from .control_actions import (
     compounding_promote as compounding_promote_operation,
 )
 from .control_common import ControlError

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
-import json
 
 from pydantic import ConfigDict, Field, field_validator
 

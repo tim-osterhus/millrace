@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-import json
 
 from ..contracts import ResearchRecoveryDecision
 from ..paths import RuntimePaths

@@ -18,7 +18,11 @@ from ..models import (
     RuntimeEventView,
     runtime_event_identity,
 )
-from .progressive_disclosure import append_operator_debug_hint, append_panel_failure_lines, collapse_operator_text
+from .progressive_disclosure import (
+    append_operator_debug_hint,
+    append_panel_failure_lines,
+    collapse_operator_text,
+)
 
 _ALL_FILTER = "all"
 _DISPLAY_LIMIT = 10

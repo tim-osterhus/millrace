@@ -17,7 +17,6 @@ from .contract_harness import (
     _normalize_text,
 )
 
-
 LAB_HARNESS_SCHEMA_VERSION = "1.0"
 
 

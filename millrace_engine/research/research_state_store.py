@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-import json
 
 from ..contracts import _normalize_datetime
 from ..markdown import write_text_atomic
@@ -153,7 +153,6 @@ def _planned_research_runtime_state(
 
     breadcrumb_paths = _deferred_breadcrumb_paths(deferred_dir)
     breadcrumb_count = len(breadcrumb_paths)
-    resolved_deferred_dir = deferred_dir or state_path.parent / ".deferred"
 
     if state_path.exists():
         raw_payload = json.loads(state_path.read_text(encoding="utf-8"))

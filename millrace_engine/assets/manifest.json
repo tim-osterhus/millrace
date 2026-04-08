@@ -1267,7 +1267,7 @@
       "category": "skill_support",
       "family": "skills",
       "path": "agents/skills/lint_skills.py",
-      "sha256": "74c32a6c1ce83c5522543b0af9a2b5ce347745be9f2e154a29518538aef460ad",
+      "sha256": "e6141a3dd85754286636e270e62c6c449c459dc30b1e4cfc5e905b5ea9c6a9c2",
       "size": 6362,
       "size_bytes": 6362,
       "source": "reference"

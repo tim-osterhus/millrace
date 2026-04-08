@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 
 from pydantic import field_validator
 
 from ..contracts import ContractModel, ExecutionStatus, _normalize_datetime, _normalize_path
-
 
 _HEADING_RE = re.compile(
     r"^##\s*(?P<occurred_at>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC)\s*[—-]\s*(?P<title>.+?)\s*$",

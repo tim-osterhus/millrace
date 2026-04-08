@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
-import re
 
 from pydantic import Field, field_validator
 
 from .contract_core import ContractModel, StageType, _normalize_datetime, _normalize_sequence
-
 
 COMPOUNDING_SCHEMA_VERSION = "1.0"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Literal
-import time
 
 from pydantic import ValidationError
 
@@ -32,19 +32,41 @@ from .contract_compounding import ProcedureScope
 from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
 from .control_actions import (
     add_idea as add_idea_operation,
+)
+from .control_actions import (
     add_task as add_task_operation,
+)
+from .control_actions import (
     compounding_deprecate as compounding_deprecate_operation,
+)
+from .control_actions import (
     compounding_promote as compounding_promote_operation,
+)
+from .control_actions import (
     lifecycle_action,
     normalize_supervisor_issuer,
     operation_with_payload_value,
-    queue_cleanup_quarantine as queue_cleanup_quarantine_operation,
-    queue_cleanup_remove as queue_cleanup_remove_operation,
-    queue_reorder as queue_reorder_operation,
-    supervisor_add_task as supervisor_add_task_operation,
-    supervisor_queue_cleanup_quarantine as supervisor_queue_cleanup_quarantine_operation,
-    supervisor_queue_cleanup_remove as supervisor_queue_cleanup_remove_operation,
     supervisor_lifecycle_action,
+)
+from .control_actions import (
+    queue_cleanup_quarantine as queue_cleanup_quarantine_operation,
+)
+from .control_actions import (
+    queue_cleanup_remove as queue_cleanup_remove_operation,
+)
+from .control_actions import (
+    queue_reorder as queue_reorder_operation,
+)
+from .control_actions import (
+    supervisor_add_task as supervisor_add_task_operation,
+)
+from .control_actions import (
+    supervisor_queue_cleanup_quarantine as supervisor_queue_cleanup_quarantine_operation,
+)
+from .control_actions import (
+    supervisor_queue_cleanup_remove as supervisor_queue_cleanup_remove_operation,
+)
+from .control_actions import (
     supervisor_queue_reorder as supervisor_queue_reorder_operation,
 )
 from .control_common import (
@@ -56,6 +78,75 @@ from .control_common import (
     single_line_message,
     validation_error_message,
 )
+from .control_compounding_surface import (
+    compounding_context_fact as compounding_context_fact_surface,
+)
+from .control_compounding_surface import (
+    compounding_context_facts as compounding_context_facts_surface,
+)
+from .control_compounding_surface import (
+    compounding_deprecate as compounding_deprecate_surface,
+)
+from .control_compounding_surface import (
+    compounding_governance_summary as compounding_governance_summary_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_benchmark as compounding_harness_benchmark_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_benchmarks as compounding_harness_benchmarks_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_candidate as compounding_harness_candidate_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_candidates as compounding_harness_candidates_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_recommendation as compounding_harness_recommendation_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_recommendations as compounding_harness_recommendations_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_run_benchmark as compounding_harness_run_benchmark_surface,
+)
+from .control_compounding_surface import (
+    compounding_harness_run_search as compounding_harness_run_search_surface,
+)
+from .control_compounding_surface import (
+    compounding_lint as compounding_lint_surface,
+)
+from .control_compounding_surface import (
+    compounding_orientation as compounding_orientation_surface,
+)
+from .control_compounding_surface import (
+    compounding_procedure as compounding_procedure_surface,
+)
+from .control_compounding_surface import (
+    compounding_procedures as compounding_procedures_surface,
+)
+from .control_compounding_surface import (
+    compounding_promote as compounding_promote_surface,
+)
+from .control_interview import (
+    interview_accept as interview_accept_operation,
+)
+from .control_interview import (
+    interview_answer as interview_answer_operation,
+)
+from .control_interview import (
+    interview_create as interview_create_operation,
+)
+from .control_interview import (
+    interview_list as interview_list_operation,
+)
+from .control_interview import (
+    interview_show as interview_show_operation,
+)
+from .control_interview import (
+    interview_skip as interview_skip_operation,
+)
 from .control_models import (
     AssetFamilyEntryView,
     AssetInventoryView,
@@ -65,11 +156,6 @@ from .control_models import (
     CompoundingContextFactReport,
     CompoundingContextFactView,
     CompoundingGovernanceSummaryView,
-    CompoundingLifecycleRecordView,
-    CompoundingOrientationArtifactView,
-    CompoundingOrientationEntryView,
-    CompoundingOrientationReport,
-    CompoundingRelationshipClusterView,
     CompoundingHarnessBenchmarkListReport,
     CompoundingHarnessBenchmarkReport,
     CompoundingHarnessBenchmarkView,
@@ -79,9 +165,14 @@ from .control_models import (
     CompoundingHarnessRecommendationListReport,
     CompoundingHarnessRecommendationReport,
     CompoundingHarnessRecommendationView,
+    CompoundingLifecycleRecordView,
+    CompoundingOrientationArtifactView,
+    CompoundingOrientationEntryView,
+    CompoundingOrientationReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
     CompoundingProcedureView,
+    CompoundingRelationshipClusterView,
     ConfigShowReport,
     InterviewListReport,
     InterviewMutationReport,
@@ -101,80 +192,102 @@ from .control_models import (
     SupervisorAttentionReason,
     SupervisorReport,
 )
-from .control_interview import (
-    interview_accept as interview_accept_operation,
-    interview_answer as interview_answer_operation,
-    interview_create as interview_create_operation,
-    interview_list as interview_list_operation,
-    interview_show as interview_show_operation,
-    interview_skip as interview_skip_operation,
-)
-from .control_compounding_surface import (
-    compounding_context_fact as compounding_context_fact_surface,
-    compounding_context_facts as compounding_context_facts_surface,
-    compounding_deprecate as compounding_deprecate_surface,
-    compounding_governance_summary as compounding_governance_summary_surface,
-    compounding_harness_benchmark as compounding_harness_benchmark_surface,
-    compounding_harness_benchmarks as compounding_harness_benchmarks_surface,
-    compounding_harness_candidate as compounding_harness_candidate_surface,
-    compounding_harness_candidates as compounding_harness_candidates_surface,
-    compounding_harness_recommendation as compounding_harness_recommendation_surface,
-    compounding_harness_recommendations as compounding_harness_recommendations_surface,
-    compounding_harness_run_benchmark as compounding_harness_run_benchmark_surface,
-    compounding_harness_run_search as compounding_harness_run_search_surface,
-    compounding_lint as compounding_lint_surface,
-    compounding_orientation as compounding_orientation_surface,
-    compounding_procedure as compounding_procedure_surface,
-    compounding_procedures as compounding_procedures_surface,
-    compounding_promote as compounding_promote_surface,
-)
-from .control_mutations import apply_native_config_value
-from .control_queue_config_surface import (
-    config_reload as config_reload_surface,
-    config_set as config_set_surface,
-    config_show as config_show_surface,
-    queue as queue_surface,
-    queue_inspect as queue_inspect_surface,
-)
 from .control_mutation_surface import (
     add_idea as add_idea_surface,
+)
+from .control_mutation_surface import (
     add_task as add_task_surface,
+)
+from .control_mutation_surface import (
     interview_accept as interview_accept_surface,
+)
+from .control_mutation_surface import (
     interview_answer as interview_answer_surface,
+)
+from .control_mutation_surface import (
     interview_create as interview_create_surface,
+)
+from .control_mutation_surface import (
     interview_list as interview_list_surface,
+)
+from .control_mutation_surface import (
     interview_show as interview_show_surface,
+)
+from .control_mutation_surface import (
     interview_skip as interview_skip_surface,
+)
+from .control_mutation_surface import (
     pause as pause_surface,
+)
+from .control_mutation_surface import (
     publish_commit as publish_commit_surface,
+)
+from .control_mutation_surface import (
     publish_preflight as publish_preflight_surface,
+)
+from .control_mutation_surface import (
     publish_sync as publish_sync_surface,
+)
+from .control_mutation_surface import (
     queue_cleanup_quarantine as queue_cleanup_quarantine_surface,
+)
+from .control_mutation_surface import (
     queue_cleanup_remove as queue_cleanup_remove_surface,
+)
+from .control_mutation_surface import (
     queue_reorder as queue_reorder_surface,
+)
+from .control_mutation_surface import (
     resume as resume_surface,
+)
+from .control_mutation_surface import (
     stop as stop_surface,
+)
+from .control_mutation_surface import (
     supervisor_add_task as supervisor_add_task_surface,
+)
+from .control_mutation_surface import (
     supervisor_pause as supervisor_pause_surface,
+)
+from .control_mutation_surface import (
     supervisor_queue_cleanup_quarantine as supervisor_queue_cleanup_quarantine_surface,
+)
+from .control_mutation_surface import (
     supervisor_queue_cleanup_remove as supervisor_queue_cleanup_remove_surface,
+)
+from .control_mutation_surface import (
     supervisor_queue_reorder as supervisor_queue_reorder_surface,
+)
+from .control_mutation_surface import (
     supervisor_resume as supervisor_resume_surface,
+)
+from .control_mutation_surface import (
     supervisor_stop as supervisor_stop_surface,
 )
+from .control_mutations import apply_native_config_value
 from .control_publish import (
     publish_commit as publish_commit_operation,
+)
+from .control_publish import (
     publish_preflight as publish_preflight_operation,
+)
+from .control_publish import (
     publish_sync as publish_sync_operation,
 )
-from .control_runtime_surface import (
-    events_subscribe as events_subscribe_surface,
-    logs as logs_surface,
-    research_history as research_history_surface,
-    research_report as research_report_surface,
-    run_provenance as run_provenance_surface,
-    status as status_surface,
-    supervisor_report as supervisor_report_surface,
+from .control_queue_config_surface import (
+    config_reload as config_reload_surface,
+)
+from .control_queue_config_surface import (
+    config_set as config_set_surface,
+)
+from .control_queue_config_surface import (
+    config_show as config_show_surface,
+)
+from .control_queue_config_surface import (
+    queue as queue_surface,
+)
+from .control_queue_config_surface import (
+    queue_inspect as queue_inspect_surface,
 )
 from .control_reports import (
     asset_inventory_for,
@@ -197,8 +310,29 @@ from .control_reports import (
     task_view,
     write_runtime_state,
 )
-from .events import EventRecord, EventType, is_research_event_type
+from .control_runtime_surface import (
+    events_subscribe as events_subscribe_surface,
+)
+from .control_runtime_surface import (
+    logs as logs_surface,
+)
+from .control_runtime_surface import (
+    research_history as research_history_surface,
+)
+from .control_runtime_surface import (
+    research_report as research_report_surface,
+)
+from .control_runtime_surface import (
+    run_provenance as run_provenance_surface,
+)
+from .control_runtime_surface import (
+    status as status_surface,
+)
+from .control_runtime_surface import (
+    supervisor_report as supervisor_report_surface,
+)
 from .engine_runtime import start_engine
+from .events import EventRecord, EventType, is_research_event_type
 from .health import WorkspaceHealthReport, build_workspace_health_report
 from .paths import RuntimePaths
 from .policies import (
@@ -225,15 +359,14 @@ from .status import ControlPlane, StatusError, StatusStore
 from .workspace_init import (
     PersistedStateMigrationApplyReport,
     PersistedStateMigrationPreviewReport,
-    WorkspaceUpgradeApplyReport,
     WorkspaceInitError,
     WorkspaceInitReport,
+    WorkspaceUpgradeApplyReport,
     WorkspaceUpgradePreviewReport,
     apply_workspace_upgrade,
     initialize_workspace,
     preview_workspace_upgrade,
 )
-
 
 _decision_report_paths = decision_report_paths
 

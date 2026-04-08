@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Iterator, Literal
-import time
 
 from pydantic import ValidationError
 
 from .contracts import AuditGateDecision, CompletionDecision, ExecutionStatus, ResearchStatus
-from .control_common import ControlError, event_log_control_error, expected_error_message, single_line_message, validation_error_message
+from .control_common import (
+    ControlError,
+    event_log_control_error,
+    expected_error_message,
+    single_line_message,
+    validation_error_message,
+)
 from .control_models import (
     ResearchReport,
     RunProvenanceReport,

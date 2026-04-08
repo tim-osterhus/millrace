@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-import hashlib
-import re
 
 
 def _slugify_historylog_part(value: str, *, max_length: int | None = None) -> str:

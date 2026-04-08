@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 from shutil import which
 from typing import Any, Protocol
-import os
 
 from pydantic import Field, field_validator
 

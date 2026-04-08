@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
 from ..paths import RuntimePaths
 from .governance_models import (
@@ -45,6 +46,9 @@ from .specs import (
     GoalSpecFamilySpecState,
     GoalSpecFamilyState,
 )
+
+if TYPE_CHECKING:
+    from .goalspec import SpecSynthesisRecord
 
 
 def _goalspec_delivery_integrity_module():
@@ -368,6 +372,11 @@ __all__ = [
     "build_queue_governor_report",
     "build_research_governance_report",
     "SpecSynthesisIdempotencyDecision",
+    "_file_sha256_or_none",
+    "_load_json_object",
+    "_normalize_optional_text",
+    "_relative_path",
+    "_utcnow",
     "evaluate_goalspec_delivery_integrity",
     "evaluate_family_policy_drift",
     "evaluate_governance_canary",

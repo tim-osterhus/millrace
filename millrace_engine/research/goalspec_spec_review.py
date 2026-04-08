@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
-import re
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .goalspec import SpecReviewExecutionResult
 from .goalspec_helpers import (
     GoalSpecExecutionError,
-    _markdown_section,
     _load_json_model,
     _load_json_object,
+    _markdown_section,
     _relative_path,
     _resolve_path_token,
     _spec_id_for_goal,

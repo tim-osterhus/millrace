@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Literal
-import re
 
 from pydantic import Field, field_validator, model_validator
 
 from ..contracts import ContractModel, ResearchStatus, _normalize_datetime, _normalize_path
-
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _AUDIT_ARTIFACT_SCHEMA_VERSION = "1.0"

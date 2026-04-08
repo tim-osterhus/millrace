@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal
-import json
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -25,6 +25,13 @@ from ..events import EventType
 from .audit import AuditQueueRecord
 from .blockers import BlockerQueueRecord
 from .incidents import IncidentDocument
+
+if TYPE_CHECKING:
+    from .research_state_store import (
+        PersistedStateMigrationApplyReport,
+        PersistedStateMigrationPreviewReport,
+        ResearchStateStore,
+    )
 
 
 def _utcnow() -> datetime:

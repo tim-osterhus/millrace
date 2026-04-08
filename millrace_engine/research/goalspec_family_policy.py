@@ -9,7 +9,6 @@ from .goalspec_semantic_profile import GoalSemanticProfile
 from .normalization_helpers import _normalize_optional_text, _normalize_text_sequence
 from .specs import GoalSpecDecompositionProfile
 
-
 _DEFAULT_NOTES = (
     "Family caps are runtime controls and should stay out of downstream synthesis prompts.",
     "Adaptive caps should reflect decomposition breadth rather than speculative LOC.",

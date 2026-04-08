@@ -30,9 +30,8 @@ from .loop_architecture_common import (
     _normalize_reference,
     _normalize_routing_token,
     _normalize_semver,
-    _normalize_status,
     _normalize_stage_selector,
-    _normalize_text,
+    _normalize_status,
     _normalize_trigger_token,
 )
 

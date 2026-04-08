@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
-import time
 
 from pydantic import ValidationError
 from textual.worker import get_current_worker
 
 from ..control import EngineControl
-from ..control_common import ControlError, expected_error_message, single_line_message, validation_error_message
+from ..control_common import (
+    ControlError,
+    expected_error_message,
+    single_line_message,
+    validation_error_message,
+)
 from ..health import WorkspaceHealthReport
 from .formatting import runtime_event_view
 from .gateway import RuntimeGateway
-from .messages import EventStreamFailed, EventsAppended
+from .messages import EventsAppended, EventStreamFailed
 from .models import FailureCategory, GatewayFailure, GatewayResult, RefreshPayload, RuntimeEventView
 
 HEALTH_CHECK_WORKER_NAME = "health.check"

@@ -39,7 +39,15 @@ from .contract_harness import (
     HarnessChangedSurface,
     HarnessRecommendationDisposition,
 )
-from .contracts import AuditGateDecision, CompletionDecision, ContractModel, ExecutionStatus, ResearchMode, ResearchStatus
+from .contracts import (
+    AuditGateDecision,
+    CompletionDecision,
+    ContractModel,
+    ExecutionStatus,
+    ResearchMode,
+    ResearchStatus,
+)
+from .control_common import normalize_datetime
 from .diagnostics import DiagnosticsPolicyEvidenceSnapshot
 from .events import EventRecord
 from .health import HealthCheckStatus, WorkspaceHealthSummary
@@ -52,7 +60,6 @@ from .research.queues import ResearchQueueItem
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
 from .standard_runtime import RuntimeSelectionView
 from .status import ControlPlane
-from .control_common import normalize_datetime
 
 
 def _selection_view_ref(view: object | None) -> object | None:

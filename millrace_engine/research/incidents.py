@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from ..contracts import ContractModel
 from ..paths import RuntimePaths
@@ -24,13 +24,17 @@ from .incident_documents import (
     IncidentRemediationRecord,
     IncidentResolveRecord,
     IncidentSeverity,
-    _INCIDENT_ARTIFACT_SCHEMA_VERSION,
     load_incident_document,
     parse_incident_document,
 )
 from .normalization_helpers import _normalize_optional_text_or_none, _normalize_required_text
 from .path_helpers import _relative_path, _resolve_path_token
-from .persistence_helpers import _load_json_object, _sha256_text, _write_json_model as _shared_write_json_model
+from .persistence_helpers import _load_json_object, _sha256_text
+from .persistence_helpers import _write_json_model as _shared_write_json_model
+
+if TYPE_CHECKING:
+    from .dispatcher import CompiledResearchDispatch
+    from .state import ResearchCheckpoint, ResearchQueueOwnership
 
 
 def _write_json_model(path: Path, model: ContractModel) -> None:
@@ -623,6 +627,7 @@ __all__ = [
     "IncidentArchiveRecord",
     "IncidentDocument",
     "IncidentExecutionError",
+    "IncidentFixSpecRecord",
     "IncidentIntakeExecutionResult",
     "IncidentIntakeRecord",
     "IncidentLifecycleStatus",

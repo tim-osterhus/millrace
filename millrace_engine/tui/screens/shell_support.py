@@ -17,11 +17,15 @@ from ..models import (
     PanelId,
     PublishOverviewView,
     QueueOverviewView,
-    RuntimeOverviewView,
     RunsOverviewView,
+    RuntimeOverviewView,
 )
-from ..workers import INITIAL_REFRESH_WORKER_NAME, PERIODIC_REFRESH_WORKER_NAME, gateway_failure_from_exception
 from ..widgets.overview_panel import LatestRunSummary
+from ..workers import (
+    INITIAL_REFRESH_WORKER_NAME,
+    PERIODIC_REFRESH_WORKER_NAME,
+    gateway_failure_from_exception,
+)
 
 WORKSPACE_REFRESH_PANELS = (
     PanelId.OVERVIEW,

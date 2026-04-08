@@ -7,9 +7,13 @@ from pathlib import Path
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
-from .audit_models import AuditLifecycleStatus, AuditQueueRecord, AuditTrigger, _normalize_required_text
+from .audit_models import (
+    AuditLifecycleStatus,
+    AuditQueueRecord,
+    AuditTrigger,
+    _normalize_required_text,
+)
 from .parser_helpers import _extract_heading_title, _parse_frontmatter_block
-
 
 _SCOPE_QUEUE_EMPTY = "orchestration-loop-backlog-empty-handoff"
 

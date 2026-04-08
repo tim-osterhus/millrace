@@ -22,14 +22,32 @@ from .contracts import (
 )
 from .materialization_merge import (
     binding_scope_for as _binding_scope_for,
+)
+from .materialization_merge import (
     merge_loop_payload as _merge_loop_payload,
+)
+from .materialization_merge import (
     merge_optional_model as _merge_optional_model,
+)
+from .materialization_merge import (
     object_ref as _object_ref,
+)
+from .materialization_merge import (
     overlay_model as _overlay_model,
+)
+from .materialization_merge import (
     profile_stage_override_for as _profile_stage_override_for,
+)
+from .materialization_merge import (
     ref_key as _ref_key,
+)
+from .materialization_merge import (
     ref_string as _ref_string,
+)
+from .materialization_merge import (
     registry_binding as _registry_binding,
+)
+from .materialization_merge import (
     stage_override_map as _stage_override_map,
 )
 from .materialization_models import (
@@ -48,7 +66,11 @@ from .materialization_models import (
 )
 from .materialization_provenance import (
     set_provenance as _set_provenance,
+)
+from .materialization_provenance import (
     set_registry_binding_provenance as _set_registry_binding_provenance,
+)
+from .materialization_provenance import (
     sorted_provenance_map as _sorted_provenance_map,
 )
 from .registry import RegistryDiscovery, RegistryDocument, RegistryLayer, discover_registry_state

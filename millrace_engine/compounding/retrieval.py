@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from pathlib import Path
-import re
 
+from ..context_facts import discover_context_facts
 from ..contract_compounding import (
     ConsideredProcedure,
     InjectedProcedure,
@@ -24,10 +25,8 @@ from ..contract_context_facts import (
     InjectedContextFact,
 )
 from ..contract_core import StageType
-from ..context_facts import discover_context_facts
 from ..paths import RuntimePaths
 from .lifecycle import load_retrievable_workspace_procedures
-
 
 _IMPLEMENTATION_SOURCE_STAGES: tuple[StageType, ...] = (
     StageType.BUILDER,

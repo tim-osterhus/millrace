@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 import fcntl
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from ..contracts import ResearchMode, ResearchStatus
 from ..events import EventType
+from ..research.incidents import IncidentExecutionError
 from ..status import RESEARCH_RUNNING_STATUSES
 from .audit import AuditExecutionError
 from .dispatcher import ResearchDispatchError
@@ -25,7 +26,6 @@ from .supervisor_payloads import (
     lock_payload,
     retry_scheduled_payload,
 )
-from ..research.incidents import IncidentExecutionError
 
 
 def should_scan(self: Any, *, trigger: str, observed_at: datetime) -> bool:

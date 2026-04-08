@@ -19,17 +19,17 @@ from ..launcher import launch_start_daemon, launch_start_once
 from ..messages import (
     ActionFailed,
     ActionSucceeded,
-    EventStreamFailed,
     EventsAppended,
+    EventStreamFailed,
     RefreshFailed,
     RefreshSucceeded,
 )
 from ..models import (
     DEFAULT_PANEL,
     EXPANDED_STREAM_WIDGET_ID,
-    GatewayFailure,
     PANEL_BY_ID,
     PANELS,
+    GatewayFailure,
     PanelId,
     ShellBodyMode,
     lifecycle_signal_from_context,

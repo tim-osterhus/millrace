@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-import re
 
 from ..contracts import AuditGateDecision, CompletionDecision, ResearchRecoveryDecision
 from ..markdown import TaskStoreDocument, parse_task_store, render_task_store, write_text_atomic
@@ -18,9 +18,9 @@ from .audit_storage_helpers import (
 )
 
 if TYPE_CHECKING:
+    from ..contracts import TaskCard
     from .audit import AuditQueueRecord, AuditRemediationRecord
     from .state import ResearchCheckpoint
-    from ..contracts import TaskCard
 
 
 def _audit_remediation_spec_id(audit_id: str) -> str:

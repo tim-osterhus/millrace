@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
-import re
 
 from pydantic import Field, field_validator
 
@@ -14,7 +14,6 @@ from ..paths import RuntimePaths
 from .goalspec_helpers import _normalize_path_token, _normalize_required_text
 from .normalization_helpers import _normalize_optional_text, _normalize_text_sequence
 from .persistence_helpers import _write_json_model
-
 
 GOALSPEC_SCOPE_DIAGNOSTIC_SCHEMA_VERSION = "1.0"
 GoalScopeKind = Literal["product", "framework_internal"]

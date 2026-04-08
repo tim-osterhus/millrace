@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from textual.widgets import Static
+
 from ...health import WorkspaceHealthReport
 from ..models import (
     DisplayMode,
@@ -15,7 +17,6 @@ from ..models import (
     RuntimeOverviewView,
 )
 from .overview_panel import _runtime_label
-from textual.widgets import Static
 
 
 def _refresh_label(moment: datetime | None) -> str:

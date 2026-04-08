@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import Any, Literal
 import contextlib
 import json
 import math
@@ -15,11 +11,14 @@ import shlex
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import field_validator
 
 from .contracts import CodexUsageSummary, ContractModel
-
 
 EXIT_OK = 0
 EXIT_USAGE = 2

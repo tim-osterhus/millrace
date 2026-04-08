@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-import re
 from typing import Any
 
 from ..events import EventRecord, is_research_event_type, render_structured_event_line
@@ -14,8 +14,8 @@ from .models import (
     RunIntegrationSummaryView,
     RunPolicyEvidenceView,
     RunSummaryView,
-    RunTransitionView,
     RuntimeEventView,
+    RunTransitionView,
 )
 
 _EVENT_CATEGORY_LABELS = {

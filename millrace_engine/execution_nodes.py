@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from .contracts import ExecutionStatus, StageType
 
-
 EXECUTION_NODE_STAGE_TYPES: dict[str, StageType] = {
     "builder": StageType.BUILDER,
     "integration": StageType.INTEGRATION,

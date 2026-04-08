@@ -6,35 +6,42 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..compounding import (
     clear_run_scoped_procedure_candidates,
     flush_milestone_for_transition,
     flush_run_scoped_compounding_candidates,
     persist_candidate_from_transition,
 )
-from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..config import StageConfig
 from ..contracts import ControlPlane as RuntimeControlPlane
-from ..contracts import ExecutionStatus, RunnerKind, StageOverrideField, StageResult, StageType, TaskCard
-from ..execution_nodes import execution_stage_type_for_node
+from ..contracts import (
+    ExecutionStatus,
+    RunnerKind,
+    StageOverrideField,
+    StageResult,
+    StageType,
+    TaskCard,
+)
 from ..events import EventType
+from ..execution_nodes import execution_stage_type_for_node
 from ..policies import (
-    PolicyHookError,
     PolicyEvaluationRecord,
+    PolicyHookError,
     build_execution_policy_runtime,
-    execution_preflight_context_from_records,
     execution_pacing_context_from_records,
+    execution_preflight_context_from_records,
     stage_runtime_from_execution_stage,
 )
 from ..provenance import (
-    BoundExecutionParameters,
-    COMPOUNDING_FLUSH_ATTRIBUTE,
     COMPOUNDING_BUDGET_ATTRIBUTE,
+    COMPOUNDING_FLUSH_ATTRIBUTE,
     COMPOUNDING_PROFILE_ATTRIBUTE,
     CONTEXT_FACT_INJECTION_ATTRIBUTE,
-    ExecutionParameterRebindingRequest,
     PROCEDURE_INJECTION_ATTRIBUTE,
     ROUTING_MODE_ATTRIBUTE,
+    BoundExecutionParameters,
+    ExecutionParameterRebindingRequest,
     RuntimeProvenanceContext,
     TransitionHistoryStore,
     clear_transition_history,
@@ -42,8 +49,6 @@ from ..provenance import (
 )
 from ..queue import TaskQueue
 from ..runner import ClaudeRunner, CodexRunner, SubprocessRunner
-from ..standard_runtime import rebound_execution_parameters_for_mode
-from ..status import ControlPlane, StatusChange, StatusStore
 from ..stages.base import ExecutionStage, StageExecutionError
 from ..stages.builder import BuilderStage
 from ..stages.consult import ConsultStage
@@ -53,6 +58,9 @@ from ..stages.integrate import IntegrationStage
 from ..stages.qa import QAStage
 from ..stages.troubleshoot import TroubleshootStage
 from ..stages.update import UpdateStage
+from ..standard_runtime import rebound_execution_parameters_for_mode
+from ..status import ControlPlane, StatusChange, StatusStore
+
 if TYPE_CHECKING:
     from ..compiler import FrozenRunPlan, FrozenStagePlan
     from ..config import EngineConfig

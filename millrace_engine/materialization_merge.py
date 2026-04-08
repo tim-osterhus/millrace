@@ -22,7 +22,6 @@ from .materialization_models import (
 )
 from .registry import RegistryDocument
 
-
 ContractModelT = TypeVar("ContractModelT", bound=ContractModel)
 
 

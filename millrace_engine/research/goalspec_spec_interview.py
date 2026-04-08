@@ -27,7 +27,6 @@ from .interview import (
 from .specs import load_goal_spec_family_state
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
 
-
 _INTERVIEW_AMBIGUITY_MARKERS = ("tbd", "todo", "???", "needs decision")
 
 

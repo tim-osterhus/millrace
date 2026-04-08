@@ -7,9 +7,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from ..config import EngineConfig
-from ..contracts import CrossPlaneParentRun, ExecutionResearchHandoff, ExecutionStatus, StageResult, StageType, TaskCard
 from ..compiler import FrozenRunPlan, FrozenStagePlan
+from ..compiler_rebinding import FrozenExecutionParameterBinder
+from ..config import EngineConfig
+from ..contracts import (
+    CrossPlaneParentRun,
+    ExecutionResearchHandoff,
+    ExecutionStatus,
+    StageResult,
+    StageType,
+    TaskCard,
+)
 from ..events import EventType
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -18,19 +26,19 @@ from ..policies import (
     DefaultTransportProbe,
     ExecutionIntegrationContext,
     ExecutionIntegrationSnapshot,
-    ExecutionPreflightEvaluator,
     ExecutionPreflightContext,
+    ExecutionPreflightEvaluator,
     PolicyEvaluationRecord,
     PolicyHookRuntime,
     SizeClass,
     SizeClassificationView,
     TransportProbe,
-    execution_preflight_context,
     execution_integration_context_from_records,
     execution_pacing_context_from_records,
-    resolve_execution_integration_context,
+    execution_preflight_context,
     execution_usage_budget_context_from_records,
     refresh_size_status,
+    resolve_execution_integration_context,
 )
 from ..provenance import (
     BoundExecutionParameters,
@@ -38,40 +46,74 @@ from ..provenance import (
     TransitionHistoryStore,
     read_transition_history,
 )
-from ..compiler_rebinding import FrozenExecutionParameterBinder
 from ..run_ids import timestamped_slug_id
-from ..status import StatusChange
 from ..stages.base import ExecutionStage, StageExecutionError
+from ..status import StatusChange
 from .base import PlaneRuntime, StageCommandMap
 from .execution_flows import (
     handle_qa_outcome as handle_qa_outcome_flow,
+)
+from .execution_flows import (
     run_builder_success_sequence as run_builder_success_sequence_flow,
+)
+from .execution_flows import (
     run_execution_cycle as run_execution_cycle_flow,
+)
+from .execution_flows import (
     run_full_task_path as run_full_task_path_flow,
+)
+from .execution_flows import (
     run_quickfix_loop as run_quickfix_loop_flow,
 )
 from .execution_recovery import (
     _RecoveryResult,
+)
+from .execution_recovery import (
     create_blocker_bundle as create_blocker_bundle_helper,
+)
+from .execution_recovery import (
     quarantine_task as quarantine_task_helper,
+)
+from .execution_recovery import (
     recover_or_quarantine as recover_or_quarantine_helper,
+)
+from .execution_recovery import (
     resume_after_recovery as resume_after_recovery_helper,
+)
+from .execution_recovery import (
     write_blocker_entry as write_blocker_entry_helper,
 )
 from .execution_routing import stage_plan as stage_plan_helper
 from .execution_runtime import (
     apply_active_config_rebindings as apply_active_config_rebindings_helper,
+)
+from .execution_runtime import (
     bound_parameters_for_node as bound_parameters_for_node_helper,
+)
+from .execution_runtime import (
     handle_status_change as handle_status_change_helper,
+)
+from .execution_runtime import (
     initialize_parameter_binder as initialize_parameter_binder_helper,
+)
+from .execution_runtime import (
     rebuild_stages as rebuild_stages_helper,
-    record_stage_transition as record_stage_transition_helper,
+)
+from .execution_runtime import (
     reconfigure as reconfigure_helper,
+)
+from .execution_runtime import (
+    record_stage_transition as record_stage_transition_helper,
+)
+from .execution_runtime import (
     run_stage as run_stage_helper,
+)
+from .execution_runtime import (
     stage_context_payload as stage_context_payload_helper,
+)
+from .execution_runtime import (
     start_transition_history as start_transition_history_helper,
 )
-
 
 MAX_LOCAL_RECOVERY_ROUNDS = 2
 ROUTING_MODE_FIXED_V1_BACKLOG_EMPTY = "fixed_v1_backlog_empty"

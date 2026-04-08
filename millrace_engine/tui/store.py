@@ -22,8 +22,8 @@ from .models import (
     RunsOverviewView,
     RuntimeEventIdentity,
     RuntimeEventView,
-    runtime_event_identity,
     RuntimeOverviewView,
+    runtime_event_identity,
     toggle_display_mode,
 )
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Sequence
-import json
 
 from pydantic import Field, field_validator, model_validator
 
@@ -14,7 +14,6 @@ from ..markdown import parse_task_store
 from .normalization_helpers import _normalize_optional_text, _normalize_required_text
 from .path_helpers import _normalize_path_token, _path_token
 from .persistence_helpers import _write_json_model
-
 
 SCHEMA_VERSION = "1.0"
 DEFAULT_TASK_PROVENANCE_SOURCE_FILENAMES = ("tasks.md", "tasksbacklog.md", "tasksarchive.md")

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-from pathlib import Path
-from tempfile import NamedTemporaryFile
 import os
 import re
+from dataclasses import dataclass
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from .contracts import CARD_HEADING_RE, TaskCard
 

@@ -10,8 +10,18 @@ from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Static
 
 from ..formatting import short_hash
-from ..models import ConfigFieldView, ConfigOverviewView, DisplayMode, GatewayFailure, RuntimeOverviewView
-from .progressive_disclosure import append_operator_debug_hint, append_panel_failure_lines, collapse_operator_text
+from ..models import (
+    ConfigFieldView,
+    ConfigOverviewView,
+    DisplayMode,
+    GatewayFailure,
+    RuntimeOverviewView,
+)
+from .progressive_disclosure import (
+    append_operator_debug_hint,
+    append_panel_failure_lines,
+    collapse_operator_text,
+)
 
 _BOUNDARY_HELP = {
     "live_immediate": "takes effect on the next accepted reload without waiting for a stage or cycle",

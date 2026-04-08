@@ -24,6 +24,8 @@ from .context_facts import context_fact_for_id, discover_context_facts
 from .contract_compounding import ProcedureScope
 from .control_actions import (
     compounding_deprecate as compounding_deprecate_operation,
+)
+from .control_actions import (
     compounding_promote as compounding_promote_operation,
 )
 from .control_common import ControlError, single_line_message, validation_error_message

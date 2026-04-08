@@ -15,9 +15,14 @@ from tomlkit.exceptions import ParseError as TomlParseError
 
 from .config import ConfigApplyBoundary, EngineConfig, LoadedConfig, diff_config_fields
 from .contracts import TaskCard
+from .control_common import (
+    ControlError,
+    load_control_config,
+    single_line_message,
+    validation_error_message,
+)
 from .markdown import TaskStoreDocument, parse_task_store, render_task_store, write_text_atomic
 from .paths import RuntimePaths
-from .control_common import ControlError, load_control_config, single_line_message, validation_error_message
 
 
 def _resolve_mapping_key(mapping: dict[Any, Any], token: str) -> Any:

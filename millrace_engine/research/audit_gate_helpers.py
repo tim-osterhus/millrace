@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-import json
 
 from pydantic import ValidationError
 
@@ -22,7 +22,12 @@ from ..contracts import (
 )
 from ..markdown import parse_task_store
 from ..paths import RuntimePaths
-from .audit_storage_helpers import _load_json_model, _relative_path, _resolve_path_token, _write_json_model
+from .audit_storage_helpers import (
+    _load_json_model,
+    _relative_path,
+    _resolve_path_token,
+    _write_json_model,
+)
 
 if TYPE_CHECKING:
     from .audit import AuditQueueRecord, AuditValidateRecord

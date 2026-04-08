@@ -21,8 +21,8 @@ from .hooks import (
     PolicyHookRuntime,
 )
 from .integration import ExecutionIntegrationEvaluator, ExecutionIntegrationSnapshot
-from .pacing import ExecutionPacingEvaluator, ExecutionPacingSnapshot
 from .network_guard import ExecutionNetworkGuardDecision, evaluate_execution_network_guard
+from .pacing import ExecutionPacingEvaluator, ExecutionPacingSnapshot
 from .transport import (
     DefaultTransportProbe,
     TransportProbe,

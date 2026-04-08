@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import re
+from datetime import datetime, timezone
 
 from .incident_documents import IncidentDocument, _extract_markdown_field, _strip_ticks
 from .normalization_helpers import _normalize_optional_text_or_none, _normalize_required_text

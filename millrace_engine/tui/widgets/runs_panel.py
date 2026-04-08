@@ -9,8 +9,14 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Static
 
-from ..formatting import compact_run_label, format_timestamp, run_operator_alert, run_operator_summary_lines, run_summary_lines
-from ..models import DisplayMode, GatewayFailure, RunSummaryView, RunsOverviewView
+from ..formatting import (
+    compact_run_label,
+    format_timestamp,
+    run_operator_alert,
+    run_operator_summary_lines,
+    run_summary_lines,
+)
+from ..models import DisplayMode, GatewayFailure, RunsOverviewView, RunSummaryView
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
 
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Self
-import json
 
 from pydantic import Field, field_validator, model_validator
 

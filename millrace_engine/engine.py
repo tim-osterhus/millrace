@@ -25,12 +25,12 @@ from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEv
 from .planes.base import StageCommandMap
 from .planes.execution import ExecutionPlane
 from .planes.research import ResearchPlane
-from .research.audit import AuditExecutionError
-from .research.incidents import IncidentExecutionError
-from .research.dispatcher import ResearchDispatchError
 from .policies import DefaultOutageProbe, OutageProbe, TransportProbe
 from .queue import TaskQueue, load_research_recovery_latch
+from .research.audit import AuditExecutionError
+from .research.dispatcher import ResearchDispatchError
 from .research.governance import sync_progress_watchdog
+from .research.incidents import IncidentExecutionError
 
 
 class MillraceEngine:

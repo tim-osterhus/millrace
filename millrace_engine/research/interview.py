@@ -26,7 +26,6 @@ from .normalization_helpers import (
     _normalize_text_sequence,
 )
 
-
 INTERVIEW_ARTIFACT_SCHEMA_VERSION = "1.0"
 InterviewQuestionStatus = Literal["pending", "answered", "accepted", "skipped"]
 InterviewAnswerSource = Literal["repo", "operator", "assumption"]

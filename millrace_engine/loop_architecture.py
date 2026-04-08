@@ -41,11 +41,11 @@ from .loop_architecture_profile_contracts import (
     CardCountRange,
     ModeCompositionRules,
     ModeDefinition,
-    ModePayload,
-    ModePolicyToggles,
     ModelBinding,
     ModelProfileDefinition,
     ModelProfilePayload,
+    ModePayload,
+    ModePolicyToggles,
     ScopedModelBinding,
     StageKindModelBinding,
     TaskAuthoringProfileDefinition,
@@ -64,7 +64,6 @@ from .loop_architecture_stage_contracts import (
     StructuredStageResult,
     StructuredStageResultMetadata,
 )
-
 
 __all__ = [
     "AcceptanceProfile",

@@ -9,7 +9,7 @@ import tomllib
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Iterable, NotRequired, TypedDict, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = Path(__file__).with_name("repo_guardrails.toml")
@@ -17,6 +17,9 @@ CONFIG_PATH = Path(__file__).with_name("repo_guardrails.toml")
 
 class LintConfig(TypedDict):
     paths: list[str]
+    args: NotRequired[list[str]]
+    exclude_paths: NotRequired[list[str]]
+    format_check: NotRequired[bool]
     scope: str
     rationale: str
 
@@ -24,6 +27,7 @@ class LintConfig(TypedDict):
 class TypecheckConfig(TypedDict):
     paths: list[str]
     args: list[str]
+    exclude_paths: NotRequired[list[str]]
     scope: str
     rationale: str
 
@@ -111,18 +115,79 @@ def _iter_python_files(root: Path) -> list[Path]:
     ]
 
 
+def _repo_path(token: str) -> Path:
+    path = Path(token)
+    return path if path.is_absolute() else ROOT / path
+
+
+def _manifest_entries(manifest_path: Path) -> list[str]:
+    entries: list[str] = []
+    for line in manifest_path.read_text(encoding="utf-8").splitlines():
+        entry = line.split("#", 1)[0].strip()
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def _expand_path_entry(entry: str) -> list[Path]:
+    if entry.startswith("@"):
+        return _expand_path_entries(_manifest_entries(_repo_path(entry[1:])))
+    path = _repo_path(entry)
+    if path.is_dir():
+        return _iter_python_files(path)
+    if path.is_file():
+        return [path]
+    raise FileNotFoundError(f"repo guardrail path does not exist: {entry}")
+
+
+def _expand_path_entries(entries: Iterable[str]) -> list[Path]:
+    expanded: list[Path] = []
+    seen: set[Path] = set()
+    for entry in entries:
+        for path in _expand_path_entry(entry):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            expanded.append(resolved)
+    return expanded
+
+
+def _resolve_surface_paths(
+    entries: list[str],
+    *,
+    exclude_entries: list[str] | None = None,
+) -> list[str]:
+    excluded = {
+        path.resolve()
+        for path in _expand_path_entries(exclude_entries or [])
+    }
+    return [
+        str(path)
+        for path in _expand_path_entries(entries)
+        if path not in excluded
+    ]
+
+
 def _run_lint(config: GuardrailConfig) -> int:
-    paths = [str(ROOT / value) for value in config["lint"]["paths"]]
-    for args in (["format", "--check", *paths], ["check", *paths]):
-        code = _run(_python_module("ruff", *args))
-        if code:
-            return code
-    return 0
+    lint_config = config["lint"]
+    paths = _resolve_surface_paths(
+        lint_config["paths"],
+        exclude_entries=lint_config.get("exclude_paths"),
+    )
+    if lint_config.get("format_check", True):
+        format_code = _run(_python_module("ruff", "format", "--check", *paths))
+        if format_code:
+            return format_code
+    return _run(_python_module("ruff", "check", *lint_config.get("args", []), *paths))
 
 
 def _run_typecheck(config: GuardrailConfig) -> int:
     typecheck_config = config["typecheck"]
-    paths = [str(ROOT / value) for value in typecheck_config["paths"]]
+    paths = _resolve_surface_paths(
+        typecheck_config["paths"],
+        exclude_entries=typecheck_config.get("exclude_paths"),
+    )
     return _run(_python_module("mypy", *typecheck_config["args"], *paths))
 
 

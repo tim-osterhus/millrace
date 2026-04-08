@@ -10,7 +10,7 @@ from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 
 if TYPE_CHECKING:
-    from .incidents import IncidentDocument
+    from .incidents import IncidentDocument, IncidentLifecycleStatus
     from .state import ResearchCheckpoint, ResearchQueueOwnership
 
 

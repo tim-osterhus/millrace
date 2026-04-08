@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import socket
+import subprocess
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
-import json
-import socket
-import subprocess
 
 from pydantic import Field, field_validator
 

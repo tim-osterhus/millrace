@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from ..contract_compounding import ProcedureScope, ReusableProcedureArtifact
-from ..contract_documents import StageResult
 from ..contract_core import StageType
+from ..contract_documents import StageResult
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from ..provenance import RuntimeTransitionRecord
-
 
 _SUPPORTED_EDGE_CONTEXT: dict[tuple[StageType, str, str], tuple[str, tuple[str, ...]]] = {
     (

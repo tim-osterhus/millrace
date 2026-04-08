@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ..compiler import FrozenLoopPlan, FrozenStagePlan, FrozenTransition
 from ..contracts import ExecutionStatus, StageResult, StageType, TaskCard
-from ..execution_nodes import execution_stage_type_for_node
 from ..events import EventType
+from ..execution_nodes import execution_stage_type_for_node
 from ..stages.base import StageExecutionError
 
 if TYPE_CHECKING:

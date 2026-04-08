@@ -11,7 +11,6 @@ from ..config import (
 from ..contracts import StageType
 from ..execution_nodes import execution_stage_type_for_node
 
-
 _BAND_TOKENS = {
     "MODERATE": ComplexityBand.MODERATE,
     "INVOLVED": ComplexityBand.INVOLVED,

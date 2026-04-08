@@ -21,7 +21,6 @@ from .stages.builder import BuilderStage
 from .stages.integrate import IntegrationStage
 from .stages.qa import QAStage
 
-
 AGENTS_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "agents"
 
 

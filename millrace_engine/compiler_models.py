@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
-import re
 
 from pydantic import Field, field_validator, model_validator
 
@@ -31,7 +31,6 @@ from .contracts import (
 )
 from .materialization_models import MaterializedAssetBinding, ProvenanceEntry
 from .provenance import FrozenPlanIdentity, RuntimeProvenanceContext
-
 
 COMPILER_VERSION = "01b-core"
 PLAN_SCHEMA_VERSION = "1.0"

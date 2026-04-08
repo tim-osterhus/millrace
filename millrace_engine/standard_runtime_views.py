@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .compiler_models import CompileResult, CompileStatus, CompileTimeResolvedSnapshot, FrozenPlanSourceKind, FrozenRunPlan
+from .compiler_models import (
+    CompileResult,
+    CompileStatus,
+    CompileTimeResolvedSnapshot,
+    FrozenPlanSourceKind,
+    FrozenRunPlan,
+)
 from .contracts import RegistryObjectRef, RegistrySourceKind, StageType
 from .execution_nodes import execution_stage_type_for_node
 from .materialization_models import ProvenanceLane

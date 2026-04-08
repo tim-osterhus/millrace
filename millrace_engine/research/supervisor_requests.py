@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from ..run_ids import stable_slug
 from .audit import AuditTrigger, ensure_backlog_empty_audit_ticket, load_audit_queue_record
 from .state import DeferredResearchRequest, ResearchCheckpoint, ResearchQueueFamily
 from .supervisor_payloads import research_deferred_payload
+
 
 def breadcrumb_name(self: Any, received_at: datetime, event_type: EventType) -> str:
     timestamp = received_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")

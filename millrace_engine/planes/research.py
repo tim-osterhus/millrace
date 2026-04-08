@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,7 +12,6 @@ from ..config import EngineConfig
 from ..contracts import ExecutionResearchHandoff, ResearchMode, ResearchStatus, SpecInterviewPolicy
 from ..events import EventRecord, EventType
 from ..paths import RuntimePaths
-from ..run_ids import timestamped_slug_id
 from ..research.audit import (
     AuditExecutionError,
     execute_audit_gatekeeper,
@@ -20,25 +19,25 @@ from ..research.audit import (
     execute_audit_validate,
 )
 from ..research.dispatcher import (
-    CompiledResearchDispatch,
     RESEARCH_AUDIT_MODE_REF,
     RESEARCH_GOALSPEC_MODE_REF,
     RESEARCH_INCIDENT_MODE_REF,
+    CompiledResearchDispatch,
     ResearchDispatchError,
     ResearchDispatchSelection,
     compile_research_dispatch,
     resolve_research_dispatch_selection,
 )
 from ..research.goalspec import (
-    execute_completion_manifest_draft,
     GoalSpecExecutionError,
+    execute_completion_manifest_draft,
     execute_goal_intake,
     execute_objective_profile_sync,
     execute_spec_interview,
-    research_stage_for_node,
     execute_spec_review,
     execute_spec_synthesis,
     next_stage_for_success,
+    research_stage_for_node,
 )
 from ..research.goalspec_delivery_integrity import (
     delivery_integrity_error_message,
@@ -51,73 +50,162 @@ from ..research.incidents import (
     execute_incident_resolve,
     execute_incident_task_generation,
 )
-from ..research.specs import load_goal_spec_family_state
-from ..research.taskaudit import execute_taskaudit
-from ..research.taskmaster import execute_taskmaster
 from ..research.queues import discover_research_queues
+from ..research.specs import load_goal_spec_family_state
 from ..research.state import (
     DeferredResearchRequest,
     ResearchCheckpoint,
     ResearchQueueFamily,
-    ResearchRuntimeState,
     ResearchRuntimeMode,
+    ResearchRuntimeState,
     ResearchStateStore,
     rebind_research_runtime_state,
 )
 from ..research.supervisor_lifecycle import (
     acquire_lock as _acquire_lock_helper,
+)
+from ..research.supervisor_lifecycle import (
     configured_runtime_mode as _configured_runtime_mode_helper,
+)
+from ..research.supervisor_lifecycle import (
     lock_expiry as _lock_expiry_helper,
+)
+from ..research.supervisor_lifecycle import (
     lock_path as _lock_path_helper,
+)
+from ..research.supervisor_lifecycle import (
     next_poll_at as _next_poll_at_helper,
+)
+from ..research.supervisor_lifecycle import (
     next_retry_state as _next_retry_state_helper,
+)
+from ..research.supervisor_lifecycle import (
     no_work_reason_for_selection as _no_work_reason_for_selection_helper,
+)
+from ..research.supervisor_lifecycle import (
     record_dispatch_failure as _record_dispatch_failure_helper,
+)
+from ..research.supervisor_lifecycle import (
     record_lock_failure as _record_lock_failure_helper,
+)
+from ..research.supervisor_lifecycle import (
     record_no_dispatchable_work as _record_no_dispatchable_work_helper,
+)
+from ..research.supervisor_lifecycle import (
     release_execution_lock as _release_execution_lock_helper,
+)
+from ..research.supervisor_lifecycle import (
     release_lock as _release_lock_helper,
+)
+from ..research.supervisor_lifecycle import (
     set_research_status as _set_research_status_helper,
+)
+from ..research.supervisor_lifecycle import (
     should_scan as _should_scan_helper,
 )
 from ..research.supervisor_payloads import discovery_payload as _discovery_payload_helper
 from ..research.supervisor_progression import (
     advance_audit_checkpoint as _advance_audit_checkpoint_helper,
+)
+from ..research.supervisor_progression import (
     advance_goalspec_checkpoint as _advance_goalspec_checkpoint_helper,
+)
+from ..research.supervisor_progression import (
     advance_incident_checkpoint as _advance_incident_checkpoint_helper,
+)
+from ..research.supervisor_progression import (
     complete_audit_checkpoint as _complete_audit_checkpoint_helper,
+)
+from ..research.supervisor_progression import (
     complete_goalspec_checkpoint as _complete_goalspec_checkpoint_helper,
+)
+from ..research.supervisor_progression import (
     complete_incident_checkpoint as _complete_incident_checkpoint_helper,
+)
+from ..research.supervisor_progression import (
     next_goalspec_stage as _next_goalspec_stage_helper,
+)
+from ..research.supervisor_progression import (
     next_incident_stage as _next_incident_stage_helper,
+)
+from ..research.supervisor_progression import (
     persist_resume_state as _persist_resume_state_helper,
+)
+from ..research.supervisor_progression import (
     queue_ownership_for_audit_path as _queue_ownership_for_audit_path_helper,
+)
+from ..research.supervisor_progression import (
     resume_selected_family as _resume_selected_family_helper,
+)
+from ..research.supervisor_progression import (
     selection_ownerships as _selection_ownerships_helper,
+)
+from ..research.supervisor_progression import (
     supports_audit_stage_execution as _supports_audit_stage_execution_helper,
+)
+from ..research.supervisor_progression import (
     supports_goalspec_stage_execution as _supports_goalspec_stage_execution_helper,
+)
+from ..research.supervisor_progression import (
     supports_incident_stage_execution as _supports_incident_stage_execution_helper,
 )
 from ..research.supervisor_requests import (
     audit_record_from_event as _audit_record_from_event_helper,
+)
+from ..research.supervisor_requests import (
     bind_queue_context_to_request as _bind_queue_context_to_request_helper,
+)
+from ..research.supervisor_requests import (
     breadcrumb_name as _breadcrumb_name_helper,
+)
+from ..research.supervisor_requests import (
     breadcrumb_path as _breadcrumb_path_helper,
+)
+from ..research.supervisor_requests import (
     claim_blocker_request_from_latch as _claim_blocker_request_from_latch_helper,
+)
+from ..research.supervisor_requests import (
     claim_deferred_request as _claim_deferred_request_helper,
+)
+from ..research.supervisor_requests import (
     claim_dispatch_request as _claim_dispatch_request_helper,
+)
+from ..research.supervisor_requests import (
     enqueue_request as _enqueue_request_helper,
+)
+from ..research.supervisor_requests import (
     handoff_from_event as _handoff_from_event_helper,
+)
+from ..research.supervisor_requests import (
     handoffs_match as _handoffs_match_helper,
+)
+from ..research.supervisor_requests import (
     incident_path_matches_handoff as _incident_path_matches_handoff_helper,
+)
+from ..research.supervisor_requests import (
     latch_handoff as _latch_handoff_helper,
+)
+from ..research.supervisor_requests import (
     paths_match as _paths_match_helper,
+)
+from ..research.supervisor_requests import (
     request_matches_handoff as _request_matches_handoff_helper,
+)
+from ..research.supervisor_requests import (
     request_task_id as _request_task_id_helper,
+)
+from ..research.supervisor_requests import (
     resume_checkpoint_handoff as _resume_checkpoint_handoff_helper,
+)
+from ..research.supervisor_requests import (
     synthetic_blocker_request as _synthetic_blocker_request_helper,
+)
+from ..research.supervisor_requests import (
     write_breadcrumb as _write_breadcrumb_helper,
 )
+from ..research.taskaudit import execute_taskaudit
+from ..research.taskmaster import execute_taskmaster
+from ..run_ids import timestamped_slug_id
 from ..status import ControlPlane, StatusStore
 
 

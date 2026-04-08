@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Literal
-import re
 
 from pydantic import Field, field_validator, model_validator
 
@@ -14,10 +14,13 @@ from ..contracts import ContractModel, _normalize_datetime, _normalize_path
 from .normalization_helpers import _normalize_optional_text_or_none, _normalize_required_text
 from .parser_helpers import (
     _extract_heading_title as _shared_extract_heading_title,
+)
+from .parser_helpers import (
     _markdown_section as _shared_markdown_section,
+)
+from .parser_helpers import (
     _parse_frontmatter_block as _shared_parse_frontmatter_block,
 )
-
 
 _HEADING_RE = re.compile(r"^#\s+(?P<title>.+?)\s*$", flags=re.MULTILINE)
 _FIELD_RE = re.compile(r"^\s*-\s*(?P<name>[^:]+):\s*(?P<value>.*)$")

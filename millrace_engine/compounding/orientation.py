@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 
 from ..context_facts import discover_context_facts
 from ..contract_compounding import (
@@ -25,7 +25,6 @@ from .harness import (
     discover_harness_recommendations,
 )
 from .lifecycle import discover_governed_procedures
-
 
 INDEX_ARTIFACT_NAME = "governed_store_index.json"
 RELATIONSHIP_ARTIFACT_NAME = "relationship_summary.json"

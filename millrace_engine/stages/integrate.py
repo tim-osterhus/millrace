@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import ExecutionStage
 from ..contracts import ExecutionStatus, StageType
+from .base import ExecutionStage
 
 
 class IntegrationStage(ExecutionStage):

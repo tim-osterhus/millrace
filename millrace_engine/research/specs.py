@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import ast
+import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
-import ast
-import json
 
 from pydantic import Field, field_serializer, field_validator, model_validator
 
@@ -20,7 +20,6 @@ from .normalization_helpers import (
 from .parser_helpers import _parse_simple_frontmatter
 from .path_helpers import _normalize_path_sequence, _normalize_path_token, _path_token
 from .persistence_helpers import _load_json_object, _write_json_model
-
 
 SCHEMA_VERSION = "1.0"
 INITIAL_FAMILY_PLAN_SCHEMA_VERSION = "1.0"

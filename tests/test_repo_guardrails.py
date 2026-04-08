@@ -25,6 +25,11 @@ def _write_python_file(path: Path, line_count: int) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def _git(repo_root: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
@@ -111,6 +116,40 @@ def test_run_budgets_allows_temporary_new_oversized_file(tmp_path: Path, monkeyp
     assert "stale size-budget exception" not in captured.err
     assert "active size-budget exception: millrace_engine/planes/execution.py (772>500)" in captured.err
     assert "temporary size-budget exception: millrace_engine/engine_runtime_loop.py (589>500)" in captured.err
+
+
+def test_resolve_surface_paths_expands_manifests_and_exclusions(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    _write_python_file(repo_root / "pkg" / "alpha.py", 1)
+    _write_python_file(repo_root / "pkg" / "beta.py", 1)
+    _write_python_file(repo_root / "pkg" / "nested" / "gamma.py", 1)
+    _write_python_file(repo_root / "tools" / "repo_guardrails.py", 1)
+    _write_text(
+        repo_root / "tools" / "include.txt",
+        "\n".join(
+            [
+                "pkg",
+                "tools/repo_guardrails.py",
+                "pkg/alpha.py",
+                "",
+            ]
+        ),
+    )
+    _write_text(repo_root / "tools" / "exclude.txt", "pkg/beta.py\n")
+
+    module = _load_repo_guardrails_module()
+    monkeypatch.setattr(module, "ROOT", repo_root)
+
+    resolved = module._resolve_surface_paths(
+        ["@tools/include.txt"],
+        exclude_entries=["@tools/exclude.txt"],
+    )
+
+    assert resolved == [
+        str(repo_root / "pkg" / "alpha.py"),
+        str(repo_root / "pkg" / "nested" / "gamma.py"),
+        str(repo_root / "tools" / "repo_guardrails.py"),
+    ]
 
 
 def test_run_budgets_flags_same_change_ratchet_violation(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -252,3 +291,11 @@ def test_run_cycles_passes_when_only_live_allowed_cycle_remains(monkeypatch, cap
 
     captured = capsys.readouterr()
     assert captured.err == ""
+
+
+def test_guardrail_config_no_longer_uses_bounded_slice_posture() -> None:
+    config_text = (Path(__file__).resolve().parents[1] / "tools" / "repo_guardrails.toml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "representative bounded runtime slice" not in config_text

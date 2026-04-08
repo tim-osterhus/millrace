@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, TypeVar
-import json
 
 from ..contracts import ContractModel
 from ..markdown import write_text_atomic
-
 
 _ContractModelT = TypeVar("_ContractModelT", bound=ContractModel)
 

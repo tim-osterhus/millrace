@@ -7,6 +7,14 @@ from typing import Any
 
 from ..control import EngineControl
 from ..control_reports import read_run_provenance
+from .gateway_support import (
+    event_log_view,
+    execute_gateway_operation,
+    input_failure,
+    normalized_optional_text,
+    resolve_config_path,
+    utcnow,
+)
 from .gateway_views import (
     action_result_view,
     commit_action_result_view,
@@ -20,14 +28,6 @@ from .gateway_views import (
     runs_overview_view,
     runtime_overview_view,
     sync_action_result_view,
-)
-from .gateway_support import (
-    event_log_view,
-    execute_gateway_operation,
-    input_failure,
-    normalized_optional_text,
-    resolve_config_path,
-    utcnow,
 )
 from .models import ActionResultView, FailureCategory, GatewayFailure, GatewayResult, RefreshPayload
 

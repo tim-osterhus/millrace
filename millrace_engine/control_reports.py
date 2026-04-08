@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
-import json
 
 from pydantic import ValidationError
 
@@ -14,7 +14,11 @@ from .assets.resolver import AssetFamilyEntry, AssetResolutionError, AssetResolv
 from .baseline_assets import packaged_baseline_asset, packaged_baseline_bundle_version
 from .compiler import CompileTimeResolvedSnapshot
 from .config import EngineConfig, LoadedConfig, build_runtime_paths
-from .contract_compounding import CompoundingFlushCheckpoint, ProcedureInjectionBundle, ReusableProcedureArtifact
+from .contract_compounding import (
+    CompoundingFlushCheckpoint,
+    ProcedureInjectionBundle,
+    ReusableProcedureArtifact,
+)
 from .contract_context_facts import ContextFactInjectionBundle
 from .contracts import (
     AuditGateDecision,
@@ -24,6 +28,30 @@ from .contracts import (
     ResearchMode,
     TaskCard,
     load_objective_contract,
+)
+from .control_common import (
+    ControlError,
+    expected_error_message,
+    normalize_datetime,
+    single_line_message,
+    validation_error_message,
+)
+from .control_models import (
+    AssetFamilyEntryView,
+    AssetInventoryView,
+    AssetResolutionView,
+    CompletionStateView,
+    PolicyHookSummary,
+    QueueItemView,
+    ResearchQueueFamilyView,
+    RunCompoundingFlushView,
+    RunCompoundingReport,
+    RunContextFactSelectionView,
+    RunCreatedProcedureView,
+    RunProcedureSelectionView,
+    RunProvenanceReport,
+    RuntimeState,
+    SelectionExplanationView,
 )
 from .diagnostics import build_policy_evidence_snapshot
 from .events import EventRecord
@@ -48,31 +76,19 @@ from .queue import TaskQueue
 from .research.audit import load_audit_remediation_record, load_audit_summary
 from .research.governance import build_research_governance_report
 from .research.queues import discover_research_queues
-from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeMode, ResearchRuntimeState, load_research_runtime_state
+from .research.state import (
+    ResearchQueueFamily,
+    ResearchQueueOwnership,
+    ResearchRuntimeMode,
+    ResearchRuntimeState,
+    load_research_runtime_state,
+)
 from .standard_runtime import (
     RuntimeSelectionView,
     preview_execution_runtime_selection,
     runtime_selection_view_from_snapshot,
 )
 from .status import ControlPlane, StatusError, StatusStore
-from .control_common import ControlError, expected_error_message, normalize_datetime, single_line_message, validation_error_message
-from .control_models import (
-    AssetFamilyEntryView,
-    AssetInventoryView,
-    AssetResolutionView,
-    CompletionStateView,
-    PolicyHookSummary,
-    QueueItemView,
-    ResearchQueueFamilyView,
-    RunCompoundingReport,
-    RunCompoundingFlushView,
-    RunCreatedProcedureView,
-    RunContextFactSelectionView,
-    RunProvenanceReport,
-    RunProcedureSelectionView,
-    RuntimeState,
-    SelectionExplanationView,
-)
 
 
 def _normalize_path_token(value: str | Path) -> Path:

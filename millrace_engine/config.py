@@ -2,27 +2,36 @@
 
 from __future__ import annotations
 
+import tomllib
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
-import tomllib
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from .contracts import (
-    ContractModel,
-    PersistedObjectKind,
-    RegistryObjectRef,
-    ResearchMode,
-    SpecInterviewPolicy,
-    StageType,
-)
 from .config_compat import (
     LegacyPolicyCompatReport,
     build_legacy_policy_compatibility_report,
     load_model_values,
     load_workflow_values,
+)
+from .config_runtime import (
+    ConfigApplyBoundary,
+    ConfigBoundaries,
+    RoutingConfig,
+    StageConfig,
+    default_stage_configs,
+)
+from .contracts import (
+    ContractModel,
+    PersistedObjectKind,
+    ReasoningEffort,
+    RegistryObjectRef,
+    ResearchMode,
+    RunnerKind,
+    SpecInterviewPolicy,
+    StageType,
 )
 from .paths import RuntimePaths
 
@@ -221,17 +230,6 @@ class WatcherConfig(MillraceModel):
         if not normalized:
             raise ValueError("watcher roots may not be empty")
         return tuple(normalized)
-
-
-# Runtime-stage routing and config-application helpers live in a sibling
-# module but stay re-exported here to preserve the stable config facade.
-from .config_runtime import (
-    ConfigApplyBoundary,
-    ConfigBoundaries,
-    RoutingConfig,
-    StageConfig,
-    default_stage_configs,
-)
 
 
 class SearchPolicy(MillraceModel):

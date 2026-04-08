@@ -16,7 +16,6 @@ from .loop_architecture_profile_contracts import (
 )
 from .loop_architecture_stage_contracts import RegisteredStageKindDefinition
 
-
 PersistedArchitectureObject: TypeAlias = Annotated[
     RegisteredStageKindDefinition
     | LoopConfigDefinition

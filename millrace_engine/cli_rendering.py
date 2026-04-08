@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
 import json
+from typing import Any
 
 import typer
 
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
 from .control import (
     AssetInventoryView,
-    CompoundingIntegrityReport,
     CompoundingContextFactListReport,
     CompoundingContextFactReport,
     CompoundingGovernanceSummaryView,
@@ -20,6 +19,7 @@ from .control import (
     CompoundingHarnessCandidateReport,
     CompoundingHarnessRecommendationListReport,
     CompoundingHarnessRecommendationReport,
+    CompoundingIntegrityReport,
     CompoundingOrientationReport,
     CompoundingProcedureListReport,
     CompoundingProcedureReport,
@@ -35,7 +35,11 @@ from .control import (
 from .events import EventRecord, render_event_record_line
 from .health import HealthCheckStatus
 from .publishing import PublishCommitReport, PublishPreflightReport, StagingSyncReport
-from .standard_runtime import RegistryObjectSelectionView, RuntimeSelectionView, StageExecutionBindingView
+from .standard_runtime import (
+    RegistryObjectSelectionView,
+    RuntimeSelectionView,
+    StageExecutionBindingView,
+)
 
 
 def _json_output(payload: Any, *, err: bool = False) -> None:

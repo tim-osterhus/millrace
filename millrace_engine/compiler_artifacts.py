@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-import json
 
 from .assets.resolver import AssetSourceKind
 from .baseline_assets import packaged_baseline_asset
 from .compiler_models import (
     CompileArtifacts,
     CompileDiagnosticsArtifact,
+    CompilerDiagnostic,
     CompileStatus,
     CompileTimeResolvedSnapshot,
-    CompilerDiagnostic,
     DiagnosticSeverity,
     FrozenPlanSourceKind,
     FrozenPlanSourceRef,

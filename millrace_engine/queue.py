@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import fcntl
+import json
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,9 +12,6 @@ from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
 from typing import Literal, Sequence
-import fcntl
-import json
-import time
 
 from .contracts import BlockerEntry, ExecutionStatus, ResearchRecoveryLatch, TaskCard
 from .markdown import (
@@ -24,7 +24,6 @@ from .markdown import (
 )
 from .paths import RuntimePaths
 from .policies.sizing import SizeClass, adaptive_upscope_task_card
-
 
 DEFAULT_STORE_PREAMBLES = {
     "tasks.md": "# Active Task",

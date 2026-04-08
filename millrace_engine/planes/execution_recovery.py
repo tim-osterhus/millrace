@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
-import json
-import re
 
-from ..contracts import BlockerEntry, ExecutionResearchHandoff, ExecutionStatus, RunnerResult, StageResult, StageType, TaskCard
+from ..contracts import (
+    BlockerEntry,
+    ExecutionResearchHandoff,
+    ExecutionStatus,
+    RunnerResult,
+    StageResult,
+    StageType,
+    TaskCard,
+)
 from ..diagnostics import create_diagnostics_bundle
 from ..markdown import insert_after_preamble, write_text_atomic
 from ..run_ids import stable_slug

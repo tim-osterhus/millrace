@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-import json
-import shutil
 
 from pydantic import Field, field_validator
 
@@ -16,7 +16,11 @@ from .contracts import ContractModel, StageType
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
 from .policies.hooks import PolicyEvaluationRecord, PolicyEvidenceKind
-from .provenance import RuntimeTransitionRecord, latest_policy_transition_record, read_transition_history
+from .provenance import (
+    RuntimeTransitionRecord,
+    latest_policy_transition_record,
+    read_transition_history,
+)
 
 _REDACTED_VALUE = "<redacted>"
 _DEFAULT_POLICY_EVIDENCE_SENSITIVE_KEYS = frozenset(

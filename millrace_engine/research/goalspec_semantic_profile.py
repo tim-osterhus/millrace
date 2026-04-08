@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Literal
 import json
 import re
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import field_validator
 
@@ -16,7 +16,6 @@ from .normalization_helpers import (
     _normalize_required_text,
     _normalize_text_sequence,
 )
-
 
 DEFAULT_SEMANTIC_SEED_FILENAMES = (
     "semantic_profile_seed.json",

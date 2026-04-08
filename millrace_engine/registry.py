@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from importlib.resources import as_file, files
 from pathlib import Path, PurePosixPath
 from typing import Any
-import json
 
 from pydantic import TypeAdapter
 
@@ -23,7 +23,6 @@ from .contracts import (
     RegistryTier,
 )
 from .markdown import write_text_atomic
-
 
 _PACKAGED_REGISTRY_PACKAGE = "millrace_engine.assets"
 _PACKAGED_REGISTRY_DIR = "registry"

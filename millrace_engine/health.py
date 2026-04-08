@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import tomllib
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Literal
-import tomllib
 
 from pydantic import Field, ValidationError, field_validator
 
@@ -13,8 +13,15 @@ from .assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKin
 from .baseline_assets import packaged_baseline_bundle_version
 from .compounding.integrity import CompoundingIntegrityStatus, build_compounding_integrity_report
 from .config import LoadedConfig, build_runtime_paths, load_engine_config
-from .contracts import ContractModel, ExecutionStatus, ResearchMode, RunnerKind, SpecInterviewPolicy, StageType
 from .config_compat import LegacyPolicyCompatStatus
+from .contracts import (
+    ContractModel,
+    ExecutionStatus,
+    ResearchMode,
+    RunnerKind,
+    SpecInterviewPolicy,
+    StageType,
+)
 from .paths import RuntimePaths
 from .policies.sizing import SizeStatusError, parse_size_status
 from .policies.transport import DefaultTransportProbe, TransportProbeContext, TransportReadiness

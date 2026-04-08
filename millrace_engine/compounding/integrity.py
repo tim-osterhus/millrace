@@ -20,7 +20,10 @@ from .harness import (
     discover_harness_search_requests,
 )
 from .lifecycle import discover_governed_procedures, discover_lifecycle_records
-from .orientation import generate_compounding_orientation_artifacts, load_compounding_orientation_artifacts
+from .orientation import (
+    generate_compounding_orientation_artifacts,
+    load_compounding_orientation_artifacts,
+)
 
 
 class CompoundingIntegrityStatus(str, Enum):

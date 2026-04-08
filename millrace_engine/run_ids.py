@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import re
-
+from datetime import datetime, timezone
 
 _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 

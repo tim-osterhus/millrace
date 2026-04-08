@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from importlib import import_module
 from pathlib import Path
 from typing import Literal
-import re
 
 from pydantic import field_validator
 
-from ..contracts import ContractModel, ControlPlane, ExecutionStatus, _normalize_datetime, _normalize_path
+from ..contracts import (
+    ContractModel,
+    ControlPlane,
+    ExecutionStatus,
+    _normalize_datetime,
+    _normalize_path,
+)
 from ..paths import RuntimePaths
 from .blockers import BlockerQueueRecord, load_blocker_records
 from .state import ResearchQueueFamily, ResearchQueueOwnership, ResearchQueueSnapshot
-
 
 _WHITESPACE_RE = re.compile(r"\s+")
 

@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .normalization_helpers import _normalize_optional_text, _normalize_required_text, _normalize_token_sequence
+from .normalization_helpers import (
+    _normalize_optional_text,
+    _normalize_required_text,
+    _normalize_token_sequence,
+)
 from .path_helpers import _relative_path
 from .persistence_helpers import _load_json_object, _sha256_text
-
 
 GOVERNANCE_REPORT_SCHEMA_VERSION = "1.0"
 DEFAULT_PINNED_FAMILY_POLICY_FIELDS = (

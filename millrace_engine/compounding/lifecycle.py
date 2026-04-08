@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 from pathlib import Path
 from typing import Literal
-import re
 
 from ..contract_compounding import (
     ProcedureLifecycleRecord,
@@ -17,7 +17,6 @@ from ..contract_compounding import (
 )
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
-
 
 ProcedureRetrievalStatus = Literal["eligible", "stale", "deprecated", "run_candidate"]
 _FILENAME_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")

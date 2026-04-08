@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pathlib import Path
-from shutil import which
-from typing import Sequence
 import os
 import re
 import signal
 import subprocess
 import time
+from datetime import datetime, timezone
+from pathlib import Path
+from shutil import which
+from typing import Sequence
 
 from .contracts import CodexUsageSummary, RunnerKind, RunnerResult, StageContext, StageType
 from .diagnostics import allocate_run_directory, build_stage_artifact_paths
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
 from .telemetry import extract_codex_exec_usage, format_usage_summary
-
 
 MARKER_RE = re.compile(r"^###\s+([A-Z0-9_]+)\s*$", re.MULTILINE)
 RUNNER_EXECUTABLES: dict[RunnerKind, str] = {

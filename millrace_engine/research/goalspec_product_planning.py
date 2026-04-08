@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Literal
 
 from .goalspec import AcceptanceProfileRecord, CompletionManifestDraftSurface, GoalSource
 from .goalspec_helpers import GoalSpecExecutionError, _slugify
 from .goalspec_scope_diagnostics import infer_goal_scope_kind
-
 
 RepoKind = Literal["millrace_python_runtime", "minecraft_fabric_mod", "python_product", "generic_product"]
 

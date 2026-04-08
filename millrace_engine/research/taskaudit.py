@@ -20,9 +20,12 @@ from .normalization_helpers import (
 )
 from .path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from .persistence_helpers import _load_json_model, _sha256_text, _write_json_model
-from .provenance import TaskauditProvenance, refresh_task_provenance_registry, task_provenance_source_paths
+from .provenance import (
+    TaskauditProvenance,
+    refresh_task_provenance_registry,
+    task_provenance_source_paths,
+)
 from .specs import GoalSpecFamilyState, load_goal_spec_family_state
-
 
 TASKAUDIT_ARTIFACT_SCHEMA_VERSION = "1.0"
 _DEFAULT_PENDING_PREAMBLE = "# Tasks Pending"

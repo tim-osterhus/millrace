@@ -15,6 +15,7 @@ from .adapters.control_mailbox import (
     list_incoming_command_paths,
     read_command,
 )
+from .config import LoadedConfig
 from .control_models import OperationResult
 from .engine_mailbox_command_handlers import (
     EngineMailboxCommandContext,
@@ -23,7 +24,6 @@ from .engine_mailbox_command_handlers import (
 )
 from .events import EventSource, EventType
 from .paths import RuntimePaths
-from .config import LoadedConfig
 
 
 @dataclass(frozen=True)

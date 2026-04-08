@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-import re
 
 from .contract_context_facts import ContextFactArtifact, ContextFactLifecycleState, ContextFactScope
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
-
 
 ContextFactRetrievalStatus = Literal["eligible", "stale", "deprecated", "run_candidate"]
 _FILENAME_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")

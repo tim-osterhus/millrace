@@ -5,17 +5,38 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
+
 from .compiler_artifacts import (
     asset_source_ref as _asset_source_ref,
+)
+from .compiler_artifacts import (
     current_rebinding_value as _current_rebinding_value,
+)
+from .compiler_artifacts import (
     emit_compile_artifacts as _emit_compile_artifacts,
+)
+from .compiler_artifacts import (
     emit_failure_compile_artifacts as _emit_failure_artifacts,
+)
+from .compiler_artifacts import (
     has_error_diagnostics as _has_error_diagnostics,
+)
+from .compiler_artifacts import (
     plan_hash as _plan_hash,
+)
+from .compiler_artifacts import (
     reachable_nodes as _reachable_nodes,
+)
+from .compiler_artifacts import (
     ref_string as _ref_string,
+)
+from .compiler_artifacts import (
     render_json as _render_json,
+)
+from .compiler_artifacts import (
     sha256_text as _sha256_text,
+)
+from .compiler_artifacts import (
     sorted_diagnostics as _sorted_diagnostics,
 )
 from .compiler_models import (
@@ -25,10 +46,10 @@ from .compiler_models import (
     CompileArtifacts,
     CompileDiagnosticsArtifact,
     CompilePhase,
+    CompilerDiagnostic,
     CompileResult,
     CompileStatus,
     CompileTimeResolvedSnapshot,
-    CompilerDiagnostic,
     DiagnosticSeverity,
     FrozenLoopPlan,
     FrozenParameterRebindingRule,
@@ -58,8 +79,8 @@ from .contracts import (
     PersistedObjectKind,
     RegisteredStageKindDefinition,
     RegistryObjectRef,
-    StageOverrideField,
     StageIdempotencePolicy,
+    StageOverrideField,
 )
 from .materialization import (
     ArchitectureMaterializer,

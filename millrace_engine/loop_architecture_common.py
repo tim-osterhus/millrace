@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
-import re
 
 from pydantic import field_validator, model_validator
 
 from .contract_core import ContractModel, _normalize_datetime
-
 
 CANONICAL_ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 ALIAS_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
