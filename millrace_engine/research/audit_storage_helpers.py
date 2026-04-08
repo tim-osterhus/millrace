@@ -6,19 +6,22 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from ..contracts import CompletionDecision, ContractModel, ResearchStatus
+from ..contracts import AuditGateDecision, CompletionDecision, ContractModel, ResearchStatus
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
+from .audit_models import (
+    AuditIntakeRecord,
+    AuditQueueRecord,
+    AuditRemediationRecord,
+    AuditSummary,
+    AuditSummaryLastOutcome,
+)
 from .path_helpers import _relative_path, _resolve_path_token
 from .persistence_helpers import _load_json_model
 from .persistence_helpers import _write_json_model as _shared_write_json_model
-
-if TYPE_CHECKING:
-    from .audit import AuditGateDecision, AuditQueueRecord, AuditRemediationRecord, AuditSummary
 
 
 def _audit_runtime_dir(paths: RuntimePaths) -> Path:
@@ -54,8 +57,6 @@ def _execution_report_path(paths: RuntimePaths, *, run_id: str) -> Path:
 
 
 def _audited_source_path(paths: RuntimePaths, *, run_id: str, record: "AuditQueueRecord") -> str:
-    from .audit import AuditIntakeRecord
-
     intake_record_path = _audit_record_path(paths, stage="intake", run_id=run_id)
     if intake_record_path.exists():
         intake_record = _load_json_model(intake_record_path, AuditIntakeRecord)
@@ -64,8 +65,6 @@ def _audited_source_path(paths: RuntimePaths, *, run_id: str, record: "AuditQueu
 
 
 def _default_audit_summary() -> "AuditSummary":
-    from .audit import AuditSummary, AuditSummaryLastOutcome
-
     return AuditSummary(
         updated_at=None,
         last_outcome=AuditSummaryLastOutcome(status="none", details="none", at=None),
@@ -74,8 +73,6 @@ def _default_audit_summary() -> "AuditSummary":
 
 
 def _load_audit_summary(paths: RuntimePaths) -> "AuditSummary":
-    from .audit import AuditSummary
-
     summary_path = _audit_summary_path(paths)
     if not summary_path.exists():
         return _default_audit_summary()
@@ -98,8 +95,6 @@ def load_audit_remediation_record(
 ) -> "AuditRemediationRecord | None":
     """Load one audit remediation record if it exists."""
 
-    from .audit import AuditRemediationRecord
-
     record_path = _audit_remediation_record_path(paths, run_id=run_id)
     if not record_path.exists():
         return None
@@ -118,8 +113,6 @@ def _write_audit_summary(
     final_status: ResearchStatus,
     remediation_record: "AuditRemediationRecord | None",
 ) -> "AuditSummary":
-    from .audit import AuditSummary, AuditSummaryLastOutcome
-
     summary = _load_audit_summary(paths)
     counts = dict(summary.counts)
     if final_status is ResearchStatus.AUDIT_PASS:

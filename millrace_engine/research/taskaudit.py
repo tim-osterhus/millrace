@@ -12,7 +12,7 @@ from ..contracts import ContractModel, TaskCard, _normalize_datetime
 from ..markdown import TaskStoreDocument, parse_task_store, render_task_store, write_text_atomic
 from ..paths import RuntimePaths
 from ..queue import QueueMergeConflictError, TaskQueue
-from .goalspec import GoalSpecExecutionError
+from .goalspec_helpers import GoalSpecExecutionError
 from .normalization_helpers import (
     _normalize_optional_text,
     _normalize_required_text,

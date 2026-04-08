@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from ..baseline_assets import packaged_baseline_asset
 from ..contracts import (
     AuditContract,
+    AuditExecutionReport,
     AuditGateDecision,
     AuditGateDecisionCounts,
     CompletionDecision,
@@ -22,15 +23,13 @@ from ..contracts import (
 )
 from ..markdown import parse_task_store
 from ..paths import RuntimePaths
+from .audit_models import AuditQueueRecord, AuditValidateRecord
 from .audit_storage_helpers import (
     _load_json_model,
     _relative_path,
     _resolve_path_token,
     _write_json_model,
 )
-
-if TYPE_CHECKING:
-    from .audit import AuditQueueRecord, AuditValidateRecord
 
 
 def _normalize_required_text(value: str, *, field_name: str) -> str:
@@ -184,8 +183,6 @@ def _evaluate_completion_gate(
     packaged_objective_contract_ref: str,
     packaged_completion_manifest_ref: str,
 ) -> tuple[AuditGateDecision, CompletionDecision, ResearchStatus]:
-    from .audit import AuditExecutionReport
-
     execution_report_path = _resolve_path_token(validate_record.execution_report_path, relative_to=paths.root)
     gate_checks: list[bool] = []
     reasons: list[str] = []

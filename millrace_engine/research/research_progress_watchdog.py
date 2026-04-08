@@ -9,6 +9,20 @@ from ..contracts import TaskCard
 from ..markdown import TaskStoreDocument, parse_task_store, render_task_store, write_text_atomic
 from ..paths import RuntimePaths
 from ..queue import load_research_recovery_latch
+from .audit_models import AuditRemediationRecord
+from .governance_models import (
+    ProgressWatchdogReport,
+    ProgressWatchdogState,
+    RecoveryTaskRegenerationReport,
+)
+from .governance_support import (
+    _file_sha256_or_none,
+    _load_json_object,
+    _normalize_optional_text,
+    _relative_path,
+    _utcnow,
+)
+from .specs import GoalSpecFamilyState
 
 
 def _read_task_store_cards(path: Path) -> tuple[TaskCard, ...]:
@@ -25,8 +39,6 @@ def _visible_recovery_cards(paths: RuntimePaths, *, remediation_spec_id: str) ->
 
 
 def _append_backlog_task(paths: RuntimePaths, *, title: str, body: str, spec_id: str) -> TaskCard:
-    from .governance import _utcnow
-
     task_date = _utcnow().date().isoformat()
     card = TaskCard.model_validate(
         {
@@ -44,9 +56,6 @@ def _append_backlog_task(paths: RuntimePaths, *, title: str, body: str, spec_id:
 
 
 def _governance_history_status(paths: RuntimePaths) -> tuple[bool | None, str]:
-    from .governance import _load_json_object
-    from .specs import GoalSpecFamilyState
-
     if not paths.goal_spec_family_state_file.exists():
         return None, "goal-spec-family-state-missing"
     if not paths.objective_family_policy_file.exists():
@@ -72,14 +81,6 @@ def _regenerate_audit_recovery_task(
     remediation_spec_id: str,
     visible_count_before: int,
 ):
-    from .audit import AuditRemediationRecord
-    from .governance import (
-        RecoveryTaskRegenerationReport,
-        _file_sha256_or_none,
-        _load_json_object,
-        _relative_path,
-    )
-
     if not remediation_record_path.exists():
         preserved, preservation_reason = _governance_history_status(paths)
         return RecoveryTaskRegenerationReport(
@@ -158,8 +159,6 @@ def _evaluate_recovery_regeneration(
     visible_count_before: int,
     allow_regeneration: bool,
 ):
-    from .governance import RecoveryTaskRegenerationReport, _relative_path
-
     preserved, preservation_reason = _governance_history_status(paths)
     base_report = RecoveryTaskRegenerationReport(
         reason="recovery-regeneration-not-applicable",
@@ -211,13 +210,6 @@ def evaluate_progress_watchdog(
     allow_regeneration: bool = False,
 ):
     """Evaluate one explainable progress-watchdog snapshot over the recovery latch."""
-
-    from .governance import (
-        ProgressWatchdogReport,
-        _normalize_optional_text,
-        _relative_path,
-        _utcnow,
-    )
 
     latch = load_research_recovery_latch(paths.research_recovery_latch_file)
     report = ProgressWatchdogReport(
@@ -307,8 +299,6 @@ def sync_progress_watchdog(
     allow_regeneration: bool = False,
 ):
     """Persist one progress-watchdog snapshot for engine-side visibility."""
-
-    from .governance import ProgressWatchdogState
 
     report = evaluate_progress_watchdog(paths=paths, allow_regeneration=allow_regeneration)
     state = ProgressWatchdogState(

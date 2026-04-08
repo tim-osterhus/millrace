@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import TYPE_CHECKING
 
 from ..paths import RuntimePaths
 from .governance_models import (
@@ -46,9 +45,6 @@ from .specs import (
     GoalSpecFamilySpecState,
     GoalSpecFamilyState,
 )
-
-if TYPE_CHECKING:
-    from .goalspec import SpecSynthesisRecord
 
 
 def _goalspec_delivery_integrity_module():
@@ -214,8 +210,8 @@ def build_reused_spec_synthesis_family_state(
 
 def evaluate_spec_synthesis_idempotency(
     *,
-    existing_record: "SpecSynthesisRecord",
-    expected_record: "SpecSynthesisRecord",
+    existing_record: object,
+    expected_record: object,
     existing_family_state: GoalSpecFamilyState,
     expected_family_state: GoalSpecFamilyState,
     actual_queue_spec_text: str,

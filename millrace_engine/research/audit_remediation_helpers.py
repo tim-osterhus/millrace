@@ -11,6 +11,7 @@ from ..contracts import AuditGateDecision, CompletionDecision, ResearchRecoveryD
 from ..markdown import TaskStoreDocument, parse_task_store, render_task_store, write_text_atomic
 from ..paths import RuntimePaths
 from ..queue import load_research_recovery_latch, write_research_recovery_latch
+from .audit_models import AuditQueueRecord, AuditRemediationRecord
 from .audit_storage_helpers import (
     _audit_remediation_record_path,
     _relative_path,
@@ -19,7 +20,6 @@ from .audit_storage_helpers import (
 
 if TYPE_CHECKING:
     from ..contracts import TaskCard
-    from .audit import AuditQueueRecord, AuditRemediationRecord
     from .state import ResearchCheckpoint
 
 
@@ -156,8 +156,6 @@ def _persist_audit_remediation(
     validate_record_path: Path,
     execution_report_path: Path,
 ) -> "AuditRemediationRecord":
-    from .audit import AuditRemediationRecord
-
     remediation_spec_id = _audit_remediation_spec_id(record.audit_id)
     remediation_path = _audit_remediation_record_path(paths, run_id=run_id)
     existing_task = _existing_remediation_task(paths, remediation_spec_id=remediation_spec_id)

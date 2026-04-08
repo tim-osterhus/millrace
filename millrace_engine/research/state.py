@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -22,16 +22,9 @@ from ..contracts import (
     _normalize_path,
 )
 from ..events import EventType
-from .audit import AuditQueueRecord
+from .audit_models import AuditQueueRecord
 from .blockers import BlockerQueueRecord
-from .incidents import IncidentDocument
-
-if TYPE_CHECKING:
-    from .research_state_store import (
-        PersistedStateMigrationApplyReport,
-        PersistedStateMigrationPreviewReport,
-        ResearchStateStore,
-    )
+from .incident_documents import IncidentDocument
 
 
 def _utcnow() -> datetime:

@@ -19,7 +19,7 @@ from .goalspec_helpers import (
 )
 from .goalspec_scope_diagnostics import ScopeDivergenceRecord, ScopeSurfaceDiagnostic
 from .goalspec_semantic_profile import GoalSemanticProfile
-from .governance import InitialFamilyPolicyPinDecision
+from .governance_models import InitialFamilyPolicyPinDecision
 from .specs import (
     GoalSpecDecompositionProfile,
 )

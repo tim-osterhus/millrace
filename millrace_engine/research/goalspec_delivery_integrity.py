@@ -4,22 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
+from .governance_models import GoalSpecDeliveryIntegrityReport, GoalSpecDeliveryIntegrityState
 from .parser_helpers import _parse_simple_frontmatter
 from .path_helpers import _relative_path, _resolve_path_token
 from .queues import ResearchQueueDiscovery, discover_research_queues
 from .specs import GoalSpecFamilySpecState, load_goal_spec_family_state
 from .state import ResearchQueueFamily
 from .taskaudit import TaskauditRecord
-
-if TYPE_CHECKING:
-    from .governance import GoalSpecDeliveryIntegrityReport
-
 
 _EARLIER_STAGE_ENTRY_NODE_IDS = frozenset({"goal_intake", "objective_profile_sync"})
 
@@ -104,8 +100,6 @@ def evaluate_goalspec_delivery_integrity(
     observed_at: datetime | None = None,
 ):
     """Evaluate one GoalSpec delivery-integrity snapshot without mutating runtime state."""
-
-    from .governance import GoalSpecDeliveryIntegrityReport
 
     observed_at = observed_at or _utcnow()
     report = GoalSpecDeliveryIntegrityReport(
@@ -220,8 +214,6 @@ def sync_goalspec_delivery_integrity(
 ):
     """Persist one GoalSpec delivery-integrity report and state snapshot."""
 
-    from .governance import GoalSpecDeliveryIntegrityState
-
     report = evaluate_goalspec_delivery_integrity(
         paths=paths,
         queue_discovery=queue_discovery,
@@ -251,15 +243,13 @@ def sync_goalspec_delivery_integrity(
 def load_goalspec_delivery_integrity_report(*, paths: RuntimePaths):
     """Return the persisted delivery-integrity report when it already exists."""
 
-    from .governance import GoalSpecDeliveryIntegrityReport
-
     report_path = _delivery_integrity_report_path(paths)
     if not report_path.exists():
         return None
     return GoalSpecDeliveryIntegrityReport.model_validate_json(report_path.read_text(encoding="utf-8"))
 
 
-def delivery_integrity_error_message(report: "GoalSpecDeliveryIntegrityReport") -> str:
+def delivery_integrity_error_message(report: GoalSpecDeliveryIntegrityReport) -> str:
     """Render one stable hard-failure message for a failed delivery-integrity report."""
 
     goal_label = report.goal_id or "active GoalSpec family"
