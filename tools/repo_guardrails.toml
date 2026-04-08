@@ -33,10 +33,8 @@ runtime = [
 ]
 diff_base = "HEAD"
 
-[[budgets.temporary_exceptions.runtime]]
-path = "millrace_engine/engine_runtime_loop.py"
-owner = "batch-25-run-09"
-rationale = "Run 04 reduced engine.py to a composition shell, but the extracted runtime-loop seam remains oversized pending a narrower outage and pacing split."
+[budgets.temporary_exceptions]
+runtime = []
 
 [budgets.exceptions]
 runtime = [
