@@ -1337,7 +1337,7 @@ def logs_command(
     try:
         events = _run_expected(
             lambda: control.events_subscribe(
-                start_at_end=True,
+                start_at_end=tail > 0,
                 idle_timeout_seconds=idle_timeout,
             ),
             json_mode=json_mode,

@@ -7,7 +7,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from ..contracts import ContractModel
 from ..markdown import write_text_atomic
@@ -1003,7 +1003,12 @@ def build_research_governance_report(paths: RuntimePaths) -> ResearchGovernanceR
         )
     else:
         progress_watchdog = sync_progress_watchdog(paths=paths, allow_regeneration=False)
-    goalspec_delivery_integrity = sync_goalspec_delivery_integrity(paths=paths)
+    try:
+        goalspec_delivery_integrity = load_goalspec_delivery_integrity_report(paths=paths)
+    except (ValidationError, ValueError):
+        goalspec_delivery_integrity = None
+    if goalspec_delivery_integrity is None:
+        goalspec_delivery_integrity = sync_goalspec_delivery_integrity(paths=paths)
     return ResearchGovernanceReport(
         queue_governor=queue_governor,
         governance_canary=evaluate_governance_canary(paths=paths),
@@ -1051,6 +1056,10 @@ def sync_goalspec_delivery_integrity(*args, **kwargs):
     return _goalspec_delivery_integrity_module().sync_goalspec_delivery_integrity(*args, **kwargs)
 
 
+def load_goalspec_delivery_integrity_report(*args, **kwargs):
+    return _goalspec_delivery_integrity_module().load_goalspec_delivery_integrity_report(*args, **kwargs)
+
+
 def evaluate_progress_watchdog(*args, **kwargs):
     return _research_progress_watchdog_module().evaluate_progress_watchdog(*args, **kwargs)
 
@@ -1086,6 +1095,7 @@ __all__ = [
     "evaluate_initial_family_plan_guard",
     "evaluate_spec_synthesis_idempotency",
     "load_drift_control_policy",
+    "load_goalspec_delivery_integrity_report",
     "load_queue_governor_report",
     "resolve_family_governor_state",
     "sync_goalspec_delivery_integrity",

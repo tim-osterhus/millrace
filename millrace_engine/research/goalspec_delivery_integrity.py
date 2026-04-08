@@ -248,6 +248,17 @@ def sync_goalspec_delivery_integrity(
     return report
 
 
+def load_goalspec_delivery_integrity_report(*, paths: RuntimePaths):
+    """Return the persisted delivery-integrity report when it already exists."""
+
+    from .governance import GoalSpecDeliveryIntegrityReport
+
+    report_path = _delivery_integrity_report_path(paths)
+    if not report_path.exists():
+        return None
+    return GoalSpecDeliveryIntegrityReport.model_validate_json(report_path.read_text(encoding="utf-8"))
+
+
 def delivery_integrity_error_message(report: "GoalSpecDeliveryIntegrityReport") -> str:
     """Render one stable hard-failure message for a failed delivery-integrity report."""
 
@@ -271,5 +282,6 @@ def delivery_integrity_error_message(report: "GoalSpecDeliveryIntegrityReport") 
 __all__ = [
     "delivery_integrity_error_message",
     "evaluate_goalspec_delivery_integrity",
+    "load_goalspec_delivery_integrity_report",
     "sync_goalspec_delivery_integrity",
 ]

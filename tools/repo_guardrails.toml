@@ -43,7 +43,6 @@ runtime = [
   "millrace_engine/compiler.py",
   "millrace_engine/config.py",
   "millrace_engine/contract_documents.py",
-  "millrace_engine/control.py",
   "millrace_engine/control_models.py",
   "millrace_engine/control_reports.py",
   "millrace_engine/diagnostics.py",

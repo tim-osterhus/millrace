@@ -422,7 +422,7 @@ def research_queue_family_view(
     *,
     ownerships: tuple[ResearchQueueOwnership, ...],
 ) -> ResearchQueueFamilyView:
-    return ResearchQueueFamilyView(
+    view = ResearchQueueFamilyView(
         family=scan.family,
         ready=scan.ready,
         item_count=len(scan.items),
@@ -432,6 +432,7 @@ def research_queue_family_view(
         first_item=scan.first_item,
         ownerships=ownerships,
     )
+    return ResearchQueueFamilyView.model_validate(view.model_dump(mode="json"))
 
 
 def _asset_resolution_view(resolved: ResolvedAsset) -> AssetResolutionView:
