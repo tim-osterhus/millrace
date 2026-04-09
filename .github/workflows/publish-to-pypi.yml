@@ -105,9 +105,42 @@ jobs:
           config_path.write_text(config_text.replace('mode = "stub"', 'mode = "auto"', 1), encoding="utf-8")
           raw_dir = workspace / "agents" / "ideas" / "raw"
           raw_dir.mkdir(parents=True, exist_ok=True)
-          (raw_dir / "goal.md").write_text("# goal\n", encoding="utf-8")
+          (raw_dir / "goal.md").write_text(
+              "---\n"
+              "idea_id: IDEA-RELEASE-SMOKE-001\n"
+              "title: Support Ticket Service\n"
+              "decomposition_profile: moderate\n"
+              "---\n\n"
+              "# Support Ticket Service\n\n"
+              "Build the first usable support-ticket web app for a Python service.\n\n"
+              "## Capability Domains\n"
+              "- Ticket creation API\n"
+              "- Agent inbox triage dashboard\n"
+              "- Escalation notifications\n\n"
+              "## Progression Lines\n"
+              "- Progression from ticket intake to assignment to resolution confirmation.\n"
+              "- Automated validation covers API behavior and core service flow.\n",
+              encoding="utf-8",
+          )
           PY
           .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" start --once --json > /tmp/millrace-publish-smoke-research-start.json
+          for pass in 2 3 4 5 6; do
+            .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" start --once --json > "/tmp/millrace-publish-smoke-research-start-${pass}.json"
+            .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" research --json > /tmp/millrace-publish-smoke-research-report.json
+            if .publish-smoke/bin/python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/millrace-publish-smoke-research-report.json").read_text(encoding="utf-8"))
+          runtime = payload.get("runtime") or {}
+          raise SystemExit(0 if payload.get("status") == "BLOCKED" and runtime.get("last_mode") == "GOALSPEC" else 1)
+          PY
+            then
+              break
+            fi
+          done
           .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" research --json > /tmp/millrace-publish-smoke-research-report.json
           .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" queue inspect --json > /tmp/millrace-publish-smoke-research-queue.json
           .publish-smoke/bin/millrace --config "$RESEARCH_WORKSPACE/millrace.toml" supervisor report --recent-events 20 --json > /tmp/millrace-publish-smoke-research-supervisor.json
@@ -144,12 +177,19 @@ jobs:
           )
 
           exec_workspace = Path(os.environ["EXEC_WORKSPACE"])
+          research_workspace = Path(os.environ["RESEARCH_WORKSPACE"])
           exec_events = [
               json.loads(line)
               for line in (exec_workspace / "agents" / "engine_events.log").read_text(encoding="utf-8").splitlines()
               if line.strip()
           ]
           exec_archive_text = (exec_workspace / "agents" / "tasksarchive.md").read_text(encoding="utf-8")
+          research_spec_decision_text = (
+              research_workspace / "agents" / "specs" / "decisions" / "SPEC-RELEASE-SMOKE-001__support-ticket-service__spec-review.md"
+          ).read_text(encoding="utf-8")
+          research_spec_questions_text = (
+              research_workspace / "agents" / "specs" / "questions" / "SPEC-RELEASE-SMOKE-001__support-ticket-service__spec-review.md"
+          ).read_text(encoding="utf-8")
 
           assert exec_health_payload["bootstrap_ready"] is True, exec_health_payload
           assert exec_health_payload["config_source_kind"] == "native_toml", exec_health_payload
@@ -185,23 +225,32 @@ jobs:
           ), exec_events
           assert any(event["type"] == "execution.task.archived" for event in exec_events), exec_events
 
-          assert research_start_payload["backlog_depth"] >= 1, research_start_payload
+          assert research_start_payload["research_status"] == "OBJECTIVE_PROFILE_SYNC_RUNNING", research_start_payload
+          assert research_start_payload["backlog_depth"] == 0, research_start_payload
           assert research_report_payload["configured_mode"] == "auto", research_report_payload
+          assert research_report_payload["status"] == "BLOCKED", research_report_payload
           assert research_report_payload["runtime"]["cycle_count"] >= 1, research_report_payload
           assert research_report_payload["runtime"]["last_mode"] == "GOALSPEC", research_report_payload
-          assert research_queue_payload["backlog_depth"] >= 1, research_queue_payload
-          assert research_queue_payload["next_task"] is not None, research_queue_payload
-          assert research_supervisor_payload["attention_reason"] == "idle_with_pending_work", research_supervisor_payload
-          assert research_supervisor_payload["backlog_depth"] >= 1, research_supervisor_payload
-          assert research_supervisor_payload["next_task"] is not None, research_supervisor_payload
+          assert research_queue_payload["backlog_depth"] == 0, research_queue_payload
+          assert research_queue_payload["next_task"] is None, research_queue_payload
+          assert research_supervisor_payload["attention_reason"] == "blocked_research", research_supervisor_payload
+          assert research_supervisor_payload["backlog_depth"] == 0, research_supervisor_payload
+          assert research_supervisor_payload["next_task"] is None, research_supervisor_payload
           assert any(
-              event["type"] == "research.mode.selected"
+              event["type"] == "research.checkpoint.resumed"
               for event in research_supervisor_payload["recent_events"]
           ), research_supervisor_payload
           assert any(
-              event["type"] == "research.dispatch.compiled"
+              event["type"] == "research.blocked"
               for event in research_supervisor_payload["recent_events"]
           ), research_supervisor_payload
+          assert any(
+              event["type"] == "research.retry.scheduled"
+              for event in research_supervisor_payload["recent_events"]
+          ), research_supervisor_payload
+          assert "Review-Status:" in research_spec_decision_text, research_spec_decision_text
+          assert "blocked" in research_spec_decision_text, research_spec_decision_text
+          assert "Critic Findings" in research_spec_questions_text, research_spec_questions_text
 
           assert any(entry["path"] == "agents" and entry["action"] == "synced" for entry in publish_sync_payload["entries"]), publish_sync_payload
           assert "README.md" in publish_sync_payload["selection"]["required_paths"], publish_sync_payload
