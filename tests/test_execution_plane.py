@@ -2915,6 +2915,9 @@ def test_execution_plane_needs_research_quarantines_active_and_backlog_cards(tmp
 
     latch = load_research_recovery_latch(workspace / "agents/.runtime/research_recovery_latch.json")
     assert latch is not None
+    assert latch.quarantine_mode_requested == "dependency"
+    assert latch.quarantine_mode_applied == "dependency"
+    assert latch.quarantine_reason == "dependency_overlap_match"
     assert latch.frozen_backlog_cards == 1
     assert latch.incident_path == Path("agents/ideas/incidents/incoming/INC-FIXTURE-001.md")
     assert latch.diag_dir == result.diagnostics_dir
@@ -2931,6 +2934,63 @@ def test_execution_plane_needs_research_quarantines_active_and_backlog_cards(tmp
     assert "- **Stage:** qa" in failure_summary
     assert "status=BLOCKED" in failure_summary
     assert (workspace / "agents/status.md").read_text(encoding="utf-8") == "### IDLE\n"
+
+
+def test_execution_plane_needs_research_retains_unrelated_backlog_without_persisting_thaw_latch(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "needs_research")
+    script = write_stage_driver(tmp_path)
+    backlog_path = workspace / "agents/tasksbacklog.md"
+    backlog_path.write_text(
+        backlog_path.read_text(encoding="utf-8")
+        + "\n\n"
+        + "\n".join(
+            [
+                "## 2026-03-21 - Publish release notes",
+                "",
+                "- **Goal:** Keep the docs lane moving.",
+                "- **Context:** This card is unrelated to the frozen execution family.",
+                "- **Spec-ID:** SPEC-DOCS",
+                "- **Dependencies:** none",
+                "- **Deliverables:**",
+                "  - Publish the release summary.",
+                "- **Acceptance:** It remains queued after a research quarantine.",
+                "- **Notes:** This backlog card should stay available.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.INTEGRATION: [sys.executable, str(script), "integration"],
+            StageType.QA: [sys.executable, str(script), "qa-blocked"],
+            StageType.TROUBLESHOOT: [sys.executable, str(script), "troubleshoot-blocked"],
+            StageType.CONSULT: [sys.executable, str(script), "consult-needs-research"],
+        },
+    )
+
+    result = plane.run_once()
+
+    assert result.final_status is ExecutionStatus.IDLE
+    assert result.quarantined_task is not None
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+    backlog_cards = parse_task_cards(backlog_path.read_text(encoding="utf-8"))
+    assert [card.title for card in backlog_cards] == ["Publish release notes"]
+
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "Ship the happy path" in backburner_text
+    assert "Research follow-up task" in backburner_text
+    assert "Publish release notes" not in backburner_text
+
+    blocker_text = (workspace / "agents/tasksblocker.md").read_text(encoding="utf-8")
+    assert "while unrelated backlog work continues promotion" in blocker_text
+    assert not (workspace / "agents/.runtime/research_recovery_latch.json").exists()
+    assert result.research_handoff is not None
 
 
 @pytest.mark.parametrize(

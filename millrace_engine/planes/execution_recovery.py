@@ -223,6 +223,7 @@ def quarantine_task(
         run_dir=run_dir,
         diagnostics_dir=diagnostics_dir,
         prompt_artifact=prompt_artifact,
+        quarantine_mode_requested="dependency",
     )
     handoff = plane._build_research_handoff(
         run_id=run_id,
@@ -234,10 +235,13 @@ def quarantine_task(
         latch=latch,
     )
     latch = latch.model_copy(update={"handoff": handoff})
-    write_text_atomic(
-        plane.paths.research_recovery_latch_file,
-        latch.model_dump_json(indent=2, exclude_none=True) + "\n",
-    )
+    if latch.quarantine_mode_applied == "dependency" and latch.retained_backlog_cards > 0:
+        plane.paths.research_recovery_latch_file.unlink(missing_ok=True)
+    else:
+        write_text_atomic(
+            plane.paths.research_recovery_latch_file,
+            latch.model_dump_json(indent=2, exclude_none=True) + "\n",
+        )
     plane._last_research_handoff = handoff
     plane.status_store.transition(ExecutionStatus.IDLE)
     return task

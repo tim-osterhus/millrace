@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ DEFAULT_STORE_PREAMBLES = {
 
 DEFAULT_LOCK_TIMEOUT_SECONDS = 15.0
 LOCK_RETRY_SLEEP_SECONDS = 0.05
+_DEPENDENCY_TAGS_RE = re.compile(r"^-\s+\*\*Dependency(?:\s+|-)Tags:\*\*\s*(.+)$", re.IGNORECASE)
 
 
 def _research_incidents_module():
@@ -76,6 +78,76 @@ class QueueCleanupRecord:
 
 def _sha256_text(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
+
+
+def _normalize_dependency_token(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _parse_dependency_tokens(value: str | None) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    return frozenset(
+        token
+        for token in (_normalize_dependency_token(raw) for raw in value.split(","))
+        if token
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _DependencyQuarantineMetadata:
+    identity_tokens: frozenset[str]
+    overlap_tokens: frozenset[str]
+    has_dependency_metadata: bool
+
+
+def _dependency_tags_from_body(body: str) -> frozenset[str]:
+    tags: set[str] = set()
+    for raw_line in body.splitlines():
+        match = _DEPENDENCY_TAGS_RE.match(raw_line.strip())
+        if not match:
+            continue
+        tags.update(_parse_dependency_tokens(match.group(1)))
+    return frozenset(tags)
+
+
+def _dependency_quarantine_metadata(card: TaskCard) -> _DependencyQuarantineMetadata:
+    spec_ids = _parse_dependency_tokens(card.spec_id)
+    dependency_tags = _dependency_tags_from_body(card.body)
+    depends_on = frozenset(
+        token for token in (_normalize_dependency_token(item) for item in card.depends_on) if token
+    )
+    blocks = frozenset(
+        token for token in (_normalize_dependency_token(item) for item in card.blocks) if token
+    )
+    provides = frozenset(
+        token for token in (_normalize_dependency_token(item) for item in card.provides) if token
+    )
+    identity_tokens = set(spec_ids | dependency_tags | blocks | provides)
+    for value in (card.task_id, card.title, card.heading):
+        token = _normalize_dependency_token(value)
+        if token:
+            identity_tokens.add(token)
+    if card.date:
+        dated_title = _normalize_dependency_token(f"{card.date} - {card.title}")
+        if dated_title:
+            identity_tokens.add(dated_title)
+    overlap_tokens = spec_ids | dependency_tags | depends_on | blocks | provides
+    return _DependencyQuarantineMetadata(
+        identity_tokens=frozenset(identity_tokens),
+        overlap_tokens=frozenset(overlap_tokens),
+        has_dependency_metadata=bool(spec_ids or dependency_tags or depends_on or blocks or provides),
+    )
+
+
+def _dependency_quarantine_overlap(
+    active_metadata: _DependencyQuarantineMetadata,
+    candidate_metadata: _DependencyQuarantineMetadata,
+) -> bool:
+    return bool(
+        active_metadata.identity_tokens.intersection(candidate_metadata.overlap_tokens)
+        or candidate_metadata.identity_tokens.intersection(active_metadata.overlap_tokens)
+    )
 
 
 def load_research_recovery_latch(path: Path) -> ResearchRecoveryLatch | None:
@@ -469,6 +541,7 @@ class TaskQueue:
         prompt_artifact: Path | None = None,
         notes: str | None = None,
         retain_backlog_cards: int = 0,
+        quarantine_mode_requested: Literal["full", "dependency"] = "full",
         failure_signature: str = "needs_research",
     ) -> ResearchRecoveryLatch:
         """Quarantine the active task and freeze backlog state for research handoff."""
@@ -487,9 +560,44 @@ class TaskQueue:
                     preferred_path=incident_path,
                 )
 
-            retained_cards = backlog_document.cards[:retain_backlog_cards]
-            frozen_backlog_cards = backlog_document.cards[retain_backlog_cards:]
+            retained_cards = list(backlog_document.cards[:retain_backlog_cards])
+            candidate_backlog_cards = list(backlog_document.cards[retain_backlog_cards:])
+            requested_mode = quarantine_mode_requested
+            if requested_mode not in {"full", "dependency"}:
+                requested_mode = "full"
+                quarantine_reason = f"fallback_full_invalid_mode:{quarantine_mode_requested}"
+            else:
+                quarantine_reason = "requested"
+            applied_mode = requested_mode
+            frozen_backlog_cards = list(candidate_backlog_cards)
+            missing_metadata_quarantined = 0
+
+            if requested_mode == "dependency":
+                active_metadata = _dependency_quarantine_metadata(active_card)
+                if not active_metadata.has_dependency_metadata:
+                    applied_mode = "full"
+                    quarantine_reason = "fallback_full_active_metadata_missing"
+                else:
+                    applied_mode = "dependency"
+                    quarantine_reason = "dependency_overlap_match"
+                    frozen_backlog_cards = []
+                    for backlog_card in candidate_backlog_cards:
+                        backlog_metadata = _dependency_quarantine_metadata(backlog_card)
+                        if not backlog_metadata.has_dependency_metadata:
+                            missing_metadata_quarantined += 1
+                            frozen_backlog_cards.append(backlog_card)
+                            continue
+                        if _dependency_quarantine_overlap(active_metadata, backlog_metadata):
+                            frozen_backlog_cards.append(backlog_card)
+                        else:
+                            retained_cards.append(backlog_card)
+            else:
+                applied_mode = "full"
+                if quarantine_reason == "requested":
+                    quarantine_reason = "full_mode"
+
             frozen_cards = [active_card, *frozen_backlog_cards]
+            write_thaw_latch = not (applied_mode == "dependency" and retained_cards)
 
             now = datetime.now(timezone.utc)
             batch_id = now.strftime("%Y%m%dT%H%M%SZ")
@@ -507,7 +615,10 @@ class TaskQueue:
                     "reason": reason,
                     "frozen_backlog_cards": len(frozen_backlog_cards),
                     "retained_backlog_cards": len(retained_cards),
-                    "quarantine_reason": "consult_handoff",
+                    "quarantine_mode_requested": requested_mode,
+                    "quarantine_mode_applied": applied_mode,
+                    "quarantine_reason": quarantine_reason,
+                    "missing_metadata_quarantined": missing_metadata_quarantined,
                 }
             )
 
@@ -523,7 +634,11 @@ class TaskQueue:
                     "diagnostics_dir": diagnostics_dir,
                     "root_cause_summary": reason,
                     "next_action": (
-                        "Research handoff via incident intake and pending-task regeneration"
+                        (
+                            "Research handoff via incident intake and pending-task regeneration"
+                            if write_thaw_latch
+                            else "Research handoff via incident intake while unrelated backlog work continues promotion"
+                        )
                         if status is ExecutionStatus.NEEDS_RESEARCH
                         else "Operator review of blocker state"
                     ),
@@ -557,7 +672,10 @@ class TaskQueue:
             )
             write_text_atomic(self.paths.backburner_file, updated_backburner)
             write_text_atomic(self.paths.blocker_file, updated_blocker)
-            write_research_recovery_latch(self.paths.research_recovery_latch_file, latch)
+            if write_thaw_latch:
+                write_research_recovery_latch(self.paths.research_recovery_latch_file, latch)
+            else:
+                self.paths.research_recovery_latch_file.unlink(missing_ok=True)
             if status is ExecutionStatus.NEEDS_RESEARCH:
                 _research_incidents_module().record_incident_recurrence(
                     self.paths,

@@ -48,6 +48,38 @@ TASK_GAMMA = """## 2026-03-18 - Research-generated remediation task
 - **Notes:** This card stands in for Taskaudit output.
 """
 
+TASK_DELTA = """## 2026-03-19 - Publish release notes
+
+- **Goal:** Document the release scope.
+- **Context:** This card is unrelated to runtime recovery work.
+- **Spec-ID:** SPEC-DOCS
+- **Dependencies:** none
+- **Deliverables:**
+  - Publish concise release notes.
+- **Acceptance:** The docs lane can continue independently.
+- **Notes:** This card should survive dependency-aware quarantine.
+"""
+
+TASK_EPSILON = """## 2026-03-20 - Capture stakeholder notes
+
+- **Goal:** Preserve a manually queued note-taking task.
+- **Context:** This card omits dependency metadata on purpose.
+- **Deliverables:**
+  - Capture the next meeting notes.
+- **Acceptance:** Conservative quarantine should freeze this card when overlap is unknown.
+- **Notes:** Metadata is intentionally incomplete.
+"""
+
+TASK_ZETA = """## 2026-03-21 - Investigate unknown failure
+
+- **Goal:** Triage an execution failure with incomplete provenance.
+- **Context:** The runtime has not yet attached spec metadata.
+- **Deliverables:**
+  - Gather the failure context.
+- **Acceptance:** Unsafe dependency quarantine falls back to a full freeze.
+- **Notes:** This active card intentionally has no dependency metadata.
+"""
+
 
 def make_queue(tmp_path: Path) -> tuple[TaskQueue, Path]:
     workspace = tmp_path / "millrace"
@@ -337,6 +369,78 @@ def test_thaw_restores_frozen_cards_after_regenerated_backlog_work_appears(tmp_p
         workspace / "agents/tasksbackburner.md"
     ).read_text(encoding="utf-8")
     assert not (workspace / "agents/.runtime/research_recovery_latch.json").exists()
+
+
+def test_quarantine_dependency_mode_retains_unrelated_backlog_and_conservatively_freezes_missing_metadata(
+    tmp_path: Path,
+) -> None:
+    queue, workspace = make_queue(tmp_path)
+    (workspace / "agents/tasks.md").write_text(f"# Active Task\n\n{TASK_ALPHA}", encoding="utf-8")
+    (workspace / "agents/tasksbacklog.md").write_text(
+        f"# Task Backlog\n\n{TASK_BETA}\n\n{TASK_DELTA}\n\n{TASK_EPSILON}",
+        encoding="utf-8",
+    )
+
+    active_card = queue.active_task()
+    assert active_card is not None
+
+    latch = queue.quarantine(
+        active_card,
+        "Consult exhausted the local path",
+        Path("agents/ideas/incidents/incoming/INC-QUEUE-DEPENDENCY-001.md"),
+        quarantine_mode_requested="dependency",
+    )
+
+    backlog_cards = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    assert [card.title for card in backlog_cards] == ["Publish release notes"]
+
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "Implement status store" in backburner_text
+    assert "Build queue operations" in backburner_text
+    assert "Capture stakeholder notes" in backburner_text
+    assert "Publish release notes" not in backburner_text
+
+    assert latch.quarantine_mode_requested == "dependency"
+    assert latch.quarantine_mode_applied == "dependency"
+    assert latch.quarantine_reason == "dependency_overlap_match"
+    assert latch.frozen_backlog_cards == 2
+    assert latch.retained_backlog_cards == 1
+    assert latch.missing_metadata_quarantined == 1
+
+    blocker_text = (workspace / "agents/tasksblocker.md").read_text(encoding="utf-8")
+    assert "while unrelated backlog work continues promotion" in blocker_text
+    assert not (workspace / "agents/.runtime/research_recovery_latch.json").exists()
+
+
+def test_quarantine_dependency_mode_falls_back_to_full_freeze_when_active_metadata_is_missing(
+    tmp_path: Path,
+) -> None:
+    queue, workspace = make_queue(tmp_path)
+    (workspace / "agents/tasks.md").write_text(f"# Active Task\n\n{TASK_ZETA}", encoding="utf-8")
+    (workspace / "agents/tasksbacklog.md").write_text(f"# Task Backlog\n\n{TASK_DELTA}", encoding="utf-8")
+
+    active_card = queue.active_task()
+    assert active_card is not None
+
+    latch = queue.quarantine(
+        active_card,
+        "Consult exhausted the local path",
+        Path("agents/ideas/incidents/incoming/INC-QUEUE-DEPENDENCY-002.md"),
+        quarantine_mode_requested="dependency",
+    )
+
+    assert parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "Investigate unknown failure" in backburner_text
+    assert "Publish release notes" in backburner_text
+
+    assert latch.quarantine_mode_requested == "dependency"
+    assert latch.quarantine_mode_applied == "full"
+    assert latch.quarantine_reason == "fallback_full_active_metadata_missing"
+    assert latch.frozen_backlog_cards == 1
+    assert latch.retained_backlog_cards == 0
+    assert latch.missing_metadata_quarantined == 0
+    assert (workspace / "agents/.runtime/research_recovery_latch.json").exists()
 
 
 def test_thaw_requires_durable_recovery_decision_even_when_backlog_is_non_empty(tmp_path: Path) -> None:
