@@ -3314,6 +3314,91 @@ def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_p
     assert (workspace / result.archived_path).exists()
 
 
+def test_execute_taskmaster_splits_oversized_phase_step_into_traceable_suffix_cards(tmp_path: Path) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-split-404",
+        emitted_at=_dt("2026-04-07T14:30:00Z"),
+        title="Aura Workshop Vertical Slice",
+        body=(
+            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "## Capability Domains\n"
+            "- Aura collector gameplay\n"
+            "- Aura conduit routing\n\n"
+            "## Progression Lines\n"
+            "- Progression from collection to conduit routing to first playable proof.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    phase_path = workspace / family_state["specs"]["SPEC-404"]["stable_spec_paths"][1]
+    phase_text = phase_path.read_text(encoding="utf-8")
+    phase_text = _replace_markdown_section(
+        phase_text,
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                (
+                    "1. Implement the broad launch slice across "
+                    "`src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java` and "
+                    "`src/main/java/com/example/aura/AuraCollectorGameplayBlock.java` and "
+                    "`src/main/java/com/example/aura/AuraConduitRoutingBlock.java` and "
+                    "`src/main/resources/assets/aura/lang/en_us.json` and "
+                    "`src/test/java/com/example/aura/AuraWorkshopVerticalSliceFlowTest.java` and "
+                    "`src/gametest/java/com/example/aura/AuraWorkshopVerticalSliceGameTest.java` "
+                    "while preserving the same bounded vertical-slice contract."
+                ),
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-split-404",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskmaster-split-404",
+            emitted_at=_dt("2026-04-07T14:30:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskmaster-split-404",
+        emitted_at=_dt("2026-04-07T14:30:00Z"),
+    )
+
+    shard = parse_task_store((workspace / result.shard_path).read_text(encoding="utf-8"), source_file=workspace / result.shard_path)
+    assert result.card_count == 6
+    assert [card.title.split(" - ", 1)[0] for card in shard.cards] == [
+        "SPEC-404 PHASE_01.1a",
+        "SPEC-404 PHASE_01.1b",
+        "SPEC-404 PHASE_01.1c",
+        "SPEC-404 PHASE_01.1d",
+        "SPEC-404 PHASE_01.1e",
+        "SPEC-404 PHASE_01.1f",
+    ]
+    assert all(len(_field_block_lines(card.body, "Files to touch")) == 1 for card in shard.cards)
+
+    record = json.loads((workspace / result.record_path).read_text(encoding="utf-8"))
+    assert record["card_count"] == 6
+    assert record["profile_selection"]["expected_min_cards"] == 6
+    assert record["profile_selection"]["expected_max_cards"] == 10
+
+
 def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_path: Path) -> None:
     workspace, config, paths, synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
         tmp_path,

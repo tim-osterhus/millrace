@@ -83,6 +83,7 @@ _PROFILE_CARD_ENVELOPE = {
     "massive": (30, 45),
     "": (2, 6),
 }
+_TASKCARD_MAX_FILES_TO_TOUCH = 2
 
 
 def _utcnow() -> datetime:
@@ -215,6 +216,132 @@ def _phase_steps(phase_text: str, *, phase_key: str) -> tuple[tuple[str, str], .
     return tuple(steps)
 
 
+def _split_step_suffix(index: int) -> str:
+    suffix = ""
+    current = index
+    while True:
+        current, remainder = divmod(current, 26)
+        suffix = chr(ord("a") + remainder) + suffix
+        if current == 0:
+            return suffix
+        current -= 1
+
+
+def _phase_step_split_paths(phase_step_description: str) -> tuple[str, ...]:
+    explicit_paths = _extract_repo_relative_paths(phase_step_description)
+    non_agent_paths = tuple(path for path in explicit_paths if not path.startswith("agents/"))
+    if non_agent_paths:
+        return non_agent_paths
+    return explicit_paths
+
+
+def _partition_split_paths(paths: tuple[str, ...], fragment_count: int) -> tuple[tuple[str, ...], ...]:
+    if fragment_count <= 1:
+        return (paths,)
+
+    partitions: list[tuple[str, ...]] = []
+    index = 0
+    remaining_paths = len(paths)
+    remaining_fragments = fragment_count
+    while remaining_fragments > 0:
+        if remaining_paths - 2 >= remaining_fragments - 1:
+            width = 2
+        else:
+            width = 1
+        partitions.append(paths[index : index + width])
+        index += width
+        remaining_paths -= width
+        remaining_fragments -= 1
+    return tuple(partitions)
+
+
+def _split_phase_step_description(
+    source_phase_step_id: str,
+    phase_step_description: str,
+    fragment_paths: tuple[str, ...],
+) -> str:
+    focused_paths = ", ".join(f"`{path}`" for path in fragment_paths)
+    return (
+        f"{phase_step_description} Constrain this split slice from `{source_phase_step_id}` to {focused_paths}."
+    )
+
+
+def _plan_taskmaster_cards(
+    phase_steps: tuple[tuple[str, str], ...],
+    *,
+    default_paths: tuple[str, ...],
+    expected_min_cards: int,
+) -> tuple[tuple[str, str, str, tuple[str, ...]], ...]:
+    step_plans: list[dict[str, object]] = []
+    planned_card_count = 0
+    for phase_step_id, phase_step_description in phase_steps:
+        split_paths = _phase_step_split_paths(phase_step_description)
+        path_count = len(split_paths)
+        if path_count == 0:
+            fragment_count = 1
+            max_fragments = 1
+        else:
+            fragment_count = max(1, (path_count + _TASKCARD_MAX_FILES_TO_TOUCH - 1) // _TASKCARD_MAX_FILES_TO_TOUCH)
+            max_fragments = path_count
+        step_plans.append(
+            {
+                "source_phase_step_id": phase_step_id,
+                "phase_step_description": phase_step_description,
+                "split_paths": split_paths,
+                "fragment_count": fragment_count,
+                "max_fragments": max_fragments,
+            }
+        )
+        planned_card_count += fragment_count
+
+    while planned_card_count < expected_min_cards:
+        expandable = [
+            plan
+            for plan in step_plans
+            if int(plan["fragment_count"]) < int(plan["max_fragments"])
+        ]
+        if not expandable:
+            break
+        expandable.sort(
+            key=lambda plan: (
+                int(plan["max_fragments"]) - int(plan["fragment_count"]),
+                len(plan["split_paths"]),  # type: ignore[arg-type]
+                str(plan["source_phase_step_id"]),
+            ),
+            reverse=True,
+        )
+        expandable[0]["fragment_count"] = int(expandable[0]["fragment_count"]) + 1
+        planned_card_count += 1
+
+    planned_cards: list[tuple[str, str, str, tuple[str, ...]]] = []
+    for plan in step_plans:
+        source_phase_step_id = str(plan["source_phase_step_id"])
+        phase_step_description = str(plan["phase_step_description"])
+        split_paths = tuple(str(path) for path in plan["split_paths"])  # type: ignore[arg-type]
+        fragment_count = int(plan["fragment_count"])
+        if fragment_count <= 1:
+            planned_cards.append(
+                (
+                    source_phase_step_id,
+                    source_phase_step_id,
+                    phase_step_description,
+                    _phase_step_files_to_touch(phase_step_description, default_paths=default_paths),
+                )
+            )
+            continue
+
+        for fragment_index, fragment_paths in enumerate(_partition_split_paths(split_paths, fragment_count)):
+            planned_cards.append(
+                (
+                    f"{source_phase_step_id}{_split_step_suffix(fragment_index)}",
+                    source_phase_step_id,
+                    _split_phase_step_description(source_phase_step_id, phase_step_description, fragment_paths),
+                    fragment_paths,
+                )
+            )
+    return tuple(planned_cards)
+
+
 def _strict_files_to_touch(
     *,
     reviewed_path: str,
@@ -332,6 +459,7 @@ def _render_task_card(
     requirement_ids: tuple[str, ...],
     acceptance_ids: tuple[str, ...],
     phase_step_id: str,
+    source_phase_step_id: str,
     phase_step_description: str,
     files_to_touch: tuple[str, ...],
     verification_commands: tuple[str, ...],
@@ -353,15 +481,22 @@ def _render_task_card(
             spec_id,
             *requirement_ids,
             *acceptance_ids,
+            f"SOURCE-{source_phase_step_id.replace('_', '-').replace('.', '-')}",
             f"OUTCOME-{phase_step_id.replace('_', '-').replace('.', '-')}",
         ]
+    )
+    context_line = (
+        f"- **Context:** Reviewed GoalSpec `{spec_id}` is decomposing phase step `{source_phase_step_id}`"
+        f" from the stable GoalSpec package via split slice `{phase_step_id}`."
+        if source_phase_step_id != phase_step_id
+        else f"- **Context:** Reviewed GoalSpec `{spec_id}` is decomposing phase step `{phase_step_id}` from the stable GoalSpec package."
     )
     return "\n".join(
         [
             f"## {emitted_at.date().isoformat()} - {title}",
             "",
             f"- **Goal:** Execute `{phase_step_id}` for `{spec_id}` as one strict, reviewable slice.",
-            f"- **Context:** Reviewed GoalSpec `{spec_id}` is decomposing phase step `{phase_step_id}` from the stable GoalSpec package.",
+            context_line,
             f"- **Spec-ID:** {spec_id}",
             f"- **Requirement IDs:** {' '.join(requirement_ids)}",
             f"- **Acceptance IDs:** {' '.join(acceptance_ids)}",
@@ -424,8 +559,13 @@ def _validate_strict_shard(
         prompt_source = _field_value(card.body, "Prompt Source").strip("`")
         if prompt_source != "agents/prompts/taskmaster_decompose.md":
             raise TaskmasterExecutionError(f"Taskmaster card {card.title!r} has invalid Prompt Source {prompt_source!r}")
-        if not _field_block_lines(card.body, "Files to touch"):
+        files_to_touch = _field_block_lines(card.body, "Files to touch")
+        if not files_to_touch:
             raise TaskmasterExecutionError(f"Taskmaster card {card.title!r} is missing Files to touch")
+        if len(files_to_touch) > _TASKCARD_MAX_FILES_TO_TOUCH:
+            raise TaskmasterExecutionError(
+                f"Taskmaster card {card.title!r} touches {len(files_to_touch)} files, above narrow-card limit {_TASKCARD_MAX_FILES_TO_TOUCH}"
+            )
         steps = _field_block_lines(card.body, "Steps")
         if not steps:
             raise TaskmasterExecutionError(f"Taskmaster card {card.title!r} is missing Steps")
@@ -705,11 +845,6 @@ def execute_taskmaster(
     if not phase_steps:
         raise TaskmasterExecutionError(f"Stable phase spec {primary_phase_path.as_posix()} is missing Work Plan steps")
 
-    if len(phase_steps) < min_cards or len(phase_steps) > max_cards:
-        raise TaskmasterExecutionError(
-            f"Stable phase spec for {spec_id} yields {len(phase_steps)} steps outside expected card range {min_cards}-{max_cards}"
-        )
-
     dependency_paths = _dependency_paths(reviewed_text)
     verification_commands = _verification_commands(reviewed_text)
     product_surface_paths = _completion_manifest_surface_paths(paths)
@@ -755,6 +890,21 @@ def execute_taskmaster(
         else ""
     )
 
+    phase_default_files_to_touch = (
+        product_default_files_to_touch
+        if enforce_open_product_lane and product_default_files_to_touch
+        else default_files_to_touch
+    )
+    planned_task_cards = _plan_taskmaster_cards(
+        phase_steps,
+        default_paths=phase_default_files_to_touch,
+        expected_min_cards=min_cards,
+    )
+    if len(planned_task_cards) < min_cards or len(planned_task_cards) > max_cards:
+        raise TaskmasterExecutionError(
+            f"Stable phase spec for {spec_id} yields {len(planned_task_cards)} task cards outside expected card range {min_cards}-{max_cards}"
+        )
+
     task_dependencies = _dedupe([archived_relative_path, *dependency_paths, *stable_spec_paths])
     shard_text = "\n\n".join(
         _render_task_card(
@@ -765,19 +915,13 @@ def execute_taskmaster(
             requirement_ids=requirement_ids,
             acceptance_ids=acceptance_ids,
             phase_step_id=phase_step_id,
+            source_phase_step_id=source_phase_step_id,
             phase_step_description=phase_step_description,
-            files_to_touch=_phase_step_files_to_touch(
-                phase_step_description,
-                default_paths=(
-                    product_default_files_to_touch
-                    if enforce_open_product_lane and product_default_files_to_touch
-                    else default_files_to_touch
-                ),
-            ),
+            files_to_touch=files_to_touch,
             verification_commands=verification_commands,
             dependencies=task_dependencies,
         )
-        for phase_step_id, phase_step_description in phase_steps
+        for phase_step_id, source_phase_step_id, phase_step_description, files_to_touch in planned_task_cards
     ).rstrip() + "\n"
     if paths.objective_profile_sync_state_file.exists():
         _objective_state, profile = _load_objective_profile_inputs(paths)
