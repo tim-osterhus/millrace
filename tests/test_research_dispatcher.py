@@ -1055,6 +1055,54 @@ def test_research_plane_run_ready_work_defers_auto_goalspec_after_goal_intake(tm
     assert backlog.cards == []
 
 
+def test_research_plane_defers_completion_manifest_and_synthesis_into_later_goal_spec_passes(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    _write_queue_file(
+        raw_goal_path,
+        "---\n"
+        "idea_id: IDEA-CADENCE-42\n"
+        "title: Support Ticket Service\n"
+        "---\n\n"
+        "# Support Ticket Service\n\n"
+        "Build the first usable support-ticket web app with ticket intake and assignment.\n",
+    )
+    plane = ResearchPlane(config, paths)
+
+    first_dispatch = plane.sync_runtime(trigger="engine-start", run_id="goalspec-cadence-42", resolve_assets=False)
+
+    assert first_dispatch is not None
+    first_snapshot = plane.snapshot_state()
+    assert first_snapshot.checkpoint is not None
+    assert first_snapshot.checkpoint.node_id == "objective_profile_sync"
+    assert plane.status_store.read() is ResearchStatus.OBJECTIVE_PROFILE_SYNC_RUNNING
+    assert not paths.audit_completion_manifest_file.exists()
+
+    second_dispatch = plane.run_ready_work(run_id="goalspec-cadence-42", resolve_assets=False)
+
+    assert second_dispatch is not None
+    second_snapshot = plane.snapshot_state()
+    assert second_snapshot.checkpoint is not None
+    assert second_snapshot.checkpoint.node_id == "completion_manifest_draft"
+    assert plane.status_store.read() is ResearchStatus.COMPLETION_MANIFEST_RUNNING
+    assert paths.objective_profile_sync_state_file.exists()
+    assert not paths.audit_completion_manifest_file.exists()
+    assert not (paths.goalspec_spec_synthesis_records_dir / "goalspec-cadence-42.json").exists()
+
+    third_dispatch = plane.run_ready_work(run_id="goalspec-cadence-42", resolve_assets=False)
+
+    assert third_dispatch is not None
+    third_snapshot = plane.snapshot_state()
+    assert third_snapshot.checkpoint is not None
+    assert third_snapshot.checkpoint.node_id == "spec_synthesis"
+    assert plane.status_store.read() is ResearchStatus.SPEC_SYNTHESIS_RUNNING
+    assert paths.audit_completion_manifest_file.exists()
+    assert (paths.goalspec_completion_manifest_records_dir / "goalspec-cadence-42.json").exists()
+    assert not (paths.goalspec_spec_synthesis_records_dir / "goalspec-cadence-42.json").exists()
+
+
 def test_research_plane_staging_dispatch_never_reenters_goal_intake(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1979,6 +2027,32 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
     assert not (workspace / "agents" / "taskspending" / "SPEC-77.md").exists()
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
     assert backlog.cards == []
+
+    dispatch = plane.run_ready_work(run_id="goalspec-sync-77", resolve_assets=False)
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "completion_manifest_draft"
+    assert plane.status_store.read() is ResearchStatus.COMPLETION_MANIFEST_RUNNING
+    assert not (workspace / "agents" / "audit" / "completion_manifest.json").exists()
+
+    dispatch = plane.run_ready_work(run_id="goalspec-sync-77", resolve_assets=False)
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "spec_synthesis"
+    assert plane.status_store.read() is ResearchStatus.SPEC_SYNTHESIS_RUNNING
+    assert (workspace / "agents" / "audit" / "completion_manifest.json").exists()
+    assert not (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "spec_synthesis"
+        / "goalspec-sync-77.json"
+    ).exists()
 
 
 def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answer(

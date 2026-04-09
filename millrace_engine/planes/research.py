@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -224,6 +225,15 @@ _REQUEST_FAMILY_BY_EVENT = {
     EventType.AUDIT_REQUESTED: ResearchQueueFamily.AUDIT,
     EventType.NEEDS_RESEARCH: ResearchQueueFamily.BLOCKER,
 }
+_GOALSPEC_COMPLETION_MANIFEST_NODE_ID = "completion_manifest_draft"
+_GOALSPEC_COMPLETION_MANIFEST_KIND_ID = "research.completion-manifest-draft"
+
+
+@dataclass(frozen=True)
+class _GoalSpecSyntheticStage:
+    node_id: str
+    kind_id: str
+    running_status: str
 
 
 class ResearchLockUnavailableError(ResearchDispatchError):
@@ -408,6 +418,75 @@ class ResearchPlane:
         ):
             return ResearchQueueFamily.INCIDENT
         return selected_family
+
+    def _supports_local_goalspec_stage_execution(self, checkpoint: ResearchCheckpoint | None) -> bool:
+        if checkpoint is None:
+            return False
+        if checkpoint.node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID:
+            return self._resume_selected_family(checkpoint) is ResearchQueueFamily.GOALSPEC
+        return self._supports_goalspec_stage_execution(checkpoint)
+
+    def _local_next_goalspec_stage(
+        self,
+        dispatch: CompiledResearchDispatch,
+        checkpoint: ResearchCheckpoint,
+    ) -> Any:
+        if checkpoint.node_id == "objective_profile_sync":
+            return _GoalSpecSyntheticStage(
+                node_id=_GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
+                kind_id=_GOALSPEC_COMPLETION_MANIFEST_KIND_ID,
+                running_status=ResearchStatus.COMPLETION_MANIFEST_RUNNING.value,
+            )
+        if checkpoint.node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID:
+            return next_stage_for_success(dispatch.research_plan, "objective_profile_sync")
+        return self._next_goalspec_stage(dispatch, checkpoint)
+
+    def _advance_local_goalspec_checkpoint(
+        self,
+        checkpoint: ResearchCheckpoint,
+        *,
+        next_stage: Any,
+        queue_ownership: Any,
+        observed_at: datetime,
+    ) -> None:
+        if (
+            next_stage is not None
+            and getattr(next_stage, "node_id", None) == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
+        ):
+            updated = checkpoint.model_copy(
+                update={
+                    "status": ResearchStatus.COMPLETION_MANIFEST_RUNNING,
+                    "node_id": _GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
+                    "stage_kind_id": _GOALSPEC_COMPLETION_MANIFEST_KIND_ID,
+                    "updated_at": observed_at,
+                    "owned_queues": (queue_ownership,),
+                }
+            )
+            queue_snapshot = self.state.queue_snapshot.model_copy(
+                update={
+                    "ownerships": updated.owned_queues,
+                    "last_scanned_at": observed_at,
+                    "selected_family": ResearchQueueFamily.GOALSPEC,
+                }
+            )
+            self.state = self.state.model_copy(
+                update={
+                    "updated_at": observed_at,
+                    "queue_snapshot": queue_snapshot,
+                    "retry_state": None,
+                    "checkpoint": updated,
+                }
+            )
+            self._persist_state()
+            self._set_research_status(ResearchStatus.COMPLETION_MANIFEST_RUNNING)
+            return
+
+        self._advance_goalspec_checkpoint(
+            checkpoint,
+            next_stage=next_stage,
+            queue_ownership=queue_ownership,
+            observed_at=observed_at,
+        )
 
     def sync_runtime(
         self,
@@ -776,7 +855,7 @@ class ResearchPlane:
         observed_at: datetime,
     ) -> None:
         checkpoint = self.state.checkpoint
-        if not self._supports_goalspec_stage_execution(checkpoint):
+        if not self._supports_local_goalspec_stage_execution(checkpoint):
             if checkpoint is not None and self._resume_selected_family(checkpoint) is ResearchQueueFamily.GOALSPEC:
                 self._release_execution_lock(observed_at=observed_at)
             return
@@ -796,20 +875,30 @@ class ResearchPlane:
                 run_id=dispatch.run_id,
                 emitted_at=stage_started_at,
             )
-        elif checkpoint.node_id == "spec_synthesis":
+        elif checkpoint.node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID:
             self._set_research_status(ResearchStatus.COMPLETION_MANIFEST_RUNNING)
-            completion_manifest = execute_completion_manifest_draft(
+            execute_completion_manifest_draft(
                 self.paths,
                 checkpoint,
                 run_id=dispatch.run_id,
                 emitted_at=stage_started_at,
             )
+            self._advance_local_goalspec_checkpoint(
+                checkpoint,
+                next_stage=self._local_next_goalspec_stage(dispatch, checkpoint),
+                queue_ownership=(
+                    checkpoint.owned_queues[0] if checkpoint.owned_queues else self.state.queue_snapshot.ownerships[0]
+                ),
+                observed_at=stage_started_at,
+            )
+            self._release_execution_lock(observed_at=_utcnow())
+            return
+        elif checkpoint.node_id == "spec_synthesis":
             self._set_research_status(ResearchStatus.SPEC_SYNTHESIS_RUNNING)
             result = execute_spec_synthesis(
                 self.paths,
                 checkpoint,
                 run_id=dispatch.run_id,
-                completion_manifest=completion_manifest.draft_state,
                 emitted_at=stage_started_at,
             )
         elif checkpoint.node_id == "spec_interview":
@@ -893,8 +982,8 @@ class ResearchPlane:
             self._release_execution_lock(observed_at=_utcnow())
             return
 
-        next_stage = self._next_goalspec_stage(dispatch, checkpoint)
-        self._advance_goalspec_checkpoint(
+        next_stage = self._local_next_goalspec_stage(dispatch, checkpoint)
+        self._advance_local_goalspec_checkpoint(
             checkpoint,
             next_stage=next_stage,
             queue_ownership=result.queue_ownership,
