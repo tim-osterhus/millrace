@@ -8,6 +8,8 @@ from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.contracts import ResearchMode, ResearchStatus
 from millrace_engine.events import EventType
 from millrace_engine.research.goalspec import execute_goal_intake, execute_objective_profile_sync
+from millrace_engine.research.goalspec_family_policy import derive_objective_family_policy
+from millrace_engine.research.goalspec_semantic_profile import GoalSemanticProfile, SemanticProfileMilestone
 from millrace_engine.research.state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeMode
 from tests.support import load_workspace_fixture
 
@@ -108,6 +110,28 @@ def _configured_goal_runtime(tmp_path: Path) -> tuple[Path, object]:
 def _write_queue_file(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
+
+
+def _semantic_profile(
+    *,
+    capability_domain_count: int,
+    progression_line_count: int,
+    milestone_count: int,
+) -> GoalSemanticProfile:
+    return GoalSemanticProfile(
+        profile_mode="heuristic",
+        objective_summary="Goal summary",
+        capability_domains=tuple(f"Capability {index}" for index in range(1, capability_domain_count + 1)),
+        progression_lines=tuple(f"Progression {index}" for index in range(1, progression_line_count + 1)),
+        milestones=tuple(
+            SemanticProfileMilestone(
+                id=f"MILESTONE-{index:02d}",
+                outcome=f"Outcome {index}",
+                capability_scope=(f"Capability {((index - 1) % max(capability_domain_count, 1)) + 1}",),
+            )
+            for index in range(1, milestone_count + 1)
+        ),
+    )
 
 
 def _goal_queue_checkpoint(*, run_id: str, emitted_at: datetime, queue_path: Path, item_path: Path) -> ResearchCheckpoint:
@@ -405,6 +429,70 @@ def test_execute_objective_profile_sync_derives_adaptive_family_policy_from_prof
     assert narrow_policy["adaptive_inputs"]["decomposition_profile"] == "trivial"
     assert broad_policy["adaptive_inputs"]["decomposition_profile"] == "involved"
     assert narrow_policy["initial_family_max_specs"] == 1
-    assert broad_policy["initial_family_max_specs"] >= 6
+    assert broad_policy["initial_family_max_specs"] == 6
     assert broad_policy["initial_family_max_specs"] > narrow_policy["initial_family_max_specs"]
     assert broad_policy["phase_caps"]["initial_family"] == broad_policy["initial_family_max_specs"]
+
+
+def test_derive_objective_family_policy_does_not_widen_below_bash_thresholds() -> None:
+    policy = derive_objective_family_policy(
+        current_policy_payload={},
+        semantic_profile=_semantic_profile(
+            capability_domain_count=6,
+            progression_line_count=2,
+            milestone_count=6,
+        ),
+        decomposition_profile="simple",
+        source_goal_id="IDEA-THRESHOLD-LOW",
+        updated_at=_dt("2026-04-09T20:10:00Z"),
+    )
+
+    assert policy["initial_family_max_specs"] == 2
+    assert policy["remediation_family_max_specs"] == 1
+    assert policy["adaptive_inputs"]["breadth_bonus"] == 0
+    assert policy["adaptive_inputs"]["capability_domain_count"] == 6
+    assert policy["adaptive_inputs"]["progression_line_count"] == 2
+    assert policy["adaptive_inputs"]["milestone_count"] == 6
+
+
+def test_derive_objective_family_policy_widens_only_at_bash_thresholds() -> None:
+    milestone_bonus_policy = derive_objective_family_policy(
+        current_policy_payload={},
+        semantic_profile=_semantic_profile(
+            capability_domain_count=6,
+            progression_line_count=1,
+            milestone_count=7,
+        ),
+        decomposition_profile="simple",
+        source_goal_id="IDEA-THRESHOLD-MILESTONE",
+        updated_at=_dt("2026-04-09T20:12:00Z"),
+    )
+    domain_bonus_policy = derive_objective_family_policy(
+        current_policy_payload={},
+        semantic_profile=_semantic_profile(
+            capability_domain_count=8,
+            progression_line_count=1,
+            milestone_count=6,
+        ),
+        decomposition_profile="simple",
+        source_goal_id="IDEA-THRESHOLD-DOMAIN",
+        updated_at=_dt("2026-04-09T20:14:00Z"),
+    )
+    remediation_bonus_policy = derive_objective_family_policy(
+        current_policy_payload={},
+        semantic_profile=_semantic_profile(
+            capability_domain_count=10,
+            progression_line_count=1,
+            milestone_count=6,
+        ),
+        decomposition_profile="moderate",
+        source_goal_id="IDEA-THRESHOLD-REMEDIATION",
+        updated_at=_dt("2026-04-09T20:16:00Z"),
+    )
+
+    assert milestone_bonus_policy["initial_family_max_specs"] == 3
+    assert milestone_bonus_policy["adaptive_inputs"]["breadth_bonus"] == 1
+    assert domain_bonus_policy["initial_family_max_specs"] == 3
+    assert domain_bonus_policy["adaptive_inputs"]["breadth_bonus"] == 1
+    assert remediation_bonus_policy["initial_family_max_specs"] == 5
+    assert remediation_bonus_policy["remediation_family_max_specs"] == 3

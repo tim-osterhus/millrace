@@ -55,9 +55,9 @@ def derive_objective_family_policy(
     progression_line_count = len(semantic_profile.progression_lines)
 
     breadth_bonus = 0
-    if milestone_count >= 3 or capability_domain_count >= 4:
+    if milestone_count >= 7:
         breadth_bonus += 1
-    if milestone_count >= 5 or capability_domain_count >= 6 or progression_line_count >= 2:
+    if capability_domain_count >= 8:
         breadth_bonus += 1
 
     profile_key = decomposition_profile if decomposition_profile in _INITIAL_CAP_BASE else ""
@@ -72,7 +72,7 @@ def derive_objective_family_policy(
         )
     else:
         initial_cap = min(12, initial_base + breadth_bonus)
-        remediation_bonus = 1 if milestone_count >= 7 or capability_domain_count >= 8 else 0
+        remediation_bonus = 1 if milestone_count >= 9 or capability_domain_count >= 10 else 0
         remediation_cap = max(1, min(initial_cap, remediation_base + remediation_bonus))
 
     notes = _normalize_text_sequence(policy.get("notes") or _DEFAULT_NOTES)
