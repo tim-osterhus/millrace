@@ -54,7 +54,6 @@ _MODE_REF_BY_RUNTIME_MODE: dict[ResearchRuntimeMode, RegistryObjectRef] = {
     ResearchRuntimeMode.INCIDENT: RESEARCH_INCIDENT_MODE_REF,
     ResearchRuntimeMode.AUDIT: RESEARCH_AUDIT_MODE_REF,
 }
-_AUTO_GROUP_ORDER = ("incident", "goalspec", "audit")
 _ENTRY_STAGE_TYPE_BY_NODE_ID: dict[str, StageType] = {
     "goal_intake": StageType.GOAL_INTAKE,
     "objective_profile_sync": StageType.OBJECTIVE_PROFILE_SYNC,
@@ -333,33 +332,36 @@ def _resolve_auto_candidate(
     goalspec_ready = queue_discovery.family_scan(ResearchQueueFamily.GOALSPEC).ready
     audit_ready = queue_discovery.family_scan(ResearchQueueFamily.AUDIT).ready
 
-    grouped_candidates: dict[str, tuple[ResearchRuntimeMode, ResearchQueueFamily, str]] = {}
-    if incident_ready or blocker_ready:
-        grouped_candidates["incident"] = (
+    ordered_candidates = (
+        (
+            incident_ready,
+            ResearchRuntimeMode.INCIDENT,
+            ResearchQueueFamily.INCIDENT,
+            "incident-queue-ready",
+        ),
+        (
+            blocker_ready,
             ResearchRuntimeMode.INCIDENT,
             ResearchQueueFamily.BLOCKER,
-            "incident-queue-ready" if incident_ready else "blocker-queue-ready",
-        )
-    if goalspec_ready:
-        grouped_candidates["goalspec"] = (
+            "blocker-queue-ready",
+        ),
+        (
+            goalspec_ready,
             ResearchRuntimeMode.GOALSPEC,
             ResearchQueueFamily.GOALSPEC,
             "goal-or-spec-queue-ready",
+        ),
+        (
+            audit_ready,
+            ResearchRuntimeMode.AUDIT,
+            ResearchQueueFamily.AUDIT,
+            "audit-queue-ready",
         )
-    if audit_ready:
-        grouped_candidates["audit"] = (ResearchRuntimeMode.AUDIT, ResearchQueueFamily.AUDIT, "audit-queue-ready")
-
-    if not grouped_candidates:
-        return None
-    if len(grouped_candidates) > 1:
-        ready_families = ", ".join(family.value for family in queue_discovery.ready_families)
-        grouped = ", ".join(name for name in _AUTO_GROUP_ORDER if name in grouped_candidates)
-        raise UnsupportedResearchQueueCombinationError(
-            "auto research dispatch does not support simultaneous ready queue groups: "
-            f"{grouped} (families: {ready_families})"
-        )
-    candidate_group = next(iter(grouped_candidates.values()))
-    return candidate_group
+    )
+    for ready, runtime_mode, selected_family, reason in ordered_candidates:
+        if ready:
+            return runtime_mode, selected_family, reason
+    return None
 
 
 class ResearchStage:

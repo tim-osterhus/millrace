@@ -33,7 +33,6 @@ from millrace_engine.research import (
     entry_stage_type_for_dispatch,
 )
 from millrace_engine.research.dispatcher import (
-    UnsupportedResearchQueueCombinationError,
     compile_research_dispatch,
     resolve_research_dispatch_selection,
 )
@@ -834,21 +833,28 @@ def test_forced_modes_compile_requested_research_plan(
     assert dispatch.compile_result.plan.content.selected_mode_ref.id == expected_mode_id
 
 
-def test_auto_selection_rejects_unsupported_ready_queue_combo(tmp_path: Path) -> None:
+def test_auto_selection_prefers_goalspec_over_audit_when_both_are_ready(tmp_path: Path) -> None:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
     _write_queue_file(workspace / "agents" / "ideas" / "raw" / "goal.md")
     _write_queue_file(workspace / "agents" / "ideas" / "audit" / "incoming" / "audit.md")
 
     plane = ResearchPlane(config, paths)
-
-    with pytest.raises(UnsupportedResearchQueueCombinationError, match="simultaneous ready queue groups"):
-        plane.dispatch_ready_work(resolve_assets=False)
+    dispatch = plane.dispatch_ready_work(run_id="research-auto-mixed-run", resolve_assets=False)
 
     snapshot = plane.snapshot_state()
-    assert snapshot.checkpoint is None
+    assert dispatch is not None
+    assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.GOALSPEC
+    assert dispatch.research_plan.entry_node_id == "goal_intake"
+    assert plane.active_dispatch() is not None
     assert snapshot.queue_snapshot.goalspec_ready is True
     assert snapshot.queue_snapshot.audit_ready is True
-    assert snapshot.mode_reason.startswith("auto research dispatch does not support simultaneous ready queue groups")
+    assert snapshot.current_mode is ResearchRuntimeMode.GOALSPEC
+    assert snapshot.mode_reason == "goal-or-spec-queue-ready"
+    assert snapshot.queue_snapshot.selected_family is ResearchQueueFamily.GOALSPEC
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "goal_intake"
+    assert plane.status_store.read() is ResearchStatus.GOAL_INTAKE_RUNNING
 
 
 def test_research_plane_dispatches_compiled_auto_plan(tmp_path: Path) -> None:
@@ -860,7 +866,7 @@ def test_research_plane_dispatches_compiled_auto_plan(tmp_path: Path) -> None:
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
-    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.BLOCKER
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
     assert dispatch.research_plan.entry_node_id == "incident_intake"
 
     snapshot = plane.snapshot_state()
@@ -894,7 +900,7 @@ def test_research_plane_run_ready_work_executes_auto_incident_stages_through_arc
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
-    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.BLOCKER
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
     snapshot = plane.snapshot_state()
     assert snapshot.current_mode is ResearchRuntimeMode.AUTO
     assert snapshot.checkpoint is None
@@ -1117,7 +1123,7 @@ def test_research_plane_run_ready_work_preserves_blocker_handoff_lineage_on_inci
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
-    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.BLOCKER
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
     snapshot = plane.snapshot_state()
     assert snapshot.checkpoint is None
     assert snapshot.deferred_requests == ()
@@ -3766,8 +3772,9 @@ def test_research_plane_emits_runtime_visibility_events_for_successful_dispatch(
     assert dispatch_payload["stage_kind_id"] == "research.incident-intake"
 
 
-def test_research_plane_emits_blocked_and_retry_visibility_events_on_dispatch_failure(tmp_path: Path) -> None:
+def test_research_plane_prefers_incident_events_over_other_ready_families_in_auto_mode(tmp_path: Path) -> None:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    _write_queue_file(workspace / "agents" / "ideas" / "incidents" / "incoming" / "incident.md")
     _write_queue_file(workspace / "agents" / "ideas" / "raw" / "goal.md")
     _write_queue_file(workspace / "agents" / "ideas" / "audit" / "incoming" / "audit.md")
     observed: list[tuple[EventType, dict[str, object]]] = []
@@ -3777,19 +3784,24 @@ def test_research_plane_emits_blocked_and_retry_visibility_events_on_dispatch_fa
         emit_event=lambda event_type, payload: observed.append((event_type, payload)),
     )
 
-    with pytest.raises(UnsupportedResearchQueueCombinationError, match="simultaneous ready queue groups"):
-        plane.dispatch_ready_work(resolve_assets=False)
+    dispatch = plane.dispatch_ready_work(run_id="research-auto-run", resolve_assets=False)
 
+    assert dispatch is not None
+    assert dispatch.selection.runtime_mode is ResearchRuntimeMode.INCIDENT
+    assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
     observed_types = [event_type for event_type, _ in observed]
     assert observed_types == [
         EventType.RESEARCH_SCAN_COMPLETED,
-        EventType.RESEARCH_BLOCKED,
-        EventType.RESEARCH_RETRY_SCHEDULED,
+        EventType.RESEARCH_MODE_SELECTED,
+        EventType.RESEARCH_LOCK_ACQUIRED,
+        EventType.RESEARCH_DISPATCH_COMPILED,
+        EventType.RESEARCH_LOCK_RELEASED,
     ]
-    retry_payload = next(payload for event_type, payload in observed if event_type is EventType.RESEARCH_RETRY_SCHEDULED)
-    assert retry_payload["attempt"] == 1
-    assert retry_payload["exhausted"] is False
-    assert "simultaneous ready queue groups" in str(retry_payload["failure_signature"])
+    dispatch_payload = next(payload for event_type, payload in observed if event_type is EventType.RESEARCH_DISPATCH_COMPILED)
+    assert dispatch_payload["run_id"] == "research-auto-run"
+    assert dispatch_payload["selected_family"] == ResearchQueueFamily.INCIDENT.value
+    assert dispatch_payload["status"] == ResearchStatus.INCIDENT_INTAKE_RUNNING.value
+    assert dispatch_payload["node_id"] == "incident_intake"
 
 
 def test_research_plane_reconfigure_clears_cached_dispatch_snapshot(tmp_path: Path) -> None:
