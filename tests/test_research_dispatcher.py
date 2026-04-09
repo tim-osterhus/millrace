@@ -685,6 +685,8 @@ def _write_typed_objective_contract(
     title: str = "Legacy workspace objective",
     source_path: str = "agents/ideas/raw/goal.md",
     updated_at: str = "2026-03-21T12:05:00Z",
+    require_open_gaps_zero: bool = True,
+    semantic_milestones: list[dict[str, object]] | None = None,
 ) -> None:
     contract_path = workspace / "agents" / "objective" / "contract.yaml"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
@@ -698,13 +700,16 @@ def _write_typed_objective_contract(
                     "authoritative_decision_file": "agents/reports/completion_decision.json",
                     "fallback_decision_file": "agents/reports/audit_gate_decision.json",
                     "require_task_store_cards_zero": True,
-                    "require_open_gaps_zero": True,
+                    "require_open_gaps_zero": require_open_gaps_zero,
                 },
                 "objective_profile": {
                     "profile_id": profile_id,
                     "title": title,
                     "source_path": source_path,
                     "updated_at": updated_at,
+                    "semantic_profile": {
+                        "milestones": [] if semantic_milestones is None else semantic_milestones,
+                    },
                 },
             },
             indent=2,
@@ -737,7 +742,12 @@ def _write_malformed_typed_objective_contract(
     )
 
 
-def _write_gaps_file(workspace: Path, *, open_gap_count: int = 0) -> None:
+def _write_gaps_file(
+    workspace: Path,
+    *,
+    open_gap_count: int = 0,
+    open_rows: list[dict[str, str]] | None = None,
+) -> None:
     gaps_path = workspace / "agents" / "gaps.md"
     lines = [
         "# Gaps",
@@ -747,10 +757,23 @@ def _write_gaps_file(workspace: Path, *, open_gap_count: int = 0) -> None:
         "| Gap ID | Title | Area | Owner | Severity | Status | Notes |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for index in range(open_gap_count):
-        lines.append(
-            f"| GAP-{index + 1:03d} | Open issue {index + 1} | runtime | qa | S2 | open | Needs closure |"
-        )
+    if open_rows is not None:
+        for index, row in enumerate(open_rows, start=1):
+            lines.append(
+                "| {gap_id} | {title} | {area} | {owner} | {severity} | open | {notes} |".format(
+                    gap_id=row.get("gap_id", f"GAP-{index:03d}"),
+                    title=row.get("title", f"Open issue {index}"),
+                    area=row.get("area", "runtime"),
+                    owner=row.get("owner", "qa"),
+                    severity=row.get("severity", "S2"),
+                    notes=row.get("notes", "Needs closure"),
+                )
+            )
+    else:
+        for index in range(open_gap_count):
+            lines.append(
+                f"| GAP-{index + 1:03d} | Open issue {index + 1} | runtime | qa | S2 | open | Needs closure |"
+            )
     lines.extend(["", "## Closed Gaps", ""])
     gaps_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -4908,6 +4931,119 @@ def test_sync_runtime_audit_fail_remediation_enqueues_backlog_and_records_operat
     audit_history_text = audit_history_path.read_text(encoding="utf-8")
     assert "Audit: `AUD-703` :: Audit AUD-703" in audit_history_text
     assert "Remediation: `SPEC-AUD-703-REMEDIATION`" in audit_history_text
+
+
+def test_sync_runtime_queue_empty_audit_goal_gap_review_fails_without_remediation_enqueue(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUDIT)
+    incoming_path = workspace / "agents" / "ideas" / "audit" / "incoming" / "AUD-705.md"
+    required_command = "pytest -q tests/test_research_dispatcher.py"
+    _write_audit_file(
+        incoming_path,
+        audit_id="AUD-705",
+        trigger="queue_empty",
+        status="incoming",
+        scope="marathon-goal-gap-review",
+        commands=[required_command],
+    )
+    _write_completion_manifest(workspace, configured=True, commands=[required_command])
+    _write_typed_objective_contract(
+        workspace,
+        profile_id="goal-gap-profile",
+        goal_id="IDEA-GOAL-GAP-001",
+        title="Restore marathon goal-gap review",
+        source_path="agents/ideas/raw/goal-gap.md",
+        require_open_gaps_zero=False,
+        semantic_milestones=[
+            {
+                "id": "MILESTONE-GAP-001",
+                "outcome": "Restore marathon goal gap review parity",
+                "capability_scope": ["goal gap review", "marathon audit"],
+            },
+            {
+                "id": "MILESTONE-GAP-002",
+                "outcome": "Keep deterministic audit pass path intact",
+                "capability_scope": ["audit gatekeeper"],
+            },
+        ],
+    )
+    _write_gaps_file(
+        workspace,
+        open_rows=[
+            {
+                "gap_id": "GAP-101",
+                "title": "Restore marathon goal gap review parity",
+                "area": "research",
+                "owner": "qa",
+                "severity": "S2",
+                "notes": "MILESTONE-GAP-001 remains unresolved in queue-empty completion flow.",
+            }
+        ],
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = plane.sync_runtime(trigger="engine-start", run_id="audit-sync-705", resolve_assets=False)
+
+    gatekeeper_path = workspace / "agents" / ".research_runtime" / "audit" / "gatekeeper" / "audit-sync-705.json"
+    goal_gap_review_path = workspace / "agents" / "reports" / "goal_gap_review.json"
+    goal_gap_review_markdown_path = workspace / "agents" / "reports" / "goal_gap_review.md"
+    gate_decision_path = workspace / "agents" / "reports" / "audit_gate_decision.json"
+    completion_decision_path = workspace / "agents" / "reports" / "completion_decision.json"
+    audit_summary_path = workspace / "agents" / "audit_summary.json"
+    audit_history_path = workspace / "agents" / "audit_history.md"
+    failed_path = workspace / "agents" / "ideas" / "audit" / "failed" / "AUD-705.md"
+
+    assert dispatch is not None
+    assert plane.status_store.read() is ResearchStatus.AUDIT_FAIL
+    assert gatekeeper_path.exists()
+    assert goal_gap_review_path.exists()
+    assert goal_gap_review_markdown_path.exists()
+    assert gate_decision_path.exists()
+    assert completion_decision_path.exists()
+    assert audit_summary_path.exists()
+    assert audit_history_path.exists()
+    assert failed_path.exists()
+    assert not incoming_path.exists()
+
+    gatekeeper_record = json.loads(gatekeeper_path.read_text(encoding="utf-8"))
+    goal_gap_review = json.loads(goal_gap_review_path.read_text(encoding="utf-8"))
+    gate_decision = json.loads(gate_decision_path.read_text(encoding="utf-8"))
+    completion_decision = json.loads(completion_decision_path.read_text(encoding="utf-8"))
+    audit_summary = json.loads(audit_summary_path.read_text(encoding="utf-8"))
+    backlog_cards = parse_task_store(
+        (workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"),
+        source_file=workspace / "agents" / "tasksbacklog.md",
+    ).cards
+
+    assert gatekeeper_record["decision"] == "audit_fail"
+    assert gatekeeper_record["deterministic_decision"] == "PASS"
+    assert gatekeeper_record["goal_gap_review_path"] == "agents/reports/goal_gap_review.json"
+    assert gatekeeper_record["goal_gap_review_status"] == "goal_gaps"
+    assert gatekeeper_record["goal_gap_count"] == 1
+    assert gatekeeper_record["remediation_record_path"] is None
+    assert gatekeeper_record["remediation_spec_id"] is None
+    assert gate_decision["decision"] == "PASS"
+    assert completion_decision["decision"] == "PASS"
+    assert goal_gap_review["artifact_type"] == "audit_goal_gap_review"
+    assert goal_gap_review["overall_status"] == "goal_gaps"
+    assert goal_gap_review["goal_gap_count"] == 1
+    assert goal_gap_review["unresolved_milestone_ids"] == ["MILESTONE-GAP-001"]
+    assert goal_gap_review["review_path"] == "agents/reports/goal_gap_review.json"
+    assert goal_gap_review["markdown_path"] == "agents/reports/goal_gap_review.md"
+    assert goal_gap_review["milestones"][0]["status"] == "goal_gap"
+    assert goal_gap_review["milestones"][0]["matched_gaps"][0]["gap_id"] == "GAP-101"
+    assert goal_gap_review["milestones"][1]["status"] == "satisfied"
+    assert backlog_cards == []
+    assert audit_summary["last_outcome"]["status"] == "AUDIT_FAIL"
+    assert audit_summary["last_outcome"]["decision"] == "FAIL"
+    assert audit_summary["last_outcome"]["deterministic_decision"] == "PASS"
+    assert audit_summary["last_outcome"]["goal_gap_review_status"] == "goal_gaps"
+    assert audit_summary["last_outcome"]["goal_gap_count"] == 1
+    assert audit_summary["last_outcome"]["goal_gap_review_path"] == "agents/reports/goal_gap_review.json"
+    audit_history_text = audit_history_path.read_text(encoding="utf-8")
+    assert "Goal gap review: `goal_gaps` (1 unresolved milestone(s))" in audit_history_text
+    assert "Goal gap review record: `agents/reports/goal_gap_review.json`" in audit_history_text
 
 
 def test_sync_runtime_blocks_completion_when_tasks_pending_and_open_gaps_remain(tmp_path: Path) -> None:

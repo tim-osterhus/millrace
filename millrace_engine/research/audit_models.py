@@ -192,6 +192,158 @@ class AuditValidateRecord(ContractModel):
         return self
 
 
+class AuditGoalGapMatch(ContractModel):
+    """One open gap row matched to a semantic milestone."""
+
+    gap_id: str
+    title: str
+    area: str | None = None
+    owner: str | None = None
+    severity: str | None = None
+    notes: str | None = None
+    matched_terms: tuple[str, ...] = ()
+
+    @field_validator("gap_id", "title", mode="before")
+    @classmethod
+    def normalize_required_fields(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "text")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("area", "owner", "severity", "notes", mode="before")
+    @classmethod
+    def normalize_optional_fields(cls, value: str | None, info: object) -> str | None:
+        field_name = getattr(info, "field_name", "text")
+        return _normalize_optional_text(value, field_name=field_name)
+
+    @field_validator("matched_terms", mode="before")
+    @classmethod
+    def normalize_matched_terms(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        normalized: list[str] = []
+        for item in value:
+            text = _normalize_optional_text(item, field_name="matched_term")
+            if text is not None:
+                normalized.append(text)
+        return tuple(normalized)
+
+
+class AuditGoalGapMilestoneReview(ContractModel):
+    """Goal-gap review outcome for one semantic milestone."""
+
+    milestone_id: str
+    outcome: str
+    capability_scope: tuple[str, ...] = ()
+    status: Literal["satisfied", "goal_gap"] = "satisfied"
+    matched_gap_count: int = Field(default=0, ge=0)
+    matched_gaps: tuple[AuditGoalGapMatch, ...] = ()
+
+    @field_validator("milestone_id", "outcome", mode="before")
+    @classmethod
+    def normalize_required_fields(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "text")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("capability_scope", mode="before")
+    @classmethod
+    def normalize_capability_scope(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        normalized: list[str] = []
+        for item in value:
+            text = _normalize_optional_text(item, field_name="capability_scope")
+            if text is not None:
+                normalized.append(text)
+        return tuple(normalized)
+
+    @model_validator(mode="after")
+    def validate_matched_gap_count(self) -> "AuditGoalGapMilestoneReview":
+        if self.matched_gap_count != len(self.matched_gaps):
+            raise ValueError("matched_gap_count must match matched_gaps")
+        if self.status == "goal_gap" and self.matched_gap_count == 0:
+            raise ValueError("goal_gap milestones must include matched_gaps")
+        if self.status == "satisfied" and self.matched_gap_count != 0:
+            raise ValueError("satisfied milestones may not include matched_gaps")
+        return self
+
+
+class AuditGoalGapReviewRecord(ContractModel):
+    """Durable operator-facing goal-gap review written after a passing completion gate."""
+
+    schema_version: Literal["1.0"] = _AUDIT_ARTIFACT_SCHEMA_VERSION
+    artifact_type: Literal["audit_goal_gap_review"] = "audit_goal_gap_review"
+    run_id: str
+    emitted_at: datetime
+    audit_id: str
+    title: str
+    trigger: AuditTrigger
+    source_path: str
+    objective_contract_path: str
+    profile_id: str | None = None
+    goal_path: str | None = None
+    deterministic_decision: Literal["PASS", "FAIL"]
+    gate_decision_path: str
+    completion_decision_path: str
+    review_path: str
+    markdown_path: str
+    overall_status: Literal["satisfied", "audit_gaps_only", "goal_gaps"] = "satisfied"
+    open_gap_count: int = Field(default=0, ge=0)
+    goal_gap_count: int = Field(default=0, ge=0)
+    unresolved_milestone_ids: tuple[str, ...] = ()
+    milestones: tuple[AuditGoalGapMilestoneReview, ...] = ()
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_emitted_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator(
+        "run_id",
+        "audit_id",
+        "title",
+        "source_path",
+        "objective_contract_path",
+        "profile_id",
+        "goal_path",
+        "gate_decision_path",
+        "completion_decision_path",
+        "review_path",
+        "markdown_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | None, info: object) -> str | None:
+        field_name = getattr(info, "field_name", "text")
+        if field_name in {"profile_id", "goal_path"}:
+            return _normalize_optional_text(value, field_name=field_name)
+        return _normalize_required_text(value or "", field_name=field_name)
+
+    @field_validator("unresolved_milestone_ids", mode="before")
+    @classmethod
+    def normalize_unresolved_milestone_ids(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        normalized: list[str] = []
+        for item in value:
+            text = _normalize_optional_text(item, field_name="unresolved_milestone_id")
+            if text is not None:
+                normalized.append(text)
+        return tuple(normalized)
+
+    @model_validator(mode="after")
+    def validate_goal_gap_counts(self) -> "AuditGoalGapReviewRecord":
+        if self.goal_gap_count != len(self.unresolved_milestone_ids):
+            raise ValueError("goal_gap_count must match unresolved_milestone_ids")
+        if self.overall_status == "goal_gaps" and self.goal_gap_count == 0:
+            raise ValueError("goal_gaps review must include unresolved milestone ids")
+        if self.overall_status == "satisfied" and self.goal_gap_count != 0:
+            raise ValueError("satisfied review may not include unresolved milestone ids")
+        return self
+
+
 class AuditGatekeeperRecord(ContractModel):
     """Durable terminal decision record for one audit run."""
 
@@ -205,10 +357,14 @@ class AuditGatekeeperRecord(ContractModel):
     terminal_path: str
     validate_record_path: str
     decision: Literal["audit_pass", "audit_fail"]
+    deterministic_decision: Literal["PASS", "FAIL"]
     final_status: ResearchStatus
     rationale: str
     gate_decision_path: str
     completion_decision_path: str
+    goal_gap_review_path: str | None = None
+    goal_gap_review_status: Literal["satisfied", "audit_gaps_only", "goal_gaps"] | None = None
+    goal_gap_count: int = Field(default=0, ge=0)
     remediation_record_path: str | None = None
     remediation_spec_id: str | None = None
     remediation_task_id: str | None = None
@@ -228,6 +384,7 @@ class AuditGatekeeperRecord(ContractModel):
         "rationale",
         "gate_decision_path",
         "completion_decision_path",
+        "goal_gap_review_path",
         "remediation_record_path",
         "remediation_spec_id",
         "remediation_task_id",
@@ -235,7 +392,12 @@ class AuditGatekeeperRecord(ContractModel):
     @classmethod
     def normalize_required_fields(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "text")
-        if field_name in {"remediation_record_path", "remediation_spec_id", "remediation_task_id"}:
+        if field_name in {
+            "goal_gap_review_path",
+            "remediation_record_path",
+            "remediation_spec_id",
+            "remediation_task_id",
+        }:
             return _normalize_optional_text(value, field_name=field_name)
         return _normalize_required_text(value, field_name=field_name)
 
@@ -251,11 +413,15 @@ class AuditSummaryLastOutcome(ContractModel):
     scope: str | None = None
     trigger: AuditTrigger | None = None
     decision: Literal["PASS", "FAIL"] | None = None
+    deterministic_decision: Literal["PASS", "FAIL"] | None = None
     reason_count: int = Field(default=0, ge=0)
     source_path: str | None = None
     terminal_path: str | None = None
     gate_decision_path: str | None = None
     completion_decision_path: str | None = None
+    goal_gap_review_path: str | None = None
+    goal_gap_review_status: Literal["satisfied", "audit_gaps_only", "goal_gaps"] | None = None
+    goal_gap_count: int = Field(default=0, ge=0)
     remediation_record_path: str | None = None
     remediation_spec_id: str | None = None
     remediation_task_id: str | None = None
@@ -276,6 +442,7 @@ class AuditSummaryLastOutcome(ContractModel):
         "terminal_path",
         "gate_decision_path",
         "completion_decision_path",
+        "goal_gap_review_path",
         "remediation_spec_id",
         "remediation_task_id",
         "remediation_record_path",
@@ -446,6 +613,7 @@ class AuditGatekeeperExecutionResult(ContractModel):
     completion_decision_path: str
     audit_record: AuditQueueRecord
     final_status: ResearchStatus
+    goal_gap_review_path: str | None = None
     remediation_record_path: str | None = None
 
     @field_validator(
@@ -453,12 +621,13 @@ class AuditGatekeeperExecutionResult(ContractModel):
         "terminal_path",
         "gate_decision_path",
         "completion_decision_path",
+        "goal_gap_review_path",
         "remediation_record_path",
     )
     @classmethod
     def normalize_paths(cls, value: str | Path, info: object) -> str:
         field_name = getattr(info, "field_name", "path")
-        if value is None and field_name == "remediation_record_path":
+        if value is None and field_name in {"goal_gap_review_path", "remediation_record_path"}:
             return None
         normalized = _normalize_path(value)
         if normalized is None:
@@ -472,6 +641,9 @@ class AuditExecutionError(RuntimeError):
 
 __all__ = [
     "AuditExecutionError",
+    "AuditGoalGapMatch",
+    "AuditGoalGapMilestoneReview",
+    "AuditGoalGapReviewRecord",
     "AuditGatekeeperExecutionResult",
     "AuditGatekeeperRecord",
     "AuditIntakeExecutionResult",

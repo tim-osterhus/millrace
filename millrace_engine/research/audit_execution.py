@@ -11,6 +11,7 @@ from ..baseline_assets import packaged_baseline_asset
 from ..contracts import AuditContract, AuditExecutionFinding, AuditExecutionReport, ResearchStatus
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
+from .audit_goal_gap_review import execute_audit_goal_gap_review
 from .audit_gate_helpers import _evaluate_completion_gate
 from .audit_models import (
     AuditExecutionError,
@@ -20,6 +21,7 @@ from .audit_models import (
     AuditIntakeRecord,
     AuditLifecycleStatus,
     AuditQueueRecord,
+    AuditTrigger,
     AuditValidateExecutionResult,
     AuditValidateRecord,
 )
@@ -354,7 +356,7 @@ def execute_audit_gatekeeper(
         _load_json_model(validate_record_path, AuditValidateRecord)
     )
 
-    gate_decision, completion_decision, final_status = _evaluate_completion_gate(
+    gate_decision, completion_decision, final_status, objective_contract = _evaluate_completion_gate(
         paths=paths,
         run_id=run_id,
         emitted_at=emitted_at,
@@ -366,6 +368,25 @@ def execute_audit_gatekeeper(
     )
     execution_report_path = _resolve_path_token(validate_record.execution_report_path, relative_to=paths.root)
     audited_source_path = _audited_source_path(paths, run_id=run_id, record=record)
+    goal_gap_review = None
+    goal_gap_review_failed = False
+    if (
+        final_status is ResearchStatus.AUDIT_PASS
+        and record.trigger is AuditTrigger.QUEUE_EMPTY
+        and objective_contract is not None
+    ):
+        goal_gap_review = execute_audit_goal_gap_review(
+            paths,
+            record,
+            run_id=run_id,
+            emitted_at=emitted_at,
+            objective_contract=objective_contract,
+            gate_decision_path=gate_decision.gate_decision_path,
+            completion_decision_path=completion_decision.completion_decision_path,
+        )
+        if goal_gap_review is not None and goal_gap_review.goal_gap_count > 0:
+            final_status = ResearchStatus.AUDIT_FAIL
+            goal_gap_review_failed = True
     if final_status is ResearchStatus.AUDIT_FAIL:
         target_status = AuditLifecycleStatus.FAILED
         decision = "audit_fail"
@@ -380,7 +401,7 @@ def execute_audit_gatekeeper(
         updated_at=emitted_at,
     )
     remediation_record = None
-    if final_status is ResearchStatus.AUDIT_FAIL:
+    if final_status is ResearchStatus.AUDIT_FAIL and not goal_gap_review_failed:
         remediation_record = _persist_audit_remediation(
             paths,
             checkpoint,
@@ -403,6 +424,7 @@ def execute_audit_gatekeeper(
         gate_decision=gate_decision,
         completion_decision=completion_decision,
         final_status=final_status,
+        goal_gap_review=goal_gap_review,
         remediation_record=remediation_record,
     )
     _write_audit_history(
@@ -414,9 +436,17 @@ def execute_audit_gatekeeper(
         gate_decision=gate_decision,
         completion_decision=completion_decision,
         final_status=final_status,
+        goal_gap_review=goal_gap_review,
         remediation_record=remediation_record,
         retention_keep=_AUDIT_HISTORY_RETENTION_KEEP,
     )
+    rationale = f"Gate decision {gate_decision.decision} moved the queue item to `{target_status.value}`."
+    if goal_gap_review is not None and goal_gap_review.goal_gap_count > 0:
+        rationale = (
+            f"Deterministic gate {gate_decision.decision} passed, but goal-gap review found "
+            f"{goal_gap_review.goal_gap_count} unresolved milestone(s), so the queue item moved to "
+            f"`{target_status.value}`."
+        )
     gate_record = AuditGatekeeperRecord(
         run_id=run_id,
         emitted_at=emitted_at,
@@ -426,12 +456,14 @@ def execute_audit_gatekeeper(
         terminal_path=_relative_path(terminal_record.source_path, relative_to=paths.root),
         validate_record_path=_relative_path(validate_record_path, relative_to=paths.root),
         decision=decision,
+        deterministic_decision=gate_decision.decision,
         final_status=final_status,
-        rationale=(
-            f"Gate decision {gate_decision.decision} moved the queue item to `{target_status.value}`."
-        ),
+        rationale=rationale,
         gate_decision_path=gate_decision.gate_decision_path,
         completion_decision_path=completion_decision.completion_decision_path,
+        goal_gap_review_path=(None if goal_gap_review is None else goal_gap_review.review_path),
+        goal_gap_review_status=(None if goal_gap_review is None else goal_gap_review.overall_status),
+        goal_gap_count=(0 if goal_gap_review is None else goal_gap_review.goal_gap_count),
         remediation_record_path=(
             None
             if remediation_record is None
@@ -449,6 +481,7 @@ def execute_audit_gatekeeper(
         completion_decision_path=completion_decision.completion_decision_path,
         audit_record=terminal_record,
         final_status=final_status,
+        goal_gap_review_path=(None if goal_gap_review is None else goal_gap_review.review_path),
         remediation_record_path=(
             None
             if remediation_record is None

@@ -13,6 +13,7 @@ from ..contracts import AuditGateDecision, CompletionDecision, ContractModel, Re
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .audit_models import (
+    AuditGoalGapReviewRecord,
     AuditIntakeRecord,
     AuditQueueRecord,
     AuditRemediationRecord,
@@ -42,6 +43,10 @@ def _audit_history_path(paths: RuntimePaths) -> Path:
 
 def _audit_summary_path(paths: RuntimePaths) -> Path:
     return paths.agents_dir / "audit_summary.json"
+
+
+def _goal_gap_review_path(paths: RuntimePaths) -> Path:
+    return paths.reports_dir / "goal_gap_review.json"
 
 
 def _audit_remediation_record_path(paths: RuntimePaths, *, run_id: str) -> Path:
@@ -111,6 +116,7 @@ def _write_audit_summary(
     gate_decision: "AuditGateDecision",
     completion_decision: CompletionDecision,
     final_status: ResearchStatus,
+    goal_gap_review: "AuditGoalGapReviewRecord | None",
     remediation_record: "AuditRemediationRecord | None",
 ) -> "AuditSummary":
     summary = _load_audit_summary(paths)
@@ -122,7 +128,18 @@ def _write_audit_summary(
         counts["fail"] = counts.get("fail", 0) + 1
         counts["total"] = counts.get("total", 0) + 1
 
-    details = "; ".join(gate_decision.reasons[:5]) if gate_decision.reasons else "none"
+    terminal_decision: str = "PASS" if final_status is ResearchStatus.AUDIT_PASS else "FAIL"
+    if goal_gap_review is not None and goal_gap_review.goal_gap_count:
+        preview = ", ".join(goal_gap_review.unresolved_milestone_ids[:3])
+        if len(goal_gap_review.unresolved_milestone_ids) > 3:
+            preview = f"{preview}, ..."
+        details = (
+            f"Goal-gap review found {goal_gap_review.goal_gap_count} unresolved milestone(s): {preview}"
+        )
+        reason_count = goal_gap_review.goal_gap_count
+    else:
+        details = "; ".join(gate_decision.reasons[:5]) if gate_decision.reasons else "none"
+        reason_count = len(gate_decision.reasons)
     payload = AuditSummary(
         updated_at=emitted_at,
         last_outcome=AuditSummaryLastOutcome(
@@ -133,12 +150,16 @@ def _write_audit_summary(
             title=record.title,
             scope=record.scope,
             trigger=record.trigger,
-            decision=gate_decision.decision,
-            reason_count=len(gate_decision.reasons),
+            decision=terminal_decision,
+            deterministic_decision=gate_decision.decision,
+            reason_count=reason_count,
             source_path=audited_source_path,
             terminal_path=_relative_path(terminal_record.source_path, relative_to=paths.root),
             gate_decision_path=gate_decision.gate_decision_path,
             completion_decision_path=completion_decision.completion_decision_path,
+            goal_gap_review_path=(None if goal_gap_review is None else goal_gap_review.review_path),
+            goal_gap_review_status=(None if goal_gap_review is None else goal_gap_review.overall_status),
+            goal_gap_count=(0 if goal_gap_review is None else goal_gap_review.goal_gap_count),
             remediation_spec_id=(
                 None if remediation_record is None else remediation_record.remediation_spec_id
             ),
@@ -170,6 +191,7 @@ def _write_audit_history(
     gate_decision: "AuditGateDecision",
     completion_decision: CompletionDecision,
     final_status: ResearchStatus,
+    goal_gap_review: "AuditGoalGapReviewRecord | None",
     remediation_record: "AuditRemediationRecord | None",
     retention_keep: int,
 ) -> None:
@@ -182,19 +204,33 @@ def _write_audit_history(
             match.group(0).rstrip() for match in re.finditer(r"(?ms)^## .*?(?=^## |\Z)", text)
         ]
 
+    terminal_decision = "PASS" if final_status is ResearchStatus.AUDIT_PASS else "FAIL"
     lines = [
         f"## {emitted_at.isoformat().replace('+00:00', 'Z')} - {final_status.value}",
         "",
         f"- Audit: `{record.audit_id}` :: {record.title}",
         f"- Scope: `{record.scope}`",
         f"- Trigger: `{record.trigger.value}`",
-        f"- Decision: `{gate_decision.decision}` ({len(gate_decision.reasons)} reason(s))",
+        f"- Decision: `{terminal_decision}`",
+        f"- Deterministic gate: `{gate_decision.decision}` ({len(gate_decision.reasons)} reason(s))",
         f"- Source path: `{audited_source_path}`",
         f"- Terminal path: `{_relative_path(terminal_record.source_path, relative_to=paths.root)}`",
         f"- Gate decision: `{gate_decision.gate_decision_path}`",
         f"- Completion decision: `{completion_decision.completion_decision_path}`",
     ]
-    if gate_decision.reasons:
+    if goal_gap_review is not None:
+        lines.append(
+            f"- Goal gap review: `{goal_gap_review.overall_status}` ({goal_gap_review.goal_gap_count} unresolved milestone(s))"
+        )
+        lines.append(f"- Goal gap review record: `{goal_gap_review.review_path}`")
+    else:
+        lines.append("- Goal gap review: none")
+    if goal_gap_review is not None and goal_gap_review.goal_gap_count:
+        lines.append(
+            f"- Details: Goal-gap review found {goal_gap_review.goal_gap_count} unresolved milestone(s): "
+            + ", ".join(goal_gap_review.unresolved_milestone_ids[:5])
+        )
+    elif gate_decision.reasons:
         lines.append(f"- Details: {'; '.join(gate_decision.reasons[:5])}")
     else:
         lines.append("- Details: none")

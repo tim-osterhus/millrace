@@ -182,7 +182,7 @@ def _evaluate_completion_gate(
     validate_record_path: Path,
     packaged_objective_contract_ref: str,
     packaged_completion_manifest_ref: str,
-) -> tuple[AuditGateDecision, CompletionDecision, ResearchStatus]:
+) -> tuple[AuditGateDecision, CompletionDecision, ResearchStatus, ObjectiveContract | None]:
     execution_report_path = _resolve_path_token(validate_record.execution_report_path, relative_to=paths.root)
     gate_checks: list[bool] = []
     reasons: list[str] = []
@@ -333,4 +333,4 @@ def _evaluate_completion_gate(
     )
     _write_json_model(gate_decision_path, gate_decision)
     _write_json_model(completion_decision_path, completion_decision)
-    return gate_decision, completion_decision, final_status
+    return gate_decision, completion_decision, final_status, objective_contract
