@@ -230,16 +230,22 @@ class TaskauditRecord(ContractModel):
 class TaskauditExecutionResult(ContractModel):
     """Minimal Taskaudit result returned to the research plane."""
 
+    status: Literal["prepared", "merged"] = "merged"
     record_path: str
-    provenance_path: str
+    provenance_path: str = ""
     pending_card_count: int = Field(ge=0)
     backlog_card_count: int = Field(ge=0)
 
-    @field_validator("record_path", "provenance_path")
+    @field_validator("record_path")
     @classmethod
     def validate_required_paths(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "value")
         return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("provenance_path", mode="before")
+    @classmethod
+    def normalize_optional_provenance_path(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value)
 
 
 class TaskauditExecutionError(GoalSpecExecutionError):
@@ -251,6 +257,7 @@ def execute_taskaudit(
     *,
     run_id: str,
     emitted_at: datetime | None = None,
+    defer_merge: bool = False,
 ) -> TaskauditExecutionResult:
     """Assemble one final pending family, merge it into backlog, and refresh provenance."""
 
@@ -258,74 +265,60 @@ def execute_taskaudit(
     record_path = paths.goalspec_runtime_dir / "taskaudit" / f"{run_id}.json"
     provenance_path = paths.agents_dir / "task_provenance.json"
 
-    if record_path.exists():
-        existing_record = _load_json_model(record_path, TaskauditRecord)
-        final_backlog_text = _read_store_text(paths.backlog_file, default_preamble=_DEFAULT_BACKLOG_PREAMBLE)
-        final_pending_document = _pending_document(paths)
-        if (
-            existing_record.status == "merged"
-            and not final_pending_document.cards
-            and _sha256_text(final_backlog_text) == existing_record.backlog_sha256_after
-            and provenance_path.exists()
-        ):
-            return TaskauditExecutionResult(
-                record_path=_relative_path(record_path, relative_to=paths.root),
-                provenance_path=_relative_path(provenance_path, relative_to=paths.root),
-                pending_card_count=existing_record.pending_card_count,
-                backlog_card_count=existing_record.backlog_card_count_after,
-            )
-        if (
-            existing_record.status == "prepared"
-            and not final_pending_document.cards
-            and _sha256_text(final_backlog_text) == existing_record.backlog_sha256_after
-        ):
-            taskaudit_metadata = TaskauditProvenance(
-                record_path=_relative_path(record_path, relative_to=paths.root),
-                run_id=run_id,
-                merged_at=emitted_at,
-                pending_path=_relative_path(paths.taskspending_file, relative_to=paths.root),
-                pending_shards=existing_record.shard_paths,
-                pending_card_count=existing_record.pending_card_count,
-                merged_backlog_card_count=existing_record.backlog_card_count_after,
-                merged_spec_ids=existing_record.merged_spec_ids,
-                ordered_backlog_titles=existing_record.ordered_backlog_titles,
-            )
-            refresh_task_provenance_registry(
-                provenance_path,
-                source_paths=task_provenance_source_paths(paths.agents_dir),
-                relative_to=paths.root,
-                updated_at=emitted_at,
-                taskaudit=taskaudit_metadata,
-            )
-            merged_record = existing_record.model_copy(
-                update={
-                    "status": "merged",
-                    "provenance_path": _relative_path(provenance_path, relative_to=paths.root),
-                }
-            )
-            _write_json_model(record_path, merged_record)
-            return TaskauditExecutionResult(
-                record_path=_relative_path(record_path, relative_to=paths.root),
-                provenance_path=_relative_path(provenance_path, relative_to=paths.root),
-                pending_card_count=merged_record.pending_card_count,
-                backlog_card_count=merged_record.backlog_card_count_after,
-            )
+    def _prepared_result(record: TaskauditRecord) -> TaskauditExecutionResult:
+        return TaskauditExecutionResult(
+            status="prepared",
+            record_path=_relative_path(record_path, relative_to=paths.root),
+            provenance_path="",
+            pending_card_count=record.pending_card_count,
+            backlog_card_count=record.backlog_card_count_before,
+        )
 
-    family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
-    if not family_state.family_complete or not family_state.fulfills_initial_family_plan():
-        raise TaskauditExecutionError("Taskaudit requires a complete GoalSpec family before final merge")
+    def _merged_result(record: TaskauditRecord) -> TaskauditExecutionResult:
+        return TaskauditExecutionResult(
+            status="merged",
+            record_path=_relative_path(record_path, relative_to=paths.root),
+            provenance_path=_relative_path(provenance_path, relative_to=paths.root),
+            pending_card_count=record.pending_card_count,
+            backlog_card_count=record.backlog_card_count_after,
+        )
 
-    assembled_pending_document, shard_paths, merged_spec_ids, _ = _assemble_pending_family(paths, family_state)
-    assembled_pending_text = render_task_store(assembled_pending_document)
-    if _read_store_text(paths.taskspending_file, default_preamble=_DEFAULT_PENDING_PREAMBLE) != assembled_pending_text:
-        write_text_atomic(paths.taskspending_file, assembled_pending_text)
+    def _finalize_merged_record(record: TaskauditRecord) -> TaskauditExecutionResult:
+        taskaudit_metadata = TaskauditProvenance(
+            record_path=_relative_path(record_path, relative_to=paths.root),
+            run_id=run_id,
+            merged_at=emitted_at,
+            pending_path=_relative_path(paths.taskspending_file, relative_to=paths.root),
+            pending_shards=record.shard_paths,
+            pending_card_count=record.pending_card_count,
+            merged_backlog_card_count=record.backlog_card_count_after,
+            merged_spec_ids=record.merged_spec_ids,
+            ordered_backlog_titles=record.ordered_backlog_titles,
+        )
+        refresh_task_provenance_registry(
+            provenance_path,
+            source_paths=task_provenance_source_paths(paths.agents_dir),
+            relative_to=paths.root,
+            updated_at=emitted_at,
+            taskaudit=taskaudit_metadata,
+        )
+        merged_record = record.model_copy(
+            update={
+                "status": "merged",
+                "provenance_path": _relative_path(provenance_path, relative_to=paths.root),
+            }
+        )
+        _write_json_model(record_path, merged_record)
+        return _merged_result(merged_record)
 
-    queue = TaskQueue(paths)
-    prepared_record: TaskauditRecord | None = None
-
-    for attempt in range(2):
+    def _merge_prepared_record(record: TaskauditRecord) -> TaskauditExecutionResult:
         backlog_text = _read_store_text(paths.backlog_file, default_preamble=_DEFAULT_BACKLOG_PREAMBLE)
         pending_text = _read_store_text(paths.taskspending_file, default_preamble=_DEFAULT_PENDING_PREAMBLE)
+        if _sha256_text(backlog_text) != record.backlog_sha256_before:
+            raise TaskauditExecutionError("Taskaudit prepared backlog changed before final merge")
+        if _sha256_text(pending_text) != record.pending_sha256:
+            raise TaskauditExecutionError("Taskaudit prepared pending family changed before final merge")
+
         backlog_document = parse_task_store(backlog_text, source_file=paths.backlog_file)
         pending_document = parse_task_store(pending_text, source_file=paths.taskspending_file)
         active_document = parse_task_store(
@@ -336,7 +329,6 @@ def execute_taskaudit(
             _read_store_text(paths.archive_file, default_preamble="# Task Archive"),
             source_file=paths.archive_file,
         )
-
         merged_backlog_cards = _build_merged_backlog(backlog_document, pending_document)
         _validate_dependency_order(
             merged_backlog_cards,
@@ -349,82 +341,136 @@ def execute_taskaudit(
                 cards=list(merged_backlog_cards),
             )
         )
-        prepared_record = TaskauditRecord(
-            status="prepared",
-            run_id=run_id,
-            emitted_at=emitted_at,
-            family_state_path=_relative_path(paths.goal_spec_family_state_file, relative_to=paths.root),
-            pending_path=_relative_path(paths.taskspending_file, relative_to=paths.root),
-            backlog_path=_relative_path(paths.backlog_file, relative_to=paths.root),
-            provenance_path="",
-            shard_paths=[_relative_path(path, relative_to=paths.root) for path in shard_paths],
-            merged_spec_ids=merged_spec_ids,
-            ordered_backlog_titles=[card.title for card in merged_backlog_cards],
-            pending_card_count=len(pending_document.cards),
-            backlog_card_count_before=len(backlog_document.cards),
-            backlog_card_count_after=len(merged_backlog_cards),
-            pending_sha256=_sha256_text(pending_text),
-            backlog_sha256_before=_sha256_text(backlog_text),
-            backlog_sha256_after=_sha256_text(merged_backlog_text),
-        )
-        _write_json_model(record_path, prepared_record)
+        if _sha256_text(merged_backlog_text) != record.backlog_sha256_after:
+            raise TaskauditExecutionError("Taskaudit prepared merge snapshot no longer matches the recorded backlog")
+
+        shard_paths = tuple(_resolve_path_token(path, relative_to=paths.root) for path in record.shard_paths)
+        queue = TaskQueue(paths)
         try:
             queue.merge_pending_family(
-                expected_backlog_sha256=prepared_record.backlog_sha256_before,
-                expected_pending_sha256=prepared_record.pending_sha256,
+                expected_backlog_sha256=record.backlog_sha256_before,
+                expected_pending_sha256=record.pending_sha256,
                 ordered_backlog_cards=merged_backlog_cards,
-                pending_preamble=assembled_pending_document.preamble,
+                pending_preamble=pending_document.preamble,
                 clear_shard_paths=shard_paths,
             )
-            break
-        except QueueMergeConflictError:
-            if attempt == 1:
-                raise TaskauditExecutionError("Taskaudit merge snapshot changed during retry window") from None
-    else:
-        raise TaskauditExecutionError("Taskaudit merge did not complete")
+        except QueueMergeConflictError as exc:
+            raise TaskauditExecutionError("Taskaudit merge snapshot changed during final merge") from exc
 
-    final_backlog_text = _read_store_text(paths.backlog_file, default_preamble=_DEFAULT_BACKLOG_PREAMBLE)
-    final_pending_document = _pending_document(paths)
-    if final_pending_document.cards:
-        raise TaskauditExecutionError("Taskaudit merge must leave agents/taskspending.md empty")
-    if any(path.exists() for path in shard_paths):
-        raise TaskauditExecutionError("Taskaudit merge must clear pending shard files")
-    if prepared_record is None or _sha256_text(final_backlog_text) != prepared_record.backlog_sha256_after:
-        raise TaskauditExecutionError("Taskaudit merge produced an unexpected backlog snapshot")
+        final_backlog_text = _read_store_text(paths.backlog_file, default_preamble=_DEFAULT_BACKLOG_PREAMBLE)
+        final_pending_document = _pending_document(paths)
+        if final_pending_document.cards:
+            raise TaskauditExecutionError("Taskaudit merge must leave agents/taskspending.md empty")
+        if any(path.exists() for path in shard_paths):
+            raise TaskauditExecutionError("Taskaudit merge must clear pending shard files")
+        if _sha256_text(final_backlog_text) != record.backlog_sha256_after:
+            raise TaskauditExecutionError("Taskaudit merge produced an unexpected backlog snapshot")
 
-    final_backlog_document = parse_task_store(final_backlog_text, source_file=paths.backlog_file)
-    taskaudit_metadata = TaskauditProvenance(
-        record_path=_relative_path(record_path, relative_to=paths.root),
+        final_backlog_document = parse_task_store(final_backlog_text, source_file=paths.backlog_file)
+        merged_record = record.model_copy(
+            update={
+                "status": "merged",
+                "provenance_path": _relative_path(provenance_path, relative_to=paths.root),
+                "ordered_backlog_titles": tuple(card.title for card in final_backlog_document.cards),
+                "backlog_card_count_after": len(final_backlog_document.cards),
+            }
+        )
+        _write_json_model(record_path, merged_record)
+        taskaudit_metadata = TaskauditProvenance(
+            record_path=_relative_path(record_path, relative_to=paths.root),
+            run_id=run_id,
+            merged_at=emitted_at,
+            pending_path=_relative_path(paths.taskspending_file, relative_to=paths.root),
+            pending_shards=record.shard_paths,
+            pending_card_count=merged_record.pending_card_count,
+            merged_backlog_card_count=merged_record.backlog_card_count_after,
+            merged_spec_ids=merged_record.merged_spec_ids,
+            ordered_backlog_titles=merged_record.ordered_backlog_titles,
+        )
+        refresh_task_provenance_registry(
+            provenance_path,
+            source_paths=task_provenance_source_paths(paths.agents_dir),
+            relative_to=paths.root,
+            updated_at=emitted_at,
+            taskaudit=taskaudit_metadata,
+        )
+        return _merged_result(merged_record)
+
+    if record_path.exists():
+        existing_record = _load_json_model(record_path, TaskauditRecord)
+        final_backlog_text = _read_store_text(paths.backlog_file, default_preamble=_DEFAULT_BACKLOG_PREAMBLE)
+        final_pending_document = _pending_document(paths)
+        if (
+            existing_record.status == "merged"
+            and not final_pending_document.cards
+            and _sha256_text(final_backlog_text) == existing_record.backlog_sha256_after
+            and provenance_path.exists()
+        ):
+            return _merged_result(existing_record)
+        if (
+            existing_record.status == "prepared"
+            and not final_pending_document.cards
+            and _sha256_text(final_backlog_text) == existing_record.backlog_sha256_after
+        ):
+            return _finalize_merged_record(existing_record)
+        if existing_record.status == "prepared":
+            return _merge_prepared_record(existing_record)
+
+    family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
+    if not family_state.family_complete or not family_state.fulfills_initial_family_plan():
+        raise TaskauditExecutionError("Taskaudit requires a complete GoalSpec family before final merge")
+
+    assembled_pending_document, shard_paths, merged_spec_ids, _ = _assemble_pending_family(paths, family_state)
+    assembled_pending_text = render_task_store(assembled_pending_document)
+    if _read_store_text(paths.taskspending_file, default_preamble=_DEFAULT_PENDING_PREAMBLE) != assembled_pending_text:
+        write_text_atomic(paths.taskspending_file, assembled_pending_text)
+
+    backlog_text = _read_store_text(paths.backlog_file, default_preamble=_DEFAULT_BACKLOG_PREAMBLE)
+    pending_text = _read_store_text(paths.taskspending_file, default_preamble=_DEFAULT_PENDING_PREAMBLE)
+    backlog_document = parse_task_store(backlog_text, source_file=paths.backlog_file)
+    pending_document = parse_task_store(pending_text, source_file=paths.taskspending_file)
+    active_document = parse_task_store(
+        _read_store_text(paths.tasks_file, default_preamble="# Active Task"),
+        source_file=paths.tasks_file,
+    )
+    archive_document = parse_task_store(
+        _read_store_text(paths.archive_file, default_preamble="# Task Archive"),
+        source_file=paths.archive_file,
+    )
+    merged_backlog_cards = _build_merged_backlog(backlog_document, pending_document)
+    _validate_dependency_order(
+        merged_backlog_cards,
+        active_cards=tuple(active_document.cards),
+        archive_cards=tuple(archive_document.cards),
+    )
+    merged_backlog_text = render_task_store(
+        TaskStoreDocument(
+            preamble=backlog_document.preamble or _DEFAULT_BACKLOG_PREAMBLE,
+            cards=list(merged_backlog_cards),
+        )
+    )
+    prepared_record = TaskauditRecord(
+        status="prepared",
         run_id=run_id,
-        merged_at=emitted_at,
+        emitted_at=emitted_at,
+        family_state_path=_relative_path(paths.goal_spec_family_state_file, relative_to=paths.root),
         pending_path=_relative_path(paths.taskspending_file, relative_to=paths.root),
-        pending_shards=[_relative_path(path, relative_to=paths.root) for path in shard_paths],
-        pending_card_count=prepared_record.pending_card_count,
-        merged_backlog_card_count=len(final_backlog_document.cards),
+        backlog_path=_relative_path(paths.backlog_file, relative_to=paths.root),
+        provenance_path="",
+        shard_paths=[_relative_path(path, relative_to=paths.root) for path in shard_paths],
         merged_spec_ids=merged_spec_ids,
-        ordered_backlog_titles=[card.title for card in final_backlog_document.cards],
+        ordered_backlog_titles=tuple(card.title for card in merged_backlog_cards),
+        pending_card_count=len(pending_document.cards),
+        backlog_card_count_before=len(backlog_document.cards),
+        backlog_card_count_after=len(merged_backlog_cards),
+        pending_sha256=_sha256_text(pending_text),
+        backlog_sha256_before=_sha256_text(backlog_text),
+        backlog_sha256_after=_sha256_text(merged_backlog_text),
     )
-    refresh_task_provenance_registry(
-        provenance_path,
-        source_paths=task_provenance_source_paths(paths.agents_dir),
-        relative_to=paths.root,
-        updated_at=emitted_at,
-        taskaudit=taskaudit_metadata,
-    )
-
-    merged_record = prepared_record.model_copy(
-        update={
-            "status": "merged",
-            "provenance_path": _relative_path(provenance_path, relative_to=paths.root),
-        }
-    )
-    _write_json_model(record_path, merged_record)
-    return TaskauditExecutionResult(
-        record_path=_relative_path(record_path, relative_to=paths.root),
-        provenance_path=_relative_path(provenance_path, relative_to=paths.root),
-        pending_card_count=prepared_record.pending_card_count,
-        backlog_card_count=len(final_backlog_document.cards),
-    )
+    _write_json_model(record_path, prepared_record)
+    if defer_merge:
+        return _prepared_result(prepared_record)
+    return _merge_prepared_record(prepared_record)
 
 
 __all__ = [

@@ -31,6 +31,7 @@ from millrace_engine.research import (
     build_research_governance_report,
     CompiledResearchDispatchError,
     entry_stage_type_for_dispatch,
+    execute_taskaudit,
 )
 from millrace_engine.research.dispatcher import (
     compile_research_dispatch,
@@ -1469,6 +1470,152 @@ def test_research_plane_forced_mode_without_matching_queue_stays_idle(
     assert snapshot.queue_snapshot.selected_family is None
     assert snapshot.checkpoint is None
     assert plane.status_store.read() is ResearchStatus.IDLE
+
+
+def test_execute_taskaudit_deferred_prepare_then_merge(tmp_path: Path) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskaudit-direct-041",
+        emitted_at=_dt("2026-04-08T19:00:00Z"),
+        title="Modernize Goal Intake",
+        body=(
+            "Create real GoalSpec intake and objective sync stages for the Millrace research runtime.\n\n"
+            "## Capability Domains\n"
+            "- Goal intake artifact capture\n"
+            "- Objective profile sync persistence\n\n"
+            "## Progression Lines\n"
+            "- Progression from raw goal intake to staged product brief to synced objective profile.\n"
+        ),
+        decomposition_profile="simple",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskaudit-direct-041",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    taskmaster_result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskaudit-direct-041",
+            emitted_at=_dt("2026-04-08T19:00:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskaudit-direct-041",
+        emitted_at=_dt("2026-04-08T19:00:00Z"),
+    )
+    shard_path = workspace / taskmaster_result.shard_path
+    taskaudit_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / "goalspec-taskaudit-direct-041.json"
+
+    prepared = execute_taskaudit(
+        paths,
+        run_id="goalspec-taskaudit-direct-041",
+        emitted_at=_dt("2026-04-08T19:05:00Z"),
+        defer_merge=True,
+    )
+
+    assert prepared.status == "prepared"
+    assert prepared.provenance_path == ""
+    assert taskaudit_record_path.exists()
+    prepared_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    assert prepared_record["status"] == "prepared"
+    assert prepared_record["pending_card_count"] == 4
+    assert parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards == []
+    pending_document = parse_task_store(paths.taskspending_file.read_text(encoding="utf-8"), source_file=paths.taskspending_file)
+    assert len(pending_document.cards) == 4
+    assert shard_path.exists()
+    assert not (workspace / "agents" / "task_provenance.json").exists()
+
+    merged = execute_taskaudit(
+        paths,
+        run_id="goalspec-taskaudit-direct-041",
+        emitted_at=_dt("2026-04-08T19:10:00Z"),
+        defer_merge=True,
+    )
+
+    assert merged.status == "merged"
+    assert merged.provenance_path == "agents/task_provenance.json"
+    merged_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    assert merged_record["status"] == "merged"
+    assert merged_record["provenance_path"] == "agents/task_provenance.json"
+    backlog = parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file)
+    assert len(backlog.cards) == 4
+    assert paths.taskspending_file.read_text(encoding="utf-8") == "# Tasks Pending\n"
+    assert not shard_path.exists()
+    task_provenance = json.loads((workspace / "agents" / "task_provenance.json").read_text(encoding="utf-8"))
+    assert task_provenance["taskaudit"]["record_path"] == "agents/.research_runtime/goalspec/taskaudit/goalspec-taskaudit-direct-041.json"
+    assert task_provenance["taskaudit"]["merged_backlog_card_count"] == 4
+
+
+def test_research_plane_defers_taskaudit_merge_into_later_goal_spec_pass(tmp_path: Path) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    _write_queue_file(
+        workspace / "agents" / "ideas" / "raw" / "goal.md",
+        (
+            "---\n"
+            "idea_id: IDEA-TASKAUDIT-042\n"
+            "title: Modernize Goal Intake\n"
+            "decomposition_profile: simple\n"
+            "---\n\n"
+            "# Modernize Goal Intake\n\n"
+            "Create real GoalSpec intake and objective sync stages.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+    run_id = "goalspec-taskaudit-cadence-042"
+    taskaudit_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / f"{run_id}.json"
+
+    for _ in range(6):
+        dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+        assert dispatch is not None
+
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "taskmaster"
+
+    dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "taskaudit"
+    assert plane.status_store.read() is ResearchStatus.TASKAUDIT_RUNNING
+    assert not taskaudit_record_path.exists()
+    assert parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards == []
+
+    dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "taskaudit"
+    prepared_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    assert prepared_record["status"] == "prepared"
+    assert parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards == []
+    assert len(
+        parse_task_store(paths.taskspending_file.read_text(encoding="utf-8"), source_file=paths.taskspending_file).cards
+    ) == 4
+
+    dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is None
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    merged_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    assert merged_record["status"] == "merged"
+    assert len(parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards) == 4
+    assert paths.taskspending_file.read_text(encoding="utf-8") == "# Tasks Pending\n"
 
 
 def test_taskaudit_pending_merge(tmp_path: Path) -> None:

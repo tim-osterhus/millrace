@@ -227,6 +227,8 @@ _REQUEST_FAMILY_BY_EVENT = {
 }
 _GOALSPEC_COMPLETION_MANIFEST_NODE_ID = "completion_manifest_draft"
 _GOALSPEC_COMPLETION_MANIFEST_KIND_ID = "research.completion-manifest-draft"
+_GOALSPEC_TASKAUDIT_NODE_ID = "taskaudit"
+_GOALSPEC_TASKAUDIT_KIND_ID = "research.taskaudit"
 
 
 @dataclass(frozen=True)
@@ -422,7 +424,10 @@ class ResearchPlane:
     def _supports_local_goalspec_stage_execution(self, checkpoint: ResearchCheckpoint | None) -> bool:
         if checkpoint is None:
             return False
-        if checkpoint.node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID:
+        if checkpoint.node_id in {
+            _GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
+            _GOALSPEC_TASKAUDIT_NODE_ID,
+        }:
             return self._resume_selected_family(checkpoint) is ResearchQueueFamily.GOALSPEC
         return self._supports_goalspec_stage_execution(checkpoint)
 
@@ -451,13 +456,28 @@ class ResearchPlane:
     ) -> None:
         if (
             next_stage is not None
-            and getattr(next_stage, "node_id", None) == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
+            and getattr(next_stage, "node_id", None)
+            in {
+                _GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
+                _GOALSPEC_TASKAUDIT_NODE_ID,
+            }
         ):
+            next_node_id = getattr(next_stage, "node_id", None)
+            next_status = (
+                ResearchStatus.COMPLETION_MANIFEST_RUNNING
+                if next_node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
+                else ResearchStatus.TASKAUDIT_RUNNING
+            )
+            next_kind_id = (
+                _GOALSPEC_COMPLETION_MANIFEST_KIND_ID
+                if next_node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
+                else _GOALSPEC_TASKAUDIT_KIND_ID
+            )
             updated = checkpoint.model_copy(
                 update={
-                    "status": ResearchStatus.COMPLETION_MANIFEST_RUNNING,
-                    "node_id": _GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
-                    "stage_kind_id": _GOALSPEC_COMPLETION_MANIFEST_KIND_ID,
+                    "status": next_status,
+                    "node_id": next_node_id,
+                    "stage_kind_id": next_kind_id,
                     "updated_at": observed_at,
                     "owned_queues": (queue_ownership,),
                 }
@@ -478,7 +498,7 @@ class ResearchPlane:
                 }
             )
             self._persist_state()
-            self._set_research_status(ResearchStatus.COMPLETION_MANIFEST_RUNNING)
+            self._set_research_status(next_status)
             return
 
         self._advance_goalspec_checkpoint(
@@ -960,21 +980,29 @@ class ResearchPlane:
                 else Path(taskmaster_result.family_state_path)
             )
             if family_state.family_complete and family_state.fulfills_initial_family_plan():
-                self._set_research_status(ResearchStatus.TASKAUDIT_RUNNING)
-                execute_taskaudit(
-                    self.paths,
-                    run_id=dispatch.run_id,
-                    emitted_at=stage_started_at,
-                )
-            next_stage = next_stage_for_success(dispatch.research_plan, checkpoint.node_id)
-            if next_stage is not None:
-                self._advance_goalspec_checkpoint(
+                self._advance_local_goalspec_checkpoint(
                     checkpoint,
-                    next_stage=next_stage,
+                    next_stage=_GoalSpecSyntheticStage(
+                        node_id=_GOALSPEC_TASKAUDIT_NODE_ID,
+                        kind_id=_GOALSPEC_TASKAUDIT_KIND_ID,
+                        running_status=ResearchStatus.TASKAUDIT_RUNNING.value,
+                    ),
                     queue_ownership=checkpoint.owned_queues[0],
                     observed_at=stage_started_at,
                 )
             else:
+                self._complete_goalspec_checkpoint(checkpoint, observed_at=stage_started_at)
+            self._release_execution_lock(observed_at=_utcnow())
+            return
+        elif checkpoint.node_id == _GOALSPEC_TASKAUDIT_NODE_ID:
+            self._set_research_status(ResearchStatus.TASKAUDIT_RUNNING)
+            taskaudit_result = execute_taskaudit(
+                self.paths,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
+                defer_merge=True,
+            )
+            if taskaudit_result.status == "merged":
                 self._complete_goalspec_checkpoint(checkpoint, observed_at=stage_started_at)
             self._release_execution_lock(observed_at=_utcnow())
             return
