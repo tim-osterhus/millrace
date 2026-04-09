@@ -52,6 +52,25 @@ from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnersh
 _NUMBERED_LINE_RE = re.compile(r"^\d+\.\s+(.*\S)\s*$")
 _BACKTICKED_TOKEN_RE = re.compile(r"`([^`\n]+)`")
 _PHASE_KEY_LINE_RE = re.compile(r"^- Phase key:\s+`(PHASE_[0-9]{2})`\s*$")
+_EPIC_PHASE_STEP_HINTS = (
+    "whole project",
+    "whole-project",
+    "whole suite",
+    "whole-suite",
+    "entire project",
+    "entire repo",
+    "whole repo",
+    "entire campaign",
+    "all remaining",
+    "full suite",
+    "full acceptance sweep",
+    "entire acceptance sweep",
+    "everything in this phase",
+    "do everything in this phase",
+    "whole gate",
+    "whole-gate",
+    "repo-wide",
+)
 
 
 def _phase_steps(phase_text: str) -> tuple[str, ...]:
@@ -79,6 +98,15 @@ def _phase_package_keys(phase_text: str) -> tuple[str, ...]:
         seen.add(phase_key)
         keys.append(phase_key)
     return tuple(keys)
+
+
+def _epic_phase_steps(steps: tuple[str, ...]) -> tuple[str, ...]:
+    findings: list[str] = []
+    for step in steps:
+        lowered = step.casefold()
+        if any(token in lowered for token in _EPIC_PHASE_STEP_HINTS):
+            findings.append(step)
+    return tuple(findings)
 
 
 def _repo_paths(text: str) -> tuple[str, ...]:
@@ -143,7 +171,8 @@ def _review_findings(
                 severity="blocker",
                 summary=(
                     f"Phase package set defines {package_count} phase package(s), "
-                    f"below the active `{decomposition_profile or 'simple'}` floor of {minimum_packages}."
+                    f"below the active `{decomposition_profile or 'simple'}` floor of {minimum_packages}; "
+                    "this campaign should split into dependent queue specs instead of one giant package."
                 ),
                 artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
             )
@@ -158,6 +187,20 @@ def _review_findings(
                 summary=(
                     "Phase plan still contains abstract or handoff-oriented work items: "
                     + "; ".join(abstract_steps[:3])
+                ),
+                artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
+            )
+        )
+
+    epic_steps = _epic_phase_steps(tuple(phase_steps))
+    if epic_steps:
+        findings.append(
+            GoalSpecReviewFinding(
+                finding_id="REV-EXECUTION-EPIC-PHASE-STEPS",
+                severity="blocker",
+                summary=(
+                    "Phase plan still contains execution-epic or whole-project/gate work items: "
+                    + "; ".join(epic_steps[:3])
                 ),
                 artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
             )
