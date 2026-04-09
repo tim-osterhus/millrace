@@ -194,7 +194,7 @@ def _build_goal_spec_family_state(
         update={
             "goal_id": source.idea_id,
             "source_idea_path": source.current_artifact_relative_path,
-            "family_phase": "initial_family",
+            "family_phase": next_state.family_phase or "initial_family",
             "family_complete": family_complete,
             "active_spec_id": spec_id,
             "spec_order": spec_order,

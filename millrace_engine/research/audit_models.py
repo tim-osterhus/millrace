@@ -344,6 +344,118 @@ class AuditGoalGapReviewRecord(ContractModel):
         return self
 
 
+class AuditGoalGapRemediationSelectionRecord(ContractModel):
+    """Durable remediation-family staging record derived from a goal-gap review."""
+
+    schema_version: Literal["1.0"] = _AUDIT_ARTIFACT_SCHEMA_VERSION
+    artifact_type: Literal["audit_goal_gap_remediation_selection"] = "audit_goal_gap_remediation_selection"
+    run_id: str
+    emitted_at: datetime
+    audit_id: str
+    title: str
+    goal_id: str
+    goal_title: str
+    family_phase: Literal["goal_gap_remediation"] = "goal_gap_remediation"
+    overall_status: Literal["satisfied", "audit_gaps_only", "goal_gaps"] = "goal_gaps"
+    canonical_goal_path: str
+    goal_gap_review_path: str
+    family_policy_path: str
+    deferred_follow_ons_path: str = ""
+    selection_report_path: str
+    selection_markdown_path: str
+    output_idea_path: str
+    family_decomposition_profile: Literal[
+        "",
+        "trivial",
+        "simple",
+        "moderate",
+        "involved",
+        "complex",
+        "massive",
+    ] = "moderate"
+    applied_family_max_specs: int = Field(default=0, ge=0)
+    unresolved_milestone_ids: tuple[str, ...] = ()
+    deferred_milestone_ids: tuple[str, ...] = ()
+    selected_deferred_spec_ids: tuple[str, ...] = ()
+    synthesized_remediation_ids: tuple[str, ...] = ()
+    total_remediation_items: int = Field(default=0, ge=0)
+    selections: tuple[dict[str, object], ...] = ()
+    selected_deferred_specs: tuple[dict[str, object], ...] = ()
+    synthesized_specs: tuple[dict[str, object], ...] = ()
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_emitted_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator(
+        "run_id",
+        "audit_id",
+        "title",
+        "goal_id",
+        "goal_title",
+        "canonical_goal_path",
+        "goal_gap_review_path",
+        "family_policy_path",
+        "deferred_follow_ons_path",
+        "selection_report_path",
+        "selection_markdown_path",
+        "output_idea_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | None, info: object) -> str:
+        field_name = getattr(info, "field_name", "text")
+        if field_name == "deferred_follow_ons_path":
+            return _normalize_optional_text(value, field_name=field_name) or ""
+        return _normalize_required_text(value or "", field_name=field_name)
+
+    @field_validator(
+        "unresolved_milestone_ids",
+        "deferred_milestone_ids",
+        "selected_deferred_spec_ids",
+        "synthesized_remediation_ids",
+        mode="before",
+    )
+    @classmethod
+    def normalize_identifier_sequences(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+        info: object,
+    ) -> tuple[str, ...]:
+        field_name = getattr(info, "field_name", "identifier")
+        if value is None:
+            return ()
+        normalized: list[str] = []
+        for item in value:
+            text = _normalize_optional_text(item, field_name=field_name)
+            if text is not None:
+                normalized.append(text)
+        return tuple(normalized)
+
+    @field_validator("selections", "selected_deferred_specs", "synthesized_specs", mode="before")
+    @classmethod
+    def normalize_mapping_sequences(
+        cls,
+        value: tuple[dict[str, object], ...] | list[dict[str, object]] | None,
+    ) -> tuple[dict[str, object], ...]:
+        if value is None:
+            return ()
+        normalized: list[dict[str, object]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError("selection payloads must be objects")
+            normalized.append(dict(item))
+        return tuple(normalized)
+
+    @model_validator(mode="after")
+    def validate_total_remediation_items(self) -> "AuditGoalGapRemediationSelectionRecord":
+        expected_total = len(self.selected_deferred_spec_ids) + len(self.synthesized_remediation_ids)
+        if self.total_remediation_items != expected_total:
+            raise ValueError("total_remediation_items must match selected + synthesized remediation ids")
+        return self
+
+
 class AuditGatekeeperRecord(ContractModel):
     """Durable terminal decision record for one audit run."""
 
@@ -365,6 +477,8 @@ class AuditGatekeeperRecord(ContractModel):
     goal_gap_review_path: str | None = None
     goal_gap_review_status: Literal["satisfied", "audit_gaps_only", "goal_gaps"] | None = None
     goal_gap_count: int = Field(default=0, ge=0)
+    goal_gap_remediation_selection_path: str | None = None
+    goal_gap_remediation_idea_path: str | None = None
     remediation_record_path: str | None = None
     remediation_spec_id: str | None = None
     remediation_task_id: str | None = None
@@ -385,6 +499,8 @@ class AuditGatekeeperRecord(ContractModel):
         "gate_decision_path",
         "completion_decision_path",
         "goal_gap_review_path",
+        "goal_gap_remediation_selection_path",
+        "goal_gap_remediation_idea_path",
         "remediation_record_path",
         "remediation_spec_id",
         "remediation_task_id",
@@ -394,6 +510,8 @@ class AuditGatekeeperRecord(ContractModel):
         field_name = getattr(info, "field_name", "text")
         if field_name in {
             "goal_gap_review_path",
+            "goal_gap_remediation_selection_path",
+            "goal_gap_remediation_idea_path",
             "remediation_record_path",
             "remediation_spec_id",
             "remediation_task_id",
@@ -422,6 +540,8 @@ class AuditSummaryLastOutcome(ContractModel):
     goal_gap_review_path: str | None = None
     goal_gap_review_status: Literal["satisfied", "audit_gaps_only", "goal_gaps"] | None = None
     goal_gap_count: int = Field(default=0, ge=0)
+    goal_gap_remediation_selection_path: str | None = None
+    goal_gap_remediation_idea_path: str | None = None
     remediation_record_path: str | None = None
     remediation_spec_id: str | None = None
     remediation_task_id: str | None = None
@@ -443,6 +563,8 @@ class AuditSummaryLastOutcome(ContractModel):
         "gate_decision_path",
         "completion_decision_path",
         "goal_gap_review_path",
+        "goal_gap_remediation_selection_path",
+        "goal_gap_remediation_idea_path",
         "remediation_spec_id",
         "remediation_task_id",
         "remediation_record_path",
@@ -614,6 +736,8 @@ class AuditGatekeeperExecutionResult(ContractModel):
     audit_record: AuditQueueRecord
     final_status: ResearchStatus
     goal_gap_review_path: str | None = None
+    goal_gap_remediation_selection_path: str | None = None
+    goal_gap_remediation_idea_path: str | None = None
     remediation_record_path: str | None = None
 
     @field_validator(
@@ -622,12 +746,19 @@ class AuditGatekeeperExecutionResult(ContractModel):
         "gate_decision_path",
         "completion_decision_path",
         "goal_gap_review_path",
+        "goal_gap_remediation_selection_path",
+        "goal_gap_remediation_idea_path",
         "remediation_record_path",
     )
     @classmethod
     def normalize_paths(cls, value: str | Path, info: object) -> str:
         field_name = getattr(info, "field_name", "path")
-        if value is None and field_name in {"goal_gap_review_path", "remediation_record_path"}:
+        if value is None and field_name in {
+            "goal_gap_review_path",
+            "goal_gap_remediation_selection_path",
+            "goal_gap_remediation_idea_path",
+            "remediation_record_path",
+        }:
             return None
         normalized = _normalize_path(value)
         if normalized is None:
@@ -643,6 +774,7 @@ __all__ = [
     "AuditExecutionError",
     "AuditGoalGapMatch",
     "AuditGoalGapMilestoneReview",
+    "AuditGoalGapRemediationSelectionRecord",
     "AuditGoalGapReviewRecord",
     "AuditGatekeeperExecutionResult",
     "AuditGatekeeperRecord",

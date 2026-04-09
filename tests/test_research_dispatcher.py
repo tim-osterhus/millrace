@@ -5021,6 +5021,8 @@ def test_sync_runtime_queue_empty_audit_goal_gap_review_fails_without_remediatio
     assert gatekeeper_record["goal_gap_review_path"] == "agents/reports/goal_gap_review.json"
     assert gatekeeper_record["goal_gap_review_status"] == "goal_gaps"
     assert gatekeeper_record["goal_gap_count"] == 1
+    assert gatekeeper_record["goal_gap_remediation_selection_path"] is None
+    assert gatekeeper_record["goal_gap_remediation_idea_path"] is None
     assert gatekeeper_record["remediation_record_path"] is None
     assert gatekeeper_record["remediation_spec_id"] is None
     assert gate_decision["decision"] == "PASS"
@@ -5044,6 +5046,138 @@ def test_sync_runtime_queue_empty_audit_goal_gap_review_fails_without_remediatio
     audit_history_text = audit_history_path.read_text(encoding="utf-8")
     assert "Goal gap review: `goal_gaps` (1 unresolved milestone(s))" in audit_history_text
     assert "Goal gap review record: `agents/reports/goal_gap_review.json`" in audit_history_text
+
+
+def test_sync_runtime_queue_empty_audit_stages_goal_gap_remediation_family_for_auto_follow_on(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    goal_path = workspace / "agents" / "objective" / "goal-gap-source.md"
+    goal_path.parent.mkdir(parents=True, exist_ok=True)
+    goal_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "idea_id: IDEA-GOAL-GAP-001",
+                "title: Goal gap remediation source goal",
+                "---",
+                "",
+                "# Goal gap remediation source goal",
+                "",
+                "Restore queue-empty marathon audit parity.",
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (workspace / "agents" / "objective").mkdir(parents=True, exist_ok=True)
+    (workspace / "agents" / "objective" / "family_policy.json").write_text(
+        json.dumps(
+            {
+                "family_cap_mode": "static",
+                "initial_family_max_specs": 4,
+                "remediation_family_max_specs": 1,
+                "overflow_registry_path": "agents/.research_runtime/deferred_follow_ons.json",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    incoming_path = workspace / "agents" / "ideas" / "audit" / "incoming" / "AUD-706.md"
+    required_command = "pytest -q tests/test_research_dispatcher.py"
+    _write_audit_file(
+        incoming_path,
+        audit_id="AUD-706",
+        trigger="queue_empty",
+        status="incoming",
+        scope="goal-gap-remediation-family",
+        commands=[required_command],
+    )
+    _write_completion_manifest(workspace, configured=True, commands=[required_command])
+    _write_typed_objective_contract(
+        workspace,
+        profile_id="goal-gap-family-profile",
+        goal_id="IDEA-GOAL-GAP-001",
+        title="Goal gap remediation family objective",
+        source_path="agents/objective/goal-gap-source.md",
+        require_open_gaps_zero=False,
+        semantic_milestones=[
+            {
+                "id": "MILESTONE-GAP-010",
+                "outcome": "Restore marathon goal gap remediation family staging",
+                "capability_scope": ["goal gap remediation", "marathon audit"],
+            }
+        ],
+    )
+    _write_gaps_file(
+        workspace,
+        open_rows=[
+            {
+                "gap_id": "GAP-201",
+                "title": "Restore marathon goal gap remediation family staging",
+                "area": "research",
+                "owner": "qa",
+                "severity": "S2",
+                "notes": "MILESTONE-GAP-010 remains unresolved after the queue-empty completion pass.",
+            }
+        ],
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = plane.sync_runtime(trigger="engine-start", run_id="audit-sync-706", resolve_assets=False)
+
+    selection_path = workspace / "agents" / "reports" / "goal_gap_remediation_selection.json"
+    selection_markdown_path = workspace / "agents" / "reports" / "goal_gap_remediation_selection.md"
+    staged_idea_path = workspace / "agents" / "ideas" / "staging" / "IDEA-GOAL-GAP-001__goal-gap-remediation.md"
+    family_state_path = paths.goal_spec_family_state_file
+    gatekeeper_path = workspace / "agents" / ".research_runtime" / "audit" / "gatekeeper" / "audit-sync-706.json"
+
+    assert dispatch is not None
+    assert plane.status_store.read() is ResearchStatus.AUDIT_FAIL
+    assert selection_path.exists()
+    assert selection_markdown_path.exists()
+    assert staged_idea_path.exists()
+    assert family_state_path.exists()
+    assert gatekeeper_path.exists()
+
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    family_state = json.loads(family_state_path.read_text(encoding="utf-8"))
+    gatekeeper_record = json.loads(gatekeeper_path.read_text(encoding="utf-8"))
+    staged_text = staged_idea_path.read_text(encoding="utf-8")
+
+    assert selection["artifact_type"] == "audit_goal_gap_remediation_selection"
+    assert selection["goal_id"] == "IDEA-GOAL-GAP-001"
+    assert selection["family_phase"] == "goal_gap_remediation"
+    assert selection["total_remediation_items"] == 1
+    assert selection["family_decomposition_profile"] == "trivial"
+    assert selection["applied_family_max_specs"] == 1
+    assert selection["synthesized_remediation_ids"] == ["REMED-MILESTONE-GAP-010"]
+    assert selection["output_idea_path"] == "agents/ideas/staging/IDEA-GOAL-GAP-001__goal-gap-remediation.md"
+    assert selection["deferred_milestone_ids"] == []
+    assert family_state["goal_id"] == "IDEA-GOAL-GAP-001"
+    assert family_state["source_idea_path"] == "agents/ideas/staging/IDEA-GOAL-GAP-001__goal-gap-remediation.md"
+    assert family_state["family_phase"] == "goal_gap_remediation"
+    assert family_state["family_complete"] is False
+    assert family_state["spec_order"] == []
+    assert family_state["family_governor"]["applied_family_max_specs"] == 1
+    assert gatekeeper_record["goal_gap_remediation_selection_path"] == "agents/reports/goal_gap_remediation_selection.json"
+    assert gatekeeper_record["goal_gap_remediation_idea_path"] == (
+        "agents/ideas/staging/IDEA-GOAL-GAP-001__goal-gap-remediation.md"
+    )
+    assert "family_phase: goal_gap_remediation" in staged_text
+    assert "canonical_source_path: agents/objective/goal-gap-source.md" in staged_text
+    assert "decomposition_profile: trivial" in staged_text
+
+    discovery = discover_research_queues(paths)
+    assert discovery.family_scan(ResearchQueueFamily.GOALSPEC).ready is True
+
+    next_dispatch = plane.dispatch_ready_work(run_id="goal-gap-remediation-follow-on", resolve_assets=False)
+
+    assert next_dispatch is not None
+    assert next_dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+    assert next_dispatch.entry_stage.node_id == "objective_profile_sync"
 
 
 def test_sync_runtime_blocks_completion_when_tasks_pending_and_open_gaps_remain(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ from ..contracts import AuditExecutionReport
 from .audit_execution import execute_audit_gatekeeper, execute_audit_intake, execute_audit_validate
 from .audit_models import (
     AuditExecutionError,
+    AuditGoalGapRemediationSelectionRecord,
     AuditGoalGapReviewRecord,
     AuditGatekeeperExecutionResult,
     AuditGatekeeperRecord,
@@ -30,6 +31,7 @@ from .audit_storage_helpers import load_audit_remediation_record, load_audit_sum
 
 __all__ = [
     "AuditExecutionError",
+    "AuditGoalGapRemediationSelectionRecord",
     "AuditGoalGapReviewRecord",
     "AuditExecutionReport",
     "AuditGatekeeperExecutionResult",

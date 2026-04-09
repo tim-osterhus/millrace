@@ -42,8 +42,10 @@ from millrace_engine.research.specs import (
 from millrace_engine.research.goalspec import (
     CompletionManifestDraftStateRecord,
     CompletionManifestDraftSurface,
+    GoalSource,
     SpecSynthesisRecord,
 )
+from millrace_engine.research.goalspec_persistence import _updated_goal_spec_family_state
 from millrace_engine.research.taskmaster import (
     TASKMASTER_ARTIFACT_SCHEMA_VERSION,
     TaskAuthoringProfileSelection,
@@ -583,6 +585,71 @@ def test_governance_canary_and_drift_reports_remain_explainable(tmp_path: Path) 
     assert canary_report.status == "drifted"
     assert canary_report.reason == "governance-canary-policy-drift"
     assert canary_report.changed_fields == ("hard_latch_on_policy_drift",)
+
+
+def test_updated_goal_spec_family_state_preserves_goal_gap_remediation_phase(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    paths = RuntimePaths.from_workspace(workspace, Path("agents"))
+    queue_spec_path = workspace / "agents" / "ideas" / "specs" / "SPEC-REM-001__remediation.md"
+    policy_path = workspace / "agents" / "objective" / "family_policy.json"
+    queue_spec_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps({"initial_family_max_specs": 4, "remediation_family_max_specs": 1}) + "\n",
+        encoding="utf-8",
+    )
+    write_goal_spec_family_state(
+        paths.goal_spec_family_state_file,
+        GoalSpecFamilyState.model_validate(
+            {
+                "goal_id": "IDEA-REM-001",
+                "source_idea_path": "agents/ideas/staging/IDEA-REM-001__goal-gap-remediation.md",
+                "family_phase": "goal_gap_remediation",
+                "family_complete": False,
+                "active_spec_id": "",
+                "spec_order": [],
+                "specs": {},
+                "family_governor": {
+                    "policy_path": "agents/objective/family_policy.json",
+                    "initial_family_max_specs": 4,
+                    "remediation_family_max_specs": 1,
+                    "applied_family_max_specs": 1,
+                },
+            }
+        ),
+        updated_at="2026-03-21T10:05:00Z",
+    )
+
+    next_state = _updated_goal_spec_family_state(
+        paths=paths,
+        source=GoalSource.model_validate(
+            {
+                "current_artifact_path": (workspace / "agents" / "ideas" / "staging" / "IDEA-REM-001__goal-gap-remediation.md").as_posix(),
+                "current_artifact_relative_path": "agents/ideas/staging/IDEA-REM-001__goal-gap-remediation.md",
+                "canonical_source_path": (workspace / "agents" / "ideas" / "raw" / "goal.md").as_posix(),
+                "canonical_relative_source_path": "agents/ideas/raw/goal.md",
+                "source_path": (workspace / "agents" / "ideas" / "staging" / "IDEA-REM-001__goal-gap-remediation.md").as_posix(),
+                "relative_source_path": "agents/ideas/staging/IDEA-REM-001__goal-gap-remediation.md",
+                "idea_id": "IDEA-REM-001",
+                "title": "Goal gap remediation source",
+                "decomposition_profile": "simple",
+                "frontmatter": {},
+                "body": "Goal gap remediation source",
+                "canonical_body": "Canonical goal",
+                "checksum_sha256": "a" * 64,
+            }
+        ),
+        spec_id="SPEC-REM-001",
+        title="Goal gap remediation spec",
+        decomposition_profile="simple",
+        queue_spec_path=queue_spec_path,
+        emitted_at="2026-03-21T10:10:00Z",
+    )
+
+    assert next_state.family_phase == "goal_gap_remediation"
+    assert next_state.family_governor is not None
+    assert next_state.family_governor.applied_family_max_specs == 1
+    assert next_state.spec_order == ("SPEC-REM-001",)
 
 
 def test_progress_watchdog_regenerates_missing_audit_recovery_task_without_rewriting_family_policy_history(

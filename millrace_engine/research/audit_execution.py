@@ -12,6 +12,7 @@ from ..contracts import AuditContract, AuditExecutionFinding, AuditExecutionRepo
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .audit_goal_gap_review import execute_audit_goal_gap_review
+from .audit_goal_gap_remediation import stage_goal_gap_remediation_family
 from .audit_gate_helpers import _evaluate_completion_gate
 from .audit_models import (
     AuditExecutionError,
@@ -369,6 +370,7 @@ def execute_audit_gatekeeper(
     execution_report_path = _resolve_path_token(validate_record.execution_report_path, relative_to=paths.root)
     audited_source_path = _audited_source_path(paths, run_id=run_id, record=record)
     goal_gap_review = None
+    goal_gap_remediation_selection = None
     goal_gap_review_failed = False
     if (
         final_status is ResearchStatus.AUDIT_PASS
@@ -386,6 +388,16 @@ def execute_audit_gatekeeper(
         )
         if goal_gap_review is not None and goal_gap_review.goal_gap_count > 0:
             final_status = ResearchStatus.AUDIT_FAIL
+            canonical_goal_path = (
+                None if not goal_gap_review.goal_path else paths.root / goal_gap_review.goal_path
+            )
+            if canonical_goal_path is not None and canonical_goal_path.exists():
+                goal_gap_remediation_selection = stage_goal_gap_remediation_family(
+                    paths,
+                    goal_gap_review,
+                    run_id=run_id,
+                    emitted_at=emitted_at,
+                )
             goal_gap_review_failed = True
     if final_status is ResearchStatus.AUDIT_FAIL:
         target_status = AuditLifecycleStatus.FAILED
@@ -425,6 +437,7 @@ def execute_audit_gatekeeper(
         completion_decision=completion_decision,
         final_status=final_status,
         goal_gap_review=goal_gap_review,
+        goal_gap_remediation_selection=goal_gap_remediation_selection,
         remediation_record=remediation_record,
     )
     _write_audit_history(
@@ -437,6 +450,7 @@ def execute_audit_gatekeeper(
         completion_decision=completion_decision,
         final_status=final_status,
         goal_gap_review=goal_gap_review,
+        goal_gap_remediation_selection=goal_gap_remediation_selection,
         remediation_record=remediation_record,
         retention_keep=_AUDIT_HISTORY_RETENTION_KEEP,
     )
@@ -464,6 +478,16 @@ def execute_audit_gatekeeper(
         goal_gap_review_path=(None if goal_gap_review is None else goal_gap_review.review_path),
         goal_gap_review_status=(None if goal_gap_review is None else goal_gap_review.overall_status),
         goal_gap_count=(0 if goal_gap_review is None else goal_gap_review.goal_gap_count),
+        goal_gap_remediation_selection_path=(
+            None
+            if goal_gap_remediation_selection is None
+            else goal_gap_remediation_selection.selection_report_path
+        ),
+        goal_gap_remediation_idea_path=(
+            None
+            if goal_gap_remediation_selection is None
+            else goal_gap_remediation_selection.output_idea_path
+        ),
         remediation_record_path=(
             None
             if remediation_record is None
@@ -482,6 +506,16 @@ def execute_audit_gatekeeper(
         audit_record=terminal_record,
         final_status=final_status,
         goal_gap_review_path=(None if goal_gap_review is None else goal_gap_review.review_path),
+        goal_gap_remediation_selection_path=(
+            None
+            if goal_gap_remediation_selection is None
+            else goal_gap_remediation_selection.selection_report_path
+        ),
+        goal_gap_remediation_idea_path=(
+            None
+            if goal_gap_remediation_selection is None
+            else goal_gap_remediation_selection.output_idea_path
+        ),
         remediation_record_path=(
             None
             if remediation_record is None

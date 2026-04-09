@@ -2,6 +2,7 @@
 
 from .audit import (
     AuditExecutionError,
+    AuditGoalGapRemediationSelectionRecord,
     AuditGoalGapReviewRecord,
     AuditGatekeeperExecutionResult,
     AuditGatekeeperRecord,
@@ -186,6 +187,7 @@ from .taskmaster import (
 
 __all__ = [
     "AuditExecutionError",
+    "AuditGoalGapRemediationSelectionRecord",
     "AuditGoalGapReviewRecord",
     "AuditGatekeeperExecutionResult",
     "AuditGatekeeperRecord",

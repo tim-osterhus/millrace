@@ -13,6 +13,7 @@ from ..contracts import AuditGateDecision, CompletionDecision, ContractModel, Re
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from .audit_models import (
+    AuditGoalGapRemediationSelectionRecord,
     AuditGoalGapReviewRecord,
     AuditIntakeRecord,
     AuditQueueRecord,
@@ -117,6 +118,7 @@ def _write_audit_summary(
     completion_decision: CompletionDecision,
     final_status: ResearchStatus,
     goal_gap_review: "AuditGoalGapReviewRecord | None",
+    goal_gap_remediation_selection: "AuditGoalGapRemediationSelectionRecord | None",
     remediation_record: "AuditRemediationRecord | None",
 ) -> "AuditSummary":
     summary = _load_audit_summary(paths)
@@ -160,6 +162,14 @@ def _write_audit_summary(
             goal_gap_review_path=(None if goal_gap_review is None else goal_gap_review.review_path),
             goal_gap_review_status=(None if goal_gap_review is None else goal_gap_review.overall_status),
             goal_gap_count=(0 if goal_gap_review is None else goal_gap_review.goal_gap_count),
+            goal_gap_remediation_selection_path=(
+                None
+                if goal_gap_remediation_selection is None
+                else goal_gap_remediation_selection.selection_report_path
+            ),
+            goal_gap_remediation_idea_path=(
+                None if goal_gap_remediation_selection is None else goal_gap_remediation_selection.output_idea_path
+            ),
             remediation_spec_id=(
                 None if remediation_record is None else remediation_record.remediation_spec_id
             ),
@@ -192,6 +202,7 @@ def _write_audit_history(
     completion_decision: CompletionDecision,
     final_status: ResearchStatus,
     goal_gap_review: "AuditGoalGapReviewRecord | None",
+    goal_gap_remediation_selection: "AuditGoalGapRemediationSelectionRecord | None",
     remediation_record: "AuditRemediationRecord | None",
     retention_keep: int,
 ) -> None:
@@ -225,6 +236,15 @@ def _write_audit_history(
         lines.append(f"- Goal gap review record: `{goal_gap_review.review_path}`")
     else:
         lines.append("- Goal gap review: none")
+    if goal_gap_remediation_selection is not None:
+        lines.append(
+            f"- Goal gap remediation selection: `{goal_gap_remediation_selection.selection_report_path}`"
+        )
+        lines.append(
+            f"- Goal gap remediation idea: `{goal_gap_remediation_selection.output_idea_path}`"
+        )
+    else:
+        lines.append("- Goal gap remediation: none")
     if goal_gap_review is not None and goal_gap_review.goal_gap_count:
         lines.append(
             f"- Details: Goal-gap review found {goal_gap_review.goal_gap_count} unresolved milestone(s): "
