@@ -36,6 +36,7 @@ from millrace_engine.research.dispatcher import (
     compile_research_dispatch,
     resolve_research_dispatch_selection,
 )
+from millrace_engine.research.goalspec_product_planning import minimum_phase_step_count
 from millrace_engine.research.goalspec import (
     execute_completion_manifest_draft,
     execute_goal_intake,
@@ -2813,9 +2814,20 @@ def test_execute_spec_review_blocks_abstract_phase_plan_before_taskmaster(tmp_pa
     )
     assert review_record["review_status"] == "blocked"
     assert any("Phase package defines 3 numbered Work Plan step" in item["summary"] for item in review_record["findings"])
+    assert any("floor of 6" in item["summary"] for item in review_record["findings"])
     assert any("abstract or handoff-oriented work items" in item["summary"] for item in review_record["findings"])
     assert queue_spec_path.exists()
     assert not (workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name).exists()
+
+
+def test_minimum_phase_step_count_matches_bash_density_floors() -> None:
+    assert minimum_phase_step_count("trivial") == 1
+    assert minimum_phase_step_count("simple") == 3
+    assert minimum_phase_step_count("moderate") == 6
+    assert minimum_phase_step_count("involved") == 10
+    assert minimum_phase_step_count("complex") == 14
+    assert minimum_phase_step_count("massive") == 20
+    assert minimum_phase_step_count("") == 3
 
 
 def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:

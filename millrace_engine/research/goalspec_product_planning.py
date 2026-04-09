@@ -111,10 +111,10 @@ _PYTHON_HINTS = (
 _PROFILE_MIN_STEP_COUNT = {
     "trivial": 1,
     "simple": 3,
-    "moderate": 4,
-    "involved": 5,
-    "complex": 6,
-    "massive": 6,
+    "moderate": 6,
+    "involved": 10,
+    "complex": 14,
+    "massive": 20,
     "": 3,
 }
 _ABSTRACT_STEP_HINTS = (
