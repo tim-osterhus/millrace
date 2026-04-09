@@ -36,7 +36,10 @@ from millrace_engine.research.dispatcher import (
     compile_research_dispatch,
     resolve_research_dispatch_selection,
 )
-from millrace_engine.research.goalspec_product_planning import minimum_phase_step_count
+from millrace_engine.research.goalspec_product_planning import (
+    minimum_phase_package_count,
+    minimum_phase_step_count,
+)
 from millrace_engine.research.goalspec import (
     execute_completion_manifest_draft,
     execute_goal_intake,
@@ -2820,6 +2823,144 @@ def test_execute_spec_review_blocks_abstract_phase_plan_before_taskmaster(tmp_pa
     assert not (workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name).exists()
 
 
+def test_execute_spec_review_blocks_overcollapsed_phase_packages_before_taskmaster(
+    tmp_path: Path,
+) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-phase-count-302"
+    emitted_at = _dt("2026-04-07T13:45:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-302\n"
+            "title: Aura Workshop Operations Suite\n"
+            "decomposition_profile: involved\n"
+            "---\n\n"
+            "# Aura Workshop Operations Suite\n\n"
+            "Build an involved aura workshop product slice with multiple bounded follow-on phases.\n\n"
+            "## Capability Domains\n"
+            "- Aura Collector\n"
+            "- Aura Conduit\n"
+            "- Aura Reservoir\n"
+            "- Aura Infuser\n\n"
+            "## Progression Lines\n"
+            "- Progression from collection to routing to storage to infusion proof.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    phase_path = workspace / synthesis.phase_spec_path
+    phase_text = phase_path.read_text(encoding="utf-8")
+
+    assert "## Phase Packages" in phase_text
+    assert "Phase key: `PHASE_01`" in phase_text
+    assert "Phase key: `PHASE_02`" in phase_text
+    assert "Phase key: `PHASE_03`" not in phase_text
+
+    phase_text = _replace_markdown_section(
+        phase_text,
+        "Phase Packages",
+        "\n".join(
+            [
+                "## Phase Packages",
+                "- Render at least 1 bounded phase package for this involved campaign.",
+                "### Phase Package 01",
+                "- Phase key: `PHASE_01`",
+                "- Phase priority: `P1`",
+                "1. Keep the larger campaign collapsed into one giant phase package.",
+                "2. Leave the remaining decomposition implied instead of explicit.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+    queue_spec_path = workspace / synthesis.queue_spec_path
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-302",
+    ):
+        execute_spec_review(
+            paths,
+            _goal_queue_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                queue_path=queue_spec_path.parent,
+                item_path=queue_spec_path,
+                status=ResearchStatus.SPEC_REVIEW_RUNNING,
+                node_id="spec_review",
+                stage_kind_id="research.spec-review",
+            ),
+            run_id=run_id,
+            emitted_at=emitted_at,
+        )
+
+    review_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "spec_review"
+            / f"{run_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert review_record["review_status"] == "blocked"
+    assert any("Phase package set defines 1 phase package" in item["summary"] for item in review_record["findings"])
+    assert any("floor of 2" in item["summary"] for item in review_record["findings"])
+    assert queue_spec_path.exists()
+    assert not (workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name).exists()
+
+
 def test_minimum_phase_step_count_matches_bash_density_floors() -> None:
     assert minimum_phase_step_count("trivial") == 1
     assert minimum_phase_step_count("simple") == 3
@@ -2828,6 +2969,16 @@ def test_minimum_phase_step_count_matches_bash_density_floors() -> None:
     assert minimum_phase_step_count("complex") == 14
     assert minimum_phase_step_count("massive") == 20
     assert minimum_phase_step_count("") == 3
+
+
+def test_minimum_phase_package_count_matches_bash_phase_floors() -> None:
+    assert minimum_phase_package_count("trivial") == 1
+    assert minimum_phase_package_count("simple") == 1
+    assert minimum_phase_package_count("moderate") == 1
+    assert minimum_phase_package_count("involved") == 2
+    assert minimum_phase_package_count("complex") == 2
+    assert minimum_phase_package_count("massive") == 3
+    assert minimum_phase_package_count("") == 1
 
 
 def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:

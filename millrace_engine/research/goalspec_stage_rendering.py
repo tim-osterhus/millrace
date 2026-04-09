@@ -15,7 +15,7 @@ from .goalspec_helpers import (
     _first_paragraph,
     _isoformat_z,
 )
-from .goalspec_product_planning import derive_goal_product_plan
+from .goalspec_product_planning import derive_goal_product_plan, minimum_phase_package_count
 
 
 def _dedupe_ordered(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -87,6 +87,25 @@ def _format_domain_sentence(domains: tuple[str, ...]) -> str:
     if len(domains) == 2:
         return f"{domains[0]} and {domains[1]}"
     return f"{', '.join(domains[:-1])}, and {domains[-1]}"
+
+
+def _partition_phase_steps(
+    steps: tuple[str, ...],
+    *,
+    package_count: int,
+) -> tuple[tuple[str, ...], ...]:
+    if not steps:
+        return ()
+    bounded_package_count = max(1, min(package_count, len(steps)))
+    base_size, remainder = divmod(len(steps), bounded_package_count)
+    packages: list[tuple[str, ...]] = []
+    cursor = 0
+    for index in range(bounded_package_count):
+        chunk_size = base_size + (1 if index < remainder else 0)
+        next_cursor = cursor + chunk_size
+        packages.append(steps[cursor:next_cursor])
+        cursor = next_cursor
+    return tuple(packages)
 
 
 def render_queue_spec(
@@ -306,7 +325,40 @@ def render_phase_spec(
         tuple(completion_manifest.verification_surfaces),
         empty_message="No verification surfaces were declared.",
     )
+    phase_packages = _partition_phase_steps(
+        product_plan.phase_steps,
+        package_count=minimum_phase_package_count(source.decomposition_profile),
+    ) or (product_plan.phase_steps,)
+    phase_package_lines: list[str] = []
+    decision_rows = [
+        "| decision_id | phase_key | phase_priority | status | owner | rationale | timestamp |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for package_index, package_steps in enumerate(phase_packages, start=1):
+        phase_key = f"PHASE_{package_index:02d}"
+        phase_priority = f"P{min(package_index, 3)}"
+        phase_package_lines.extend(
+            [
+                f"### Phase Package {package_index:02d}",
+                f"- Phase key: `{phase_key}`",
+                f"- Phase priority: `{phase_priority}`",
+                *[f"{index}. {step}" for index, step in enumerate(package_steps, start=1)],
+                "",
+            ]
+        )
+        decision_rows.append(
+            (
+                f"| DEC-PHASE-{package_index:03d} | {phase_key} | {phase_priority} | proposed | research | "
+                f"Keep phase package {package_index} bounded to concrete implementation and verification surfaces before decomposition | {timestamp} |"
+            )
+        )
+
     work_plan_lines = [f"{index}. {step}" for index, step in enumerate(product_plan.phase_steps, start=1)]
+    phase_package_summary = (
+        f"- Render at least {len(phase_packages)} bounded phase package(s) for this `{source.decomposition_profile}` campaign before Taskmaster runs."
+        if len(phase_packages) > 1
+        else "- One bounded phase package is sufficient for this profile before Taskmaster runs."
+    )
     return "\n".join(
         [
             _FRONTMATTER_BOUNDARY,
@@ -359,6 +411,9 @@ def render_phase_spec(
             "## Verification Surfaces",
             *verification_surface_lines,
             "",
+            "## Phase Packages",
+            phase_package_summary,
+            *phase_package_lines,
             "## Work Plan",
             *work_plan_lines,
             "",
@@ -371,18 +426,22 @@ def render_phase_spec(
             ),
             "",
             "## Assumptions Ledger",
+            "- The first emitted slice can advance the highest-priority capability path without absorbing later planned slices (confidence: inferred).",
             (
-                "- The first emitted slice can advance the highest-priority capability path without absorbing later planned slices (confidence: inferred)."
+                f"- Larger `{source.decomposition_profile}` campaigns keep their decomposition explicit by rendering {len(phase_packages)} bounded phase package(s) in this artifact (confidence: inferred)."
+                if len(phase_packages) > 1
+                else f"- Repo-kind planning remains bounded to `{completion_manifest.repo_kind}` surfaces (confidence: inferred)."
             ),
-            f"- Repo-kind planning remains bounded to `{completion_manifest.repo_kind}` surfaces (confidence: inferred).",
             "",
             "## Structured Decision Log",
-            "| decision_id | phase_key | phase_priority | status | owner | rationale | timestamp |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
-            f"| DEC-PHASE-001 | PHASE_01 | P1 | proposed | research | Keep the first phase bounded to concrete implementation and verification surfaces before decomposition | {timestamp} |",
+            *decision_rows,
             "",
             "## Interrogation Notes",
-            "- This phase keeps the first emitted spec decomposition-ready by naming concrete repo surfaces before Taskmaster runs.",
+            (
+                "- This phase spec keeps the first emitted spec decomposition-ready by naming concrete repo surfaces before Taskmaster runs."
+                if len(phase_packages) == 1
+                else f"- This phase spec keeps `{source.decomposition_profile}` work split into bounded phase packages before Taskmaster runs."
+            ),
             "",
             "## Verification",
             *(
@@ -398,6 +457,11 @@ def render_phase_spec(
             "",
             "## Exit Criteria",
             "- The first bounded product slice is implemented or explicitly specified with measurable proof expectations and no family-scope drift.",
+            (
+                f"- Larger `{source.decomposition_profile}` campaigns remain split into the declared bounded phase packages above."
+                if len(phase_packages) > 1
+                else "- The declared phase package remains bounded and decomposition-ready."
+            ),
             "",
             "## Handoff",
             "- Feed the queue spec, phase note, and frozen initial-family declaration into downstream review.",

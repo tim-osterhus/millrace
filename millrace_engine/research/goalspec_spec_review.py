@@ -29,6 +29,7 @@ from .goalspec_persistence import (
 from .goalspec_product_planning import (
     find_abstract_phase_steps,
     is_product_surface_path,
+    minimum_phase_package_count,
     minimum_phase_step_count,
     surface_paths,
 )
@@ -50,6 +51,7 @@ from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnersh
 
 _NUMBERED_LINE_RE = re.compile(r"^\d+\.\s+(.*\S)\s*$")
 _BACKTICKED_TOKEN_RE = re.compile(r"`([^`\n]+)`")
+_PHASE_KEY_LINE_RE = re.compile(r"^- Phase key:\s+`(PHASE_[0-9]{2})`\s*$")
 
 
 def _phase_steps(phase_text: str) -> tuple[str, ...]:
@@ -61,6 +63,22 @@ def _phase_steps(phase_text: str) -> tuple[str, ...]:
             continue
         steps.append(" ".join(match.group(1).split()))
     return tuple(steps)
+
+
+def _phase_package_keys(phase_text: str) -> tuple[str, ...]:
+    phase_packages = _markdown_section(phase_text, "Phase Packages")
+    keys: list[str] = []
+    seen: set[str] = set()
+    for raw_line in phase_packages.splitlines():
+        match = _PHASE_KEY_LINE_RE.match(raw_line.strip())
+        if match is None:
+            continue
+        phase_key = match.group(1)
+        if phase_key in seen:
+            continue
+        seen.add(phase_key)
+        keys.append(phase_key)
+    return tuple(keys)
 
 
 def _repo_paths(text: str) -> tuple[str, ...]:
@@ -93,10 +111,12 @@ def _review_findings(
     phase_paths = tuple(path for path in stable_spec_paths if "/phase/" in _relative_path(path, relative_to=paths.root))
     phase_steps: list[str] = []
     phase_path_tokens: list[str] = []
+    phase_package_keys: list[str] = []
     for phase_path in phase_paths:
         phase_text = phase_path.read_text(encoding="utf-8")
         phase_steps.extend(_phase_steps(phase_text))
         phase_path_tokens.extend(_repo_paths(phase_text))
+        phase_package_keys.extend(_phase_package_keys(phase_text))
 
     findings: list[GoalSpecReviewFinding] = []
     minimum_steps = minimum_phase_step_count(decomposition_profile)
@@ -108,6 +128,22 @@ def _review_findings(
                 summary=(
                     f"Phase package defines {len(phase_steps)} numbered Work Plan step(s), "
                     f"below the active `{decomposition_profile or 'simple'}` floor of {minimum_steps}."
+                ),
+                artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
+            )
+        )
+
+    minimum_packages = minimum_phase_package_count(decomposition_profile)
+    declared_package_count = len(tuple(dict.fromkeys(phase_package_keys)))
+    package_count = declared_package_count or (1 if phase_paths else 0)
+    if package_count < minimum_packages:
+        findings.append(
+            GoalSpecReviewFinding(
+                finding_id="REV-PHASE-PACKAGE-COUNT",
+                severity="blocker",
+                summary=(
+                    f"Phase package set defines {package_count} phase package(s), "
+                    f"below the active `{decomposition_profile or 'simple'}` floor of {minimum_packages}."
                 ),
                 artifact_path=_relative_path(phase_paths[0], relative_to=paths.root) if phase_paths else "",
             )

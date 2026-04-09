@@ -117,6 +117,15 @@ _PROFILE_MIN_STEP_COUNT = {
     "massive": 20,
     "": 3,
 }
+_PROFILE_MIN_PHASE_PACKAGE_COUNT = {
+    "trivial": 1,
+    "simple": 1,
+    "moderate": 1,
+    "involved": 2,
+    "complex": 2,
+    "massive": 3,
+    "": 1,
+}
 _ABSTRACT_STEP_HINTS = (
     "implement the bounded slice",
     "implement the first bounded capability slice",
@@ -191,6 +200,13 @@ def minimum_phase_step_count(decomposition_profile: str) -> int:
 
     normalized = decomposition_profile.strip().lower()
     return _PROFILE_MIN_STEP_COUNT.get(normalized, _PROFILE_MIN_STEP_COUNT[""])
+
+
+def minimum_phase_package_count(decomposition_profile: str) -> int:
+    """Return the active minimum number of phase packages for one decomposition profile."""
+
+    normalized = decomposition_profile.strip().lower()
+    return _PROFILE_MIN_PHASE_PACKAGE_COUNT.get(normalized, _PROFILE_MIN_PHASE_PACKAGE_COUNT[""])
 
 
 def find_abstract_phase_steps(steps: tuple[str, ...]) -> tuple[str, ...]:
@@ -638,6 +654,7 @@ __all__ = [
     "find_abstract_phase_steps",
     "infer_repo_kind",
     "is_product_surface_path",
+    "minimum_phase_package_count",
     "minimum_phase_step_count",
     "surface_paths",
 ]
