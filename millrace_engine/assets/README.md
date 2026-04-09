@@ -258,6 +258,8 @@ millrace --config millrace.toml add-idea /absolute/path/to/idea.md
 
 When research is active, one raw idea follows a deterministic staged funnel: `goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis -> optional spec_interview -> spec_review -> taskmaster`, and `taskaudit` merges only when the current initial-family declaration is complete. The completion manifest keeps governance artifacts separate from implementation surfaces and verification surfaces so the emitted queue spec, phase spec, and task cards stay product-grounded. Projects can also pin semantic milestones with `agents/objective/semantic_profile_seed.json`, `.yaml`, or `.yml`.
 
+In `AUTO` mode, mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence and reevaluate after each defer boundary instead of silently draining a whole family inline. Queue-empty completion failures can also continue into marathon audit, goal-gap review, and bounded goal-gap remediation-family staging when semantic milestones remain unsatisfied.
+
 If GoalSpec interview mode is enabled, research can pause after synthesis with one durable pending interview question under `agents/specs/questions/`. The feature is optional and file-backed: Millrace records the question and recommended answer on disk, then waits for operator input before continuing review/task decomposition.
 
 Resolve interview pauses with either surface:

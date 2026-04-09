@@ -189,11 +189,12 @@ Research is now a real supervisor in v1:
 - it accepts selected handoff and intake events
 - persists a typed runtime snapshot in `agents/research_state.json`, and the workspace upgrade seam can now explicitly canonicalize or materialize that file when a supported migration is needed
 - compiles and owns research-plane dispatch/queue selection
-- executes the supported GoalSpec stages (`goal_intake`, `objective_profile_sync`, `spec_synthesis`, optional `spec_interview`, `spec_review`, `taskmaster`, plus `taskaudit` when family-complete)
+- executes the supported GoalSpec stages (`goal_intake`, `objective_profile_sync`, `completion_manifest_draft`, `spec_synthesis`, optional `spec_interview`, `spec_review`, `taskmaster`, plus `taskaudit` when family-complete)
+- mixed-ready `AUTO` queues follow deterministic family precedence and reevaluate at defer boundaries instead of silently advancing a whole family inline
 - executes the supported incident stages (`incident_intake`, `incident_resolve`, `incident_archive`) plus deterministic remediation task generation
 - executes the packaged audit intake/validate/gatekeeper stages
 - writes durable audit outcomes to `agents/audit_history.md`, `agents/audit_summary.json`, and the audit runtime artifact tree
-- can enqueue deterministic audit remediation work when the completion gate fails
+- can enqueue deterministic audit remediation work when the completion gate fails, and queue-empty semantic failures can continue into marathon audit, goal-gap review, and bounded goal-gap remediation-family staging
 - still keeps broader governance and multi-family concurrency intentionally bounded
 
 ### 4.2 File-Backed Truth
@@ -670,7 +671,7 @@ The latch records:
 
 ### 11.6 Thaw
 
-`thaw()` rehydrates previously frozen cards only after the recovery decision exists and visible remediation work matching that decision is still present in the live task stores.
+`thaw()` rehydrates previously frozen cards once visible backlog work reappears. When a recovery decision exists, thaw prefers matching remediation work, but it still restores the frozen backlog conservatively even if the decision is absent or the visible work was regenerated through a different spec path.
 
 It:
 
@@ -1049,9 +1050,11 @@ The important contract details are:
 
 - objective-profile sync may read `agents/objective/semantic_profile_seed.json`, `agents/objective/semantic_profile_seed.yaml`, or `agents/objective/semantic_profile_seed.yml` to pin workspace-local capability milestones
 - the completion manifest keeps governance artifacts separate from product implementation surfaces and verification surfaces
+- mixed-ready `AUTO` selection reevaluates after each defer boundary instead of draining a whole research family inline
 - spec synthesis may freeze an initial-family plan with planned later specs instead of forcing one oversized spec
 - spec review blocks traceable but still too-coarse packages before Taskmaster runs
 - Taskmaster emits product-first per-spec shards, and Taskaudit is the only stage that merges a completed family into backlog
+- queue-empty completion failures may continue into marathon audit, goal-gap review, and bounded remediation-family staging instead of reducing only to deterministic PASS/FAIL
 
 ### 17.4 Stub Compatibility Path
 

@@ -170,6 +170,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in readme
     assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in readme
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in readme
+    assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in readme
+    assert "goal-gap remediation-family staging" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -222,6 +224,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in operator_guide
     assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in operator_guide
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in operator_guide
+    assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in operator_guide
+    assert "goal-gap remediation-family staging" in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 5.7 Governed Compounding Operating Model" in runtime_deep_dive
@@ -247,6 +251,9 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in runtime_deep_dive
     assert "semantic_profile_seed.yaml" in runtime_deep_dive
     assert "Taskmaster emits product-first per-spec shards" in runtime_deep_dive
+    assert "mixed-ready `AUTO` queues follow deterministic family precedence" in runtime_deep_dive
+    assert "goal-gap remediation-family staging" in runtime_deep_dive
+    assert "`thaw()` rehydrates previously frozen cards once visible backlog work reappears" in runtime_deep_dive
 
     tui_doc = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
     assert "## External Supervisor Boundary" in tui_doc
