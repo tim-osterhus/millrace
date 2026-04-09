@@ -2495,7 +2495,7 @@ def test_execute_spec_synthesis_reuses_matching_artifacts_without_rewriting_fami
     assert json.loads(first_family_state_text)["updated_at"] == "2026-03-21T12:00:00Z"
 
 
-def test_execute_spec_synthesis_keeps_broad_family_below_bash_thresholds_to_two_spec_family(
+def test_execute_spec_synthesis_keeps_broad_family_single_spec_until_later_cycle(
     tmp_path: Path,
 ) -> None:
     workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
@@ -2585,19 +2585,18 @@ def test_execute_spec_synthesis_keeps_broad_family_below_bash_thresholds_to_two_
     assert family_policy["adaptive_inputs"]["breadth_bonus"] == 0
     assert family_policy["adaptive_inputs"]["capability_domain_count"] == 6
     assert family_policy["adaptive_inputs"]["progression_line_count"] == 2
-    assert family_state["family_complete"] is False
+    assert family_state["family_complete"] is True
     assert family_state["active_spec_id"] == "SPEC-BROAD-201"
-    assert family_state["spec_order"] == ["SPEC-BROAD-201", "SPEC-BROAD-201-02"]
+    assert family_state["spec_order"] == ["SPEC-BROAD-201"]
     assert family_state["specs"]["SPEC-BROAD-201"]["status"] == "emitted"
-    assert family_state["specs"]["SPEC-BROAD-201-02"]["status"] == "planned"
-    assert family_state["specs"]["SPEC-BROAD-201-02"]["depends_on_specs"] == ["SPEC-BROAD-201"]
-    assert family_state["initial_family_plan"]["spec_order"] == ["SPEC-BROAD-201", "SPEC-BROAD-201-02"]
+    assert "SPEC-BROAD-201-02" not in family_state["specs"]
+    assert family_state["initial_family_plan"]["spec_order"] == ["SPEC-BROAD-201"]
     assert phase_text.count("Planned later initial-family specs:") == 1
-    assert "`SPEC-BROAD-201-02`" in phase_text
-    assert "`SPEC-BROAD-201-03`" not in phase_text
+    assert "- None." in phase_text
+    assert "`SPEC-BROAD-201-02`" not in phase_text
     assert "Carry the drafted GoalSpec package" not in phase_text
-    assert "Planned later specs: `SPEC-BROAD-201-02`" in decision_text
-    assert "`SPEC-BROAD-201-03`" not in decision_text
+    assert "Planned later specs: none" in decision_text
+    assert "`SPEC-BROAD-201-02`" not in decision_text
 
 
 def test_execute_spec_synthesis_respects_single_spec_broad_cap_for_broad_goal(tmp_path: Path) -> None:

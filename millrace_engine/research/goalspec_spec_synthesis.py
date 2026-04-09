@@ -58,18 +58,6 @@ class PlannedFamilySpec(NamedTuple):
     depends_on_specs: tuple[str, ...]
 
 
-def _dedupe_ordered(values: tuple[str, ...]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        token = value.strip()
-        if not token or token in seen:
-            continue
-        seen.add(token)
-        ordered.append(token)
-    return tuple(ordered)
-
-
 def _plan_initial_family_specs(
     *,
     spec_id: str,
@@ -93,66 +81,10 @@ def _plan_initial_family_specs(
             if planned_spec_id != spec_id
         )
 
-    capability_domains = _dedupe_ordered(tuple(profile.semantic_profile.capability_domains))
-    progression_lines = _dedupe_ordered(tuple(profile.semantic_profile.progression_lines))
-    # Objective-profile sync already persists the effective family cap in policy.json; synthesis reuses it from family governor.
-    # Planned-family derivation stays conservative: only broad goals with both breadth and budget declare later specs.
-    broadness_score = 0
-    if len(capability_domains) >= 4:
-        broadness_score += 1
-    if len(progression_lines) >= 2:
-        broadness_score += 1
-    if source.decomposition_profile in {"involved", "complex", "massive"}:
-        broadness_score += 1
-    if len(profile.semantic_profile.milestones) >= 4:
-        broadness_score += 1
-    if broadness_score < 2:
-        return ()
-
-    planned_count = min(max(0, family_cap - 1), 2, len(capability_domains) // 2 or 1)
-    if planned_count <= 0:
-        if family_cap <= 1:
-            return ()
-        if len(progression_lines) >= 2:
-            planned_count = 1
-        else:
-            return ()
-
-    slice_count = planned_count + 1
-    domain_chunks: list[tuple[str, ...]] = []
-    if capability_domains:
-        chunk_size = max(1, -(-len(capability_domains) // slice_count))
-        for start in range(0, len(capability_domains), chunk_size):
-            domain_chunks.append(capability_domains[start : start + chunk_size])
-    planned_specs: list[PlannedFamilySpec] = []
-    for index in range(planned_count):
-        suffix = f"{index + 2:02d}"
-        planned_spec_id = f"{spec_id}-{suffix}"
-        domain_chunk = domain_chunks[index + 1] if index + 1 < len(domain_chunks) else ()
-        if domain_chunk:
-            title = f"{source.title}: {_join_domains(domain_chunk)}"
-        elif index < len(progression_lines):
-            title = f"{source.title}: {progression_lines[index]}"
-        else:
-            title = f"{source.title}: Later Product Slice {index + 2}"
-        planned_specs.append(
-            PlannedFamilySpec(
-                spec_id=planned_spec_id,
-                title=title,
-                depends_on_specs=(spec_id,),
-            )
-        )
-    return tuple(planned_specs)
-
-
-def _join_domains(domains: tuple[str, ...]) -> str:
-    if not domains:
-        return "Later Product Slice"
-    if len(domains) == 1:
-        return domains[0]
-    if len(domains) == 2:
-        return f"{domains[0]} and {domains[1]}"
-    return f"{', '.join(domains[:-1])}, and {domains[-1]}"
+    # Fresh synthesis runs now emit one spec at a time. Objective-profile sync still
+    # determines the bounded family cap, but synthesis no longer speculates about
+    # later slices until a future cycle explicitly materializes them.
+    return ()
 
 
 def execute_spec_synthesis(
