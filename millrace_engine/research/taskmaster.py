@@ -74,6 +74,15 @@ _ROOT_LEVEL_REPO_FILES = {
     "yarn.lock",
     "Cargo.toml",
 }
+_PROFILE_CARD_ENVELOPE = {
+    "trivial": (1, 2),
+    "simple": (3, 5),
+    "moderate": (6, 10),
+    "involved": (12, 16),
+    "complex": (20, 28),
+    "massive": (30, 45),
+    "": (2, 6),
+}
 
 
 def _utcnow() -> datetime:
@@ -141,6 +150,11 @@ def _normalize_goal_token(value: str) -> str:
 def _goal_title(frontmatter: dict[str, str], spec_id: str) -> str:
     title = _normalize_optional_text(frontmatter.get("title"))
     return title or spec_id
+
+
+def taskmaster_card_envelope(decomposition_profile: str) -> tuple[int, int]:
+    normalized = decomposition_profile.strip().casefold()
+    return _PROFILE_CARD_ENVELOPE.get(normalized, _PROFILE_CARD_ENVELOPE[""])
 
 
 def _acceptance_ids_for(requirement_ids: tuple[str, ...], source_text: str) -> tuple[tuple[str, ...], str]:
@@ -426,6 +440,8 @@ def _validate_strict_shard(
 def _load_task_authoring_profile(
     paths: RuntimePaths,
     dispatch: CompiledResearchDispatch,
+    *,
+    decomposition_profile: str,
 ) -> tuple["TaskAuthoringProfileSelection", int, int]:
     content = dispatch.compile_result.plan.content if dispatch.compile_result.plan is not None else None
     if content is None or content.task_authoring_profile_ref is None:
@@ -451,18 +467,26 @@ def _load_task_authoring_profile(
     lookup_entry = provenance_by_path.get("mode.task_authoring_profile_lookup_ref") or provenance_by_path.get(
         "loop.task_authoring_profile_lookup_ref"
     )
+    expected_min_cards, expected_max_cards = taskmaster_card_envelope(decomposition_profile)
+    selection_detail = selection_entry.detail if selection_entry is not None else "compiled research dispatch"
+    normalized_profile = decomposition_profile.strip().casefold()
+    if normalized_profile:
+        selection_detail = (
+            f"{selection_detail}; GoalSpec profile-aware envelope {expected_min_cards}-{expected_max_cards}"
+            f" for {normalized_profile}"
+        )
     selection = TaskAuthoringProfileSelection(
         selected_mode_ref=content.selected_mode_ref,
         task_authoring_profile_ref=content.task_authoring_profile_ref,
         selection_path=selection_entry.path if selection_entry is not None else "compile.content.task_authoring_profile_ref",
         lookup_path=lookup_entry.path if lookup_entry is not None else "",
         selection_source=selection_entry.source.value if selection_entry is not None else "compiled_plan",
-        selection_detail=selection_entry.detail if selection_entry is not None else "compiled research dispatch",
+        selection_detail=selection_detail,
         required_metadata_fields=getattr(payload, "required_metadata_fields", ()),
-        expected_min_cards=payload.expected_card_count.min_cards,
-        expected_max_cards=payload.expected_card_count.max_cards,
+        expected_min_cards=expected_min_cards,
+        expected_max_cards=expected_max_cards,
     )
-    return selection, payload.expected_card_count.min_cards, payload.expected_card_count.max_cards
+    return selection, expected_min_cards, expected_max_cards
 
 
 def _finish_source_idea(paths: RuntimePaths, family_state_path: str, *, emitted_at: datetime) -> str:
@@ -659,7 +683,11 @@ def execute_taskmaster(
     if spec_state is None:
         raise TaskmasterExecutionError(f"GoalSpec family state is missing reviewed spec {spec_id}")
 
-    profile_selection, min_cards, max_cards = _load_task_authoring_profile(paths, dispatch)
+    profile_selection, min_cards, max_cards = _load_task_authoring_profile(
+        paths,
+        dispatch,
+        decomposition_profile=spec_state.decomposition_profile,
+    )
     requirement_ids = _dedupe(REQUIREMENT_ID_RE.findall(reviewed_text))
     if not requirement_ids:
         raise TaskmasterExecutionError(f"Reviewed spec {spec_id} is missing REQ-* traceability")
@@ -893,4 +921,5 @@ __all__ = [
     "TaskmasterExecutionResult",
     "TaskmasterRecord",
     "execute_taskmaster",
+    "taskmaster_card_envelope",
 ]

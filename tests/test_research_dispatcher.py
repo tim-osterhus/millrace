@@ -48,7 +48,11 @@ from millrace_engine.research.goalspec import (
     execute_spec_review,
     execute_spec_synthesis,
 )
-from millrace_engine.research.taskmaster import TaskmasterExecutionError, execute_taskmaster
+from millrace_engine.research.taskmaster import (
+    TaskmasterExecutionError,
+    execute_taskmaster,
+    taskmaster_card_envelope,
+)
 from millrace_engine.research.interview import answer_interview_question, list_interview_questions
 from millrace_engine.research.queues import discover_research_queues
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
@@ -1474,7 +1478,7 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
         "---\n"
         "idea_id: IDEA-42\n"
         "title: Modernize Goal Intake\n"
-        "decomposition_profile: moderate\n"
+        "decomposition_profile: simple\n"
         "---\n\n"
         "# Modernize Goal Intake\n\n"
         "Create real GoalSpec intake and objective sync stages.\n"
@@ -1816,6 +1820,8 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert taskmaster_record["profile_selection"]["selection_path"] == "mode.task_authoring_profile_ref"
     assert taskmaster_record["profile_selection"]["lookup_path"] == "mode.task_authoring_profile_lookup_ref"
     assert taskmaster_record["profile_selection"]["selection_source"] == "mode"
+    assert taskmaster_record["profile_selection"]["expected_min_cards"] == 3
+    assert taskmaster_record["profile_selection"]["expected_max_cards"] == 5
     assert [title.split(" - ", 1)[0] for title in taskmaster_record["task_titles"]] == [
         "SPEC-42 PHASE_01.1",
         "SPEC-42 PHASE_01.2",
@@ -3156,6 +3162,11 @@ def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective
     )
 
     shard = parse_task_store((workspace / result.shard_path).read_text(encoding="utf-8"), source_file=workspace / result.shard_path)
+    record = json.loads((workspace / result.record_path).read_text(encoding="utf-8"))
+    assert result.card_count == 6
+    assert record["card_count"] == 6
+    assert record["profile_selection"]["expected_min_cards"] == 6
+    assert record["profile_selection"]["expected_max_cards"] == 10
     assert any("src/main/java/com/example/aura/" in card.body for card in shard.cards)
     assert any("src/test/java/com/example/aura/" in card.body for card in shard.cards)
     for card in shard.cards:
@@ -3168,6 +3179,17 @@ def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective
     assert (workspace / result.archived_path).exists()
     family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
     assert family_state["specs"]["SPEC-401"]["status"] == "decomposed"
+
+
+def test_taskmaster_card_envelope_matches_bash_profile_targets() -> None:
+    assert taskmaster_card_envelope("trivial") == (1, 2)
+    assert taskmaster_card_envelope("simple") == (3, 5)
+    assert taskmaster_card_envelope("moderate") == (6, 10)
+    assert taskmaster_card_envelope("involved") == (12, 16)
+    assert taskmaster_card_envelope("complex") == (20, 28)
+    assert taskmaster_card_envelope("massive") == (30, 45)
+    assert taskmaster_card_envelope("") == (2, 6)
+    assert taskmaster_card_envelope("unexpected-profile") == (2, 6)
 
 
 def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_names_repo_paths(
@@ -3251,7 +3273,7 @@ def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_p
             "## Progression Lines\n"
             "- Progression from raw goal intake to staged product brief to synced objective profile.\n"
         ),
-        decomposition_profile="moderate",
+        decomposition_profile="simple",
     )
     discovery = discover_research_queues(paths)
     selection = resolve_research_dispatch_selection(config.research.mode, discovery)
@@ -3281,9 +3303,13 @@ def test_execute_taskmaster_allows_honestly_internal_goal_without_repo_surface_p
     )
 
     shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
+    record = json.loads((workspace / result.record_path).read_text(encoding="utf-8"))
     assert "millrace_engine/research/goalspec_goal_intake.py" in shard_text
     assert "tests/test_research_dispatcher.py" in shard_text
     assert "agents/specs/stable/golden/SPEC-403__modernize-goal-intake.md" in shard_text
+    assert record["card_count"] == 4
+    assert record["profile_selection"]["expected_min_cards"] == 3
+    assert record["profile_selection"]["expected_max_cards"] == 5
     assert not reviewed_path.exists()
     assert (workspace / result.archived_path).exists()
 
