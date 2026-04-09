@@ -2059,6 +2059,7 @@ def test_execution_plane_backlog_empty_runs_update_once_when_enabled(tmp_path: P
     result = plane.run_once()
 
     assert result.update_only is True
+    assert result.backlog_empty_after_progress is False
     assert result.final_status is ExecutionStatus.IDLE
     assert [stage.stage for stage in result.stage_results] == [StageType.UPDATE]
     assert result.stage_results[0].status == "UPDATE_COMPLETE"
@@ -2070,6 +2071,28 @@ def test_execution_plane_backlog_empty_runs_update_once_when_enabled(tmp_path: P
     records = read_transition_history(result.transition_history_path)
     assert len(records) == 1
     assert records[0].attributes["routing_mode"] == "fixed_v1_backlog_empty"
+
+
+def test_execution_plane_marks_backlog_empty_after_archival_progress(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    script = write_stage_driver(tmp_path)
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.final_status is ExecutionStatus.IDLE
+    assert result.archived_task is not None
+    assert result.backlog_empty_after_progress is True
 
 
 def test_execution_plane_does_not_synthesize_qa_success_without_marker(tmp_path: Path) -> None:

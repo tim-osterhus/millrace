@@ -2771,7 +2771,9 @@ def test_cli_add_task_thaws_research_frozen_batch_once(tmp_path: Path) -> None:
     ).read_text(encoding="utf-8")
 
 
-def test_cli_add_task_does_not_thaw_research_frozen_batch_without_remediation_decision(tmp_path: Path) -> None:
+def test_cli_add_task_thaws_research_frozen_batch_without_remediation_decision_once_backlog_reappears(
+    tmp_path: Path,
+) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "needs_research")
     config_path.write_text(
         config_path.read_text(encoding="utf-8")
@@ -2803,26 +2805,27 @@ def test_cli_add_task_does_not_thaw_research_frozen_batch_without_remediation_de
     )
     assert add_result.exit_code == 0
 
-    wait_for(
-        lambda: [
-            card.title
-            for card in parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
-        ]
-        == ["Unrelated backlog task"]
-    )
-    assert latch_path.exists()
-    assert "research_recovery:freeze:start" in (
+    assert engine._consume_research_recovery_latch(trigger="add_task") == 2
+    assert not latch_path.exists()
+    assert [
+        card.title
+        for card in parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
+    ] == ["Unrelated backlog task", "Ship the happy path", "Research follow-up task"]
+    assert "research_recovery:freeze:start" not in (
         workspace / "agents/tasksbackburner.md"
     ).read_text(encoding="utf-8")
-    assert [
+    repopulated_events = [
         event
         for event in read_events(workspace)
         if event["type"] == EventType.BACKLOG_REPOPULATED.value
-    ] == []
+    ]
+    assert len(repopulated_events) == 1
+    assert repopulated_events[0]["payload"]["decision_type"] is None
+    assert repopulated_events[0]["payload"]["remediation_spec_id"] is None
     assert read_state(engine.paths.runtime_dir / "state.json")["process_running"] is False
 
 
-def test_cli_add_task_does_not_thaw_research_frozen_batch_when_visible_work_has_the_wrong_spec(
+def test_cli_add_task_thaws_research_frozen_batch_even_when_visible_work_has_a_different_spec(
     tmp_path: Path,
 ) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "needs_research")
@@ -2878,23 +2881,24 @@ def test_cli_add_task_does_not_thaw_research_frozen_batch_when_visible_work_has_
         ["--config", str(config_path), "add-task", "Unrelated recovery task", "--spec-id", "SPEC-OTHER", "--json"],
     )
     assert add_result.exit_code == 0
-    assert engine._consume_research_recovery_latch(trigger="add_task") == 0
+    assert engine._consume_research_recovery_latch(trigger="add_task") == 2
 
     assert [
         card.spec_id for card in parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
-    ] == ["SPEC-OTHER"]
-    assert latch_path.exists()
-    report = EngineControl(config_path).research_report()
-    assert report.governance is not None
-    assert report.governance.progress_watchdog.status == "stalled"
-    assert report.governance.progress_watchdog.remediation_spec_id == "SPEC-CLI-THAW"
-    assert report.governance.progress_watchdog.recovery_regeneration is not None
-    assert report.governance.progress_watchdog.recovery_regeneration.status == "manual_only"
-    assert [
+    ] == ["SPEC-OTHER", "SPEC-HAPPY-PATH", "SPEC-RESEARCH-HANDOFF"]
+    assert not latch_path.exists()
+    watchdog_state = json.loads(engine.paths.progress_watchdog_state_file.read_text(encoding="utf-8"))
+    watchdog_report = json.loads(engine.paths.progress_watchdog_report_file.read_text(encoding="utf-8"))
+    assert watchdog_state["status"] == "not_active"
+    assert watchdog_report["status"] == "not_active"
+    repopulated_events = [
         event
         for event in read_events(workspace)
         if event["type"] == EventType.BACKLOG_REPOPULATED.value
-    ] == []
+    ]
+    assert len(repopulated_events) == 1
+    assert repopulated_events[0]["payload"]["decision_type"] == "regenerated_backlog_work"
+    assert repopulated_events[0]["payload"]["remediation_spec_id"] == "SPEC-CLI-THAW"
 
 
 def test_cli_daemon_auto_roundtrip_thaws_only_after_research_remediation_output(tmp_path: Path) -> None:

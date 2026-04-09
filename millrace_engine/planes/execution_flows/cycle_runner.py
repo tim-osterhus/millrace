@@ -243,8 +243,10 @@ def run_execution_cycle(plane: CycleRunnerPlane) -> ExecutionCycleResult:
             routing_mode="frozen_plan",
         )
         pacing_delay_seconds = 0
+        backlog_empty_after_progress = False
         if archived_task is not None:
             pacing_delay_seconds = plane._apply_inter_task_delay(stage_results)
+            backlog_empty_after_progress = plane.queue.backlog_empty()
         return _cycle_result(
             run_id=run_id,
             final_status=final_status,
@@ -253,6 +255,7 @@ def run_execution_cycle(plane: CycleRunnerPlane) -> ExecutionCycleResult:
             archived_task=archived_task,
             quarantined_task=quarantined_task,
             diagnostics_dir=diagnostics_dir,
+            backlog_empty_after_progress=backlog_empty_after_progress,
             quickfix_attempts=quickfix_attempts,
             transition_history_path=history.history_path,
             research_handoff=plane._last_research_handoff,
@@ -301,8 +304,10 @@ def run_execution_cycle(plane: CycleRunnerPlane) -> ExecutionCycleResult:
             )
         )
         pacing_delay_seconds = 0
+        backlog_empty_after_progress = False
         if archived_task is not None:
             pacing_delay_seconds = plane._apply_inter_task_delay(stage_results)
+            backlog_empty_after_progress = plane.queue.backlog_empty()
         return _cycle_result(
             run_id=run_id,
             final_status=final_status,
@@ -311,6 +316,7 @@ def run_execution_cycle(plane: CycleRunnerPlane) -> ExecutionCycleResult:
             archived_task=archived_task,
             quarantined_task=quarantined_task,
             diagnostics_dir=diagnostics_dir,
+            backlog_empty_after_progress=backlog_empty_after_progress,
             quickfix_attempts=quickfix_attempts,
             transition_history_path=history.history_path,
             research_handoff=plane._last_research_handoff,

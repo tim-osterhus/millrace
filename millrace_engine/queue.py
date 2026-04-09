@@ -689,16 +689,13 @@ class TaskQueue:
             return latch
 
     def thaw(self, latch: ResearchRecoveryLatch) -> int:
-        """Restore frozen backburner cards once research records a durable thaw decision."""
+        """Restore frozen cards once visible backlog work shows research has regenerated queue state."""
 
         with self._locked():
-            decision = latch.remediation_decision
-            if decision is None:
-                return 0
-            if not self._visible_recovery_cards(decision.remediation_spec_id):
+            backlog_document = self._read_store(self.paths.backlog_file)
+            if not backlog_document.cards:
                 return 0
 
-            backlog_document = self._read_store(self.paths.backlog_file)
             backburner_text = self._read_text(self.paths.backburner_file)
             marker_start = f"<!-- research_recovery:freeze:start {latch.batch_id} -->"
             marker_end = f"<!-- research_recovery:freeze:end {latch.batch_id} -->"

@@ -443,7 +443,9 @@ def test_quarantine_dependency_mode_falls_back_to_full_freeze_when_active_metada
     assert (workspace / "agents/.runtime/research_recovery_latch.json").exists()
 
 
-def test_thaw_requires_durable_recovery_decision_even_when_backlog_is_non_empty(tmp_path: Path) -> None:
+def test_thaw_restores_frozen_cards_once_any_visible_backlog_work_reappears_even_without_decision(
+    tmp_path: Path,
+) -> None:
     queue, workspace = make_queue(tmp_path)
     (workspace / "agents/tasks.md").write_text(f"# Active Task\n\n{TASK_ALPHA}", encoding="utf-8")
     (workspace / "agents/tasksbacklog.md").write_text(f"# Task Backlog\n\n{TASK_BETA}", encoding="utf-8")
@@ -460,16 +462,42 @@ def test_thaw_requires_durable_recovery_decision_even_when_backlog_is_non_empty(
 
     thawed = queue.thaw(latch)
 
-    assert thawed == 0
+    assert thawed == 2
     backlog_cards = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
-    assert [card.title for card in backlog_cards] == ["Research-generated remediation task"]
+    assert [card.title for card in backlog_cards] == [
+        "Research-generated remediation task",
+        "Implement status store",
+        "Build queue operations",
+    ]
+    assert "research_recovery:freeze:start" not in (
+        workspace / "agents/tasksbackburner.md"
+    ).read_text(encoding="utf-8")
+    assert not (workspace / "agents/.runtime/research_recovery_latch.json").exists()
+
+
+def test_thaw_waits_until_visible_backlog_cards_reappear(tmp_path: Path) -> None:
+    queue, workspace = make_queue(tmp_path)
+    (workspace / "agents/tasks.md").write_text(f"# Active Task\n\n{TASK_ALPHA}", encoding="utf-8")
+    (workspace / "agents/tasksbacklog.md").write_text(f"# Task Backlog\n\n{TASK_BETA}", encoding="utf-8")
+
+    active_card = queue.active_task()
+    assert active_card is not None
+    latch = queue.quarantine(
+        active_card,
+        "Consult exhausted the local path",
+        Path("agents/ideas/incidents/incoming/INC-QUEUE-004.md"),
+    )
+    thawed = queue.thaw(latch)
+
+    assert thawed == 0
+    assert parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
     assert "research_recovery:freeze:start" in (
         workspace / "agents/tasksbackburner.md"
     ).read_text(encoding="utf-8")
     assert (workspace / "agents/.runtime/research_recovery_latch.json").exists()
 
 
-def test_thaw_requires_visible_recovery_work_matching_the_remediation_spec(tmp_path: Path) -> None:
+def test_thaw_ignores_remediation_spec_mismatch_once_any_visible_backlog_work_exists(tmp_path: Path) -> None:
     queue, workspace = make_queue(tmp_path)
     (workspace / "agents/tasks.md").write_text(f"# Active Task\n\n{TASK_ALPHA}", encoding="utf-8")
     (workspace / "agents/tasksbacklog.md").write_text(f"# Task Backlog\n\n{TASK_BETA}", encoding="utf-8")
@@ -501,19 +529,20 @@ def test_thaw_requires_visible_recovery_work_matching_the_remediation_spec(tmp_p
 
     unrelated_task = """## 2026-03-21 - Unrelated recovery task
 
-- **Goal:** This should not satisfy the remediation latch.
+- **Goal:** This should still allow Bash-style thaw once backlog work exists.
 - **Spec-ID:** SPEC-OTHER
 """
     (workspace / "agents/tasksbacklog.md").write_text(f"# Task Backlog\n\n{unrelated_task}", encoding="utf-8")
 
     thawed = queue.thaw(latch_with_decision)
 
-    assert thawed == 0
+    assert thawed == 2
     backlog_cards = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))
-    assert [card.spec_id for card in backlog_cards] == ["SPEC-OTHER"]
-    assert "research_recovery:freeze:start" in (
+    assert [card.spec_id for card in backlog_cards] == ["SPEC-OTHER", "SPEC-STATUS", "SPEC-QUEUE"]
+    assert "research_recovery:freeze:start" not in (
         workspace / "agents/tasksbackburner.md"
     ).read_text(encoding="utf-8")
+    assert not (workspace / "agents/.runtime/research_recovery_latch.json").exists()
 
 
 def test_cleanup_remove_rewrites_backlog_and_records_cleanup_trail(tmp_path: Path) -> None:

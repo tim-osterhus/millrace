@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from millrace_engine.contracts import ExecutionStatus
 from millrace_engine.engine import MillraceEngine
+from millrace_engine.events import EventType
+from millrace_engine.markdown import parse_task_cards
+from millrace_engine.planes.execution import ExecutionCycleResult
 
 from .support import load_workspace_fixture
 
@@ -85,3 +89,45 @@ def test_engine_runtime_loop_once_skips_execution_cycle_after_startup_research_s
     assert run_cycle_calls == []
     assert result.process_running is False
     assert result.mode == "once"
+
+
+def test_engine_runtime_loop_emits_backlog_empty_audit_after_archival_progress(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "backlog_empty")
+    engine = MillraceEngine(config_path)
+    captured: list[object] = []
+
+    class _Capture:
+        def handle(self, event) -> None:
+            captured.append(event)
+
+    engine.event_bus.subscribe(_Capture())
+    archived_task = parse_task_cards(
+        "\n".join(
+            [
+                "# Task Backlog",
+                "",
+                "## 2026-03-19 - Ship the happy path",
+                "",
+                "- **Goal:** Execute one bounded runtime task.",
+                "- **Spec-ID:** SPEC-HAPPY-PATH",
+                "",
+            ]
+        )
+    )[0]
+
+    engine.runtime_loop.emit_cycle_events(
+        ExecutionCycleResult(
+            run_id="run-backlog-empty-after-progress",
+            final_status=ExecutionStatus.IDLE,
+            archived_task=archived_task,
+            backlog_empty_after_progress=True,
+        )
+    )
+
+    event_types = [event.type for event in captured]
+    assert event_types[0] is EventType.TASK_ARCHIVED
+    assert EventType.BACKLOG_EMPTY_AUDIT in event_types
+    backlog_empty_event = next(event for event in captured if event.type is EventType.BACKLOG_EMPTY_AUDIT)
+    assert backlog_empty_event.payload["after_progress"] is True
+    assert backlog_empty_event.payload["task_id"] == archived_task.task_id
+    assert backlog_empty_event.payload["title"] == archived_task.title

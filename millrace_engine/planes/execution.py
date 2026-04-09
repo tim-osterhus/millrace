@@ -136,6 +136,7 @@ class ExecutionCycleResult:
     quarantined_task: TaskCard | None = None
     diagnostics_dir: Path | None = None
     update_only: bool = False
+    backlog_empty_after_progress: bool = False
     quickfix_attempts: int = 0
     transition_history_path: Path | None = None
     research_handoff: ExecutionResearchHandoff | None = None

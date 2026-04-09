@@ -198,7 +198,19 @@ class EngineRuntimeLoop:
             self.engine.event_bus.emit(
                 EventType.BACKLOG_EMPTY_AUDIT,
                 source=EventSource.EXECUTION,
-                payload={"backlog_depth": 0},
+                payload={"backlog_depth": 0, "after_progress": False},
+            )
+        elif result.backlog_empty_after_progress:
+            self.engine.event_bus.emit(
+                EventType.BACKLOG_EMPTY_AUDIT,
+                source=EventSource.EXECUTION,
+                payload={
+                    "backlog_depth": 0,
+                    "after_progress": True,
+                    "run_id": result.run_id,
+                    "task_id": None if result.archived_task is None else result.archived_task.task_id,
+                    "title": None if result.archived_task is None else result.archived_task.title,
+                },
             )
 
     async def run_cycle(self) -> ExecutionCycleResult | None:
