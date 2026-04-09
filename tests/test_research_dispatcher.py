@@ -77,6 +77,44 @@ def _configured_runtime(
     return workspace, loaded.config, build_runtime_paths(loaded.config)
 
 
+def _resume_research_until_settled(
+    plane: ResearchPlane,
+    *,
+    trigger: str,
+    run_id: str | None = None,
+    resolve_assets: bool = False,
+    max_passes: int = 12,
+):
+    dispatch = None
+    for _ in range(max_passes):
+        dispatch = plane.sync_runtime(trigger=trigger, run_id=run_id, resolve_assets=resolve_assets)
+        snapshot = plane.snapshot_state()
+        if snapshot.checkpoint is None or plane.status_store.read() is ResearchStatus.BLOCKED:
+            return dispatch
+    raise AssertionError("research plane did not settle within the allowed pass budget")
+
+
+def _run_research_until_settled(
+    plane: ResearchPlane,
+    *,
+    run_id: str,
+    trigger: str = "engine-start",
+    resolve_assets: bool = False,
+    max_passes: int = 12,
+):
+    dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=resolve_assets)
+    snapshot = plane.snapshot_state()
+    if snapshot.checkpoint is None or plane.status_store.read() is ResearchStatus.BLOCKED:
+        return dispatch
+    return _resume_research_until_settled(
+        plane,
+        trigger=trigger,
+        run_id=run_id,
+        resolve_assets=resolve_assets,
+        max_passes=max_passes - 1,
+    )
+
+
 def _write_queue_file(path: Path, body: str = "# queued\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -969,7 +1007,7 @@ def test_research_plane_run_ready_work_executes_auto_incident_stages_through_arc
     assert all(card.spec_id == "SPEC-INC-AUTO-001" for card in backlog.cards)
 
 
-def test_research_plane_run_ready_work_executes_auto_goalspec_stages_through_taskaudit(tmp_path: Path) -> None:
+def test_research_plane_run_ready_work_defers_auto_goalspec_after_goal_intake(tmp_path: Path) -> None:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     raw_goal_text = (
@@ -990,12 +1028,13 @@ def test_research_plane_run_ready_work_executes_auto_goalspec_stages_through_tas
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
     assert dispatch.selection.queue_snapshot.selected_family is ResearchQueueFamily.GOALSPEC
     snapshot = plane.snapshot_state()
-    assert snapshot.current_mode is ResearchRuntimeMode.AUTO
-    assert snapshot.checkpoint is None
+    assert snapshot.current_mode is ResearchRuntimeMode.GOALSPEC
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "objective_profile_sync"
     assert snapshot.lock_state is None
-    assert snapshot.queue_snapshot.selected_family is None
-    assert snapshot.queue_snapshot.ownerships == ()
-    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert snapshot.queue_snapshot.selected_family is ResearchQueueFamily.GOALSPEC
+    assert snapshot.queue_snapshot.ownerships != ()
+    assert plane.status_store.read() is ResearchStatus.OBJECTIVE_PROFILE_SYNC_RUNNING
 
     archived_rel_path = (
         "agents/ideas/archive/raw/"
@@ -1006,15 +1045,14 @@ def test_research_plane_run_ready_work_executes_auto_goalspec_stages_through_tas
     assert (
         workspace / "agents" / ".research_runtime" / "goalspec" / "goal_intake" / "goalspec-auto-run.json"
     ).exists()
-    assert (
+    assert not (
         workspace / "agents" / ".research_runtime" / "goalspec" / "taskmaster" / "goalspec-auto-run.json"
     ).exists()
-    assert (
+    assert not (
         workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / "goalspec-auto-run.json"
     ).exists()
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
-    assert len(backlog.cards) == 4
-    assert all(card.spec_id == "SPEC-AUTO-42" for card in backlog.cards)
+    assert backlog.cards == []
 
 
 def test_research_plane_staging_dispatch_never_reenters_goal_intake(
@@ -1393,7 +1431,11 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     pending_scaffold = paths.taskspending_file.read_text(encoding="utf-8")
     plane = ResearchPlane(config, paths)
 
-    dispatch = plane.run_ready_work(run_id="goalspec-run-42", resolve_assets=False)
+    dispatch = _run_research_until_settled(
+        plane,
+        run_id="goalspec-run-42",
+        resolve_assets=False,
+    )
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
@@ -1895,13 +1937,14 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
 
     assert dispatch is not None
     snapshot = plane.snapshot_state()
-    assert snapshot.checkpoint is None
-    assert snapshot.queue_snapshot.selected_family is None
-    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "objective_profile_sync"
+    assert snapshot.queue_snapshot.selected_family is ResearchQueueFamily.GOALSPEC
+    assert plane.status_store.read() is ResearchStatus.OBJECTIVE_PROFILE_SYNC_RUNNING
     assert not (workspace / "agents" / ".research_runtime" / "goalspec" / "spec_interview").exists()
     assert not list((workspace / "agents" / "specs" / "questions").glob("SPEC-77__interview-*.json"))
-    assert (workspace / "agents" / "audit" / "completion_manifest.json").exists()
-    assert (
+    assert not (workspace / "agents" / "audit" / "completion_manifest.json").exists()
+    assert not (
         workspace
         / "agents"
         / ".research_runtime"
@@ -1909,7 +1952,7 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
         / "spec_synthesis"
         / "goalspec-sync-77.json"
     ).exists()
-    assert (
+    assert not (
         workspace
         / "agents"
         / ".research_runtime"
@@ -1917,7 +1960,7 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
         / "spec_review"
         / "goalspec-sync-77.json"
     ).exists()
-    assert (
+    assert not (
         workspace
         / "agents"
         / ".research_runtime"
@@ -1925,7 +1968,7 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
         / "taskmaster"
         / "goalspec-sync-77.json"
     ).exists()
-    assert (
+    assert not (
         workspace
         / "agents"
         / ".research_runtime"
@@ -1935,7 +1978,7 @@ def test_sync_runtime_executes_goalspec_stages_from_supervisor_entrypoint(tmp_pa
     ).exists()
     assert not (workspace / "agents" / "taskspending" / "SPEC-77.md").exists()
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
-    assert len(backlog.cards) == 4
+    assert backlog.cards == []
 
 
 def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answer(
@@ -1982,7 +2025,11 @@ def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answ
         _execute_spec_synthesis_with_ambiguity,
     )
 
-    plane.run_ready_work(run_id="goalspec-interview-block-88", resolve_assets=False)
+    _run_research_until_settled(
+        plane,
+        run_id="goalspec-interview-block-88",
+        resolve_assets=False,
+    )
 
     blocked_snapshot = plane.snapshot_state()
     questions = list_interview_questions(paths)
@@ -2006,7 +2053,11 @@ def test_research_plane_blocks_at_spec_interview_and_resumes_after_operator_answ
         text="VIP escalations require manager approval before the console can assign an agent.",
     )
 
-    plane.sync_runtime(trigger="operator-answer", resolve_assets=False)
+    _resume_research_until_settled(
+        plane,
+        trigger="operator-answer",
+        resolve_assets=False,
+    )
 
     resumed_snapshot = plane.snapshot_state()
     resumed_questions = list_interview_questions(paths)
@@ -2986,7 +3037,11 @@ def test_research_plane_run_ready_work_keeps_aura_seed_product_grounded_through_
     )
     plane = ResearchPlane(config, paths)
 
-    dispatch = plane.run_ready_work(run_id="goalspec-aura-auto-710", resolve_assets=False)
+    dispatch = _run_research_until_settled(
+        plane,
+        run_id="goalspec-aura-auto-710",
+        resolve_assets=False,
+    )
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
@@ -3087,7 +3142,11 @@ def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_ba
     )
     plane = ResearchPlane(config, paths)
 
-    dispatch = plane.run_ready_work(run_id="goalspec-python-auto-711", resolve_assets=False)
+    dispatch = _run_research_until_settled(
+        plane,
+        run_id="goalspec-python-auto-711",
+        resolve_assets=False,
+    )
 
     assert dispatch is not None
     assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC

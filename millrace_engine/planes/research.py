@@ -781,141 +781,125 @@ class ResearchPlane:
                 self._release_execution_lock(observed_at=observed_at)
             return
 
-        while checkpoint is not None and checkpoint.node_id in {
-            "goal_intake",
-            "objective_profile_sync",
-            "spec_synthesis",
-            "spec_interview",
-            "spec_review",
-            "taskmaster",
-        }:
-            stage_started_at = _utcnow()
-            if checkpoint.node_id == "goal_intake":
-                result = execute_goal_intake(
-                    self.paths,
-                    checkpoint,
-                    run_id=dispatch.run_id,
-                    emitted_at=stage_started_at,
-                )
-            elif checkpoint.node_id == "objective_profile_sync":
-                result = execute_objective_profile_sync(
-                    self.paths,
-                    checkpoint,
-                    run_id=dispatch.run_id,
-                    emitted_at=stage_started_at,
-                )
-            elif checkpoint.node_id == "spec_synthesis":
-                self._set_research_status(ResearchStatus.COMPLETION_MANIFEST_RUNNING)
-                completion_manifest = execute_completion_manifest_draft(
-                    self.paths,
-                    checkpoint,
-                    run_id=dispatch.run_id,
-                    emitted_at=stage_started_at,
-                )
-                self._set_research_status(ResearchStatus.SPEC_SYNTHESIS_RUNNING)
-                result = execute_spec_synthesis(
-                    self.paths,
-                    checkpoint,
-                    run_id=dispatch.run_id,
-                    completion_manifest=completion_manifest.draft_state,
-                    emitted_at=stage_started_at,
-                )
-            elif checkpoint.node_id == "spec_interview":
-                self._set_research_status(ResearchStatus.SPEC_INTERVIEW_RUNNING)
-                result = execute_spec_interview(
-                    self.paths,
-                    checkpoint,
-                    run_id=dispatch.run_id,
-                    policy=self.config.research.interview_policy,
-                    emitted_at=stage_started_at,
-                )
-                if result.blocked:
-                    blocked_checkpoint = checkpoint.model_copy(
-                        update={
-                            "status": ResearchStatus.BLOCKED,
-                            "updated_at": stage_started_at,
-                            "owned_queues": (result.queue_ownership,),
-                        }
-                    )
-                    queue_snapshot = self.state.queue_snapshot.model_copy(
-                        update={
-                            "ownerships": blocked_checkpoint.owned_queues,
-                            "last_scanned_at": stage_started_at,
-                            "selected_family": ResearchQueueFamily.GOALSPEC,
-                        }
-                    )
-                    self.state = self.state.model_copy(
-                        update={
-                            "updated_at": stage_started_at,
-                            "queue_snapshot": queue_snapshot,
-                            "retry_state": None,
-                            "checkpoint": blocked_checkpoint,
-                        }
-                    )
-                    self._persist_state()
-                    self._set_research_status(ResearchStatus.BLOCKED)
-                    self._release_execution_lock(observed_at=stage_started_at)
-                    return
-            elif checkpoint.node_id == "spec_review":
-                self._set_research_status(ResearchStatus.SPEC_REVIEW_RUNNING)
-                result = execute_spec_review(
-                    self.paths,
-                    checkpoint,
-                    run_id=dispatch.run_id,
-                    emitted_at=stage_started_at,
-                )
-            elif checkpoint.node_id == "taskmaster":
-                self._set_research_status(ResearchStatus.TASKMASTER_RUNNING)
-                taskmaster_result = execute_taskmaster(
-                    self.paths,
-                    checkpoint,
-                    dispatch=dispatch,
-                    run_id=dispatch.run_id,
-                    emitted_at=stage_started_at,
-                )
-                family_state = load_goal_spec_family_state(
-                    (self.paths.root / taskmaster_result.family_state_path)
-                    if not Path(taskmaster_result.family_state_path).is_absolute()
-                    else Path(taskmaster_result.family_state_path)
-                )
-                if family_state.family_complete and family_state.fulfills_initial_family_plan():
-                    self._set_research_status(ResearchStatus.TASKAUDIT_RUNNING)
-                    execute_taskaudit(
-                        self.paths,
-                        run_id=dispatch.run_id,
-                        emitted_at=stage_started_at,
-                    )
-                next_stage = next_stage_for_success(dispatch.research_plan, checkpoint.node_id)
-                if next_stage is not None:
-                    checkpoint = self._advance_goalspec_checkpoint(
-                        checkpoint,
-                        next_stage=next_stage,
-                        queue_ownership=checkpoint.owned_queues[0],
-                        observed_at=stage_started_at,
-                    )
-                else:
-                    self._complete_goalspec_checkpoint(checkpoint, observed_at=stage_started_at)
-                    checkpoint = None
-                continue
-            else:
-                break
-
-            next_stage = self._next_goalspec_stage(dispatch, checkpoint)
-            checkpoint = self._advance_goalspec_checkpoint(
+        stage_started_at = _utcnow()
+        if checkpoint.node_id == "goal_intake":
+            result = execute_goal_intake(
+                self.paths,
                 checkpoint,
-                next_stage=next_stage,
-                queue_ownership=result.queue_ownership,
-                observed_at=stage_started_at,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
             )
-            if checkpoint is None or checkpoint.node_id not in {
-                "goal_intake",
-                "objective_profile_sync",
-                "spec_synthesis",
-                "spec_interview",
-                "spec_review",
-                "taskmaster",
-            }:
-                break
+        elif checkpoint.node_id == "objective_profile_sync":
+            result = execute_objective_profile_sync(
+                self.paths,
+                checkpoint,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
+            )
+        elif checkpoint.node_id == "spec_synthesis":
+            self._set_research_status(ResearchStatus.COMPLETION_MANIFEST_RUNNING)
+            completion_manifest = execute_completion_manifest_draft(
+                self.paths,
+                checkpoint,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
+            )
+            self._set_research_status(ResearchStatus.SPEC_SYNTHESIS_RUNNING)
+            result = execute_spec_synthesis(
+                self.paths,
+                checkpoint,
+                run_id=dispatch.run_id,
+                completion_manifest=completion_manifest.draft_state,
+                emitted_at=stage_started_at,
+            )
+        elif checkpoint.node_id == "spec_interview":
+            self._set_research_status(ResearchStatus.SPEC_INTERVIEW_RUNNING)
+            result = execute_spec_interview(
+                self.paths,
+                checkpoint,
+                run_id=dispatch.run_id,
+                policy=self.config.research.interview_policy,
+                emitted_at=stage_started_at,
+            )
+            if result.blocked:
+                blocked_checkpoint = checkpoint.model_copy(
+                    update={
+                        "status": ResearchStatus.BLOCKED,
+                        "updated_at": stage_started_at,
+                        "owned_queues": (result.queue_ownership,),
+                    }
+                )
+                queue_snapshot = self.state.queue_snapshot.model_copy(
+                    update={
+                        "ownerships": blocked_checkpoint.owned_queues,
+                        "last_scanned_at": stage_started_at,
+                        "selected_family": ResearchQueueFamily.GOALSPEC,
+                    }
+                )
+                self.state = self.state.model_copy(
+                    update={
+                        "updated_at": stage_started_at,
+                        "queue_snapshot": queue_snapshot,
+                        "retry_state": None,
+                        "checkpoint": blocked_checkpoint,
+                    }
+                )
+                self._persist_state()
+                self._set_research_status(ResearchStatus.BLOCKED)
+                self._release_execution_lock(observed_at=stage_started_at)
+                return
+        elif checkpoint.node_id == "spec_review":
+            self._set_research_status(ResearchStatus.SPEC_REVIEW_RUNNING)
+            result = execute_spec_review(
+                self.paths,
+                checkpoint,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
+            )
+        elif checkpoint.node_id == "taskmaster":
+            self._set_research_status(ResearchStatus.TASKMASTER_RUNNING)
+            taskmaster_result = execute_taskmaster(
+                self.paths,
+                checkpoint,
+                dispatch=dispatch,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
+            )
+            family_state = load_goal_spec_family_state(
+                (self.paths.root / taskmaster_result.family_state_path)
+                if not Path(taskmaster_result.family_state_path).is_absolute()
+                else Path(taskmaster_result.family_state_path)
+            )
+            if family_state.family_complete and family_state.fulfills_initial_family_plan():
+                self._set_research_status(ResearchStatus.TASKAUDIT_RUNNING)
+                execute_taskaudit(
+                    self.paths,
+                    run_id=dispatch.run_id,
+                    emitted_at=stage_started_at,
+                )
+            next_stage = next_stage_for_success(dispatch.research_plan, checkpoint.node_id)
+            if next_stage is not None:
+                self._advance_goalspec_checkpoint(
+                    checkpoint,
+                    next_stage=next_stage,
+                    queue_ownership=checkpoint.owned_queues[0],
+                    observed_at=stage_started_at,
+                )
+            else:
+                self._complete_goalspec_checkpoint(checkpoint, observed_at=stage_started_at)
+            self._release_execution_lock(observed_at=_utcnow())
+            return
+        else:
+            self._release_execution_lock(observed_at=_utcnow())
+            return
+
+        next_stage = self._next_goalspec_stage(dispatch, checkpoint)
+        self._advance_goalspec_checkpoint(
+            checkpoint,
+            next_stage=next_stage,
+            queue_ownership=result.queue_ownership,
+            observed_at=stage_started_at,
+        )
 
         self._release_execution_lock(observed_at=_utcnow())
 
