@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widget import Widget
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher, DataTable, Static
 
 from ..formatting import short_hash
 from ..models import (
@@ -94,6 +94,15 @@ class ConfigPanel(Static):
 
         bubble = True
 
+    class SelectionChanged(Message):
+        """Posted when the highlighted config field changes."""
+
+        bubble = True
+
+        def __init__(self, field_key: str | None) -> None:
+            super().__init__()
+            self.field_key = field_key
+
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__("", id=id, classes="panel-card", markup=False)
         self.border_title = "Config"
@@ -117,7 +126,8 @@ class ConfigPanel(Static):
                     yield Static("Editable fields", classes="overview-card-label")
                     yield Static("--", id="config-fields-headline", classes="overview-card-headline")
                     yield Static("", id="config-fields-detail", classes="overview-card-detail")
-                    yield Vertical(id="config-fields-items", classes="panel-item-stack")
+                    yield DataTable(id="config-fields-table", classes="panel-data-table")
+                    yield Static("", id="config-fields-focus", classes="overview-card-detail")
                 yield self._section_card("config-actions", "Actions")
             yield Static("", id="config-debug", classes="panel-debug-body")
 
@@ -157,7 +167,34 @@ class ConfigPanel(Static):
         return self._selected_field_key
 
     def on_mount(self) -> None:
+        table = self.query_one("#config-fields-table", DataTable)
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.add_column("Field", key="field", width=24)
+        table.add_column("Value", key="value", width=18)
+        table.add_column("Boundary", key="boundary", width=10)
+        table.add_column("Meaning", key="meaning")
         self._render_state()
+
+    @on(DataTable.RowHighlighted, "#config-fields-table")
+    def _handle_field_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        field_key = event.row_key.value
+        if field_key.startswith("__config-empty__") or field_key == self._selected_field_key:
+            return
+        self._selected_field_key = field_key
+        self.post_message(self.SelectionChanged(field_key))
+        self._update_focus_label()
+
+    @on(DataTable.RowSelected, "#config-fields-table")
+    def _handle_field_row_selected(self, event: DataTable.RowSelected) -> None:
+        field_key = event.row_key.value
+        if field_key.startswith("__config-empty__"):
+            return
+        if field_key != self._selected_field_key:
+            self._selected_field_key = field_key
+            self.post_message(self.SelectionChanged(field_key))
+            self._update_focus_label()
+        self.action_edit_selected()
 
     def show_snapshot(
         self,
@@ -240,9 +277,13 @@ class ConfigPanel(Static):
         if not fields:
             return
         bounded_index = min(max(index, 0), len(fields) - 1)
-        self._selected_field_key = fields[bounded_index].key
+        field_key = fields[bounded_index].key
+        if field_key == self._selected_field_key:
+            return
+        self._selected_field_key = field_key
         if self.is_mounted:
             self._render_state()
+            self.post_message(self.SelectionChanged(field_key))
 
     def _render_state(self) -> None:
         switcher = self.query_one("#config-mode-switcher", ContentSwitcher)
@@ -260,7 +301,8 @@ class ConfigPanel(Static):
             self._update_metric("config-pending", "--", "pending boundary unavailable")
             self._update_section("config-source", "No config snapshot", "config source appears after refresh")
             self._update_section("config-queue", "No pending changes", "runtime queue state will appear after refresh")
-            self._set_field_items(headline="No editable fields visible", detail="config snapshot not loaded", items=())
+            self._set_field_items(headline="No editable fields visible", detail="config snapshot not loaded")
+            self._render_field_table(())
             self._update_section("config-actions", "Waiting for config", "edit and reload controls appear when the config snapshot loads")
             return
 
@@ -289,21 +331,17 @@ class ConfigPanel(Static):
         self._update_section("config-queue", _boundary_help(pending_boundary), pending_summary)
 
         if editable_fields:
-            items = tuple(
-                self._field_card(field, index=index, selected=field.key == self._selected_field_key)
-                for index, field in enumerate(editable_fields, start=1)
-            )
             self._set_field_items(
                 headline=f"{len(editable_fields)} guided fields",
                 detail="selected field opens the controlled edit modal",
-                items=items,
             )
+            self._render_field_table(editable_fields)
         else:
             self._set_field_items(
                 headline="No guided fields are editable",
                 detail=config.editing_disabled_reason or "this config source is read-only in the guided editor",
-                items=(),
             )
+            self._render_field_table(())
 
         if config.editing_enabled and editable_fields:
             action_detail = "Up/Down select | Enter/E edit selected | R reload config from disk"
@@ -321,22 +359,53 @@ class ConfigPanel(Static):
         self.query_one(f"#{suffix}-headline", Static).update(headline)
         self.query_one(f"#{suffix}-detail", Static).update(detail)
 
-    def _set_field_items(self, *, headline: str, detail: str, items: tuple[Widget, ...]) -> None:
+    def _set_field_items(self, *, headline: str, detail: str) -> None:
         self.query_one("#config-fields-headline", Static).update(headline)
         self.query_one("#config-fields-detail", Static).update(detail)
-        container = self.query_one("#config-fields-items", Vertical)
-        container.remove_children()
-        if items:
-            for item in items:
-                container.mount(item)
+        self._update_focus_label()
+
+    def _render_field_table(self, fields: tuple[ConfigFieldView, ...]) -> None:
+        table = self.query_one("#config-fields-table", DataTable)
+        table.clear(columns=False)
+        if not fields:
+            table.add_row("--", "No guided fields", "", "Guided config rows appear after refresh.", key="__config-empty__")
+            table.move_cursor(row=0, column=0, animate=False, scroll=False)
+            self.query_one("#config-fields-focus", Static).update("Focus a guided row to inspect and edit it.")
             return
-        container.mount(
-            Vertical(
-                Static("No guided field rows", classes="panel-item-title"),
-                Static(detail, classes="panel-item-meta"),
-                classes="overview-card panel-item-card panel-empty-card",
+        for field in fields:
+            table.add_row(
+                field.label,
+                field.value,
+                _boundary_chip(field.boundary),
+                collapse_operator_text(field.description, max_parts=1, max_length=56),
+                key=field.key,
             )
-        )
+        self._sync_field_table_cursor(scroll=False)
+        self._update_focus_label()
+
+    def _sync_field_table_cursor(self, *, scroll: bool) -> None:
+        table = self.query_one("#config-fields-table", DataTable)
+        if self._selected_field_key is None:
+            if table.row_count:
+                table.move_cursor(row=0, column=0, animate=False, scroll=scroll)
+            return
+        try:
+            row_index = table.get_row_index(self._selected_field_key)
+        except Exception:
+            if table.row_count:
+                table.move_cursor(row=0, column=0, animate=False, scroll=scroll)
+            return
+        table.move_cursor(row=row_index, column=0, animate=False, scroll=scroll)
+
+    def _update_focus_label(self) -> None:
+        label = "Focus a guided row to inspect and edit it."
+        selected = next((field for field in self._editable_fields() if field.key == self._selected_field_key), None)
+        if selected is not None:
+            label = (
+                f"{selected.label} [{_boundary_chip(selected.boundary)}] | "
+                f"{collapse_operator_text(selected.description, max_parts=1, max_length=96)}"
+            )
+        self.query_one("#config-fields-focus", Static).update(label)
 
     def _failure_operator_detail(self, *, has_snapshot: bool) -> str:
         if self._failure is None:

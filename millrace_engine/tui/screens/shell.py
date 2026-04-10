@@ -602,6 +602,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
                 selected_event=self.query_one(LogsPanel).selected_event,
                 selected_question_id=self.query_one(ResearchPanel).selected_question_id,
                 selected_config_field_key=self.query_one(ConfigPanel).selected_field_key,
+                selected_publish_path=self.query_one(PublishPanel).selected_path,
             )
         )
 
@@ -647,6 +648,24 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     @on(RunsPanel.SelectionChanged)
     def _handle_runs_selection_changed(self, message: RunsPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.RUNS:
+            self._render_inspector()
+        message.stop()
+
+    @on(ResearchPanel.SelectionChanged)
+    def _handle_research_selection_changed(self, message: ResearchPanel.SelectionChanged) -> None:
+        if self.active_panel is PanelId.RESEARCH:
+            self._render_inspector()
+        message.stop()
+
+    @on(ConfigPanel.SelectionChanged)
+    def _handle_config_selection_changed(self, message: ConfigPanel.SelectionChanged) -> None:
+        if self.active_panel is PanelId.CONFIG:
+            self._render_inspector()
+        message.stop()
+
+    @on(PublishPanel.SelectionChanged)
+    def _handle_publish_selection_changed(self, message: PublishPanel.SelectionChanged) -> None:
+        if self.active_panel is PanelId.PUBLISH:
             self._render_inspector()
         message.stop()
 

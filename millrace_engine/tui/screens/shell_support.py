@@ -103,6 +103,7 @@ def build_shell_inspector_view(
     selected_event: RuntimeEventView | None = None,
     selected_question_id: str | None = None,
     selected_config_field_key: str | None = None,
+    selected_publish_path: str | None = None,
 ) -> ShellInspectorView:
     title = active_panel.label
     headline = "waiting for the first workspace snapshot"
@@ -212,12 +213,25 @@ def build_shell_inspector_view(
         if publish is None:
             headline = "publish preflight not loaded"
         else:
-            headline = f"{publish.status} | changed {len(publish.changed_paths)}"
-            detail_lines = (
-                f"branch {publish.branch or 'detached'} | origin {'configured' if publish.origin_configured else 'missing'}",
-                f"selected manifest paths {len(publish.selected_paths)}",
-            )
-            action_lines = ("Shift+R refreshes preflight facts.", "Publish sync and commit actions remain available in palette and footer.")
+            if selected_publish_path is not None:
+                title = selected_publish_path
+                headline = f"{publish.status} | changed path"
+                detail = [
+                    f"branch {publish.branch or 'detached'} | origin {'configured' if publish.origin_configured else 'missing'}",
+                    (
+                        "tracked by the staging manifest"
+                        if selected_publish_path in publish.selected_paths
+                        else "changed outside the current manifest selection"
+                    ),
+                ]
+                detail_lines = tuple(detail)
+            else:
+                headline = f"{publish.status} | changed {len(publish.changed_paths)}"
+                detail_lines = (
+                    f"branch {publish.branch or 'detached'} | origin {'configured' if publish.origin_configured else 'missing'}",
+                    f"selected manifest paths {len(publish.selected_paths)}",
+                )
+            action_lines = ("Up/Down inspects changed paths.", "Publish sync and commit actions remain available in palette and footer.")
 
     if panel_failure is not None:
         detail_lines = (*detail_lines, f"refresh degraded: {panel_failure.message}")

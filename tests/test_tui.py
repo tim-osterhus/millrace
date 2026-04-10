@@ -13,7 +13,7 @@ import pytest
 from textual.app import App, SystemCommand
 from textual.geometry import Region
 from textual.worker import WorkerState
-from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Input, Static, TextArea
+from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Input, Static, TextArea, Tree
 
 import millrace_engine.tui.gateway as gateway_module
 import millrace_engine.tui.gateway_support as gateway_support_module
@@ -970,6 +970,14 @@ def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path
         assert "PANEL   Config" in inspector_text
         assert f"FOCUS   {selected_field.label}" in inspector_text
         assert selected_field.description in inspector_text
+
+        await pilot.press("7")
+        await pilot.pause()
+        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        publish_panel = app.screen.query_one(PublishPanel)
+        if publish_panel.selected_path is not None:
+            assert "PANEL   Publish" in inspector_text
+            assert f"FOCUS   {publish_panel.selected_path}" in inspector_text
 
     _run_app_scenario(config_path, scenario)
 
@@ -2569,6 +2577,23 @@ def test_research_panel_renders_pending_interview_questions_and_selection() -> N
     assert "> Operator interview spec | SPEC-TUI-001 | focus | blocking" in text
     assert "NEXT    press Enter to answer, accept, or skip the selected interview question" in text
 
+    class Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield panel
+
+    async def runner() -> None:
+        app = Host()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            panel.show_snapshot(research)
+            await pilot.pause()
+            interview_table = panel.query_one("#research-interview-table", DataTable)
+            assert interview_table.row_count == 1
+            families_tree = panel.query_one("#research-families-tree", Tree)
+            assert families_tree.root is not None
+
+    asyncio.run(runner())
+
 
 def test_interview_modal_validates_answer_and_returns_requests() -> None:
     class ModalHost(App[None]):
@@ -2663,8 +2688,24 @@ def test_config_panel_operator_and_debug_modes_split_summary_and_internal_detail
     assert "NEXT    Up/Down select field | Enter/E edit selected | R reload config from disk" in operator_text
     assert "DETAIL  open debug for hashes, startup-only fields, and raw keys" in operator_text
 
-    panel.show_snapshot(payload.config, runtime=payload.runtime, display_mode=DisplayMode.DEBUG)
-    debug_text = panel.summary_text()
+    class Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield panel
+
+    async def runner() -> None:
+        app = Host()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            panel.show_snapshot(payload.config, runtime=payload.runtime, display_mode=DisplayMode.OPERATOR)
+            await pilot.pause()
+            fields_table = panel.query_one("#config-fields-table", DataTable)
+            assert fields_table.row_count == 3
+
+    asyncio.run(runner())
+
+    debug_panel = ConfigPanel(id="panel-config-debug")
+    debug_panel.show_snapshot(payload.config, runtime=payload.runtime, display_mode=DisplayMode.DEBUG)
+    debug_text = debug_panel.summary_text()
     assert "SUPPORTED" in debug_text
     assert "Poll interval [engine.poll_interval_seconds] = 60 | live_immediate | editable" in debug_text
     assert "STARTUP" in debug_text
@@ -2739,6 +2780,23 @@ def test_publish_panel_operator_ready_no_push_path_is_not_blocked() -> None:
     assert "READY   commit yes | push-ready yes | branch main" in operator_text
     assert "NEXT    N commit locally (default safe path) | P commit and push (higher friction)" in operator_text
     assert "ALERT   blocked" not in operator_text
+
+    class Host(App[None]):
+        def compose(self) -> ComposeResult:
+            yield panel
+
+    async def runner() -> None:
+        app = Host()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            panel.show_snapshot(publish, display_mode=DisplayMode.OPERATOR)
+            await pilot.pause()
+            assert panel.selected_path == "agents/status.md"
+            assert "changed outside manifest selection" in _static_text(panel.query_one("#publish-paths-focus", Static))
+            tree = panel.query_one("#publish-paths-tree", Tree)
+            assert tree.root is not None
+
+    asyncio.run(runner())
 
 
 def test_major_panels_failure_progressive_disclosure_splits_operator_and_debug() -> None:

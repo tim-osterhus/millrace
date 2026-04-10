@@ -164,6 +164,25 @@
     text-style: bold;
 }
 
+.panel-tree {
+    height: 8;
+    margin-top: 1;
+    background: #141417;
+    color: #e8e6ed;
+    border: round #252528;
+}
+
+.panel-tree > .tree--guides {
+    color: #3b3b45;
+}
+
+.panel-tree > .tree--highlight,
+.panel-tree > .tree--cursor {
+    background: #2b0f14;
+    color: #f0eef5;
+    text-style: bold;
+}
+
 .overview-card-label {
     color: #807e88;
     text-style: bold;
