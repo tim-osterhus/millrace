@@ -37,10 +37,12 @@ from .control_common import (
     validation_error_message,
 )
 from .control_models import (
+    ActiveTaskRemediationResult,
     AssetFamilyEntryView,
     AssetInventoryView,
     AssetResolutionView,
     CompletionStateView,
+    DeferredActiveTaskClear,
     PolicyHookSummary,
     QueueItemView,
     ResearchQueueFamilyView,
@@ -203,12 +205,37 @@ def config_hash(config: EngineConfig) -> str:
     return sha256(payload).hexdigest()
 
 
+def _read_pending_active_task_clear(runtime_dir: Path) -> DeferredActiveTaskClear | None:
+    path = runtime_dir / "pending_active_task_clear.json"
+    if not path.exists():
+        return None
+    return DeferredActiveTaskClear.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _read_last_active_task_clear(runtime_dir: Path) -> ActiveTaskRemediationResult | None:
+    path = runtime_dir / "last_active_task_clear.json"
+    if not path.exists():
+        return None
+    return ActiveTaskRemediationResult.model_validate_json(path.read_text(encoding="utf-8"))
+
+
 def read_runtime_state(state_path: Path) -> RuntimeState | None:
     """Read a persisted runtime snapshot if present."""
 
     if not state_path.exists():
         return None
-    return RuntimeState.model_validate_json(state_path.read_text(encoding="utf-8"))
+    state = RuntimeState.model_validate_json(state_path.read_text(encoding="utf-8"))
+    runtime_root = state_path.parent
+    pending = _read_pending_active_task_clear(runtime_root)
+    last = _read_last_active_task_clear(runtime_root)
+    if pending is None and last is None:
+        return state
+    return state.model_copy(
+        update={
+            "pending_active_task_clear": pending,
+            "last_active_task_clear": last,
+        }
+    )
 
 
 def read_control_runtime_state(state_path: Path) -> RuntimeState | None:
@@ -561,6 +588,8 @@ def build_live_runtime_state(
             "pending_config_boundary": pending_boundary,
             "pending_config_fields": pending_fields,
             "rollback_armed": rollback_armed,
+            "pending_active_task_clear": _read_pending_active_task_clear(paths.runtime_dir),
+            "last_active_task_clear": _read_last_active_task_clear(paths.runtime_dir),
             "started_at": started_at,
             "updated_at": datetime.now(timezone.utc),
             "mode": mode,

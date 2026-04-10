@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .adapters.control_mailbox import ControlCommand, normalize_command_issuer, write_command
 from .compounding import deprecate_procedure, promote_procedure
 from .control_common import ControlError, queue_control_error
 from .control_models import (
+    DeferredActiveTaskClear,
     ActiveTaskRemediationIntent,
     ActiveTaskRemediationOutcome,
     ActiveTaskRemediationRequest,
@@ -16,6 +19,7 @@ from .control_models import (
     OperationResult,
 )
 from .control_mutations import append_task_to_backlog, copy_idea_into_raw_queue
+from .markdown import write_text_atomic
 from .paths import RuntimePaths
 from .queue import QueueEmptyError, QueueError, TaskQueue
 
@@ -69,6 +73,7 @@ def normalize_task_id(task_id: str, *, action_label: str) -> str:
 
 def _active_task_remediation_result(
     *,
+    command_id: str | None = None,
     mode: str,
     applied: bool,
     message: str,
@@ -77,6 +82,7 @@ def _active_task_remediation_result(
     payload: dict[str, object] | None = None,
 ) -> ActiveTaskRemediationResult:
     return ActiveTaskRemediationResult(
+        command_id=command_id,
         mode=mode,
         applied=applied,
         message=message,
@@ -86,6 +92,68 @@ def _active_task_remediation_result(
     )
 
 
+def _pending_active_task_clear_path(paths: RuntimePaths) -> Path:
+    return paths.runtime_dir / "pending_active_task_clear.json"
+
+
+def _last_active_task_clear_path(paths: RuntimePaths) -> Path:
+    return paths.runtime_dir / "last_active_task_clear.json"
+
+
+def read_pending_active_task_clear(paths: RuntimePaths) -> DeferredActiveTaskClear | None:
+    path = _pending_active_task_clear_path(paths)
+    if not path.exists():
+        return None
+    try:
+        return DeferredActiveTaskClear.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError) as exc:
+        raise ControlError(f"pending active-task clear state is invalid: {exc}") from exc
+
+
+def write_pending_active_task_clear(paths: RuntimePaths, pending: DeferredActiveTaskClear) -> None:
+    path = _pending_active_task_clear_path(paths)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, pending.model_dump_json(indent=2) + "\n")
+
+
+def clear_pending_active_task_clear(
+    paths: RuntimePaths,
+    *,
+    command_id: str | None = None,
+) -> DeferredActiveTaskClear | None:
+    pending = read_pending_active_task_clear(paths)
+    if pending is None:
+        return None
+    if command_id is not None and pending.command_id != command_id:
+        return pending
+    _pending_active_task_clear_path(paths).unlink(missing_ok=True)
+    return pending
+
+
+def read_last_active_task_clear(paths: RuntimePaths) -> ActiveTaskRemediationResult | None:
+    path = _last_active_task_clear_path(paths)
+    if not path.exists():
+        return None
+    try:
+        return ActiveTaskRemediationResult.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError) as exc:
+        raise ControlError(f"last active-task clear state is invalid: {exc}") from exc
+
+
+def write_last_active_task_clear(paths: RuntimePaths, result: ActiveTaskRemediationResult) -> None:
+    path = _last_active_task_clear_path(paths)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, result.model_dump_json(indent=2) + "\n")
+
+
+def _record_last_active_task_clear(
+    paths: RuntimePaths,
+    result: ActiveTaskRemediationResult,
+) -> ActiveTaskRemediationResult:
+    write_last_active_task_clear(paths, result)
+    return result
+
+
 def active_task_remediate(
     paths: RuntimePaths,
     *,
@@ -93,6 +161,9 @@ def active_task_remediate(
     reason: str,
     daemon_running: bool,
     issuer: str | None = None,
+    requested_at: datetime | None = None,
+    command_id: str | None = None,
+    response_mode: str = "direct",
 ) -> ActiveTaskRemediationResult:
     """Apply one supported active-task clear or recover request."""
 
@@ -111,13 +182,81 @@ def active_task_remediate(
         {
             "intent": normalized_intent,
             "reason": normalized_reason,
-            "requested_at": datetime.now(timezone.utc),
+            "requested_at": requested_at or datetime.now(timezone.utc),
             "issuer": issuer,
         }
     )
     queue = TaskQueue(paths)
     backlog_depth = queue.backlog_depth()
     next_task = queue.peek_next()
+
+    active_task = queue.active_task()
+    if daemon_running and request.intent == ActiveTaskRemediationIntent.CLEAR.value:
+        if active_task is None:
+            return _record_last_active_task_clear(
+                paths,
+                _active_task_remediation_result(
+                    mode="direct",
+                    applied=False,
+                    message="active task already clear",
+                    outcome_state=ActiveTaskRemediationOutcome.NOOP_IDEMPOTENT,
+                    request=request,
+                    payload={
+                        "intent": request.intent,
+                        "backlog_depth": backlog_depth,
+                        "next_task_id": next_task.task_id if next_task is not None else None,
+                    },
+                ),
+            )
+        pending = read_pending_active_task_clear(paths)
+        if pending is not None:
+            return _record_last_active_task_clear(
+                paths,
+                _active_task_remediation_result(
+                    mode="mailbox",
+                    applied=False,
+                    message="active-task clear already pending until daemon boundary",
+                    outcome_state=ActiveTaskRemediationOutcome.NOOP_IDEMPOTENT,
+                    request=request,
+                    payload={
+                        "intent": request.intent,
+                        "backlog_depth": backlog_depth,
+                        "next_task_id": next_task.task_id if next_task is not None else None,
+                        "pending_command_id": pending.command_id,
+                    },
+                ),
+            )
+        envelope = write_command(
+            paths,
+            ControlCommand.ACTIVE_TASK_CLEAR,
+            payload={"reason": request.reason},
+            issuer=issuer or "cli",
+        )
+        write_pending_active_task_clear(
+            paths,
+            DeferredActiveTaskClear(
+                command_id=envelope.command_id,
+                request=request,
+                deferred_at=datetime.now(timezone.utc),
+            ),
+        )
+        return _record_last_active_task_clear(
+            paths,
+            _active_task_remediation_result(
+                command_id=envelope.command_id,
+                mode="mailbox",
+                applied=True,
+                message="active-task clear deferred until daemon boundary",
+                outcome_state=ActiveTaskRemediationOutcome.DEFERRED,
+                request=request,
+                payload={
+                    "intent": request.intent,
+                    "backlog_depth": backlog_depth,
+                    "next_task_id": next_task.task_id if next_task is not None else None,
+                    "deferred_reason": "daemon_running",
+                },
+            ),
+        )
 
     if daemon_running:
         return _active_task_remediation_result(
@@ -134,10 +273,9 @@ def active_task_remediate(
             },
         )
 
-    active_task = queue.active_task()
     if active_task is None:
-        return _active_task_remediation_result(
-            mode="direct",
+        result = _active_task_remediation_result(
+            mode=response_mode,
             applied=False,
             message="active task already clear",
             outcome_state=ActiveTaskRemediationOutcome.NOOP_IDEMPOTENT,
@@ -148,6 +286,9 @@ def active_task_remediate(
                 "next_task_id": next_task.task_id if next_task is not None else None,
             },
         )
+        if request.intent == ActiveTaskRemediationIntent.CLEAR.value:
+            return _record_last_active_task_clear(paths, result)
+        return result
 
     try:
         record = queue.remediate_active_task(
@@ -157,8 +298,8 @@ def active_task_remediate(
             issuer=request.issuer,
         )
     except QueueEmptyError:
-        return _active_task_remediation_result(
-            mode="direct",
+        result = _active_task_remediation_result(
+            mode=response_mode,
             applied=False,
             message="active task already clear",
             outcome_state=ActiveTaskRemediationOutcome.NOOP_IDEMPOTENT,
@@ -169,6 +310,9 @@ def active_task_remediate(
                 "next_task_id": next_task.task_id if next_task is not None else None,
             },
         )
+        if request.intent == ActiveTaskRemediationIntent.CLEAR.value:
+            return _record_last_active_task_clear(paths, result)
+        return result
     except (FileNotFoundError, QueueError, ValueError) as exc:
         raise queue_control_error(exc, prefix=f"active-task {request.intent} failed") from exc
 
@@ -188,14 +332,19 @@ def active_task_remediate(
     }
     if record.issuer is not None:
         payload["issuer"] = record.issuer
-    return _active_task_remediation_result(
-        mode="direct",
+    result = _active_task_remediation_result(
+        command_id=command_id,
+        mode=response_mode,
         applied=True,
         message=f"active task {record.intent} applied",
         outcome_state=ActiveTaskRemediationOutcome.APPLIED,
         request=request,
         payload=payload,
     )
+    if record.intent == ActiveTaskRemediationIntent.CLEAR.value:
+        clear_pending_active_task_clear(paths, command_id=command_id)
+        return _record_last_active_task_clear(paths, result)
+    return result
 
 
 def active_task_rejected(

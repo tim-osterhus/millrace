@@ -15,6 +15,11 @@ from .control_actions import (
 from .control_actions import (
     compounding_promote as compounding_promote_operation,
 )
+from .control_actions import (
+    active_task_remediate as active_task_remediate_operation,
+    clear_pending_active_task_clear,
+    read_pending_active_task_clear,
+)
 from .control_common import ControlError
 from .control_models import OperationResult
 from .control_mutations import (
@@ -100,6 +105,7 @@ def build_engine_mailbox_command_registry() -> EngineMailboxCommandRegistry:
             ControlCommand.STOP: _handle_stop,
             ControlCommand.PAUSE: _handle_pause,
             ControlCommand.RESUME: _handle_resume,
+            ControlCommand.ACTIVE_TASK_CLEAR: _handle_active_task_clear,
             ControlCommand.RELOAD_CONFIG: _handle_reload_config,
             ControlCommand.SET_CONFIG: _handle_set_config,
             ControlCommand.ADD_TASK: _handle_add_task,
@@ -178,6 +184,42 @@ def _handle_reload_config(
         key=None,
     )
     return EngineMailboxCommandExecution(operation=operation, restart_file_watcher=restart_watcher)
+
+
+def _handle_active_task_clear(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    pending = read_pending_active_task_clear(context.hooks.get_paths())
+    reason = (
+        pending.request.reason
+        if pending is not None and pending.command_id == envelope.command_id
+        else str(envelope.payload.get("reason", "")).strip()
+    )
+    requested_at = (
+        pending.request.requested_at
+        if pending is not None and pending.command_id == envelope.command_id
+        else envelope.issued_at
+    )
+    issuer = (
+        pending.request.issuer
+        if pending is not None and pending.command_id == envelope.command_id
+        else envelope.issuer
+    )
+    try:
+        operation = active_task_remediate_operation(
+            context.hooks.get_paths(),
+            intent="clear",
+            reason=reason,
+            daemon_running=False,
+            issuer=issuer,
+            requested_at=requested_at,
+            command_id=envelope.command_id,
+            response_mode="mailbox",
+        )
+    finally:
+        clear_pending_active_task_clear(context.hooks.get_paths(), command_id=envelope.command_id)
+    return EngineMailboxCommandExecution(operation=operation)
 
 
 def _handle_set_config(

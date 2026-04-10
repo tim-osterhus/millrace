@@ -3351,7 +3351,7 @@ def test_engine_control_active_task_recover_is_noop_when_active_slot_already_emp
     assert result.payload["next_task_id"] is None
 
 
-def test_engine_control_active_task_clear_reports_blocked_when_daemon_running(tmp_path: Path) -> None:
+def test_engine_control_active_task_clear_defers_when_daemon_running(tmp_path: Path) -> None:
     workspace, config_path = runtime_workspace(tmp_path)
     control = EngineControl(config_path)
     paths = build_runtime_paths(load_engine_config(config_path).config)
@@ -3375,12 +3375,19 @@ def test_engine_control_active_task_clear_reports_blocked_when_daemon_running(tm
 
     result = control.active_task_clear(reason="daemon still active")
 
-    assert result.mode == "direct"
-    assert result.applied is False
-    assert result.outcome_state == "blocked"
-    assert result.message == "active-task clear blocked while daemon is running"
-    assert result.payload["blocked_reason"] == "daemon_running"
+    assert result.mode == "mailbox"
+    assert result.applied is True
+    assert result.outcome_state == "deferred"
+    assert result.message == "active-task clear deferred until daemon boundary"
+    assert result.command_id is not None
+    assert result.payload["deferred_reason"] == "daemon_running"
     assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) != []
+    pending = control.status(detail=False).runtime.pending_active_task_clear
+    assert pending is not None
+    assert pending.command_id == result.command_id
+    assert pending.request.reason == "daemon still active"
+    assert pending.request.intent == "clear"
+    assert control.status(detail=False).runtime.last_active_task_clear is not None
 
 
 def test_engine_control_active_task_clear_rejects_empty_reason_without_mutation(tmp_path: Path) -> None:

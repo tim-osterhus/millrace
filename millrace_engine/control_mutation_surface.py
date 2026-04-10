@@ -13,6 +13,7 @@ from .control_actions import (
     add_task as add_task_operation,
     active_task_remediate as active_task_remediate_operation,
     active_task_rejected as active_task_rejected_operation,
+    write_last_active_task_clear as write_last_active_task_clear_operation,
 )
 from .control_actions import (
     lifecycle_action,
@@ -85,12 +86,15 @@ def queue_reorder(control, task_ids: list[str] | tuple[str, ...]) -> OperationRe
 
 
 def active_task_remediate(control, intent: str, *, reason: str) -> ActiveTaskRemediationResult:
-    return active_task_remediate_operation(
+    result = active_task_remediate_operation(
         control.paths,
         intent=intent,
         reason=reason,
         daemon_running=control.is_daemon_running(),
     )
+    if result.request.intent == "clear" and result.outcome_state == "rejected":
+        write_last_active_task_clear_operation(control.paths, result)
+    return result
 
 
 def supervisor_active_task_remediate(
@@ -101,13 +105,16 @@ def supervisor_active_task_remediate(
     issuer: str,
 ) -> ActiveTaskRemediationResult:
     normalized_issuer = control._normalize_supervisor_issuer(issuer)
-    return active_task_remediate_operation(
+    result = active_task_remediate_operation(
         control.paths,
         intent=intent,
         reason=reason,
         issuer=normalized_issuer,
         daemon_running=control.is_daemon_running(),
     )
+    if result.request.intent == "clear" and result.outcome_state == "rejected":
+        write_last_active_task_clear_operation(control.paths, result)
+    return result
 
 
 def active_task_rejected(intent: str, *, reason: str, issuer: str | None = None) -> ActiveTaskRemediationResult:

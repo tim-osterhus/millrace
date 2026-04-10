@@ -6,14 +6,23 @@ from pathlib import Path
 
 from millrace_engine.adapters.control_mailbox import ControlCommand, write_command
 from millrace_engine.config import LoadedConfig, build_runtime_paths, load_engine_config
+from millrace_engine.control_actions import (
+    read_last_active_task_clear,
+    read_pending_active_task_clear,
+    write_pending_active_task_clear,
+)
 from millrace_engine.control_models import OperationResult
+from millrace_engine.control_models import ActiveTaskRemediationRequest, DeferredActiveTaskClear
 from millrace_engine.engine_mailbox_command_handlers import (
     EngineMailboxCommandContext,
     build_engine_mailbox_command_registry,
 )
 from millrace_engine.engine_mailbox_processor import EngineMailboxHooks, EngineMailboxProcessor
+from millrace_engine.control_common import ControlError
 from millrace_engine.events import EventSource, EventType
+from millrace_engine.markdown import parse_task_cards
 from millrace_engine.paths import RuntimePaths
+from millrace_engine.queue import TaskQueue
 
 from .support import load_workspace_fixture
 
@@ -186,3 +195,89 @@ def test_engine_mailbox_command_registry_marks_config_restart_requests(tmp_path:
     assert execution.operation.applied is True
     assert execution.operation.payload == {"command_id": "config-command", "key": "watchers.debounce_seconds"}
     assert execution.restart_file_watcher is True
+
+
+def test_engine_mailbox_processor_applies_pending_active_task_clear_at_mailbox_boundary(tmp_path: Path) -> None:
+    _, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    harness = _MailboxHarness(config_path)
+    processor = EngineMailboxProcessor(config_path=config_path, hooks=harness.hooks())
+
+    write_command(harness.paths, ControlCommand.ADD_TASK, payload={"title": "Deferred active clear"})
+    queue = TaskQueue(harness.paths)
+    asyncio.run(processor.process_mailbox())
+    active_card = queue.promote_next()
+
+    clear_envelope = write_command(
+        harness.paths,
+        ControlCommand.ACTIVE_TASK_CLEAR,
+        payload={"reason": "defer until boundary"},
+    )
+    write_pending_active_task_clear(
+        harness.paths,
+        DeferredActiveTaskClear(
+            command_id=clear_envelope.command_id,
+            request=ActiveTaskRemediationRequest(
+                intent="clear",
+                reason="defer until boundary",
+                requested_at=clear_envelope.issued_at,
+                issuer=clear_envelope.issuer,
+            ),
+            deferred_at=clear_envelope.issued_at,
+        ),
+    )
+
+    asyncio.run(processor.process_mailbox())
+
+    assert parse_task_cards(harness.paths.tasks_file.read_text(encoding="utf-8")) == []
+    assert read_pending_active_task_clear(harness.paths) is None
+    last_result = read_last_active_task_clear(harness.paths)
+    assert last_result is not None
+    assert last_result.command_id == clear_envelope.command_id
+    assert last_result.mode == "mailbox"
+    assert last_result.outcome_state == "applied"
+    assert last_result.payload["task_id"] == active_card.task_id
+
+
+def test_engine_mailbox_processor_clears_pending_active_task_clear_when_boundary_apply_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    harness = _MailboxHarness(config_path)
+    processor = EngineMailboxProcessor(config_path=config_path, hooks=harness.hooks())
+
+    clear_envelope = write_command(
+        harness.paths,
+        ControlCommand.ACTIVE_TASK_CLEAR,
+        payload={"reason": "defer until boundary"},
+    )
+    write_pending_active_task_clear(
+        harness.paths,
+        DeferredActiveTaskClear(
+            command_id=clear_envelope.command_id,
+            request=ActiveTaskRemediationRequest(
+                intent="clear",
+                reason="defer until boundary",
+                requested_at=clear_envelope.issued_at,
+                issuer=clear_envelope.issuer,
+            ),
+            deferred_at=clear_envelope.issued_at,
+        ),
+    )
+
+    def _raise_remediation_failure(*_args, **_kwargs):
+        raise ControlError("active-task clear failed at boundary")
+
+    monkeypatch.setattr(
+        "millrace_engine.engine_mailbox_command_handlers.active_task_remediate_operation",
+        _raise_remediation_failure,
+    )
+
+    asyncio.run(processor.process_mailbox())
+
+    assert read_pending_active_task_clear(harness.paths) is None
+    failed_path = harness.paths.commands_failed_dir / f"{clear_envelope.command_id}.json"
+    assert failed_path.exists()
+    archived_payload = json.loads(failed_path.read_text(encoding="utf-8"))
+    assert archived_payload["result"]["ok"] is False
+    assert archived_payload["result"]["message"] == "active-task clear failed at boundary"

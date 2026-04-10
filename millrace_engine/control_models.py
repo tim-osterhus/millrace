@@ -95,6 +95,8 @@ class RuntimeState(ContractModel):
     pending_config_boundary: ConfigApplyBoundary | None = None
     pending_config_fields: tuple[str, ...] = ()
     rollback_armed: bool = False
+    pending_active_task_clear: DeferredActiveTaskClear | None = None
+    last_active_task_clear: ActiveTaskRemediationResult | None = None
     started_at: datetime | None = None
     updated_at: datetime
     mode: Literal["once", "daemon"] = "once"
@@ -1296,6 +1298,7 @@ class ActiveTaskRemediationOutcome(str, Enum):
     """Deterministic result states for the active-task remediation surface."""
 
     APPLIED = "applied"
+    DEFERRED = "deferred"
     NOOP_IDEMPOTENT = "noop-idempotent"
     BLOCKED = "blocked"
     REJECTED = "rejected"
@@ -1331,6 +1334,29 @@ class ActiveTaskRemediationRequest(ContractModel):
             return None
         normalized = " ".join(value.strip().split())
         return normalized or None
+
+
+class DeferredActiveTaskClear(ContractModel):
+    """Durable pending active-task clear request accepted during daemon operation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    command_id: str
+    request: ActiveTaskRemediationRequest
+    deferred_at: datetime
+
+    @field_validator("command_id")
+    @classmethod
+    def normalize_command_id(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("command_id may not be empty")
+        return normalized
+
+    @field_validator("deferred_at", mode="before")
+    @classmethod
+    def normalize_deferred_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
 
 
 class ActiveTaskRemediationResult(OperationResult):

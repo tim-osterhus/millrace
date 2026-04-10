@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from millrace_engine.contracts import ExecutionStatus, ResearchMode, ResearchStatus
+from millrace_engine.control import EngineControl
 from millrace_engine.engine import MillraceEngine
 from millrace_engine.events import EventType
 from millrace_engine.markdown import parse_task_cards
@@ -175,3 +176,45 @@ def test_engine_runtime_loop_daemon_advances_active_goalspec_checkpoint_on_next_
     assert (workspace / "agents" / "research_status.md").read_text(encoding="utf-8") == (
         f"### {ResearchStatus.COMPLETION_MANIFEST_RUNNING.value}\n"
     )
+
+
+def test_engine_runtime_loop_applies_deferred_active_clear_only_after_cycle_boundary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    engine = MillraceEngine(config_path)
+    control = EngineControl(config_path)
+    control.add_task("Deferred active clear")
+    engine.execution_plane.queue.promote_next()
+    monkeypatch.setattr(engine, "_consume_research_recovery_latch", lambda **_kwargs: 0)
+    monkeypatch.setattr(engine.research_plane, "shutdown", lambda: None)
+    monkeypatch.setattr(engine.runtime_loop, "build_file_watcher", lambda: _WatcherStub(mode="poll"))
+
+    cycle_calls = 0
+
+    async def _run_cycle() -> ExecutionCycleResult:
+        nonlocal cycle_calls
+        cycle_calls += 1
+        active_before = parse_task_cards((workspace / "agents" / "tasks.md").read_text(encoding="utf-8"))
+        if cycle_calls == 1:
+            assert len(active_before) == 1
+            result = control.active_task_clear(reason="request during active stage")
+            assert result.outcome_state.value == "deferred"
+            assert parse_task_cards((workspace / "agents" / "tasks.md").read_text(encoding="utf-8")) == active_before
+            return ExecutionCycleResult(run_id="daemon-cycle-1", final_status=ExecutionStatus.BUILDER_RUNNING)
+        assert active_before == []
+        engine.stop_requested = True
+        return ExecutionCycleResult(run_id="daemon-cycle-2", final_status=ExecutionStatus.IDLE)
+
+    monkeypatch.setattr(engine.runtime_loop, "run_cycle", _run_cycle)
+
+    result = asyncio.run(engine.runtime_loop.run(mode="daemon"))
+
+    assert cycle_calls == 2
+    assert result.process_running is False
+    assert parse_task_cards((workspace / "agents" / "tasks.md").read_text(encoding="utf-8")) == []
+    runtime = control.status(detail=False).runtime
+    assert runtime.pending_active_task_clear is None
+    assert runtime.last_active_task_clear is not None
+    assert runtime.last_active_task_clear.outcome_state.value == "applied"

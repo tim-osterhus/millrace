@@ -19,6 +19,7 @@ class ControlCommand(str, Enum):
     STOP = "stop"
     PAUSE = "pause"
     RESUME = "resume"
+    ACTIVE_TASK_CLEAR = "active_task_clear"
     RELOAD_CONFIG = "reload_config"
     SET_CONFIG = "set_config"
     ADD_TASK = "add_task"
