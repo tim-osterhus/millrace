@@ -741,7 +741,7 @@ class ResearchPlane:
             self._execute_supported_goalspec_stages(dispatch, observed_at=execution_started_at)
             self._execute_supported_incident_stages(dispatch, observed_at=execution_started_at)
             self._execute_supported_audit_stages(dispatch, observed_at=execution_started_at)
-        except (ResearchDispatchError, IncidentExecutionError, AuditExecutionError) as exc:
+        except (ResearchDispatchError, GoalSpecExecutionError, IncidentExecutionError, AuditExecutionError) as exc:
             discovery = discover_research_queues(self.paths)
             self._record_dispatch_failure(exc, discovery=discovery, failed_at=execution_started_at)
             raise
@@ -791,7 +791,7 @@ class ResearchPlane:
             return
         try:
             self.sync_runtime(trigger=event.type.value)
-        except (ResearchDispatchError, IncidentExecutionError, AuditExecutionError):
+        except (ResearchDispatchError, GoalSpecExecutionError, IncidentExecutionError, AuditExecutionError):
             # The plane state/status already records the failure. As an event-bus
             # subscriber, avoid escalating one bad research selection into an
             # engine-lifecycle crash.

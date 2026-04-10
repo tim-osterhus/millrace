@@ -31,6 +31,7 @@ from millrace_engine.research import (
     build_research_governance_report,
     CompiledResearchDispatchError,
     entry_stage_type_for_dispatch,
+    TaskauditExecutionError,
     execute_taskaudit,
 )
 from millrace_engine.research.dispatcher import (
@@ -1581,6 +1582,89 @@ def test_execute_taskaudit_deferred_prepare_then_merge(tmp_path: Path) -> None:
     assert task_provenance["taskaudit"]["merged_backlog_card_count"] == 4
 
 
+def test_execute_taskaudit_marks_promotion_blocked_when_prepared_pending_snapshot_changes(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskaudit-integrity-043",
+        emitted_at=_dt("2026-04-08T20:00:00Z"),
+        title="Preserve pending to live integrity",
+        body=(
+            "Exercise the Taskaudit merge conflict path without silently dropping pending work.\n\n"
+            "## Capability Domains\n"
+            "- Pending shard assembly\n"
+            "- Live backlog promotion integrity\n"
+        ),
+        decomposition_profile="simple",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskaudit-integrity-043",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+    taskmaster_result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskaudit-integrity-043",
+            emitted_at=_dt("2026-04-08T20:00:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskaudit-integrity-043",
+        emitted_at=_dt("2026-04-08T20:00:00Z"),
+    )
+    shard_path = workspace / taskmaster_result.shard_path
+    taskaudit_record_path = (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "taskaudit"
+        / "goalspec-taskaudit-integrity-043.json"
+    )
+
+    prepared = execute_taskaudit(
+        paths,
+        run_id="goalspec-taskaudit-integrity-043",
+        emitted_at=_dt("2026-04-08T20:05:00Z"),
+        defer_merge=True,
+    )
+
+    assert prepared.status == "prepared"
+    paths.taskspending_file.write_text(
+        paths.taskspending_file.read_text(encoding="utf-8") + "\n<!-- drift -->\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TaskauditExecutionError, match="Taskaudit prepared pending family changed before final merge"):
+        execute_taskaudit(
+            paths,
+            run_id="goalspec-taskaudit-integrity-043",
+            emitted_at=_dt("2026-04-08T20:10:00Z"),
+            defer_merge=True,
+        )
+
+    record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    assert record["status"] == "promotion_blocked"
+    assert record["blocked_reason"] == "Taskaudit prepared pending family changed before final merge"
+    assert record["blocked_failure_kind"] == "TaskauditExecutionError"
+    assert record["blocked_at"] == "2026-04-08T20:10:00Z"
+    assert parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards == []
+    assert len(parse_task_store(paths.taskspending_file.read_text(encoding="utf-8"), source_file=paths.taskspending_file).cards) == 4
+    assert shard_path.exists()
+    assert not (workspace / "agents" / "task_provenance.json").exists()
+
+
 def test_research_plane_defers_taskaudit_merge_into_later_goal_spec_pass(tmp_path: Path) -> None:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
     _write_queue_file(
@@ -1640,6 +1724,80 @@ def test_research_plane_defers_taskaudit_merge_into_later_goal_spec_pass(tmp_pat
     assert merged_record["status"] == "merged"
     assert len(parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards) == 4
     assert paths.taskspending_file.read_text(encoding="utf-8") == "# Tasks Pending\n"
+
+
+def test_research_plane_surfaces_taskaudit_promotion_integrity_failure_as_blocked(tmp_path: Path) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    _write_queue_file(
+        workspace / "agents" / "ideas" / "raw" / "goal.md",
+            (
+                "---\n"
+                "idea_id: IDEA-TASKAUDIT-044\n"
+                "title: Preserve promotion integrity\n"
+                "decomposition_profile: simple\n"
+                "---\n\n"
+                "# Preserve promotion integrity\n\n"
+                "Keep pending delivery work truthful when backlog handoff is interrupted.\n"
+            ),
+        )
+    captured: list[tuple[EventType, dict[str, object]]] = []
+    plane = ResearchPlane(
+        config,
+        paths,
+        emit_event=lambda event_type, payload: captured.append((event_type, dict(payload))),
+    )
+    run_id = "goalspec-taskaudit-integrity-044"
+    taskaudit_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / f"{run_id}.json"
+
+    for _ in range(6):
+        dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+        assert dispatch is not None
+
+    dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+    assert dispatch is not None
+    assert plane.snapshot_state().checkpoint is not None
+    assert plane.snapshot_state().checkpoint.node_id == "taskaudit"
+
+    dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+    assert dispatch is not None
+    assert json.loads(taskaudit_record_path.read_text(encoding="utf-8"))["status"] == "prepared"
+    prepared_pending_count = len(
+        parse_task_store(
+            paths.taskspending_file.read_text(encoding="utf-8"),
+            source_file=paths.taskspending_file,
+        ).cards
+    )
+
+    paths.taskspending_file.write_text(
+        paths.taskspending_file.read_text(encoding="utf-8") + "\n<!-- drift -->\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(research_plane_module.GoalSpecExecutionError, match="Taskaudit prepared pending family changed before final merge"):
+        plane.run_ready_work(run_id=run_id, resolve_assets=False)
+
+    snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "taskaudit"
+    assert snapshot.retry_state is not None
+    blocked_event = next(payload for event_type, payload in captured if event_type is EventType.RESEARCH_BLOCKED)
+    assert blocked_event["failure_kind"] == "TaskauditExecutionError"
+    assert blocked_event["reason"] == "Taskaudit prepared pending family changed before final merge"
+
+    record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    assert record["status"] == "promotion_blocked"
+    assert record["blocked_reason"] == "Taskaudit prepared pending family changed before final merge"
+    assert (
+        len(
+            parse_task_store(
+                paths.taskspending_file.read_text(encoding="utf-8"),
+                source_file=paths.taskspending_file,
+            ).cards
+        )
+        == prepared_pending_count
+    )
+    assert parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file).cards == []
 
 
 def test_taskaudit_pending_merge(tmp_path: Path) -> None:
