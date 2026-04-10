@@ -1283,3 +1283,58 @@ class OperationResult(ContractModel):
     applied: bool
     message: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActiveTaskRemediationIntent(str, Enum):
+    """Supported operator intents for active-task remediation."""
+
+    CLEAR = "clear"
+    RECOVER = "recover"
+
+
+class ActiveTaskRemediationOutcome(str, Enum):
+    """Deterministic result states for the active-task remediation surface."""
+
+    APPLIED = "applied"
+    NOOP_IDEMPOTENT = "noop-idempotent"
+    BLOCKED = "blocked"
+    REJECTED = "rejected"
+
+
+class ActiveTaskRemediationRequest(ContractModel):
+    """Auditable request metadata for one active-task remediation attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: str
+    reason: str
+    requested_at: datetime
+    issuer: str | None = None
+
+    @field_validator("requested_at", mode="before")
+    @classmethod
+    def normalize_requested_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+    @field_validator("intent", "reason")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("value may not be empty")
+        return normalized
+
+    @field_validator("issuer")
+    @classmethod
+    def normalize_optional_issuer(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        return normalized or None
+
+
+class ActiveTaskRemediationResult(OperationResult):
+    """Structured response for supported active-task clear or recover requests."""
+
+    outcome_state: ActiveTaskRemediationOutcome
+    request: ActiveTaskRemediationRequest

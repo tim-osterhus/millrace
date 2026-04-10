@@ -11,6 +11,8 @@ from .control_actions import (
 )
 from .control_actions import (
     add_task as add_task_operation,
+    active_task_remediate as active_task_remediate_operation,
+    active_task_rejected as active_task_rejected_operation,
 )
 from .control_actions import (
     lifecycle_action,
@@ -56,6 +58,7 @@ from .control_interview import (
     interview_skip as interview_skip_operation,
 )
 from .control_models import (
+    ActiveTaskRemediationResult,
     InterviewListReport,
     InterviewMutationReport,
     InterviewQuestionReport,
@@ -79,6 +82,36 @@ def queue_reorder(control, task_ids: list[str] | tuple[str, ...]) -> OperationRe
         task_ids=task_ids,
         daemon_running=control.is_daemon_running(),
     )
+
+
+def active_task_remediate(control, intent: str, *, reason: str) -> ActiveTaskRemediationResult:
+    return active_task_remediate_operation(
+        control.paths,
+        intent=intent,
+        reason=reason,
+        daemon_running=control.is_daemon_running(),
+    )
+
+
+def supervisor_active_task_remediate(
+    control,
+    intent: str,
+    *,
+    reason: str,
+    issuer: str,
+) -> ActiveTaskRemediationResult:
+    normalized_issuer = control._normalize_supervisor_issuer(issuer)
+    return active_task_remediate_operation(
+        control.paths,
+        intent=intent,
+        reason=reason,
+        issuer=normalized_issuer,
+        daemon_running=control.is_daemon_running(),
+    )
+
+
+def active_task_rejected(intent: str, *, reason: str, issuer: str | None = None) -> ActiveTaskRemediationResult:
+    return active_task_rejected_operation(intent=intent, reason=reason, issuer=issuer)
 
 
 def queue_cleanup_remove(control, task_id: str, *, reason: str) -> OperationResult:

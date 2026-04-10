@@ -69,6 +69,7 @@ app = typer.Typer(add_completion=False, help="Control the Millrace runtime.")
 config_app = typer.Typer(help="Inspect or mutate runtime config.")
 queue_app = typer.Typer(help="Inspect visible execution queues.")
 queue_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work.")
+active_task_app = typer.Typer(help="Clear or recover stale active-task state.")
 compounding_app = typer.Typer(help="Inspect governed reusable procedures.")
 compounding_facts_app = typer.Typer(help="Inspect governed durable context facts.")
 compounding_procedures_app = typer.Typer(help="Inspect or mutate governed reusable procedures.")
@@ -82,9 +83,11 @@ interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview 
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
 supervisor_app = typer.Typer(help="External supervisor report surfaces.")
 supervisor_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work with issuer attribution.")
+supervisor_active_task_app = typer.Typer(help="Supervisor-attributed active-task remediation.")
 app.add_typer(config_app, name="config")
 app.add_typer(queue_app, name="queue")
 queue_app.add_typer(queue_cleanup_app, name="cleanup")
+app.add_typer(active_task_app, name="active-task")
 app.add_typer(compounding_app, name="compounding")
 compounding_app.add_typer(compounding_facts_app, name="facts")
 compounding_app.add_typer(compounding_procedures_app, name="procedures")
@@ -98,6 +101,7 @@ app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
 app.add_typer(supervisor_app, name="supervisor")
 supervisor_app.add_typer(supervisor_cleanup_app, name="cleanup")
+supervisor_app.add_typer(supervisor_active_task_app, name="active-task")
 
 
 @dataclass(frozen=True, slots=True)
@@ -547,6 +551,46 @@ def queue_cleanup_quarantine_command(
     render_operation(
         _run_expected(
             lambda: _control(ctx).queue_cleanup_quarantine(task_id, reason=reason),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@active_task_app.command("clear")
+def active_task_clear_command(
+    ctx: typer.Context,
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the active task should be cleared."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Clear the visible active task through the supported remediation surface."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).active_task_clear(reason=reason),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@active_task_app.command("recover")
+def active_task_recover_command(
+    ctx: typer.Context,
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the active task should be recovered."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Recover stale active-task state through the supported remediation surface."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).active_task_recover(reason=reason),
             json_mode=json_mode,
         ),
         json_mode=json_mode,
@@ -1045,6 +1089,48 @@ def supervisor_queue_cleanup_quarantine_command(
                 reason=reason,
                 issuer=issuer,
             ),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_active_task_app.command("clear")
+def supervisor_active_task_clear_command(
+    ctx: typer.Context,
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the active task should be cleared."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Clear the visible active task through the supervisor-safe remediation surface."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).supervisor_active_task_clear(reason=reason, issuer=issuer),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
+@supervisor_active_task_app.command("recover")
+def supervisor_active_task_recover_command(
+    ctx: typer.Context,
+    issuer: Annotated[str, typer.Option("--issuer", help="Supervisor issuer identity to record.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why the active task should be recovered."),
+    ],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Recover stale active-task state through the supervisor-safe remediation surface."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).supervisor_active_task_recover(reason=reason, issuer=issuer),
             json_mode=json_mode,
         ),
         json_mode=json_mode,

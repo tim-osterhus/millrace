@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .adapters.control_mailbox import ControlCommand, normalize_command_issuer, write_command
 from .compounding import deprecate_procedure, promote_procedure
 from .control_common import ControlError, queue_control_error
-from .control_models import OperationResult
+from .control_models import (
+    ActiveTaskRemediationIntent,
+    ActiveTaskRemediationOutcome,
+    ActiveTaskRemediationRequest,
+    ActiveTaskRemediationResult,
+    OperationResult,
+)
 from .control_mutations import append_task_to_backlog, copy_idea_into_raw_queue
 from .paths import RuntimePaths
-from .queue import QueueError, TaskQueue
+from .queue import QueueEmptyError, QueueError, TaskQueue
 
 
 def normalize_supervisor_issuer(issuer: str) -> str:
@@ -58,6 +65,173 @@ def normalize_task_id(task_id: str, *, action_label: str) -> str:
     if not normalized:
         raise ControlError(f"{action_label} requires a task id")
     return normalized
+
+
+def _active_task_remediation_result(
+    *,
+    mode: str,
+    applied: bool,
+    message: str,
+    outcome_state: ActiveTaskRemediationOutcome,
+    request: ActiveTaskRemediationRequest,
+    payload: dict[str, object] | None = None,
+) -> ActiveTaskRemediationResult:
+    return ActiveTaskRemediationResult(
+        mode=mode,
+        applied=applied,
+        message=message,
+        outcome_state=outcome_state,
+        request=request,
+        payload=payload or {},
+    )
+
+
+def active_task_remediate(
+    paths: RuntimePaths,
+    *,
+    intent: str,
+    reason: str,
+    daemon_running: bool,
+    issuer: str | None = None,
+) -> ActiveTaskRemediationResult:
+    """Apply one supported active-task clear or recover request."""
+
+    normalized_intent = " ".join(intent.strip().split())
+    normalized_reason = " ".join(reason.strip().split())
+    if not normalized_reason:
+        return active_task_rejected(
+            intent=intent,
+            reason=reason,
+            issuer=issuer,
+            rejected_reason="reason_required",
+        )
+    if normalized_intent not in {item.value for item in ActiveTaskRemediationIntent}:
+        return active_task_rejected(intent=intent, reason=reason, issuer=issuer)
+    request = ActiveTaskRemediationRequest.model_validate(
+        {
+            "intent": normalized_intent,
+            "reason": normalized_reason,
+            "requested_at": datetime.now(timezone.utc),
+            "issuer": issuer,
+        }
+    )
+    queue = TaskQueue(paths)
+    backlog_depth = queue.backlog_depth()
+    next_task = queue.peek_next()
+
+    if daemon_running:
+        return _active_task_remediation_result(
+            mode="direct",
+            applied=False,
+            message=f"active-task {request.intent} blocked while daemon is running",
+            outcome_state=ActiveTaskRemediationOutcome.BLOCKED,
+            request=request,
+            payload={
+                "intent": request.intent,
+                "backlog_depth": backlog_depth,
+                "next_task_id": next_task.task_id if next_task is not None else None,
+                "blocked_reason": "daemon_running",
+            },
+        )
+
+    active_task = queue.active_task()
+    if active_task is None:
+        return _active_task_remediation_result(
+            mode="direct",
+            applied=False,
+            message="active task already clear",
+            outcome_state=ActiveTaskRemediationOutcome.NOOP_IDEMPOTENT,
+            request=request,
+            payload={
+                "intent": request.intent,
+                "backlog_depth": backlog_depth,
+                "next_task_id": next_task.task_id if next_task is not None else None,
+            },
+        )
+
+    try:
+        record = queue.remediate_active_task(
+            intent=request.intent,
+            reason=request.reason,
+            requested_at=request.requested_at,
+            issuer=request.issuer,
+        )
+    except QueueEmptyError:
+        return _active_task_remediation_result(
+            mode="direct",
+            applied=False,
+            message="active task already clear",
+            outcome_state=ActiveTaskRemediationOutcome.NOOP_IDEMPOTENT,
+            request=request,
+            payload={
+                "intent": request.intent,
+                "backlog_depth": backlog_depth,
+                "next_task_id": next_task.task_id if next_task is not None else None,
+            },
+        )
+    except (FileNotFoundError, QueueError, ValueError) as exc:
+        raise queue_control_error(exc, prefix=f"active-task {request.intent} failed") from exc
+
+    remaining_backlog_depth = queue.backlog_depth()
+    next_after = queue.peek_next()
+    payload: dict[str, object] = {
+        "intent": record.intent,
+        "task_id": record.task.task_id,
+        "title": record.task.title,
+        "source_store": record.source_store,
+        "destination_store": record.destination_store,
+        "reason": record.reason,
+        "requested_at": record.requested_at,
+        "applied_at": record.applied_at,
+        "backlog_depth": remaining_backlog_depth,
+        "next_task_id": next_after.task_id if next_after is not None else None,
+    }
+    if record.issuer is not None:
+        payload["issuer"] = record.issuer
+    return _active_task_remediation_result(
+        mode="direct",
+        applied=True,
+        message=f"active task {record.intent} applied",
+        outcome_state=ActiveTaskRemediationOutcome.APPLIED,
+        request=request,
+        payload=payload,
+    )
+
+
+def active_task_rejected(
+    *,
+    intent: str,
+    reason: str,
+    issuer: str | None = None,
+    rejected_reason: str = "unsupported_intent",
+) -> ActiveTaskRemediationResult:
+    """Return one deterministic rejected result for unsupported active-task requests."""
+
+    normalized_reason = " ".join(reason.strip().split())
+    normalized_issuer = " ".join((issuer or "").strip().split()) or None
+    normalized_intent = " ".join(intent.strip().split()) or intent.strip()
+    if not normalized_reason:
+        normalized_reason = "request rejected"
+    if rejected_reason == "reason_required":
+        message = "active-task request rejected: reason is required"
+    else:
+        message = f"active-task request rejected: unsupported intent {normalized_intent!r}"
+    return _active_task_remediation_result(
+        mode="direct",
+        applied=False,
+        message=message,
+        outcome_state=ActiveTaskRemediationOutcome.REJECTED,
+        request=ActiveTaskRemediationRequest.model_construct(
+            intent=normalized_intent,
+            reason=normalized_reason,
+            requested_at=datetime.now(timezone.utc),
+            issuer=normalized_issuer,
+        ),
+        payload={
+            "intent": normalized_intent,
+            "rejected_reason": rejected_reason,
+        },
+    )
 
 
 def queue_reorder(

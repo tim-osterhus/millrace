@@ -148,6 +148,7 @@ from .control_interview import (
     interview_skip as interview_skip_operation,
 )
 from .control_models import (
+    ActiveTaskRemediationResult,
     AssetFamilyEntryView,
     AssetInventoryView,
     AssetResolutionView,
@@ -191,6 +192,9 @@ from .control_models import (
     SupervisorAction,
     SupervisorAttentionReason,
     SupervisorReport,
+)
+from .control_mutation_surface import (
+    active_task_remediate as active_task_remediate_surface,
 )
 from .control_mutation_surface import (
     add_idea as add_idea_surface,
@@ -245,6 +249,9 @@ from .control_mutation_surface import (
 )
 from .control_mutation_surface import (
     supervisor_add_task as supervisor_add_task_surface,
+)
+from .control_mutation_surface import (
+    supervisor_active_task_remediate as supervisor_active_task_remediate_surface,
 )
 from .control_mutation_surface import (
     supervisor_pause as supervisor_pause_surface,
@@ -545,6 +552,31 @@ class EngineControl:
     def start(self, *, daemon: bool = False, once: bool = False) -> RuntimeState:
         """Start the engine in foreground once or daemon mode."""
         return start_engine(self.config_path, daemon=daemon, once=once)
+
+    def active_task_clear(self, *, reason: str) -> ActiveTaskRemediationResult:
+        """Request supported active-task clear semantics."""
+
+        return active_task_remediate_surface(self, "clear", reason=reason)
+
+    def active_task_recover(self, *, reason: str) -> ActiveTaskRemediationResult:
+        """Request supported active-task recover semantics."""
+
+        return active_task_remediate_surface(self, "recover", reason=reason)
+
+    def active_task_remediate(self, intent: str, *, reason: str) -> ActiveTaskRemediationResult:
+        """Request active-task remediation through the stable control API."""
+
+        return active_task_remediate_surface(self, intent, reason=reason)
+
+    def supervisor_active_task_clear(self, *, reason: str, issuer: str) -> ActiveTaskRemediationResult:
+        """Request supervisor-attributed active-task clear semantics."""
+
+        return supervisor_active_task_remediate_surface(self, "clear", reason=reason, issuer=issuer)
+
+    def supervisor_active_task_recover(self, *, reason: str, issuer: str) -> ActiveTaskRemediationResult:
+        """Request supervisor-attributed active-task recover semantics."""
+
+        return supervisor_active_task_remediate_surface(self, "recover", reason=reason, issuer=issuer)
 
     # Delegate bulky surface families into owned modules while keeping EngineControl stable.
     status = status_surface

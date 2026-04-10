@@ -3296,6 +3296,127 @@ def test_cli_queue_cleanup_remove_records_backburner_audit_trail(tmp_path: Path)
     assert "invalid queued work" in backburner_text
 
 
+def test_cli_active_task_clear_applies_supported_direct_remediation(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+
+    RUNNER.invoke(app, ["--config", str(config_path), "add-task", "Recover active task"])
+    task_queue = TaskQueue(build_runtime_paths(load_engine_config(config_path).config))
+    active_card = task_queue.promote_next()
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "active-task",
+            "clear",
+            "--reason",
+            "stale after review",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "direct"
+    assert payload["applied"] is True
+    assert payload["outcome_state"] == "applied"
+    assert payload["message"] == "active task clear applied"
+    assert payload["request"]["intent"] == "clear"
+    assert payload["request"]["reason"] == "stale after review"
+    assert payload["payload"]["task_id"] == active_card.task_id
+    assert payload["payload"]["source_store"] == "active"
+    assert payload["payload"]["destination_store"] == "backburner"
+    assert payload["payload"]["backlog_depth"] == 0
+
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+    backburner_text = (workspace / "agents/tasksbackburner.md").read_text(encoding="utf-8")
+    assert "active_task_remediation:clear:start" in backburner_text
+    assert active_card.task_id in backburner_text
+    assert "stale after review" in backburner_text
+
+
+def test_engine_control_active_task_recover_is_noop_when_active_slot_already_empty(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+
+    result = control.active_task_recover(reason="recover empty slot")
+
+    assert result.mode == "direct"
+    assert result.applied is False
+    assert result.outcome_state == "noop-idempotent"
+    assert result.message == "active task already clear"
+    assert result.request.intent == "recover"
+    assert result.payload["backlog_depth"] == 0
+    assert result.payload["next_task_id"] is None
+
+
+def test_engine_control_active_task_clear_reports_blocked_when_daemon_running(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+
+    RUNNER.invoke(app, ["--config", str(config_path), "add-task", "Blocked active task"])
+    TaskQueue(paths).promote_next()
+
+    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    runtime_state = RuntimeState(
+        process_running=True,
+        process_id=os.getpid(),
+        paused=False,
+        execution_status=ExecutionStatus.BUILDER_RUNNING,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-10T22:00:00Z",
+    )
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    result = control.active_task_clear(reason="daemon still active")
+
+    assert result.mode == "direct"
+    assert result.applied is False
+    assert result.outcome_state == "blocked"
+    assert result.message == "active-task clear blocked while daemon is running"
+    assert result.payload["blocked_reason"] == "daemon_running"
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) != []
+
+
+def test_engine_control_active_task_clear_rejects_empty_reason_without_mutation(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+
+    RUNNER.invoke(app, ["--config", str(config_path), "add-task", "Empty reason active task"])
+    TaskQueue(paths).promote_next()
+
+    result = control.active_task_clear(reason="   ")
+
+    assert result.mode == "direct"
+    assert result.applied is False
+    assert result.outcome_state == "rejected"
+    assert result.message == "active-task request rejected: reason is required"
+    assert result.request.intent == "clear"
+    assert result.request.reason == "request rejected"
+    assert result.payload["rejected_reason"] == "reason_required"
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) != []
+
+
+def test_engine_control_active_task_remediation_rejects_unknown_intent(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+
+    result = control.active_task_remediate("erase", reason="unsupported request")
+
+    assert result.mode == "direct"
+    assert result.applied is False
+    assert result.outcome_state == "rejected"
+    assert result.message == "active-task request rejected: unsupported intent 'erase'"
+    assert result.request.intent == "erase"
+    assert result.payload["rejected_reason"] == "unsupported_intent"
+
+
 def test_cli_queue_cleanup_unknown_task_fails_without_traceback(tmp_path: Path) -> None:
     workspace, config_path = runtime_workspace(tmp_path)
 

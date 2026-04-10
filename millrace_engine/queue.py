@@ -76,6 +76,20 @@ class QueueCleanupRecord:
     cleaned_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveTaskRemediationRecord:
+    """One supported active-task remediation audit record."""
+
+    intent: Literal["clear", "recover"]
+    task: TaskCard
+    source_store: Literal["active"]
+    destination_store: Literal["backburner"]
+    reason: str
+    requested_at: datetime
+    issuer: str | None
+    applied_at: datetime
+
+
 def _sha256_text(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
 
@@ -286,6 +300,36 @@ class TaskQueue:
         ]
         return "\n\n".join(lines)
 
+    def _render_active_task_remediation_record(
+        self,
+        *,
+        intent: Literal["clear", "recover"],
+        reason: str,
+        requested_at: datetime,
+        issuer: str | None,
+        applied_at: datetime,
+        task: TaskCard,
+    ) -> str:
+        requested_at_label = requested_at.isoformat().replace("+00:00", "Z")
+        applied_at_label = applied_at.isoformat().replace("+00:00", "Z")
+        lines = [
+            f"<!-- active_task_remediation:{intent}:start {task.task_id} -->",
+            f"<!-- requested_at: {requested_at_label} -->",
+            f"<!-- applied_at: {applied_at_label} -->",
+            "<!-- source_store: active -->",
+            "<!-- destination_store: backburner -->",
+            f"<!-- reason: {reason} -->",
+        ]
+        if issuer:
+            lines.append(f"<!-- issuer: {issuer} -->")
+        lines.extend(
+            [
+                task.render_markdown(),
+                f"<!-- active_task_remediation:{intent}:end {task.task_id} -->",
+            ]
+        )
+        return "\n\n".join(lines)
+
     def backlog_empty(self) -> bool:
         """Return True when the backlog file has no visible task cards."""
 
@@ -401,6 +445,55 @@ class TaskQueue:
         """Quarantine one visible queued task into backburner with a cleanup record."""
 
         return self.cleanup(task_id, action="quarantine", reason=reason)
+
+    def remediate_active_task(
+        self,
+        *,
+        intent: Literal["clear", "recover"],
+        reason: str,
+        requested_at: datetime,
+        issuer: str | None = None,
+    ) -> ActiveTaskRemediationRecord:
+        """Move the active task into backburner with an active-task remediation audit trail."""
+
+        normalized_reason = " ".join(reason.strip().split())
+        normalized_issuer = " ".join((issuer or "").strip().split()) or None
+        if not normalized_reason:
+            raise QueueStateError("active-task remediation requires a reason")
+
+        with self._locked():
+            active_document = self._read_active_document()
+            if not active_document.cards:
+                raise QueueEmptyError("no active task card is present")
+            task = active_document.cards[0]
+            applied_at = datetime.now(timezone.utc)
+            remediation_record = self._render_active_task_remediation_record(
+                intent=intent,
+                reason=normalized_reason,
+                requested_at=requested_at,
+                issuer=normalized_issuer,
+                applied_at=applied_at,
+                task=task,
+            )
+            self._write_store(
+                self.paths.tasks_file,
+                TaskStoreDocument(preamble=active_document.preamble, cards=[]),
+            )
+            updated_backburner = append_markdown_block(
+                self._read_text(self.paths.backburner_file),
+                remediation_record,
+            )
+            write_text_atomic(self.paths.backburner_file, updated_backburner)
+            return ActiveTaskRemediationRecord(
+                intent=intent,
+                task=task,
+                source_store="active",
+                destination_store="backburner",
+                reason=normalized_reason,
+                requested_at=requested_at,
+                issuer=normalized_issuer,
+                applied_at=applied_at,
+            )
 
     def merge_pending_family(
         self,

@@ -691,8 +691,18 @@ def render_operation(result: OperationResult, *, json_mode: bool = False) -> Non
         f"Applied: {'yes' if result.applied else 'no'}",
         f"Message: {result.message}",
     ]
+    outcome_state = getattr(result, "outcome_state", None)
+    if outcome_state is not None:
+        lines.append(f"Outcome state: {outcome_state}")
     if result.command_id is not None:
         lines.append(f"Command id: {result.command_id}")
+    request = getattr(result, "request", None)
+    if request is not None:
+        lines.append(f"Request intent: {request.intent}")
+        lines.append(f"Request reason: {request.reason}")
+        lines.append(f"Requested at: {request.requested_at.isoformat().replace('+00:00', 'Z')}")
+        if getattr(request, "issuer", None):
+            lines.append(f"Issuer: {request.issuer}")
     for key, value in sorted(result.payload.items()):
         lines.append(f"{key}: {value}")
     typer.echo("\n".join(lines))
