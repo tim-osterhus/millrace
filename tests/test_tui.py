@@ -761,10 +761,21 @@ def test_tui_shell_expanded_stream_scrollback_and_jump_live(monkeypatch, tmp_pat
     _run_app_scenario(config_path, scenario)
 
 
-def test_tui_help_modal_surfaces_global_and_panel_shortcuts(tmp_path) -> None:
-    _, config_path = load_operator_workspace(tmp_path)
+def test_tui_help_modal_surfaces_global_and_panel_shortcuts(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    _write_runtime_state_snapshot(workspace, process_running=True, backlog_depth=0)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
 
     async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
         await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
         assert isinstance(app.screen, ShellScreen)
 
@@ -790,6 +801,47 @@ def test_tui_help_modal_surfaces_global_and_panel_shortcuts(tmp_path) -> None:
         assert "Current panel: Logs" in logs_help
         assert "f toggles follow and freeze." in logs_help
         assert "Ctrl+Left/Right changes the source filter" in logs_help
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_help_modal_restores_content_focus_after_close(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    _write_runtime_state_snapshot(workspace, process_running=True, backlog_depth=0)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("5")
+        await pilot.pause()
+        assert app.screen.active_panel == PanelId.LOGS
+
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-logs"
+
+        await pilot.press("question_mark")
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, HelpModal))
+        assert isinstance(app.screen, HelpModal)
+
+        await pilot.press("escape")
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen.active_panel == PanelId.LOGS
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-logs"
 
     _run_app_scenario(config_path, scenario)
 
@@ -3409,6 +3461,75 @@ def test_tui_store_append_events_retains_distinct_payload_variants() -> None:
     assert state.events.events == (first, second)
 
 
+def test_tui_store_failure_recovery_and_display_mode_updates_stay_targeted() -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    refresh_payload = _sample_refresh_payload(observed_at=observed_at)
+    lifecycle_action = ActionResultView(
+        action="pause",
+        message="pause queued",
+        applied=True,
+        mode="mailbox",
+    )
+    refresh_failure = GatewayFailure(
+        operation="refresh.workspace",
+        category=FailureCategory.IO,
+        message="queue panel stale",
+        exception_type="OSError",
+        retryable=True,
+    )
+    action_failure = GatewayFailure(
+        operation="runtime.pause",
+        category=FailureCategory.CONTROL,
+        message="pause failed",
+        exception_type="ControlError",
+        retryable=True,
+    )
+    recovery_event = _sample_runtime_event(
+        event_type="engine.started",
+        source="engine",
+        observed_at=observed_at,
+        is_research_event=False,
+    )
+    store = TUIStore()
+
+    state = store.apply_refresh_success(refresh_payload)
+    state = store.apply_action_success(lifecycle_action, notice=notice_from_action(lifecycle_action, created_at=observed_at))
+    state = store.apply_refresh_failure(
+        refresh_failure,
+        panels=(PanelId.QUEUE, PanelId.LOGS),
+        notice=notice_from_failure(refresh_failure, created_at=observed_at),
+    )
+
+    assert state.last_refresh_failure == refresh_failure
+    assert store.panel_failure(PanelId.QUEUE) == refresh_failure
+    assert store.panel_failure(PanelId.LOGS) == refresh_failure
+
+    state = store.apply_action_failure(
+        action_failure,
+        notice=notice_from_failure(action_failure, created_at=observed_at),
+    )
+
+    assert state.last_action == lifecycle_action
+    assert state.last_action_failure == action_failure
+    assert state.last_refresh_failure == refresh_failure
+
+    state = store.set_display_mode(DisplayMode.DEBUG)
+    assert state.display_mode is DisplayMode.DEBUG
+
+    state = store.toggle_display_mode()
+    assert state.display_mode is DisplayMode.OPERATOR
+
+    state = store.apply_refresh_success(refresh_payload, panels=(PanelId.QUEUE,))
+    assert state.last_refresh_failure is None
+    assert store.panel_failure(PanelId.QUEUE) is None
+    assert store.panel_failure(PanelId.LOGS) == refresh_failure
+
+    state = store.append_events((recovery_event,), received_at=observed_at, clear_panels=(PanelId.LOGS,))
+    assert state.events is not None
+    assert state.events.events == (recovery_event,)
+    assert store.panel_failure(PanelId.LOGS) is None
+
+
 def test_tui_shell_queue_panel_navigation_preserves_selection_across_panel_switches(tmp_path) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
     (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
@@ -4356,6 +4477,97 @@ def test_tui_shell_queue_panel_opens_run_detail_modal(monkeypatch, tmp_path) -> 
         assert isinstance(app.screen, ShellScreen)
         runs_text = _panel_text(app.screen.query_one("#panel-runs", RunsPanel))
         assert "run-queue-1" in runs_text
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_event_stream_failure_recovers_without_losing_logs_snapshot(monkeypatch, tmp_path) -> None:
+    observed_at = datetime(2026, 3, 25, 0, 0, 30, tzinfo=timezone.utc)
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    payload = replace(
+        _sample_refresh_payload(observed_at=observed_at),
+        events=EventLogView(
+            events=(
+                _sample_runtime_event(
+                    event_type="engine.started",
+                    source="engine",
+                    observed_at=observed_at,
+                    category="ENG",
+                    summary="stage=bootstrap",
+                    is_research_event=False,
+                ),
+            ),
+            last_loaded_at=observed_at,
+        ),
+    )
+    monkeypatch.setattr(
+        shell_module,
+        "load_workspace_refresh",
+        lambda *args, **kwargs: GatewayResult(value=payload),
+    )
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+    failure = GatewayFailure(
+        operation="events.subscribe",
+        category=FailureCategory.IO,
+        message="engine_events.log temporarily unavailable",
+        exception_type="OSError",
+        retryable=True,
+    )
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and app.screen._store.state.events.events,
+        )
+        assert isinstance(app.screen, ShellScreen)
+        logs_panel = app.screen.query_one("#panel-logs", LogsPanel)
+        baseline_text = _panel_text(logs_panel)
+        assert "engine.started" in baseline_text
+        assert app.screen._store.panel_failure(PanelId.LOGS) is None
+
+        app.screen.post_message(EventStreamFailed(failure))
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.panel_failure(PanelId.LOGS) == failure,
+        )
+        degraded_text = _panel_text(app.screen.query_one("#panel-logs", LogsPanel))
+        assert "LOGS stale: engine_events.log temporarily unavailable" in degraded_text
+        assert "engine.started" in degraded_text
+        assert app.screen._store.state.notices[-1].message == failure.message
+
+        recovery_event = _sample_runtime_event(
+            event_type="execution.stage.completed",
+            source="execution",
+            observed_at=observed_at,
+            category="EXE",
+            summary="stage=qa | status=success",
+            run_id="run-recovery-1",
+            is_research_event=False,
+            payload=(KeyValueView("stage", "qa"), KeyValueView("status", "success")),
+        )
+        app.screen.post_message(EventsAppended((recovery_event,), received_at=observed_at))
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.panel_failure(PanelId.LOGS) is None
+            and app.screen._store.state.events is not None
+            and any(event.run_id == "run-recovery-1" for event in app.screen._store.state.events.events),
+        )
+        recovered_text = _panel_text(app.screen.query_one("#panel-logs", LogsPanel))
+        assert "LOGS stale" not in recovered_text
+        assert "run run-recovery-1" in recovered_text
 
     _run_app_scenario(config_path, scenario)
 

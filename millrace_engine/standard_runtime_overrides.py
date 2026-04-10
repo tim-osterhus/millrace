@@ -50,6 +50,13 @@ def explicit_stage_binding_parameters(
         updates["model"] = stage_config.model
     if stage_config.effort is not None and stage_config.effort != baseline.effort:
         updates["effort"] = stage_config.effort
+    stage_permission_profile = getattr(stage_config, "permission_profile", None)
+    baseline_permission_profile = getattr(baseline, "permission_profile", None)
+    if (
+        stage_permission_profile != baseline_permission_profile
+        and (stage_permission_profile is not None or baseline_permission_profile is not None)
+    ):
+        updates["permission_profile"] = stage_permission_profile
     return updates
 
 
@@ -66,18 +73,21 @@ def stage_overrides_for_node_ids(
             continue
         stage_config = config.stages[stage_type]
         binding_updates = explicit_stage_binding_parameters(config, stage_type)
+        override_kwargs: dict[str, object] = {
+            "runner": binding_updates.get("runner"),
+            "model": binding_updates.get("model"),
+            "effort": binding_updates.get("effort"),
+            "allow_search": stage_config.allow_search,
+            "prompt_asset_ref": prompt_asset_ref_for_path(config.paths.workspace, stage_config.prompt_file),
+            "timeout_seconds": stage_config.timeout_seconds,
+        }
+        if "permission_profile" in getattr(LoopStageNodeOverrides, "model_fields", {}):
+            override_kwargs["permission_profile"] = binding_updates.get("permission_profile")
         stage_overrides.append(
             StageInvocationOverride(
                 plane="execution",
                 node_id=node_id,
-                overrides=LoopStageNodeOverrides(
-                    runner=binding_updates.get("runner"),
-                    model=binding_updates.get("model"),
-                    effort=binding_updates.get("effort"),
-                    allow_search=stage_config.allow_search,
-                    prompt_asset_ref=prompt_asset_ref_for_path(config.paths.workspace, stage_config.prompt_file),
-                    timeout_seconds=stage_config.timeout_seconds,
-                ),
+                overrides=LoopStageNodeOverrides(**override_kwargs),
             )
         )
     return tuple(stage_overrides)
