@@ -86,6 +86,8 @@ def test_contractor_execution_record_round_trips_from_runtime_record_dir(tmp_pat
         canonical_source_path="agents/ideas/archive/raw/aura_goal.md",
         current_artifact_path="agents/ideas/staging/aura_goal.md",
         source_path="agents/ideas/archive/raw/aura_goal.md",
+        source_checksum_sha256="abc123",
+        canonical_source_checksum_sha256="def456",
         research_brief_path="agents/ideas/staging/aura_goal.md",
         profile_path="agents/objective/contractor_profile.json",
         report_path="agents/reports/contractor_profile.md",

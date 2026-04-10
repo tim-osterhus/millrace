@@ -70,6 +70,7 @@ from .goalspec import (
     research_stage_for_node,
     resolve_goal_source,
 )
+from .goalspec_contractor import execute_contractor
 from .governance import (
     DEFAULT_PINNED_FAMILY_POLICY_FIELDS,
     DriftControlPolicy,
@@ -323,6 +324,7 @@ __all__ = [
     "execute_audit_validate",
     "execute_completion_manifest_draft",
     "execute_goal_intake",
+    "execute_contractor",
     "execute_objective_profile_sync",
     "execute_spec_review",
     "execute_spec_synthesis",

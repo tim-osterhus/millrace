@@ -528,6 +528,8 @@ class ContractorExecutionRecord(ContractModel):
     canonical_source_path: str
     current_artifact_path: str
     source_path: str
+    source_checksum_sha256: str = ""
+    canonical_source_checksum_sha256: str = ""
     research_brief_path: str
     profile_path: str
     report_path: str
@@ -577,6 +579,16 @@ class ContractorExecutionRecord(ContractModel):
         if field_name.endswith("_path"):
             return _normalize_required_text(_normalize_path_token(value), field_name=field_name)
         return _normalize_required_text(str(value), field_name=field_name)
+
+    @field_validator("source_checksum_sha256", mode="before")
+    @classmethod
+    def normalize_source_checksum_sha256(cls, value: str | None) -> str:
+        return "" if value is None else str(value).strip()
+
+    @field_validator("canonical_source_checksum_sha256", mode="before")
+    @classmethod
+    def normalize_canonical_source_checksum_sha256(cls, value: str | None) -> str:
+        return "" if value is None else str(value).strip()
 
 
 class ContractorExecutionResult(ContractModel):
