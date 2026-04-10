@@ -23,7 +23,8 @@ APP_BINDINGS = tuple(
             for index, panel in enumerate(PANELS, start=1)
         ],
         Binding("s", "focus_sidebar", "Sidebar", group=FOCUS_GROUP),
-        Binding("c", "focus_content", "Content", group=FOCUS_GROUP),
+        Binding("c", "focus_content", "Workspace", group=FOCUS_GROUP),
+        Binding("tab", "focus_next", "Next Region", key_display="Tab", group=FOCUS_GROUP),
+        Binding("shift+tab", "focus_previous", "Prev Region", key_display="Shift+Tab", group=FOCUS_GROUP),
     ]
 )
-

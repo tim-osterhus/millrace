@@ -323,7 +323,9 @@ def test_tui_registers_minimal_system_commands(tmp_path) -> None:
         assert "Open Overview" in titles
         assert "Open Logs" in titles
         assert "Focus Sidebar" in titles
-        assert "Focus Content" in titles
+        assert "Focus Workspace" in titles
+        assert "Focus Next Region" in titles
+        assert "Focus Previous Region" in titles
         assert "Open Keyboard Help" in titles
         assert "Start Once" in titles
         assert "Start Daemon" in titles
@@ -785,6 +787,8 @@ def test_tui_help_modal_surfaces_global_and_panel_shortcuts(monkeypatch, tmp_pat
         assert isinstance(app.screen, HelpModal)
         overview_help = _static_text(app.screen.query_one("#help-modal-body", Static))
         assert "Current panel: Overview" in overview_help
+        assert "s focuses the sidebar, c focuses the workspace, and Tab or Shift+Tab cycles between them." in overview_help
+        assert "d toggles operator and debug display modes for the current shell session." in overview_help
         assert "e toggles expanded stream mode and Escape exits it." in overview_help
         assert "Ctrl+P opens the command palette" in overview_help
         assert "This panel does not add extra keyboard controls." in overview_help
@@ -843,6 +847,54 @@ def test_tui_help_modal_restores_content_focus_after_close(monkeypatch, tmp_path
         assert app.screen.active_panel == PanelId.LOGS
         assert app.screen.focused is not None
         assert app.screen.focused.id == "panel-logs"
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_cycles_focus_and_restores_sidebar_after_expanded_exit(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    _write_runtime_state_snapshot(workspace, process_running=True, backlog_depth=0)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "nav-overview"
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-overview"
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "nav-overview"
+
+        await pilot.press("e")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen.focused is not None and app.screen.focused.id == EXPANDED_STREAM_WIDGET_ID,
+        )
+
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen.focused is not None and app.screen.focused.id == "nav-overview",
+        )
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "nav-overview"
 
     _run_app_scenario(config_path, scenario)
 
@@ -3658,6 +3710,11 @@ def test_tui_shell_add_task_modal_validates_locally_and_refreshes_queue(monkeypa
             pilot,
             lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.queue is not None,
         )
+        assert isinstance(app.screen, ShellScreen)
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-overview"
 
         await pilot.press("t")
         await _wait_for_condition(pilot, lambda: isinstance(app.screen, AddTaskModal))
@@ -3688,6 +3745,8 @@ def test_tui_shell_add_task_modal_validates_locally_and_refreshes_queue(monkeypa
         assert app.screen._store.state.last_action is not None
         assert app.screen._store.state.last_action.message == "task added"
         assert app.screen._store.state.notices[-1].message == "task added"
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-overview"
         backlog_cards = parse_task_cards((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
         assert [card.title for card in backlog_cards] == ["Operator-authored TUI task"]
         assert backlog_cards[0].spec_id == "SPEC-TUI-ADD-TASK"

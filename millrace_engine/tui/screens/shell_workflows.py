@@ -66,17 +66,21 @@ class ShellWorkflowMixin:
 
     def open_panel(self, panel_id: PanelId) -> None: ...
 
+    def capture_focus_zone_for_modal(self) -> None: ...
+
+    def restore_focus_after_modal(self) -> None: ...
+
     def action_open_add_task(self) -> None:
-        self.app.push_screen(AddTaskModal(), self._handle_add_task_request)
+        self._push_modal(AddTaskModal(), self._handle_add_task_request)
 
     def action_open_add_idea(self) -> None:
-        self.app.push_screen(
+        self._push_modal(
             AddIdeaModal(workspace_path=self.workspace_path),
             self._handle_add_idea_request,
         )
 
     def action_open_help(self) -> None:
-        self.app.push_screen(HelpModal(active_panel=self.active_panel))
+        self._push_modal(HelpModal(active_panel=self.active_panel))
 
     def action_start_once(self) -> None:
         self._run_lifecycle_action(
@@ -165,7 +169,7 @@ class ShellWorkflowMixin:
         self._startup_prompt_window_open = False
         if runtime.process_running:
             return
-        self.app.push_screen(
+        self._push_modal(
             ConfirmModal(
                 title="Launch Daemon Now",
                 body_lines=(
@@ -257,7 +261,7 @@ class ShellWorkflowMixin:
     @on(QueuePanel.ReorderRequested)
     def _handle_queue_reorder_requested(self, message: QueuePanel.ReorderRequested) -> None:
         self._pending_queue_reorder = message.task_ids
-        self.app.push_screen(
+        self._push_modal(
             ConfirmModal(
                 title="Apply Queue Reorder",
                 body_lines=queue_reorder_confirmation_lines(
@@ -283,7 +287,7 @@ class ShellWorkflowMixin:
 
     @on(ResearchPanel.InterviewRequested)
     def _handle_research_interview_requested(self, message: ResearchPanel.InterviewRequested) -> None:
-        self.app.push_screen(
+        self._push_modal(
             InterviewModal(question=message.question),
             self._handle_interview_resolution_request,
         )
@@ -324,7 +328,7 @@ class ShellWorkflowMixin:
             )
             return
         runtime = self._store.state.runtime
-        self.app.push_screen(
+        self._push_modal(
             ConfigEditModal(
                 field=field,
                 daemon_running=bool(runtime.process_running) if runtime is not None else False,
@@ -384,7 +388,7 @@ class ShellWorkflowMixin:
             )
             return
         self._pending_publish_push = push
-        self.app.push_screen(
+        self._push_modal(
             ConfirmModal(
                 title=("Commit And Push" if push else "Commit Without Push"),
                 body_lines=publish_confirmation_lines(publish, push=push),
@@ -430,9 +434,24 @@ class ShellWorkflowMixin:
             return
         self._requested_run_id = normalized_run_id
         self.open_panel(PanelId.RUNS)
-        self.app.push_screen(
-            RunDetailModal(config_path=self.config_path, run_id=normalized_run_id)
-        )
+        self._push_modal(RunDetailModal(config_path=self.config_path, run_id=normalized_run_id))
+
+    def _push_modal(self, screen, callback: Callable[[object], None] | None = None) -> None:
+        self.capture_focus_zone_for_modal()
+        if callback is None:
+            self.app.push_screen(screen, self._restore_focus_only)
+            return
+        self.app.push_screen(screen, self._wrap_modal_callback(callback))
+
+    def _restore_focus_only(self, _: object) -> None:
+        self.restore_focus_after_modal()
+
+    def _wrap_modal_callback(self, callback: Callable[[object], None]) -> Callable[[object], None]:
+        def wrapped(result: object) -> None:
+            self.restore_focus_after_modal()
+            callback(result)
+
+        return wrapped
 
 
 __all__ = ["ShellWorkflowMixin"]

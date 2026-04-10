@@ -13,7 +13,8 @@ from ..models import PANEL_BY_ID, PanelId
 
 _GLOBAL_LINES = (
     "1-7 open the main panels.",
-    "s focuses the sidebar and c focuses the active panel.",
+    "s focuses the sidebar, c focuses the workspace, and Tab or Shift+Tab cycles between them.",
+    "d toggles operator and debug display modes for the current shell session.",
     "e toggles expanded stream mode and Escape exits it.",
     "t opens Add Task and i opens Add Idea.",
     "Ctrl+P opens the command palette for panel, lifecycle, config, and publish actions.",

@@ -104,6 +104,14 @@ class MillraceTUIApplication(App[None]):
         if isinstance(self.screen, ShellScreen):
             self._shell_screen.focus_content()
 
+    def action_focus_next(self) -> None:
+        if isinstance(self.screen, ShellScreen):
+            self._shell_screen.action_focus_next()
+
+    def action_focus_previous(self) -> None:
+        if isinstance(self.screen, ShellScreen):
+            self._shell_screen.action_focus_previous()
+
     def action_toggle_display_mode(self) -> None:
         if isinstance(self.screen, ShellScreen):
             self._shell_screen.action_toggle_display_mode()
@@ -254,7 +262,17 @@ class MillraceTUIApplication(App[None]):
             self.action_jump_expanded_stream_live,
         )
         yield SystemCommand("Focus Sidebar", "Move focus to the left sidebar navigation.", self.action_focus_sidebar)
-        yield SystemCommand("Focus Content", "Move focus to the active panel content.", self.action_focus_content)
+        yield SystemCommand("Focus Workspace", "Move focus to the active panel workspace.", self.action_focus_content)
+        yield SystemCommand(
+            "Focus Next Region",
+            "Cycle focus between the sidebar and workspace regions.",
+            self.action_focus_next,
+        )
+        yield SystemCommand(
+            "Focus Previous Region",
+            "Cycle focus backward between the sidebar and workspace regions.",
+            self.action_focus_previous,
+        )
         yield SystemCommand(
             "Open Keyboard Help",
             "Show shortcuts plus operator/debug guidance for the active panel.",

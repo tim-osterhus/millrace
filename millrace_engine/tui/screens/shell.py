@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import ContentSwitcher, Footer
 from textual.worker import Worker, WorkerState
 
@@ -78,12 +80,20 @@ ACTION_GROUP = Binding.Group("Actions", compact=True)
 DISCOVERY_GROUP = Binding.Group("Discover", compact=True)
 
 
+class ShellFocusZone(Enum):
+    """Focusable shell regions that the shell owns explicitly."""
+
+    SIDEBAR = "sidebar"
+    WORKSPACE = "workspace"
+
+
 class ShellScreen(ShellWorkflowMixin, Screen[None]):
     """Persistent shell layout with refresh workers and inline failure state."""
 
     BINDINGS = (
         Binding("t", "open_add_task", "Add Task", group=ACTION_GROUP),
         Binding("i", "open_add_idea", "Add Idea", group=ACTION_GROUP),
+        Binding("d", "toggle_display_mode", "Mode", group=DISCOVERY_GROUP),
         Binding("e", "toggle_expanded_mode", "Expanded", group=DISCOVERY_GROUP),
         Binding("l", "jump_expanded_stream_live", "Jump Live", show=False),
         Binding("escape", "exit_expanded_mode", "Exit Expanded", show=False),
@@ -118,6 +128,9 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         self._lifecycle_worker_name: str | None = None
         self._last_lifecycle_failure: GatewayFailure | None = None
         self._startup_prompt_window_open = offer_startup_daemon_launch
+        self._focus_zone = ShellFocusZone.SIDEBAR
+        self._focus_zone_before_expanded: ShellFocusZone | None = None
+        self._focus_zone_before_modal: ShellFocusZone | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell-root"):
@@ -180,23 +193,47 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     def open_panel(self, panel_id: PanelId) -> None:
         if self.active_panel == panel_id:
             return
-        focus_sidebar = self.focused is not None and self.focused.id is not None and self.focused.id.startswith("nav-")
-        focus_content = self.focused is not None and self.focused.id == panel_widget_id(self.active_panel)
+        previous_zone = self._focused_zone(self.focused) or self._focus_zone
         self.active_panel = panel_id
         self._sync_panel_state()
-        if focus_sidebar:
-            self.focus_sidebar()
-        elif focus_content:
-            self.focus_content()
+        self.restore_focus_zone(previous_zone)
 
     def focus_sidebar(self) -> None:
+        self._focus_zone = ShellFocusZone.SIDEBAR
         self.query_one(SidebarNav).focus_active_button()
 
     def focus_content(self) -> None:
+        self._focus_zone = ShellFocusZone.WORKSPACE
         if self._shell_body_mode is ShellBodyMode.EXPANDED:
             self.query_one(f"#{EXPANDED_STREAM_WIDGET_ID}").focus()
             return
         self.query_one(f"#{panel_widget_id(self.active_panel)}").focus()
+
+    def action_focus_next(self) -> None:
+        if self._focus_zone is ShellFocusZone.WORKSPACE:
+            self.focus_sidebar()
+            return
+        self.focus_content()
+
+    def action_focus_previous(self) -> None:
+        if self._focus_zone is ShellFocusZone.SIDEBAR:
+            self.focus_content()
+            return
+        self.focus_sidebar()
+
+    def capture_focus_zone_for_modal(self) -> None:
+        self._focus_zone_before_modal = self._focused_zone(self.focused) or self._focus_zone
+
+    def restore_focus_after_modal(self) -> None:
+        zone = self._focus_zone_before_modal
+        self._focus_zone_before_modal = None
+        self.restore_focus_zone(zone)
+
+    def restore_focus_zone(self, zone: ShellFocusZone | None) -> None:
+        if zone is ShellFocusZone.SIDEBAR:
+            self.focus_sidebar()
+            return
+        self.focus_content()
 
     def _runtime_gateway(self) -> RuntimeGateway:
         return RuntimeGateway(self.config_path)
@@ -345,9 +382,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
 
     def action_toggle_expanded_mode(self) -> None:
         next_mode = (
-            ShellBodyMode.COMPACT
-            if self._shell_body_mode is ShellBodyMode.EXPANDED
-            else ShellBodyMode.EXPANDED
+            ShellBodyMode.COMPACT if self._shell_body_mode is ShellBodyMode.EXPANDED else ShellBodyMode.EXPANDED
         )
         self._set_shell_body_mode(next_mode)
 
@@ -372,14 +407,34 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
 
     def _set_shell_body_mode(self, mode: ShellBodyMode) -> None:
         previous_mode = self._shell_body_mode
+        if mode is ShellBodyMode.EXPANDED and previous_mode is not ShellBodyMode.EXPANDED:
+            self._focus_zone_before_expanded = self._focused_zone(self.focused) or self._focus_zone
         self._shell_body_mode = mode
         if self.is_mounted:
             self._sync_panel_state()
             if mode is ShellBodyMode.EXPANDED:
                 self.focus_content()
-            elif previous_mode is ShellBodyMode.EXPANDED and self.focused is not None:
-                if self.focused.id == EXPANDED_STREAM_WIDGET_ID:
-                    self.focus_content()
+            elif previous_mode is ShellBodyMode.EXPANDED:
+                zone = self._focus_zone_before_expanded
+                self._focus_zone_before_expanded = None
+                self.restore_focus_zone(zone)
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        zone = self._focused_zone(event.widget)
+        if zone is not None:
+            self._focus_zone = zone
+
+    def _focused_zone(self, widget: Widget | None) -> ShellFocusZone | None:
+        current = widget
+        active_panel_id = panel_widget_id(self.active_panel)
+        while current is not None:
+            widget_id = current.id
+            if widget_id is not None and widget_id.startswith("nav-"):
+                return ShellFocusZone.SIDEBAR
+            if widget_id == active_panel_id or widget_id == EXPANDED_STREAM_WIDGET_ID:
+                return ShellFocusZone.WORKSPACE
+            current = current.parent
+        return None
 
     def _render_state(self) -> None:
         state = self._store.state
