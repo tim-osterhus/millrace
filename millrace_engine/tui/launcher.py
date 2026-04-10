@@ -12,6 +12,7 @@ from typing import BinaryIO
 
 from ..config import build_runtime_paths, load_engine_config
 from ..control_reports import read_runtime_state
+from ..engine_runtime import start_collision_message_for_state_path
 from .models import (
     ActionResultView,
     FailureCategory,
@@ -295,9 +296,15 @@ async def launch_start_daemon(
             exception_type=exc.__class__.__name__,
         )
     if await asyncio.to_thread(_daemon_running, observation_paths.state_path):
+        collision_message = await asyncio.to_thread(
+            start_collision_message_for_state_path,
+            observation_paths.state_path,
+            attempted_mode="daemon",
+        )
         return _failure(
             START_DAEMON_OPERATION,
-            (
+            collision_message
+            or (
                 "runtime already reports a running daemon; "
                 "refresh status or use pause, resume, or stop instead."
                 f"{_observation_path_message_suffix(observation_paths)}"

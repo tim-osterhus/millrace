@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 import json
 import os
 import pytest
@@ -18,6 +18,7 @@ import millrace_engine.cli as cli_module
 from millrace_engine.cli import app
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import EngineControl
+from millrace_engine.control_common import ControlError
 from millrace_engine.contracts import (
     AuditGateDecision,
     AuditGateDecisionCounts,
@@ -2508,6 +2509,69 @@ def test_cli_mailbox_commands_update_runtime_state_and_event_log(tmp_path: Path)
     assert EventType.ENGINE_PAUSED.value in event_types
     assert EventType.ENGINE_RESUMED.value in event_types
     assert EventType.ENGINE_STOPPED.value in event_types
+
+
+def test_engine_control_start_rejects_daemon_overlap_while_once_run_owns_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    state_path = workspace / "agents/.runtime/state.json"
+    controller = EngineControl(config_path)
+    release_run = Event()
+
+    from millrace_engine.planes.execution import ExecutionPlane
+    from millrace_engine.planes.execution import ExecutionCycleResult
+
+    def blocking_run_once(self):
+        release_run.wait(timeout=5.0)
+        return ExecutionCycleResult(run_id=None, final_status=ExecutionStatus.IDLE)
+
+    monkeypatch.setattr(ExecutionPlane, "run_once", blocking_run_once)
+
+    thread = Thread(target=lambda: controller.start(once=True), daemon=True)
+    thread.start()
+
+    wait_for(lambda: state_path.exists() and read_state(state_path)["process_running"] is True)
+
+    with pytest.raises(ControlError) as excinfo:
+        controller.start(daemon=True)
+
+    message = str(excinfo.value)
+    assert "cannot start daemon" in message
+    assert "workspace is already owned by a running once runtime" in message
+    assert "started_at=" in message
+    assert f"state_path={state_path.as_posix()}" in message
+
+    release_run.set()
+    wait_for(lambda: read_state(state_path)["process_running"] is False)
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
+
+
+def test_engine_control_start_rejects_second_daemon_owner_for_same_workspace(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    state_path = workspace / "agents/.runtime/state.json"
+    controller = EngineControl(config_path)
+    thread = Thread(target=lambda: controller.start(daemon=True), daemon=True)
+    thread.start()
+
+    wait_for(lambda: state_path.exists() and read_state(state_path)["process_running"] is True)
+
+    with pytest.raises(ControlError) as excinfo:
+        EngineControl(config_path).start(daemon=True)
+
+    message = str(excinfo.value)
+    assert "cannot start daemon" in message
+    assert "workspace is already owned by a running daemon runtime" in message
+    assert "started_at=" in message
+    assert f"state_path={state_path.as_posix()}" in message
+
+    stop_result = RUNNER.invoke(app, ["--config", str(config_path), "stop"])
+    assert stop_result.exit_code == 0
+    wait_for(lambda: read_state(state_path)["process_running"] is False)
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
 
 
 def test_cli_config_hotswap_applies_runtime_safe_change_and_rejects_startup_only(tmp_path: Path) -> None:

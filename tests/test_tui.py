@@ -1760,12 +1760,23 @@ def test_launcher_start_daemon_rejects_preexisting_running_state(monkeypatch, tm
         ),
     )
     monkeypatch.setattr(launcher_module, "_daemon_running", lambda path: True)
+    monkeypatch.setattr(
+        launcher_module,
+        "start_collision_message_for_state_path",
+        lambda state_path, attempted_mode: (
+            "cannot start daemon: workspace is already owned by a running daemon runtime "
+            f"(started_at=2026-04-10T12:00:00Z, state_path={Path(state_path).as_posix()}); "
+            "stop the active runtime before starting another."
+        ),
+    )
 
     result = asyncio.run(launcher_module.launch_start_daemon(tmp_path / "millrace.toml"))
 
     assert not result.ok
     assert result.failure is not None
-    assert "already reports a running daemon" in result.failure.message
+    assert "cannot start daemon" in result.failure.message
+    assert "workspace is already owned by a running daemon runtime" in result.failure.message
+    assert f"state_path={(tmp_path / 'state.json').as_posix()}" in result.failure.message
     assert result.failure.retryable is False
     assert called is False
 
