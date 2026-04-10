@@ -13,7 +13,7 @@ python3 -m pip install millrace-ai
 ```
 
 This installs the `millrace` command. Create a workspace with `millrace init ...`; `millrace.toml` and `agents/` live inside that initialized workspace, not at the public repo root.
-If you need the exact `v0.7.1` release, install `millrace-ai==0.7.1`.
+If you need the exact `v0.8.0` release, install `millrace-ai==0.8.0`.
 
 Fresh-workspace research is explicit by default: the shipped baseline config starts with `[research] mode = "stub"` and `interview_policy = "off"`. A new workspace still includes the research plane and its reporting surfaces, but first-run research only records deferred breadcrumbs until you deliberately reconfigure research to a non-stub mode.
 
@@ -116,7 +116,7 @@ Install the published package:
 python3 -m pip install millrace-ai
 ```
 
-For a version-pinned install of this release, use `python3 -m pip install millrace-ai==0.7.1`.
+For a version-pinned install of this release, use `python3 -m pip install millrace-ai==0.8.0`.
 
 Create and inspect a workspace:
 
