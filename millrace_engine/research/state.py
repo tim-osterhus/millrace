@@ -82,6 +82,13 @@ class ResearchQueueFamily(str, Enum):
     AUDIT = "audit"
 
 
+class ResearchQueueSelectionAuthority(str, Enum):
+    """How the selected queue family was authorized for this snapshot."""
+
+    DISCOVERY = "discovery"
+    CHECKPOINT = "checkpoint"
+
+
 class ResearchLockScope(str, Enum):
     PLANE_RUN = "plane_run"
     QUEUE_SCAN = "queue_scan"
@@ -164,6 +171,7 @@ class ResearchQueueSnapshot(ContractModel):
     blocker_ready: bool = False
     audit_ready: bool = False
     selected_family: ResearchQueueFamily | None = None
+    selected_family_authority: ResearchQueueSelectionAuthority | None = None
     ownerships: tuple[ResearchQueueOwnership, ...] = ()
     last_scanned_at: datetime | None = None
 
@@ -177,6 +185,8 @@ class ResearchQueueSnapshot(ContractModel):
     @model_validator(mode="after")
     def validate_selected_family(self) -> "ResearchQueueSnapshot":
         if self.selected_family is None:
+            if self.selected_family_authority is not None:
+                raise ValueError("selected_family_authority requires selected_family")
             return self
         ready_map = {
             ResearchQueueFamily.GOALSPEC: self.goalspec_ready,
@@ -184,6 +194,11 @@ class ResearchQueueSnapshot(ContractModel):
             ResearchQueueFamily.BLOCKER: self.blocker_ready,
             ResearchQueueFamily.AUDIT: self.audit_ready,
         }
+        owned_families = {ownership.family for ownership in self.ownerships}
+        if self.selected_family_authority is ResearchQueueSelectionAuthority.CHECKPOINT:
+            if self.selected_family in owned_families:
+                return self
+            raise ValueError("checkpoint-selected family must be owned inside queue_snapshot")
         if self.selected_family is ResearchQueueFamily.BLOCKER and self.incident_ready:
             return self
         if not ready_map[self.selected_family]:
@@ -475,6 +490,7 @@ __all__ = [
     "ResearchQueueFamily",
     "ResearchQueueOwnership",
     "ResearchQueueSnapshot",
+    "ResearchQueueSelectionAuthority",
     "ResearchRuntimeMode",
     "ResearchRuntimeState",
     "ResearchStageRetryState",

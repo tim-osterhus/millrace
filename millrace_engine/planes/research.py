@@ -57,6 +57,7 @@ from ..research.state import (
     DeferredResearchRequest,
     ResearchCheckpoint,
     ResearchQueueFamily,
+    ResearchQueueSelectionAuthority,
     ResearchRuntimeMode,
     ResearchRuntimeState,
     ResearchStateStore,
@@ -487,6 +488,7 @@ class ResearchPlane:
                     "ownerships": updated.owned_queues,
                     "last_scanned_at": observed_at,
                     "selected_family": ResearchQueueFamily.GOALSPEC,
+                    "selected_family_authority": ResearchQueueSelectionAuthority.CHECKPOINT,
                 }
             )
             self.state = self.state.model_copy(
@@ -847,6 +849,7 @@ class ResearchPlane:
                 ownerships=checkpoint.owned_queues,
                 last_scanned_at=observed_at,
                 selected_family=selected_family,
+                selected_family_authority=ResearchQueueSelectionAuthority.CHECKPOINT,
             ),
             reason="resume-from-checkpoint",
         )
@@ -943,6 +946,7 @@ class ResearchPlane:
                         "ownerships": blocked_checkpoint.owned_queues,
                         "last_scanned_at": stage_started_at,
                         "selected_family": ResearchQueueFamily.GOALSPEC,
+                        "selected_family_authority": ResearchQueueSelectionAuthority.CHECKPOINT,
                     }
                 )
                 self.state = self.state.model_copy(

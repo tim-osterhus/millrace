@@ -11,7 +11,12 @@ from ..events import EventType
 from .goalspec import next_stage_for_success
 from .incidents import incident_source_exists, incident_source_on_disk
 from .queues import ResearchQueueDiscovery
-from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
+from .state import (
+    ResearchCheckpoint,
+    ResearchQueueFamily,
+    ResearchQueueOwnership,
+    ResearchQueueSelectionAuthority,
+)
 from .supervisor_payloads import checkpoint_resumed_payload
 
 
@@ -59,6 +64,7 @@ def persist_resume_state(
             "ownerships": checkpoint.owned_queues,
             "last_scanned_at": observed_at,
             "selected_family": self._resume_selected_family(checkpoint),
+            "selected_family_authority": ResearchQueueSelectionAuthority.CHECKPOINT,
         }
     )
     self.state = self.state.model_copy(
@@ -185,6 +191,7 @@ def advance_goalspec_checkpoint(
             "ownerships": updated.owned_queues,
             "last_scanned_at": observed_at,
             "selected_family": ResearchQueueFamily.GOALSPEC,
+            "selected_family_authority": ResearchQueueSelectionAuthority.CHECKPOINT,
         }
     )
     self.state = self.state.model_copy(
@@ -213,6 +220,7 @@ def complete_goalspec_checkpoint(
             "ownerships": (),
             "last_scanned_at": observed_at,
             "selected_family": None,
+            "selected_family_authority": None,
         }
     )
     self.state = self.state.model_copy(
@@ -272,6 +280,7 @@ def advance_audit_checkpoint(
             "ownerships": updated.owned_queues,
             "last_scanned_at": observed_at,
             "selected_family": ResearchQueueFamily.AUDIT,
+            "selected_family_authority": ResearchQueueSelectionAuthority.CHECKPOINT,
         }
     )
     self.state = self.state.model_copy(
@@ -301,6 +310,7 @@ def complete_audit_checkpoint(
             "ownerships": (),
             "last_scanned_at": observed_at,
             "selected_family": None,
+            "selected_family_authority": None,
         }
     )
     self.state = self.state.model_copy(
@@ -350,6 +360,11 @@ def advance_incident_checkpoint(
             "ownerships": updated.owned_queues,
             "last_scanned_at": observed_at,
             "selected_family": selected_family,
+            "selected_family_authority": (
+                None
+                if selected_family is None
+                else ResearchQueueSelectionAuthority.CHECKPOINT
+            ),
         }
     )
     self.state = self.state.model_copy(
@@ -378,6 +393,7 @@ def complete_incident_checkpoint(
             "ownerships": (),
             "last_scanned_at": observed_at,
             "selected_family": None,
+            "selected_family_authority": None,
         }
     )
     self.state = self.state.model_copy(

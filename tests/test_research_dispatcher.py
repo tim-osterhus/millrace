@@ -63,6 +63,7 @@ from millrace_engine.research.state import (
     ResearchCheckpoint,
     ResearchQueueFamily,
     ResearchQueueOwnership,
+    ResearchQueueSelectionAuthority,
     ResearchRuntimeMode,
     load_research_runtime_state,
 )
@@ -5634,9 +5635,62 @@ def test_research_resume_failure_preserves_owned_queue_snapshot_truthfully(
     assert snapshot.retry_state.attempt == 2
     assert snapshot.checkpoint is not None
     assert snapshot.queue_snapshot.selected_family is ResearchQueueFamily.INCIDENT
+    assert snapshot.queue_snapshot.selected_family_authority is ResearchQueueSelectionAuthority.CHECKPOINT
     assert snapshot.queue_snapshot.ownerships == snapshot.checkpoint.owned_queues
     assert snapshot.deferred_requests[0].event_type is EventType.BACKLOG_EMPTY_AUDIT
     assert snapshot.checkpoint.deferred_follow_ons[0].event_type is EventType.IDEA_SUBMITTED
+
+
+def test_research_plane_resume_checkpoint_uses_checkpoint_authority_when_family_is_no_longer_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    plane = ResearchPlane(config, paths)
+    checkpoint = ResearchCheckpoint.model_validate(
+        {
+            "checkpoint_id": "research-goalspec-restart",
+            "mode": "GOALSPEC",
+            "status": "SPEC_REVIEW_RUNNING",
+            "node_id": "spec_review",
+            "stage_kind_id": "research.spec-review",
+            "attempt": 1,
+            "started_at": "2026-03-19T12:00:00Z",
+            "updated_at": "2026-03-19T12:04:00Z",
+            "owned_queues": [
+                {
+                    "family": "goalspec",
+                    "queue_path": "agents/ideas/specs_reviewed",
+                    "item_path": "agents/ideas/specs_reviewed/SPEC-100.md",
+                    "owner_token": "research-goalspec-restart",
+                    "acquired_at": "2026-03-19T12:00:00Z",
+                }
+            ],
+        }
+    )
+    plane.state = plane.state.model_copy(update={"checkpoint": checkpoint})
+    captured: dict[str, object] = {}
+
+    def fake_compile(paths_arg, selection, **kwargs):
+        captured["selection"] = selection
+        captured["run_id"] = kwargs["run_id"]
+        return object()
+
+    monkeypatch.setattr(research_plane_module, "compile_research_dispatch", fake_compile)
+
+    dispatch = plane._resume_checkpoint(
+        trigger="engine-start",
+        resolve_assets=False,
+        observed_at=_dt("2026-03-19T12:05:00Z"),
+    )
+
+    selection = captured["selection"]
+    assert dispatch is not None
+    assert captured["run_id"] == "research-goalspec-restart"
+    assert selection.queue_snapshot.goalspec_ready is False
+    assert selection.queue_snapshot.selected_family is ResearchQueueFamily.GOALSPEC
+    assert selection.queue_snapshot.selected_family_authority is ResearchQueueSelectionAuthority.CHECKPOINT
+    assert selection.queue_snapshot.ownerships == checkpoint.owned_queues
 
 
 def test_research_resume_failure_stops_retrying_after_budget_is_exhausted(

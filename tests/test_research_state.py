@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import json
 
+import pytest
+
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import EngineControl
 from millrace_engine.contracts import PersistedObjectKind, RegistryObjectRef, ResearchStatus
@@ -14,6 +16,7 @@ from millrace_engine.research.state import (
     ResearchLockScope,
     ResearchLockState,
     ResearchQueueFamily,
+    ResearchQueueSelectionAuthority,
     ResearchRuntimeMode,
     ResearchRuntimeState,
     ResearchStateStore,
@@ -188,6 +191,47 @@ def test_research_runtime_state_round_trips_shell_compatible_payload_and_checkpo
 
     reloaded = ResearchRuntimeState.model_validate(dumped)
     assert reloaded == state
+
+
+def test_research_queue_snapshot_rejects_checkpoint_authority_without_matching_owned_family() -> None:
+    with pytest.raises(ValueError, match="checkpoint-selected family must be owned inside queue_snapshot"):
+        ResearchRuntimeState.model_validate(
+            {
+                "updated_at": "2026-03-19T12:00:00Z",
+                "current_mode": "GOALSPEC",
+                "last_mode": "GOALSPEC",
+                "mode_reason": "resume-from-checkpoint",
+                "queue_snapshot": {
+                    "goalspec_ready": False,
+                    "incident_ready": False,
+                    "blocker_ready": False,
+                    "audit_ready": False,
+                    "selected_family": "goalspec",
+                    "selected_family_authority": "checkpoint",
+                    "ownerships": [],
+                },
+            }
+        )
+
+
+def test_research_queue_snapshot_requires_fresh_readiness_without_checkpoint_authority() -> None:
+    with pytest.raises(ValueError, match="selected_family must be ready inside queue_snapshot"):
+        ResearchRuntimeState.model_validate(
+            {
+                "updated_at": "2026-03-19T12:00:00Z",
+                "current_mode": "GOALSPEC",
+                "last_mode": "GOALSPEC",
+                "mode_reason": "forced-by-config",
+                "queue_snapshot": {
+                    "goalspec_ready": False,
+                    "incident_ready": False,
+                    "blocker_ready": False,
+                    "audit_ready": False,
+                    "selected_family": "goalspec",
+                    "selected_family_authority": ResearchQueueSelectionAuthority.DISCOVERY.value,
+                },
+            }
+        )
 
 
 def test_research_stub_plane_exposes_typed_runtime_state_snapshot(tmp_path: Path) -> None:

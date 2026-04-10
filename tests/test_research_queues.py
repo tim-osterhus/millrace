@@ -8,7 +8,12 @@ from millrace_engine.contracts import ControlPlane, ExecutionStatus
 from millrace_engine.research.audit import AuditTrigger
 from millrace_engine.research import BlockerQueueRecord, IncidentDocument
 from millrace_engine.research.queues import discover_research_queues
-from millrace_engine.research.state import ResearchQueueFamily, ResearchRuntimeState, write_research_runtime_state
+from millrace_engine.research.state import (
+    ResearchQueueFamily,
+    ResearchQueueSelectionAuthority,
+    ResearchRuntimeState,
+    write_research_runtime_state,
+)
 
 from tests.support import load_workspace_fixture, runtime_paths
 
@@ -223,6 +228,34 @@ def test_discover_research_queues_handles_mixed_families_and_snapshot_projection
     assert snapshot.blocker_ready is True
     assert snapshot.audit_ready is True
     assert snapshot.selected_family is None
+    assert snapshot.selected_family_authority is None
+
+
+def test_research_queue_snapshot_can_resume_owned_family_without_fresh_readiness(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    paths = runtime_paths(config_path)
+    _setup_research_queue_dirs(paths.agents_dir)
+
+    discovery = discover_research_queues(paths)
+    snapshot = discovery.to_snapshot(
+        ownerships=(
+            {
+                "family": "goalspec",
+                "queue_path": "agents/ideas/specs_reviewed",
+                "item_path": "agents/ideas/specs_reviewed/SPEC-100.md",
+                "owner_token": "research-restart-run",
+                "acquired_at": "2026-03-19T12:00:00Z",
+            },
+        ),
+        last_scanned_at=datetime(2026, 3, 19, 12, 5, tzinfo=timezone.utc),
+        selected_family=ResearchQueueFamily.GOALSPEC,
+        selected_family_authority=ResearchQueueSelectionAuthority.CHECKPOINT,
+    )
+
+    assert snapshot.goalspec_ready is False
+    assert snapshot.selected_family is ResearchQueueFamily.GOALSPEC
+    assert snapshot.selected_family_authority is ResearchQueueSelectionAuthority.CHECKPOINT
+    assert snapshot.ownerships[0].family is ResearchQueueFamily.GOALSPEC
 
 
 def test_discover_research_queues_keeps_terminal_roots_non_actionable(tmp_path: Path) -> None:

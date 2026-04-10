@@ -20,7 +20,12 @@ from ..contracts import (
 )
 from ..paths import RuntimePaths
 from .blockers import BlockerQueueRecord, load_blocker_records
-from .state import ResearchQueueFamily, ResearchQueueOwnership, ResearchQueueSnapshot
+from .state import (
+    ResearchQueueFamily,
+    ResearchQueueOwnership,
+    ResearchQueueSelectionAuthority,
+    ResearchQueueSnapshot,
+)
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -194,13 +199,17 @@ class ResearchQueueDiscovery(ContractModel):
         ownerships: tuple[ResearchQueueOwnership, ...] = (),
         last_scanned_at: datetime | None = None,
         selected_family: ResearchQueueFamily | None = None,
+        selected_family_authority: ResearchQueueSelectionAuthority | None = None,
     ) -> ResearchQueueSnapshot:
+        if selected_family is not None and selected_family_authority is None:
+            selected_family_authority = ResearchQueueSelectionAuthority.DISCOVERY
         return ResearchQueueSnapshot(
             goalspec_ready=self.family_scan(ResearchQueueFamily.GOALSPEC).ready,
             incident_ready=self.family_scan(ResearchQueueFamily.INCIDENT).ready,
             blocker_ready=self.family_scan(ResearchQueueFamily.BLOCKER).ready,
             audit_ready=self.family_scan(ResearchQueueFamily.AUDIT).ready,
             selected_family=selected_family,
+            selected_family_authority=selected_family_authority,
             ownerships=ownerships,
             last_scanned_at=last_scanned_at,
         )

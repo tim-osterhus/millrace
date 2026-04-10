@@ -17,6 +17,7 @@ from .state import (
     ResearchLockScope,
     ResearchLockState,
     ResearchQueueFamily,
+    ResearchQueueSelectionAuthority,
     ResearchRuntimeMode,
     ResearchStageRetryState,
 )
@@ -198,6 +199,7 @@ def record_dispatch_failure(
             ownerships=checkpoint.owned_queues,
             last_scanned_at=failed_at,
             selected_family=self._resume_selected_family(checkpoint),
+            selected_family_authority=ResearchQueueSelectionAuthority.CHECKPOINT,
         )
     self.state = self.state.model_copy(
         update={
