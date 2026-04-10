@@ -133,7 +133,9 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         self._focus_zone = ShellFocusZone.SIDEBAR
         self._focus_zone_before_expanded: ShellFocusZone | None = None
         self._focus_widget_before_expanded: str | None = None
+        self._focus_panel_before_expanded: PanelId | None = None
         self._focus_zone_before_modal: ShellFocusZone | None = None
+        self._expanded_live_seed: bool | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell-root"):
@@ -446,6 +448,8 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         if mode is ShellBodyMode.EXPANDED and previous_mode is not ShellBodyMode.EXPANDED:
             self._focus_zone_before_expanded = self._focused_zone(self.focused) or self._focus_zone
             self._focus_widget_before_expanded = self.focused.id if self.focused is not None else None
+            self._focus_panel_before_expanded = self.active_panel
+            self._expanded_live_seed = self.query_one(LogsPanel).follow_mode if self.active_panel is PanelId.LOGS else True
         self._shell_body_mode = mode
         if self.is_mounted:
             self._sync_panel_state()
@@ -454,10 +458,13 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             elif previous_mode is ShellBodyMode.EXPANDED:
                 widget_id = self._focus_widget_before_expanded
                 zone = self._focus_zone_before_expanded
+                panel_id = self._focus_panel_before_expanded
                 self._focus_zone_before_expanded = None
                 self._focus_widget_before_expanded = None
-                if not self._restore_focus_widget(widget_id):
-                    self.restore_focus_zone(zone)
+                self._focus_panel_before_expanded = None
+                if panel_id is self.active_panel and self._restore_focus_widget(widget_id):
+                    return
+                self.restore_focus_zone(zone)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         zone = self._focused_zone(event.widget)
@@ -593,7 +600,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         active = PANEL_BY_ID[self.active_panel]
         logs_panel = self.query_one(LogsPanel)
         expanded_view = self.query_one(ExpandedStreamView)
-        live: bool | None = expanded_view.follow_live if self._shell_body_mode is ShellBodyMode.EXPANDED else None
+        live: bool | None = None
         event_items = None
         anchor_event_key = None
         context_label = None
@@ -601,7 +608,12 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             event_items = logs_panel.filtered_events
             anchor_event_key = logs_panel.selected_event_key
             context_label = f"focus {logs_panel.focus_surface} | source {logs_panel.source_filter} | type {logs_panel.event_type_filter}"
-            live = logs_panel.follow_mode
+            if self._shell_body_mode is ShellBodyMode.COMPACT:
+                live = logs_panel.follow_mode
+        if self._expanded_live_seed is not None:
+            live = self._expanded_live_seed
+        elif self._shell_body_mode is ShellBodyMode.EXPANDED:
+            live = expanded_view.follow_live
         expanded_view.show_snapshot(
             active_panel_label=active.label,
             display_mode=state.display_mode,
@@ -611,6 +623,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             anchor_event_key=anchor_event_key,
             context_label=context_label,
         )
+        self._expanded_live_seed = None
 
     def _render_inspector(self) -> None:
         state = self._store.state

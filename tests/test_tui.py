@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -460,6 +460,8 @@ def test_tui_shell_expanded_mode_replaces_main_content_only(monkeypatch, tmp_pat
         await pilot.pause()
         assert app.screen.query_one("#shell-content", ContentSwitcher).current == "panel-queue"
         assert "enter expanded" in str(sidebar_toggle.label)
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "nav-queue"
 
     _run_app_scenario(config_path, scenario)
 
@@ -637,6 +639,107 @@ def test_tui_shell_expanded_logs_stays_frozen_during_appends_and_jump_live_reali
         )
         assert "State: LIVE TAIL" in expanded.summary_text()
         assert expanded.at_live_tail is True
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_expanded_logs_preserves_scrollback_during_long_append_churn(monkeypatch, tmp_path) -> None:
+    observed_at = datetime(2026, 3, 25, 0, 5, 0, tzinfo=timezone.utc)
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.events is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("5")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+
+        baseline_events = len(app.screen._store.state.events.events)
+        burst = tuple(
+            _sample_runtime_event(
+                event_type="execution.stage.completed",
+                source="execution",
+                observed_at=observed_at + timedelta(seconds=index),
+                category="EXE",
+                summary=f"stage=builder | status=success | seq={index}",
+                run_id=f"run-burst-{index}",
+                is_research_event=False,
+                payload=(
+                    KeyValueView("stage", "builder"),
+                    KeyValueView("status", "success"),
+                    KeyValueView("seq", str(index)),
+                ),
+            )
+            for index in range(96)
+        )
+        app.screen.post_message(EventsAppended(burst, received_at=observed_at + timedelta(seconds=95)))
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and len(app.screen._store.state.events.events) >= baseline_events + len(burst),
+        )
+
+        await pilot.press("e")
+        expanded = app.screen.query_one(f"#{EXPANDED_STREAM_WIDGET_ID}", ExpandedStreamView)
+        await _wait_for_condition(
+            pilot,
+            lambda: expanded.follow_live
+            and app.screen.focused is not None
+            and app.screen.focused.id == EXPANDED_STREAM_WIDGET_ID,
+        )
+        assert expanded.summary_text().count("\n") > 100
+
+        await pilot.press("home")
+        await _wait_for_condition(
+            pilot,
+            lambda: not expanded.follow_live,
+        )
+        frozen_scroll_y = expanded.scroll_y
+
+        churn = tuple(
+            _sample_runtime_event(
+                event_type="execution.stage.completed",
+                source="execution",
+                observed_at=observed_at + timedelta(seconds=200 + index),
+                category="EXE",
+                summary=f"stage=qa | status=success | seq={index}",
+                run_id=f"run-churn-{index}",
+                is_research_event=False,
+                payload=(
+                    KeyValueView("stage", "qa"),
+                    KeyValueView("status", "success"),
+                    KeyValueView("seq", str(index)),
+                ),
+            )
+            for index in range(2)
+        )
+        app.screen.post_message(EventsAppended(churn, received_at=observed_at + timedelta(seconds=201)))
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and any(event.run_id == "run-churn-1" for event in app.screen._store.state.events.events),
+        )
+        await pilot.pause()
+
+        assert expanded.follow_live is False
+        assert expanded.scroll_y <= frozen_scroll_y + 1
+        assert "State: SCROLLBACK" in expanded.summary_text()
+        assert "Browsing older lines." in expanded.summary_text()
+
+        await pilot.press("l")
+        await _wait_for_condition(
+            pilot,
+            lambda: expanded.follow_live and expanded.at_live_tail,
+        )
+        assert "State: LIVE TAIL" in expanded.summary_text()
 
     _run_app_scenario(config_path, scenario)
 
@@ -998,6 +1101,51 @@ def test_tui_shell_cycles_focus_and_restores_sidebar_after_expanded_exit(monkeyp
         )
         assert app.screen.focused is not None
         assert app.screen.focused.id == "nav-overview"
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_expanded_exit_restores_current_workspace_focus_after_panel_switch(monkeypatch, tmp_path) -> None:
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.events is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("5")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-logs"
+
+        await pilot.press("e")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen.focused is not None
+            and app.screen.focused.id == EXPANDED_STREAM_WIDGET_ID,
+        )
+
+        await pilot.press("2")
+        await pilot.pause()
+        assert app.screen.active_panel is PanelId.QUEUE
+        assert app.screen.query_one("#shell-content", ContentSwitcher).current == EXPANDED_STREAM_WIDGET_ID
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == EXPANDED_STREAM_WIDGET_ID
+
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen.focused is not None
+            and app.screen.focused.id == "panel-queue",
+        )
+        assert app.screen.query_one("#shell-content", ContentSwitcher).current == "panel-queue"
 
     _run_app_scenario(config_path, scenario)
 
