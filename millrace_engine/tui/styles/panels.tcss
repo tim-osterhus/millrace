@@ -136,6 +136,34 @@
     color: #ef9a9a;
 }
 
+.panel-data-table {
+    height: 8;
+    margin-top: 1;
+    background: #141417;
+    color: #e8e6ed;
+    border: round #252528;
+}
+
+.panel-data-table > .datatable--header {
+    background: #1b1b20;
+    color: #807e88;
+    text-style: bold;
+}
+
+.panel-data-table > .datatable--even-row {
+    background: #141417;
+}
+
+.panel-data-table > .datatable--odd-row {
+    background: #17171a;
+}
+
+.panel-data-table > .datatable--cursor {
+    background: #2b0f14;
+    color: #f0eef5;
+    text-style: bold;
+}
+
 .overview-card-label {
     color: #807e88;
     text-style: bold;

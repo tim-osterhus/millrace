@@ -13,7 +13,7 @@ import pytest
 from textual.app import App, SystemCommand
 from textual.geometry import Region
 from textual.worker import WorkerState
-from textual.widgets import Button, ContentSwitcher, Footer, Input, Static, TextArea
+from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Input, Static, TextArea
 
 import millrace_engine.tui.gateway as gateway_module
 import millrace_engine.tui.gateway_support as gateway_support_module
@@ -2945,6 +2945,32 @@ def test_runs_panel_renders_recent_summaries_and_requested_missing_run() -> None
     assert "issue invalid provenance" in debug_text
 
 
+def test_runs_panel_preserves_selected_run_across_refresh_when_identity_survives() -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    panel = RunsPanel(id="panel-runs")
+    initial = _sample_runs_overview(
+        observed_at=observed_at,
+        runs=(
+            _sample_run_summary(run_id="run-2", observed_at=observed_at),
+            _sample_run_summary(run_id="run-1", observed_at=observed_at.replace(second=1)),
+        ),
+    )
+    refreshed = _sample_runs_overview(
+        observed_at=observed_at.replace(second=5),
+        runs=(
+            _sample_run_summary(run_id="run-3", observed_at=observed_at.replace(second=5)),
+            _sample_run_summary(run_id="run-1", observed_at=observed_at.replace(second=1)),
+        ),
+    )
+
+    panel.show_snapshot(initial)
+    panel.action_cursor_down()
+    assert panel.selected_run_id == "run-1"
+
+    panel.show_snapshot(refreshed)
+    assert panel.selected_run_id == "run-1"
+
+
 def test_logs_panel_filters_freezes_and_emits_run_requests() -> None:
     observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
     panel = LogsPanel(id="panel-logs")
@@ -3116,6 +3142,36 @@ def test_queue_panel_preserves_reorder_and_emits_run_requests() -> None:
 
     panel.action_submit_selection()
     assert panel.reorder_mode is True
+
+
+def test_queue_panel_preserves_selected_task_across_refresh_when_identity_survives() -> None:
+    panel = QueuePanel(id="panel-queue")
+    initial = QueueOverviewView(
+        active_task=None,
+        next_task=QueueTaskView(task_id="task-1", title="First task"),
+        backlog_depth=2,
+        backlog=(
+            QueueTaskView(task_id="task-1", title="First task"),
+            QueueTaskView(task_id="task-2", title="Second task"),
+        ),
+    )
+    refreshed = QueueOverviewView(
+        active_task=None,
+        next_task=QueueTaskView(task_id="task-3", title="Third task"),
+        backlog_depth=3,
+        backlog=(
+            QueueTaskView(task_id="task-3", title="Third task"),
+            QueueTaskView(task_id="task-2", title="Second task"),
+            QueueTaskView(task_id="task-1", title="First task"),
+        ),
+    )
+
+    panel.show_snapshot(initial)
+    panel.action_cursor_down()
+    assert panel.selected_task_id == "task-2"
+
+    panel.show_snapshot(refreshed)
+    assert panel.selected_task_id == "task-2"
 
 
 def test_runtime_gateway_rebuilds_engine_control_per_call(monkeypatch, tmp_path) -> None:
@@ -3685,17 +3741,86 @@ def test_tui_shell_queue_panel_navigation_preserves_selection_across_panel_switc
         await pilot.pause()
         assert app.screen.focused is not None
         assert app.screen.focused.id == "panel-queue"
+        table = panel.query_one("#queue-table", DataTable)
+        assert table.row_count == 2
+        assert table.cursor_row == 0
 
         await pilot.press("down")
         await pilot.pause()
         assert panel.selected_task_id == "2026-03-20__second-queued-task"
         assert "FOCUS   Second queued task" in panel.summary_text()
+        assert table.cursor_row == 1
+        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        assert "PANEL   Queue" in inspector_text
+        assert "FOCUS   Second queued task" in inspector_text
+        assert "STATE   task 2026-03-20__second-queued-task" in inspector_text
 
         await pilot.press("1")
         await pilot.pause()
         await pilot.press("2")
         await pilot.pause()
         assert panel.selected_task_id == "2026-03-20__second-queued-task"
+        assert table.cursor_row == 1
+        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        assert "FOCUS   Second queued task" in inspector_text
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_runs_panel_navigation_updates_inspector_selection(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        shell_module,
+        "load_workspace_refresh",
+        lambda *args, **kwargs: GatewayResult(
+            value=_sample_refresh_payload(
+                observed_at=observed_at,
+                runs=_sample_runs_overview(
+                    observed_at=observed_at,
+                    runs=(
+                        _sample_run_summary(run_id="run-2", observed_at=observed_at),
+                        _sample_run_summary(run_id="run-1", observed_at=observed_at.replace(second=1)),
+                    ),
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.runs is not None
+            and len(app.screen._store.state.runs.runs) == 2,
+        )
+
+        await pilot.press("3")
+        await pilot.pause()
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen.active_panel is PanelId.RUNS
+
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-runs"
+        panel = app.screen.query_one("#panel-runs", RunsPanel)
+        table = panel.query_one("#runs-table", DataTable)
+        assert panel.selected_run_id == "run-2"
+        assert table.row_count == 2
+        assert table.cursor_row == 0
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert panel.selected_run_id == "run-1"
+        assert table.cursor_row == 1
+        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        assert "PANEL   Runs" in inspector_text
+        assert "FOCUS   run-1" in inspector_text
+        assert "STATE   QA_PENDING | builder success" in inspector_text
 
     _run_app_scenario(config_path, scenario)
 

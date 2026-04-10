@@ -638,6 +638,18 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         self.action_toggle_expanded_mode()
         message.stop()
 
+    @on(QueuePanel.SelectionChanged)
+    def _handle_queue_selection_changed(self, message: QueuePanel.SelectionChanged) -> None:
+        if self.active_panel is PanelId.QUEUE:
+            self._render_inspector()
+        message.stop()
+
+    @on(RunsPanel.SelectionChanged)
+    def _handle_runs_selection_changed(self, message: RunsPanel.SelectionChanged) -> None:
+        if self.active_panel is PanelId.RUNS:
+            self._render_inspector()
+        message.stop()
+
 
 _PANEL_MESSAGE_HANDLERS = (
     (LogsPanel.RunRequested, ShellWorkflowMixin._handle_logs_run_requested),

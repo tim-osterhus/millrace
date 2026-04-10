@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widget import Widget
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher, DataTable, Static
 
 from ..formatting import (
     compact_run_label,
@@ -41,6 +41,15 @@ class RunsPanel(Static):
             super().__init__()
             self.run_id = run_id
 
+    class SelectionChanged(Message):
+        """Posted when the highlighted run selection changes."""
+
+        bubble = True
+
+        def __init__(self, run_id: str | None) -> None:
+            super().__init__()
+            self.run_id = run_id
+
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__("", id=id, classes="panel-card", markup=False)
         self.border_title = "Runs"
@@ -63,7 +72,7 @@ class RunsPanel(Static):
                     yield Static("Recent runs", classes="overview-card-label")
                     yield Static("--", id="runs-list-headline", classes="overview-card-headline")
                     yield Static("", id="runs-list-detail", classes="overview-card-detail")
-                    yield Vertical(id="runs-list-items", classes="panel-item-stack")
+                    yield DataTable(id="runs-table", classes="panel-data-table")
                 yield self._section_card("runs-actions", "Actions")
             yield Static("", id="runs-debug", classes="panel-debug-body")
 
@@ -87,34 +96,38 @@ class RunsPanel(Static):
             id=f"{suffix}-card",
         )
 
-    @staticmethod
-    def _run_item_card(run: RunSummaryView, *, index: int, selected: bool) -> Vertical:
-        header, detail = run_operator_summary_lines(run)
-        alert = run_operator_alert(run)
-        classes = "overview-card panel-item-card"
-        outcome = header.split(maxsplit=1)[0]
-        if selected:
-            classes += " is-selected"
-        if outcome == "FAIL":
-            classes += " state-fail"
-        elif outcome == "WARN":
-            classes += " state-warn"
-        else:
-            classes += " state-ok"
-        children: list[Widget] = [
-            Static(f"{index:>2}. {header}", classes="panel-item-title"),
-            Static(detail, classes="panel-item-meta"),
-        ]
-        if alert:
-            children.append(Static(alert, classes="panel-item-alert"))
-        return Vertical(*children, classes=classes)
-
     @property
     def selected_run_id(self) -> str | None:
         return self._selected_run_id
 
     def on_mount(self) -> None:
+        table = self.query_one("#runs-table", DataTable)
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.add_column("State", key="state", width=7)
+        table.add_column("Run", key="run", width=30)
+        table.add_column("Selection", key="selection", width=18)
+        table.add_column("When", key="when", width=10)
+        table.add_column("Status", key="status", width=18)
         self._render_state()
+
+    @on(DataTable.RowHighlighted, "#runs-table")
+    def _handle_runs_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        run_id = event.row_key.value
+        if run_id.startswith("__runs-empty__") or run_id == self._selected_run_id:
+            return
+        self._selected_run_id = run_id
+        self.post_message(self.SelectionChanged(run_id))
+
+    @on(DataTable.RowSelected, "#runs-table")
+    def _handle_runs_row_selected(self, event: DataTable.RowSelected) -> None:
+        run_id = event.row_key.value
+        if run_id.startswith("__runs-empty__"):
+            return
+        if run_id != self._selected_run_id:
+            self._selected_run_id = run_id
+            self.post_message(self.SelectionChanged(run_id))
+        self.action_submit_selection()
 
     def show_snapshot(
         self,
@@ -163,17 +176,18 @@ class RunsPanel(Static):
         return self._runs.runs
 
     def _reconcile_selection(self, *, preferred_run_id: str | None = None) -> None:
+        previous = self._selected_run_id
         runs = self._run_items()
         if not runs:
             self._selected_run_id = None
-            return
-        run_ids = {run.run_id for run in runs}
-        if preferred_run_id is not None and preferred_run_id in run_ids:
-            self._selected_run_id = preferred_run_id
-            return
-        if self._selected_run_id in run_ids:
-            return
-        self._selected_run_id = runs[0].run_id
+        else:
+            run_ids = {run.run_id for run in runs}
+            if preferred_run_id is not None and preferred_run_id in run_ids:
+                self._selected_run_id = preferred_run_id
+            elif self._selected_run_id not in run_ids:
+                self._selected_run_id = runs[0].run_id
+        if previous != self._selected_run_id and self.is_mounted:
+            self.post_message(self.SelectionChanged(self._selected_run_id))
 
     def _selected_index(self) -> int | None:
         if self._selected_run_id is None:
@@ -199,9 +213,13 @@ class RunsPanel(Static):
         if not runs:
             return
         bounded_index = min(max(index, 0), len(runs) - 1)
-        self._selected_run_id = runs[bounded_index].run_id
+        run_id = runs[bounded_index].run_id
+        if run_id == self._selected_run_id:
+            return
+        self._selected_run_id = run_id
         if self.is_mounted:
             self._render_state()
+            self.post_message(self.SelectionChanged(run_id))
 
     def _render_state(self) -> None:
         switcher = self.query_one("#runs-mode-switcher", ContentSwitcher)
@@ -209,16 +227,16 @@ class RunsPanel(Static):
         self.query_one("#runs-debug", Static).update(self._render_debug_text())
         if self._display_mode is DisplayMode.DEBUG:
             return
-        self._render_operator_cards()
+        self._render_operator_surface()
 
-    def _render_operator_cards(self) -> None:
+    def _render_operator_surface(self) -> None:
         if self._runs is None:
             self._update_section("runs-status", "Waiting for the runs snapshot.", self._failure_operator_detail(has_snapshot=False))
             self._update_metric("runs-recent", "--", "no run snapshot")
             self._update_metric("runs-flagged", "--", "alerts unavailable")
             self._update_metric("runs-scanned", "--", "scan timestamp unavailable")
             self._update_section("runs-request", "No requested run", "no request context yet")
-            self._set_run_items(headline="No runs visible", detail="recent run snapshot not loaded", items=())
+            self._set_run_items(headline="No runs visible", detail="recent run snapshot not loaded")
             self._update_section("runs-actions", "Waiting for run history", "open debug for hashes, routes, and provenance detail")
             return
 
@@ -248,15 +266,12 @@ class RunsPanel(Static):
             self._update_section("runs-request", "No requested run", "selection follows the visible recent-runs list")
 
         if not runs:
-            self._set_run_items(headline="No run artifacts are visible yet.", detail="recent run directory is empty", items=())
+            self._set_run_items(headline="No run artifacts are visible yet.", detail="recent run directory is empty")
             self._update_section("runs-actions", "Waiting for runs", "Enter opens concise provenance detail when a run is visible")
             return
 
-        items = tuple(
-            self._run_item_card(run, index=index, selected=run.run_id == self._selected_run_id)
-            for index, run in enumerate(runs, start=1)
-        )
-        self._set_run_items(headline=f"{len(runs)} recent runs", detail="selected run opens concise provenance detail", items=items)
+        self._render_runs_table(runs)
+        self._set_run_items(headline=f"{len(runs)} recent runs", detail="selected run opens concise provenance detail")
         self._update_section("runs-actions", "Up/Down select, Enter opens detail", "flagged runs stay visible in operator mode")
 
     def _update_metric(self, suffix: str, value: str, meta: str) -> None:
@@ -267,22 +282,46 @@ class RunsPanel(Static):
         self.query_one(f"#{suffix}-headline", Static).update(headline)
         self.query_one(f"#{suffix}-detail", Static).update(detail)
 
-    def _set_run_items(self, *, headline: str, detail: str, items: tuple[Widget, ...]) -> None:
+    def _set_run_items(self, *, headline: str, detail: str) -> None:
         self.query_one("#runs-list-headline", Static).update(headline)
         self.query_one("#runs-list-detail", Static).update(detail)
-        container = self.query_one("#runs-list-items", Vertical)
-        container.remove_children()
-        if items:
-            for item in items:
-                container.mount(item)
-        else:
-            container.mount(
-                Vertical(
-                    Static("No recent runs", classes="panel-item-title"),
-                    Static(detail, classes="panel-item-meta"),
-                    classes="overview-card panel-item-card panel-empty-card",
-                )
+        if self._runs is None or not self._run_items():
+            self._render_runs_table(())
+
+    def _render_runs_table(self, runs: tuple[RunSummaryView, ...]) -> None:
+        table = self.query_one("#runs-table", DataTable)
+        table.clear(columns=False)
+        if not runs:
+            table.add_row("--", "No recent runs", "", "", "", key="__runs-empty__")
+            table.move_cursor(row=0, column=0, animate=False, scroll=False)
+            return
+        for run in runs:
+            selection = (run.selection_ref or "").split(":", maxsplit=1)[-1] if run.selection_ref else "none"
+            latest_when = format_timestamp(run.latest_transition_at) if run.latest_transition_at is not None else "--"
+            status = run.latest_status or run.latest_transition_label or "unknown"
+            table.add_row(
+                run_operator_summary_lines(run)[0].split(maxsplit=1)[0],
+                compact_run_label(run.run_id),
+                selection,
+                latest_when,
+                " ".join(status.lower().split()),
+                key=run.run_id,
             )
+        self._sync_runs_table_cursor(scroll=False)
+
+    def _sync_runs_table_cursor(self, *, scroll: bool) -> None:
+        table = self.query_one("#runs-table", DataTable)
+        if self._selected_run_id is None:
+            if table.row_count:
+                table.move_cursor(row=0, column=0, animate=False, scroll=scroll)
+            return
+        try:
+            row_index = table.get_row_index(self._selected_run_id)
+        except Exception:
+            if table.row_count:
+                table.move_cursor(row=0, column=0, animate=False, scroll=scroll)
+            return
+        table.move_cursor(row=row_index, column=0, animate=False, scroll=scroll)
 
     def _failure_operator_detail(self, *, has_snapshot: bool) -> str:
         if self._failure is None:

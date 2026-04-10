@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher, DataTable, Static
 
 from ..models import DisplayMode, GatewayFailure, QueueOverviewView, QueueTaskView
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
@@ -118,7 +119,7 @@ class QueuePanel(Static):
                     yield Static("Backlog", classes="overview-card-label")
                     yield Static("--", id="queue-list-headline", classes="overview-card-headline")
                     yield Static("", id="queue-list-detail", classes="overview-card-detail")
-                    yield Vertical(id="queue-list-items", classes="panel-item-stack")
+                    yield DataTable(id="queue-table", classes="panel-data-table")
                     yield Static("", id="queue-list-focus", classes="overview-card-detail")
                 yield self._section_card("queue-actions", "Actions")
             yield Static("", id="queue-debug", classes="panel-debug-body")
@@ -143,33 +144,35 @@ class QueuePanel(Static):
             id=f"{suffix}-card",
         )
 
-    @staticmethod
-    def _queue_item_card(
-        task: QueueTaskView,
-        *,
-        index: int,
-        selected: bool,
-        live_index: int | None,
-        reorder_mode: bool,
-    ) -> Vertical:
-        detail_fragments = [f"position {index}"]
-        if task.spec_id:
-            detail_fragments.append(task.spec_id)
-        if reorder_mode and live_index is not None and live_index != index:
-            detail_fragments.append(f"from {live_index}")
-        classes = "overview-card panel-item-card"
-        if selected:
-            classes += " is-selected"
-        if reorder_mode and live_index is not None and live_index != index:
-            classes += " is-moved"
-        return Vertical(
-            Static(f"{index:>2}. {task.title}", classes="panel-item-title"),
-            Static(" | ".join(detail_fragments), classes="panel-item-meta"),
-            classes=classes,
-        )
-
     def on_mount(self) -> None:
+        table = self.query_one("#queue-table", DataTable)
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.add_column("Ord", key="order", width=5)
+        table.add_column("Task", key="task")
+        table.add_column("Spec", key="spec", width=18)
+        table.add_column("Draft", key="draft", width=12)
         self._render_state()
+
+    @on(DataTable.RowHighlighted, "#queue-table")
+    def _handle_queue_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        task_id = event.row_key.value
+        if task_id.startswith("__queue-empty__") or task_id == self._selected_task_id:
+            return
+        self._selected_task_id = task_id
+        self.post_message(self.SelectionChanged(task_id))
+        self._update_focus_label()
+
+    @on(DataTable.RowSelected, "#queue-table")
+    def _handle_queue_row_selected(self, event: DataTable.RowSelected) -> None:
+        task_id = event.row_key.value
+        if task_id.startswith("__queue-empty__"):
+            return
+        if task_id != self._selected_task_id:
+            self._selected_task_id = task_id
+            self.post_message(self.SelectionChanged(task_id))
+            self._update_focus_label()
+        self.action_submit_selection()
 
     def show_snapshot(
         self,
@@ -343,9 +346,9 @@ class QueuePanel(Static):
         self.query_one("#queue-debug", Static).update(self._render_debug_text())
         if self._display_mode is DisplayMode.DEBUG:
             return
-        self._render_operator_cards()
+        self._render_operator_surface()
 
-    def _render_operator_cards(self) -> None:
+    def _render_operator_surface(self) -> None:
         if self._queue is None:
             self._update_status_card(
                 "Waiting for the queue snapshot.",
@@ -358,7 +361,6 @@ class QueuePanel(Static):
             self._set_backlog_content(
                 headline="No visible backlog",
                 detail="queue snapshot not available",
-                items=(),
                 focus="",
             )
             self._update_section("queue-actions", "Waiting for queue state", "open debug for task ids and draft detail")
@@ -388,19 +390,9 @@ class QueuePanel(Static):
                 if queue.active_task is not None
                 else "no queued tasks are waiting"
             )
-            self._set_backlog_content(headline="Backlog empty", detail=detail, items=(), focus="")
+            self._set_backlog_content(headline="Backlog empty", detail=detail, focus="")
         else:
             live_order = {task.task_id: index for index, task in enumerate(self._backlog(), start=1)}
-            items = tuple(
-                self._queue_item_card(
-                    task,
-                    index=index,
-                    selected=task.task_id == self._selected_task_id,
-                    live_index=live_order.get(task.task_id),
-                    reorder_mode=self._reorder_task_ids is not None,
-                )
-                for index, task in enumerate(backlog, start=1)
-            )
             selected = next((task for task in backlog if task.task_id == self._selected_task_id), None)
             focus = f"Focus: {selected.title}" if selected is not None else ""
             detail = (
@@ -408,10 +400,10 @@ class QueuePanel(Static):
                 if queue.backlog_depth != len(backlog)
                 else "visible queue order"
             )
+            self._render_backlog_table(backlog, live_order=live_order)
             self._set_backlog_content(
                 headline=f"{len(backlog)} queued tasks",
                 detail=detail,
-                items=items,
                 focus=focus,
             )
 
@@ -438,23 +430,62 @@ class QueuePanel(Static):
     def _update_status_card(self, headline: str, detail: str) -> None:
         self._update_section("queue-status", headline, detail)
 
-    def _set_backlog_content(self, *, headline: str, detail: str, items: tuple[Widget, ...], focus: str) -> None:
+    def _set_backlog_content(self, *, headline: str, detail: str, focus: str) -> None:
         self.query_one("#queue-list-headline", Static).update(headline)
         self.query_one("#queue-list-detail", Static).update(detail)
         self.query_one("#queue-list-focus", Static).update(focus)
-        container = self.query_one("#queue-list-items", Vertical)
-        container.remove_children()
-        if items:
-            for item in items:
-                container.mount(item)
-        else:
-            container.mount(
-                Vertical(
-                    Static("No queued tasks", classes="panel-item-title"),
-                    Static(detail, classes="panel-item-meta"),
-                    classes="overview-card panel-item-card panel-empty-card",
-                )
+        if self._queue is None or not self._visible_backlog():
+            self._render_backlog_table((), live_order={})
+
+    def _render_backlog_table(
+        self,
+        backlog: tuple[QueueTaskView, ...],
+        *,
+        live_order: dict[str, int],
+    ) -> None:
+        table = self.query_one("#queue-table", DataTable)
+        table.clear(columns=False)
+        if not backlog:
+            table.add_row("--", "No queued tasks", "", "", key="__queue-empty__")
+            table.move_cursor(row=0, column=0, animate=False, scroll=False)
+            return
+        for index, task in enumerate(backlog, start=1):
+            spec_label = task.spec_id or "none"
+            live_index = live_order.get(task.task_id)
+            draft_label = "live"
+            if self._reorder_task_ids is not None:
+                if live_index is not None and live_index != index:
+                    draft_label = f"from {live_index}"
+                else:
+                    draft_label = "kept"
+            table.add_row(
+                str(index),
+                task.title,
+                spec_label,
+                draft_label,
+                key=task.task_id,
             )
+        self._sync_backlog_table_cursor(scroll=False)
+
+    def _sync_backlog_table_cursor(self, *, scroll: bool) -> None:
+        table = self.query_one("#queue-table", DataTable)
+        if self._selected_task_id is None:
+            if table.row_count:
+                table.move_cursor(row=0, column=0, animate=False, scroll=scroll)
+            return
+        try:
+            row_index = table.get_row_index(self._selected_task_id)
+        except Exception:
+            if table.row_count:
+                table.move_cursor(row=0, column=0, animate=False, scroll=scroll)
+            return
+        table.move_cursor(row=row_index, column=0, animate=False, scroll=scroll)
+
+    def _update_focus_label(self) -> None:
+        backlog = self._visible_backlog()
+        selected = next((task for task in backlog if task.task_id == self._selected_task_id), None)
+        focus = f"Focus: {selected.title}" if selected is not None else ""
+        self.query_one("#queue-list-focus", Static).update(focus)
 
     def _failure_operator_detail(self, *, has_snapshot: bool) -> str:
         if self._failure is None:
