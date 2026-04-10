@@ -227,12 +227,18 @@ def _split_step_suffix(index: int) -> str:
         current -= 1
 
 
-def _phase_step_split_paths(phase_step_description: str) -> tuple[str, ...]:
+def _phase_step_split_paths(
+    phase_step_description: str,
+    *,
+    default_split_paths: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     explicit_paths = _extract_repo_relative_paths(phase_step_description)
     non_agent_paths = tuple(path for path in explicit_paths if not path.startswith("agents/"))
     if non_agent_paths:
         return non_agent_paths
-    return explicit_paths
+    if explicit_paths:
+        return explicit_paths
+    return _dedupe([path for path in default_split_paths if _looks_like_repo_relative_path(path)])
 
 
 def _partition_split_paths(paths: tuple[str, ...], fragment_count: int) -> tuple[tuple[str, ...], ...]:
@@ -275,13 +281,20 @@ def _plan_taskmaster_cards(
     step_plans: list[dict[str, object]] = []
     planned_card_count = 0
     for phase_step_id, phase_step_description in phase_steps:
-        split_paths = _phase_step_split_paths(phase_step_description)
+        explicit_split_paths = _phase_step_split_paths(phase_step_description)
+        split_paths = explicit_split_paths or _phase_step_split_paths(
+            phase_step_description,
+            default_split_paths=default_paths,
+        )
         path_count = len(split_paths)
         if path_count == 0:
             fragment_count = 1
             max_fragments = 1
-        else:
+        elif explicit_split_paths:
             fragment_count = max(1, (path_count + _TASKCARD_MAX_FILES_TO_TOUCH - 1) // _TASKCARD_MAX_FILES_TO_TOUCH)
+            max_fragments = path_count
+        else:
+            fragment_count = 1
             max_fragments = path_count
         step_plans.append(
             {
@@ -320,12 +333,17 @@ def _plan_taskmaster_cards(
         split_paths = tuple(str(path) for path in plan["split_paths"])  # type: ignore[arg-type]
         fragment_count = int(plan["fragment_count"])
         if fragment_count <= 1:
+            files_to_touch = (
+                split_paths[:_TASKCARD_MAX_FILES_TO_TOUCH]
+                if split_paths
+                else _phase_step_files_to_touch(phase_step_description, default_paths=default_paths)
+            )
             planned_cards.append(
                 (
                     source_phase_step_id,
                     source_phase_step_id,
                     phase_step_description,
-                    _phase_step_files_to_touch(phase_step_description, default_paths=default_paths),
+                    files_to_touch,
                 )
             )
             continue

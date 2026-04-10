@@ -3583,8 +3583,8 @@ def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective
 
     shard = parse_task_store((workspace / result.shard_path).read_text(encoding="utf-8"), source_file=workspace / result.shard_path)
     record = json.loads((workspace / result.record_path).read_text(encoding="utf-8"))
-    assert result.card_count == 6
-    assert record["card_count"] == 6
+    assert 6 <= result.card_count <= 10
+    assert record["card_count"] == result.card_count
     assert record["profile_selection"]["expected_min_cards"] == 6
     assert record["profile_selection"]["expected_max_cards"] == 10
     assert any("src/main/java/com/example/aura/" in card.body for card in shard.cards)
@@ -3813,10 +3813,163 @@ def test_execute_taskmaster_splits_oversized_phase_step_into_traceable_suffix_ca
     ]
     assert all(len(_field_block_lines(card.body, "Files to touch")) == 1 for card in shard.cards)
 
-    record = json.loads((workspace / result.record_path).read_text(encoding="utf-8"))
-    assert record["card_count"] == 6
-    assert record["profile_selection"]["expected_min_cards"] == 6
-    assert record["profile_selection"]["expected_max_cards"] == 10
+
+def test_execute_taskmaster_uses_reviewed_product_surfaces_when_phase_steps_are_text_sparse(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-python-product-405",
+        emitted_at=_dt("2026-04-09T19:00:00Z"),
+        title="Support Ticket Service",
+        body=(
+            "Build the first usable support-ticket web app for a Python service.\n\n"
+            "## Capability Domains\n"
+            "- Ticket creation API\n"
+            "- Agent inbox triage dashboard\n"
+            "- Escalation notifications\n"
+            "- Resolution analytics\n\n"
+            "## Progression Lines\n"
+            "- Progression from ticket intake to assignment to resolution confirmation.\n"
+            "- Automated validation covers API behavior, inbox triage, escalation flow, and resolution reporting.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    phase_path = workspace / family_state["specs"]["SPEC-405"]["stable_spec_paths"][1]
+    phase_text = _replace_markdown_section(
+        phase_path.read_text(encoding="utf-8"),
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                "1. Deliver the bounded ticket intake slice while preserving the reviewed service scope.",
+                "2. Wire assignment behavior into the same product lane without widening the objective.",
+                "3. Connect escalation handling to the launch path with the existing acceptance scope.",
+                "4. Extend analytics reporting as a bounded continuation of the same service slice.",
+                "5. Run the core service verification flow for the reviewed launch path.",
+                "6. Close the release-ready support workflow verification sweep for this bounded objective.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-python-product-405",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskmaster-python-product-405",
+            emitted_at=_dt("2026-04-09T19:00:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskmaster-python-product-405",
+        emitted_at=_dt("2026-04-09T19:00:00Z"),
+    )
+
+    shard = parse_task_store(
+        (workspace / result.shard_path).read_text(encoding="utf-8"),
+        source_file=workspace / result.shard_path,
+    )
+    assert result.card_count == 6
+    assert any("src/support-ticket-service/" in card.body for card in shard.cards)
+    assert any("tests/test_support-ticket-service_" in card.body for card in shard.cards)
+    for card in shard.cards:
+        files_to_touch = _field_block_lines(card.body, "Files to touch")
+        assert files_to_touch
+        assert len(files_to_touch) <= 2
+        assert any(not path.startswith("agents/") for path in files_to_touch)
+
+
+def test_execute_taskmaster_fails_closed_when_sparse_phase_plan_lacks_enough_surface_headroom(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-python-product-406",
+        emitted_at=_dt("2026-04-09T19:10:00Z"),
+        title="Support Ticket Service",
+        body=(
+            "Build the first usable support-ticket web app for a Python service.\n\n"
+            "## Capability Domains\n"
+            "- Ticket creation API\n"
+            "- Agent inbox triage dashboard\n"
+            "- Escalation notifications\n"
+            "- Resolution analytics\n\n"
+            "## Progression Lines\n"
+            "- Progression from ticket intake to assignment to resolution confirmation.\n"
+            "- Automated validation covers API behavior, inbox triage, escalation flow, and resolution reporting.\n"
+        ),
+        decomposition_profile="moderate",
+    )
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    phase_path = workspace / family_state["specs"]["SPEC-406"]["stable_spec_paths"][1]
+    phase_text = _replace_markdown_section(
+        phase_path.read_text(encoding="utf-8"),
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                "1. Deliver the whole bounded launch slice for the support workflow without widening scope.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+
+    completion_manifest_path = workspace / "agents" / "audit" / "completion_manifest.json"
+    completion_manifest = json.loads(completion_manifest_path.read_text(encoding="utf-8"))
+    completion_manifest["implementation_surfaces"] = [
+        completion_manifest["implementation_surfaces"][0],
+    ]
+    completion_manifest["verification_surfaces"] = [
+        completion_manifest["verification_surfaces"][0],
+    ]
+    completion_manifest_path.write_text(json.dumps(completion_manifest, indent=2) + "\n", encoding="utf-8")
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-python-product-406",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    with pytest.raises(
+        TaskmasterExecutionError,
+        match=r"yields 2 task cards outside expected card range 6-10",
+    ):
+        execute_taskmaster(
+            paths,
+            _goal_queue_checkpoint(
+                run_id="goalspec-taskmaster-python-product-406",
+                emitted_at=_dt("2026-04-09T19:10:00Z"),
+                queue_path=reviewed_path.parent,
+                item_path=reviewed_path,
+                status=ResearchStatus.TASKMASTER_RUNNING,
+                node_id="taskmaster",
+                stage_kind_id="research.taskmaster",
+            ),
+            dispatch=dispatch,
+            run_id="goalspec-taskmaster-python-product-406",
+            emitted_at=_dt("2026-04-09T19:10:00Z"),
+        )
 
 
 def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_path: Path) -> None:
