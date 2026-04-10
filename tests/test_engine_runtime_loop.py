@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from millrace_engine.contracts import ExecutionStatus
+from millrace_engine.contracts import ExecutionStatus, ResearchMode, ResearchStatus
 from millrace_engine.engine import MillraceEngine
 from millrace_engine.events import EventType
 from millrace_engine.markdown import parse_task_cards
 from millrace_engine.planes.execution import ExecutionCycleResult
+from millrace_engine.research.state import ResearchRuntimeMode, load_research_runtime_state
 
 from .support import load_workspace_fixture
 
@@ -23,6 +24,12 @@ class _WatcherStub:
 
     def stop(self) -> None:
         self.stopped += 1
+
+    def poll_once(self) -> list[object]:
+        return []
+
+    def wakeup_timeout_seconds(self, timeout: float) -> float:
+        return timeout
 
 
 def test_engine_runtime_loop_restart_replaces_existing_watcher(tmp_path: Path, monkeypatch) -> None:
@@ -131,3 +138,40 @@ def test_engine_runtime_loop_emits_backlog_empty_audit_after_archival_progress(t
     assert backlog_empty_event.payload["after_progress"] is True
     assert backlog_empty_event.payload["task_id"] == archived_task.task_id
     assert backlog_empty_event.payload["title"] == archived_task.title
+
+
+def test_engine_runtime_loop_daemon_advances_active_goalspec_checkpoint_on_next_tick(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    config_text = config_path.read_text(encoding="utf-8")
+    config_text = config_text.replace('mode = "stub"', 'mode = "goalspec"', 1)
+    config_path.write_text(config_text, encoding="utf-8")
+
+    goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    goal_path.parent.mkdir(parents=True, exist_ok=True)
+    goal_path.write_text("# queued\n", encoding="utf-8")
+
+    engine = MillraceEngine(config_path)
+    monkeypatch.setattr(engine, "_consume_research_recovery_latch", lambda **_kwargs: 0)
+    monkeypatch.setattr(engine.research_plane, "shutdown", lambda: None)
+    monkeypatch.setattr(engine.runtime_loop, "build_file_watcher", lambda: _WatcherStub(mode="poll"))
+
+    async def _run_cycle() -> ExecutionCycleResult:
+        engine.stop_requested = True
+        return ExecutionCycleResult(run_id="daemon-goalspec-cycle", final_status=ExecutionStatus.IDLE)
+
+    monkeypatch.setattr(engine.runtime_loop, "run_cycle", _run_cycle)
+
+    result = asyncio.run(engine.runtime_loop.run(mode="daemon"))
+
+    assert result.process_running is False
+    state = load_research_runtime_state(workspace / "agents" / "research_state.json")
+    assert state is not None
+    assert state.current_mode is ResearchRuntimeMode.GOALSPEC
+    assert state.checkpoint is not None
+    assert state.checkpoint.node_id == "completion_manifest_draft"
+    assert (workspace / "agents" / "research_status.md").read_text(encoding="utf-8") == (
+        f"### {ResearchStatus.COMPLETION_MANIFEST_RUNNING.value}\n"
+    )

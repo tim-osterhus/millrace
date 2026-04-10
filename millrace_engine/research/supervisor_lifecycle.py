@@ -30,7 +30,7 @@ from .supervisor_payloads import (
 
 def should_scan(self: Any, *, trigger: str, observed_at: datetime) -> bool:
     if self.state.checkpoint is not None:
-        return self._last_dispatch is None or trigger != "daemon-loop"
+        return should_continue_checkpoint(self, observed_at=observed_at)
     if trigger != "daemon-loop":
         return True
     if self.state.retry_state is not None and not self.state.retry_due(observed_at):
@@ -38,6 +38,16 @@ def should_scan(self: Any, *, trigger: str, observed_at: datetime) -> bool:
     if self.config.research.idle_mode == "watch":
         return False
     return self.state.poll_due(observed_at)
+
+
+def should_continue_checkpoint(self: Any, *, observed_at: datetime) -> bool:
+    """Gate checkpoint continuation separately from fresh daemon rescans."""
+
+    if self.state.checkpoint is None:
+        return False
+    if self.state.retry_state is not None and not self.state.retry_due(observed_at):
+        return False
+    return True
 
 
 def lock_path(self: Any) -> Path:
