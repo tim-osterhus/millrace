@@ -380,7 +380,7 @@ def test_tui_shell_operator_fixture_boots_with_real_runs_and_logs(tmp_path) -> N
         assert "SUMMARY follow" in logs_text
         assert "engine.started" in logs_text
         assert _static_text(logs_panel.query_one("#logs-mode-value", Static)) == "follow"
-        assert "Recent runtime events" in _static_text(logs_panel.query_one("#logs-list-headline", Static))
+        assert "Recent runtime events" in _static_text(logs_panel.query_one("#logs-events-headline", Static))
 
     _run_app_scenario(config_path, scenario)
 
@@ -3029,9 +3029,13 @@ def test_runs_panel_preserves_selected_run_across_refresh_when_identity_survives
     assert panel.selected_run_id == "run-1"
 
 
-def test_logs_panel_filters_freezes_and_emits_run_requests() -> None:
+def test_logs_panel_filters_freezes_and_emits_run_requests(tmp_path) -> None:
     observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
-    panel = LogsPanel(id="panel-logs")
+    artifact_root = tmp_path / "agents" / "runs" / "run-1"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "resolved_snapshot.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (artifact_root / "transition_history.jsonl").write_text('{"event":"started"}\n', encoding="utf-8")
+    panel = LogsPanel(workspace_path=tmp_path, id="panel-logs")
     first_batch = EventLogView(
         events=(
             _sample_runtime_event(
@@ -3094,9 +3098,11 @@ def test_logs_panel_filters_freezes_and_emits_run_requests() -> None:
     panel.set_source_filter("execution")
     panel.set_event_type_filter("execution.stage.started")
     text = panel.summary_text()
-    assert "SUMMARY frozen | visible 1 | alert 0 | warn 0" in text
+    assert "SUMMARY frozen | focus events | visible 1 | alert 0 | warn 0" in text
     assert "source execution | type execution.stage.started" in text
     assert "FOCUS   1/1 | INFO | execution.stage.started | stage=builder | run run-1" in text
+    assert f"ARTIFACT 2 visible | root {artifact_root.as_posix()}" in text
+    assert "PATH    resolved_snapshot.json" in text
     assert "execution.stage.completed" not in text
 
     posted: list[LogsPanel.RunRequested] = []
@@ -3108,8 +3114,48 @@ def test_logs_panel_filters_freezes_and_emits_run_requests() -> None:
 
     panel.show_snapshot(second_batch, display_mode=DisplayMode.DEBUG)
     debug_text = panel.summary_text()
-    assert "MODE    frozen | retained 4 | visible 1" in debug_text
+    assert "MODE    frozen | focus events | retained 4 | visible 1" in debug_text
     assert "payload stage=builder" in debug_text
+    assert f"root {artifact_root.as_posix()}" in debug_text
+
+
+def test_logs_panel_artifact_focus_switches_to_selected_run_artifacts(tmp_path) -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    run_root = tmp_path / "agents" / "runs" / "run-2"
+    nested = run_root / "diagnostics"
+    nested.mkdir(parents=True)
+    (run_root / "resolved_snapshot.json").write_text('{"run":"run-2"}\n', encoding="utf-8")
+    (nested / "compile.log").write_text("compile ok\n", encoding="utf-8")
+
+    panel = LogsPanel(workspace_path=tmp_path, id="panel-logs")
+    panel.show_snapshot(
+        EventLogView(
+            events=(
+                _sample_runtime_event(
+                    event_type="execution.stage.completed",
+                    source="execution",
+                    observed_at=observed_at,
+                    category="EXE",
+                    summary="stage=builder | status=success",
+                    run_id="run-2",
+                    is_research_event=False,
+                    payload=(KeyValueView("stage", "builder"), KeyValueView("status", "success")),
+                ),
+            ),
+            last_loaded_at=observed_at,
+        )
+    )
+
+    assert panel.selected_artifact_path == "diagnostics/"
+    panel.action_toggle_focus_surface()
+    panel.action_cursor_down()
+
+    assert panel.focus_surface == "artifacts"
+    assert panel.selected_artifact_path == "diagnostics/compile.log"
+    text = panel.summary_text()
+    assert "focus artifacts" in text
+    assert f"ARTIFACT 3 visible | root {run_root.as_posix()}" in text
+    assert "PATH    diagnostics/compile.log" in text
 
 
 def test_logs_panel_operator_mode_compacts_generated_run_ids() -> None:

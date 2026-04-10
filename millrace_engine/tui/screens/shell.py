@@ -160,7 +160,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
                             elif panel.id is PanelId.RESEARCH:
                                 yield ResearchPanel(id=panel_widget_id(panel.id))
                             elif panel.id is PanelId.LOGS:
-                                yield LogsPanel(id=panel_widget_id(panel.id))
+                                yield LogsPanel(workspace_path=self.workspace_path, id=panel_widget_id(panel.id))
                             elif panel.id is PanelId.CONFIG:
                                 yield ConfigPanel(id=panel_widget_id(panel.id))
                             elif panel.id is PanelId.PUBLISH:
@@ -600,6 +600,9 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
                 selected_task_id=self.query_one(QueuePanel).selected_task_id,
                 selected_run_id=self.query_one(RunsPanel).selected_run_id,
                 selected_event=self.query_one(LogsPanel).selected_event,
+                selected_log_artifact_path=self.query_one(LogsPanel).selected_artifact_path,
+                log_artifact_root=self.query_one(LogsPanel).artifact_root,
+                logs_focus_surface=self.query_one(LogsPanel).focus_surface,
                 selected_question_id=self.query_one(ResearchPanel).selected_question_id,
                 selected_config_field_key=self.query_one(ConfigPanel).selected_field_key,
                 selected_publish_path=self.query_one(PublishPanel).selected_path,
@@ -648,6 +651,12 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     @on(RunsPanel.SelectionChanged)
     def _handle_runs_selection_changed(self, message: RunsPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.RUNS:
+            self._render_inspector()
+        message.stop()
+
+    @on(LogsPanel.SelectionChanged)
+    def _handle_logs_selection_changed(self, message: LogsPanel.SelectionChanged) -> None:
+        if self.active_panel is PanelId.LOGS:
             self._render_inspector()
         message.stop()
 

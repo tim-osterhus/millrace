@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from textual.worker import WorkerState
 
@@ -101,6 +102,9 @@ def build_shell_inspector_view(
     selected_task_id: str | None = None,
     selected_run_id: str | None = None,
     selected_event: RuntimeEventView | None = None,
+    selected_log_artifact_path: str | None = None,
+    log_artifact_root: str | None = None,
+    logs_focus_surface: str | None = None,
     selected_question_id: str | None = None,
     selected_config_field_key: str | None = None,
     selected_publish_path: str | None = None,
@@ -183,6 +187,14 @@ def build_shell_inspector_view(
             detail = [selected_event.summary or selected_event.event_type]
             if selected_event.run_id:
                 detail.append(f"run {selected_event.run_id}")
+            if selected_event.payload:
+                detail.append(
+                    "payload " + ", ".join(f"{item.key}={item.value}" for item in selected_event.payload[:4])
+                )
+            if log_artifact_root:
+                detail.append(f"artifacts {Path(log_artifact_root).name or log_artifact_root}")
+            if selected_log_artifact_path:
+                detail.append(f"selected artifact {selected_log_artifact_path}")
             detail_lines = tuple(detail)
         elif display_mode is DisplayMode.DEBUG:
             headline = "debug log view"
@@ -193,7 +205,10 @@ def build_shell_inspector_view(
         if expanded_mode:
             action_lines = ("Escape returns from expanded stream mode.", "L jumps the expanded stream back to live.")
         else:
-            action_lines = ("Up/Down selects events.", "Enter opens run detail when the selected event has a run id.")
+            action_lines = (
+                f"Tab switches between events and artifacts ({logs_focus_surface or 'events'} active).",
+                "Enter opens run detail when the selected event has a run id.",
+            )
     elif active_panel.id is PanelId.CONFIG:
         selected = selected_config_field(config, selected_key=selected_config_field_key)
         if config is None:
