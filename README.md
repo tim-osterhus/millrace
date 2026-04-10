@@ -163,12 +163,12 @@ What it provides:
 
 - a startup health gate before the shell becomes interactive
 - a dual-mode shell with summary-first `operator` mode and detail-forward `debug` mode
-- one toggleable expanded stream mode that takes over the main content area while leaving the sidebar, status strip, and notices visible
-- a persistent shell with sidebar navigation, a compact status strip, and widget-composed overview/queue/runs/research/logs/config/publish panels
-- explicit lifecycle signaling across the sidebar daemon badge, top status strip, and notices rail
+- one toggleable expanded stream mode that takes over the main content area while leaving the sidebar, status strip, inspector, notices, and footer discovery surfaces visible
+- a persistent shell with sidebar navigation, a compact status strip, a right-hand inspector, a real footer, and widget-composed overview/queue/runs/research/logs/config/publish panels
+- explicit lifecycle signaling across the sidebar daemon badge, top status strip, inspector context, and notices rail
 - guided task, idea, queue reorder, config edit, and publish confirmation flows
 - lifecycle actions for `start --once`, `start --daemon`, `pause`, `resume`, and `stop`
-- a command palette for common actions, including display-mode toggle and lifecycle controls
+- a command palette for common actions, including display-mode toggle, lifecycle controls, focus movement, and expanded-stream actions
 - built-in keyboard help (`?`) and panel shortcuts (`1` through `7`)
 - read-only governance visibility for recent compounding knowledge usage and pending review items
 - concise run-detail drilldown that now includes procedure and context-fact usage summaries when present
@@ -183,7 +183,7 @@ Expanded stream behavior to know:
 - press `e` to toggle the active panel into expanded mode and `Escape` to return to the normal panel body
 - in `operator` mode, expanded view renders a narrated activity feed from runtime events
 - in `debug` mode, expanded view renders the raw structured event lines, close to `logs --follow`
-- if you scroll upward, live follow disengages until you jump back with `l`
+- if you scroll upward, live follow disengages until you jump back with `l` or the command palette action
 
 ## Start A Fresh Workspace
 

@@ -341,6 +341,7 @@ def test_tui_registers_minimal_system_commands(tmp_path) -> None:
         assert "Toggle Display Mode" in titles
         assert "Toggle Expanded Mode" in titles
         assert "Exit Expanded Mode" in titles
+        assert "Jump Expanded Stream To Live" in titles
 
         await pilot.press("7")
         await pilot.pause()

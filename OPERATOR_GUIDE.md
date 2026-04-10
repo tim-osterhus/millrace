@@ -151,11 +151,11 @@ The TUI is a supported operator shell over the same control layer used by the CL
 What the shell gives you:
 
 - a startup health gate with retry and local recovery context
-- a sidebar-driven shell with a top status strip, widget-composed Overview/Queue/Runs/Research/Logs/Config/Publish panels, and a notices rail for action feedback
+- a sidebar-driven shell with a top status strip, widget-composed Overview/Queue/Runs/Research/Logs/Config/Publish panels, a right-hand inspector, a notices rail, and a real footer discovery strip
 - dual display modes: `operator` for concise daily control and `debug` for denser diagnostics
 - one expanded stream mode that swaps the current panel body for a full-height live feed while keeping the rest of the shell frame visible
-- lifecycle state signals in multiple places: sidebar daemon badge, top status strip, and notices
-- a command palette for lifecycle, publish, config, and panel actions
+- lifecycle state signals in multiple places: sidebar daemon badge, top status strip, inspector context, and notices
+- a command palette for lifecycle, publish, config, panel, focus, and expanded-stream actions
 - guided modals for add-task, add-idea, queue reorder, config edits, run detail, and publish confirmations
 - read-only governance visibility in Overview plus run-detail compounding summaries for recent procedure/context-fact usage
 - the same mailbox-safe daemon mutation rules used by the CLI
@@ -163,7 +163,7 @@ What the shell gives you:
 Useful TUI controls:
 
 - `1` through `7` switch panels
-- `s` focuses the sidebar and `c` focuses the active panel
+- `s` focuses the sidebar, `c` focuses the active panel, and `Tab` or `Shift+Tab` cycles between shell regions
 - `t` opens Add Task and `i` opens Add Idea
 - `Ctrl+P` opens the command palette
 - use the sidebar Mode toggle or command palette action to switch operator/debug views

@@ -168,7 +168,9 @@ The shell layout is:
 - a left sidebar with panel navigation, daemon badge, and mode toggle
 - a status bar above the active panel body
 - the active panel content area, which uses composed cards, section stacks, and structured list rows in operator mode
+- a right-hand inspector that mirrors the current panel focus and context
 - a notices strip for action outcomes and failures
+- a real footer that exposes the currently relevant discovery surface
 
 The TUI does not render a second fake terminal title row inside the app. The host terminal provides the outer window chrome; the shipped shell begins at the sidebar, status bar, panel body, and notices rail.
 
@@ -192,7 +194,7 @@ Display mode is session-scoped to the current TUI run.
 
 The shell also has one expanded-stream presentation mode.
 
-Expanded mode is not a separate panel. It temporarily replaces the active panel body with a full-height live stream while keeping the sidebar, top status strip, and notices rail visible.
+Expanded mode is not a separate panel. It temporarily replaces the active panel body with a full-height live stream while keeping the sidebar, top status strip, inspector, notices rail, and footer visible.
 
 Use expanded mode when you want a continuously readable foreground feed instead of the normal compact panel body.
 
@@ -439,9 +441,13 @@ The status bar summarizes:
 - refresh freshness
 - any in-progress lifecycle action
 
+The right-hand inspector keeps the active panel, current focus target, and selection-specific context visible without leaving the shell.
+
 Below the active panel, the notices area records recent action results and failures.
 
-Use the status bar for continuous situational awareness and the notices area for immediate action feedback.
+The footer remains mounted as the live binding-discovery strip for whichever shell or panel actions are currently relevant.
+
+Use the status bar for continuous situational awareness, the inspector for selection-specific context, the notices area for immediate action feedback, and the footer when you want to discover the current keyboard contract quickly.
 
 ## Command Palette
 
