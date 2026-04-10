@@ -184,6 +184,14 @@ def execute_spec_synthesis(
         for spec in planned_family_specs
     )
     family_complete = not planned_family_specs
+    emitted_depends_on_specs = (
+        current_family_state.initial_family_plan.specs[spec_id].depends_on_specs
+        if (
+            current_family_state.initial_family_plan is not None
+            and spec_id in current_family_state.initial_family_plan.specs
+        )
+        else ()
+    )
 
     queue_spec_text = render_queue_spec(
         emitted_at=emitted_at,
@@ -251,6 +259,7 @@ def execute_spec_synthesis(
         spec_id=spec_id,
         title=source.title,
         decomposition_profile=source.decomposition_profile,
+        depends_on_specs=emitted_depends_on_specs,
         queue_spec_path=queue_spec_path,
         emitted_at=emitted_at,
         planned_specs=planned_spec_states,
@@ -379,6 +388,7 @@ def execute_spec_synthesis(
         spec_id=spec_id,
         title=source.title,
         decomposition_profile=source.decomposition_profile,
+        depends_on_specs=emitted_depends_on_specs,
         queue_spec_path=queue_spec_path,
         emitted_at=emitted_at,
         planned_specs=planned_spec_states,

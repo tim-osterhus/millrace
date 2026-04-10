@@ -45,6 +45,7 @@ from millrace_engine.research.goalspec import (
     GoalSource,
     SpecSynthesisRecord,
 )
+from millrace_engine.research.goalspec_helpers import GoalSpecExecutionError
 from millrace_engine.research.goalspec_persistence import _updated_goal_spec_family_state
 from millrace_engine.research.taskmaster import (
     TASKMASTER_ARTIFACT_SCHEMA_VERSION,
@@ -650,6 +651,190 @@ def test_updated_goal_spec_family_state_preserves_goal_gap_remediation_phase(tmp
     assert next_state.family_governor is not None
     assert next_state.family_governor.applied_family_max_specs == 1
     assert next_state.spec_order == ("SPEC-REM-001",)
+
+
+def test_updated_goal_spec_family_state_preserves_promoted_sibling_dependencies(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    paths = RuntimePaths.from_workspace(workspace, Path("agents"))
+    goal_file = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    queue_spec_path = workspace / "agents" / "ideas" / "specs" / "SPEC-BETA__beta.md"
+    policy_path = workspace / "agents" / "objective" / "family_policy.json"
+    for path in (goal_file, queue_spec_path, policy_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    goal_file.write_text("# Goal\n", encoding="utf-8")
+    queue_spec_path.write_text("# Beta\n", encoding="utf-8")
+    policy_path.write_text(json.dumps({"initial_family_max_specs": 2}) + "\n", encoding="utf-8")
+
+    state = GoalSpecFamilyState.model_validate(
+        {
+            "goal_id": "IDEA-42",
+            "source_idea_path": "agents/ideas/raw/goal.md",
+            "family_phase": "initial_family",
+            "family_complete": False,
+            "active_spec_id": "SPEC-ALPHA",
+            "spec_order": ["SPEC-ALPHA", "SPEC-BETA"],
+            "specs": {
+                "SPEC-ALPHA": {
+                    "status": "emitted",
+                    "title": "Alpha",
+                    "decomposition_profile": "moderate",
+                    "queue_path": "agents/ideas/specs/SPEC-ALPHA__alpha.md",
+                },
+                "SPEC-BETA": {
+                    "status": "planned",
+                    "title": "Beta",
+                    "decomposition_profile": "moderate",
+                    "depends_on_specs": ["SPEC-ALPHA"],
+                },
+            },
+            "family_governor": {
+                "policy_path": "agents/objective/family_policy.json",
+                "initial_family_max_specs": 2,
+                "applied_family_max_specs": 2,
+            },
+        }
+    )
+    frozen_state = state.model_copy(
+        update={
+            "initial_family_plan": build_initial_family_plan_snapshot(
+                state,
+                repo_root=workspace,
+                goal_file=goal_file,
+                policy_path=policy_path,
+                frozen_at="2026-03-21T10:05:00Z",
+            )
+        }
+    )
+    write_goal_spec_family_state(
+        paths.goal_spec_family_state_file,
+        frozen_state,
+        updated_at="2026-03-21T10:05:00Z",
+    )
+
+    next_state = _updated_goal_spec_family_state(
+        paths=paths,
+        source=GoalSource.model_validate(
+            {
+                "current_artifact_path": goal_file.as_posix(),
+                "current_artifact_relative_path": "agents/ideas/raw/goal.md",
+                "canonical_source_path": goal_file.as_posix(),
+                "canonical_relative_source_path": "agents/ideas/raw/goal.md",
+                "source_path": goal_file.as_posix(),
+                "relative_source_path": "agents/ideas/raw/goal.md",
+                "idea_id": "IDEA-42",
+                "title": "Goal source",
+                "decomposition_profile": "moderate",
+                "frontmatter": {},
+                "body": "Goal source",
+                "canonical_body": "Goal source",
+                "checksum_sha256": "a" * 64,
+            }
+        ),
+        spec_id="SPEC-BETA",
+        title="Beta",
+        decomposition_profile="moderate",
+        depends_on_specs=("SPEC-ALPHA",),
+        queue_spec_path=queue_spec_path,
+        emitted_at="2026-03-21T10:10:00Z",
+        family_complete=False,
+    )
+
+    assert next_state.active_spec_id == "SPEC-BETA"
+    assert next_state.specs["SPEC-BETA"].status == "emitted"
+    assert next_state.specs["SPEC-BETA"].depends_on_specs == ("SPEC-ALPHA",)
+    assert load_goal_spec_family_state(paths.goal_spec_family_state_file).specs["SPEC-BETA"].depends_on_specs == (
+        "SPEC-ALPHA",
+    )
+
+
+def test_updated_goal_spec_family_state_still_blocks_mutated_promoted_sibling_dependencies(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    paths = RuntimePaths.from_workspace(workspace, Path("agents"))
+    goal_file = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    queue_spec_path = workspace / "agents" / "ideas" / "specs" / "SPEC-BETA__beta.md"
+    policy_path = workspace / "agents" / "objective" / "family_policy.json"
+    for path in (goal_file, queue_spec_path, policy_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    goal_file.write_text("# Goal\n", encoding="utf-8")
+    queue_spec_path.write_text("# Beta\n", encoding="utf-8")
+    policy_path.write_text(json.dumps({"initial_family_max_specs": 2}) + "\n", encoding="utf-8")
+
+    state = GoalSpecFamilyState.model_validate(
+        {
+            "goal_id": "IDEA-42",
+            "source_idea_path": "agents/ideas/raw/goal.md",
+            "family_phase": "initial_family",
+            "family_complete": False,
+            "active_spec_id": "SPEC-ALPHA",
+            "spec_order": ["SPEC-ALPHA", "SPEC-BETA"],
+            "specs": {
+                "SPEC-ALPHA": {
+                    "status": "emitted",
+                    "title": "Alpha",
+                    "decomposition_profile": "moderate",
+                    "queue_path": "agents/ideas/specs/SPEC-ALPHA__alpha.md",
+                },
+                "SPEC-BETA": {
+                    "status": "planned",
+                    "title": "Beta",
+                    "decomposition_profile": "moderate",
+                    "depends_on_specs": ["SPEC-ALPHA"],
+                },
+            },
+            "family_governor": {
+                "policy_path": "agents/objective/family_policy.json",
+                "initial_family_max_specs": 2,
+                "applied_family_max_specs": 2,
+            },
+        }
+    )
+    frozen_state = state.model_copy(
+        update={
+            "initial_family_plan": build_initial_family_plan_snapshot(
+                state,
+                repo_root=workspace,
+                goal_file=goal_file,
+                policy_path=policy_path,
+                frozen_at="2026-03-21T10:05:00Z",
+            )
+        }
+    )
+    write_goal_spec_family_state(
+        paths.goal_spec_family_state_file,
+        frozen_state,
+        updated_at="2026-03-21T10:05:00Z",
+    )
+
+    with pytest.raises(GoalSpecExecutionError, match="frozen-initial-family-plan-drift"):
+        _updated_goal_spec_family_state(
+            paths=paths,
+            source=GoalSource.model_validate(
+                {
+                    "current_artifact_path": goal_file.as_posix(),
+                    "current_artifact_relative_path": "agents/ideas/raw/goal.md",
+                    "canonical_source_path": goal_file.as_posix(),
+                    "canonical_relative_source_path": "agents/ideas/raw/goal.md",
+                    "source_path": goal_file.as_posix(),
+                    "relative_source_path": "agents/ideas/raw/goal.md",
+                    "idea_id": "IDEA-42",
+                    "title": "Goal source",
+                    "decomposition_profile": "moderate",
+                    "frontmatter": {},
+                    "body": "Goal source",
+                    "canonical_body": "Goal source",
+                    "checksum_sha256": "a" * 64,
+                }
+            ),
+            spec_id="SPEC-BETA",
+            title="Beta",
+            decomposition_profile="moderate",
+            depends_on_specs=(),
+            queue_spec_path=queue_spec_path,
+            emitted_at="2026-03-21T10:10:00Z",
+            family_complete=False,
+        )
 
 
 def test_progress_watchdog_regenerates_missing_audit_recovery_task_without_rewriting_family_policy_history(

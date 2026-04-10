@@ -125,6 +125,7 @@ def _build_goal_spec_family_state(
     spec_id: str,
     title: str,
     decomposition_profile: GoalSpecDecompositionProfile,
+    depends_on_specs: tuple[str, ...] = (),
     queue_spec_path: Path,
     emitted_at: datetime,
     planned_specs: tuple[GoalSpecFamilySpecState, ...] = (),
@@ -168,6 +169,7 @@ def _build_goal_spec_family_state(
         status="emitted",
         title=title,
         decomposition_profile=decomposition_profile,
+        depends_on_specs=depends_on_specs,
         queue_path=_relative_path(queue_spec_path, relative_to=paths.root),
     )
     specs = dict(next_state.specs)
@@ -227,6 +229,7 @@ def _updated_goal_spec_family_state(
     spec_id: str,
     title: str,
     decomposition_profile: GoalSpecDecompositionProfile,
+    depends_on_specs: tuple[str, ...] = (),
     queue_spec_path: Path,
     emitted_at: datetime,
     planned_specs: tuple[GoalSpecFamilySpecState, ...] = (),
@@ -239,6 +242,7 @@ def _updated_goal_spec_family_state(
         spec_id=spec_id,
         title=title,
         decomposition_profile=decomposition_profile,
+        depends_on_specs=depends_on_specs,
         queue_spec_path=queue_spec_path,
         emitted_at=emitted_at,
         planned_specs=planned_specs,
