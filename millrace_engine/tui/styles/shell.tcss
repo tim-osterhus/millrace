@@ -1,11 +1,15 @@
+#shell-root {
+    height: 1fr;
+}
+
 #shell-body {
     height: 1fr;
     layout: horizontal;
 }
 
 #shell-sidebar {
-    width: 26;
-    min-width: 22;
+    width: 22;
+    min-width: 20;
     background: #0a0a0b;
     border-right: solid #252528;
     padding: 1 1;
@@ -26,13 +30,29 @@
 
 #shell-content {
     height: 1fr;
-    padding: 1 2 0 2;
+    padding: 1 1 1 1;
+}
+
+#shell-inspector {
+    width: 24;
+    min-width: 22;
+    background: #121214;
+    border-left: solid #252528;
+    padding: 1 1;
+    color: #d4d2dc;
+}
+
+#shell-bottom {
+    height: auto;
+    min-height: 3;
+    background: #0e0e10;
+    border-top: solid #252528;
 }
 
 #shell-notices {
+    width: 1fr;
     background: #0e0e10;
     color: #807e88;
-    border-top: solid #252528;
     padding: 0 1;
     height: auto;
 }
@@ -42,6 +62,17 @@
 }
 
 #shell-notices.notice-error {
+    color: #ef4444;
+}
+
+#shell-footer {
+    width: auto;
+    min-width: 36;
+    background: #0e0e10;
+    color: #d4d2dc;
+}
+
+#shell-footer > .footer--highlight-key {
     color: #ef4444;
 }
 
@@ -64,9 +95,9 @@
 }
 
 .sidebar-daemon-badge {
-    background: rgba(220, 38, 38, 0.12);
+    background: #17171b;
     color: #d4d2dc;
-    border: round #4a4a4f;
+    border: round #3b3b45;
     text-style: bold;
     padding: 0 1 0 1;
     margin-bottom: 1;
@@ -74,7 +105,7 @@
 
 .sidebar-daemon-badge.state-idle {
     color: #807e88;
-    border: round #3a3a3e;
+    border: round #3b3b45;
 }
 
 .sidebar-daemon-badge.state-launching-once {
@@ -166,6 +197,10 @@
     color: #807e88;
     margin-top: 1;
     padding-left: 1;
+}
+
+.shell-inspector {
+    text-style: none;
 }
 
 .expanded-stream-view {

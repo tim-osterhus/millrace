@@ -26,6 +26,13 @@ def _refresh_label(moment: datetime | None) -> str:
     return normalized.astimezone(timezone.utc).strftime("%H:%M:%SZ")
 
 
+def _compact_refresh_label(moment: datetime | None) -> str:
+    if moment is None:
+        return "wait"
+    normalized = moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+    return normalized.astimezone(timezone.utc).strftime("%H:%MZ")
+
+
 def _clip_fragment(value: str, *, limit: int) -> str:
     normalized = " ".join(value.split())
     if len(normalized) <= limit:
@@ -55,14 +62,17 @@ def _compact_lifecycle_label(lifecycle: LifecycleSignalView) -> str:
 
 def _operator_health_fragment(report: WorkspaceHealthReport | None) -> str:
     if report is None:
-        return "health pending"
-    return f"health {report.status.value} {report.summary.passed_checks}/{report.summary.total_checks}"
+        return "health --"
+    counts = f"{report.summary.passed_checks}/{report.summary.total_checks}"
+    if report.status.value == "pass":
+        return counts
+    return f"{report.status.value} {counts}"
 
 
 def _operator_refresh_fragment(*, refreshed_at: datetime | None, failure: GatewayFailure | None) -> str:
     if failure is not None:
         return f"stale {_clip_fragment(failure.message, limit=16)}"
-    return _refresh_label(refreshed_at)
+    return ""
 
 
 class StatusBar(Static):
@@ -171,8 +181,9 @@ class StatusBar(Static):
         active_fragment = _clip_fragment(active_label, limit=12)
         health_fragment = _operator_health_fragment(health_report)
         tail_fragment = _operator_refresh_fragment(refreshed_at=last_refreshed_at, failure=refresh_failure)
+        telemetry_fragment = f"{health_fragment} {tail_fragment}".strip()
         if busy_message is not None:
-            tail_fragment = f"busy {_clip_fragment(busy_message, limit=12)}"
+            telemetry_fragment = f"{health_fragment} busy {_clip_fragment(busy_message, limit=12)}".strip()
         panel_fragment = active_panel_label
         if expanded_mode:
             panel_fragment = f"{panel_fragment} Expanded"
@@ -181,8 +192,7 @@ class StatusBar(Static):
             f"daemon {daemon_label}",
             f"backlog {backlog_depth}",
             f"active {active_fragment}",
-            health_fragment,
-            tail_fragment,
+            telemetry_fragment,
         ]
         lifecycle_label = _compact_lifecycle_label(lifecycle)
         if lifecycle_label not in {"idle", "running"}:

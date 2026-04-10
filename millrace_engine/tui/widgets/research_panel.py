@@ -361,6 +361,10 @@ class ResearchPanel(Static):
             return
         self.post_message(self.InterviewRequested(question))
 
+    @property
+    def selected_question_id(self) -> str | None:
+        return self._selected_question_id
+
     def _update_metric(self, suffix: str, value: str, meta: str) -> None:
         self.query_one(f"#{suffix}-value", Static).update(value)
         self.query_one(f"#{suffix}-meta", Static).update(meta)

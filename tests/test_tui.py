@@ -13,7 +13,7 @@ import pytest
 from textual.app import App, SystemCommand
 from textual.geometry import Region
 from textual.worker import WorkerState
-from textual.widgets import Button, ContentSwitcher, Input, Static, TextArea
+from textual.widgets import Button, ContentSwitcher, Footer, Input, Static, TextArea
 
 import millrace_engine.tui.gateway as gateway_module
 import millrace_engine.tui.gateway_support as gateway_support_module
@@ -109,6 +109,7 @@ from millrace_engine.tui.widgets.publish_panel import PublishPanel
 from millrace_engine.tui.widgets.queue_panel import QueuePanel
 from millrace_engine.tui.widgets.research_panel import ResearchPanel
 from millrace_engine.tui.widgets.runs_panel import RunsPanel
+from millrace_engine.tui.widgets.shell_inspector import ShellInspector
 from millrace_engine.tui.widgets.status_bar import StatusBar
 from millrace_engine.tui.workers import WorkerSettings
 from tests.support import FIXTURE_ROOT, load_workspace_fixture
@@ -842,6 +843,81 @@ def test_tui_help_modal_restores_content_focus_after_close(monkeypatch, tmp_path
         assert app.screen.active_panel == PanelId.LOGS
         assert app.screen.focused is not None
         assert app.screen.focused.id == "panel-logs"
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_frame_mounts_footer_and_inspector(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    _write_runtime_state_snapshot(workspace, process_running=True, backlog_depth=0)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+        await pilot.pause()
+
+        footer = app.screen.query_one(Footer)
+        inspector = app.screen.query_one("#shell-inspector", ShellInspector)
+        assert footer.id == "shell-footer"
+        inspector_text = _static_text(inspector)
+        assert "PANEL   Overview" in inspector_text
+        assert "FOCUS   Overview" in inspector_text
+        assert "NEXT" in inspector_text
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path) -> None:
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        queue_panel = app.screen.query_one(QueuePanel)
+        selected_id = queue_panel.selected_task_id
+        assert selected_id is not None
+        selected_task = next(task for task in app.screen._store.state.queue.backlog if task.task_id == selected_id)
+        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        assert "PANEL   Queue" in inspector_text
+        assert f"FOCUS   {selected_task.title}" in inspector_text
+        assert f"STATE   task {selected_task.task_id}" in inspector_text
+
+        await pilot.press("6")
+        await pilot.pause()
+        config_panel = app.screen.query_one(ConfigPanel)
+        selected_field = shell_support_module.selected_config_field(
+            app.screen._store.state.config,
+            selected_key=config_panel.selected_field_key,
+        )
+        assert selected_field is not None
+        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        assert "PANEL   Config" in inspector_text
+        assert f"FOCUS   {selected_field.label}" in inspector_text
+        assert selected_field.description in inspector_text
 
     _run_app_scenario(config_path, scenario)
 

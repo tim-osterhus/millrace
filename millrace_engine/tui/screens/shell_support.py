@@ -11,16 +11,24 @@ from ..messages import ActionFailed, ActionSucceeded, RefreshFailed, RefreshSucc
 from ..models import (
     ConfigFieldView,
     ConfigOverviewView,
+    DisplayMode,
     GatewayFailure,
     GatewayResult,
+    InterviewQuestionSummaryView,
+    PanelDefinition,
     NoticeView,
     PanelId,
     PublishOverviewView,
     QueueOverviewView,
+    QueueTaskView,
+    ResearchOverviewView,
+    RunSummaryView,
     RunsOverviewView,
+    RuntimeEventView,
     RuntimeOverviewView,
 )
 from ..widgets.overview_panel import LatestRunSummary
+from ..widgets.shell_inspector import ShellInspectorView
 from ..workers import (
     INITIAL_REFRESH_WORKER_NAME,
     PERIODIC_REFRESH_WORKER_NAME,
@@ -57,6 +65,181 @@ class WorkerStateOutcome:
     message: ActionSucceeded | ActionFailed | RefreshSucceeded | RefreshFailed | None = None
     clear_lifecycle_busy: bool = False
     ensure_background_runtime: bool = False
+
+
+def build_shell_inspector_view(
+    *,
+    active_panel: PanelDefinition,
+    display_mode: DisplayMode,
+    expanded_mode: bool,
+    runtime: RuntimeOverviewView | None,
+    queue: QueueOverviewView | None,
+    runs: RunsOverviewView | None,
+    research: ResearchOverviewView | None,
+    config: ConfigOverviewView | None,
+    publish: PublishOverviewView | None,
+    latest_run: LatestRunSummary | None,
+    panel_failure: GatewayFailure | None,
+    selected_task_id: str | None = None,
+    selected_run_id: str | None = None,
+    selected_event: RuntimeEventView | None = None,
+    selected_question_id: str | None = None,
+    selected_config_field_key: str | None = None,
+) -> ShellInspectorView:
+    title = active_panel.label
+    headline = "waiting for the first workspace snapshot"
+    detail_lines: tuple[str, ...] = ()
+    action_lines: tuple[str, ...] = ()
+
+    if active_panel.id is PanelId.OVERVIEW:
+        if runtime is not None:
+            daemon_state = "running" if runtime.process_running else "stopped"
+            headline = f"daemon {daemon_state} | exec {runtime.execution_status.lower()}"
+            detail = [
+                f"research {runtime.research_status.lower()} | backlog {runtime.backlog_depth}",
+            ]
+            if latest_run is not None:
+                detail.append(f"latest run {latest_run.run_id} | status {latest_run.latest_status or 'unknown'}")
+            if runtime.selection.selection_ref:
+                detail.append(f"selection {runtime.selection.selection_ref}")
+            detail_lines = tuple(detail)
+            action_lines = ("Use the left rail or 1-7 to switch work surfaces.",)
+    elif active_panel.id is PanelId.QUEUE:
+        selected = _queue_task_by_id(queue, selected_task_id)
+        if queue is None:
+            headline = "queue snapshot not loaded"
+        elif selected is not None:
+            title = selected.title
+            headline = f"task {selected.task_id}"
+            detail = [f"backlog depth {queue.backlog_depth}"]
+            if selected.spec_id:
+                detail.append(f"spec {selected.spec_id}")
+            if runtime is not None and runtime.process_running:
+                detail.append("daemon running | reorder requests queue through mailbox")
+            detail_lines = tuple(detail)
+            action_lines = ("Up/Down select backlog items.", "Enter reviews a staged reorder draft.")
+        else:
+            headline = f"backlog {queue.backlog_depth}"
+            detail_lines = ("No backlog item selected yet.",)
+            action_lines = ("Focus content and use Up/Down to choose a task.",)
+    elif active_panel.id is PanelId.RUNS:
+        selected = _run_by_id(runs, selected_run_id)
+        if runs is None:
+            headline = "recent runs are not loaded yet"
+        elif selected is not None:
+            title = selected.run_id
+            headline = f"{selected.latest_status or 'unknown'} | {selected.latest_transition_label or 'no transition'}"
+            detail = []
+            if selected.selection_ref:
+                detail.append(f"selection {selected.selection_ref}")
+            if selected.note:
+                detail.append(selected.note)
+            if selected.issue:
+                detail.append(selected.issue)
+            detail_lines = tuple(detail or ("Press Enter to open concise run detail.",))
+            action_lines = ("Up/Down changes the selected run.", "Enter opens the run-detail workflow.")
+        else:
+            headline = "no run selected"
+            detail_lines = ("The recent-runs list is empty.",)
+    elif active_panel.id is PanelId.RESEARCH:
+        selected = _research_question_by_id(research, selected_question_id)
+        if research is None:
+            headline = "research snapshot not loaded"
+        elif selected is not None:
+            title = selected.title or selected.question_id
+            headline = f"{selected.spec_id} | {selected.status}"
+            detail = [selected.question or "pending interview question"]
+            if selected.why_this_matters:
+                detail.append(selected.why_this_matters)
+            detail_lines = tuple(detail)
+            action_lines = ("Up/Down chooses the pending question.", "Enter opens answer, accept, and skip actions.")
+        else:
+            headline = f"{research.status} | mode {research.current_mode}"
+            detail_lines = (f"selected family {research.selected_family or 'none'}",)
+            action_lines = ("Research drilldown will become richer in later panel slices.",)
+    elif active_panel.id is PanelId.LOGS:
+        if selected_event is not None:
+            title = selected_event.event_type
+            headline = f"{selected_event.source} | {selected_event.category or 'event'}"
+            detail = [selected_event.summary or selected_event.event_type]
+            if selected_event.run_id:
+                detail.append(f"run {selected_event.run_id}")
+            detail_lines = tuple(detail)
+        elif display_mode is DisplayMode.DEBUG:
+            headline = "debug log view"
+            detail_lines = ("Expanded payload detail stays in the workspace surface.",)
+        else:
+            headline = "live log stream"
+            detail_lines = ("Focus content to select an event and populate this inspector.",)
+        if expanded_mode:
+            action_lines = ("Escape returns from expanded stream mode.", "L jumps the expanded stream back to live.")
+        else:
+            action_lines = ("Up/Down selects events.", "Enter opens run detail when the selected event has a run id.")
+    elif active_panel.id is PanelId.CONFIG:
+        selected = selected_config_field(config, selected_key=selected_config_field_key)
+        if config is None:
+            headline = "config snapshot not loaded"
+        elif selected is not None:
+            title = selected.label
+            headline = f"{selected.value} | {selected.boundary.lower()}"
+            detail = [selected.description]
+            if selected.editable:
+                detail.append("editable through the guided config modal")
+            detail_lines = tuple(detail)
+            action_lines = ("Up/Down changes the selected field.", "Enter or E opens guided editing.")
+        else:
+            headline = f"{config.source_kind} | guided edits unavailable"
+            detail_lines = (config.editing_disabled_reason or "no editable fields are visible",)
+    elif active_panel.id is PanelId.PUBLISH:
+        if publish is None:
+            headline = "publish preflight not loaded"
+        else:
+            headline = f"{publish.status} | changed {len(publish.changed_paths)}"
+            detail_lines = (
+                f"branch {publish.branch or 'detached'} | origin {'configured' if publish.origin_configured else 'missing'}",
+                f"selected manifest paths {len(publish.selected_paths)}",
+            )
+            action_lines = ("Shift+R refreshes preflight facts.", "Publish sync and commit actions remain available in palette and footer.")
+
+    if panel_failure is not None:
+        detail_lines = (*detail_lines, f"refresh degraded: {panel_failure.message}")
+    return ShellInspectorView(
+        panel_label=active_panel.label,
+        title=title,
+        headline=headline,
+        detail_lines=detail_lines,
+        action_lines=action_lines,
+    )
+
+
+def _queue_task_by_id(queue: QueueOverviewView | None, task_id: str | None) -> QueueTaskView | None:
+    if queue is None or task_id is None:
+        return None
+    for task in queue.backlog:
+        if task.task_id == task_id:
+            return task
+    return None
+
+
+def _run_by_id(runs: RunsOverviewView | None, run_id: str | None) -> RunSummaryView | None:
+    if runs is None or run_id is None:
+        return None
+    for run in runs.runs:
+        if run.run_id == run_id:
+            return run
+    return None
+
+
+def _research_question_by_id(
+    research: ResearchOverviewView | None,
+    question_id: str | None,
+) -> InterviewQuestionSummaryView | None:
+    if research is None or question_id is None:
+        return None
+    for question in research.interview_questions:
+        if question.question_id == question_id:
+            return question
+    return None
 
 
 def selected_config_field(
@@ -278,6 +461,7 @@ __all__ = [
     "PUBLISH_REFRESH_WORKER_NAME",
     "WORKSPACE_REFRESH_PANELS",
     "WorkerStateOutcome",
+    "build_shell_inspector_view",
     "is_lifecycle_action",
     "latest_run_summary_from_runs",
     "notification_severity",

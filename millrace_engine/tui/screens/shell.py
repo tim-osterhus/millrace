@@ -10,7 +10,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher, Footer
 from textual.worker import Worker, WorkerState
 
 from ...health import WorkspaceHealthReport
@@ -48,6 +48,7 @@ from ..widgets.publish_panel import PublishPanel
 from ..widgets.queue_panel import QueuePanel
 from ..widgets.research_panel import ResearchPanel
 from ..widgets.runs_panel import RunsPanel
+from ..widgets.shell_inspector import ShellInspector
 from ..widgets.sidebar import SidebarNav
 from ..widgets.status_bar import StatusBar
 from ..workers import (
@@ -66,6 +67,7 @@ from .shell_support import (
     PUBLISH_REFRESH_WORKER_GROUP,
     PUBLISH_REFRESH_WORKER_NAME,
     WORKSPACE_REFRESH_PANELS,
+    build_shell_inspector_view,
     is_lifecycle_action,
     latest_run_summary_from_runs,
     worker_state_outcome,
@@ -118,39 +120,43 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         self._startup_prompt_window_open = offer_startup_daemon_launch
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="shell-body"):
-            yield SidebarNav(
-                PANELS,
-                active_panel=self.active_panel,
-                display_mode=self._store.state.display_mode,
-                lifecycle_signal=self._lifecycle_signal(),
-                id="shell-sidebar",
-            )
-            with Vertical(id="shell-main"):
-                yield StatusBar(id="shell-status")
-                with ContentSwitcher(
-                    id="shell-content",
-                    initial=shell_content_target(self.active_panel, self._shell_body_mode),
-                ):
-                    for panel in PANELS:
-                        if panel.id is PanelId.OVERVIEW:
-                            yield OverviewPanel(id=panel_widget_id(panel.id))
-                        elif panel.id is PanelId.QUEUE:
-                            yield QueuePanel(id=panel_widget_id(panel.id))
-                        elif panel.id is PanelId.RUNS:
-                            yield RunsPanel(id=panel_widget_id(panel.id))
-                        elif panel.id is PanelId.RESEARCH:
-                            yield ResearchPanel(id=panel_widget_id(panel.id))
-                        elif panel.id is PanelId.LOGS:
-                            yield LogsPanel(id=panel_widget_id(panel.id))
-                        elif panel.id is PanelId.CONFIG:
-                            yield ConfigPanel(id=panel_widget_id(panel.id))
-                        elif panel.id is PanelId.PUBLISH:
-                            yield PublishPanel(id=panel_widget_id(panel.id))
-                        else:
-                            continue
-                    yield ExpandedStreamView(id=EXPANDED_STREAM_WIDGET_ID)
+        with Vertical(id="shell-root"):
+            with Horizontal(id="shell-body"):
+                yield SidebarNav(
+                    PANELS,
+                    active_panel=self.active_panel,
+                    display_mode=self._store.state.display_mode,
+                    lifecycle_signal=self._lifecycle_signal(),
+                    id="shell-sidebar",
+                )
+                with Vertical(id="shell-main"):
+                    yield StatusBar(id="shell-status")
+                    with ContentSwitcher(
+                        id="shell-content",
+                        initial=shell_content_target(self.active_panel, self._shell_body_mode),
+                    ):
+                        for panel in PANELS:
+                            if panel.id is PanelId.OVERVIEW:
+                                yield OverviewPanel(id=panel_widget_id(panel.id))
+                            elif panel.id is PanelId.QUEUE:
+                                yield QueuePanel(id=panel_widget_id(panel.id))
+                            elif panel.id is PanelId.RUNS:
+                                yield RunsPanel(id=panel_widget_id(panel.id))
+                            elif panel.id is PanelId.RESEARCH:
+                                yield ResearchPanel(id=panel_widget_id(panel.id))
+                            elif panel.id is PanelId.LOGS:
+                                yield LogsPanel(id=panel_widget_id(panel.id))
+                            elif panel.id is PanelId.CONFIG:
+                                yield ConfigPanel(id=panel_widget_id(panel.id))
+                            elif panel.id is PanelId.PUBLISH:
+                                yield PublishPanel(id=panel_widget_id(panel.id))
+                            else:
+                                continue
+                        yield ExpandedStreamView(id=EXPANDED_STREAM_WIDGET_ID)
+                yield ShellInspector(id="shell-inspector")
+            with Horizontal(id="shell-bottom"):
                 yield NoticesView(id="shell-notices")
+                yield Footer(id="shell-footer")
 
     def on_mount(self) -> None:
         self._sync_panel_state()
@@ -443,6 +449,26 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             display_mode=state.display_mode,
             events=state.events,
             live=self._shell_body_mode is ShellBodyMode.EXPANDED,
+        )
+        self.query_one(ShellInspector).show_view(
+            build_shell_inspector_view(
+                active_panel=active,
+                display_mode=state.display_mode,
+                expanded_mode=self._shell_body_mode is ShellBodyMode.EXPANDED,
+                runtime=state.runtime,
+                queue=state.queue,
+                runs=state.runs,
+                research=state.research,
+                config=state.config,
+                publish=state.publish,
+                latest_run=self._latest_run_summary,
+                panel_failure=self._store.panel_failure(self.active_panel),
+                selected_task_id=self.query_one(QueuePanel).selected_task_id,
+                selected_run_id=self.query_one(RunsPanel).selected_run_id,
+                selected_event=self.query_one(LogsPanel).selected_event,
+                selected_question_id=self.query_one(ResearchPanel).selected_question_id,
+                selected_config_field_key=self.query_one(ConfigPanel).selected_field_key,
+            )
         )
         self.query_one(NoticesView).show_notices(self._store.state.notices)
 

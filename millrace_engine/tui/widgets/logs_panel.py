@@ -162,6 +162,10 @@ class LogsPanel(Static):
         selected = self._selected_event()
         return None if selected is None else selected.run_id
 
+    @property
+    def selected_event(self) -> RuntimeEventView | None:
+        return self._selected_event()
+
     def on_mount(self) -> None:
         self._render_state()
 
