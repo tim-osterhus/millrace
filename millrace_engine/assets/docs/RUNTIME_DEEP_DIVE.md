@@ -190,6 +190,7 @@ Research is now a real supervisor in v1:
 - persists a typed runtime snapshot in `agents/research_state.json`, and the workspace upgrade seam can now explicitly canonicalize or materialize that file when a supported migration is needed
 - compiles and owns research-plane dispatch/queue selection
 - executes the supported GoalSpec stages (`goal_intake`, `objective_profile_sync`, `completion_manifest_draft`, `spec_synthesis`, optional `spec_interview`, `spec_review`, `taskmaster`, plus `taskaudit` when family-complete)
+- treats pending shards and prepared Taskaudit finalization as restart-safe transitional handoff state instead of automatic same-family recycling failure
 - mixed-ready `AUTO` queues follow deterministic family precedence and reevaluate at defer boundaries instead of silently advancing a whole family inline
 - executes the supported incident stages (`incident_intake`, `incident_resolve`, `incident_archive`) plus deterministic remediation task generation
 - executes the packaged audit intake/validate/gatekeeper stages
@@ -1056,6 +1057,7 @@ The important contract details are:
 - spec synthesis may freeze an initial-family plan with planned later specs instead of forcing one oversized spec
 - spec review blocks traceable but still too-coarse packages before Taskmaster runs
 - Taskmaster emits product-first per-spec shards, and Taskaudit is the only stage that merges a completed family into backlog
+- pending shards and prepared finalization records are healthy in-flight delivery state; delivery integrity reserves fatal recycling for families that have emitted work without a valid shard or merged backlog handoff
 - queue-empty completion failures may continue into marathon audit, goal-gap review, and bounded remediation-family staging instead of reducing only to deterministic PASS/FAIL
 
 ### 17.4 Stub Compatibility Path

@@ -58,6 +58,36 @@ class PlannedFamilySpec(NamedTuple):
     depends_on_specs: tuple[str, ...]
 
 
+def _select_family_spec(
+    *,
+    source: GoalSource,
+    current_family_state: GoalSpecFamilyState,
+) -> PlannedFamilySpec:
+    default_spec = PlannedFamilySpec(
+        spec_id=_spec_id_for_goal(source.idea_id),
+        title=source.title,
+        depends_on_specs=(),
+    )
+    if (
+        current_family_state.goal_id != source.idea_id
+        or current_family_state.initial_family_plan is None
+        or not current_family_state.initial_family_plan.frozen
+    ):
+        return default_spec
+
+    for spec_id in current_family_state.initial_family_plan.spec_order:
+        plan_entry = current_family_state.initial_family_plan.specs[spec_id]
+        live_state = current_family_state.specs.get(spec_id)
+        if live_state is not None and live_state.status == "decomposed":
+            continue
+        return PlannedFamilySpec(
+            spec_id=spec_id,
+            title=plan_entry.title,
+            depends_on_specs=plan_entry.depends_on_specs,
+        )
+    return default_spec
+
+
 def _planned_family_breadth_budget(
     *,
     profile: AcceptanceProfileRecord,
@@ -101,6 +131,10 @@ def _plan_initial_family_specs(
             )
             for planned_spec_id in current_family_state.initial_family_plan.spec_order
             if planned_spec_id != spec_id
+            and (
+                current_family_state.specs.get(planned_spec_id) is None
+                or current_family_state.specs[planned_spec_id].status != "decomposed"
+            )
         )
 
     planned_family_size = _planned_family_breadth_budget(
@@ -147,15 +181,17 @@ def execute_spec_synthesis(
             _load_json_object(paths.audit_completion_manifest_file)
         )
 
-    spec_id = _spec_id_for_goal(source.idea_id)
+    current_family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
+    selected_spec = _select_family_spec(source=source, current_family_state=current_family_state)
+    spec_id = selected_spec.spec_id
+    source = source.model_copy(update={"title": selected_spec.title})
     slug = _slugify(source.title)
     queue_spec_path = paths.ideas_specs_dir / f"{spec_id}__{slug}.md"
     golden_spec_path = paths.specs_stable_golden_dir / f"{spec_id}__{slug}.md"
     phase_spec_path = paths.specs_stable_phase_dir / f"{spec_id}__phase-01.md"
-    decision_path = paths.specs_decisions_dir / f"{Path(source.source_path).stem}__spec-synthesis.md"
+    decision_path = paths.specs_decisions_dir / f"{spec_id}__{slug}__spec-synthesis.md"
     record_path = paths.goalspec_spec_synthesis_records_dir / f"{run_id}.json"
     completion_manifest_path = _relative_path(paths.audit_completion_manifest_file, relative_to=paths.root)
-    current_family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
     policy_payload = (
         _load_json_object(paths.objective_family_policy_file)
         if paths.objective_family_policy_file.exists()
@@ -190,7 +226,7 @@ def execute_spec_synthesis(
             current_family_state.initial_family_plan is not None
             and spec_id in current_family_state.initial_family_plan.specs
         )
-        else ()
+        else selected_spec.depends_on_specs
     )
 
     queue_spec_text = render_queue_spec(

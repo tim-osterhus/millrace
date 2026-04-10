@@ -4516,6 +4516,130 @@ def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_ba
     assert list((workspace / "agents" / "taskspending").glob("*")) == []
 
 
+def test_research_plane_run_ready_work_closes_failure_mode_5_with_multi_spec_family_handoff(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-FM5-713\n"
+            "title: Team Workspace Expansion\n"
+            "decomposition_profile: simple\n"
+            "---\n\n"
+            "# Team Workspace Expansion\n\n"
+            "Build a broad but still early team workspace slice without widening the initial family too early.\n\n"
+            "## Capability Domains\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n"
+            "- Activity Feed\n"
+            "- Template Library\n"
+            "- Insights Panel\n\n"
+            "## Progression Lines\n"
+            "- Progression from intake to drafting to review handoff to insight delivery.\n"
+            "- Progression from individual planning to coordinated team publishing.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = None
+    taskaudit_path = None
+    for attempt in range(1, 21):
+        run_id = f"goalspec-failure-mode-5-713-pass-{attempt:02d}"
+        dispatch = plane.run_ready_work(run_id=run_id, resolve_assets=False)
+        snapshot = plane.snapshot_state()
+        family_state = (
+            json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+            if paths.goal_spec_family_state_file.exists()
+            else None
+        )
+        taskaudit_candidates = sorted(
+            (workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit").glob("*.json")
+        )
+        taskaudit_path = taskaudit_candidates[-1] if taskaudit_candidates else None
+        taskaudit_record = (
+            json.loads(taskaudit_path.read_text(encoding="utf-8"))
+            if taskaudit_path is not None
+            else None
+        )
+        if (
+            snapshot.checkpoint is None
+            and plane.status_store.read() is ResearchStatus.IDLE
+            and family_state is not None
+            and family_state["family_complete"] is True
+            and taskaudit_record is not None
+            and taskaudit_record["status"] == "merged"
+        ):
+            break
+    else:
+        raise AssertionError("multi-spec GoalSpec family did not reach merged Taskaudit handoff")
+
+    assert dispatch is not None
+    assert dispatch.selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert plane.snapshot_state().checkpoint is None
+    assert plane.snapshot_state().queue_snapshot.selected_family is None
+
+    family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    assert family_state["goal_id"] == "IDEA-FM5-713"
+    assert family_state["family_complete"] is True
+    assert family_state["spec_order"] == [
+        "SPEC-FM5-713",
+        "SPEC-FM5-713-02",
+    ]
+    assert family_state["initial_family_plan"]["spec_order"] == [
+        "SPEC-FM5-713",
+        "SPEC-FM5-713-02",
+    ]
+    assert family_state["specs"]["SPEC-FM5-713"]["status"] == "decomposed"
+    assert family_state["specs"]["SPEC-FM5-713-02"]["status"] == "decomposed"
+    assert family_state["specs"]["SPEC-FM5-713-02"]["depends_on_specs"] == ["SPEC-FM5-713"]
+    assert family_state["specs"]["SPEC-FM5-713"]["pending_shard_path"] == "agents/taskspending/SPEC-FM5-713.md"
+    assert family_state["specs"]["SPEC-FM5-713-02"]["pending_shard_path"] == "agents/taskspending/SPEC-FM5-713-02.md"
+
+    assert taskaudit_path is not None
+    assert taskaudit_path.exists()
+    taskaudit_record = json.loads(taskaudit_path.read_text(encoding="utf-8"))
+    assert taskaudit_record["status"] == "merged"
+    assert taskaudit_record["merged_spec_ids"] == [
+        "SPEC-FM5-713",
+        "SPEC-FM5-713-02",
+    ]
+    assert taskaudit_record["shard_paths"] == [
+        "agents/taskspending/SPEC-FM5-713.md",
+        "agents/taskspending/SPEC-FM5-713-02.md",
+    ]
+    assert taskaudit_record["pending_card_count"] >= 6
+    assert taskaudit_record["backlog_card_count_after"] == taskaudit_record["pending_card_count"]
+
+    backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
+    assert len(backlog.cards) == taskaudit_record["pending_card_count"]
+    assert any(card.spec_id == "SPEC-FM5-713" for card in backlog.cards)
+    assert any(card.spec_id == "SPEC-FM5-713-02" for card in backlog.cards)
+    _assert_product_first_task_cards(backlog.cards)
+    assert any("tests/team-workspace-expansion/regression" in card.body for card in backlog.cards)
+
+    task_provenance = json.loads((workspace / "agents" / "task_provenance.json").read_text(encoding="utf-8"))
+    assert task_provenance["taskaudit"]["record_path"].startswith("agents/.research_runtime/goalspec/taskaudit/")
+    assert task_provenance["taskaudit"]["merged_spec_ids"] == [
+        "SPEC-FM5-713",
+        "SPEC-FM5-713-02",
+    ]
+    assert task_provenance["taskaudit"]["pending_shards"] == [
+        "agents/taskspending/SPEC-FM5-713.md",
+        "agents/taskspending/SPEC-FM5-713-02.md",
+    ]
+    assert task_provenance["sources"][1]["source_file"] == "agents/tasksbacklog.md"
+    assert task_provenance["sources"][1]["card_count"] == len(backlog.cards)
+
+    assert (workspace / "agents" / "taskspending.md").read_text(encoding="utf-8") == "# Tasks Pending\n"
+    assert list((workspace / "agents" / "taskspending").glob("*")) == []
+    plane.shutdown()
+
+
 def test_completion_manifest_planning_guard_fails_closed_on_contaminated_semantic_labels(tmp_path: Path) -> None:
     workspace, _config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
