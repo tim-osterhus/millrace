@@ -166,6 +166,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert OPERATIONS_SKILL_PATH in manifest_paths
     assert "agents/skills/millrace-operator-intake-control/EXAMPLES.md" in manifest_paths
     assert "agents/_contractor.md" in manifest_paths
+    assert "agents/_completion_manifest_draft.md" in manifest_paths
     assert "agents/objective/contractor_profile.schema.json" in manifest_paths
     assert "agents/objective/contractor_profile.example.json" in manifest_paths
     assert "agents/skills/contractor-classification/SKILL.md" in manifest_paths
@@ -223,7 +224,10 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "compounding orient --query builder" in readme
     assert "compounding lint" in readme
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in readme
-    assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in readme
+    assert "goal_intake -> objective_profile_sync (begins with inline Contractor classification) -> completion_manifest_draft -> spec_synthesis" in readme
+    assert "`agents/_contractor.md` runs inline at the start of `objective_profile_sync`" in readme
+    assert "`agents/_completion_manifest_draft.md` remains the dedicated completion-manifest draft asset" in readme
+    assert "`agents/skills/contractor-classification/`" in readme
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in readme
     assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in readme
     assert "goal-gap remediation-family staging" in readme
@@ -281,7 +285,10 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "compounding orient --query builder" in operator_guide
     assert "compounding lint" in operator_guide
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in operator_guide
-    assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in operator_guide
+    assert "goal_intake -> objective_profile_sync (begins with inline Contractor classification) -> completion_manifest_draft -> spec_synthesis" in operator_guide
+    assert "`agents/_contractor.md` runs inline at the start of `objective_profile_sync`" in operator_guide
+    assert "`agents/_completion_manifest_draft.md` remains the dedicated completion-manifest draft asset" in operator_guide
+    assert "`agents/skills/contractor-classification/`" in operator_guide
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in operator_guide
     assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in operator_guide
     assert "goal-gap remediation-family staging" in operator_guide
@@ -307,7 +314,10 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`tools/repo_guardrails.py`" in runtime_deep_dive
     assert "same-change ratchets" in runtime_deep_dive
     assert "### 17.3A GoalSpec Staged Contract" in runtime_deep_dive
-    assert "goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis" in runtime_deep_dive
+    assert "goal_intake -> objective_profile_sync (begins with inline Contractor classification) -> completion_manifest_draft -> spec_synthesis" in runtime_deep_dive
+    assert "`agents/_completion_manifest_draft.md` is the dedicated completion-manifest draft asset" in runtime_deep_dive
+    assert "`_contractor.md` is not the completion-manifest entrypoint" in runtime_deep_dive
+    assert "`agents/skills/contractor-classification/`" in runtime_deep_dive
     assert "semantic_profile_seed.yaml" in runtime_deep_dive
     assert "Taskmaster emits product-first per-spec shards" in runtime_deep_dive
     assert "mixed-ready `AUTO` queues follow deterministic family precedence" in runtime_deep_dive

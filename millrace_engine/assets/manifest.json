@@ -271,18 +271,18 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "22cff737a136b6fe41c690c5e54e55b5986a7b85d5e2aba87574c7f3d658f44c",
-      "size": 20606,
-      "size_bytes": 19433,
+      "sha256": "e003fe893f7ec4526f184d997af06d072b1562ca6cb94283194e6262fcd9ab80",
+      "size": 19937,
+      "size_bytes": 19937,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "3762f3626f590649509236dde36610cd4d3bcb20f99655de9d183c85e52a0798",
-      "size": 23371,
-      "size_bytes": 22890,
+      "sha256": "5665287358e79952f874918f2ccc488e483dac77670a41c9b05f73c87dafcfd8",
+      "size": 23394,
+      "size_bytes": 23394,
       "source": "runtime"
     },
     {
@@ -353,7 +353,7 @@
       "family": "entrypoints",
       "path": "agents/_completion_manifest_draft.md",
       "sha256": "15ede458fae0caf012e2f3ea672b46e4e83e103c391800b931ffcf2df7f69d4c",
-      "size": 4208,
+      "size": 4169,
       "size_bytes": 4169,
       "source": "reference"
     },
@@ -371,7 +371,7 @@
       "family": "entrypoints",
       "path": "agents/_contractor.md",
       "sha256": "4706f3854716166d68ed5cd5983bf7ddcb6a5a5ad96cf7b3f8878236000f80f4",
-      "size": 4208,
+      "size": 6524,
       "size_bytes": 6524,
       "source": "reference"
     },
@@ -1523,7 +1523,7 @@
       "family": "workspace",
       "path": "agents/status_contract.md",
       "sha256": "a292d0097b8fdd3802e5cd6bd413a9fdc1a08624cdd3b9cf74b084e0a5b75529",
-      "size": 6714,
+      "size": 6685,
       "size_bytes": 6685,
       "source": "reference"
     },
@@ -1531,9 +1531,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "f4ac152e626de8909888eba1a89c9cf189b9e2a0881e042c1a61e3b77efc2d50",
-      "size": 56404,
-      "size_bytes": 55963,
+      "sha256": "7cf429ee57a1dd830a2edd2d5ca52a4ca58b7772a9de04b5a43318c904540e2d",
+      "size": 56418,
+      "size_bytes": 56418,
       "source": "runtime"
     },
     {

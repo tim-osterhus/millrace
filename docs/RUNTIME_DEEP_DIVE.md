@@ -1030,11 +1030,13 @@ AUTO mode intentionally allows only one ready queue group at a time (incident, g
 
 When GoalSpec is active, the shipped staged funnel is:
 
-- `goal_intake -> objective_profile_sync -> completion_manifest_draft -> spec_synthesis -> optional spec_interview -> spec_review -> taskmaster`
+- `goal_intake -> objective_profile_sync (begins with inline Contractor classification) -> completion_manifest_draft -> spec_synthesis -> optional spec_interview -> spec_review -> taskmaster`
 - `taskaudit` runs only when the current initial-family declaration is complete
 
 The important contract details are:
 
+- the packaged Contractor bundle is guidance scaffolding for that inline substage: `agents/_contractor.md`, `agents/objective/contractor_profile.schema.json`, `agents/objective/contractor_profile.example.json`, and `agents/skills/contractor-classification/`
+- `agents/_completion_manifest_draft.md` is the dedicated completion-manifest draft asset; `_contractor.md` is not the completion-manifest entrypoint
 - objective-profile sync may read `agents/objective/semantic_profile_seed.json`, `agents/objective/semantic_profile_seed.yaml`, or `agents/objective/semantic_profile_seed.yml` to pin workspace-local capability milestones
 - the completion manifest keeps governance artifacts separate from product implementation surfaces and verification surfaces
 - mixed-ready `AUTO` selection reevaluates after each defer boundary instead of draining a whole research family inline
