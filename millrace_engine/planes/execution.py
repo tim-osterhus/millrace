@@ -122,6 +122,7 @@ ROUTING_MODE_FROZEN_PLAN = "frozen_plan"
 ROUTING_MODE_FROZEN_PLAN_LEGACY_RESUME = "frozen_plan_legacy_resume"
 ADAPTIVE_UPSCOPE_RULE = "blocked_small_non_usage_v1"
 QUICKFIX_ARTIFACT_SCAFFOLD = "# Quickfix\n"
+EXECUTION_RUN_ID_SLUG_MAX_LENGTH = 96
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +233,11 @@ class ExecutionPlane(PlaneRuntime):
 
     def _new_run_id(self, task: TaskCard | None, label: str) -> str:
         if task is not None:
-            return timestamped_slug_id(task.task_id, fallback="run")
+            return timestamped_slug_id(
+                task.task_id,
+                fallback="run",
+                max_length=EXECUTION_RUN_ID_SLUG_MAX_LENGTH,
+            )
         return timestamped_slug_id(label, fallback="run")
 
     def _integration_context(self, task: TaskCard | None = None) -> ExecutionIntegrationContext:

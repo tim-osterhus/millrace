@@ -73,7 +73,7 @@ from tests.provenance_support import (
     persist_packaged_shadow,
     prompt_path,
 )
-from tests.support import load_workspace_fixture
+from tests.support import load_workspace_fixture, runtime_workspace
 
 
 def write_stage_driver(tmp_path: Path) -> Path:
@@ -1285,6 +1285,65 @@ def test_execution_plane_reused_run_id_rewrites_transition_history_instead_of_ap
     stage_records = _stage_transition_records(records)
     assert [record.node_id for record in stage_records] == ["update"]
     assert [record.event_id for record in stage_records] == ["fixed-run-transition-0001"]
+
+
+def test_execution_plane_bounds_artifact_run_id_for_long_path_heavy_promoted_task_titles(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = runtime_workspace(tmp_path, name="long-run-id-workspace")
+    script = write_stage_driver(tmp_path)
+    long_title = " ".join(
+        [
+            "Ship promoted task artifact safety for",
+            "millrace/millrace_engine/planes/execution.py",
+            "millrace/millrace_engine/planes/execution_flows/cycle_runner.py",
+            "millrace/millrace_engine/contract_core.py",
+            "millrace/millrace_engine/paths.py",
+        ]
+        * 10
+    )
+
+    control = EngineControl(config_path)
+    control.add_task(long_title)
+    backlog_task = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))[0]
+    assert len(backlog_task.task_id) > 255
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+    )
+
+    result = plane.run_once()
+
+    assert result.final_status is ExecutionStatus.IDLE
+    assert result.run_id is not None
+    assert result.promoted_task is not None
+    assert result.promoted_task.task_id == backlog_task.task_id
+    assert result.run_id != backlog_task.task_id
+    assert result.run_id.startswith("20")
+
+    slug = result.run_id.split("__", 1)[1]
+    assert len(slug) <= 96
+    assert slug in result.run_id
+    assert len(result.run_id) < len(backlog_task.task_id)
+
+    run_dir = workspace / "agents" / "runs" / result.run_id
+    assert run_dir.exists()
+    assert len(run_dir.name) <= 122
+    assert (run_dir / "transition_history.jsonl").exists()
+    assert (run_dir / "resolved_snapshot.json").exists()
+    assert (run_dir / "frozen_run_plan.json").exists()
+
+    report = EngineControl(config_path).run_provenance(result.run_id)
+    assert report.run_id == result.run_id
+    assert report.snapshot_path == run_dir / "resolved_snapshot.json"
+    assert report.transition_history_path == run_dir / "transition_history.jsonl"
 
 
 def test_execution_plane_backlog_empty_transition_history_does_not_reuse_prior_frozen_provenance(
