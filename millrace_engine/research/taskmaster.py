@@ -21,8 +21,8 @@ from ..markdown import parse_task_store, write_text_atomic
 from ..materialization import ArchitectureMaterializer, MaterializationError
 from ..paths import RuntimePaths
 from .dispatcher import CompiledResearchDispatch
-from .goalspec import CompletionManifestDraftStateRecord, GoalSpecExecutionError
-from .goalspec_persistence import _load_objective_profile_inputs
+from .goalspec import CompletionManifestDraftStateRecord, ContractorProfileArtifact, GoalSpecExecutionError
+from .goalspec_persistence import _load_objective_profile_inputs, load_objective_state_contractor_profile
 from .goalspec_scope_diagnostics import (
     build_goal_anchor_tokens,
     evaluate_scope_divergence,
@@ -482,15 +482,35 @@ def _render_task_card(
     files_to_touch: tuple[str, ...],
     verification_commands: tuple[str, ...],
     dependencies: tuple[str, ...],
+    contractor_profile: ContractorProfileArtifact | None = None,
 ) -> str:
-    files_block = "\n".join(f"  - `{path}`" for path in files_to_touch)
-    steps_block = "\n".join(
-        [
-            f"  1. Implement `{phase_step_id}` by executing this bounded slice: {phase_step_description}.",
-            f"  2. Keep the touched product surfaces aligned with the reviewed `{spec_id}` acceptance scope instead of expanding into unrelated repo areas.",
-            "  3. Run the listed product verification commands and leave task-store/governance artifacts untouched unless trace metadata truly needs refresh.",
-        ]
+    contractor_shape = _contractor_task_shape(contractor_profile)
+    contractor_scope_line = (
+        f"- **Contractor Scope:** {contractor_shape} under fallback mode `{contractor_profile.fallback_mode}`."
+        if contractor_profile is not None
+        else ""
     )
+    contractor_boundaries = _contractor_boundary_lines(contractor_profile)
+    files_block = "\n".join(f"  - `{path}`" for path in files_to_touch)
+    step_two = (
+        f"  2. Keep the touched product surfaces aligned with the reviewed `{spec_id}` acceptance scope"
+        + (
+            f" and preserve the Contractor-resolved {contractor_shape}."
+            if contractor_shape
+            else " instead of expanding into unrelated repo areas."
+        )
+    )
+    steps = [
+        (
+            f"  1. Implement `{phase_step_id}` by executing this bounded "
+            f"{contractor_shape if contractor_shape else 'slice'}: {phase_step_description}."
+        ),
+        step_two,
+        "  3. Run the listed product verification commands and leave task-store/governance artifacts untouched unless trace metadata truly needs refresh.",
+    ]
+    if contractor_boundaries:
+        steps.extend(f"  {index}. {line}" for index, line in enumerate(contractor_boundaries, start=4))
+    steps_block = "\n".join(steps)
     verification_block = "\n".join(f"  - `{command}`" for command in verification_commands)
     dependencies_text = ", ".join(f"`{dependency}`" for dependency in dependencies) if dependencies else "none"
     trace_tokens = " ".join(
@@ -522,6 +542,7 @@ def _render_task_card(
             "- **Lane:** OBJECTIVE",
             f"- **Contract Trace:** {trace_tokens}",
             "- **Prompt Source:** `agents/prompts/taskmaster_decompose.md`",
+            *([contractor_scope_line] if contractor_scope_line else []),
             "- **Files to touch:**",
             files_block,
             "- **Steps:**",
@@ -534,6 +555,41 @@ def _render_task_card(
             "- **Gates:** NONE",
         ]
     ).rstrip()
+
+
+def _contractor_task_shape(contractor_profile: ContractorProfileArtifact | None) -> str:
+    if contractor_profile is None:
+        return ""
+    if contractor_profile.classification.host_platform:
+        return f"`{contractor_profile.classification.host_platform}` host extension slice"
+    if contractor_profile.classification.archetype:
+        return f"`{contractor_profile.classification.archetype}` product slice"
+    return f"`{contractor_profile.shape_class}` product slice"
+
+
+def _contractor_boundary_lines(contractor_profile: ContractorProfileArtifact | None) -> tuple[str, ...]:
+    if contractor_profile is None:
+        return ()
+    lines: list[str] = []
+    if contractor_profile.unresolved_specializations:
+        lines.append(
+            "Preserve unresolved specialization boundaries: "
+            + ", ".join(f"`{item}`" for item in contractor_profile.unresolved_specializations)
+            + "; do not invent a resolved overlay."
+        )
+    if contractor_profile.abstentions:
+        lines.append(
+            "Keep contractor abstentions in force: "
+            + "; ".join(contractor_profile.abstentions[:2])
+            + "."
+        )
+    if contractor_profile.contradictions:
+        lines.append(
+            "Preserve contractor contradictions as bounded planning cautions: "
+            + "; ".join(contractor_profile.contradictions[:2])
+            + "."
+        )
+    return tuple(lines)
 
 
 def _validate_strict_shard(
@@ -898,6 +954,11 @@ def execute_taskmaster(
         phase_frontmatter=phase_frontmatter,
         spec_id=spec_id,
     )
+    contractor_profile: ContractorProfileArtifact | None = None
+    profile = None
+    if paths.objective_profile_sync_state_file.exists():
+        objective_state, profile = _load_objective_profile_inputs(paths)
+        contractor_profile = load_objective_state_contractor_profile(paths, objective_state)
 
     pending_dir = paths.agents_dir / "taskspending"
     pending_dir.mkdir(parents=True, exist_ok=True)
@@ -938,11 +999,11 @@ def execute_taskmaster(
             files_to_touch=files_to_touch,
             verification_commands=verification_commands,
             dependencies=task_dependencies,
+            contractor_profile=contractor_profile,
         )
         for phase_step_id, source_phase_step_id, phase_step_description, files_to_touch in planned_task_cards
     ).rstrip() + "\n"
-    if paths.objective_profile_sync_state_file.exists():
-        _objective_state, profile = _load_objective_profile_inputs(paths)
+    if profile is not None:
         scope_record = evaluate_scope_divergence(
             run_id=run_id,
             emitted_at=emitted_at,

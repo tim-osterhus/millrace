@@ -24,6 +24,7 @@ from .goalspec_helpers import (
 from .goalspec_persistence import (
     _build_goal_spec_review_state,
     _load_objective_profile_inputs,
+    load_objective_state_contractor_profile,
     _stable_spec_paths_for_review,
 )
 from .goalspec_product_planning import (
@@ -71,6 +72,14 @@ _EPIC_PHASE_STEP_HINTS = (
     "whole-gate",
     "repo-wide",
 )
+_SPECIALIZATION_TOKEN_RE = re.compile(r"\b([a-z_]+=[a-z0-9._-]+)\b", re.IGNORECASE)
+_SAFE_UNRESOLVED_LINE_HINTS = ("unresolved", "unsupported", "abstention", "fallback", "do not invent")
+_MINECRAFT_LOADER_HINTS = {
+    "fabric": ("fabric", "fabric.mod.json"),
+    "forge": ("forge", "mods.toml"),
+    "neoforge": ("neoforge", "neoforge.mods.toml"),
+    "quilt": ("quilt", "quilt.mod.json"),
+}
 
 
 def _phase_steps(phase_text: str) -> tuple[str, ...]:
@@ -128,6 +137,100 @@ def _repo_paths(text: str) -> tuple[str, ...]:
     return tuple(deduped)
 
 
+def _review_text_lines(*texts: str) -> tuple[str, ...]:
+    lines: list[str] = []
+    for text in texts:
+        for raw_line in text.splitlines():
+            line = " ".join(raw_line.split())
+            if line:
+                lines.append(line)
+    return tuple(lines)
+
+
+def _line_mentions_specialization(line: str, *, token: str, hints: tuple[str, ...]) -> bool:
+    lowered = line.casefold()
+    token_value = token.partition("=")[2].casefold()
+    if token.casefold() in lowered:
+        return True
+    return any(hint.casefold() in lowered for hint in hints if hint)
+
+
+def _line_is_safe_unresolved_reference(line: str, *, token: str) -> bool:
+    lowered = line.casefold()
+    return token.casefold() in lowered and any(hint in lowered for hint in _SAFE_UNRESOLVED_LINE_HINTS)
+
+
+def _contractor_specificity_findings(
+    *,
+    contractor_profile: object | None,
+    artifact_lines: tuple[str, ...],
+    queue_spec_path: Path,
+    paths: RuntimePaths,
+) -> tuple[GoalSpecReviewFinding, ...]:
+    from .goalspec import ContractorProfileArtifact
+
+    if not isinstance(contractor_profile, ContractorProfileArtifact):
+        return ()
+
+    findings: list[GoalSpecReviewFinding] = []
+    unresolved_specializations = set(contractor_profile.unresolved_specializations)
+    specialization_keys = {
+        specialization.partition("=")[0].strip().casefold()
+        for specialization in contractor_profile.unresolved_specializations
+        if "=" in specialization
+    }
+    explicit_specializations = {
+        match.group(1).strip()
+        for line in artifact_lines
+        for match in _SPECIALIZATION_TOKEN_RE.finditer(line)
+        if match.group(1).partition("=")[0].strip().casefold() in specialization_keys
+    }
+    for specialization in sorted(explicit_specializations):
+        if specialization in unresolved_specializations:
+            continue
+        findings.append(
+            GoalSpecReviewFinding(
+                finding_id="REV-CONTRACTOR-INVENTED-SPECIALIZATION",
+                severity="blocker",
+                summary=(
+                    "Stable planning text invents unsupported specialization "
+                    f"`{specialization}` beyond the contractor profile."
+                ),
+                artifact_path=_relative_path(queue_spec_path, relative_to=paths.root),
+            )
+        )
+
+    if (
+        contractor_profile.shape_class == "platform_extension"
+        and contractor_profile.classification.host_platform == "minecraft"
+    ):
+        unresolved_loaders = {
+            specialization.partition("=")[2].casefold()
+            for specialization in contractor_profile.unresolved_specializations
+            if specialization.startswith("loader=")
+        }
+        for loader, hints in _MINECRAFT_LOADER_HINTS.items():
+            for line in artifact_lines:
+                if not _line_mentions_specialization(line, token=f"loader={loader}", hints=hints):
+                    continue
+                if loader in unresolved_loaders and _line_is_safe_unresolved_reference(line, token=f"loader={loader}"):
+                    continue
+                findings.append(
+                    GoalSpecReviewFinding(
+                        finding_id="REV-CONTRACTOR-UNSUPPORTED-SPECIALIZATION",
+                        severity="blocker",
+                        summary=(
+                            "Stable planning text resolves loader-specific specialization "
+                            f"`loader={loader}` beyond contractor grounding: {line}"
+                        ),
+                        artifact_path=_relative_path(queue_spec_path, relative_to=paths.root),
+                    )
+                )
+                break
+
+    return tuple(findings)
+
+
 def _review_findings(
     *,
     paths: RuntimePaths,
@@ -135,6 +238,8 @@ def _review_findings(
     source_title: str,
     decomposition_profile: str,
     stable_spec_paths: tuple[Path, ...],
+    queue_spec_path: Path,
+    queue_spec_text: str,
 ) -> tuple[GoalSpecReviewFinding, ...]:
     phase_paths = tuple(path for path in stable_spec_paths if "/phase/" in _relative_path(path, relative_to=paths.root))
     phase_steps: list[str] = []
@@ -207,6 +312,7 @@ def _review_findings(
         )
 
     objective_state, profile = _load_objective_profile_inputs(paths)
+    contractor_profile = load_objective_state_contractor_profile(paths, objective_state)
     expected_scope = infer_goal_scope_kind(
         title=source_title,
         source_body=source_body,
@@ -259,6 +365,19 @@ def _review_findings(
                 )
             )
 
+    artifact_lines = _review_text_lines(
+        queue_spec_text,
+        *(path.read_text(encoding="utf-8") for path in stable_spec_paths),
+    )
+    findings.extend(
+        _contractor_specificity_findings(
+            contractor_profile=contractor_profile,
+            artifact_lines=artifact_lines,
+            queue_spec_path=queue_spec_path,
+            paths=paths,
+        )
+    )
+
     return tuple(findings)
 
 
@@ -299,6 +418,8 @@ def execute_spec_review(
         source_title=source.title,
         decomposition_profile=source.decomposition_profile,
         stable_spec_paths=stable_spec_paths,
+        queue_spec_path=queue_spec_path,
+        queue_spec_text=queue_spec_text,
     )
     review_status = "blocked" if findings else "no_material_delta"
     finding_summaries = tuple(finding.summary for finding in findings)

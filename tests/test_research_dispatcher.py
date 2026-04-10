@@ -3807,6 +3807,136 @@ def test_execute_spec_review_accepts_generated_supported_planning_profile_phase_
         assert f"- Phase key: `{phase_key}`" in phase_text
 
 
+def test_execute_spec_review_blocks_invented_minecraft_loader_specificity(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-loader-306"
+    emitted_at = _dt("2026-04-10T18:10:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-306\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    phase_path = workspace / synthesis.phase_spec_path
+    phase_text = phase_path.read_text(encoding="utf-8")
+    phase_text = _replace_markdown_section(
+        phase_text,
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                "1. Implement bounded Minecraft registrations in `mods/aura-progression-mod/src/main/java/registrations`.",
+                "2. Add Fabric loader bootstrap in `mods/aura-progression-mod/src/main/resources/fabric.mod.json`.",
+                "3. Extend gameplay proof in `mods/aura-progression-mod/src/gametest/java`.",
+                "4. Verify Gradle-backed tests in `mods/aura-progression-mod/src/test/java`.",
+                "5. Keep resource packaging aligned in `mods/aura-progression-mod/src/main/resources`.",
+                "6. Close the bounded mod slice with traceable proof in `mods/aura-progression-mod/src/gametest/java`.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+    queue_spec_path = workspace / synthesis.queue_spec_path
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-306",
+    ):
+        execute_spec_review(
+            paths,
+            _goal_queue_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                queue_path=queue_spec_path.parent,
+                item_path=queue_spec_path,
+                status=ResearchStatus.SPEC_REVIEW_RUNNING,
+                node_id="spec_review",
+                stage_kind_id="research.spec-review",
+            ),
+            run_id=run_id,
+            emitted_at=emitted_at,
+        )
+
+    review_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "spec_review"
+            / f"{run_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert review_record["review_status"] == "blocked"
+    assert any("loader=fabric" in item["summary"] for item in review_record["findings"])
+    assert any("fabric.mod.json" in item["summary"] for item in review_record["findings"])
+
+
 def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:
     workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
         tmp_path,
@@ -3868,6 +3998,68 @@ def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective
     assert (workspace / result.archived_path).exists()
     family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
     assert family_state["specs"]["SPEC-401"]["status"] == "decomposed"
+
+
+def test_execute_taskmaster_preserves_contractor_boundaries_for_supported_minecraft_shape(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-taskmaster-minecraft-713",
+        emitted_at=_dt("2026-04-10T18:40:00Z"),
+        title="Aura Progression Mod",
+        decomposition_profile="moderate",
+        idea_id="IDEA-MINECRAFT-713",
+        body=(
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-taskmaster-minecraft-713",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    result = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-taskmaster-minecraft-713",
+            emitted_at=_dt("2026-04-10T18:40:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-taskmaster-minecraft-713",
+        emitted_at=_dt("2026-04-10T18:40:00Z"),
+    )
+
+    shard = parse_task_store(
+        (workspace / result.shard_path).read_text(encoding="utf-8"),
+        source_file=workspace / result.shard_path,
+    )
+
+    assert shard.cards
+    assert any("`minecraft` host extension slice" in card.body for card in shard.cards)
+    assert any("`loader=fabric`" in card.body for card in shard.cards)
+    assert any("do not invent a resolved overlay" in card.body for card in shard.cards)
+    assert any("Keep contractor abstentions in force" in card.body for card in shard.cards)
 
 
 def test_taskmaster_card_envelope_matches_bash_profile_targets() -> None:
