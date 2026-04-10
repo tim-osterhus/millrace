@@ -685,8 +685,17 @@ class CompletionManifestDraftStateRecord(ContractModel):
     completion_manifest_plan_path: str
     goal_intake_record_path: str
     planning_profile: str
+    contractor_profile_path: str = ""
+    contractor_specificity_level: str = ""
+    contractor_shape_class: str = ""
+    contractor_fallback_mode: str = ""
     acceptance_focus: tuple[str, ...]
     open_questions: tuple[str, ...]
+    contractor_capability_hints: tuple[str, ...] = ()
+    contractor_environment_hints: tuple[str, ...] = ()
+    contractor_unresolved_specializations: tuple[str, ...] = ()
+    contractor_abstentions: tuple[str, ...] = ()
+    contractor_contradictions: tuple[str, ...] = ()
     required_artifacts: tuple[CompletionManifestDraftArtifact, ...]
     implementation_surfaces: tuple[CompletionManifestDraftSurface, ...]
     verification_surfaces: tuple[CompletionManifestDraftSurface, ...]
@@ -729,11 +738,50 @@ class CompletionManifestDraftStateRecord(ContractModel):
         "completion_manifest_plan_path",
         "goal_intake_record_path",
         "planning_profile",
+        mode="before",
     )
     @classmethod
     def validate_required_text(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "value")
         return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator(
+        "contractor_profile_path",
+        "contractor_specificity_level",
+        "contractor_shape_class",
+        "contractor_fallback_mode",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
+
+    @field_validator(
+        "acceptance_focus",
+        "open_questions",
+        "contractor_capability_hints",
+        "contractor_environment_hints",
+        "contractor_unresolved_specializations",
+        "contractor_abstentions",
+        "contractor_contradictions",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_sequence(cls, value: object, info: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            items = (value,)
+        else:
+            items = tuple(value)
+        normalized: list[str] = []
+        field_name = getattr(info, "field_name", "value")
+        for item in items:
+            text = str(item).strip()
+            if not text:
+                raise ValueError(f"{field_name} may not contain blank values")
+            normalized.append(text)
+        return tuple(normalized)
 
 
 class CompletionManifestDraftRecord(ContractModel):

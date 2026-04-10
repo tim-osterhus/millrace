@@ -135,8 +135,19 @@ def _build_completion_manifest_draft_state(
         completion_manifest_plan_path=_relative_path(paths.completion_manifest_plan_file, relative_to=paths.root),
         goal_intake_record_path=objective_state.goal_intake_record_path,
         planning_profile=product_plan.planning_profile,
+        contractor_profile_path=objective_state.contractor_profile_path,
+        contractor_specificity_level=contractor_profile.specificity_level if contractor_profile is not None else "",
+        contractor_shape_class=contractor_profile.shape_class if contractor_profile is not None else "",
+        contractor_fallback_mode=contractor_profile.fallback_mode if contractor_profile is not None else "",
         acceptance_focus=profile.milestones,
         open_questions=open_questions,
+        contractor_capability_hints=contractor_profile.capability_hints if contractor_profile is not None else (),
+        contractor_environment_hints=contractor_profile.environment_hints if contractor_profile is not None else (),
+        contractor_unresolved_specializations=(
+            contractor_profile.unresolved_specializations if contractor_profile is not None else ()
+        ),
+        contractor_abstentions=contractor_profile.abstentions if contractor_profile is not None else (),
+        contractor_contradictions=contractor_profile.contradictions if contractor_profile is not None else (),
         required_artifacts=(
             CompletionManifestDraftArtifact(
                 artifact_kind="queue_spec",

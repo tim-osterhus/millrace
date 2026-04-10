@@ -90,6 +90,73 @@ def _format_domain_sentence(domains: tuple[str, ...]) -> str:
     return f"{', '.join(domains[:-1])}, and {domains[-1]}"
 
 
+def _contractor_shape_phrase(contractor_profile: ContractorProfileArtifact) -> str:
+    parts = [f"`{contractor_profile.shape_class}`"]
+    if contractor_profile.classification.archetype:
+        parts.append(f"archetype `{contractor_profile.classification.archetype}`")
+    if contractor_profile.classification.host_platform:
+        parts.append(f"host `{contractor_profile.classification.host_platform}`")
+    return ", ".join(parts)
+
+
+def _contractor_grounding_lines(
+    *,
+    contractor_profile: ContractorProfileArtifact | None,
+    completion_manifest: CompletionManifestDraftStateRecord,
+) -> list[str]:
+    if contractor_profile is None or not completion_manifest.contractor_shape_class:
+        return []
+    lines = [
+        "## Contractor Grounding",
+        (
+            f"- Contractor resolved {_contractor_shape_phrase(contractor_profile)} at specificity "
+            f"`{completion_manifest.contractor_specificity_level or contractor_profile.specificity_level}`."
+        ),
+        (
+            f"- Planning remains bounded by fallback mode "
+            f"`{completion_manifest.contractor_fallback_mode or contractor_profile.fallback_mode}`."
+        ),
+    ]
+    if completion_manifest.contractor_capability_hints:
+        lines.append(
+            "- Carry forward capability hints: "
+            + ", ".join(f"`{item}`" for item in completion_manifest.contractor_capability_hints)
+            + "."
+        )
+    if completion_manifest.contractor_environment_hints:
+        lines.append(
+            "- Environment assumptions remain explicit: "
+            + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+            + "."
+        )
+    if completion_manifest.contractor_unresolved_specializations:
+        lines.append(
+            "- Unsupported specialization remains unresolved: "
+            + ", ".join(f"`{item}`" for item in completion_manifest.contractor_unresolved_specializations)
+            + "."
+        )
+    if completion_manifest.contractor_abstentions:
+        lines.append(
+            "- Contractor abstentions remain in force: "
+            + "; ".join(completion_manifest.contractor_abstentions[:2])
+            + "."
+        )
+    if completion_manifest.contractor_contradictions:
+        lines.append(
+            "- Contractor contradictions to preserve: "
+            + "; ".join(completion_manifest.contractor_contradictions[:2])
+            + "."
+        )
+    lines.append("")
+    return lines
+
+
+def _contractor_scope_line(contractor_profile: ContractorProfileArtifact | None) -> str | None:
+    if contractor_profile is None:
+        return None
+    return f"- Keep implementation aligned to Contractor-resolved {_contractor_shape_phrase(contractor_profile)}."
+
+
 def _partition_phase_steps(
     steps: tuple[str, ...],
     *,
@@ -147,6 +214,11 @@ def render_queue_spec(
         empty_message="No governance artifacts were declared.",
     )
     implementation_plan_lines = [f"{index}. {step}" for index, step in enumerate(product_plan.phase_steps[:3], start=1)]
+    contractor_scope_line = _contractor_scope_line(contractor_profile)
+    contractor_grounding_lines = _contractor_grounding_lines(
+        contractor_profile=contractor_profile,
+        completion_manifest=completion_manifest,
+    )
     timestamp = _isoformat_z(emitted_at)
     return "\n".join(
         [
@@ -187,6 +259,7 @@ def render_queue_spec(
             "## Scope",
             "### In Scope",
             f"- Product-facing implementation for {_format_domain_sentence(capability_domains)}.",
+            *([contractor_scope_line] if contractor_scope_line else []),
             (
                 f"- Acceptance and progression coverage for {progression_lines[0]}."
                 if progression_lines
@@ -222,6 +295,7 @@ def render_queue_spec(
             "## Governance Artifacts",
             *required_artifact_lines,
             "",
+            *contractor_grounding_lines,
             "## Decomposition Readiness",
             (
                 f"- The first bounded product slice centers on {progression_lines[0]}."
@@ -253,6 +327,17 @@ def render_queue_spec(
             "## Assumptions Ledger",
             "- The bounded synthesized slice can cover the highest-priority product capability path without expanding the family in this run (source: inferred).",
             "- Synced semantic milestones and completion-manifest acceptance focus are sufficient evidence for first-slice spec authoring (source: confirmed).",
+            *(
+                [
+                    (
+                        "- Contractor-specific environment assumptions stay bounded to "
+                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+                        + " (source: contractor profile)."
+                    )
+                ]
+                if completion_manifest.contractor_environment_hints
+                else []
+            ),
             "",
             "## Structured Decision Log",
             "| decision_id | phase_key | phase_priority | status | owner | rationale | timestamp |",
@@ -285,6 +370,17 @@ def render_queue_spec(
             "",
             "## Risks and Mitigations",
             "- Risk: later stages may require additional capability decomposition. Mitigation: family state remains explicit and bounded for later runs.",
+            *(
+                [
+                    (
+                        "- Risk: unresolved contractor specialization could be overclaimed. Mitigation: keep "
+                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_unresolved_specializations)
+                        + " explicit and unsupported in this slice."
+                    )
+                ]
+                if completion_manifest.contractor_unresolved_specializations
+                else []
+            ),
             "",
             "## Rollout and Rollback",
             "- Rollout: use this bounded product slice as the input to Spec Review.",
@@ -370,6 +466,11 @@ def render_phase_spec(
         if len(phase_packages) > 1
         else "- One bounded phase package is sufficient for this profile before Taskmaster runs."
     )
+    contractor_scope_line = _contractor_scope_line(contractor_profile)
+    contractor_grounding_lines = _contractor_grounding_lines(
+        contractor_profile=contractor_profile,
+        completion_manifest=completion_manifest,
+    )
     return "\n".join(
         [
             _FRONTMATTER_BOUNDARY,
@@ -395,6 +496,7 @@ def render_phase_spec(
             "## Scope",
             "### In Scope",
             f"- Product-facing implementation for {_format_domain_sentence(capability_domains)}.",
+            *([contractor_scope_line] if contractor_scope_line else []),
             (
                 f"- Verification coverage for {progression_lines[0]}."
                 if progression_lines
@@ -422,6 +524,7 @@ def render_phase_spec(
             "## Verification Surfaces",
             *verification_surface_lines,
             "",
+            *contractor_grounding_lines,
             "## Phase Packages",
             phase_package_summary,
             *phase_package_lines,
@@ -442,6 +545,17 @@ def render_phase_spec(
                 f"- Larger `{source.decomposition_profile}` campaigns keep their decomposition explicit by rendering {len(phase_packages)} bounded phase package(s) in this artifact (confidence: inferred)."
                 if len(phase_packages) > 1
                 else f"- Planning remains bounded to `{completion_manifest.planning_profile}` surfaces (confidence: inferred)."
+            ),
+            *(
+                [
+                    (
+                        "- Contractor environment assumptions remain bounded to "
+                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+                        + " (confidence: contractor profile)."
+                    )
+                ]
+                if completion_manifest.contractor_environment_hints
+                else []
             ),
             "",
             "## Structured Decision Log",
@@ -485,6 +599,17 @@ def render_phase_spec(
                 f"- Governance artifacts remain references only: {', '.join(f'`{path}`' for path in required_artifact_paths)}."
                 if required_artifact_paths
                 else "- Governance artifacts remain references only."
+            ),
+            *(
+                [
+                    (
+                        "- Unsupported contractor specialization stays unresolved: "
+                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_unresolved_specializations)
+                        + "."
+                    )
+                ]
+                if completion_manifest.contractor_unresolved_specializations
+                else []
             ),
             "",
         ]

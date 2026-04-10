@@ -4441,15 +4441,29 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
             "- Aura Progression\n"
             "- Registrations\n"
             "- Gameplay Tests\n\n"
-            "## Progression Lines\n"
-            "- Progression from registrations to gameplay proof in-game.\n"
-            "- Automated validation covers GameTests and bounded host behavior.\n"
-            "- Use Gradle for the project build.\n"
-        ),
-    )
+                "## Progression Lines\n"
+                "- Progression from registrations to gameplay proof in-game.\n"
+                "- Automated validation covers GameTests and bounded host behavior.\n"
+                "- Use Gradle for the project build.\n"
+                "- Loader discussion currently points at Fabric.\n"
+            ),
+        )
 
     completion_manifest = json.loads((workspace / "agents" / "audit" / "completion_manifest.json").read_text(encoding="utf-8"))
+    completion_report_text = (
+        workspace / "agents" / "reports" / "completion_manifest_plan.md"
+    ).read_text(encoding="utf-8")
     assert completion_manifest["planning_profile"] == "generic_product"
+    assert completion_manifest["contractor_shape_class"] == "platform_extension"
+    assert completion_manifest["contractor_specificity_level"] == "L4"
+    assert completion_manifest["contractor_fallback_mode"] == "apply_resolved_profiles_only"
+    assert completion_manifest["contractor_capability_hints"] == [
+        "registration_assets",
+        "progression_content",
+        "repo_native_behavior_tests",
+    ]
+    assert completion_manifest["contractor_environment_hints"] == ["java", "gradle"]
+    assert completion_manifest["contractor_unresolved_specializations"] == ["loader=fabric"]
     assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
         "mods/aura-progression-mod/src/main/java",
         "mods/aura-progression-mod/src/main/java/aura-progression",
@@ -4461,11 +4475,23 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
         "mods/aura-progression-mod/src/gametest/java",
         "mods/aura-progression-mod/src/test/java",
     ]
+    assert "## Contractor Grounding" in completion_report_text
+    assert "- **Capability-Hints:** `registration_assets`, `progression_content`, `repo_native_behavior_tests`" in (
+        completion_report_text
+    )
+    assert "- **Environment-Hints:** `java`, `gradle`" in completion_report_text
+    assert "- **Unresolved-Specializations:** `loader=fabric`" in completion_report_text
 
     golden_spec_text = (workspace / synthesis.golden_spec_path).read_text(encoding="utf-8")
     phase_spec_text = (workspace / synthesis.phase_spec_path).read_text(encoding="utf-8")
+    assert "## Contractor Grounding" in golden_spec_text
+    assert "Environment assumptions remain explicit: `java`, `gradle`." in golden_spec_text
+    assert "Unsupported specialization remains unresolved: `loader=fabric`." in golden_spec_text
     assert "mods/aura-progression-mod/src/main/java" in golden_spec_text
     assert "mods/aura-progression-mod/src/main/resources" in golden_spec_text
+    assert "## Contractor Grounding" in phase_spec_text
+    assert "Contractor environment assumptions remain bounded to `java`, `gradle`" in phase_spec_text
+    assert "Unsupported contractor specialization stays unresolved: `loader=fabric`." in phase_spec_text
     assert "mods/aura-progression-mod/src/gametest/java" in phase_spec_text
     assert "loader-specific overlay" in phase_spec_text
 

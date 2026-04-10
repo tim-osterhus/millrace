@@ -33,6 +33,48 @@ def _render_completion_manifest_report(
     source: GoalSource,
     draft_state: CompletionManifestDraftStateRecord,
 ) -> str:
+    contractor_lines = []
+    if draft_state.contractor_shape_class:
+        contractor_lines.extend(
+            [
+                "## Contractor Grounding",
+                f"- **Contractor-Profile:** `{draft_state.contractor_profile_path or 'none'}`",
+                f"- **Shape-Class:** `{draft_state.contractor_shape_class}`",
+                f"- **Specificity-Level:** `{draft_state.contractor_specificity_level or 'unknown'}`",
+                f"- **Fallback-Mode:** `{draft_state.contractor_fallback_mode or 'unknown'}`",
+            ]
+        )
+        if draft_state.contractor_capability_hints:
+            contractor_lines.append(
+                "- **Capability-Hints:** "
+                + ", ".join(f"`{item}`" for item in draft_state.contractor_capability_hints)
+            )
+        if draft_state.contractor_environment_hints:
+            contractor_lines.append(
+                "- **Environment-Hints:** "
+                + ", ".join(f"`{item}`" for item in draft_state.contractor_environment_hints)
+            )
+        if draft_state.contractor_unresolved_specializations:
+            contractor_lines.append(
+                "- **Unresolved-Specializations:** "
+                + ", ".join(f"`{item}`" for item in draft_state.contractor_unresolved_specializations)
+            )
+        if draft_state.contractor_abstentions:
+            contractor_lines.extend(
+                [
+                    "- **Abstentions:**",
+                    *(f"  - {item}" for item in draft_state.contractor_abstentions),
+                ]
+            )
+        if draft_state.contractor_contradictions:
+            contractor_lines.extend(
+                [
+                    "- **Contradictions:**",
+                    *(f"  - {item}" for item in draft_state.contractor_contradictions),
+                ]
+            )
+        contractor_lines.append("")
+
     return "\n".join(
         [
             "# Completion Manifest Draft",
@@ -64,6 +106,7 @@ def _render_completion_manifest_report(
                 for surface in draft_state.verification_surfaces
             ),
             "",
+            *contractor_lines,
             "## Open Questions",
             *(f"- {item}" for item in draft_state.open_questions),
             "",
