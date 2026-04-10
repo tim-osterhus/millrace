@@ -206,6 +206,8 @@ millrace --config millrace.toml logs --tail 50 --json
 
 Use these before touching files directly. In normal operation, the runtime is the authority for queue state, daemon state, status markers, and research state.
 
+Execution `IDLE` is the execution plane's neutral state: no execution stage is active right now. It does not mean the daemon is stopped, and it does not imply research activity or queued work are absent elsewhere in the workspace.
+
 In the TUI, use the Overview, Queue, Research, Logs, Runs, Config, and Publish panels for the same visibility without leaving the shell.
 
 ### 3. Add Work

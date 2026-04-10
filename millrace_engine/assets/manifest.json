@@ -277,36 +277,36 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "7850e4772415ca4d0186498c6c4b11f3ec68eb5f3320a75357a723f8cc4119a8",
-      "size": 9990,
-      "size_bytes": 9990,
+      "sha256": "eec9d3f06ad96bf0285328c6e0ac7fa7071c46d2ce6b916115db5cffb16a2e1f",
+      "size": 10145,
+      "size_bytes": 10145,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "f0b5b199ff4bc1d02ae5b06c0f18b5946b3dc6c7a60d3618c4020c64cec5c541",
-      "size": 20374,
-      "size_bytes": 20374,
+      "sha256": "11ec82f8ffa5e70c1768b3cf5d039ee20d2b40ef32ebb0876cc29488f4863478",
+      "size": 20606,
+      "size_bytes": 20606,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "73da0029f600ccbcd8040396732a24d0d335a246583c54cf75b00de7692ef254",
-      "size": 23140,
-      "size_bytes": 23140,
+      "sha256": "95ed3b49421f947e49e8984b67a3315862d50eeb18ec9e893ebd981ff91bdc1f",
+      "size": 23371,
+      "size_bytes": 23371,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "SUPERVISOR.md",
-      "sha256": "dffd4fb8177a5134341b73c8685349401905f4862c319d3915378fc6712e03f7",
-      "size": 4451,
-      "size_bytes": 5022,
+      "sha256": "4e94d7543585499cd302ea810646c5a1b7856d1e0f2234fba63a0fc14fd70746",
+      "size": 5177,
+      "size_bytes": 5177,
       "source": "runtime"
     },
     {
@@ -1510,9 +1510,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "792d6a147d6102bbec84bb8149f09e593e2dfc0085e5916e8591fb975b2a771b",
-      "size": 56167,
-      "size_bytes": 56167,
+      "sha256": "9c7a83955bf369d137c365e5bf5c0c7be0a1f691caae14fda6a1156aa40858ee",
+      "size": 56404,
+      "size_bytes": 56404,
       "source": "runtime"
     },
     {

@@ -1606,6 +1606,7 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
     assert json.loads(status_result.stdout)["config_path"] == (destination / "millrace.toml").as_posix()
     assert start_result.returncode == 0, start_result.stderr
     assert "Execution status: IDLE" in start_result.stdout
+    assert "Execution status detail: IDLE is the execution plane's neutral state" in start_result.stdout
 
     stale_markers = (
         "workspace-local override resolution and precedence are not yet implemented",
@@ -4532,6 +4533,7 @@ def test_python_module_entrypoint_supports_status_and_once(tmp_path: Path) -> No
     )
     assert once_result.returncode == 0
     assert "Process: stopped" in once_result.stdout
+    assert "Execution status detail: IDLE is the execution plane's neutral state" in once_result.stdout
 
 
 def test_cli_status_exposes_pending_cycle_boundary_config_between_cycles(tmp_path: Path) -> None:

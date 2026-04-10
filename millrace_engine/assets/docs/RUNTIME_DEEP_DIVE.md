@@ -237,6 +237,8 @@ The runtime validates:
 - legal transitions
 - legal stage-terminal markers
 
+For the execution plane specifically, `IDLE` is the neutral no-stage-active state. It does not mean the daemon process is stopped, and it does not imply that research work or queued execution work are absent elsewhere in the workspace.
+
 ### 4.4 Task Cards
 
 Task stores are markdown documents containing zero or more task cards.

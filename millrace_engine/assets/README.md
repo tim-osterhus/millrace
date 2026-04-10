@@ -247,6 +247,8 @@ millrace --config millrace.toml logs --tail 50 --json
 
 In the TUI, the Overview, Queue, Research, Logs, and Runs panels expose the same runtime state without leaving the shell.
 
+Execution `IDLE` is the execution plane's neutral state: no execution stage is active right now. It does not mean the daemon is stopped, and it does not mean research activity or queued work are absent elsewhere in the workspace.
+
 3. Add work:
 
 ```bash

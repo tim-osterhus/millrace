@@ -353,6 +353,14 @@ def start_command(
                 f"Paused: {'yes' if report.paused else 'no'}",
                 f"Execution status: {report.execution_status.value}",
                 f"Research status: {report.research_status.value}",
+                *(
+                    [
+                        "Execution status detail: IDLE is the execution plane's neutral state "
+                        "(no execution stage active); it does not mean the daemon is stopped."
+                    ]
+                    if report.execution_status.value == "IDLE"
+                    else []
+                ),
             ]
         )
     )

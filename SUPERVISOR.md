@@ -58,6 +58,7 @@ millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer
 ## Runtime Rules
 
 - Treat `supervisor report --json` as the primary observation surface.
+- Read execution `IDLE` as the execution plane's neutral state, not as proof that the daemon is stopped or that no work exists elsewhere in the workspace.
 - Use only `supervisor ... --issuer <name>` for external mutations.
 - Use `supervisor cleanup remove` or `supervisor cleanup quarantine` when invalid queued work must be corrected without losing issuer attribution.
 - Keep runtime-owned files read-only during normal supervision.

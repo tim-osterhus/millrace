@@ -487,6 +487,11 @@ def render_status(report: StatusReport, *, json_mode: bool) -> None:
         f"Config source: {report.config_source_kind}",
         f"Status source: {report.source_kind}",
     ]
+    if runtime.execution_status is ExecutionStatus.IDLE:
+        lines.append(
+            "Execution status detail: IDLE is the execution plane's neutral state "
+            "(no execution stage active); it does not mean the daemon is stopped."
+        )
     if report.config_source.legacy_policy_compatibility is not None:
         lines.append(_legacy_policy_summary_line(report.config_source.legacy_policy_compatibility))
     if report.config_source.unmapped_keys:
@@ -569,6 +574,11 @@ def render_supervisor_report(report: SupervisorReport, *, json_mode: bool) -> No
             f"fail={report.health_summary.failed_checks}"
         ),
     ]
+    if report.execution_status is ExecutionStatus.IDLE:
+        lines.append(
+            "Execution status detail: IDLE is the execution plane's neutral state "
+            "(no execution stage active); it does not mean the daemon is stopped."
+        )
     if report.recent_events:
         lines.append("Recent events:")
         lines.extend(f"- {render_event_record_line(event)}" for event in report.recent_events)

@@ -137,6 +137,7 @@ millrace --config millrace.toml publish commit --push --json
 - When you submit an idea or task, describe the desired outcome and repo surface instead of Millrace routing or stage instructions.
 - Use `queue cleanup remove` or `queue cleanup quarantine` when invalid queued tasks must be corrected; keep direct file edits as manual-repair-only escalation.
 - Explain config changes in terms of both what changes and when the boundary applies.
+- Read execution `IDLE` as the execution plane's neutral state, not as proof that the daemon is stopped or that no work exists elsewhere in the workspace.
 - Use the runtime's config boundary vocabulary when it matters: `live_immediate`, `stage_boundary`, `cycle_boundary`, and `startup_only`.
 - Keep scheduling, messaging, wakeups, and multi-workspace registry outside Millrace core.
 - Optional adapters may consume supervisor reports or structured events, but they are edge layers over Millrace-owned truth and the OpenClaw/Supervisor compatibility seam.

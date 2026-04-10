@@ -172,6 +172,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in readme
     assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in readme
     assert "goal-gap remediation-family staging" in readme
+    assert "Execution `IDLE` is the execution plane's neutral state" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -188,6 +189,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "OpenClaw Supervisor agent" in advisor
     assert "publish preflight --json" in advisor
     assert OPERATIONS_SKILL_PATH in advisor
+    assert "Read execution `IDLE` as the execution plane's neutral state" in advisor
 
     supervisor = (MILLRACE_ROOT / "SUPERVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the external one-workspace supervisor" in supervisor
@@ -198,6 +200,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert 'supervisor add-task "Example task" --issuer <name> --json' in supervisor
     assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in supervisor
     assert "Use `ADVISOR.md` instead" in supervisor
+    assert "Read execution `IDLE` as the execution plane's neutral state" in supervisor
 
     skill = (
         MILLRACE_ROOT
@@ -218,6 +221,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "upgrade --apply" in operator_guide
     assert "## Governed Compounding Operating Model" in operator_guide
     assert "raw -> compiled -> query -> lint" in operator_guide
+    assert "Execution `IDLE` is the execution plane's neutral state" in operator_guide
     assert "governed compounding authority lives in typed artifacts under `agents/compounding/`" in operator_guide
     assert "compounding orient --query builder" in operator_guide
     assert "compounding lint" in operator_guide
