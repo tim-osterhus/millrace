@@ -45,7 +45,7 @@ class DomainCase:
     taskmaster_title: str
     taskmaster_body: str
     split_paths: tuple[str, ...]
-    repo_kind: str
+    planning_profile: str
     implementation_prefixes: tuple[str, ...]
     verification_prefixes: tuple[str, ...]
     canonical_goal_relative_path: str
@@ -61,91 +61,88 @@ class DomainCase:
     recovery_unrelated_title: str
     recovery_regenerated_title: str
 
-
-AURA_CASE = DomainCase(
-    case_id="aura",
+WORKSPACE_CASE = DomainCase(
+    case_id="workspace",
     raw_goal_text=(
         "---\n"
-        "idea_id: IDEA-AURA-PARITY-001\n"
-        "title: Aura Workshop Vertical Slice\n"
+        "idea_id: IDEA-WORKSPACE-PARITY-001\n"
+        "title: Team Workspace Vertical Slice\n"
         "decomposition_profile: moderate\n"
         "---\n\n"
-        "# Aura Workshop Vertical Slice\n\n"
-        "Build the first playable aura workshop vertical slice for the mod.\n\n"
+        "# Team Workspace Vertical Slice\n\n"
+        "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
         "## Capability Domains\n"
-        "- Aura Collector\n"
-        "- Aura Conduit\n"
-        "- Aura Reservoir\n"
-        "- Aura Infuser\n"
-        "- infused weapon payoff\n\n"
+        "- Workspace Intake\n"
+        "- Shared Drafts\n"
+        "- Review Queue\n"
+        "- Activity Feed\n"
+        "- Published Summary\n\n"
         "## Progression Lines\n"
-        "- Progression from crafting to aura routing to infusion.\n"
-        "- Automated validation covers registration, aura behavior, infusion correctness, and the happy path.\n"
+        "- Progression from intake to shared drafting to review handoff.\n"
+        "- Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.\n"
     ),
     broad_goal_text=(
         "---\n"
-        "idea_id: IDEA-AURA-BROAD-001\n"
-        "title: Aura Workshop Expansion\n"
+        "idea_id: IDEA-WORKSPACE-BROAD-001\n"
+        "title: Team Workspace Expansion\n"
         "decomposition_profile: simple\n"
         "---\n\n"
-        "# Aura Workshop Expansion\n\n"
-        "Build a broad but still early aura workshop slice without widening the initial family too early.\n\n"
+        "# Team Workspace Expansion\n\n"
+        "Build a broad but still early team workspace slice without widening the initial family too early.\n\n"
         "## Capability Domains\n"
-        "- Aura Collector\n"
-        "- Aura Conduit\n"
-        "- Aura Reservoir\n"
-        "- Aura Infuser\n"
-        "- Aura Forge\n"
-        "- Aura Boss Arena\n\n"
+        "- Workspace Intake\n"
+        "- Shared Drafts\n"
+        "- Review Queue\n"
+        "- Activity Feed\n"
+        "- Template Library\n"
+        "- Insights Panel\n\n"
         "## Progression Lines\n"
-        "- Progression from collection to routing to infusion to boss payoff.\n"
-        "- Progression from solo crafting to coordinated combat trials.\n"
+        "- Progression from intake to drafting to review handoff to insight delivery.\n"
+        "- Progression from individual planning to coordinated team publishing.\n"
     ),
-    taskmaster_title="Aura Workshop Vertical Slice",
+    taskmaster_title="Team Workspace Vertical Slice",
     taskmaster_body=(
-        "Build the first playable aura workshop vertical slice for the mod.\n\n"
+        "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
         "## Capability Domains\n"
-        "- Aura collector gameplay\n"
-        "- Aura conduit routing\n\n"
+        "- Workspace intake\n"
+        "- Shared drafts\n\n"
         "## Progression Lines\n"
-        "- Progression from collection to conduit routing to first playable proof.\n"
+        "- Progression from intake to shared drafting to first usable proof.\n"
     ),
     split_paths=(
-        "src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java",
-        "src/main/java/com/example/aura/AuraCollectorGameplayBlock.java",
-        "src/main/java/com/example/aura/AuraConduitRoutingBlock.java",
-        "src/main/resources/assets/aura/lang/en_us.json",
-        "src/test/java/com/example/aura/AuraWorkshopVerticalSliceFlowTest.java",
-        "src/gametest/java/com/example/aura/AuraWorkshopVerticalSliceGameTest.java",
+        "src/team-workspace-vertical-slice/entrypoint",
+        "src/team-workspace-vertical-slice/workspace-intake",
+        "src/team-workspace-vertical-slice/shared-drafts",
+        "src/team-workspace-vertical-slice/review-queue",
+        "tests/team-workspace-vertical-slice/flow",
+        "tests/team-workspace-vertical-slice/regression",
     ),
-    repo_kind="minecraft_fabric_mod",
+    planning_profile="generic_product",
     implementation_prefixes=(
-        "src/main/java/com/example/aura/",
-        "src/main/resources/data/aura/",
+        "src/team-workspace-vertical-slice/",
     ),
     verification_prefixes=(
-        "src/test/java/com/example/aura/",
-        "src/gametest/java/com/example/aura/",
+        "tests/team-workspace-vertical-slice/",
     ),
-    canonical_goal_relative_path="agents/objective/aura-goal-gap-source.md",
+    canonical_goal_relative_path="agents/objective/workspace-goal-gap-source.md",
     canonical_goal_text=(
         "---\n"
-        "idea_id: IDEA-AURA-GAP-001\n"
-        "title: Aura Goal Gap Remediation Source\n"
+        "idea_id: IDEA-WORKSPACE-GAP-001\n"
+        "title: Workspace Goal Gap Remediation Source\n"
         "---\n\n"
-        "# Aura Goal Gap Remediation Source\n\n"
-        "Restore queue-empty marathon audit parity for aura workshop completion.\n"
+        "# Workspace Goal Gap Remediation Source\n\n"
+        "Restore queue-empty marathon audit parity for team workspace completion.\n"
     ),
-    goal_id="IDEA-AURA-GAP-001",
-    goal_gap_milestone_id="MILESTONE-AURA-GAP-001",
-    goal_gap_outcome="Restore aura workshop goal gap remediation family staging",
-    goal_gap_scope=("aura goal gap remediation", "marathon audit"),
-    goal_gap_gap_id="GAP-AURA-201",
-    goal_gap_gap_title="Restore aura workshop goal gap remediation family staging",
-    recovery_active_title="Implement aura collector persistence",
-    recovery_dependent_title="Hook aura collector UI refresh",
-    recovery_unrelated_title="Document aura release notes",
-    recovery_regenerated_title="Regenerated aura recovery slice",
+    goal_id="IDEA-WORKSPACE-GAP-001",
+    goal_gap_milestone_id="MILESTONE-WORKSPACE-GAP-001",
+    goal_gap_outcome="Restore team workspace goal gap remediation family staging",
+    goal_gap_scope=("workspace goal gap remediation", "marathon audit"),
+    goal_gap_gap_id="GAP-WORKSPACE-201",
+    goal_gap_gap_title="Restore team workspace goal gap remediation family staging",
+    recovery_active_title="Implement workspace intake persistence",
+    recovery_dependent_title="Hook workspace review refresh",
+    recovery_unrelated_title="Document workspace release notes",
+    recovery_regenerated_title="Regenerated workspace recovery slice",
 )
 
 SUPPORT_CASE = DomainCase(
@@ -205,9 +202,9 @@ SUPPORT_CASE = DomainCase(
         "tests/test_support-ticket-service_api.py",
         "tests/test_support-ticket-service_service.py",
     ),
-    repo_kind="python_product",
+    planning_profile="generic_product",
     implementation_prefixes=("src/support-ticket-service/",),
-    verification_prefixes=("tests/test_support-ticket-service_",),
+    verification_prefixes=("tests/support-ticket-service/",),
     canonical_goal_relative_path="agents/objective/support-goal-gap-source.md",
     canonical_goal_text=(
         "---\n"
@@ -229,8 +226,7 @@ SUPPORT_CASE = DomainCase(
     recovery_regenerated_title="Regenerated support recovery slice",
 )
 
-
-DOMAIN_CASES = (AURA_CASE, SUPPORT_CASE)
+DOMAIN_CASES = (WORKSPACE_CASE, SUPPORT_CASE)
 
 
 def _task_card(
@@ -327,7 +323,7 @@ def test_cross_domain_goal_family_defers_completion_manifest_and_synthesis(tmp_p
     assert plane.status_store.read() is ResearchStatus.SPEC_SYNTHESIS_RUNNING
     assert paths.audit_completion_manifest_file.exists()
     completion_manifest = json.loads(paths.audit_completion_manifest_file.read_text(encoding="utf-8"))
-    assert completion_manifest["repo_kind"] == case.repo_kind
+    assert completion_manifest["planning_profile"] == case.planning_profile
     for prefix in case.implementation_prefixes:
         assert any(
             path.startswith(prefix)
@@ -510,7 +506,7 @@ def test_cross_domain_spec_synthesis_declares_bounded_later_specs_for_broad_goal
     assert all(f"`{spec_id}`" in decision_text for spec_id in planned_spec_ids)
 
 
-@pytest.mark.parametrize("case", (AURA_CASE,), ids=lambda case: case.case_id)
+@pytest.mark.parametrize("case", (WORKSPACE_CASE,), ids=lambda case: case.case_id)
 def test_cross_domain_taskmaster_splits_oversized_phase_steps_with_profile_scaled_envelope(
     tmp_path: Path,
     case: DomainCase,

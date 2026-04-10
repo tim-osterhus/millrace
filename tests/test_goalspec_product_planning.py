@@ -109,14 +109,14 @@ def test_derive_goal_product_plan_preserves_framework_internal_runtime_goals() -
 
     plan = derive_goal_product_plan(source=source, profile=profile)
 
-    assert plan.repo_kind == "millrace_python_runtime"
+    assert plan.planning_profile == "framework_runtime"
     assert plan.implementation_surfaces[0].path == "millrace_engine/research/goalspec_goal_intake.py"
     assert len(plan.phase_steps) >= minimum_phase_step_count("moderate")
     assert not find_abstract_phase_steps(plan.phase_steps)
 
 
 @pytest.mark.parametrize(
-    ("title", "body", "objective_summary", "capability_domains", "progression_lines", "expected_repo_kind"),
+    ("title", "body", "objective_summary", "capability_domains", "progression_lines", "expected_planning_profile"),
     [
         (
             "Modernize Goal Intake",
@@ -124,23 +124,23 @@ def test_derive_goal_product_plan_preserves_framework_internal_runtime_goals() -
             "Create real GoalSpec intake and objective sync stages.",
             ("Goal Intake", "Objective Profile Sync"),
             ("Progression from intake to objective sync to restart-safe completion.",),
-            "millrace_python_runtime",
+            "framework_runtime",
         ),
         (
-            "Aura Workshop Vertical Slice",
-            "Build the first playable aura workshop vertical slice for the mod.",
-            "Build the first playable aura workshop vertical slice for the mod.",
-            ("Aura Collector", "Aura Conduit", "Aura Reservoir"),
-            ("Progression from collection to routing to storage proof.",),
-            "minecraft_fabric_mod",
+            "Team Workspace Vertical Slice",
+            "Build the first usable team workspace vertical slice for collaborative planning.",
+            "Build the first usable team workspace vertical slice for collaborative planning.",
+            ("Workspace Intake", "Shared Drafts", "Review Queue"),
+            ("Progression from intake to shared drafting to review handoff.",),
+            "generic_product",
         ),
         (
-            "Support Ticket Service",
-            "Build the first usable support-ticket web app for a Python service.",
-            "Build the first usable support-ticket web app for a Python service.",
-            ("Support Ticket Intake", "Agent Workflow"),
-            ("Progression from intake to triage to reply proof.",),
-            "python_product",
+            "Shared Notes Console",
+            "Build the first usable shared-notes console for a collaborative team.",
+            "Build the first usable shared-notes console for a collaborative team.",
+            ("Note Capture", "Review Inbox"),
+            ("Progression from note capture to review to publish confirmation.",),
+            "generic_product",
         ),
         (
             "Neighborhood Events Hub",
@@ -159,7 +159,7 @@ def test_derive_goal_product_plan_supported_profiles_meet_density_floors(
     objective_summary: str,
     capability_domains: tuple[str, ...],
     progression_lines: tuple[str, ...],
-    expected_repo_kind: str,
+    expected_planning_profile: str,
     decomposition_profile: str,
 ) -> None:
     source = _goal_source(title=title, body=body, decomposition_profile=decomposition_profile)
@@ -172,7 +172,7 @@ def test_derive_goal_product_plan_supported_profiles_meet_density_floors(
 
     plan = derive_goal_product_plan(source=source, profile=profile)
 
-    assert plan.repo_kind == expected_repo_kind
+    assert plan.planning_profile == expected_planning_profile
     assert len(plan.phase_steps) >= minimum_phase_step_count(decomposition_profile)
     assert not find_abstract_phase_steps(plan.phase_steps)
     assert any("`" in step for step in plan.phase_steps)

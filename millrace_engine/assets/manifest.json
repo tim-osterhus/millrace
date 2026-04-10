@@ -63,6 +63,11 @@
     },
     {
       "category": "directory",
+      "family": "legacy",
+      "path": "agents/legacy"
+    },
+    {
+      "category": "directory",
       "family": "objective",
       "path": "agents/objective"
     },
@@ -75,6 +80,11 @@
       "category": "directory",
       "family": "options",
       "path": "agents/options/integrate"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/orchestrate"
     },
     {
       "category": "directory",
@@ -393,6 +403,15 @@
     {
       "category": "research_entrypoint",
       "family": "entrypoints",
+      "path": "agents/_customize.md",
+      "sha256": "9c9f145f0a046dc200ac0ac96b4fc8e4c2b4eac40c69c16edf7d3c5a85c29dd5",
+      "size": 13395,
+      "size_bytes": 13395,
+      "source": "reference"
+    },
+    {
+      "category": "research_entrypoint",
+      "family": "entrypoints",
       "path": "agents/_designer.md",
       "sha256": "01a77ab0a1ffab4e1077eac8d45660781f521f5b88ec6bb466a7fa2b4be74aeb",
       "size": 2770,
@@ -478,6 +497,15 @@
       "sha256": "b3e9d7e74e91df005d0269cbea4dc69e1970f0bb36750b1c136d45d14e270ee1",
       "size": 4398,
       "size_bytes": 4398,
+      "source": "reference"
+    },
+    {
+      "category": "research_entrypoint",
+      "family": "entrypoints",
+      "path": "agents/_orchestrate.md",
+      "sha256": "44a45c19c94c595733f260729e5251e7cc50e22142ebae10464e674151c5ff6c",
+      "size": 771,
+      "size_bytes": 771,
       "source": "reference"
     },
     {
@@ -625,6 +653,15 @@
       "source": "reference"
     },
     {
+      "category": "workspace_seed",
+      "family": "workspace",
+      "path": "agents/autonomy_runbook.md",
+      "sha256": "ed6660226fe4aa1d113dab14e9ab7c0ae984df9260daf70b6ee5b4801ed44077",
+      "size": 1815,
+      "size_bytes": 1815,
+      "source": "reference"
+    },
+    {
       "category": "ideas_seed",
       "family": "ideas",
       "path": "agents/ideas/audit/README.md",
@@ -640,6 +677,33 @@
       "sha256": "6be3cc13b00c450edd90edc543ebb03fc7f9c282a74dae9a2981008dddb3739d",
       "size": 1222,
       "size_bytes": 1222,
+      "source": "reference"
+    },
+    {
+      "category": "legacy_doc",
+      "family": "legacy",
+      "path": "agents/legacy/README.md",
+      "sha256": "e962141174018cf38c9c42e014c59d77f09b0e8e09da9f90c442e752adbc1e7c",
+      "size": 1386,
+      "size_bytes": 1386,
+      "source": "reference"
+    },
+    {
+      "category": "legacy_entrypoint",
+      "family": "legacy",
+      "path": "agents/legacy/_orchestrate.md",
+      "sha256": "9f0321753af5bc02e78fbc72b7b41ba2ab1ba0dd74f35d62163ec1b33a21cf14",
+      "size": 12646,
+      "size_bytes": 12646,
+      "source": "reference"
+    },
+    {
+      "category": "legacy_entrypoint",
+      "family": "legacy",
+      "path": "agents/legacy/_supervisor.md",
+      "sha256": "77c8aaaf30133e442918f3a3587c6f1df6f2438830311c649e3ac4024fd18924",
+      "size": 10262,
+      "size_bytes": 10262,
       "source": "reference"
     },
     {
@@ -672,6 +736,33 @@
     {
       "category": "option_doc",
       "family": "options",
+      "path": "agents/options/model_config.md",
+      "sha256": "6c3c64440dee6250bcedbd0c6b14f4a21661ff53cc62045fc104ae326ad1ad36",
+      "size": 8914,
+      "size_bytes": 8914,
+      "source": "reference"
+    },
+    {
+      "category": "option_doc",
+      "family": "options",
+      "path": "agents/options/orchestrate/orchestrate_options_bash.md",
+      "sha256": "28eea33daf946086648c2d23621598293f8c881afe8f3672dd7d5f51c8931413",
+      "size": 7511,
+      "size_bytes": 7511,
+      "source": "reference"
+    },
+    {
+      "category": "option_doc",
+      "family": "options",
+      "path": "agents/options/orchestrate/orchestrate_options_powershell.md",
+      "sha256": "6dc1d85be6f6860a5ef00af71611184747992f3babb7a11a44dc2a8ef730e93e",
+      "size": 7237,
+      "size_bytes": 7237,
+      "source": "reference"
+    },
+    {
+      "category": "option_doc",
+      "family": "options",
       "path": "agents/options/permission/perm_config.md",
       "sha256": "002725f75cb26231d959aa6079fbe3e0d9fa5f80516111d566f449baadf19f9b",
       "size": 1648,
@@ -685,6 +776,15 @@
       "sha256": "d1b79535893c9bd2986ebae64dca35f2c683f2b8163d6604aef87fa08485b30e",
       "size": 9097,
       "size_bytes": 9097,
+      "source": "reference"
+    },
+    {
+      "category": "option_script",
+      "family": "options",
+      "path": "agents/options/troubleshoot/orchestrate_loop_no_ts.sh",
+      "sha256": "ff27405737ddccdc0c6bb0e8c4f83f17f75956324685fd7c56230826c2ed4c88",
+      "size": 38465,
+      "size_bytes": 38465,
       "source": "reference"
     },
     {
@@ -739,6 +839,24 @@
       "sha256": "c81adf126283dc2c6de293c47f5e386e4f22bf31bb4538b6ee42a888467ba86f",
       "size": 1181,
       "size_bytes": 1181,
+      "source": "reference"
+    },
+    {
+      "category": "option_doc",
+      "family": "options",
+      "path": "agents/options/workflow_config.md",
+      "sha256": "a1efc312699b2ba62ceb1b827ffacd102015843dc3cbc426e3a2cb049731abf0",
+      "size": 12552,
+      "size_bytes": 12552,
+      "source": "reference"
+    },
+    {
+      "category": "script",
+      "family": "workspace",
+      "path": "agents/orchestrate_loop.sh",
+      "sha256": "ef9444ea83100f41eed7e04af6372b77ce3a561f56841d247be0dc3d74b543f6",
+      "size": 191898,
+      "size_bytes": 191898,
       "source": "reference"
     },
     {
@@ -928,6 +1046,15 @@
       "sha256": "372f773260d76482d7a7f814a7cc6cc4111732c671a8e096e750aa9721cda053",
       "size": 804,
       "size_bytes": 804,
+      "source": "reference"
+    },
+    {
+      "category": "script",
+      "family": "workspace",
+      "path": "agents/research_loop.sh",
+      "sha256": "f5db6df2dd93982470f13d2ebdd328f59c196a25dda39aa3514274421d0d392d",
+      "size": 406690,
+      "size_bytes": 406690,
       "source": "reference"
     },
     {
@@ -1504,6 +1631,15 @@
       "sha256": "5544213a299c10f31a3660528d72df98178aac2f7064aa56664b6c65cf22baab",
       "size": 6714,
       "size_bytes": 6714,
+      "source": "reference"
+    },
+    {
+      "category": "manifest",
+      "family": "workspace",
+      "path": "agents/ui_verification_spec.yaml",
+      "sha256": "1b4e4fe828525bdf6252b315799d9775b1f28091cab48931fedce4cb545c5a8d",
+      "size": 627,
+      "size_bytes": 627,
       "source": "reference"
     },
     {

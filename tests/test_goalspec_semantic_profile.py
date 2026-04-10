@@ -12,34 +12,34 @@ from millrace_engine.research.goalspec_semantic_profile import (
 )
 
 
-PRODUCT_GOAL_TEXT = """# Aura Workshop Vertical Slice
+PRODUCT_GOAL_TEXT = """# Team Workspace Vertical Slice
 
-Build a compact aura-themed Minecraft mod vertical slice for a first playable release.
+Build the first usable team workspace vertical slice for collaborative planning.
 
-- Aura Collector
-- Aura Conduit
-- Aura Reservoir
-- Aura Infuser
-- one aura-powered infused weapon
+- Workspace Intake
+- Shared Drafts
+- Review Queue
+- Activity Feed
+- Published Summary
 
-Progression from crafting to aura routing to infusion.
-Minimal in-game teaching.
-Automated validation for registration, aura behavior, infusion correctness, and the happy path.
+Progression from intake to shared drafting to review handoff.
+Minimal onboarding guidance.
+Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.
 """
 
-SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """# Support Ticket Service
+SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """# Shared Workspace Service
 
-Build the first usable support-ticket web app for a Python service.
+Build the first usable shared workspace service for a collaborative team.
 
 ## Capability Domains
-- Ticket creation API
-- Agent inbox triage dashboard
+- Workspace Intake
+- Review Inbox
 - Stage contract
 - agents/ideas/staging
-- support-ticket/phase_spec.md
+- workspace-service/phase_spec.md
 
 ## Progression Lines
-- Progression from ticket intake to assignment to resolution confirmation.
+- Progression from intake to review to publish confirmation.
 - objective_profile_sync
 - agents/_goal_intake.md
 """
@@ -49,25 +49,23 @@ def test_build_goal_semantic_profile_extracts_product_scoped_content() -> None:
     profile = build_goal_semantic_profile(PRODUCT_GOAL_TEXT)
 
     assert profile.profile_mode == "heuristic"
-    assert profile.objective_summary == (
-        "Build a compact aura-themed Minecraft mod vertical slice for a first playable release."
-    )
+    assert profile.objective_summary == "Build the first usable team workspace vertical slice for collaborative planning."
     assert profile.capability_domains == (
-        "Aura Collector",
-        "Aura Conduit",
-        "Aura Reservoir",
-        "Aura Infuser",
-        "one aura-powered infused weapon",
+        "Workspace Intake",
+        "Shared Drafts",
+        "Review Queue",
+        "Activity Feed",
+        "Published Summary",
     )
-    assert profile.progression_lines == ("Progression from crafting to aura routing to infusion.",)
+    assert profile.progression_lines == ("Progression from intake to shared drafting to review handoff.",)
     assert [item.id for item in profile.milestones] == [
         "CAPABILITY-FOUNDATION",
         "CAPABILITY-PROGRESSION",
         "CAPABILITY-ENDSTATE",
     ]
     milestone_text = " ".join(item.outcome for item in profile.milestones)
-    assert "Aura Collector" in milestone_text
-    assert "aura routing to infusion" in milestone_text
+    assert "Workspace Intake" in milestone_text
+    assert "intake to shared drafting to review handoff" in milestone_text
     assert "GoalSpec" not in milestone_text
     assert "objective-profile" not in milestone_text
 
@@ -75,18 +73,18 @@ def test_build_goal_semantic_profile_extracts_product_scoped_content() -> None:
 def test_build_goal_semantic_profile_rejects_control_plane_candidates_across_domains() -> None:
     profile = build_goal_semantic_profile(SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE)
 
-    assert profile.objective_summary == "Build the first usable support-ticket web app for a Python service."
+    assert profile.objective_summary == "Build the first usable shared workspace service for a collaborative team."
     assert profile.capability_domains == (
-        "Ticket creation API",
-        "Agent inbox triage dashboard",
+        "Workspace Intake",
+        "Review Inbox",
     )
     assert profile.progression_lines == (
-        "Progression from ticket intake to assignment to resolution confirmation.",
+        "Progression from intake to review to publish confirmation.",
     )
     assert {(item.candidate, item.reason) for item in profile.rejected_candidates} == {
         ("Stage contract", "administrative_language"),
         ("agents/ideas/staging", "path_shaped"),
-        ("support-ticket/phase_spec.md", "path_shaped"),
+        ("workspace-service/phase_spec.md", "path_shaped"),
         ("objective_profile_sync", "administrative_language"),
         ("agents/_goal_intake.md", "path_shaped"),
     }
@@ -101,12 +99,12 @@ def test_seed_document_json_and_yaml_normalization(tmp_path: Path) -> None:
     json_seed.write_text(
         (
             "{\n"
-            '  "objective": "Ship the aura workshop loop.",\n'
-            '  "capability_domains": ["Aura Collector", "Aura Reservoir"],\n'
-            '  "progression_lines": ["From collection to storage to infusion."],\n'
+            '  "objective": "Ship the team workspace loop.",\n'
+            '  "capability_domains": ["Workspace Intake", "Activity Feed"],\n'
+            '  "progression_lines": ["From intake to drafting to review handoff."],\n'
             '  "milestones": [\n'
-            '    "Bring up the collector and reservoir loop.",\n'
-            '    {"id": "SEED-INFUSION", "outcome": "Finish the infusion payoff.", "capability_scope": ["Aura Infuser"]}\n'
+            '    "Bring up the intake and activity loop.",\n'
+            '    {"id": "SEED-HANDOFF", "outcome": "Finish the review handoff path.", "capability_scope": ["Review Queue"]}\n'
             "  ]\n"
             "}\n"
         ),
@@ -116,16 +114,16 @@ def test_seed_document_json_and_yaml_normalization(tmp_path: Path) -> None:
     yaml_seed = paths.objective_dir / "semantic_profile_seed.yaml"
     yaml_seed.write_text(
         (
-            "objective: Ship the seeded aura loop.\n"
+            "objective: Ship the seeded workspace loop.\n"
             "capability_domains:\n"
-            "  - Aura Collector\n"
-            "  - Aura Conduit\n"
+            "  - Workspace Intake\n"
+            "  - Shared Drafts\n"
             "milestones:\n"
             "  - id: SEED-FOUNDATION\n"
-            "    outcome: Establish aura collection and transfer.\n"
+            "    outcome: Establish intake and drafting handoff.\n"
             "    capability_scope:\n"
-            "      - Aura Collector\n"
-            "      - Aura Conduit\n"
+            "      - Workspace Intake\n"
+            "      - Shared Drafts\n"
         ),
         encoding="utf-8",
     )
@@ -139,10 +137,10 @@ def test_seed_document_json_and_yaml_normalization(tmp_path: Path) -> None:
     )
     assert json_profile.profile_mode == "seeded"
     assert json_profile.semantic_seed_path == "agents/objective/semantic_profile_seed.json"
-    assert json_profile.capability_domains == ("Aura Collector", "Aura Reservoir")
-    assert json_profile.progression_lines == ("From collection to storage to infusion.",)
-    assert [item.id for item in json_profile.milestones] == ["SEED-001", "SEED-INFUSION"]
-    assert json_profile.milestones[1].capability_scope == ("Aura Infuser",)
+    assert json_profile.capability_domains == ("Workspace Intake", "Activity Feed")
+    assert json_profile.progression_lines == ("From intake to drafting to review handoff.",)
+    assert [item.id for item in json_profile.milestones] == ["SEED-001", "SEED-HANDOFF"]
+    assert json_profile.milestones[1].capability_scope == ("Review Queue",)
 
     json_seed.unlink()
     assert discover_semantic_seed_path(paths) == yaml_seed
@@ -153,9 +151,9 @@ def test_seed_document_json_and_yaml_normalization(tmp_path: Path) -> None:
         semantic_seed_path="agents/objective/semantic_profile_seed.yaml",
     )
     assert yaml_profile.profile_mode == "seeded"
-    assert yaml_profile.capability_domains == ("Aura Collector", "Aura Conduit")
+    assert yaml_profile.capability_domains == ("Workspace Intake", "Shared Drafts")
     assert [item.id for item in yaml_profile.milestones] == ["SEED-FOUNDATION"]
-    assert yaml_profile.milestones[0].capability_scope == ("Aura Collector", "Aura Conduit")
+    assert yaml_profile.milestones[0].capability_scope == ("Workspace Intake", "Shared Drafts")
 
 
 def test_seed_document_filters_control_plane_candidates_and_records_diagnostics() -> None:
@@ -163,27 +161,27 @@ def test_seed_document_filters_control_plane_candidates_and_records_diagnostics(
         PRODUCT_GOAL_TEXT,
         semantic_seed_payload={
             "capability_domains": [
-                "Aura Collector",
+                "Workspace Intake",
                 "agents/ideas/specs",
                 "goal_intake",
             ],
             "progression_lines": [
-                "From collection to storage to infusion.",
+                "From intake to drafting to review handoff.",
                 "agents/_goal_intake.md",
             ],
             "milestones": [
                 {
                     "id": "SEED-FOUNDATION",
-                    "outcome": "Establish aura collection and storage.",
-                    "capability_scope": ["Aura Collector", "phase spec"],
+                    "outcome": "Establish workspace intake and shared drafting.",
+                    "capability_scope": ["Workspace Intake", "phase spec"],
                 }
             ],
         },
     )
 
-    assert profile.capability_domains == ("Aura Collector",)
-    assert profile.progression_lines == ("From collection to storage to infusion.",)
-    assert profile.milestones[0].capability_scope == ("Aura Collector",)
+    assert profile.capability_domains == ("Workspace Intake",)
+    assert profile.progression_lines == ("From intake to drafting to review handoff.",)
+    assert profile.milestones[0].capability_scope == ("Workspace Intake",)
     assert {(item.candidate, item.reason) for item in profile.rejected_candidates} >= {
         ("agents/ideas/specs", "path_shaped"),
         ("goal_intake", "administrative_language"),

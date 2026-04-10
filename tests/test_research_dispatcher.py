@@ -2053,7 +2053,7 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     assert completion_manifest["canonical_source_path"] == archived_rel_path
     assert completion_manifest["current_artifact_path"] == "agents/ideas/staging/IDEA-42__modernize-goal-intake.md"
     assert completion_manifest["source_path"] == archived_rel_path
-    assert completion_manifest["repo_kind"] == "millrace_python_runtime"
+    assert completion_manifest["planning_profile"] == "framework_runtime"
     assert completion_manifest["objective_profile_path"] == "agents/reports/acceptance_profiles/idea-42-profile.json"
     assert any(downstream_pending_text in item for item in completion_manifest["open_questions"])
     assert [artifact["path"] for artifact in completion_manifest["required_artifacts"]] == [
@@ -2208,8 +2208,8 @@ def test_research_plane_blocks_same_family_earlier_stage_recycling_after_spec_em
         tmp_path,
         run_id="goalspec-recycle-601",
         emitted_at=_dt("2026-04-07T17:00:00Z"),
-        title="Aura Workshop Vertical Slice",
-        body="Build the first playable aura workshop vertical slice for the mod.",
+        title="Team Workspace Vertical Slice",
+        body="Build the first usable team workspace vertical slice for collaborative planning.",
         decomposition_profile="moderate",
         idea_id="IDEA-601",
     )
@@ -2220,10 +2220,10 @@ def test_research_plane_blocks_same_family_earlier_stage_recycling_after_spec_em
         (
             "---\n"
             "idea_id: IDEA-601\n"
-            "title: Aura Workshop Vertical Slice\n"
+            "title: Team Workspace Vertical Slice\n"
             "decomposition_profile: moderate\n"
             "---\n\n"
-            "# Aura Workshop Vertical Slice\n\n"
+            "# Team Workspace Vertical Slice\n\n"
             "Rediscovered raw goal after spec emission.\n"
         ),
     )
@@ -2843,26 +2843,26 @@ def test_execute_spec_synthesis_declares_bounded_later_specs_for_broad_goal(
     raw_goal_text = (
         "---\n"
         "idea_id: IDEA-BROAD-201\n"
-        "title: Aura Workshop Expansion\n"
+        "title: Team Workspace Expansion\n"
         "decomposition_profile: simple\n"
         "---\n"
         "\n"
-        "# Aura Workshop Expansion\n\n"
-        "Build a broad but still early aura workshop slice without widening the initial family too early.\n\n"
+        "# Team Workspace Expansion\n\n"
+        "Build a broad but still early team workspace slice without widening the initial family too early.\n\n"
         "## Capability Domains\n"
-        "- Aura Collector\n"
-        "- Aura Conduit\n"
-        "- Aura Reservoir\n"
-        "- Aura Infuser\n"
-        "- Aura Forge\n"
-        "- Aura Boss Arena\n\n"
+        "- Workspace Intake\n"
+        "- Shared Drafts\n"
+        "- Review Queue\n"
+        "- Activity Feed\n"
+        "- Template Library\n"
+        "- Insights Panel\n\n"
         "## Progression Lines\n"
-        "- Progression from collection to routing to infusion to boss payoff.\n"
-        "- Progression from solo crafting to coordinated combat trials.\n"
+        "- Progression from intake to drafting to review handoff to insight delivery.\n"
+        "- Progression from individual planning to coordinated team publishing.\n"
     )
     emitted_at = _dt("2026-04-07T12:00:00Z")
     run_id = "goalspec-broad-family-201"
-    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-201__aura-workshop-expansion.md"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-201__team-workspace-expansion.md"
 
     _write_queue_file(raw_goal_path, raw_goal_text)
     execute_goal_intake(
@@ -2946,26 +2946,26 @@ def test_execute_spec_synthesis_respects_single_spec_broad_cap_for_broad_goal(tm
     raw_goal_text = (
         "---\n"
         "idea_id: IDEA-BROAD-CAP-201\n"
-        "title: Aura Workshop Capped\n"
+        "title: Team Workspace Capped\n"
         "decomposition_profile: involved\n"
         "---\n"
         "\n"
-        "# Aura Workshop Capped\n\n"
-        "Build an involved aura workshop expansion with capped initial-family planning.\n\n"
+        "# Team Workspace Capped\n\n"
+        "Build an involved team workspace expansion with capped initial-family planning.\n\n"
         "## Capability Domains\n"
-        "- Aura Collector\n"
-        "- Aura Conduit\n"
-        "- Aura Reservoir\n"
-        "- Aura Infuser\n"
-        "- Aura Forge\n"
-        "- Aura Boss Arena\n\n"
+        "- Workspace Intake\n"
+        "- Shared Drafts\n"
+        "- Review Queue\n"
+        "- Activity Feed\n"
+        "- Template Library\n"
+        "- Insights Panel\n\n"
         "## Progression Lines\n"
-        "- Progression from collection to routing to infusion to boss payoff.\n"
-        "- Progression from solo crafting to coordinated combat trials.\n"
+        "- Progression from intake to drafting to review handoff to insight delivery.\n"
+        "- Progression from individual planning to coordinated team publishing.\n"
     )
     emitted_at = _dt("2026-04-07T12:20:00Z")
     run_id = "goalspec-broad-cap-201"
-    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-CAP-201__aura-workshop-capped.md"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-CAP-201__team-workspace-capped.md"
 
     _write_queue_file(raw_goal_path, raw_goal_text)
     execute_goal_intake(
@@ -3044,16 +3044,16 @@ def test_execute_spec_review_blocks_abstract_phase_plan_before_taskmaster(tmp_pa
         (
             "---\n"
             "idea_id: IDEA-301\n"
-            "title: Aura Workshop Vertical Slice\n"
+            "title: Team Workspace Vertical Slice\n"
             "decomposition_profile: moderate\n"
             "---\n\n"
-            "# Aura Workshop Vertical Slice\n\n"
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura Collector\n"
-            "- Aura Conduit\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n\n"
             "## Progression Lines\n"
-            "- Progression from crafting to aura routing to first playable proof.\n"
+            "- Progression from intake to shared drafting to first usable proof.\n"
         ),
     )
     goal_intake = execute_goal_intake(
@@ -3172,17 +3172,17 @@ def test_execute_spec_review_blocks_whole_project_epic_phase_plan_before_taskmas
         (
             "---\n"
             "idea_id: IDEA-304\n"
-            "title: Aura Workshop Campaign\n"
+            "title: Team Workspace Campaign\n"
             "decomposition_profile: moderate\n"
             "---\n\n"
-            "# Aura Workshop Campaign\n\n"
-            "Build the first bounded aura workshop campaign slice for the product.\n\n"
+            "# Team Workspace Campaign\n\n"
+            "Build the first bounded workspace workshop campaign slice for the product.\n\n"
             "## Capability Domains\n"
-            "- Aura Collector\n"
-            "- Aura Conduit\n"
-            "- Aura Reservoir\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n\n"
             "## Progression Lines\n"
-            "- Progression from collection to routing to storage proof.\n"
+            "- Progression from intake to shared drafting to review handoff.\n"
         ),
     )
     goal_intake = execute_goal_intake(
@@ -3243,12 +3243,12 @@ def test_execute_spec_review_blocks_whole_project_epic_phase_plan_before_taskmas
         "\n".join(
             [
                 "## Work Plan",
-                "1. Implement the entire campaign across `src/aura/collector.py`, `src/aura/conduit.py`, and `src/aura/reservoir.py` in one phase.",
-                "2. Consolidate the repo-wide product rollout in `src/aura/runtime.py` and `src/aura/app.py`.",
-                "3. Run the whole project verification gate in `tests/test_aura_flow.py` and `tests/test_aura_balance.py`.",
-                "4. Verify the full suite stays green in `tests/test_aura_flow.py` and `tests/test_aura_balance.py`.",
-                "5. Close the entire acceptance sweep in `tests/test_aura_e2e.py`.",
-                "6. Deliver the end-to-end campaign across `src/aura/runtime.py`, `src/aura/app.py`, and `tests/test_aura_e2e.py`.",
+                "1. Implement the entire campaign across `src/workspace/collector.py`, `src/workspace/conduit.py`, and `src/workspace/reservoir.py` in one phase.",
+                "2. Consolidate the repo-wide product rollout in `src/workspace/runtime.py` and `src/workspace/app.py`.",
+                "3. Run the whole project verification gate in `tests/test_workspace_flow.py` and `tests/test_workspace_balance.py`.",
+                "4. Verify the full suite stays green in `tests/test_workspace_flow.py` and `tests/test_workspace_balance.py`.",
+                "5. Close the entire acceptance sweep in `tests/test_workspace_e2e.py`.",
+                "6. Deliver the end-to-end campaign across `src/workspace/runtime.py`, `src/workspace/app.py`, and `tests/test_workspace_e2e.py`.",
             ]
         ),
     )
@@ -3303,16 +3303,16 @@ def test_execute_spec_review_blocks_overcollapsed_phase_packages_before_taskmast
         (
             "---\n"
             "idea_id: IDEA-302\n"
-            "title: Aura Workshop Operations Suite\n"
+            "title: Team Workspace Operations Suite\n"
             "decomposition_profile: involved\n"
             "---\n\n"
-            "# Aura Workshop Operations Suite\n\n"
-            "Build an involved aura workshop product slice with multiple bounded follow-on phases.\n\n"
+            "# Team Workspace Operations Suite\n\n"
+            "Build an involved workspace workshop product slice with multiple bounded follow-on phases.\n\n"
             "## Capability Domains\n"
-            "- Aura Collector\n"
-            "- Aura Conduit\n"
-            "- Aura Reservoir\n"
-            "- Aura Infuser\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n"
+            "- Activity Feed\n\n"
             "## Progression Lines\n"
             "- Progression from collection to routing to storage to infusion proof.\n"
         ),
@@ -3466,15 +3466,15 @@ def test_minimum_phase_package_count_matches_bash_phase_floors() -> None:
             ("PHASE_01", "PHASE_02"),
         ),
         (
-            "Aura Workshop Vertical Slice",
+            "Team Workspace Vertical Slice",
             (
-                "Build the first playable aura workshop vertical slice for the mod.\n\n"
+                "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
                 "## Capability Domains\n"
-                "- Aura Collector\n"
-                "- Aura Conduit\n"
-                "- Aura Reservoir\n\n"
+                "- Workspace Intake\n"
+                "- Shared Drafts\n"
+                "- Review Queue\n\n"
                 "## Progression Lines\n"
-                "- Progression from collection to routing to storage proof.\n"
+                "- Progression from intake to shared drafting to review handoff.\n"
             ),
             "moderate",
             ("PHASE_01",),
@@ -3507,7 +3507,7 @@ def test_minimum_phase_package_count_matches_bash_phase_floors() -> None:
         ),
     ],
 )
-def test_execute_spec_review_accepts_generated_supported_repo_kind_phase_plans(
+def test_execute_spec_review_accepts_generated_supported_planning_profile_phase_plans(
     tmp_path: Path,
     title: str,
     body: str,
@@ -3544,14 +3544,14 @@ def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective
         tmp_path,
         run_id="goalspec-taskmaster-product-401",
         emitted_at=_dt("2026-04-07T14:00:00Z"),
-        title="Aura Workshop Vertical Slice",
+        title="Team Workspace Vertical Slice",
         body=(
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura collector gameplay\n"
-            "- Aura conduit routing\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n\n"
             "## Progression Lines\n"
-            "- Progression from collection to conduit routing to first playable proof.\n"
+            "- Progression from intake to shared drafting to first usable proof.\n"
         ),
         decomposition_profile="moderate",
     )
@@ -3588,8 +3588,8 @@ def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective
     assert record["card_count"] == result.card_count
     assert record["profile_selection"]["expected_min_cards"] == 6
     assert record["profile_selection"]["expected_max_cards"] == 10
-    assert any("src/main/java/com/example/aura/" in card.body for card in shard.cards)
-    assert any("src/test/java/com/example/aura/" in card.body for card in shard.cards)
+    assert any("src/team-workspace-vertical-slice/" in card.body for card in shard.cards)
+    assert any("tests/team-workspace-vertical-slice/" in card.body for card in shard.cards)
     for card in shard.cards:
         files_to_touch = _field_block_lines(card.body, "Files to touch")
         assert files_to_touch
@@ -3620,14 +3620,14 @@ def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_na
         tmp_path,
         run_id="goalspec-taskmaster-product-402",
         emitted_at=_dt("2026-04-07T14:10:00Z"),
-        title="Aura Workshop Vertical Slice",
+        title="Team Workspace Vertical Slice",
         body=(
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura collector gameplay\n"
-            "- Aura conduit routing\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n\n"
             "## Progression Lines\n"
-            "- Progression from collection to conduit routing to first playable proof.\n"
+            "- Progression from intake to shared drafting to first usable proof.\n"
         ),
         decomposition_profile="moderate",
     )
@@ -3638,8 +3638,8 @@ def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_na
         "\n".join(
             [
                 "## Dependencies",
-                "- Product implementation: `src/aura/collector.py`",
-                "- Verification: `tests/test_aura_collector.py`",
+                "- Product implementation: `src/team-workspace-vertical-slice/workspace-intake`",
+                "- Verification: `tests/team-workspace-vertical-slice/flow`",
             ]
         ),
     )
@@ -3673,9 +3673,9 @@ def test_execute_taskmaster_accepts_open_product_objective_when_reviewed_spec_na
     )
 
     shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
-    assert "src/aura/collector.py" in shard_text
-    assert "tests/test_aura_collector.py" in shard_text
-    assert "src/main/java/com/example/aura/" in shard_text
+    assert "src/team-workspace-vertical-slice/workspace-intake" in shard_text
+    assert "tests/team-workspace-vertical-slice/flow" in shard_text
+    assert "src/team-workspace-vertical-slice/" in shard_text
     assert not reviewed_path.exists()
     assert (workspace / result.archived_path).exists()
 
@@ -3740,14 +3740,14 @@ def test_execute_taskmaster_splits_oversized_phase_step_into_traceable_suffix_ca
         tmp_path,
         run_id="goalspec-taskmaster-split-404",
         emitted_at=_dt("2026-04-07T14:30:00Z"),
-        title="Aura Workshop Vertical Slice",
+        title="Team Workspace Vertical Slice",
         body=(
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura collector gameplay\n"
-            "- Aura conduit routing\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n\n"
             "## Progression Lines\n"
-            "- Progression from collection to conduit routing to first playable proof.\n"
+            "- Progression from intake to shared drafting to first usable proof.\n"
         ),
         decomposition_profile="moderate",
     )
@@ -3762,13 +3762,13 @@ def test_execute_taskmaster_splits_oversized_phase_step_into_traceable_suffix_ca
                 "## Work Plan",
                 (
                     "1. Implement the broad launch slice across "
-                    "`src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java` and "
-                    "`src/main/java/com/example/aura/AuraCollectorGameplayBlock.java` and "
-                    "`src/main/java/com/example/aura/AuraConduitRoutingBlock.java` and "
-                    "`src/main/resources/assets/aura/lang/en_us.json` and "
-                    "`src/test/java/com/example/aura/AuraWorkshopVerticalSliceFlowTest.java` and "
-                    "`src/gametest/java/com/example/aura/AuraWorkshopVerticalSliceGameTest.java` "
-                    "while preserving the same bounded vertical-slice contract."
+                    "`src/team-workspace-vertical-slice/entrypoint` and "
+                    "`src/team-workspace-vertical-slice/workspace-intake` and "
+                    "`src/team-workspace-vertical-slice/shared-drafts` and "
+                    "`src/team-workspace-vertical-slice/workflow` and "
+                    "`tests/team-workspace-vertical-slice/flow` and "
+                    "`tests/team-workspace-vertical-slice/regression` "
+                    "while preserving the same bounded product-slice contract."
                 ),
             ]
         ),
@@ -3888,7 +3888,7 @@ def test_execute_taskmaster_uses_reviewed_product_surfaces_when_phase_steps_are_
     )
     assert result.card_count == 6
     assert any("src/support-ticket-service/" in card.body for card in shard.cards)
-    assert any("tests/test_support-ticket-service_" in card.body for card in shard.cards)
+    assert any("tests/support-ticket-service/" in card.body for card in shard.cards)
     for card in shard.cards:
         files_to_touch = _field_block_lines(card.body, "Files to touch")
         assert files_to_touch
@@ -3978,18 +3978,18 @@ def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_pat
         tmp_path,
         run_id="goalspec-e2e-product-701",
         emitted_at=_dt("2026-04-07T16:00:00Z"),
-        title="Aura Workshop Vertical Slice",
+        title="Team Workspace Vertical Slice",
         body=(
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura Collector\n"
-            "- Aura Conduit\n"
-            "- Aura Reservoir\n"
-            "- Aura Infuser\n"
-            "- infused weapon payoff\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n"
+            "- Activity Feed\n"
+            "- published summary\n\n"
             "## Progression Lines\n"
-            "- Progression from crafting to aura routing to infusion.\n"
-            "- Automated validation covers registration, aura behavior, infusion correctness, and the happy path.\n"
+            "- Progression from intake to shared drafting to review handoff.\n"
+            "- Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.\n"
         ),
         decomposition_profile="moderate",
     )
@@ -3997,17 +3997,17 @@ def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_pat
     acceptance_profile_path = next((workspace / "agents" / "reports" / "acceptance_profiles").glob("*.json"))
     acceptance_profile = json.loads(acceptance_profile_path.read_text(encoding="utf-8"))
     assert acceptance_profile["semantic_profile"]["objective_summary"] == (
-        "Build the first playable aura workshop vertical slice for the mod."
+        "Build the first usable team workspace vertical slice for collaborative planning."
     )
-    assert "Aura Collector" in acceptance_profile["semantic_profile"]["capability_domains"]
+    assert "Workspace Intake" in acceptance_profile["semantic_profile"]["capability_domains"]
     assert "GoalSpec" not in " ".join(acceptance_profile["milestones"])
 
     queue_spec_text = (workspace / synthesis.golden_spec_path).read_text(encoding="utf-8")
     phase_spec_text = (workspace / synthesis.phase_spec_path).read_text(encoding="utf-8")
-    assert "Aura Collector" in queue_spec_text
-    assert "Aura Infuser" in queue_spec_text
+    assert "Workspace Intake" in queue_spec_text
+    assert "Activity Feed" in queue_spec_text
     assert "GoalSpec draft package" not in queue_spec_text
-    assert "crafting to aura routing to infusion" in phase_spec_text
+    assert "intake to shared drafting to review handoff" in phase_spec_text
     assert "reviewable runtime implementation slice" not in phase_spec_text
 
     reviewed_text = reviewed_path.read_text(encoding="utf-8")
@@ -4017,9 +4017,9 @@ def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_pat
         "\n".join(
             [
                 "## Dependencies",
-                "- Product implementation: `src/main/java/com/example/aura/AuraCollectorBlock.java`",
-                "- Product implementation: `src/main/java/com/example/aura/AuraInfuserBlock.java`",
-                "- Verification: `src/test/java/com/example/aura/AuraWorkshopFlowTest.java`",
+                "- Product implementation: `src/team-workspace-vertical-slice/workspace-intake`",
+                "- Product implementation: `src/team-workspace-vertical-slice/activity-feed`",
+                "- Verification: `tests/team-workspace-vertical-slice/flow`",
             ]
         ),
     )
@@ -4053,16 +4053,16 @@ def test_end_to_end_product_goal_stays_product_scoped_through_taskmaster(tmp_pat
     )
 
     shard_text = (workspace / result.shard_path).read_text(encoding="utf-8")
-    assert "AuraCollectorBlock.java" in shard_text
-    assert "AuraInfuserBlock.java" in shard_text
-    assert "AuraWorkshopFlowTest.java" in shard_text
-    assert "agents/specs/stable/golden/SPEC-701__aura-workshop-vertical-slice.md" in shard_text
-    assert "agents/ideas/archive/SPEC-701__aura-workshop-vertical-slice.md" in shard_text
+    assert "src/team-workspace-vertical-slice/workspace-intake" in shard_text
+    assert "src/team-workspace-vertical-slice/activity-feed" in shard_text
+    assert "tests/team-workspace-vertical-slice/flow" in shard_text
+    assert "agents/specs/stable/golden/SPEC-701__team-workspace-vertical-slice.md" in shard_text
+    assert "agents/ideas/archive/SPEC-701__team-workspace-vertical-slice.md" in shard_text
     assert "GoalSpec draft package" not in shard_text
     assert "task queue maintenance" not in shard_text
 
 
-def test_research_plane_run_ready_work_keeps_aura_seed_product_grounded_through_first_family_shard(
+def test_research_plane_run_ready_work_keeps_workspace_seed_product_grounded_through_first_family_shard(
     tmp_path: Path,
 ) -> None:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.AUTO)
@@ -4071,28 +4071,28 @@ def test_research_plane_run_ready_work_keeps_aura_seed_product_grounded_through_
         raw_goal_path,
         (
             "---\n"
-            "idea_id: IDEA-AURA-710\n"
-            "title: Aura Workshop Vertical Slice\n"
+            "idea_id: IDEA-WORKSPACE-710\n"
+            "title: Team Workspace Vertical Slice\n"
             "decomposition_profile: moderate\n"
             "---\n\n"
-            "# Aura Workshop Vertical Slice\n\n"
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura Collector\n"
-            "- Aura Conduit\n"
-            "- Aura Reservoir\n"
-            "- Aura Infuser\n"
-            "- infused weapon payoff\n\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n"
+            "- Activity Feed\n"
+            "- published summary\n\n"
             "## Progression Lines\n"
-            "- Progression from crafting to aura routing to infusion.\n"
-            "- Automated validation covers registration, aura behavior, infusion correctness, and the happy path.\n"
+            "- Progression from intake to shared drafting to review handoff.\n"
+            "- Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.\n"
         ),
     )
     plane = ResearchPlane(config, paths)
 
     dispatch = _run_research_until_settled(
         plane,
-        run_id="goalspec-aura-auto-710",
+        run_id="goalspec-workspace-auto-710",
         resolve_assets=False,
     )
 
@@ -4102,40 +4102,30 @@ def test_research_plane_run_ready_work_keeps_aura_seed_product_grounded_through_
     assert plane.snapshot_state().queue_snapshot.selected_family is None
 
     completion_manifest = json.loads((workspace / "agents" / "audit" / "completion_manifest.json").read_text(encoding="utf-8"))
-    assert completion_manifest["repo_kind"] == "minecraft_fabric_mod"
+    assert completion_manifest["planning_profile"] == "generic_product"
     assert any(
-        path.startswith("src/main/java/com/example/aura/")
+        path.startswith("src/team-workspace-vertical-slice/")
         for path in (surface["path"] for surface in completion_manifest["implementation_surfaces"])
     )
     assert any(
-        path.startswith("src/main/resources/data/aura/")
-        for path in (surface["path"] for surface in completion_manifest["implementation_surfaces"])
-    )
-    assert any(
-        path.startswith("src/test/java/com/example/aura/")
-        for path in (surface["path"] for surface in completion_manifest["verification_surfaces"])
-    )
-    assert any(
-        path.startswith("src/gametest/java/com/example/aura/")
+        path.startswith("tests/team-workspace-vertical-slice/")
         for path in (surface["path"] for surface in completion_manifest["verification_surfaces"])
     )
 
     golden_spec_text = (
-        workspace / "agents" / "specs" / "stable" / "golden" / "SPEC-AURA-710__aura-workshop-vertical-slice.md"
+        workspace / "agents" / "specs" / "stable" / "golden" / "SPEC-WORKSPACE-710__team-workspace-vertical-slice.md"
     ).read_text(encoding="utf-8")
     phase_spec_text = (
-        workspace / "agents" / "specs" / "stable" / "phase" / "SPEC-AURA-710__phase-01.md"
+        workspace / "agents" / "specs" / "stable" / "phase" / "SPEC-WORKSPACE-710__phase-01.md"
     ).read_text(encoding="utf-8")
     _assert_product_grounded_stage_artifacts(golden_spec_text, phase_spec_text)
-    assert "src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java" in golden_spec_text
-    assert "src/main/resources/data/aura/recipes/aura_core.json" in phase_spec_text
+    assert "src/team-workspace-vertical-slice/entrypoint" in golden_spec_text
+    assert "tests/team-workspace-vertical-slice/flow" in phase_spec_text
 
     family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
-    assert family_state["family_complete"] is False
-    assert family_state["spec_order"] == ["SPEC-AURA-710", "SPEC-AURA-710-02", "SPEC-AURA-710-03"]
-    assert family_state["specs"]["SPEC-AURA-710"]["status"] == "decomposed"
-    assert family_state["specs"]["SPEC-AURA-710-02"]["status"] == "planned"
-    assert family_state["specs"]["SPEC-AURA-710-03"]["status"] == "planned"
+    assert family_state["family_complete"] is True
+    assert family_state["spec_order"] == ["SPEC-WORKSPACE-710"]
+    assert family_state["specs"]["SPEC-WORKSPACE-710"]["status"] == "decomposed"
 
     taskmaster_record = json.loads(
         (
@@ -4144,29 +4134,29 @@ def test_research_plane_run_ready_work_keeps_aura_seed_product_grounded_through_
             / ".research_runtime"
             / "goalspec"
             / "taskmaster"
-            / "goalspec-aura-auto-710.json"
+            / "goalspec-workspace-auto-710.json"
         ).read_text(encoding="utf-8")
     )
-    assert taskmaster_record["card_count"] == 5
-    assert not (
+    assert taskmaster_record["card_count"] == 7
+    taskaudit_path = (
         workspace
         / "agents"
         / ".research_runtime"
         / "goalspec"
         / "taskaudit"
-        / "goalspec-aura-auto-710.json"
-    ).exists()
+        / "goalspec-workspace-auto-710.json"
+    )
+    assert taskaudit_path.exists()
+    taskaudit_record = json.loads(taskaudit_path.read_text(encoding="utf-8"))
+    assert taskaudit_record["status"] == "merged"
+    assert taskaudit_record["pending_card_count"] == 7
 
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
-    assert backlog.cards == []
-
-    shard = parse_task_store(
-        (workspace / "agents" / "taskspending" / "SPEC-AURA-710.md").read_text(encoding="utf-8"),
-        source_file=workspace / "agents" / "taskspending" / "SPEC-AURA-710.md",
-    )
-    assert len(shard.cards) == 5
-    _assert_product_first_task_cards(shard.cards)
-    assert any("AuraWorkshopVerticalSliceGameTest.java" in card.body for card in shard.cards)
+    assert len(backlog.cards) == 7
+    _assert_product_first_task_cards(backlog.cards)
+    assert any("tests/team-workspace-vertical-slice/regression" in card.body for card in backlog.cards)
+    assert (workspace / "agents" / "taskspending.md").read_text(encoding="utf-8") == "# Tasks Pending\n"
+    assert list((workspace / "agents" / "taskspending").glob("*")) == []
 
 
 def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_backlog(
@@ -4206,15 +4196,17 @@ def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_ba
     assert plane.status_store.read() is ResearchStatus.IDLE
 
     completion_manifest = json.loads((workspace / "agents" / "audit" / "completion_manifest.json").read_text(encoding="utf-8"))
-    assert completion_manifest["repo_kind"] == "python_product"
+    assert completion_manifest["planning_profile"] == "generic_product"
     assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
-        "src/support-ticket-service/api.py",
-        "src/support-ticket-service/service.py",
-        "src/support-ticket-service/models.py",
+        "src/support-ticket-service/entrypoint",
+        "src/support-ticket-service/ticket-creation-api",
+        "src/support-ticket-service/agent-inbox-triage-dashboard",
+        "src/support-ticket-service/escalation-notifications",
+        "src/support-ticket-service/workflow",
     ]
     assert [surface["path"] for surface in completion_manifest["verification_surfaces"]] == [
-        "tests/test_support-ticket-service_api.py",
-        "tests/test_support-ticket-service_service.py",
+        "tests/support-ticket-service/flow",
+        "tests/support-ticket-service/regression",
     ]
 
     golden_spec_text = (
@@ -4224,8 +4216,8 @@ def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_ba
         workspace / "agents" / "specs" / "stable" / "phase" / "SPEC-PY-711__phase-01.md"
     ).read_text(encoding="utf-8")
     _assert_product_grounded_stage_artifacts(golden_spec_text, phase_spec_text)
-    assert "src/support-ticket-service/api.py" in golden_spec_text
-    assert "tests/test_support-ticket-service_api.py" in phase_spec_text
+    assert "src/support-ticket-service/entrypoint" in golden_spec_text
+    assert "tests/support-ticket-service/flow" in phase_spec_text
 
     family_state = json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
     assert family_state["family_complete"] is True
@@ -4243,14 +4235,14 @@ def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_ba
         ).read_text(encoding="utf-8")
     )
     assert taskaudit_record["status"] == "merged"
-    assert taskaudit_record["pending_card_count"] == 4
-    assert taskaudit_record["backlog_card_count_after"] == 4
+    assert taskaudit_record["pending_card_count"] == 7
+    assert taskaudit_record["backlog_card_count_after"] == 7
 
     backlog = parse_task_store((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))
-    assert len(backlog.cards) == 4
+    assert len(backlog.cards) == 7
     _assert_product_first_task_cards(backlog.cards)
-    assert any("src/support-ticket-service/api.py" in card.body for card in backlog.cards)
-    assert any("tests/test_support-ticket-service_service.py" in card.body for card in backlog.cards)
+    assert any("src/support-ticket-service/entrypoint" in card.body for card in backlog.cards)
+    assert any("tests/support-ticket-service/regression" in card.body for card in backlog.cards)
 
     assert (workspace / "agents" / "taskspending.md").read_text(encoding="utf-8") == "# Tasks Pending\n"
     assert list((workspace / "agents" / "taskspending").glob("*")) == []
@@ -4351,16 +4343,16 @@ def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_ha
         (
             "---\n"
             "idea_id: IDEA-702\n"
-            "title: Aura Workshop Vertical Slice\n"
+            "title: Team Workspace Vertical Slice\n"
             "decomposition_profile: moderate\n"
             "---\n\n"
-            "# Aura Workshop Vertical Slice\n\n"
-            "Build the first playable aura workshop vertical slice for the mod.\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
             "## Capability Domains\n"
-            "- Aura Collector\n"
-            "- Aura Conduit\n"
-            "- Aura Reservoir\n"
-            "- Aura Infuser\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n"
+            "- Activity Feed\n"
         ),
     )
     goal_intake = execute_goal_intake(
@@ -4434,9 +4426,9 @@ def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_ha
             run_id=run_id,
             emitted_at=emitted_at,
             goal_id="IDEA-702",
-            title="Aura Workshop Vertical Slice",
+            title="Team Workspace Vertical Slice",
             stage_name="spec_synthesis",
-            source_path="agents/ideas/staging/IDEA-702__aura-workshop-vertical-slice.md",
+            source_path="agents/ideas/staging/IDEA-702__team-workspace-vertical-slice.md",
             expected_scope="product",
             decision="blocked",
             reason="severe_product_scope_divergence",
@@ -4446,7 +4438,7 @@ def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_ha
                     surface_id="queue_spec",
                     coverage_ratio=0.0,
                     matched_goal_tokens=(),
-                    missing_goal_tokens=("aura", "collector", "conduit", "reservoir", "infuser"),
+                    missing_goal_tokens=("workspace", "collector", "conduit", "reservoir", "infuser"),
                     meta_scope_hits=("goalspec", "completion manifest", "task generation"),
                     severe=True,
                     excerpt="Convert the goal into a traceable GoalSpec draft package.",
@@ -4455,7 +4447,7 @@ def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_ha
                     surface_id="phase_spec",
                     coverage_ratio=0.0,
                     matched_goal_tokens=(),
-                    missing_goal_tokens=("aura", "collector", "conduit", "reservoir", "infuser"),
+                    missing_goal_tokens=("workspace", "collector", "conduit", "reservoir", "infuser"),
                     meta_scope_hits=("goalspec", "traceability", "phase spec"),
                     severe=True,
                     excerpt="Carry the GoalSpec package into a reviewable runtime implementation slice.",
@@ -4494,19 +4486,19 @@ def test_end_to_end_product_goal_meta_collapse_fails_closed_before_taskmaster_ha
 
 def test_scope_divergence_helper_blocks_severe_meta_scope_divergence() -> None:
     anchor_tokens = goalspec_scope_diagnostics_module.build_goal_anchor_tokens(
-        title="Aura Workshop Vertical Slice",
+        title="Team Workspace Vertical Slice",
         source_body=(
-            "Build the first playable aura workshop vertical slice for the mod.\n"
-            "Aura collector gameplay.\n"
-            "Aura conduit routing.\n"
-            "Aura reservoir storage.\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n"
+            "Workspace intake gameplay.\n"
+            "Shared drafts routing.\n"
+            "Review queue storage.\n"
             "Progression from collection to conduit routing to infusion proof.\n"
         ),
-        semantic_summary="Build the first playable aura workshop vertical slice for the mod.",
+        semantic_summary="Build the first usable team workspace vertical slice for collaborative planning.",
         capability_domains=(
-            "Aura collector gameplay",
-            "Aura conduit routing",
-            "Aura reservoir storage",
+            "Workspace intake gameplay",
+            "Shared drafts routing",
+            "Review queue storage",
         ),
         progression_lines=("Progression from collection to conduit routing to infusion proof.",),
     )
@@ -4514,7 +4506,7 @@ def test_scope_divergence_helper_blocks_severe_meta_scope_divergence() -> None:
         run_id="goalspec-scope-drift-501",
         emitted_at=_dt("2026-04-07T15:00:00Z"),
         goal_id="IDEA-501",
-        title="Aura Workshop Vertical Slice",
+        title="Team Workspace Vertical Slice",
         stage_name="spec_synthesis",
         source_path="agents/ideas/staging/IDEA-501.md",
         expected_scope="product",
@@ -4567,11 +4559,11 @@ def test_execute_spec_synthesis_fails_closed_when_scope_diagnostic_blocks(
         (
             "---\n"
             "idea_id: IDEA-502\n"
-            "title: Aura Workshop Vertical Slice\n"
+            "title: Team Workspace Vertical Slice\n"
             "decomposition_profile: moderate\n"
             "---\n\n"
-            "# Aura Workshop Vertical Slice\n\n"
-            "Build the first playable aura workshop vertical slice for the mod.\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n"
         ),
     )
     goal_intake = execute_goal_intake(
@@ -4618,7 +4610,7 @@ def test_execute_spec_synthesis_fails_closed_when_scope_diagnostic_blocks(
             run_id=run_id,
             emitted_at=emitted_at,
             goal_id="IDEA-502",
-            title="Aura Workshop Vertical Slice",
+            title="Team Workspace Vertical Slice",
             stage_name="spec_synthesis",
             source_path="agents/ideas/staging/IDEA-502.md",
             expected_scope="product",
@@ -4630,7 +4622,7 @@ def test_execute_spec_synthesis_fails_closed_when_scope_diagnostic_blocks(
                     surface_id="queue_spec",
                     coverage_ratio=0.0,
                     matched_goal_tokens=(),
-                    missing_goal_tokens=("aura", "collector"),
+                    missing_goal_tokens=("workspace", "collector"),
                     meta_scope_hits=("goalspec", "completion manifest", "task generation"),
                     severe=True,
                     excerpt="Convert the goal into a traceable GoalSpec draft package.",

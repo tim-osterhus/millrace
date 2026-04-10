@@ -3,10 +3,15 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 .coverage.*
 htmlcov/
+snapshot_report.html
 .venv/
+.publish-smoke/
+.wheel-smoke/
 build/
 dist/
 *.egg-info/

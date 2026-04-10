@@ -88,7 +88,7 @@ def _build_completion_manifest_draft_state(
         objective_profile_path=objective_state.profile_path,
         completion_manifest_plan_path=_relative_path(paths.completion_manifest_plan_file, relative_to=paths.root),
         goal_intake_record_path=objective_state.goal_intake_record_path,
-        repo_kind=product_plan.repo_kind,
+        planning_profile=product_plan.planning_profile,
         acceptance_focus=profile.milestones,
         open_questions=open_questions,
         required_artifacts=(

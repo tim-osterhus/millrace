@@ -223,7 +223,7 @@ def render_queue_spec(
                 else "- The first bounded product slice preserves the profiled objective summary and milestone ladder."
             ),
             f"- Declared decomposition profile: `{source.decomposition_profile}`.",
-            f"- Repo-kind plan: `{completion_manifest.repo_kind}`.",
+            f"- Planning profile: `{completion_manifest.planning_profile}`.",
             "- Later review/task-generation stages remain downstream of this synthesized product slice.",
             "",
             "## Constraints",
@@ -430,7 +430,7 @@ def render_phase_spec(
             (
                 f"- Larger `{source.decomposition_profile}` campaigns keep their decomposition explicit by rendering {len(phase_packages)} bounded phase package(s) in this artifact (confidence: inferred)."
                 if len(phase_packages) > 1
-                else f"- Repo-kind planning remains bounded to `{completion_manifest.repo_kind}` surfaces (confidence: inferred)."
+                else f"- Planning remains bounded to `{completion_manifest.planning_profile}` surfaces (confidence: inferred)."
             ),
             "",
             "## Structured Decision Log",

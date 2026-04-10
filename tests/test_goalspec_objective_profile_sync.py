@@ -15,36 +15,36 @@ from tests.support import load_workspace_fixture
 
 
 PRODUCT_GOAL_TEXT = """---
-idea_id: IDEA-AURA-001
-title: Aura Workshop Vertical Slice
+idea_id: IDEA-WORKSPACE-001
+title: Team Workspace Vertical Slice
 ---
 
-# Aura Workshop Vertical Slice
+# Team Workspace Vertical Slice
 
-Build a compact aura-themed Minecraft mod vertical slice for a first playable release.
+Build the first usable team workspace vertical slice for collaborative planning.
 
-- Aura Collector
-- Aura Conduit
-- Aura Reservoir
-- Aura Infuser
-- one aura-powered infused weapon
+- Workspace Intake
+- Shared Drafts
+- Review Queue
+- Activity Feed
+- Published Summary
 
-Progression from crafting to aura routing to infusion.
-Minimal in-game teaching.
-Automated validation for registration, aura behavior, infusion correctness, and the happy path.
+Progression from intake to shared drafting to review handoff.
+Minimal onboarding guidance.
+Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.
 """
 
 SMALL_PRODUCT_GOAL_TEXT = """---
 idea_id: IDEA-SMALL-001
-title: Lantern Toggle
+title: Status Toggle
 decomposition_profile: trivial
 ---
 
-# Lantern Toggle
+# Status Toggle
 
-Add a single lantern toggle interaction for the first playable build.
+Add a single status toggle interaction for the first usable build.
 
-- Lantern Toggle
+- Status Toggle
 
 Manual validation for on and off state changes.
 """
@@ -52,45 +52,45 @@ Manual validation for on and off state changes.
 
 BROAD_PRODUCT_GOAL_TEXT = """---
 idea_id: IDEA-BROAD-001
-title: Aura Workshop Expansion
+title: Team Workspace Expansion
 decomposition_profile: involved
 ---
 
-# Aura Workshop Expansion
+# Team Workspace Expansion
 
-Build an involved aura workshop expansion with multiple gameplay systems for the first playable release.
+Build an involved team workspace expansion with multiple collaborative systems for the first usable release.
 
-- Aura Collector
-- Aura Conduit
-- Aura Reservoir
-- Aura Infuser
-- Aura Forge
-- Aura Boss Arena
+- Workspace Intake
+- Shared Drafts
+- Review Queue
+- Activity Feed
+- Template Library
+- Insights Panel
 
-Progression from collection to routing to infusion to boss payoff.
-Progression from solo crafting to coordinated combat trials.
-Automated validation for registration, aura behavior, infusion correctness, boss unlocks, and encounter completion.
+Progression from intake to drafting to review handoff to insight delivery.
+Progression from individual planning to coordinated team publishing.
+Automated validation covers entry flow, collaboration state, handoff correctness, and insight delivery.
 """
 
 SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """---
 idea_id: IDEA-PY-NOISE-001
-title: Support Ticket Service
+title: Shared Workspace Service
 decomposition_profile: moderate
 ---
 
-# Support Ticket Service
+# Shared Workspace Service
 
-Build the first usable support-ticket web app for a Python service.
+Build the first usable shared workspace service for a collaborative team.
 
 ## Capability Domains
-- Ticket creation API
-- Agent inbox triage dashboard
+- Workspace Intake
+- Review Inbox
 - Stage contract
 - agents/ideas/staging
-- support-ticket/phase_spec.md
+- workspace-service/phase_spec.md
 
 ## Progression Lines
-- Progression from ticket intake to assignment to resolution confirmation.
+- Progression from intake to review to publish confirmation.
 - objective_profile_sync
 - agents/_goal_intake.md
 """
@@ -248,25 +248,25 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     _, _, acceptance_profile, synced_profile, synced_markdown, family_policy = _run_objective_profile_sync(
         tmp_path=tmp_path,
         goal_text=PRODUCT_GOAL_TEXT,
-        run_id="goalspec-aura-001",
+        run_id="goalspec-workspace-001",
         emitted_at=_dt("2026-04-07T12:00:00Z"),
     )
 
     milestone_text = " ".join(synced_profile["milestones"])
     blocker_text = " ".join(synced_profile["hard_blockers"])
-    assert "Aura Collector" in milestone_text
-    assert "aura routing to infusion" in milestone_text
+    assert "Workspace Intake" in milestone_text
+    assert "intake to shared drafting to review handoff" in milestone_text
     assert "Normalize queued goal" not in milestone_text
     assert "GoalSpec brief" not in milestone_text
     assert synced_profile["semantic_profile"]["objective_summary"].startswith(
-        "Build a compact aura-themed Minecraft mod vertical slice"
+        "Build the first usable team workspace vertical slice"
     )
     assert synced_profile["semantic_profile"]["capability_domains"][:2] == [
-        "Aura Collector",
-        "Aura Conduit",
+        "Workspace Intake",
+        "Shared Drafts",
     ]
     assert synced_profile["semantic_profile"]["progression_lines"] == [
-        "Progression from crafting to aura routing to infusion."
+        "Progression from intake to shared drafting to review handoff."
     ]
     assert "Implementation remains open for the profiled product capabilities" in blocker_text
     assert "GoalSpec" not in blocker_text
@@ -274,7 +274,7 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert family_policy["family_cap_mode"] == "adaptive"
     assert family_policy["initial_family_max_specs"] > 1
     assert family_policy["adaptive_inputs"]["capability_domain_count"] == 5
-    assert "Aura Collector" in synced_markdown
+    assert "Workspace Intake" in synced_markdown
     assert "## Objective Summary" in synced_markdown
     assert "## Capability Domains" in synced_markdown
 
@@ -283,28 +283,28 @@ def test_execute_objective_profile_sync_surfaces_rejected_control_plane_candidat
     _, _, _, synced_profile, synced_markdown, _ = _run_objective_profile_sync(
         tmp_path=tmp_path,
         goal_text=SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE,
-        run_id="goalspec-support-noise-001",
+        run_id="goalspec-workspace-noise-001",
         emitted_at=_dt("2026-04-07T12:05:00Z"),
     )
 
     assert synced_profile["semantic_profile"]["capability_domains"] == [
-        "Ticket creation API",
-        "Agent inbox triage dashboard",
+        "Workspace Intake",
+        "Review Inbox",
     ]
     assert synced_profile["semantic_profile"]["progression_lines"] == [
-        "Progression from ticket intake to assignment to resolution confirmation."
+        "Progression from intake to review to publish confirmation."
     ]
     assert {(item["candidate"], item["reason"]) for item in synced_profile["semantic_profile"]["rejected_candidates"]} == {
         ("Stage contract", "administrative_language"),
         ("agents/ideas/staging", "path_shaped"),
-        ("support-ticket/phase_spec.md", "path_shaped"),
+        ("workspace-service/phase_spec.md", "path_shaped"),
         ("objective_profile_sync", "administrative_language"),
         ("agents/_goal_intake.md", "path_shaped"),
     }
     assert "## Semantic Hygiene Diagnostics" in synced_markdown
     assert "`Stage contract` (capability domain; administrative language)" in synced_markdown
     assert "`agents/ideas/staging` (capability domain; path shaped)" in synced_markdown
-    assert "Support Ticket Service" in synced_markdown
+    assert "Shared Workspace Service" in synced_markdown
 
 
 def test_execute_objective_profile_sync_preserves_canonical_lineage_on_staged_revisit(tmp_path: Path) -> None:
@@ -330,7 +330,7 @@ def test_execute_objective_profile_sync_preserves_canonical_lineage_on_staged_re
     staged_path = workspace / goal_intake.research_brief_path
     staged_text = staged_path.read_text(encoding="utf-8")
     staged_text = staged_text.replace(
-        "## Summary\nBuild a compact aura-themed Minecraft mod vertical slice for a first playable release.\n",
+        "## Summary\nBuild the first usable team workspace vertical slice for collaborative planning.\n",
         "## Summary\nNormalize queued goal into daemon resume metadata only.\n",
     )
     staged_path.write_text(staged_text, encoding="utf-8")
@@ -349,7 +349,7 @@ def test_execute_objective_profile_sync_preserves_canonical_lineage_on_staged_re
     assert acceptance_profile["source_path"] == acceptance_profile["canonical_source_path"]
     assert synced_profile["canonical_source_path"] == acceptance_profile["canonical_source_path"]
     assert synced_profile["current_artifact_path"] == goal_intake.research_brief_path
-    assert "Aura Collector" in " ".join(synced_profile["milestones"])
+    assert "Workspace Intake" in " ".join(synced_profile["milestones"])
     assert "daemon resume metadata only" not in synced_profile["semantic_profile"]["objective_summary"]
 
 
@@ -357,19 +357,19 @@ def test_execute_objective_profile_sync_prefers_workspace_semantic_seed(tmp_path
     workspace, paths = _configured_goal_runtime(tmp_path)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     seed_path = workspace / "agents" / "objective" / "semantic_profile_seed.yaml"
-    run_id = "goalspec-aura-seeded"
+    run_id = "goalspec-workspace-seeded"
     emitted_at = _dt("2026-04-07T12:30:00Z")
 
     _write_queue_file(raw_goal_path, PRODUCT_GOAL_TEXT)
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_path.write_text(
         (
-            "objective: Ship the aura workshop loop.\n"
+            "objective: Ship the team workspace loop.\n"
             "milestones:\n"
             "  - id: SEED-FOUNDATION\n"
-            "    outcome: Bring up aura collection and storage.\n"
-            "  - id: SEED-INFUSION\n"
-            "    outcome: Complete the infused weapon payoff.\n"
+            "    outcome: Bring up workspace intake and drafting.\n"
+            "  - id: SEED-HANDOFF\n"
+            "    outcome: Complete the review handoff path.\n"
         ),
         encoding="utf-8",
     )
@@ -399,14 +399,14 @@ def test_execute_objective_profile_sync_prefers_workspace_semantic_seed(tmp_path
     )
 
     assert synced_profile["milestones"] == [
-        "Bring up aura collection and storage.",
-        "Complete the infused weapon payoff.",
+        "Bring up workspace intake and drafting.",
+        "Complete the review handoff path.",
     ]
     assert synced_profile["semantic_profile"]["profile_mode"] == "seeded"
     assert synced_profile["semantic_profile"]["semantic_seed_path"] == "agents/objective/semantic_profile_seed.yaml"
     assert [item["id"] for item in synced_profile["semantic_profile"]["milestones"]] == [
         "SEED-FOUNDATION",
-        "SEED-INFUSION",
+        "SEED-HANDOFF",
     ]
 
 

@@ -385,7 +385,7 @@ class CompletionManifestDraftStateRecord(ContractModel):
     objective_profile_path: str
     completion_manifest_plan_path: str
     goal_intake_record_path: str
-    repo_kind: str
+    planning_profile: str
     acceptance_focus: tuple[str, ...]
     open_questions: tuple[str, ...]
     required_artifacts: tuple[CompletionManifestDraftArtifact, ...]
@@ -402,8 +402,13 @@ class CompletionManifestDraftStateRecord(ContractModel):
         current_artifact_path = str(
             payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
         ).strip()
+        legacy_repo_kind = str(payload.pop("repo_kind", "") or "").strip()
+        planning_profile = str(payload.get("planning_profile") or "").strip()
+        if not planning_profile and legacy_repo_kind:
+            planning_profile = "framework_runtime" if legacy_repo_kind == "millrace_python_runtime" else "generic_product"
         payload.setdefault("canonical_source_path", canonical_source_path)
         payload.setdefault("current_artifact_path", current_artifact_path)
+        payload.setdefault("planning_profile", planning_profile)
         return payload
 
     @field_validator("updated_at", mode="before")
@@ -424,7 +429,7 @@ class CompletionManifestDraftStateRecord(ContractModel):
         "objective_profile_path",
         "completion_manifest_plan_path",
         "goal_intake_record_path",
-        "repo_kind",
+        "planning_profile",
     )
     @classmethod
     def validate_required_text(cls, value: str, info: object) -> str:

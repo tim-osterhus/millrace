@@ -41,7 +41,7 @@ def _render_completion_manifest_report(
             f"- **Goal-ID:** {source.idea_id}",
             f"- **Title:** {source.title}",
             f"- **Source-Path:** `{source.relative_source_path}`",
-            f"- **Repo-Kind:** `{draft_state.repo_kind}`",
+            f"- **Planning-Profile:** `{draft_state.planning_profile}`",
             "",
             "## Acceptance Focus",
             *(f"- {item}" for item in draft_state.acceptance_focus),

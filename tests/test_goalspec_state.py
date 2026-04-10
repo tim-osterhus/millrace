@@ -216,39 +216,39 @@ def test_completion_manifest_state_tracks_artifacts_and_product_surfaces_separat
         {
             "draft_id": "idea-42-completion-manifest",
             "goal_id": "IDEA-42",
-            "title": "Aura Workshop Vertical Slice",
+            "title": "Neighborhood Events Hub",
             "run_id": "goalspec-run-42",
             "updated_at": "2026-04-07T12:00:00Z",
             "canonical_source_path": "agents/ideas/archive/raw/goal__goalspec-run-42__abc123def456.md",
-            "current_artifact_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
+            "current_artifact_path": "agents/ideas/staging/IDEA-42__neighborhood-events-hub.md",
             "source_path": "agents/ideas/archive/raw/goal__goalspec-run-42__abc123def456.md",
-            "research_brief_path": "agents/ideas/staging/IDEA-42__aura-workshop-vertical-slice.md",
+            "research_brief_path": "agents/ideas/staging/IDEA-42__neighborhood-events-hub.md",
             "objective_profile_state_path": "agents/objective/profile_sync_state.json",
             "objective_profile_path": "agents/reports/acceptance_profiles/idea-42-profile.json",
             "completion_manifest_plan_path": "agents/reports/completion_manifest_plan.md",
             "goal_intake_record_path": "agents/.research_runtime/goalspec/goal_intake/goalspec-run-42.json",
-            "repo_kind": "minecraft_fabric_mod",
+            "planning_profile": "generic_product",
             "acceptance_focus": ["Collector works", "Flow validates"],
             "open_questions": ["Implementation remains open."],
             "required_artifacts": [
                 {
                     "artifact_kind": "queue_spec",
-                    "path": "agents/ideas/specs/SPEC-42__aura-workshop-vertical-slice.md",
+                    "path": "agents/ideas/specs/SPEC-42__neighborhood-events-hub.md",
                     "purpose": "Primary queue spec for downstream review.",
                 }
             ],
             "implementation_surfaces": [
                 {
-                    "surface_kind": "registration",
-                    "path": "src/main/java/com/example/aura/AuraWorkshopVerticalSliceContent.java",
-                    "purpose": "Register the first playable aura content.",
+                    "surface_kind": "entrypoint",
+                    "path": "src/neighborhood-events-hub/entrypoint",
+                    "purpose": "Expose the bounded product entry surface.",
                 }
             ],
             "verification_surfaces": [
                 {
-                    "surface_kind": "flow_test",
-                    "path": "src/test/java/com/example/aura/AuraWorkshopVerticalSliceFlowTest.java",
-                    "purpose": "Lock the bounded gameplay flow.",
+                    "surface_kind": "flow_verification",
+                    "path": "tests/neighborhood-events-hub/flow",
+                    "purpose": "Lock the bounded product flow.",
                 }
             ],
         }
@@ -258,7 +258,7 @@ def test_completion_manifest_state_tracks_artifacts_and_product_surfaces_separat
     assert state.current_artifact_path.startswith("agents/ideas/staging/")
     assert state.required_artifacts[0].path.startswith("agents/")
     assert state.implementation_surfaces[0].path.startswith("src/")
-    assert state.verification_surfaces[0].path.startswith("src/test/")
+    assert state.verification_surfaces[0].path.startswith("tests/")
 
 
 def test_goal_spec_family_state_rejects_specs_without_matching_spec_order() -> None:

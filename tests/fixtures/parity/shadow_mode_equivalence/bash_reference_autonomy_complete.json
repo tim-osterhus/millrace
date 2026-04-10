@@ -1,0 +1,36 @@
+{
+  "contract_source": "reproducible_reference_side_probe",
+  "source_script_path": "ref-framework/millrace-temp-main/agents/tools/run_autonomy_smoke.sh",
+  "source_fixture_path": "ref-framework/millrace-temp-main/agents/tools/fixtures/autonomy_smoke/autonomy_complete",
+  "represented_commands": [
+    {
+      "command": "bash agents/orchestrate_loop.sh --once",
+      "expected_exit_code": 0
+    },
+    {
+      "command": "bash agents/research_loop.sh --once --mode Auto",
+      "expected_exit_code": 22
+    }
+  ],
+  "expected_exit_codes": {
+    "orchestrate_loop": 0,
+    "research_loop": 22
+  },
+  "live_execution_in_qa_ci": false,
+  "live_execution_not_used_reason": "QA/CI does not run the full bash cutover pair live because the copied reference orchestrate loop only reaches AUTONOMY_COMPLETE after disabling transport preflight in the sandboxed environment, and the checked-in agents/research_loop.sh currently fails bash syntax validation at line 1637 before its completion path can run.",
+  "probe_observations": {
+    "orchestrate_live_probe": {
+      "config_override": "ENV_PREFLIGHT_TRANSPORT_CHECK=off",
+      "exit_code": 0,
+      "marker_logged": true
+    },
+    "research_syntax_check": {
+      "command": "bash -n agents/research_loop.sh",
+      "exit_code": 2,
+      "error_excerpt": "line 1637: syntax error near unexpected token `('"
+    }
+  },
+  "orchestrate_exit_code": 0,
+  "research_exit_code": 22,
+  "marker_logged": true
+}

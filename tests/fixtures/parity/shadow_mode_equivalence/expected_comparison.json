@@ -1,0 +1,168 @@
+{
+  "scenario": "shadow_mode_equivalence",
+  "result": "equivalent_with_bounded_differences",
+  "allowed_difference_codes": [
+    "overflow_handling_strategy",
+    "python_preflight_surface",
+    "split_loop_exit_semantics"
+  ],
+  "comparisons": [
+    {
+      "name": "family_governor_cap",
+      "bash_reference_source": "live_reference_subprocess",
+      "shared": {
+        "family_phase": "initial_family",
+        "applied_family_max_specs": 2,
+        "overflow_candidate": "SPEC-GAMMA",
+        "overflow_admitted": false,
+        "active_family_size_after_enforcement": 2
+      },
+      "bash_reference": {
+        "budget_hit": true,
+        "deferred_spec_ids": [
+          "SPEC-GAMMA"
+        ],
+        "overflow_registry_written": true,
+        "active_spec_count_after": 2,
+        "registry_deferred_spec_ids": [
+          "SPEC-GAMMA"
+        ]
+      },
+      "python_runtime": {
+        "action": "block",
+        "reason": "family-governor-cap-exceeded",
+        "violation_codes": [
+          "family-cap-exceeded"
+        ],
+        "proposed_spec_count": 3
+      },
+      "difference_codes": [
+        "overflow_handling_strategy"
+      ],
+      "difference_explanations": [
+        "The bash reference defers overflow specs into a follow-on registry, while the Python runtime blocks the extra spec at the initial-family guard boundary instead of mutating state in place."
+      ]
+    },
+    {
+      "name": "staging_manifest_sync",
+      "bash_reference_source": "live_reference_subprocess",
+      "shared": {
+        "required_paths": [
+          "README.md"
+        ],
+        "entries": [
+          {
+            "path": "README.md",
+            "action": "synced"
+          }
+        ],
+        "created_staging_dir": false
+      },
+      "bash_reference": {
+        "entries": [
+          {
+            "path": "README.md",
+            "action": "synced"
+          }
+        ],
+        "complete_line": "SYNC_COMPLETE required_paths=1 optional_paths=0"
+      },
+      "python_runtime": {
+        "manifest_source_kind": "workspace",
+        "entries": [
+          {
+            "path": "README.md",
+            "action": "synced"
+          }
+        ],
+        "created_staging_dir": false
+      },
+      "difference_codes": [],
+      "difference_explanations": []
+    },
+    {
+      "name": "publish_preflight_commit",
+      "bash_reference_source": "live_reference_subprocess",
+      "shared": {
+        "branch": "main",
+        "publish_performed": true,
+        "commit_marker": "PUSH_OK remote=origin branch=main"
+      },
+      "bash_reference": {
+        "commit_exit_code": 0,
+        "commit_marker": "PUSH_OK remote=origin branch=main"
+      },
+      "python_runtime": {
+        "preflight_status": "ready",
+        "changed_paths": [
+          "README.md"
+        ],
+        "commit_status": "pushed",
+        "commit_marker": "PUSH_OK remote=origin branch=main"
+      },
+      "difference_codes": [
+        "python_preflight_surface"
+      ],
+      "difference_explanations": [
+        "The bash reference exposes only the final commit/push marker, while the Python runtime adds an explicit preflight readiness surface before performing the same push-capable commit path."
+      ]
+    },
+    {
+      "name": "autonomy_complete_marker",
+      "bash_reference_source": "reproducible_reference_probe_contract",
+      "bash_reference_provenance": {
+        "contract_source": "reproducible_reference_side_probe",
+        "source_script_path": "ref-framework/millrace-temp-main/agents/tools/run_autonomy_smoke.sh",
+        "source_fixture_path": "ref-framework/millrace-temp-main/agents/tools/fixtures/autonomy_smoke/autonomy_complete",
+        "represented_commands": [
+          {
+            "command": "bash agents/orchestrate_loop.sh --once",
+            "expected_exit_code": 0
+          },
+          {
+            "command": "bash agents/research_loop.sh --once --mode Auto",
+            "expected_exit_code": 22
+          }
+        ],
+        "expected_exit_codes": {
+          "orchestrate_loop": 0,
+          "research_loop": 22
+        },
+        "live_execution_in_qa_ci": false,
+        "live_execution_not_used_reason": "QA/CI does not run the full bash cutover pair live because the copied reference orchestrate loop only reaches AUTONOMY_COMPLETE after disabling transport preflight in the sandboxed environment, and the checked-in agents/research_loop.sh currently fails bash syntax validation at line 1637 before its completion path can run.",
+        "probe_observations": {
+          "orchestrate_live_probe": {
+            "config_override": "ENV_PREFLIGHT_TRANSPORT_CHECK=off",
+            "exit_code": 0,
+            "marker_logged": true
+          },
+          "research_syntax_check": {
+            "command": "bash -n agents/research_loop.sh",
+            "exit_code": 2,
+            "error_excerpt": "line 1637: syntax error near unexpected token `('"
+          }
+        }
+      },
+      "shared": {
+        "marker_present": true,
+        "completion_respected": true
+      },
+      "bash_reference": {
+        "scenario_expected_orchestrate_exit_code": 0,
+        "scenario_expected_research_exit_code": 22,
+        "scenario_expected_marker_logged": true
+      },
+      "python_runtime": {
+        "completion_allowed": true,
+        "marker_honored": true,
+        "reason": "allowed"
+      },
+      "difference_codes": [
+        "split_loop_exit_semantics"
+      ],
+      "difference_explanations": [
+        "The bash reference reports separate orchestrate and research loop exits, while the Python runtime exposes the authoritative completion state through its control-plane report after the audit pass is present."
+      ]
+    }
+  ]
+}
