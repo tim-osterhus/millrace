@@ -105,6 +105,14 @@ def test_stage_context_default_timeout_matches_stage_defaults(tmp_path: Path) ->
     assert context.timeout_seconds == 3600
 
 
+def test_native_config_is_required_for_runtime_load(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError, match="native Millrace config not found"):
+        load_engine_config(workspace_root / "millrace.toml")
+
+
 def test_stage_context_accepts_typed_procedure_injection_bundle(tmp_path: Path) -> None:
     context = StageContext.model_validate(
         {

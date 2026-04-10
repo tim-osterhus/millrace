@@ -133,6 +133,17 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths
     assert OPERATIONS_SKILL_PATH in manifest_paths
     assert "agents/skills/millrace-operator-intake-control/EXAMPLES.md" in manifest_paths
+    for removed_path in (
+        "agents/legacy",
+        "agents/legacy/README.md",
+        "agents/legacy/_orchestrate.md",
+        "agents/legacy/_supervisor.md",
+        "agents/options/model_config.md",
+        "agents/options/workflow_config.md",
+        "agents/orchestrate_loop.sh",
+        "agents/research_loop.sh",
+    ):
+        assert removed_path not in manifest_paths
     _assert_public_docs_match_packaged_copies()
 
     readme = (MILLRACE_ROOT / "README.md").read_text(encoding="utf-8")
@@ -147,7 +158,8 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "OPERATOR_GUIDE.md" in readme
     assert "ADVISOR.md" in readme
     assert "OpenClaw-style supervisor agents" in readme
-    assert "millrace --config /absolute/path/to/workspace/millrace.toml health --json" in readme
+    assert "millrace health --json" in readme
+    assert "pass `--config /absolute/path/to/workspace/millrace.toml` explicitly" in readme
     assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in readme
     assert '[research] mode = "stub"' in readme
     assert 'interview_policy = "off"' in readme
@@ -209,7 +221,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         / "agents/skills/millrace-operator-intake-control/SKILL.md"
     ).read_text(encoding="utf-8")
     assert "before `millrace queue cleanup ...` or `millrace supervisor cleanup ...`" in skill
-    assert "local: `millrace --config millrace.toml queue cleanup remove|quarantine" in skill
+    assert "local: `millrace queue cleanup remove|quarantine" in skill
     assert "external: `millrace --config millrace.toml supervisor cleanup remove|quarantine" in skill
 
     operator_guide = (MILLRACE_ROOT / "OPERATOR_GUIDE.md").read_text(encoding="utf-8")

@@ -34,7 +34,7 @@ It is not:
 
 - a web service
 - a distributed job system
-- a complete port of every legacy shell behavior
+- a complete port of every historical shell artifact
 
 External supervisors stay outside the core runtime. The explicit compatibility seam is the CLI-first one-workspace supervisor contract: observe with `millrace --config millrace.toml supervisor report --json`, then act through issuer-attributed `millrace --config millrace.toml supervisor ... --issuer <name> --json` commands when intervention is required.
 
@@ -82,7 +82,7 @@ Key modules:
 - `engine_mailbox_processor.py`: daemon mailbox intake, dispatch, and archive coordinator
 - `engine_mailbox_command_handlers.py`: bounded mailbox command handler family
 - `engine_runtime_loop.py`: daemon-loop, watcher, wakeup, and post-cycle control coordinator
-- `config.py`: typed config model plus native and legacy config loading
+- `config.py`: typed native TOML config model and loader
 - `paths.py`: canonical resolved path model rooted at the configured workspace
 - `contracts.py`: shared enums and immutable contract models, plus the stable re-export surface for Phase 01B loop-architecture schemas
 - `loop_architecture.py`: additive Phase 01B persisted-object schemas for registered stage kinds, loop DAGs, modes, profiles, and structured stage results
@@ -125,8 +125,6 @@ Key modules:
   - staging-manifest parsing plus sync/preflight/commit helpers for the publish surface
 - `tui/`
   - Textual operator shell, health gate, runtime gateway/store/workers, modal screens, and panel widgets
-- `legacy/`
-  - `workflow_loader.py`, `model_loader.py`: compatibility loaders for reference-framework markdown configs
 - `policies/`
   - typed policy fact/evidence contracts plus execution preflight, clean-room network, and outage-recovery helpers
 
@@ -421,21 +419,7 @@ Config sections:
 - `[policies]`
 - `[stages]`
 
-### 6.2 Legacy Config Compatibility
-
-If native TOML is not present, the runtime can fall back to legacy markdown-based reference-framework config extraction using:
-
-- `legacy/workflow_loader.py`
-- `legacy/model_loader.py`
-
-This lets the runtime ingest selected values from the reference framework while preserving a Python-native config model internally.
-
-When that legacy fallback is active, the control/CLI config surface carries two explicit visibility hooks:
-
-- an audited legacy policy compatibility report for mapped, partially mapped, deprecated, and unsupported policy knobs
-- a deterministic `unmapped_keys` list for legacy settings that still have no native translation
-
-### 6.3 Config Boundaries
+### 6.2 Config Boundaries
 
 The runtime explicitly distinguishes:
 

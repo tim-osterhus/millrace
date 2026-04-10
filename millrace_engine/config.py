@@ -10,12 +10,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from .config_compat import (
-    LegacyPolicyCompatReport,
-    build_legacy_policy_compatibility_report,
-    load_model_values,
-    load_workflow_values,
-)
 from .config_runtime import (
     ConfigApplyBoundary,
     ConfigBoundaries,
@@ -447,11 +441,8 @@ class EngineConfig(MillraceModel):
 
 
 class ConfigSourceInfo(MillraceModel):
-    kind: Literal["native_toml", "legacy_markdown"]
+    kind: Literal["native_toml"]
     primary_path: Path
-    secondary_paths: tuple[Path, ...] = ()
-    unmapped_keys: tuple[str, ...] = ()
-    legacy_policy_compatibility: LegacyPolicyCompatReport | None = None
 
     @field_validator("primary_path", mode="before")
     @classmethod
@@ -460,18 +451,6 @@ class ConfigSourceInfo(MillraceModel):
         if path is None:
             raise ValueError("primary path may not be empty")
         return path
-
-    @field_validator("secondary_paths", mode="before")
-    @classmethod
-    def normalize_secondary_paths(cls, value: tuple[Path, ...] | list[Path] | None) -> tuple[Path, ...]:
-        if not value:
-            return ()
-        paths: list[Path] = []
-        for item in value:
-            path = _to_path(item)
-            if path is not None:
-                paths.append(path)
-        return tuple(paths)
 
 
 class LoadedConfig(MillraceModel):
@@ -538,226 +517,10 @@ def _finalize_config(config: EngineConfig, base_dir: Path) -> EngineConfig:
     return EngineConfig.model_validate(payload)
 
 
-def _build_legacy_config(
-    workflow_values: dict[str, str],
-    model_values: dict[str, str],
-    base_dir: Path,
-    workflow_path: Path,
-    model_path: Path,
-) -> LoadedConfig:
-    consumed_keys: set[str] = set()
-    legacy_policy_compatibility = build_legacy_policy_compatibility_report(workflow_values)
-
-    raw_config: dict[str, Any] = {
-        "engine": {
-            "mode": "once",
-            "idle_mode": "watch",
-            "poll_interval_seconds": 60,
-            "inter_task_delay_seconds": _optional_int(workflow_values.get("ORCH_INTER_TASK_DELAY_SECS")) or 0,
-        },
-        "paths": {
-            "workspace": str(base_dir),
-            "agents_dir": "agents",
-        },
-        "execution": {
-            "integration_mode": _coerce_integration_mode(workflow_values.get("INTEGRATION_MODE")),
-            "quickfix_max_attempts": 2,
-            "run_update_on_empty": _normalize_legacy_bool(workflow_values.get("RUN_UPDATE_ON_EMPTY"), default=True),
-        },
-        "sizing": {
-            "mode": _coerce_size_metric_mode(workflow_values.get("SIZE_METRIC_MODE")),
-            "repo": {
-                "file_count_threshold": _optional_int(workflow_values.get("LARGE_FILES_THRESHOLD")) or 999_999_999,
-                "nonempty_line_count_threshold": (
-                    _optional_int(workflow_values.get("LARGE_LOC_THRESHOLD")) or 999_999_999
-                ),
-            },
-            "task": {
-                "file_count_threshold": (
-                    _optional_int(workflow_values.get("TASK_LARGE_FILES_THRESHOLD")) or 999_999_999
-                ),
-                "nonempty_line_count_threshold": (
-                    _optional_int(workflow_values.get("TASK_LARGE_LOC_THRESHOLD")) or 999_999_999
-                ),
-            },
-        },
-        "research": {
-            "mode": (workflow_values.get("RESEARCH_MODE") or "AUTO").strip().lower(),
-            "idle_mode": _coerce_idle_mode(workflow_values.get("RESEARCH_IDLE_MODE"), default="poll"),
-            "idle_poll_seconds": _optional_int(workflow_values.get("RESEARCH_IDLE_POLL_SECS")) or 60,
-            "stage_retry_max": _optional_int(workflow_values.get("STAGE_RETRY_MAX")) or 1,
-            "stage_retry_backoff_seconds": _optional_int(workflow_values.get("STAGE_RETRY_BACKOFF_SECS")) or 5,
-        },
-        "policies": {
-            "search": {
-                "execution_enabled": _normalize_legacy_bool(workflow_values.get("ORCH_ALLOW_SEARCH")),
-                "execution_exception": _normalize_legacy_bool(workflow_values.get("ORCH_ALLOW_SEARCH_EXCEPTION")),
-                "research_enabled": _normalize_legacy_bool(workflow_values.get("RESEARCH_ALLOW_SEARCH")),
-                "research_exception": _normalize_legacy_bool(workflow_values.get("RESEARCH_ALLOW_SEARCH_EXCEPTION")),
-            },
-            "usage": {
-                "enabled": _normalize_legacy_bool(workflow_values.get("USAGE_AUTOPAUSE_MODE")),
-                "provider": (workflow_values.get("USAGE_SAMPLER_PROVIDER") or "codex").strip().lower() or "codex",
-                "cache_max_age_secs": _optional_int(workflow_values.get("USAGE_SAMPLER_CACHE_MAX_AGE_SECS")) or 900,
-                "orch_command": workflow_values.get("USAGE_SAMPLER_ORCH_CMD") or None,
-                "research_command": workflow_values.get("USAGE_SAMPLER_RESEARCH_CMD") or None,
-                "codex_auth_source_dir": workflow_values.get("CODEX_AUTH_SOURCE_DIR") or None,
-                "codex_runtime_home": workflow_values.get("CODEX_RUNTIME_HOME") or None,
-                "execution": {
-                    "remaining_threshold": workflow_values.get("ORCH_WEEKLY_USAGE_REMAINING_THRESHOLD"),
-                    "consumed_threshold": workflow_values.get("ORCH_WEEKLY_USAGE_CONSUMED_THRESHOLD"),
-                    "legacy_threshold": workflow_values.get("ORCH_WEEKLY_USAGE_THRESHOLD"),
-                    "refresh_utc": workflow_values.get("ORCH_WEEKLY_REFRESH_UTC") or "MON 00:00",
-                },
-                "research": {
-                    "remaining_threshold": workflow_values.get("RESEARCH_WEEKLY_USAGE_REMAINING_THRESHOLD"),
-                    "consumed_threshold": workflow_values.get("RESEARCH_WEEKLY_USAGE_CONSUMED_THRESHOLD"),
-                    "legacy_threshold": workflow_values.get("RESEARCH_WEEKLY_USAGE_THRESHOLD"),
-                    "refresh_utc": workflow_values.get("RESEARCH_WEEKLY_REFRESH_UTC") or "MON 00:00",
-                },
-            },
-            "network_guard": {
-                "enabled": _normalize_legacy_bool(workflow_values.get("NETWORK_GUARD_MODE")),
-                "execution_policy": (workflow_values.get("ORCH_NETWORK_GUARD_POLICY") or "deny").strip().lower(),
-                "research_policy": (workflow_values.get("RESEARCH_NETWORK_GUARD_POLICY") or "deny").strip().lower(),
-                "execution_exception": _normalize_legacy_bool(workflow_values.get("ORCH_NETWORK_POLICY_EXCEPTION")),
-                "research_exception": _normalize_legacy_bool(workflow_values.get("RESEARCH_NETWORK_POLICY_EXCEPTION")),
-            },
-            "preflight": {
-                "enabled": _normalize_legacy_bool(workflow_values.get("ENV_PREFLIGHT_MODE"), default=True),
-                "transport_check": _normalize_legacy_bool(
-                    workflow_values.get("ENV_PREFLIGHT_TRANSPORT_CHECK"),
-                    default=True,
-                ),
-            },
-            "outage": {
-                "enabled": _normalize_legacy_bool(workflow_values.get("NETWORK_OUTAGE_RESILIENCE_MODE"), default=True),
-                "wait_initial_seconds": _optional_int(workflow_values.get("NETWORK_OUTAGE_WAIT_INITIAL_SECS")) or 15,
-                "wait_max_seconds": _optional_int(workflow_values.get("NETWORK_OUTAGE_WAIT_MAX_SECS")) or 300,
-                "max_probes": _optional_int(workflow_values.get("NETWORK_OUTAGE_MAX_PROBES")) or 0,
-                "probe_timeout_seconds": _optional_int(workflow_values.get("NETWORK_OUTAGE_PROBE_TIMEOUT_SECS")) or 5,
-                "probe_host": workflow_values.get("NETWORK_OUTAGE_PROBE_HOST") or "api.openai.com",
-                "probe_port": _optional_int(workflow_values.get("NETWORK_OUTAGE_PROBE_PORT")) or 443,
-                "probe_command": workflow_values.get("NETWORK_OUTAGE_PROBE_CMD") or None,
-                "policy": (workflow_values.get("NETWORK_OUTAGE_POLICY") or "pause_resume").strip().lower(),
-                "route_to_blocker": _normalize_legacy_bool(workflow_values.get("NETWORK_OUTAGE_ROUTE_TO_BLOCKER")),
-                "route_to_incident": _normalize_legacy_bool(workflow_values.get("NETWORK_OUTAGE_ROUTE_TO_INCIDENT")),
-            },
-        },
-        "stages": {},
-    }
-
-    consumed_keys.update(
-        {
-            "INTEGRATION_MODE",
-            "ORCH_INTER_TASK_DELAY_SECS",
-            "RUN_UPDATE_ON_EMPTY",
-            "SIZE_METRIC_MODE",
-            "LARGE_FILES_THRESHOLD",
-            "LARGE_LOC_THRESHOLD",
-            "TASK_LARGE_FILES_THRESHOLD",
-            "TASK_LARGE_LOC_THRESHOLD",
-            "RESEARCH_MODE",
-            "RESEARCH_IDLE_MODE",
-            "RESEARCH_IDLE_POLL_SECS",
-            "STAGE_RETRY_MAX",
-            "STAGE_RETRY_BACKOFF_SECS",
-            "HEADLESS_PERMISSIONS",
-            "ORCH_ALLOW_SEARCH",
-            "ORCH_ALLOW_SEARCH_EXCEPTION",
-            "RESEARCH_ALLOW_SEARCH",
-            "RESEARCH_ALLOW_SEARCH_EXCEPTION",
-            "USAGE_AUTOPAUSE_MODE",
-            "USAGE_SAMPLER_PROVIDER",
-            "USAGE_SAMPLER_CACHE_MAX_AGE_SECS",
-            "USAGE_SAMPLER_ORCH_CMD",
-            "USAGE_SAMPLER_RESEARCH_CMD",
-            "CODEX_AUTH_SOURCE_DIR",
-            "CODEX_RUNTIME_HOME",
-            "ORCH_WEEKLY_USAGE_REMAINING_THRESHOLD",
-            "ORCH_WEEKLY_USAGE_CONSUMED_THRESHOLD",
-            "ORCH_WEEKLY_USAGE_THRESHOLD",
-            "ORCH_WEEKLY_REFRESH_UTC",
-            "RESEARCH_WEEKLY_USAGE_REMAINING_THRESHOLD",
-            "RESEARCH_WEEKLY_USAGE_CONSUMED_THRESHOLD",
-            "RESEARCH_WEEKLY_USAGE_THRESHOLD",
-            "RESEARCH_WEEKLY_REFRESH_UTC",
-            "NETWORK_GUARD_MODE",
-            "ORCH_NETWORK_GUARD_POLICY",
-            "RESEARCH_NETWORK_GUARD_POLICY",
-            "ORCH_NETWORK_POLICY_EXCEPTION",
-            "RESEARCH_NETWORK_POLICY_EXCEPTION",
-            "ENV_PREFLIGHT_MODE",
-            "ENV_PREFLIGHT_TRANSPORT_CHECK",
-            "NETWORK_OUTAGE_RESILIENCE_MODE",
-            "NETWORK_OUTAGE_WAIT_INITIAL_SECS",
-            "NETWORK_OUTAGE_WAIT_MAX_SECS",
-            "NETWORK_OUTAGE_MAX_PROBES",
-            "NETWORK_OUTAGE_PROBE_TIMEOUT_SECS",
-            "NETWORK_OUTAGE_PROBE_HOST",
-            "NETWORK_OUTAGE_PROBE_PORT",
-            "NETWORK_OUTAGE_PROBE_CMD",
-            "NETWORK_OUTAGE_POLICY",
-            "NETWORK_OUTAGE_ROUTE_TO_BLOCKER",
-            "NETWORK_OUTAGE_ROUTE_TO_INCIDENT",
-        }
-    )
-
-    stages = default_stage_configs()
-    legacy_permission_profile = _coerce_headless_permission_profile(workflow_values.get("HEADLESS_PERMISSIONS"))
-    stages = {
-        stage: stage_config.model_copy(update={"permission_profile": legacy_permission_profile})
-        for stage, stage_config in stages.items()
-    }
-    stage_fields = {"RUNNER", "MODEL", "EFFORT"}
-    for key, value in model_values.items():
-        for stage in StageType:
-            prefix = f"{stage.name}_"
-            if not key.startswith(prefix):
-                continue
-            field_name = key[len(prefix) :]
-            if field_name not in stage_fields:
-                continue
-            stage_config = stages[stage].model_copy(deep=True)
-            if field_name == "RUNNER":
-                stage_config.runner = RunnerKind(value.strip().lower())
-            elif field_name == "MODEL":
-                stage_config.model = value.strip()
-            elif field_name == "EFFORT":
-                stage_config.effort = ReasoningEffort(value.strip().lower())
-            stages[stage] = stage_config
-            consumed_keys.add(key)
-            break
-
-    raw_config["stages"] = {
-        stage.value: stage_config.model_dump()
-        for stage, stage_config in stages.items()
-    }
-
-    config = _finalize_config(EngineConfig.model_validate(raw_config), base_dir)
-    explicitly_reported_keys = set(legacy_policy_compatibility.explicitly_reported_keys())
-    workflow_unmapped_keys = set(workflow_values) - consumed_keys - explicitly_reported_keys
-    model_unmapped_keys = set(model_values) - consumed_keys
-    unmapped_keys = tuple(sorted(workflow_unmapped_keys | model_unmapped_keys))
-    return LoadedConfig(
-        config=config,
-        source=ConfigSourceInfo(
-            kind="legacy_markdown",
-            primary_path=workflow_path,
-            secondary_paths=(model_path,),
-            unmapped_keys=unmapped_keys,
-            legacy_policy_compatibility=legacy_policy_compatibility,
-        ),
-    )
-
-
 def load_engine_config(
     config_path: Path | str | None = None,
-    *,
-    legacy_workflow_path: Path | str | None = None,
-    legacy_model_path: Path | str | None = None,
 ) -> LoadedConfig:
-    """Load config from native TOML or legacy markdown config files."""
+    """Load config from native TOML."""
 
     resolved_config_path = Path(config_path or "millrace.toml").expanduser()
     if resolved_config_path.exists():
@@ -773,24 +536,7 @@ def load_engine_config(
             ),
         )
 
-    workflow_path = Path(legacy_workflow_path or resolved_config_path.parent / "agents/options/workflow_config.md").expanduser()
-    model_path = Path(legacy_model_path or resolved_config_path.parent / "agents/options/model_config.md").expanduser()
-
-    if workflow_path.exists() and model_path.exists():
-        workflow_values = load_workflow_values(workflow_path)
-        model_values = load_model_values(model_path)
-        return _build_legacy_config(
-            workflow_values=workflow_values,
-            model_values=model_values,
-            base_dir=resolved_config_path.parent.resolve(),
-            workflow_path=workflow_path.resolve(),
-            model_path=model_path.resolve(),
-        )
-
-    raise FileNotFoundError(
-        "No native config found and legacy markdown config pair is incomplete: "
-        f"{resolved_config_path}, {workflow_path}, {model_path}"
-    )
+    raise FileNotFoundError(f"native Millrace config not found: {resolved_config_path}")
 
 
 def build_runtime_paths(config: EngineConfig) -> RuntimePaths:

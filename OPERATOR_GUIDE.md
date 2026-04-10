@@ -15,19 +15,19 @@ Run commands from the workspace root that contains your active `millrace.toml`, 
 CLI:
 
 ```bash
-millrace --config millrace.toml ...
+millrace ...
 ```
 
 Module form:
 
 ```bash
-python3 -m millrace_engine --config millrace.toml ...
+python3 -m millrace_engine ...
 ```
 
 TUI:
 
 ```bash
-python3 -m millrace_engine.tui --config millrace.toml
+python3 -m millrace_engine.tui
 ```
 
 ## Supported Operating Surface
@@ -58,9 +58,7 @@ Use the CLI commands:
 
 Or launch the TUI directly with:
 
-- `python3 -m millrace_engine.tui --config millrace.toml`
-
-Do not treat `bash agents/orchestrate_loop.sh ...` or `bash agents/research_loop.sh ...` as the supported operator entrypoints. Those shell assets are compatibility or reference material now, not the main runtime path.
+- `python3 -m millrace_engine.tui`
 
 ## Governed Compounding Operating Model
 
@@ -84,11 +82,12 @@ Install the published package:
 ```bash
 python3 -m pip install millrace-ai
 millrace init /absolute/path/to/workspace
-millrace --config /absolute/path/to/workspace/millrace.toml health --json
-millrace --config /absolute/path/to/workspace/millrace.toml doctor
+cd /absolute/path/to/workspace
+millrace health --json
+millrace doctor
 ```
 
-If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.8.0`.
+If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.7.0`.
 
 The initialized workspace ships with real default model ids for the Codex runner, including `gpt-5.3-codex` and `gpt-5.2`. Those defaults are not placeholders, but they still rely on the local runner environment being usable.
 
@@ -97,7 +96,7 @@ The first-run research contract is also deliberate: a fresh workspace starts wit
 If you prefer an interactive shell, launch the TUI against that workspace after the environment is ready:
 
 ```bash
-python3 -m millrace_engine.tui --config /absolute/path/to/workspace/millrace.toml
+python3 -m millrace_engine.tui
 ```
 
 If you are developing Millrace itself from a source checkout instead of using the published package:
@@ -118,8 +117,9 @@ Use `init` when you want a fresh workspace without copying files manually:
 ```bash
 millrace init /absolute/path/to/new-workspace
 millrace init --force /absolute/path/to/new-workspace
-millrace --config /absolute/path/to/new-workspace/millrace.toml upgrade
-millrace --config /absolute/path/to/new-workspace/millrace.toml upgrade --apply
+cd /absolute/path/to/new-workspace
+millrace upgrade
+millrace upgrade --apply
 ```
 
 Behavior to remember:
@@ -136,8 +136,8 @@ Behavior to remember:
 Always run the preflight after creating or updating a workspace:
 
 ```bash
-millrace --config /absolute/path/to/new-workspace/millrace.toml health --json
-millrace --config /absolute/path/to/new-workspace/millrace.toml doctor
+millrace health --json
+millrace doctor
 ```
 
 The TUI runs the same workspace health check automatically before entering the shell.
@@ -177,7 +177,7 @@ In shipped operator mode, the major panels are rendered as composed cards and st
 Expanded mode follows the current display mode:
 
 - `operator expanded` gives you a narrated runtime feed intended for continuous human monitoring
-- `debug expanded` gives you the raw structured event stream, close to `millrace --config millrace.toml logs --follow`
+- `debug expanded` gives you the raw structured event stream, close to `millrace logs --follow`
 - if you scroll upward, the feed stays in scrollback while new lines continue to append off-screen until you jump live again
 
 ## Normal Workflow
@@ -185,8 +185,8 @@ Expanded mode follows the current display mode:
 ### 1. Preflight
 
 ```bash
-millrace --config millrace.toml health --json
-millrace --config millrace.toml doctor
+millrace health --json
+millrace doctor
 ```
 
 Do not move on if `health` fails. It is the supported bootstrap and cutover check.
@@ -197,11 +197,11 @@ That split is intentional: the default model ids are real packaged defaults, whi
 ### 2. Inspect State
 
 ```bash
-millrace --config millrace.toml status --detail --json
-millrace --config millrace.toml queue inspect --json
-millrace --config millrace.toml research --json
-millrace --config millrace.toml config show --json
-millrace --config millrace.toml logs --tail 50 --json
+millrace status --detail --json
+millrace queue inspect --json
+millrace research --json
+millrace config show --json
+millrace logs --tail 50 --json
 ```
 
 Use these before touching files directly. In normal operation, the runtime is the authority for queue state, daemon state, status markers, and research state.
@@ -213,10 +213,10 @@ In the TUI, use the Overview, Queue, Research, Logs, Runs, Config, and Publish p
 ### 3. Add Work
 
 ```bash
-millrace --config millrace.toml add-task "Example task"
-millrace --config millrace.toml add-task "Example task" --body "# Notes"
-millrace --config millrace.toml add-idea /absolute/path/to/idea.md
-millrace --config millrace.toml queue reorder <task-id> <task-id> ...
+millrace add-task "Example task"
+millrace add-task "Example task" --body "# Notes"
+millrace add-idea /absolute/path/to/idea.md
+millrace queue reorder <task-id> <task-id> ...
 ```
 
 Use `add-task` for execution backlog work. Use `add-idea` to feed research-side intake through `agents/ideas/raw/`.
@@ -234,11 +234,11 @@ When optional GoalSpec interview mode is enabled, research may pause after synth
 Use the CLI when you want explicit artifact-oriented control:
 
 ```bash
-millrace --config millrace.toml interview list
-millrace --config millrace.toml interview show <question-id>
-millrace --config millrace.toml interview answer <question-id> --text "..."
-millrace --config millrace.toml interview accept <question-id>
-millrace --config millrace.toml interview skip <question-id> --reason "..."
+millrace interview list
+millrace interview show <question-id>
+millrace interview answer <question-id> --text "..."
+millrace interview accept <question-id>
+millrace interview skip <question-id> --reason "..."
 ```
 
 Use the TUI when you want to stay inside the operator shell:
@@ -253,8 +253,8 @@ After the resolution is written, Millrace can resume the paused research progres
 ### 4. Execute
 
 ```bash
-millrace --config millrace.toml start --once
-millrace --config millrace.toml start --daemon
+millrace start --once
+millrace start --daemon
 ```
 
 `start --once` is the foreground single-pass path. If startup research sync creates new execution backlog while the execution queue was empty, that invocation stops after the research pass and leaves the new task in backlog for the next `start --once`. `start --daemon` is the long-running local runtime mode.
@@ -264,9 +264,9 @@ In the TUI, use the command palette or panel actions for the same lifecycle comm
 ### 5. Control A Daemon
 
 ```bash
-millrace --config millrace.toml pause
-millrace --config millrace.toml resume
-millrace --config millrace.toml stop
+millrace pause
+millrace resume
+millrace stop
 ```
 
 When the daemon is running, mutating commands become mailbox commands so the daemon stays the only live owner of runtime state.
@@ -298,14 +298,14 @@ Optional adapters may translate supervisor reports or structured events into loc
 ### 6. Inspect Outcomes
 
 ```bash
-millrace --config millrace.toml logs --follow
-millrace --config millrace.toml run-provenance <run_id> --json
-millrace --config millrace.toml research history --json
-millrace --config millrace.toml compounding --json
-millrace --config millrace.toml compounding orient --query builder
-millrace --config millrace.toml compounding lint
-millrace --config millrace.toml compounding facts --json
-millrace --config millrace.toml compounding harness recommendations --json
+millrace logs --follow
+millrace run-provenance <run_id> --json
+millrace research history --json
+millrace compounding --json
+millrace compounding orient --query builder
+millrace compounding lint
+millrace compounding facts --json
+millrace compounding harness recommendations --json
 ```
 
 Use:
@@ -330,10 +330,10 @@ Use expanded mode when you want the live stream to dominate the shell body. Keep
 ### 7. Publish
 
 ```bash
-millrace --config millrace.toml publish sync --json
-millrace --config millrace.toml publish preflight --json
-millrace --config millrace.toml publish commit --no-push --json
-millrace --config millrace.toml publish commit --push --json
+millrace publish sync --json
+millrace publish preflight --json
+millrace publish commit --no-push --json
+millrace publish commit --push --json
 ```
 
 Publish behavior:
@@ -400,6 +400,6 @@ Manual file repair is outside the normal control path. Treat it as an exception,
 ```bash
 python3 -m compileall millrace_engine tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q tests
-millrace --config millrace.toml health --json
-millrace --config millrace.toml status --detail --json
+millrace health --json
+millrace status --detail --json
 ```

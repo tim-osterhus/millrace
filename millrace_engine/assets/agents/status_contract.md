@@ -15,13 +15,13 @@ This file is the canonical marker contract for Millrace control planes.
 
 ## Execution Markers (`agents/status.md`)
 
-These markers are consumed by `agents/orchestrate_loop.sh` and execution entrypoints.
+These markers are consumed by the Python execution plane and its stage entrypoints.
 
 | Marker | Primary emitter(s) | Purpose |
 | --- | --- | --- |
 | `### IDLE` | Orchestrator/reset paths | Neutral state between stages. |
 | `### BUILDER_COMPLETE` | Builder/Hotfix paths | Builder-stage success (non-LARGE standard flow). |
-| `### HOTFIX_COMPLETE` | Legacy `_orchestrate.md` compatibility paths | Legacy hotfix completion marker (not used by primary loop). |
+| `### HOTFIX_COMPLETE` | `_hotfix.md` | Hotfix completion marker for the supported quickfix path. |
 | `### INTEGRATION_COMPLETE` | `_integrate.md` | Integration success. |
 | `### QA_COMPLETE` | `_check.md`, `_doublecheck.md`, `_qa_execute.md` | QA success. |
 | `### QUICKFIX_NEEDED` | `_check.md`, `_doublecheck.md`, `_qa_execute.md` | QA found fixable gaps. |
@@ -51,11 +51,11 @@ Millrace uses FA-010 Option A (distinct stage markers) in `agents/status.md`:
 3. `### LARGE_REASSESS_COMPLETE`
 4. `### LARGE_REFACTOR_COMPLETE`
 
-`agents/orchestrate_loop.sh` treats these as ordered stage-complete signals and determines the next LARGE stage from the current marker.
+The execution plane treats these as ordered stage-complete signals and determines the next LARGE stage from the current marker.
 
 ## Research Markers (`agents/research_status.md`)
 
-These markers are consumed by `agents/research_loop.sh` and research entrypoints.
+These markers are consumed by the Python research plane and its stage entrypoints.
 
 | Marker | Primary emitter(s) | Purpose |
 | --- | --- | --- |
@@ -77,9 +77,9 @@ These markers are consumed by `agents/research_loop.sh` and research entrypoints
 | `### INCIDENT_ARCHIVE_RUNNING` | `_incident_archive.md` | Incident archive stage active. |
 | `### AUDIT_INTAKE_RUNNING` | `_audit_intake.md` | Audit intake stage active. |
 | `### AUDIT_VALIDATE_RUNNING` | `_audit_validate.md` | Audit validate stage active. |
-| `### AUDIT_RUNNING` | `research_loop.sh` audit orchestration | Marathon/task audit flow active. |
-| `### AUDIT_PASS` | `research_loop.sh` | Audit flow passed. |
-| `### AUDIT_FAIL` | `research_loop.sh` | Audit flow failed or needs remediation. |
+| `### AUDIT_RUNNING` | audit orchestration | Marathon/task audit flow active. |
+| `### AUDIT_PASS` | audit orchestration | Audit flow passed. |
+| `### AUDIT_FAIL` | audit orchestration | Audit flow failed or needs remediation. |
 
 ### Research Transitions (Primary Loop)
 
@@ -95,18 +95,19 @@ These are orchestrator routing markers, not execution/research status ownership 
 
 ## unknown marker Behavior (Deterministic)
 
-Execution loop (`agents/orchestrate_loop.sh`):
+Execution plane:
 - If status is an unknown marker in the `### LARGE_*` namespace, the loop routes through blocker handling (no silent fallback).
 - If status is an unexpected non-LARGE marker, the loop escalates via deterministic blocker handling.
 
-Research loop (`agents/research_loop.sh`):
+Research plane:
 - After each stage run, only `### IDLE` and `### BLOCKED` are accepted as terminal stage outcomes.
 - Any other terminal value is treated as an unknown marker / unexpected status and is coerced to `### BLOCKED`.
 
 ## Implementation References
 
-- `agents/orchestrate_loop.sh` (execution status machine and LARGE stage routing)
-- `agents/research_loop.sh` (research status machine and stage validation)
+- `millrace_engine/status.py` (status parsing and validation)
+- `millrace_engine/planes/execution.py` (execution status machine and LARGE stage routing)
+- `millrace_engine/research/dispatcher.py` and related research-plane helpers
 - LARGE stage entrypoints:
   - `agents/_start_large_plan.md`
   - `agents/_start_large_execute.md`

@@ -1650,13 +1650,8 @@ def test_cli_init_scaffolded_workspace_acts_as_real_workspace_root(tmp_path: Pat
     ).read_text(encoding="utf-8")
     workspace_model_config = destination / "agents" / "options" / "model_config.md"
     packaged_model_config = repo_root / "millrace_engine" / "assets" / "agents" / "options" / "model_config.md"
-    if packaged_model_config.exists():
-        assert workspace_model_config.exists()
-        assert "real packaged defaults for Codex/OpenAI execution" in workspace_model_config.read_text(
-            encoding="utf-8"
-        )
-    else:
-        assert not workspace_model_config.exists()
+    assert not packaged_model_config.exists()
+    assert not workspace_model_config.exists()
 
 
 def test_cli_upgrade_preview_reports_manifest_deltas_without_mutation(tmp_path: Path) -> None:

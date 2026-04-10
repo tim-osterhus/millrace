@@ -135,7 +135,7 @@ jobs:
 
           payload = json.loads(Path("/tmp/millrace-publish-smoke-research-report.json").read_text(encoding="utf-8"))
           runtime = payload.get("runtime") or {}
-          raise SystemExit(0 if payload.get("status") == "TASKMASTER_RUNNING" and runtime.get("current_mode") == "GOALSPEC" else 1)
+          raise SystemExit(0 if payload.get("status") == "BLOCKED" and runtime.get("last_mode") == "GOALSPEC" else 1)
           PY
             then
               break
@@ -228,25 +228,28 @@ jobs:
           assert research_start_payload["research_status"] == "OBJECTIVE_PROFILE_SYNC_RUNNING", research_start_payload
           assert research_start_payload["backlog_depth"] == 0, research_start_payload
           assert research_report_payload["configured_mode"] == "auto", research_report_payload
-          assert research_report_payload["status"] == "TASKMASTER_RUNNING", research_report_payload
+          assert research_report_payload["status"] == "BLOCKED", research_report_payload
           assert research_report_payload["runtime"]["cycle_count"] >= 1, research_report_payload
-          assert research_report_payload["runtime"]["current_mode"] == "GOALSPEC", research_report_payload
-          assert research_report_payload["runtime"]["last_mode"] == "STUB", research_report_payload
+          assert research_report_payload["runtime"]["last_mode"] == "GOALSPEC", research_report_payload
           assert research_queue_payload["backlog_depth"] == 0, research_queue_payload
           assert research_queue_payload["next_task"] is None, research_queue_payload
-          assert research_supervisor_payload["attention_reason"] == "idle_with_pending_work", research_supervisor_payload
+          assert research_supervisor_payload["attention_reason"] == "blocked_research", research_supervisor_payload
           assert research_supervisor_payload["backlog_depth"] == 0, research_supervisor_payload
           assert research_supervisor_payload["next_task"] is None, research_supervisor_payload
           assert any(
               event["type"] == "research.checkpoint.resumed"
               for event in research_supervisor_payload["recent_events"]
           ), research_supervisor_payload
-          assert all(
-              event["type"] != "research.blocked"
+          assert any(
+              event["type"] == "research.blocked"
+              for event in research_supervisor_payload["recent_events"]
+          ), research_supervisor_payload
+          assert any(
+              event["type"] == "research.retry.scheduled"
               for event in research_supervisor_payload["recent_events"]
           ), research_supervisor_payload
           assert "Review-Status:" in research_spec_decision_text, research_spec_decision_text
-          assert "approved" in research_spec_decision_text.lower(), research_spec_decision_text
+          assert "blocked" in research_spec_decision_text, research_spec_decision_text
           assert "Critic Findings" in research_spec_questions_text, research_spec_questions_text
 
           assert any(entry["path"] == "agents" and entry["action"] == "synced" for entry in publish_sync_payload["entries"]), publish_sync_payload

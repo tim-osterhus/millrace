@@ -13,7 +13,6 @@ from .assets.resolver import AssetResolutionError, AssetResolver, AssetSourceKin
 from .baseline_assets import packaged_baseline_bundle_version
 from .compounding.integrity import CompoundingIntegrityStatus, build_compounding_integrity_report
 from .config import LoadedConfig, build_runtime_paths, load_engine_config
-from .config_compat import LegacyPolicyCompatStatus
 from .contracts import (
     ContractModel,
     ExecutionStatus,
@@ -106,7 +105,7 @@ class WorkspaceHealthReport(ContractModel):
     config_path: Path
     workspace_root: Path
     workspace_root_source: Literal["loaded_config", "config_path_parent"]
-    config_source_kind: Literal["native_toml", "legacy_markdown", "unresolved"]
+    config_source_kind: Literal["native_toml", "unresolved"]
     bundle_version: str
     status: HealthCheckStatus
     ok: bool
@@ -230,17 +229,9 @@ def _config_surface_files(
 ) -> tuple[tuple[str, Path], ...]:
     items: list[tuple[str, Path]] = []
     if loaded is not None:
-        if loaded.source.kind == "native_toml":
-            items.append(("config", config_path))
-        else:
-            items.append(("legacy workflow config", loaded.source.primary_path))
-            for path in loaded.source.secondary_paths:
-                items.append(("legacy model config", path))
+        items.append(("config", loaded.source.primary_path))
     elif config_path.exists():
         items.append(("config", config_path))
-    else:
-        items.append(("legacy workflow config", workspace_root / "agents/options/workflow_config.md"))
-        items.append(("legacy model config", workspace_root / "agents/options/model_config.md"))
     return tuple(items)
 
 
@@ -314,72 +305,12 @@ def _build_config_load_check(
             message=f"workspace config loaded from {loaded.source.kind}",
             details=(
                 f"primary_path: {loaded.source.primary_path.as_posix()}",
-                *(
-                    f"secondary_path: {path.as_posix()}"
-                    for path in loaded.source.secondary_paths
-                ),
             ),
         ),
         loaded,
         loaded_paths.root,
         loaded_paths.agents_dir,
         loaded_paths,
-    )
-
-
-def _build_legacy_compat_check(loaded: LoadedConfig | None) -> WorkspaceHealthCheck:
-    if loaded is None:
-        return WorkspaceHealthCheck(
-            check_id="config.legacy_compat",
-            category="config",
-            status=HealthCheckStatus.WARN,
-            message="legacy compatibility audit skipped because config did not load",
-        )
-    if loaded.source.kind != "legacy_markdown":
-        return WorkspaceHealthCheck(
-            check_id="config.legacy_compat",
-            category="config",
-            status=HealthCheckStatus.PASS,
-            message="native config is active; no legacy compatibility warnings",
-        )
-
-    report = loaded.source.legacy_policy_compatibility
-    if report is None:
-        return WorkspaceHealthCheck(
-            check_id="config.legacy_compat",
-            category="config",
-            status=HealthCheckStatus.WARN,
-            message="legacy config loaded without a compatibility audit report",
-        )
-
-    details: list[str] = []
-    for status in (
-        LegacyPolicyCompatStatus.PARTIALLY_MAPPED,
-        LegacyPolicyCompatStatus.DEPRECATED,
-        LegacyPolicyCompatStatus.UNSUPPORTED,
-    ):
-        keys = [entry.key for entry in report.entries_for_status(status, present_only=True)]
-        if keys:
-            details.append(f"{status.value}: {', '.join(keys)}")
-    if loaded.source.unmapped_keys:
-        details.append(f"unmapped: {', '.join(loaded.source.unmapped_keys)}")
-    if details:
-        return WorkspaceHealthCheck(
-            check_id="config.legacy_compat",
-            category="config",
-            status=HealthCheckStatus.WARN,
-            message="legacy config has compatibility items that still need operator review",
-            details=details,
-        )
-    counts = report.status_counts(present_only=True)
-    return WorkspaceHealthCheck(
-        check_id="config.legacy_compat",
-        category="config",
-        status=HealthCheckStatus.PASS,
-        message=(
-            "legacy config compatibility is clean "
-            f"(mapped={counts['mapped']})"
-        ),
     )
 
 
@@ -736,7 +667,6 @@ def build_workspace_health_report(config_path: Path | str = "millrace.toml") -> 
     )
     bootstrap_checks = [
         config_check,
-        _build_legacy_compat_check(loaded),
         _build_required_directories_check(workspace_root=workspace_root, paths=paths),
         _build_required_files_check(
             config_path=normalized_config_path,

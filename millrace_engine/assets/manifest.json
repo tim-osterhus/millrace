@@ -63,11 +63,6 @@
     },
     {
       "category": "directory",
-      "family": "legacy",
-      "path": "agents/legacy"
-    },
-    {
-      "category": "directory",
       "family": "objective",
       "path": "agents/objective"
     },
@@ -80,11 +75,6 @@
       "category": "directory",
       "family": "options",
       "path": "agents/options/integrate"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/orchestrate"
     },
     {
       "category": "directory",
@@ -287,7 +277,7 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "eec9d3f06ad96bf0285328c6e0ac7fa7071c46d2ce6b916115db5cffb16a2e1f",
+      "sha256": "45c87aa462de5570b346412e0305e5c9a5238a5be5d17d060d7696c94eeb260e",
       "size": 10145,
       "size_bytes": 10145,
       "source": "runtime"
@@ -296,18 +286,18 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "c00b3c577c04d33de67748cb16fe731d4abd9d8f6799697fa90485a416c5df54",
-      "size": 20750,
-      "size_bytes": 20750,
+      "sha256": "22cff737a136b6fe41c690c5e54e55b5986a7b85d5e2aba87574c7f3d658f44c",
+      "size": 20606,
+      "size_bytes": 19433,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "079622ac29e1e535cc264e9abefc556343dce1e51b723698aeafe13645cc1d16",
-      "size": 23515,
-      "size_bytes": 23515,
+      "sha256": "3762f3626f590649509236dde36610cd4d3bcb20f99655de9d183c85e52a0798",
+      "size": 23371,
+      "size_bytes": 22890,
       "source": "runtime"
     },
     {
@@ -403,15 +393,6 @@
     {
       "category": "research_entrypoint",
       "family": "entrypoints",
-      "path": "agents/_customize.md",
-      "sha256": "9c9f145f0a046dc200ac0ac96b4fc8e4c2b4eac40c69c16edf7d3c5a85c29dd5",
-      "size": 13395,
-      "size_bytes": 13395,
-      "source": "reference"
-    },
-    {
-      "category": "research_entrypoint",
-      "family": "entrypoints",
       "path": "agents/_designer.md",
       "sha256": "01a77ab0a1ffab4e1077eac8d45660781f521f5b88ec6bb466a7fa2b4be74aeb",
       "size": 2770,
@@ -497,15 +478,6 @@
       "sha256": "b3e9d7e74e91df005d0269cbea4dc69e1970f0bb36750b1c136d45d14e270ee1",
       "size": 4398,
       "size_bytes": 4398,
-      "source": "reference"
-    },
-    {
-      "category": "research_entrypoint",
-      "family": "entrypoints",
-      "path": "agents/_orchestrate.md",
-      "sha256": "44a45c19c94c595733f260729e5251e7cc50e22142ebae10464e674151c5ff6c",
-      "size": 771,
-      "size_bytes": 771,
       "source": "reference"
     },
     {
@@ -653,15 +625,6 @@
       "source": "reference"
     },
     {
-      "category": "workspace_seed",
-      "family": "workspace",
-      "path": "agents/autonomy_runbook.md",
-      "sha256": "ed6660226fe4aa1d113dab14e9ab7c0ae984df9260daf70b6ee5b4801ed44077",
-      "size": 1815,
-      "size_bytes": 1815,
-      "source": "reference"
-    },
-    {
       "category": "ideas_seed",
       "family": "ideas",
       "path": "agents/ideas/audit/README.md",
@@ -680,33 +643,6 @@
       "source": "reference"
     },
     {
-      "category": "legacy_doc",
-      "family": "legacy",
-      "path": "agents/legacy/README.md",
-      "sha256": "e962141174018cf38c9c42e014c59d77f09b0e8e09da9f90c442e752adbc1e7c",
-      "size": 1386,
-      "size_bytes": 1386,
-      "source": "reference"
-    },
-    {
-      "category": "legacy_entrypoint",
-      "family": "legacy",
-      "path": "agents/legacy/_orchestrate.md",
-      "sha256": "9f0321753af5bc02e78fbc72b7b41ba2ab1ba0dd74f35d62163ec1b33a21cf14",
-      "size": 12646,
-      "size_bytes": 12646,
-      "source": "reference"
-    },
-    {
-      "category": "legacy_entrypoint",
-      "family": "legacy",
-      "path": "agents/legacy/_supervisor.md",
-      "sha256": "77c8aaaf30133e442918f3a3587c6f1df6f2438830311c649e3ac4024fd18924",
-      "size": 10262,
-      "size_bytes": 10262,
-      "source": "reference"
-    },
-    {
       "category": "objective_contract",
       "family": "objective",
       "path": "agents/objective/contract.schema.json",
@@ -722,78 +658,6 @@
       "sha256": "1044e2402612540a13831024f5d40cbb053a39611345f06e72f0c2006e8b04cf",
       "size": 1067,
       "size_bytes": 1067,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/integrate/integrate_option.md",
-      "sha256": "56e6b42c8f65dc4f8b787010d564ae098294913d3eccb71358fe42d95570e851",
-      "size": 4628,
-      "size_bytes": 4628,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/model_config.md",
-      "sha256": "6c3c64440dee6250bcedbd0c6b14f4a21661ff53cc62045fc104ae326ad1ad36",
-      "size": 8914,
-      "size_bytes": 8914,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/orchestrate/orchestrate_options_bash.md",
-      "sha256": "28eea33daf946086648c2d23621598293f8c881afe8f3672dd7d5f51c8931413",
-      "size": 7511,
-      "size_bytes": 7511,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/orchestrate/orchestrate_options_powershell.md",
-      "sha256": "6dc1d85be6f6860a5ef00af71611184747992f3babb7a11a44dc2a8ef730e93e",
-      "size": 7237,
-      "size_bytes": 7237,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/permission/perm_config.md",
-      "sha256": "002725f75cb26231d959aa6079fbe3e0d9fa5f80516111d566f449baadf19f9b",
-      "size": 1648,
-      "size_bytes": 1648,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/troubleshoot/_troubleshoot.md",
-      "sha256": "d1b79535893c9bd2986ebae64dca35f2c683f2b8163d6604aef87fa08485b30e",
-      "size": 9097,
-      "size_bytes": 9097,
-      "source": "reference"
-    },
-    {
-      "category": "option_script",
-      "family": "options",
-      "path": "agents/options/troubleshoot/orchestrate_loop_no_ts.sh",
-      "sha256": "ff27405737ddccdc0c6bb0e8c4f83f17f75956324685fd7c56230826c2ed4c88",
-      "size": 38465,
-      "size_bytes": 38465,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/troubleshoot/troubleshoot_option.md",
-      "sha256": "cdc596ab3e329ddd1f9ce13dd0b9717a38f463448991900f0c713f5748ca681f",
-      "size": 3368,
-      "size_bytes": 3368,
       "source": "reference"
     },
     {
@@ -830,33 +694,6 @@
       "sha256": "d3e8fa9541ab8b0eade684b7359d89f807c32d33a507ca14b7c71fc7393c2dd2",
       "size": 3749,
       "size_bytes": 3749,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/update/update_option.md",
-      "sha256": "c81adf126283dc2c6de293c47f5e386e4f22bf31bb4538b6ee42a888467ba86f",
-      "size": 1181,
-      "size_bytes": 1181,
-      "source": "reference"
-    },
-    {
-      "category": "option_doc",
-      "family": "options",
-      "path": "agents/options/workflow_config.md",
-      "sha256": "a1efc312699b2ba62ceb1b827ffacd102015843dc3cbc426e3a2cb049731abf0",
-      "size": 12552,
-      "size_bytes": 12552,
-      "source": "reference"
-    },
-    {
-      "category": "script",
-      "family": "workspace",
-      "path": "agents/orchestrate_loop.sh",
-      "sha256": "ef9444ea83100f41eed7e04af6372b77ce3a561f56841d247be0dc3d74b543f6",
-      "size": 191898,
-      "size_bytes": 191898,
       "source": "reference"
     },
     {
@@ -1046,24 +883,6 @@
       "sha256": "372f773260d76482d7a7f814a7cc6cc4111732c671a8e096e750aa9721cda053",
       "size": 804,
       "size_bytes": 804,
-      "source": "reference"
-    },
-    {
-      "category": "script",
-      "family": "workspace",
-      "path": "agents/research_loop.sh",
-      "sha256": "f5db6df2dd93982470f13d2ebdd328f59c196a25dda39aa3514274421d0d392d",
-      "size": 406690,
-      "size_bytes": 406690,
-      "source": "reference"
-    },
-    {
-      "category": "workspace_seed",
-      "family": "workspace",
-      "path": "agents/research_troubleshooting.md",
-      "sha256": "4449565276f87e747e6280f5891bd26a17e7d86aeebfddccd422e6613fdd8549",
-      "size": 2965,
-      "size_bytes": 2965,
       "source": "reference"
     },
     {
@@ -1412,9 +1231,9 @@
       "category": "skill_definition",
       "family": "skills",
       "path": "agents/skills/millrace-operator-intake-control/SKILL.md",
-      "sha256": "14ccdbeaf009cd35125d74d1d4d55a73bebda9901844e222c35ac91226ceae02",
+      "sha256": "06b04da94f7a86c8fd0e04b90d0290494e25f6423af40f1804854913a0f84d0c",
       "size": 7462,
-      "size_bytes": 7793,
+      "size_bytes": 7701,
       "source": "runtime"
     },
     {
@@ -1628,36 +1447,27 @@
       "category": "workspace_seed",
       "family": "workspace",
       "path": "agents/status_contract.md",
-      "sha256": "5544213a299c10f31a3660528d72df98178aac2f7064aa56664b6c65cf22baab",
+      "sha256": "63f88141c7e892eae3cad82d2ed6bd74443128bb856a41f2da7ca1d4ff87cf37",
       "size": 6714,
-      "size_bytes": 6714,
-      "source": "reference"
-    },
-    {
-      "category": "manifest",
-      "family": "workspace",
-      "path": "agents/ui_verification_spec.yaml",
-      "sha256": "1b4e4fe828525bdf6252b315799d9775b1f28091cab48931fedce4cb545c5a8d",
-      "size": 627,
-      "size_bytes": 627,
+      "size_bytes": 6670,
       "source": "reference"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "56102652f3c495555c418fca5efa21266e7cc3696a3f8da3117058ea633bf8f6",
-      "size": 56775,
-      "size_bytes": 56775,
+      "sha256": "f4ac152e626de8909888eba1a89c9cf189b9e2a0881e042c1a61e3b77efc2d50",
+      "size": 56404,
+      "size_bytes": 55963,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
-      "sha256": "8cb4c51a97209757efa30173a087d3d0cd0f1a45e6827c7ef86bbbbd8e6356c0",
+      "sha256": "7d6d17127b0b1f6598b812b76518e81cdc6aca83c5ba01f7e498e16a99afadf2",
       "size": 24542,
-      "size_bytes": 24898,
+      "size_bytes": 25447,
       "source": "runtime"
     },
     {

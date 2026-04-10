@@ -79,14 +79,14 @@ Progress:
   - Advisor: `health`, `status --detail --json`, `queue inspect --json`, `research --json`, `logs`
   - Supervisor: `supervisor report --json` first, then supporting read-only inspection only if needed
 - Intake:
-  - idea seed: `millrace --config millrace.toml add-idea /absolute/path/to/idea.md`
-  - local task seed: `millrace --config millrace.toml add-task "..."`
+  - idea seed: `millrace add-idea /absolute/path/to/idea.md`
+  - local task seed: `millrace add-task "..."`
   - external task seed: `millrace --config millrace.toml supervisor add-task "..." --issuer <name> --json`
 - Queue ordering:
-  - local: `millrace --config millrace.toml queue reorder <task-id> <task-id> ...`
+  - local: `millrace queue reorder <task-id> <task-id> ...`
   - external: `millrace --config millrace.toml supervisor queue-reorder <task-id> <task-id> ... --issuer <name> --json`
 - Cleanup:
-  - local: `millrace --config millrace.toml queue cleanup remove|quarantine <task-id> --reason "..."`
+  - local: `millrace queue cleanup remove|quarantine <task-id> --reason "..."`
   - external: `millrace --config millrace.toml supervisor cleanup remove|quarantine <task-id> --issuer <name> --reason "..." --json`
 - Lifecycle:
   - local: `start`, `pause`, `resume`, `stop`
