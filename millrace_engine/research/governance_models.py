@@ -385,6 +385,8 @@ class GoalSpecDeliveryIntegrityReport(ContractModel):
     emitted_spec_ids: tuple[str, ...] = ()
     pending_shard_count: int = Field(default=0, ge=0)
     merged_backlog_handoff: bool = False
+    taskaudit_record_path: str = ""
+    taskaudit_record_status: str = ""
     queue_item_path: str = ""
     queue_path: str = ""
     queue_goal_id: str = ""
@@ -403,6 +405,8 @@ class GoalSpecDeliveryIntegrityReport(ContractModel):
         "reason",
         "goal_id",
         "active_spec_id",
+        "taskaudit_record_path",
+        "taskaudit_record_status",
         "queue_item_path",
         "queue_path",
         "queue_goal_id",
@@ -442,6 +446,8 @@ class GoalSpecDeliveryIntegrityState(ContractModel):
     emitted_spec_ids: tuple[str, ...] = ()
     pending_shard_count: int = Field(default=0, ge=0)
     merged_backlog_handoff: bool = False
+    taskaudit_record_path: str = ""
+    taskaudit_record_status: str = ""
     violation_codes: tuple[str, ...] = ()
 
     @field_validator("updated_at", mode="before")
@@ -449,7 +455,14 @@ class GoalSpecDeliveryIntegrityState(ContractModel):
     def normalize_updated_at(cls, value: datetime | str | None) -> datetime | None:
         return _normalize_datetime_or_none(value)
 
-    @field_validator("reason", "goal_id", "active_spec_id", mode="before")
+    @field_validator(
+        "reason",
+        "goal_id",
+        "active_spec_id",
+        "taskaudit_record_path",
+        "taskaudit_record_status",
+        mode="before",
+    )
     @classmethod
     def normalize_text_fields(cls, value: str | Path | None, info: object) -> str:
         field_name = getattr(info, "field_name", "value")

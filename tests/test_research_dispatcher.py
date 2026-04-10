@@ -35,6 +35,7 @@ from millrace_engine.research import (
     TaskauditExecutionError,
     execute_taskaudit,
 )
+from millrace_engine.research.goalspec_delivery_integrity import sync_goalspec_delivery_integrity
 from millrace_engine.research.dispatcher import (
     compile_research_dispatch,
     resolve_research_dispatch_selection,
@@ -2318,6 +2319,197 @@ def test_research_plane_treats_same_family_earlier_stage_queue_with_pending_shar
     assert integrity_report["pending_shard_count"] == 1
     assert integrity_report["goal_id"] == "IDEA-601A"
     assert integrity_report["queue_item_path"] == "agents/ideas/raw/goal-recycled.md"
+    plane.shutdown()
+
+
+def test_research_plane_suppresses_same_family_earlier_stage_redispatch_when_taskaudit_finalization_is_prepared(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-prepared-handoff-601b",
+        emitted_at=_dt("2026-04-08T19:30:00Z"),
+        title="Team Workspace Vertical Slice",
+        body=(
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
+            "## Capability Domains\n"
+            "- Collaborative planning workflow\n"
+            "- Team-ready workspace ergonomics\n"
+        ),
+        decomposition_profile="simple",
+        idea_id="IDEA-601B",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-prepared-handoff-601b",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-prepared-handoff-601b",
+            emitted_at=_dt("2026-04-08T19:30:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-prepared-handoff-601b",
+        emitted_at=_dt("2026-04-08T19:30:00Z"),
+    )
+    prepared = execute_taskaudit(
+        paths,
+        run_id="goalspec-prepared-handoff-601b",
+        emitted_at=_dt("2026-04-08T19:35:00Z"),
+        defer_merge=True,
+    )
+    assert prepared.status == "prepared"
+
+    recycled_raw_path = workspace / "agents" / "ideas" / "raw" / "goal-recycled.md"
+    _write_queue_file(
+        recycled_raw_path,
+        (
+            "---\n"
+            "idea_id: IDEA-601B\n"
+            "title: Team Workspace Vertical Slice\n"
+            "decomposition_profile: simple\n"
+            "---\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Rediscovered raw goal while prepared Taskaudit finalization is still in flight.\n"
+        ),
+    )
+
+    report = sync_goalspec_delivery_integrity(
+        paths=paths,
+        queue_discovery=discover_research_queues(paths),
+        entry_node_id="goal_intake",
+        observed_at=_dt("2026-04-08T19:36:00Z"),
+    )
+    assert report.status == "healthy"
+    assert report.reason == "goalspec-family-taskaudit-finalization-prepared"
+    assert report.taskaudit_record_status == "prepared"
+    assert (
+        report.taskaudit_record_path
+        == "agents/.research_runtime/goalspec/taskaudit/goalspec-prepared-handoff-601b.json"
+    )
+    assert report.pending_shard_count == 1
+    assert not report.merged_backlog_handoff
+
+    plane = ResearchPlane(config, paths)
+    dispatch = plane.dispatch_ready_work(resolve_assets=False)
+
+    assert dispatch is None
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    integrity_report = json.loads(
+        (workspace / "agents" / ".tmp" / "goalspec_delivery_integrity_report.json").read_text(encoding="utf-8")
+    )
+    assert integrity_report["status"] == "healthy"
+    assert integrity_report["reason"] == "goalspec-family-taskaudit-finalization-prepared"
+    assert integrity_report["taskaudit_record_status"] == "prepared"
+    plane.shutdown()
+
+
+def test_research_plane_blocks_when_latest_taskaudit_finalization_record_is_promotion_blocked(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-blocked-handoff-601c",
+        emitted_at=_dt("2026-04-08T19:40:00Z"),
+        title="Team Workspace Vertical Slice",
+        body=(
+            "Build a durable workspace delivery handoff that survives interrupted promotion across restarts.\n\n"
+            "## Capability Domains\n"
+            "- Delivery handoff state\n"
+            "- Restart-safe workspace progression\n"
+        ),
+        decomposition_profile="simple",
+        idea_id="IDEA-601C",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-blocked-handoff-601c",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-blocked-handoff-601c",
+            emitted_at=_dt("2026-04-08T19:40:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-blocked-handoff-601c",
+        emitted_at=_dt("2026-04-08T19:40:00Z"),
+    )
+    prepared = execute_taskaudit(
+        paths,
+        run_id="goalspec-blocked-handoff-601c",
+        emitted_at=_dt("2026-04-08T19:45:00Z"),
+        defer_merge=True,
+    )
+    assert prepared.status == "prepared"
+    paths.taskspending_file.write_text(
+        paths.taskspending_file.read_text(encoding="utf-8") + "\n<!-- drift -->\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(TaskauditExecutionError, match="Taskaudit prepared pending family changed before final merge"):
+        execute_taskaudit(
+            paths,
+            run_id="goalspec-blocked-handoff-601c",
+            emitted_at=_dt("2026-04-08T19:50:00Z"),
+            defer_merge=True,
+        )
+
+    recycled_raw_path = workspace / "agents" / "ideas" / "raw" / "goal-recycled.md"
+    _write_queue_file(
+        recycled_raw_path,
+        (
+            "---\n"
+            "idea_id: IDEA-601C\n"
+            "title: Team Workspace Vertical Slice\n"
+            "decomposition_profile: simple\n"
+            "---\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Rediscovered raw goal after Taskaudit promotion finalization had already blocked.\n"
+        ),
+    )
+
+    plane = ResearchPlane(config, paths)
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="promotion finalization is blocked",
+    ):
+        plane.dispatch_ready_work(resolve_assets=False)
+
+    integrity_report = json.loads(
+        (workspace / "agents" / ".tmp" / "goalspec_delivery_integrity_report.json").read_text(encoding="utf-8")
+    )
+    assert integrity_report["status"] == "failed"
+    assert integrity_report["reason"] == "goalspec-family-promotion-finalization-blocked"
+    assert integrity_report["taskaudit_record_status"] == "promotion_blocked"
+    assert (
+        integrity_report["taskaudit_record_path"]
+        == "agents/.research_runtime/goalspec/taskaudit/goalspec-blocked-handoff-601c.json"
+    )
     plane.shutdown()
 
 

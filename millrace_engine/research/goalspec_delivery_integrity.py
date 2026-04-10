@@ -73,22 +73,22 @@ def _goalspec_first_item(queue_discovery: ResearchQueueDiscovery):
         return None
 
 
-def _matching_merged_taskaudit_record_path(paths: RuntimePaths) -> Path | None:
+def _matching_taskaudit_record(paths: RuntimePaths) -> tuple[Path, TaskauditRecord] | None:
     taskaudit_dir = paths.goalspec_runtime_dir / "taskaudit"
     if not taskaudit_dir.exists():
         return None
     family_state_path = _relative_path(paths.goal_spec_family_state_file, relative_to=paths.root)
-    matches: list[Path] = []
+    matches: list[tuple[Path, TaskauditRecord]] = []
     for record_path in taskaudit_dir.glob("*.json"):
         try:
             record = TaskauditRecord.model_validate_json(record_path.read_text(encoding="utf-8"))
         except (ValidationError, ValueError):
             continue
-        if record.status == "merged" and record.family_state_path == family_state_path:
-            matches.append(record_path)
+        if record.family_state_path == family_state_path:
+            matches.append((record_path, record))
     if not matches:
         return None
-    matches.sort(key=lambda path: path.stat().st_mtime_ns)
+    matches.sort(key=lambda match: match[0].stat().st_mtime_ns)
     return matches[-1]
 
 
@@ -138,7 +138,9 @@ def evaluate_goalspec_delivery_integrity(
         shard_path = _resolve_path_token(spec_state.pending_shard_path, relative_to=paths.root)
         if shard_path.exists():
             pending_shard_count += 1
-    taskaudit_record_path = _matching_merged_taskaudit_record_path(paths)
+    taskaudit_record = _matching_taskaudit_record(paths)
+    taskaudit_record_path = None if taskaudit_record is None else taskaudit_record[0]
+    taskaudit_record_status = "" if taskaudit_record is None else taskaudit_record[1].status
     queue_goal_id = _queue_item_goal_id(None if first_item is None else first_item.item_path)
     queue_item_path = ""
     queue_path = ""
@@ -150,7 +152,11 @@ def evaluate_goalspec_delivery_integrity(
     report = report.model_copy(
         update={
             "pending_shard_count": pending_shard_count,
-            "merged_backlog_handoff": taskaudit_record_path is not None,
+            "merged_backlog_handoff": taskaudit_record_status == "merged",
+            "taskaudit_record_path": (
+                "" if taskaudit_record_path is None else _relative_path(taskaudit_record_path, relative_to=paths.root)
+            ),
+            "taskaudit_record_status": taskaudit_record_status,
             "queue_item_path": queue_item_path,
             "queue_path": queue_path,
             "queue_goal_id": queue_goal_id,
@@ -163,6 +169,21 @@ def evaluate_goalspec_delivery_integrity(
         and _normalized_token(queue_goal_id) != ""
         and _normalized_token(queue_goal_id) == _normalized_token(family_state.goal_id)
     )
+    if taskaudit_record_status == "promotion_blocked":
+        return report.model_copy(
+            update={
+                "status": "failed",
+                "reason": "goalspec-family-promotion-finalization-blocked",
+                "violation_codes": ("taskaudit-promotion-blocked",),
+            }
+        )
+    if taskaudit_record_status == "prepared":
+        return report.model_copy(
+            update={
+                "status": "healthy",
+                "reason": "goalspec-family-taskaudit-finalization-prepared",
+            }
+        )
     if pending_shard_count > 0:
         return report.model_copy(
             update={
@@ -178,7 +199,7 @@ def evaluate_goalspec_delivery_integrity(
                 "violation_codes": ("same-family-earlier-stage-recycling",),
             }
         )
-    if taskaudit_record_path is not None:
+    if taskaudit_record_status == "merged":
         return report.model_copy(
             update={
                 "status": "healthy",
@@ -229,6 +250,8 @@ def sync_goalspec_delivery_integrity(
         emitted_spec_ids=report.emitted_spec_ids,
         pending_shard_count=report.pending_shard_count,
         merged_backlog_handoff=report.merged_backlog_handoff,
+        taskaudit_record_path=report.taskaudit_record_path,
+        taskaudit_record_status=report.taskaudit_record_status,
         violation_codes=report.violation_codes,
     )
     state_path = _delivery_integrity_state_path(paths)
@@ -265,6 +288,12 @@ def delivery_integrity_error_message(report: GoalSpecDeliveryIntegrityReport) ->
         return (
             f"GoalSpec delivery integrity failed for {goal_label}: emitted specs have no active GoalSpec queue item, "
             f"pending shard, or merged Taskaudit backlog handoff; diagnostic: {report.report_path}"
+        )
+    if report.reason == "goalspec-family-promotion-finalization-blocked":
+        record_label = report.taskaudit_record_path or "the latest Taskaudit record"
+        return (
+            f"GoalSpec delivery integrity failed for {goal_label}: promotion finalization is blocked; "
+            f"inspect {record_label}; diagnostic: {report.report_path}"
         )
     return f"GoalSpec delivery integrity failed for {goal_label}: {report.reason}; diagnostic: {report.report_path}"
 

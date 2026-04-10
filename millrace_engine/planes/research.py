@@ -230,6 +230,7 @@ _GOALSPEC_COMPLETION_MANIFEST_NODE_ID = "completion_manifest_draft"
 _GOALSPEC_COMPLETION_MANIFEST_KIND_ID = "research.completion-manifest-draft"
 _GOALSPEC_TASKAUDIT_NODE_ID = "taskaudit"
 _GOALSPEC_TASKAUDIT_KIND_ID = "research.taskaudit"
+_GOALSPEC_EARLIER_STAGE_ENTRY_NODE_IDS = frozenset({"goal_intake", "objective_profile_sync"})
 
 
 @dataclass(frozen=True)
@@ -596,6 +597,19 @@ class ResearchPlane:
             error = GoalSpecExecutionError(delivery_integrity_error_message(delivery_integrity))
             self._record_dispatch_failure(error, discovery=discovery, failed_at=started_at)
             raise error
+        if (
+            selection.runtime_mode is ResearchRuntimeMode.GOALSPEC
+            and selection.entry_node_id in _GOALSPEC_EARLIER_STAGE_ENTRY_NODE_IDS
+            and delivery_integrity.reason == "goalspec-family-taskaudit-finalization-prepared"
+            and delivery_integrity.goal_id
+            and delivery_integrity.goal_id == delivery_integrity.queue_goal_id
+        ):
+            self._record_no_dispatchable_work(
+                discovery=discovery,
+                observed_at=started_at,
+                reason="goalspec-delivery-finalization-in-flight",
+            )
+            return None
 
         self._emit(
             EventType.RESEARCH_MODE_SELECTED,
