@@ -774,6 +774,7 @@ class ArchitectureMaterializer:
             runner=resolved_values.get("runner"),
             model=resolved_values.get("model"),
             effort=resolved_values.get("effort"),
+            permission_profile=resolved_values.get("permission_profile"),
             allow_search=resolved_values.get("allow_search"),
             prompt_asset_ref=prompt_asset_ref,
             timeout_seconds=resolved_values.get("timeout_seconds"),
@@ -895,7 +896,15 @@ class ArchitectureMaterializer:
         path_prefix: str,
     ) -> None:
         payload = overrides.model_dump(mode="python", exclude_none=True)
-        for field_name in ("runner", "model", "effort", "allow_search", "prompt_asset_ref", "timeout_seconds"):
+        for field_name in (
+            "runner",
+            "model",
+            "effort",
+            "permission_profile",
+            "allow_search",
+            "prompt_asset_ref",
+            "timeout_seconds",
+        ):
             if field_name not in payload:
                 continue
             value = payload[field_name]

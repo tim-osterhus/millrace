@@ -12,7 +12,14 @@ from pathlib import Path
 from shutil import which
 from typing import Sequence
 
-from .contracts import CodexUsageSummary, RunnerKind, RunnerResult, StageContext, StageType
+from .contracts import (
+    CodexUsageSummary,
+    HeadlessPermissionProfile,
+    RunnerKind,
+    RunnerResult,
+    StageContext,
+    StageType,
+)
 from .diagnostics import allocate_run_directory, build_stage_artifact_paths
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
@@ -145,6 +152,7 @@ class BaseRunner:
                 "MILLRACE_STDOUT_PATH": str(stdout_path),
                 "MILLRACE_STDERR_PATH": str(stderr_path),
                 "MILLRACE_LAST_RESPONSE_PATH": str(last_response_path),
+                "MILLRACE_PERMISSION_PROFILE": context.permission_profile.value,
                 "MILLRACE_ALLOW_SEARCH": "1" if context.allow_search else "0",
                 "MILLRACE_ALLOW_NETWORK": "1" if context.allow_network else "0",
                 "MILLRACE_REASONING_EFFORT": context.effort.value if context.effort else "",
@@ -315,9 +323,14 @@ class CodexRunner(BaseRunner):
                 "--skip-git-repo-check",
                 "--model",
                 context.model,
-                "--full-auto",
             ]
         )
+        if context.permission_profile is HeadlessPermissionProfile.MAXIMUM:
+            command.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            command.append("--full-auto")
+            if context.permission_profile is HeadlessPermissionProfile.ELEVATED:
+                command.extend(["--sandbox", "danger-full-access"])
         if context.effort is not None:
             command.extend(["-c", f'model_reasoning_effort="{context.effort.value}"'])
         command.extend(["-o", str(last_response_path), context.prompt])

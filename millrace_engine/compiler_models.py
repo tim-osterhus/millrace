@@ -14,10 +14,12 @@ from .config import ConfigApplyBoundary
 from .contracts import (
     ContractModel,
     ControlPlane,
+    HeadlessPermissionProfile,
     LoopEdgeKind,
     LoopTerminalClass,
     LoopTerminalState,
     ModePolicyToggles,
+    OptionalPermissionProfileModel,
     OutlinePolicy,
     ReasoningEffort,
     RegistryObjectRef,
@@ -204,7 +206,7 @@ class FrozenTransition(ContractModel):
         return normalized
 
 
-class FrozenStagePlan(ContractModel):
+class FrozenStagePlan(OptionalPermissionProfileModel):
     plane: ControlPlane
     node_id: str
     kind_id: str
@@ -214,6 +216,7 @@ class FrozenStagePlan(ContractModel):
     runner: RunnerKind | None = None
     model: str | None = None
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile | None = None
     allow_search: bool | None = None
     prompt_asset_ref: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)

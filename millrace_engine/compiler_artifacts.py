@@ -67,6 +67,9 @@ def current_rebinding_value(
         StageOverrideField.RUNNER: binding.runner.value if binding.runner is not None else None,
         StageOverrideField.MODEL: binding.model,
         StageOverrideField.EFFORT: binding.effort.value if binding.effort is not None else None,
+        StageOverrideField.PERMISSION_PROFILE: (
+            binding.permission_profile.value if binding.permission_profile is not None else None
+        ),
         StageOverrideField.ALLOW_SEARCH: binding.allow_search,
         StageOverrideField.PROMPT_ASSET_REF: binding.prompt_asset_ref,
         StageOverrideField.TIMEOUT_SECONDS: binding.timeout_seconds,

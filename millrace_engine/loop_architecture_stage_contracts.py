@@ -9,6 +9,8 @@ from pydantic import Field, field_validator, model_validator
 
 from .contract_core import (
     ContractModel,
+    HeadlessPermissionProfile,
+    OptionalPermissionProfileModel,
     ReasoningEffort,
     RunnerKind,
     _normalize_path,
@@ -97,11 +99,12 @@ class StageRetryPolicy(ContractModel):
         return _normalize_routing_token(value, field_label="retry exhausted outcome")
 
 
-class LoopStageNodeOverrides(ContractModel):
+class LoopStageNodeOverrides(OptionalPermissionProfileModel):
     model_profile_ref: RegistryObjectRef | None = None
     runner: RunnerKind | None = None
     model: str | None = None
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile | None = None
     allow_search: bool | None = None
     prompt_asset_ref: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
@@ -133,6 +136,7 @@ class LoopStageNodeOverrides(ContractModel):
             "runner": StageOverrideField.RUNNER,
             "model": StageOverrideField.MODEL,
             "effort": StageOverrideField.EFFORT,
+            "permission_profile": StageOverrideField.PERMISSION_PROFILE,
             "allow_search": StageOverrideField.ALLOW_SEARCH,
             "prompt_asset_ref": StageOverrideField.PROMPT_ASSET_REF,
             "timeout_seconds": StageOverrideField.TIMEOUT_SECONDS,

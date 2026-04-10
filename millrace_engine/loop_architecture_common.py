@@ -197,6 +197,7 @@ class StageOverrideField(str, Enum):
     RUNNER = "runner"
     MODEL = "model"
     EFFORT = "effort"
+    PERMISSION_PROFILE = "permission_profile"
     ALLOW_SEARCH = "allow_search"
     PROMPT_ASSET_REF = "prompt_asset_ref"
     TIMEOUT_SECONDS = "timeout_seconds"

@@ -133,6 +133,9 @@ class RuntimeOverviewView:
     updated_at: datetime
     selection: SelectionSummaryView
     selection_decision: SelectionDecisionView
+    liveness_authority: str = "snapshot_absent"
+    liveness_degraded: bool = False
+    liveness_summary: str | None = None
 
 
 class LifecycleState(StrEnum):

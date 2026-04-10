@@ -8,6 +8,7 @@ from typing import Any
 import typer
 
 from .config_compat import LegacyPolicyCompatReport, LegacyPolicyCompatStatus
+from .contracts import ExecutionStatus
 from .control import (
     AssetInventoryView,
     CompoundingContextFactListReport,
@@ -80,6 +81,7 @@ def _stage_binding_line(binding: StageExecutionBindingView) -> str:
         f"stage_layer={stage_layer} stage_source={stage_source} model_profile={model_profile} "
         f"runner={binding.runner.value if binding.runner is not None else 'n/a'} model={binding.model or 'n/a'} "
         f"effort={binding.effort.value if binding.effort is not None else 'n/a'} "
+        f"permission_profile={binding.permission_profile.value if binding.permission_profile is not None else 'n/a'} "
         f"allow_search={_bool_label(binding.allow_search)} timeout={binding.timeout_seconds or 'n/a'} "
         f"prompt={prompt_ref} prompt_source={prompt_source}"
     )
@@ -449,6 +451,8 @@ def render_status(report: StatusReport, *, json_mode: bool) -> None:
     runtime = report.runtime
     lines = [
         f"Process: {'running' if runtime.process_running else 'stopped'}",
+        f"Liveness authority: {report.liveness.authority}",
+        f"Liveness summary: {report.liveness.summary}",
         f"Paused: {'yes' if runtime.paused else 'no'}",
         f"Execution status: {runtime.execution_status.value}",
         f"Research status: {runtime.research_status.value}",
@@ -492,6 +496,8 @@ def render_status(report: StatusReport, *, json_mode: bool) -> None:
             "Execution status detail: IDLE is the execution plane's neutral state "
             "(no execution stage active); it does not mean the daemon is stopped."
         )
+    if report.liveness.degraded:
+        lines.append("Liveness degraded: yes")
     if report.config_source.legacy_policy_compatibility is not None:
         lines.append(_legacy_policy_summary_line(report.config_source.legacy_policy_compatibility))
     if report.config_source.unmapped_keys:
@@ -540,6 +546,8 @@ def render_supervisor_report(report: SupervisorReport, *, json_mode: bool) -> No
         f"Bootstrap ready: {'yes' if report.bootstrap_ready else 'no'}",
         f"Execution ready: {'yes' if report.execution_ready else 'no'}",
         f"Process: {'running' if report.process_running else 'stopped'}",
+        f"Liveness authority: {report.liveness.authority}",
+        f"Liveness summary: {report.liveness.summary}",
         f"Paused: {'yes' if report.paused else 'no'}",
         f"Execution status: {report.execution_status.value}",
         f"Research status: {report.research_status.value}",
@@ -579,6 +587,8 @@ def render_supervisor_report(report: SupervisorReport, *, json_mode: bool) -> No
             "Execution status detail: IDLE is the execution plane's neutral state "
             "(no execution stage active); it does not mean the daemon is stopped."
         )
+    if report.liveness.degraded:
+        lines.append("Liveness degraded: yes")
     if report.recent_events:
         lines.append("Recent events:")
         lines.extend(f"- {render_event_record_line(event)}" for event in report.recent_events)

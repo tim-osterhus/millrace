@@ -12,11 +12,13 @@ from .assets.resolver import AssetSourceKind
 from .contracts import (
     ContractModel,
     ControlPlane,
+    HeadlessPermissionProfile,
     LoopConfigDefinition,
     LoopStageNodeOverrides,
     ModeDefinition,
     ModelProfileDefinition,
     ModePolicyToggles,
+    OptionalPermissionProfileModel,
     OutlinePolicy,
     PersistedObjectKind,
     ReasoningEffort,
@@ -177,7 +179,7 @@ class MaterializedAssetBinding(ContractModel):
         return normalized
 
 
-class MaterializedStageBinding(ContractModel):
+class MaterializedStageBinding(OptionalPermissionProfileModel):
     plane: ControlPlane
     node_id: str
     kind_id: str
@@ -187,6 +189,7 @@ class MaterializedStageBinding(ContractModel):
     runner: RunnerKind | None = None
     model: str | None = None
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile | None = None
     allow_search: bool | None = None
     prompt_asset_ref: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)

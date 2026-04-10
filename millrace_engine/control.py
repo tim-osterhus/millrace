@@ -331,7 +331,7 @@ from .control_runtime_surface import (
 from .control_runtime_surface import (
     supervisor_report as supervisor_report_surface,
 )
-from .engine_runtime import start_engine
+from .engine_runtime import reconcile_runtime_snapshot, start_engine
 from .events import EventRecord, EventType, is_research_event_type
 from .health import WorkspaceHealthReport, build_workspace_health_report
 from .paths import RuntimePaths
@@ -539,7 +539,7 @@ class EngineControl:
     def is_daemon_running(self) -> bool:
         """Return True when the persisted runtime snapshot says the daemon is active."""
 
-        state = read_runtime_state(self.state_path)
+        state, _liveness = reconcile_runtime_snapshot(read_runtime_state(self.state_path))
         return bool(state is not None and state.process_running)
 
     def start(self, *, daemon: bool = False, once: bool = False) -> RuntimeState:

@@ -240,6 +240,9 @@ def runtime_overview_view(status: object) -> RuntimeOverviewView:
         updated_at=getattr(runtime, "updated_at"),
         selection=selection_summary_view(getattr(status, "selection")),
         selection_decision=selection_decision_view(getattr(status, "selection_explanation")),
+        liveness_authority=str(getattr(getattr(status, "liveness"), "authority")),
+        liveness_degraded=bool(getattr(getattr(status, "liveness"), "degraded")),
+        liveness_summary=str(getattr(getattr(status, "liveness"), "summary")),
     )
 
 

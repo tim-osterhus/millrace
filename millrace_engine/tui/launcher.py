@@ -12,7 +12,7 @@ from typing import BinaryIO
 
 from ..config import build_runtime_paths, load_engine_config
 from ..control_reports import read_runtime_state
-from ..engine_runtime import start_collision_message_for_state_path
+from ..engine_runtime import reconcile_runtime_snapshot, start_collision_message_for_state_path
 from .models import (
     ActionResultView,
     FailureCategory,
@@ -95,7 +95,7 @@ def _load_observation_paths(config_path: Path) -> LauncherObservationPaths:
 
 def _daemon_running(state_path: Path) -> bool:
     try:
-        state = read_runtime_state(state_path)
+        state, _liveness = reconcile_runtime_snapshot(read_runtime_state(state_path))
     except Exception:  # noqa: BLE001 - state may be missing or mid-write during startup
         return False
     return bool(state is not None and state.process_running)

@@ -9,7 +9,9 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from .config import ComplexityRouteSelection
 from .contracts import (
     ContractModel,
+    HeadlessPermissionProfile,
     ModePolicyToggles,
+    OptionalPermissionProfileModel,
     OutlinePolicy,
     ReasoningEffort,
     RegistryObjectRef,
@@ -58,7 +60,7 @@ class RegistryObjectSelectionView(ContractModel):
         return tuple(normalized)
 
 
-class StageExecutionBindingView(ContractModel):
+class StageExecutionBindingView(OptionalPermissionProfileModel):
     """Actual execution parameters and resolved references for one stage node."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -71,6 +73,7 @@ class StageExecutionBindingView(ContractModel):
     runner: RunnerKind | None = None
     model: str | None = None
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile | None = None
     allow_search: bool | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
     prompt_asset_ref: str | None = None

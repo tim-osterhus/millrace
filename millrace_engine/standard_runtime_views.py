@@ -121,6 +121,7 @@ def runtime_selection_view_from_plan(
                     runner=stage.runner,
                     model=stage.model,
                     effort=stage.effort,
+                    permission_profile=stage.permission_profile,
                     allow_search=stage.allow_search,
                     timeout_seconds=stage.timeout_seconds,
                     prompt_asset_ref=stage.prompt_asset_ref,

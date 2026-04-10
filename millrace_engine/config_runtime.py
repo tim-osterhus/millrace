@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .contract_core import ReasoningEffort, RunnerKind, StageType
+from .contract_core import HeadlessPermissionProfile, ReasoningEffort, RunnerKind, StageType
 
 
 class MillraceRuntimeConfigModel(BaseModel):
@@ -31,6 +31,7 @@ class StageConfig(MillraceRuntimeConfigModel):
     runner: RunnerKind = RunnerKind.CODEX
     model: str = "gpt-5.3-codex"
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile = HeadlessPermissionProfile.NORMAL
     timeout_seconds: int = Field(default=3600, ge=1)
     prompt_file: Path | None = None
     allow_search: bool = False

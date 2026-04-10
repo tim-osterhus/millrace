@@ -4202,6 +4202,7 @@ def test_cli_compounding_procedure_deprecate_queues_mailbox_when_daemon_running(
     paths.runtime_dir.mkdir(parents=True, exist_ok=True)
     runtime_state = RuntimeState(
         process_running=True,
+        process_id=os.getpid(),
         paused=False,
         execution_status=ExecutionStatus.BUILDER_RUNNING,
         research_status=ResearchStatus.IDLE,
@@ -5612,6 +5613,78 @@ def test_engine_control_supervisor_report_contract_for_idle_workspace(tmp_path: 
     assert report.time_in_current_status_seconds >= 0
     assert [action.value for action in report.allowed_actions] == ["add_task"]
     assert report.recent_events[-1].type is EventType.RESEARCH_IDLE
+
+
+def test_cli_status_and_supervisor_report_surface_degraded_liveness_for_unverifiable_snapshot(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    runtime_state = RuntimeState(
+        process_running=True,
+        process_id=None,
+        paused=False,
+        execution_status=ExecutionStatus.IDLE,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-10T18:30:00Z",
+        started_at="2026-04-10T18:00:00Z",
+        mode="daemon",
+    )
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    status_payload = invoke_cli_report_json(config_path, "status")
+    status_text = invoke_cli_report_text(config_path, "status")
+    stop_result = RUNNER.invoke(app, ["--config", str(config_path), "stop", "--json"])
+    report = EngineControl(config_path).supervisor_report()
+
+    assert status_payload["runtime"]["process_running"] is False
+    assert status_payload["liveness"]["authority"] == "degraded_snapshot"
+    assert status_payload["liveness"]["degraded"] is True
+    assert "no PID" in status_payload["liveness"]["summary"]
+    assert "Liveness authority: degraded_snapshot" in status_text
+    assert "Liveness degraded: yes" in status_text
+
+    assert stop_result.exit_code == 0, stop_result.output
+    stop_payload = json.loads(stop_result.stdout)
+    assert stop_payload["mode"] == "direct"
+    assert stop_payload["applied"] is False
+    assert stop_payload["message"] == "engine is not running"
+    assert sorted(paths.commands_incoming_dir.glob("*.json")) == []
+
+    assert report.process_running is False
+    assert report.liveness.authority == "degraded_snapshot"
+    assert report.liveness.degraded is True
+    assert report.attention_reason.value == "degraded_state"
+    assert "no PID" in report.attention_summary
+
+
+def test_cli_status_confirms_live_pid_probe_for_running_snapshot(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    runtime_state = RuntimeState(
+        process_running=True,
+        process_id=os.getpid(),
+        paused=False,
+        execution_status=ExecutionStatus.IDLE,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-10T18:30:00Z",
+        started_at="2026-04-10T18:00:00Z",
+        mode="daemon",
+    )
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    status_payload = invoke_cli_report_json(config_path, "status")
+
+    assert status_payload["runtime"]["process_running"] is True
+    assert status_payload["runtime"]["process_id"] == os.getpid()
+    assert status_payload["liveness"]["authority"] == "live_probe"
+    assert status_payload["liveness"]["degraded"] is False
 
 
 def test_engine_control_supervisor_report_flags_blocked_research(tmp_path: Path) -> None:

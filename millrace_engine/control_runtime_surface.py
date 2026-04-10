@@ -44,6 +44,7 @@ from .control_reports import (
     size_status_view,
     snapshot_selection_explanation,
 )
+from .engine_runtime import reconcile_runtime_snapshot
 from .events import EventRecord, EventType, is_research_event_type
 from .health import WorkspaceHealthReport
 from .paths import RuntimePaths
@@ -146,6 +147,8 @@ def _attention_reason_for(
         )
     if research.status is ResearchStatus.AUDIT_FAIL:
         return SupervisorAttentionReason.AUDIT_FAILED, "Research reported AUDIT_FAIL."
+    if status.liveness.degraded:
+        return SupervisorAttentionReason.DEGRADED_STATE, status.liveness.summary
     if runtime.execution_status is ExecutionStatus.BLOCKED:
         return SupervisorAttentionReason.BLOCKED_EXECUTION, "Execution status is BLOCKED."
     if research.status is ResearchStatus.BLOCKED:
@@ -169,11 +172,13 @@ def status(control, *, detail: bool = False) -> StatusReport:
     active_task = TaskQueue(control.paths).active_task()
     size = size_status_view(control.loaded, task=active_task)
     snapshot = read_control_runtime_state(control.state_path)
+    runtime, liveness = reconcile_runtime_snapshot(snapshot)
     if snapshot is None:
         try:
             runtime = build_live_runtime_state(
                 control.loaded,
                 process_running=False,
+                process_id=None,
                 paused=False,
                 pause_reason=None,
                 pause_run_id=None,
@@ -184,8 +189,8 @@ def status(control, *, detail: bool = False) -> StatusReport:
             raise ControlError(f"runtime state could not be read: {expected_error_message(exc)}") from exc
         source_kind = "live"
     else:
-        runtime = snapshot
         source_kind = "snapshot"
+    assert runtime is not None
     selection = selection_preview_for(
         control.loaded,
         size=size,
@@ -195,6 +200,7 @@ def status(control, *, detail: bool = False) -> StatusReport:
     return StatusReport.model_validate(
         {
             "runtime": runtime,
+            "liveness": liveness,
             "source_kind": source_kind,
             "config_path": control.config_path,
             "config_source_kind": control.loaded.source.kind,
@@ -265,6 +271,7 @@ def supervisor_report(control, *, recent_event_limit: int = 10) -> SupervisorRep
         bootstrap_ready=health.bootstrap_ready,
         execution_ready=health.execution_ready,
         process_running=status_report.runtime.process_running,
+        liveness=status_report.liveness,
         paused=status_report.runtime.paused,
         execution_status=status_report.runtime.execution_status,
         research_status=research.status,

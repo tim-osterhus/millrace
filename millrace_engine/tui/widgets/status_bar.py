@@ -178,6 +178,8 @@ class StatusBar(Static):
                 if queue is not None and queue.active_task is not None
                 else _runtime_label(runtime.active_task_id)
             )
+            if runtime.liveness_degraded:
+                daemon_label = f"{daemon_label}*"
         active_fragment = _clip_fragment(active_label, limit=12)
         health_fragment = _operator_health_fragment(health_report)
         tail_fragment = _operator_refresh_fragment(refreshed_at=last_refreshed_at, failure=refresh_failure)
@@ -228,6 +230,8 @@ class StatusBar(Static):
                 else _runtime_label(runtime.active_task_id)
             )
             source_label = runtime.source_kind
+            if runtime.liveness_degraded:
+                source_label = f"{source_label} | liveness degraded"
 
         health_fragment = "health pending"
         if health_report is not None:

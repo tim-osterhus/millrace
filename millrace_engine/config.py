@@ -25,6 +25,7 @@ from .config_runtime import (
 )
 from .contracts import (
     ContractModel,
+    HeadlessPermissionProfile,
     PersistedObjectKind,
     ReasoningEffort,
     RegistryObjectRef,
@@ -118,6 +119,17 @@ def _coerce_size_metric_mode(value: str | None) -> Literal["repo", "task", "hybr
     if lowered in {"repo", "task", "hybrid"}:
         return lowered
     return "hybrid"
+
+
+def _coerce_headless_permission_profile(value: str | None) -> HeadlessPermissionProfile:
+    lowered = (value or "").strip().lower()
+    mapping = {
+        "": HeadlessPermissionProfile.NORMAL,
+        "normal": HeadlessPermissionProfile.NORMAL,
+        "elevated": HeadlessPermissionProfile.ELEVATED,
+        "maximum": HeadlessPermissionProfile.MAXIMUM,
+    }
+    return mapping.get(lowered, HeadlessPermissionProfile.NORMAL)
 
 
 class EngineSettings(MillraceModel):
@@ -650,6 +662,7 @@ def _build_legacy_config(
             "RESEARCH_IDLE_POLL_SECS",
             "STAGE_RETRY_MAX",
             "STAGE_RETRY_BACKOFF_SECS",
+            "HEADLESS_PERMISSIONS",
             "ORCH_ALLOW_SEARCH",
             "ORCH_ALLOW_SEARCH_EXCEPTION",
             "RESEARCH_ALLOW_SEARCH",
@@ -691,6 +704,11 @@ def _build_legacy_config(
     )
 
     stages = default_stage_configs()
+    legacy_permission_profile = _coerce_headless_permission_profile(workflow_values.get("HEADLESS_PERMISSIONS"))
+    stages = {
+        stage: stage_config.model_copy(update={"permission_profile": legacy_permission_profile})
+        for stage, stage_config in stages.items()
+    }
     stage_fields = {"RUNNER", "MODEL", "EFFORT"}
     for key, value in model_values.items():
         for stage in StageType:

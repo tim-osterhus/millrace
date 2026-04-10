@@ -248,6 +248,8 @@ class OverviewPanel(Static):
         runtime_detail = (
             f"{paused_label} | exec {runtime.execution_status.lower()} | uptime {_format_duration(runtime.uptime_seconds)}"
         )
+        if runtime.liveness_degraded and runtime.liveness_summary:
+            runtime_detail = f"{runtime_detail} | {runtime.liveness_summary}"
         self._update_detail("runtime", runtime_headline, runtime_detail)
 
         latest_headline, latest_detail, latest_state = self._latest_run_card_content()

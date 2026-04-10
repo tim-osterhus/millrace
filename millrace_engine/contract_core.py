@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_serializer
 
 CARD_HEADING_RE = re.compile(r"^##\s*(\d{4}-\d{2}-\d{2})\s*[—-]\s*(.+?)\s*$")
 FIELD_LINE_RE = re.compile(r"^\s*(?:[-*]\s*)?\*\*(.+?):\*\*\s*(.*)$")
@@ -153,6 +153,19 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class OptionalPermissionProfileModel(ContractModel):
+    """Contract model that omits an unset optional permission profile on serialization."""
+
+    @model_serializer(mode="wrap")
+    def serialize_without_null_permission_profile(self, handler: object) -> object:
+        payload = handler(self)
+        if isinstance(payload, dict) and payload.get("permission_profile") is None:
+            normalized = dict(payload)
+            normalized.pop("permission_profile", None)
+            return normalized
+        return payload
+
+
 class ContractSurface(str, Enum):
     """Public contract scope for a vocabulary item."""
 
@@ -283,6 +296,12 @@ class RunnerKind(str, Enum):
     CODEX = "codex"
     CLAUDE = "claude"
     SUBPROCESS = "subprocess"
+
+
+class HeadlessPermissionProfile(str, Enum):
+    NORMAL = "normal"
+    ELEVATED = "elevated"
+    MAXIMUM = "maximum"
 
 
 class ReasoningEffort(str, Enum):

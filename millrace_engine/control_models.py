@@ -78,6 +78,7 @@ class RuntimeState(ContractModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     process_running: bool
+    process_id: int | None = Field(default=None, ge=1)
     paused: bool
     pause_reason: str | None = None
     pause_run_id: str | None = None
@@ -346,10 +347,30 @@ class SelectionExplanationView(ContractModel):
         return normalized
 
 
+class RuntimeLivenessView(ContractModel):
+    """Machine-readable liveness authority details for runtime-facing surfaces."""
+
+    authority: Literal["live_probe", "snapshot_stopped", "snapshot_absent", "degraded_snapshot"]
+    degraded: bool = False
+    snapshot_present: bool
+    snapshot_process_running: bool
+    process_id: int | None = Field(default=None, ge=1)
+    summary: str
+
+    @field_validator("summary")
+    @classmethod
+    def normalize_summary(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("liveness summary may not be empty")
+        return normalized
+
+
 class StatusReport(ContractModel):
     """Status command payload."""
 
     runtime: RuntimeState
+    liveness: RuntimeLivenessView
     source_kind: Literal["snapshot", "live"]
     config_path: Path
     config_source_kind: str
@@ -410,6 +431,7 @@ class SupervisorReport(ContractModel):
     bootstrap_ready: bool
     execution_ready: bool
     process_running: bool
+    liveness: RuntimeLivenessView
     paused: bool
     execution_status: ExecutionStatus
     research_status: ResearchStatus
@@ -654,6 +676,8 @@ class RunProvenanceReport(ContractModel):
                 if binding.model != stage.model:
                     raise ValueError("selection view stage_bindings do not match compile snapshot")
                 if binding.effort != stage.effort:
+                    raise ValueError("selection view stage_bindings do not match compile snapshot")
+                if binding.permission_profile != stage.permission_profile:
                     raise ValueError("selection view stage_bindings do not match compile snapshot")
                 if binding.allow_search != stage.allow_search:
                     raise ValueError("selection view stage_bindings do not match compile snapshot")

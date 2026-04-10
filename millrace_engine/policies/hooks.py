@@ -10,7 +10,9 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from ..contracts import (
     ContractModel,
     ControlPlane,
+    HeadlessPermissionProfile,
     ModePolicyToggles,
+    OptionalPermissionProfileModel,
     OutlinePolicy,
     ReasoningEffort,
     RegistryObjectRef,
@@ -177,7 +179,7 @@ class PolicyPlanFacts(ContractModel):
         return tuple(normalized)
 
 
-class PolicyStageFacts(ContractModel):
+class PolicyStageFacts(OptionalPermissionProfileModel):
     """Compile-time stage facts for a stage-scoped policy hook."""
 
     stage: StageType
@@ -188,6 +190,7 @@ class PolicyStageFacts(ContractModel):
     runner: RunnerKind | None = None
     model: str | None = None
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile | None = None
     allow_search: bool | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
     prompt_asset_ref: str | None = None
@@ -590,6 +593,7 @@ class PolicyHookRuntime:
                 runner=stage_plan.runner,
                 model=stage_plan.model,
                 effort=stage_plan.effort,
+                permission_profile=stage_plan.permission_profile,
                 allow_search=stage_plan.allow_search,
                 timeout_seconds=stage_plan.timeout_seconds,
                 prompt_asset_ref=stage_plan.prompt_asset_ref,

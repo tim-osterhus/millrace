@@ -231,6 +231,11 @@ def resolve_stage(
         runner=bound_parameters.runner or stage.stage_config.runner,
         model=bound_parameters.model or stage.stage_config.model,
         effort=bound_parameters.effort if bound_parameters.effort is not None else stage.stage_config.effort,
+        permission_profile=(
+            bound_parameters.permission_profile
+            if bound_parameters.permission_profile is not None
+            else stage.stage_config.permission_profile
+        ),
         timeout_seconds=bound_parameters.timeout_seconds or stage.stage_config.timeout_seconds,
         prompt_file=(
             Path(stage_plan.prompt_asset_ref)
@@ -310,6 +315,7 @@ def bound_parameters_for_node(
                     runner=stage.stage_config.runner,
                     model=stage.stage_config.model,
                     effort=stage.stage_config.effort,
+                    permission_profile=stage.stage_config.permission_profile,
                     allow_search=stage.stage_config.allow_search,
                     timeout_seconds=stage.stage_config.timeout_seconds,
                 )
@@ -320,6 +326,7 @@ def bound_parameters_for_node(
         runner=getattr(stage_plan, "runner", None),
         model=getattr(stage_plan, "model", None),
         effort=getattr(stage_plan, "effort", None),
+        permission_profile=getattr(stage_plan, "permission_profile", None),
         allow_search=getattr(stage_plan, "allow_search", None),
         timeout_seconds=getattr(stage_plan, "timeout_seconds", None),
     )
@@ -386,6 +393,12 @@ def apply_active_config_rebindings(plane: ExecutionRuntimePlane) -> None:
             and current.effort != target.effort
         ):
             updates["effort"] = target.effort
+        if (
+            StageOverrideField.PERMISSION_PROFILE in allowed_fields
+            and target.permission_profile is not None
+            and current.permission_profile != target.permission_profile
+        ):
+            updates["permission_profile"] = target.permission_profile
         if StageOverrideField.ALLOW_SEARCH in allowed_fields and current.allow_search != target.allow_search:
             updates["allow_search"] = target.allow_search
         if (
@@ -464,6 +477,7 @@ def bound_parameters_from_result(plane: ExecutionRuntimePlane, result: StageResu
             runner=stage_config.runner,
             model=stage_config.model,
             effort=stage_config.effort,
+            permission_profile=stage_config.permission_profile,
             allow_search=stage_config.allow_search,
             timeout_seconds=stage_config.timeout_seconds,
         )
@@ -632,6 +646,7 @@ def run_stage(
                 runner=stage.stage_config.runner,
                 model=stage.stage_config.model,
                 effort=stage.stage_config.effort,
+                permission_profile=stage.stage_config.permission_profile,
                 allow_search=preflight_context.allow_search,
                 timeout_seconds=stage.stage_config.timeout_seconds,
             )

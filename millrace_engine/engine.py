@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -184,6 +185,7 @@ class MillraceEngine:
         return build_live_runtime_state(
             config_state.loaded,
             process_running=process_running,
+            process_id=os.getpid() if process_running else None,
             paused=self.paused,
             pause_reason=self.pause_reason,
             pause_run_id=self.pause_run_id,

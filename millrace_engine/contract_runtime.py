@@ -13,6 +13,7 @@ from .contract_context_facts import ContextFactInjectionBundle
 from .contract_core import (
     ContractModel,
     ExecutionStatus,
+    HeadlessPermissionProfile,
     ReasoningEffort,
     RunnerKind,
     StageType,
@@ -30,6 +31,7 @@ class StageContext(ContractModel):
     prompt: str = ""
     working_dir: Path
     run_id: str | None = None
+    permission_profile: HeadlessPermissionProfile = HeadlessPermissionProfile.NORMAL
     timeout_seconds: int = Field(default=3600, ge=1)
     command: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)

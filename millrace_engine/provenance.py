@@ -13,6 +13,8 @@ from .config import ConfigApplyBoundary
 from .contracts import (
     ContractModel,
     ControlPlane,
+    HeadlessPermissionProfile,
+    OptionalPermissionProfileModel,
     ReasoningEffort,
     RegistryObjectRef,
     RunnerKind,
@@ -36,6 +38,7 @@ RUNTIME_REBINDABLE_STAGE_FIELDS = frozenset(
         StageOverrideField.RUNNER,
         StageOverrideField.MODEL,
         StageOverrideField.EFFORT,
+        StageOverrideField.PERMISSION_PROFILE,
         StageOverrideField.ALLOW_SEARCH,
         StageOverrideField.TIMEOUT_SECONDS,
     }
@@ -173,7 +176,7 @@ class RuntimeProvenanceContext(ContractModel):
         return self.stage_bound_execution_parameters.get(runtime_stage_parameter_key(plane, node_id))
 
 
-class BoundExecutionParameters(ContractModel):
+class BoundExecutionParameters(OptionalPermissionProfileModel):
     """Actual execution knobs bound for one stage invocation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -182,6 +185,7 @@ class BoundExecutionParameters(ContractModel):
     runner: RunnerKind | None = None
     model: str | None = None
     effort: ReasoningEffort | None = None
+    permission_profile: HeadlessPermissionProfile | None = None
     allow_search: bool | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
 
@@ -196,6 +200,7 @@ class BoundExecutionParameters(ContractModel):
             "runner": StageOverrideField.RUNNER,
             "model": StageOverrideField.MODEL,
             "effort": StageOverrideField.EFFORT,
+            "permission_profile": StageOverrideField.PERMISSION_PROFILE,
             "allow_search": StageOverrideField.ALLOW_SEARCH,
             "timeout_seconds": StageOverrideField.TIMEOUT_SECONDS,
         }
@@ -211,6 +216,7 @@ class BoundExecutionParameters(ContractModel):
             StageOverrideField.RUNNER: self.runner,
             StageOverrideField.MODEL: self.model,
             StageOverrideField.EFFORT: self.effort,
+            StageOverrideField.PERMISSION_PROFILE: self.permission_profile,
             StageOverrideField.ALLOW_SEARCH: self.allow_search,
             StageOverrideField.TIMEOUT_SECONDS: self.timeout_seconds,
         }

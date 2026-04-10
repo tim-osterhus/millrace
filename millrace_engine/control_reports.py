@@ -513,6 +513,7 @@ def build_live_runtime_state(
     loaded: LoadedConfig,
     *,
     process_running: bool,
+    process_id: int | None,
     paused: bool,
     pause_reason: str | None,
     pause_run_id: str | None,
@@ -531,6 +532,7 @@ def build_live_runtime_state(
     runtime = RuntimeState.model_validate(
         {
             "process_running": process_running,
+            "process_id": process_id,
             "paused": paused,
             "pause_reason": pause_reason,
             "pause_run_id": pause_run_id,

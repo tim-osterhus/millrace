@@ -242,6 +242,7 @@ class ExecutionStage:
                 ),
                 "working_dir": self.paths.root,
                 "run_id": run_id,
+                "permission_profile": self.stage_config.permission_profile,
                 "timeout_seconds": self.stage_config.timeout_seconds,
                 "command": self.command,
                 "prompt_path": (
@@ -275,6 +276,7 @@ class ExecutionStage:
             runner=context.runner,
             model=context.model,
             effort=context.effort,
+            permission_profile=context.permission_profile,
             allow_search=context.allow_search,
             timeout_seconds=context.timeout_seconds,
         )

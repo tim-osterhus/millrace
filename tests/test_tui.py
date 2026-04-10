@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -202,6 +203,7 @@ def _write_runtime_state_snapshot(
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "process_running": process_running,
+        "process_id": os.getpid() if process_running else None,
         "paused": False,
         "pause_reason": None,
         "pause_run_id": None,
@@ -1779,6 +1781,42 @@ def test_launcher_start_daemon_rejects_preexisting_running_state(monkeypatch, tm
     assert f"state_path={(tmp_path / 'state.json').as_posix()}" in result.failure.message
     assert result.failure.retryable is False
     assert called is False
+
+
+def test_launcher_daemon_running_ignores_unverifiable_running_snapshot(tmp_path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "process_running": True,
+                "process_id": None,
+                "paused": False,
+                "pause_reason": None,
+                "pause_run_id": None,
+                "execution_status": "IDLE",
+                "research_status": "IDLE",
+                "active_task_id": None,
+                "backlog_depth": 0,
+                "deferred_queue_size": 0,
+                "uptime_seconds": 120.0,
+                "config_hash": "test-config-hash",
+                "asset_bundle_version": "test-bundle",
+                "pending_config_hash": None,
+                "previous_config_hash": None,
+                "pending_config_boundary": None,
+                "pending_config_fields": [],
+                "rollback_armed": False,
+                "started_at": datetime(2026, 4, 10, tzinfo=timezone.utc).isoformat(),
+                "updated_at": datetime(2026, 4, 10, tzinfo=timezone.utc).isoformat(),
+                "mode": "daemon",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert launcher_module._daemon_running(state_path) is False
 
 
 def test_launcher_start_daemon_surfaces_early_exit_with_actionable_detail(monkeypatch, tmp_path) -> None:

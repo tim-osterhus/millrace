@@ -421,6 +421,7 @@ class ExecutionPlane(PlaneRuntime):
                     runner=stage.runner,
                     model=stage.model,
                     effort=stage.effort,
+                    permission_profile=stage.permission_profile,
                     allow_search=stage.allow_search,
                     timeout_seconds=stage.timeout_seconds,
                 )
