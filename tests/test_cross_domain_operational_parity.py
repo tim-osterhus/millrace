@@ -341,7 +341,86 @@ def test_cross_domain_goal_family_defers_completion_manifest_and_synthesis(tmp_p
 
 
 @pytest.mark.parametrize("case", DOMAIN_CASES, ids=lambda case: case.case_id)
-def test_cross_domain_spec_synthesis_keeps_broad_family_single_spec_until_later_cycle(
+def test_cross_domain_spec_synthesis_keeps_narrow_family_single_spec(
+    tmp_path: Path,
+    case: DomainCase,
+) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    emitted_at = _dt("2026-04-09T17:40:00Z")
+    run_id = f"{case.case_id}-narrow-family"
+
+    _write_queue_file(raw_goal_path, case.raw_goal_text)
+    execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_candidates = sorted(paths.ideas_staging_dir.glob("*.md"))
+    assert staged_candidates
+    staged_path = staged_candidates[0]
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    ).draft_state
+
+    result = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=emitted_at,
+    )
+
+    family_state = json.loads((workspace / result.family_state_path).read_text(encoding="utf-8"))
+    phase_text = (workspace / result.phase_spec_path).read_text(encoding="utf-8")
+    decision_text = (workspace / result.decision_path).read_text(encoding="utf-8")
+
+    assert family_state["family_complete"] is True
+    assert len(family_state["spec_order"]) == 1
+    assert len(family_state["specs"]) == 1
+    assert all(not spec_id.endswith("-02") for spec_id in family_state["specs"])
+    assert phase_text.count("Planned later initial-family specs:") == 1
+    assert "- None." in phase_text
+    assert "Carry the drafted GoalSpec package" not in phase_text
+    assert "Planned later specs: none" in decision_text
+
+
+@pytest.mark.parametrize("case", DOMAIN_CASES, ids=lambda case: case.case_id)
+def test_cross_domain_spec_synthesis_declares_bounded_later_specs_for_broad_goal(
     tmp_path: Path,
     case: DomainCase,
 ) -> None:
@@ -414,14 +493,21 @@ def test_cross_domain_spec_synthesis_keeps_broad_family_single_spec_until_later_
     assert family_policy["initial_family_max_specs"] >= 1
     assert family_policy["adaptive_inputs"]["capability_domain_count"] == 6
     assert family_policy["adaptive_inputs"]["progression_line_count"] == 2
-    assert family_state["family_complete"] is True
-    assert len(family_state["spec_order"]) == 1
-    assert len(family_state["specs"]) == 1
-    assert all(not spec_id.endswith("-02") for spec_id in family_state["specs"])
+    assert family_state["family_complete"] is False
+    assert len(family_state["spec_order"]) == min(family_policy["initial_family_max_specs"], 3)
+    assert len(family_state["specs"]) == len(family_state["spec_order"])
+    assert any(spec_id.endswith("-02") for spec_id in family_state["specs"])
+    active_spec_id = family_state["active_spec_id"]
+    assert family_state["specs"][active_spec_id]["status"] == "emitted"
+    planned_spec_ids = family_state["spec_order"][1:]
+    assert planned_spec_ids
+    assert all(family_state["specs"][spec_id]["status"] == "planned" for spec_id in planned_spec_ids)
     assert phase_text.count("Planned later initial-family specs:") == 1
-    assert "- None." in phase_text
+    assert "- None." not in phase_text
+    assert all(f"`{spec_id}`" in phase_text for spec_id in planned_spec_ids)
     assert "Carry the drafted GoalSpec package" not in phase_text
-    assert "Planned later specs: none" in decision_text
+    assert "Planned later specs: none" not in decision_text
+    assert all(f"`{spec_id}`" in decision_text for spec_id in planned_spec_ids)
 
 
 @pytest.mark.parametrize("case", (AURA_CASE,), ids=lambda case: case.case_id)

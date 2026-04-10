@@ -58,6 +58,28 @@ class PlannedFamilySpec(NamedTuple):
     depends_on_specs: tuple[str, ...]
 
 
+def _planned_family_breadth_budget(
+    *,
+    profile: AcceptanceProfileRecord,
+    family_cap: int,
+) -> int:
+    if family_cap <= 1:
+        return 0
+
+    capability_domain_count = len(profile.semantic_profile.capability_domains)
+    progression_line_count = len(profile.semantic_profile.progression_lines)
+    milestone_count = len(profile.milestones)
+
+    # Keep fresh-family widening conservative: require clear breadth signals before
+    # declaring later specs, then clamp the total family size to a small bounded set.
+    if capability_domain_count < 6:
+        return 0
+    if progression_line_count < 2 and milestone_count < 7:
+        return 0
+
+    return min(family_cap, 3)
+
+
 def _plan_initial_family_specs(
     *,
     spec_id: str,
@@ -81,10 +103,26 @@ def _plan_initial_family_specs(
             if planned_spec_id != spec_id
         )
 
-    # Fresh synthesis runs now emit one spec at a time. Objective-profile sync still
-    # determines the bounded family cap, but synthesis no longer speculates about
-    # later slices until a future cycle explicitly materializes them.
-    return ()
+    planned_family_size = _planned_family_breadth_budget(
+        profile=profile,
+        family_cap=family_cap,
+    )
+    if planned_family_size <= 1:
+        return ()
+
+    planned_specs: list[PlannedFamilySpec] = []
+    previous_spec_id = spec_id
+    for index in range(2, planned_family_size + 1):
+        planned_spec_id = f"{spec_id}-{index:02d}"
+        planned_specs.append(
+            PlannedFamilySpec(
+                spec_id=planned_spec_id,
+                title=f"{source.title} Slice {index:02d}",
+                depends_on_specs=(previous_spec_id,),
+            )
+        )
+        previous_spec_id = planned_spec_id
+    return tuple(planned_specs)
 
 
 def execute_spec_synthesis(
