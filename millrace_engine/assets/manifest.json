@@ -74,27 +74,7 @@
     {
       "category": "directory",
       "family": "options",
-      "path": "agents/options/integrate"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/permission"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/troubleshoot"
-    },
-    {
-      "category": "directory",
-      "family": "options",
       "path": "agents/options/ui-verify"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/update"
     },
     {
       "category": "directory",
@@ -277,7 +257,7 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "45c87aa462de5570b346412e0305e5c9a5238a5be5d17d060d7696c94eeb260e",
+      "sha256": "ebb45e9de552c17a95be8d1016ccf5a7cca3d9fc8230178289e450b36c6b800b",
       "size": 10145,
       "size_bytes": 10145,
       "source": "runtime"
@@ -364,6 +344,15 @@
       "source": "reference"
     },
     {
+      "category": "research_entrypoint",
+      "family": "entrypoints",
+      "path": "agents/_completion_manifest_draft.md",
+      "sha256": "15ede458fae0caf012e2f3ea672b46e4e83e103c391800b931ffcf2df7f69d4c",
+      "size": 4208,
+      "size_bytes": 4169,
+      "source": "reference"
+    },
+    {
       "category": "execution_entrypoint",
       "family": "entrypoints",
       "path": "agents/_consult.md",
@@ -376,9 +365,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_contractor.md",
-      "sha256": "d04fe78564cc8f85ea267a04c2f4b0bec9d966f52b0daeeb7ec7a4a51841ace2",
+      "sha256": "4706f3854716166d68ed5cd5983bf7ddcb6a5a5ad96cf7b3f8878236000f80f4",
       "size": 4208,
-      "size_bytes": 4208,
+      "size_bytes": 6524,
       "source": "reference"
     },
     {
@@ -1447,9 +1436,9 @@
       "category": "workspace_seed",
       "family": "workspace",
       "path": "agents/status_contract.md",
-      "sha256": "63f88141c7e892eae3cad82d2ed6bd74443128bb856a41f2da7ca1d4ff87cf37",
+      "sha256": "a292d0097b8fdd3802e5cd6bd413a9fdc1a08624cdd3b9cf74b084e0a5b75529",
       "size": 6714,
-      "size_bytes": 6670,
+      "size_bytes": 6685,
       "source": "reference"
     },
     {

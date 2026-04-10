@@ -62,7 +62,7 @@ These markers are consumed by the Python research plane and its stage entrypoint
 | `### IDLE` | Research loop + research stages | Neutral/no-work/success-complete state. |
 | `### BLOCKED` | Research loop + research stages | Deterministic stop in research control plane. |
 | `### GOAL_INTAKE_RUNNING` | `_goal_intake.md` | Condensed GoalSpec intake stage active. |
-| `### COMPLETION_MANIFEST_RUNNING` | `_contractor.md` | Project-local completion manifest drafting active. |
+| `### COMPLETION_MANIFEST_RUNNING` | `_completion_manifest_draft.md` | Project-local completion manifest drafting active. |
 | `### OBJECTIVE_PROFILE_SYNC_RUNNING` | `_objective_profile_sync.md` | Goal-derived acceptance/profile sync stage active. |
 | `### SPEC_SYNTHESIS_RUNNING` | `_spec_synthesis.md` | Condensed GoalSpec synthesis stage active. |
 | `### SPEC_INTERVIEW_RUNNING` | `_spec_interview.md` | Optional GoalSpec interview hardening stage active. |
