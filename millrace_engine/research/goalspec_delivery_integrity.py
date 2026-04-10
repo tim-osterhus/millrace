@@ -163,19 +163,19 @@ def evaluate_goalspec_delivery_integrity(
         and _normalized_token(queue_goal_id) != ""
         and _normalized_token(queue_goal_id) == _normalized_token(family_state.goal_id)
     )
+    if pending_shard_count > 0:
+        return report.model_copy(
+            update={
+                "status": "healthy",
+                "reason": "goalspec-family-pending-shard-handoff-present",
+            }
+        )
     if same_goal_item and report.entry_node_id in _EARLIER_STAGE_ENTRY_NODE_IDS:
         return report.model_copy(
             update={
                 "status": "failed",
                 "reason": "same-family-earlier-stage-recycling-after-spec-emission",
                 "violation_codes": ("same-family-earlier-stage-recycling",),
-            }
-        )
-    if pending_shard_count > 0:
-        return report.model_copy(
-            update={
-                "status": "healthy",
-                "reason": "goalspec-family-pending-shard-handoff-present",
             }
         )
     if taskaudit_record_path is not None:

@@ -2245,6 +2245,82 @@ def test_research_plane_blocks_same_family_earlier_stage_recycling_after_spec_em
     assert integrity_report["queue_item_path"] == "agents/ideas/raw/goal-recycled.md"
 
 
+def test_research_plane_treats_same_family_earlier_stage_queue_with_pending_shard_as_transitional_handoff(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-pending-handoff-601a",
+        emitted_at=_dt("2026-04-08T19:20:00Z"),
+        title="Team Workspace Vertical Slice",
+        body=(
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
+            "## Capability Domains\n"
+            "- Collaborative planning workflow\n"
+            "- Team-ready workspace ergonomics\n\n"
+            "## Progression Lines\n"
+            "- GoalSpec decomposition that produces real pending work before live promotion.\n"
+        ),
+        decomposition_profile="simple",
+        idea_id="IDEA-601A",
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-pending-handoff-601a",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-pending-handoff-601a",
+            emitted_at=_dt("2026-04-08T19:20:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-pending-handoff-601a",
+        emitted_at=_dt("2026-04-08T19:20:00Z"),
+    )
+    recycled_raw_path = workspace / "agents" / "ideas" / "raw" / "goal-recycled.md"
+    _write_queue_file(
+        recycled_raw_path,
+        (
+            "---\n"
+            "idea_id: IDEA-601A\n"
+            "title: Team Workspace Vertical Slice\n"
+            "decomposition_profile: simple\n"
+            "---\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Rediscovered raw goal while pending shard handoff is still in progress.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    next_dispatch = plane.dispatch_ready_work(resolve_assets=False)
+
+    assert next_dispatch is not None
+    assert next_dispatch.selection.entry_node_id == "goal_intake"
+    assert plane.status_store.read() is ResearchStatus.GOAL_INTAKE_RUNNING
+    integrity_report = json.loads(
+        (workspace / "agents" / ".tmp" / "goalspec_delivery_integrity_report.json").read_text(encoding="utf-8")
+    )
+    assert integrity_report["status"] == "healthy"
+    assert integrity_report["reason"] == "goalspec-family-pending-shard-handoff-present"
+    assert integrity_report["pending_shard_count"] == 1
+    assert integrity_report["goal_id"] == "IDEA-601A"
+    assert integrity_report["queue_item_path"] == "agents/ideas/raw/goal-recycled.md"
+    plane.shutdown()
+
+
 def test_research_plane_blocks_silent_emitted_family_non_delivery_and_surfaces_it_in_governance(
     tmp_path: Path,
 ) -> None:
