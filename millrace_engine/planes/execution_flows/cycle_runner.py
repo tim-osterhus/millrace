@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -12,7 +13,7 @@ from ...policies import (
     execution_integration_context_from_records,
     execution_usage_budget_context_from_records,
 )
-from ...queue import load_research_recovery_latch
+from ...queue import QueueEmptyError, QueueStateError, load_research_recovery_latch
 from ...stages.base import StageExecutionError
 from ...standard_runtime import compile_execution_runtime_selection
 from ..execution_routing import (
@@ -95,6 +96,100 @@ def _cycle_result(**kwargs: object) -> ExecutionCycleResult:
     return ExecutionCycleResult(**kwargs)
 
 
+@dataclass(frozen=True, slots=True)
+class _EmptyActiveResolution:
+    current_status: ExecutionStatus
+    active_task: TaskCard | None
+    promoted_task: TaskCard | None = None
+    early_result: ExecutionCycleResult | None = None
+
+
+def _resolve_empty_active_state(
+    plane: CycleRunnerPlane,
+    *,
+    current_status: ExecutionStatus,
+    stage_results: list,
+) -> _EmptyActiveResolution:
+    """Normalize one empty-active startup/cycle state before stage routing."""
+
+    active_task = plane.queue.active_task()
+    if active_task is not None:
+        return _EmptyActiveResolution(current_status=current_status, active_task=active_task)
+
+    next_task = plane.queue.peek_next()
+    backlog_has_work = next_task is not None
+
+    if current_status is ExecutionStatus.NEEDS_RESEARCH:
+        latch = load_research_recovery_latch(plane.paths.research_recovery_latch_file)
+        plane.status_store.transition(ExecutionStatus.IDLE)
+        if not backlog_has_work:
+            return _EmptyActiveResolution(
+                current_status=ExecutionStatus.IDLE,
+                active_task=None,
+                early_result=_cycle_result(
+                    run_id=None,
+                    final_status=ExecutionStatus.IDLE,
+                    diagnostics_dir=latch.diag_dir if latch is not None else None,
+                    research_handoff=plane._last_research_handoff,
+                ),
+            )
+        current_status = ExecutionStatus.IDLE
+
+    if current_status is ExecutionStatus.IDLE:
+        if not backlog_has_work:
+            plane._refresh_size_status(None)
+            plane._emit_event(
+                EventType.BACKLOG_EMPTY,
+                {
+                    "backlog_depth": 0,
+                    "run_update_on_empty": plane.config.execution.run_update_on_empty,
+                },
+            )
+            if plane.config.execution.run_update_on_empty:
+                run_id = plane._new_run_id(None, "update-empty")
+                history = start_transition_history_helper(plane, run_id)
+                final_status = plane._run_empty_backlog_sequence(run_id, stage_results)
+                return _EmptyActiveResolution(
+                    current_status=current_status,
+                    active_task=None,
+                    early_result=_cycle_result(
+                        run_id=run_id,
+                        final_status=final_status,
+                        stage_results=stage_results,
+                        update_only=True,
+                        transition_history_path=history.history_path,
+                        research_handoff=plane._last_research_handoff,
+                    ),
+                )
+            return _EmptyActiveResolution(
+                current_status=current_status,
+                active_task=None,
+                early_result=_cycle_result(run_id=None, final_status=ExecutionStatus.IDLE),
+            )
+
+        try:
+            promoted_task = plane.queue.promote_next()
+        except (QueueEmptyError, QueueStateError) as exc:
+            raise StageExecutionError(
+                "execution startup integrity failure: active task is empty while backlog work "
+                f"appeared promotable, but promotion failed: {exc}"
+            ) from exc
+        return _EmptyActiveResolution(
+            current_status=current_status,
+            active_task=promoted_task,
+            promoted_task=promoted_task,
+        )
+
+    if backlog_has_work:
+        raise StageExecutionError(
+            "execution startup integrity failure: active task is empty while backlog has queued work "
+            f"(next_task={next_task.task_id}), but status marker {current_status.value} is not promotable; "
+            "expected IDLE or stale NEEDS_RESEARCH."
+        )
+
+    return _EmptyActiveResolution(current_status=current_status, active_task=None)
+
+
 def run_execution_cycle(plane: CycleRunnerPlane) -> ExecutionCycleResult:
     """Run one execution-plane cycle in `--once` mode."""
 
@@ -119,53 +214,26 @@ def run_execution_cycle(plane: CycleRunnerPlane) -> ExecutionCycleResult:
     plane._quickfix_artifact_active_for_cycle = current_status is ExecutionStatus.QUICKFIX_NEEDED
     plane.policy_evaluations = []
 
-    active_task = plane.queue.active_task()
-    if current_status is ExecutionStatus.IDLE and active_task is None:
-        if plane.queue.backlog_empty():
-            plane._refresh_size_status(None)
-            plane._emit_event(
-                EventType.BACKLOG_EMPTY,
-                {
-                    "backlog_depth": 0,
-                    "run_update_on_empty": plane.config.execution.run_update_on_empty,
-                },
-            )
-            if plane.config.execution.run_update_on_empty:
-                run_id = plane._new_run_id(None, "update-empty")
-                history = start_transition_history_helper(plane, run_id)
-                final_status = plane._run_empty_backlog_sequence(run_id, stage_results)
-                return _cycle_result(
-                    run_id=run_id,
-                    final_status=final_status,
-                    stage_results=stage_results,
-                    update_only=True,
-                    transition_history_path=history.history_path,
-                    research_handoff=plane._last_research_handoff,
-                )
-            return _cycle_result(run_id=None, final_status=ExecutionStatus.IDLE)
-
-        promoted_task = plane.queue.promote_next()
-        if promoted_task is not None:
-            plane._emit_event(
-                EventType.TASK_PROMOTED,
-                {
-                    "task_id": promoted_task.task_id,
-                    "title": promoted_task.title,
-                },
-            )
-        active_task = promoted_task
+    empty_active_resolution = _resolve_empty_active_state(
+        plane,
+        current_status=current_status,
+        stage_results=stage_results,
+    )
+    current_status = empty_active_resolution.current_status
+    active_task = empty_active_resolution.active_task
+    promoted_task = empty_active_resolution.promoted_task
+    if empty_active_resolution.early_result is not None:
+        return empty_active_resolution.early_result
+    if promoted_task is not None:
+        plane._emit_event(
+            EventType.TASK_PROMOTED,
+            {
+                "task_id": promoted_task.task_id,
+                "title": promoted_task.title,
+            },
+        )
 
     size_view = plane._refresh_size_status(active_task)
-
-    if current_status is ExecutionStatus.NEEDS_RESEARCH and active_task is None:
-        latch = load_research_recovery_latch(plane.paths.research_recovery_latch_file)
-        plane.status_store.transition(ExecutionStatus.IDLE)
-        return _cycle_result(
-            run_id=None,
-            final_status=ExecutionStatus.IDLE,
-            diagnostics_dir=latch.diag_dir if latch is not None else None,
-            research_handoff=plane._last_research_handoff,
-        )
 
     if active_task is None:
         raise StageExecutionError("execution plane cannot continue without an active task")

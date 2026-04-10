@@ -3100,6 +3100,77 @@ def test_cli_start_once_research_sync_requires_second_invocation_for_new_executi
     )
 
 
+def test_cli_start_once_promotes_backlog_after_stale_needs_research_normalization(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    append_subprocess_stage_config(config_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace('integration_mode = "large_only"', 'integration_mode = "never"', 1),
+        encoding="utf-8",
+    )
+    (workspace / "agents/status.md").write_text("### NEEDS_RESEARCH\n", encoding="utf-8")
+    script = write_outage_stage_driver(tmp_path)
+    engine = MillraceEngine(
+        config_path,
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa"],
+            StageType.UPDATE: [sys.executable, str(script), "update"],
+        },
+    )
+
+    engine.start(once=True)
+
+    assert parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+    archived_cards = parse_task_cards((workspace / "agents/tasksarchive.md").read_text(encoding="utf-8"))
+    assert len(archived_cards) == 1
+    assert archived_cards[0].task_id == "2026-03-19__ship-the-happy-path"
+    assert (workspace / "agents/status.md").read_text(encoding="utf-8") == "### IDLE\n"
+    event_types = [event["type"] for event in read_events(workspace)]
+    assert EventType.TASK_PROMOTED.value in event_types
+    assert EventType.STAGE_STARTED.value in event_types
+
+
+def test_cli_start_daemon_promotes_backlog_after_stale_needs_research_normalization(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    set_engine_idle_mode(config_path, "poll", poll_interval_seconds=1)
+    append_subprocess_stage_config(config_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace('integration_mode = "large_only"', 'integration_mode = "never"', 1),
+        encoding="utf-8",
+    )
+    (workspace / "agents/status.md").write_text("### NEEDS_RESEARCH\n", encoding="utf-8")
+    state_path = workspace / "agents/.runtime/state.json"
+    script = write_outage_stage_driver(tmp_path)
+    engine = MillraceEngine(
+        config_path,
+        stage_commands={
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa"],
+            StageType.UPDATE: [sys.executable, str(script), "update"],
+        },
+    )
+    thread = Thread(target=lambda: engine.start(daemon=True), daemon=True)
+    thread.start()
+
+    wait_for(lambda: state_path.exists() and read_state(state_path)["process_running"] is True)
+    wait_for(lambda: len(parse_task_cards((workspace / "agents/tasksarchive.md").read_text(encoding="utf-8"))) == 1)
+
+    archived_cards = parse_task_cards((workspace / "agents/tasksarchive.md").read_text(encoding="utf-8"))
+    assert archived_cards[0].task_id == "2026-03-19__ship-the-happy-path"
+    assert parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+    event_types = [event["type"] for event in read_events(workspace)]
+    assert EventType.TASK_PROMOTED.value in event_types
+    assert EventType.STAGE_STARTED.value in event_types
+
+    stop_result = RUNNER.invoke(app, ["--config", str(config_path), "stop"])
+    assert stop_result.exit_code == 0
+    wait_for(lambda: read_state(state_path)["process_running"] is False)
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
+
+
 def test_cli_queue_reorder_rewrites_backlog_directly(tmp_path: Path) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
 

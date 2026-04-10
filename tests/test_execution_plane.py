@@ -9,8 +9,9 @@ import pytest
 
 from millrace_engine.compiler import CompileStatus, FrozenRunCompiler
 from millrace_engine.compounding import build_injected_procedure_bundle
-from millrace_engine.context_facts import persist_context_fact
 from millrace_engine.config import build_runtime_paths, load_engine_config
+from millrace_engine.config_runtime import default_stage_configs
+from millrace_engine.context_facts import persist_context_fact
 from millrace_engine.control import ControlError, EngineControl
 from millrace_engine.contracts import (
     CompoundingFlushCheckpoint,
@@ -383,6 +384,7 @@ def configure_execution_plane(
     if mutate_config is not None:
         mutate_config(config)
 
+    stage_defaults = default_stage_configs()
     for stage_type in [
         StageType.BUILDER,
         StageType.INTEGRATION,
@@ -397,7 +399,7 @@ def configure_execution_plane(
         StageType.REASSESS,
         StageType.REFACTOR,
     ]:
-        stage_config = config.stages[stage_type]
+        stage_config = config.stages.setdefault(stage_type, stage_defaults[stage_type].model_copy(deep=True))
         stage_config.runner = RunnerKind.SUBPROCESS
         stage_config.model = "fixture-model"
         stage_config.timeout_seconds = 30
@@ -3560,6 +3562,63 @@ def test_execution_plane_settles_stale_needs_research_marker_without_active_task
     assert result.diagnostics_dir == Path("agents/diagnostics/diag-stale")
     assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
     assert (workspace / "agents/status.md").read_text(encoding="utf-8") == "### IDLE\n"
+
+
+def test_execution_plane_promotes_backlog_after_stale_needs_research_normalization(tmp_path: Path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    append_subprocess_stage_config(config_path)
+    (workspace / "agents/status.md").write_text("### NEEDS_RESEARCH\n", encoding="utf-8")
+    emitted: list[tuple[EventType, dict[str, object]]] = []
+    script = write_stage_driver(tmp_path)
+    backlog_task = parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8"))[0]
+
+    plane = configure_execution_plane(
+        workspace,
+        config_path,
+        {
+            StageType.BUILDER: [sys.executable, str(script), "builder"],
+            StageType.QA: [sys.executable, str(script), "qa-complete"],
+            StageType.UPDATE: [sys.executable, str(script), "update-idle"],
+        },
+        integration_mode="never",
+        update_on_empty=False,
+        emitted=emitted,
+    )
+
+    result = plane.run_once()
+
+    assert result.final_status is ExecutionStatus.IDLE
+    assert result.promoted_task is not None
+    assert result.promoted_task.task_id == backlog_task.task_id
+    assert result.archived_task is not None
+    assert result.archived_task.task_id == backlog_task.task_id
+    assert parse_task_cards((workspace / "agents/tasksbacklog.md").read_text(encoding="utf-8")) == []
+    assert parse_task_cards((workspace / "agents/tasks.md").read_text(encoding="utf-8")) == []
+    assert parse_task_cards((workspace / "agents/tasksarchive.md").read_text(encoding="utf-8"))[0].task_id == (
+        backlog_task.task_id
+    )
+    assert (workspace / "agents/status.md").read_text(encoding="utf-8") == "### IDLE\n"
+    assert any(
+        event_type is EventType.TASK_PROMOTED and payload.get("task_id") == backlog_task.task_id
+        for event_type, payload in emitted
+    )
+
+
+def test_execution_plane_raises_integrity_failure_for_empty_active_backlog_with_completed_status(
+    tmp_path: Path,
+) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "golden_path")
+    (workspace / "agents/status.md").write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+    plane = configure_execution_plane(workspace, config_path, {}, update_on_empty=False)
+
+    with pytest.raises(
+        StageExecutionError,
+        match=(
+            "execution startup integrity failure: active task is empty while backlog has queued work "
+            r"\(next_task=2026-03-19__ship-the-happy-path\), but status marker BUILDER_COMPLETE is not promotable"
+        ),
+    ):
+        plane.run_once()
 
 
 def test_outage_trigger_and_policy_record_reuse_frozen_net_wait_evidence(tmp_path: Path) -> None:
