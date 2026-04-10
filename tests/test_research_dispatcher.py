@@ -4427,6 +4427,49 @@ def test_research_plane_run_ready_work_keeps_workspace_seed_product_grounded_thr
     assert list((workspace / "agents" / "taskspending").glob("*")) == []
 
 
+def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecraft_plan(tmp_path: Path) -> None:
+    workspace, _, _, synthesis, _ = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id="goalspec-minecraft-712",
+        emitted_at=_dt("2026-04-10T16:40:00Z"),
+        title="Aura Progression Mod",
+        decomposition_profile="moderate",
+        idea_id="IDEA-MINECRAFT-712",
+        body=(
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+        ),
+    )
+
+    completion_manifest = json.loads((workspace / "agents" / "audit" / "completion_manifest.json").read_text(encoding="utf-8"))
+    assert completion_manifest["planning_profile"] == "generic_product"
+    assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
+        "mods/aura-progression-mod/src/main/java",
+        "mods/aura-progression-mod/src/main/java/aura-progression",
+        "mods/aura-progression-mod/src/main/java/registrations",
+        "mods/aura-progression-mod/src/main/java/gameplay-tests",
+        "mods/aura-progression-mod/src/main/resources",
+    ]
+    assert [surface["path"] for surface in completion_manifest["verification_surfaces"]] == [
+        "mods/aura-progression-mod/src/gametest/java",
+        "mods/aura-progression-mod/src/test/java",
+    ]
+
+    golden_spec_text = (workspace / synthesis.golden_spec_path).read_text(encoding="utf-8")
+    phase_spec_text = (workspace / synthesis.phase_spec_path).read_text(encoding="utf-8")
+    assert "mods/aura-progression-mod/src/main/java" in golden_spec_text
+    assert "mods/aura-progression-mod/src/main/resources" in golden_spec_text
+    assert "mods/aura-progression-mod/src/gametest/java" in phase_spec_text
+    assert "loader-specific overlay" in phase_spec_text
+
+
 def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_backlog(
     tmp_path: Path,
 ) -> None:

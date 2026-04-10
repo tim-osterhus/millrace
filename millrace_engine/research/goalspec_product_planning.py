@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from .goalspec import AcceptanceProfileRecord, CompletionManifestDraftSurface, GoalSource
+from .goalspec import AcceptanceProfileRecord, CompletionManifestDraftSurface, ContractorProfileArtifact, GoalSource
 from .goalspec_helpers import GoalSpecExecutionError, _slugify
 from .goalspec_scope_diagnostics import infer_goal_scope_kind
 
@@ -150,13 +150,25 @@ def infer_planning_profile(*, source: GoalSource, profile: AcceptanceProfileReco
     return "generic_product"
 
 
-def derive_goal_product_plan(*, source: GoalSource, profile: AcceptanceProfileRecord) -> GoalProductPlan:
+def derive_goal_product_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact | None = None,
+) -> GoalProductPlan:
     """Build a deterministic product plan for the current goal."""
 
     _raise_if_contaminated_planning_inputs(source=source, profile=profile)
     planning_profile = infer_planning_profile(source=source, profile=profile)
     if planning_profile == "framework_runtime":
         return _framework_runtime_plan(source=source, profile=profile)
+    contractor_plan = _contractor_resolved_product_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+    )
+    if contractor_plan is not None:
+        return contractor_plan
     return _generic_product_plan(source=source, profile=profile)
 
 
@@ -565,6 +577,351 @@ def _generic_product_plan(*, source: GoalSource, profile: AcceptanceProfileRecor
             f"confirm repo-native flow verification covering {flow_path}",
             f"confirm repo-native regression verification covering {regression_path}",
         ),
+    )
+
+
+def _contractor_resolved_product_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact | None,
+) -> GoalProductPlan | None:
+    if contractor_profile is None:
+        return None
+    if contractor_profile.shape_class == "unknown":
+        return None
+    if contractor_profile.fallback_mode != "apply_resolved_profiles_only":
+        return None
+    if contractor_profile.specificity_level in {"L0", "L1"}:
+        return None
+    if not _supported_unresolved_specializations(contractor_profile):
+        return None
+
+    shape_class = contractor_profile.shape_class
+    if shape_class == "platform_extension":
+        host_platform = contractor_profile.classification.host_platform
+        if host_platform == "minecraft":
+            return _minecraft_mod_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+        return _platform_extension_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+    if shape_class in {"network_application", "service_backend"}:
+        return _network_business_system_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+    if shape_class == "automation_tool":
+        return _automation_tool_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+    if shape_class == "library_framework":
+        return _library_framework_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+    return None
+
+
+def _supported_unresolved_specializations(contractor_profile: ContractorProfileArtifact) -> bool:
+    unresolved = contractor_profile.unresolved_specializations
+    if not unresolved:
+        return True
+    return contractor_profile.shape_class == "platform_extension" and all(
+        item.startswith("loader=") for item in unresolved
+    )
+
+
+def _surface_root(slug: str, *parts: str) -> str:
+    return "/".join((slug, *parts))
+
+
+def _contractor_component_surface_pairs(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    base_dir: str,
+) -> tuple[tuple[str, str], ...]:
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for index, label in enumerate(_component_labels(profile, fallback=source.title), start=1):
+        component_slug = _slugify(label) or f"capability-{index:02d}"
+        path = f"{base_dir}/{component_slug}"
+        if path in seen:
+            continue
+        seen.add(path)
+        pairs.append((label, path))
+    return tuple(pairs)
+
+
+def _contractor_verification_surfaces(*surfaces: tuple[str, str]) -> tuple[CompletionManifestDraftSurface, ...]:
+    return tuple(
+        _surface(
+            surface_kind=surface_kind,
+            path=path,
+            purpose=purpose,
+        )
+        for surface_kind, path, purpose in surfaces
+    )
+
+
+def _contractor_step_focus(contractor_profile: ContractorProfileArtifact) -> str:
+    if contractor_profile.classification.host_platform:
+        return f"the `{contractor_profile.classification.host_platform}` host contract"
+    if contractor_profile.classification.archetype:
+        return f"the `{contractor_profile.classification.archetype}` product archetype"
+    return "the Contractor-resolved product shape"
+
+
+def _contractor_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact,
+    primary_surface_kind: str,
+    primary_surface_path: str,
+    primary_surface_purpose: str,
+    component_base_dir: str,
+    workflow_surface_kind: str,
+    workflow_surface_path: str,
+    workflow_surface_purpose: str,
+    verification_surfaces: tuple[tuple[str, str, str], ...],
+    first_step: str,
+    second_step: str,
+    third_step: str,
+    fourth_step: str,
+    fifth_step: str,
+) -> GoalProductPlan:
+    component_pairs = _contractor_component_surface_pairs(
+        source=source,
+        profile=profile,
+        base_dir=component_base_dir,
+    )
+    implementation_surfaces = (
+        _surface(
+            surface_kind=primary_surface_kind,
+            path=primary_surface_path,
+            purpose=primary_surface_purpose,
+        ),
+        *(
+            _surface(
+                surface_kind="capability_surface",
+                path=path,
+                purpose=f"Implement {label} behavior without widening past the Contractor-resolved slice.",
+            )
+            for label, path in component_pairs[:3]
+        ),
+        _surface(
+            surface_kind=workflow_surface_kind,
+            path=workflow_surface_path,
+            purpose=workflow_surface_purpose,
+        ),
+    )
+    minimum = minimum_phase_step_count(source.decomposition_profile)
+    steps = _finalize_phase_steps(
+        [first_step, second_step, third_step, fourth_step, fifth_step],
+        supplemental_steps=(
+            (
+                f"Keep `{primary_surface_path}` aligned with `{workflow_surface_path}` while preserving "
+                f"{_contractor_step_focus(contractor_profile)}."
+            ),
+            (
+                f"Add bounded capability detail in `{component_pairs[0][1] if component_pairs else primary_surface_path}` "
+                f"and `{component_pairs[1][1] if len(component_pairs) > 1 else workflow_surface_path}`."
+            ),
+            (
+                f"Re-run verification anchored to "
+                f"{', '.join(f'`{path}`' for _, path, _ in verification_surfaces)} and fix path-specific regressions."
+            ),
+        ),
+        minimum=minimum,
+        fallback_paths=(
+            primary_surface_path,
+            *(path for _, path in component_pairs[:3]),
+            workflow_surface_path,
+            *(path for _, path, _ in verification_surfaces),
+        ),
+        fallback_focus=_contractor_step_focus(contractor_profile),
+    )
+    return GoalProductPlan(
+        planning_profile="generic_product",
+        implementation_surfaces=implementation_surfaces,
+        verification_surfaces=_contractor_verification_surfaces(*verification_surfaces),
+        phase_steps=steps,
+        verification_commands=tuple(
+            f"confirm repo-native verification covering {path}" for _, path, _ in verification_surfaces
+        ),
+    )
+
+
+def _minecraft_mod_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact,
+) -> GoalProductPlan:
+    slug = _slugify(source.title)
+    module_root = _surface_root("mods", slug)
+    source_root = f"{module_root}/src/main/java"
+    resources_path = f"{module_root}/src/main/resources"
+    gametest_path = f"{module_root}/src/gametest/java"
+    behavior_test_path = f"{module_root}/src/test/java"
+    return _contractor_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+        primary_surface_kind="host_module",
+        primary_surface_path=source_root,
+        primary_surface_purpose="Own the host-loaded gameplay implementation surface for the bounded mod slice.",
+        component_base_dir=source_root,
+        workflow_surface_kind="registration_assets",
+        workflow_surface_path=resources_path,
+        workflow_surface_purpose="Keep registrations, metadata, and packaged host assets aligned to the mod slice.",
+        verification_surfaces=(
+            ("gametest_verification", gametest_path, "Lock in-game behavior and host-loaded proof expectations."),
+            ("behavior_verification", behavior_test_path, "Lock bounded host integration and regression behavior."),
+        ),
+        first_step=(
+            f"Implement the bounded Minecraft mod slice in `{source_root}` so the core gameplay path lands without "
+            "inventing a loader-specific overlay."
+        ),
+        second_step=(
+            f"Add registration and packaged host assets in `{resources_path}` for {_progression_fragment(profile)}."
+        ),
+        third_step=(
+            f"Implement the next bounded gameplay capabilities in `{source_root}` while keeping unresolved loader hints "
+            "documented rather than promoted into a fake specialization."
+        ),
+        fourth_step=f"Add in-game proof coverage in `{gametest_path}` for {_progression_fragment(profile)}.",
+        fifth_step=f"Add bounded host-regression coverage in `{behavior_test_path}` for the mod slice.",
+    )
+
+
+def _platform_extension_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact,
+) -> GoalProductPlan:
+    slug = _slugify(source.title)
+    host_platform = contractor_profile.classification.host_platform or "host-platform"
+    module_root = _surface_root("extensions", slug)
+    integration_root = f"{module_root}/integration"
+    assets_root = f"{module_root}/assets"
+    return _contractor_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+        primary_surface_kind="host_integration",
+        primary_surface_path=integration_root,
+        primary_surface_purpose="Own the host-loaded integration surface for the bounded extension slice.",
+        component_base_dir=integration_root,
+        workflow_surface_kind="host_assets",
+        workflow_surface_path=assets_root,
+        workflow_surface_purpose="Keep packaged host assets and metadata aligned to the bounded extension behavior.",
+        verification_surfaces=(
+            ("host_flow_verification", f"tests/{slug}/host-flow", f"Lock the primary `{host_platform}` extension flow."),
+            ("host_regression_verification", f"tests/{slug}/host-regression", "Lock bounded extension regressions."),
+        ),
+        first_step=f"Implement the bounded `{host_platform}` integration slice in `{integration_root}`.",
+        second_step=f"Wire packaged host assets and metadata in `{assets_root}` without widening beyond the profiled extension.",
+        third_step=f"Implement the next bounded host capabilities in `{integration_root}` for {_progression_fragment(profile)}.",
+        fourth_step=f"Add focused host-flow coverage in `tests/{slug}/host-flow` for {_progression_fragment(profile)}.",
+        fifth_step=f"Add bounded host regression coverage in `tests/{slug}/host-regression`.",
+    )
+
+
+def _network_business_system_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact,
+) -> GoalProductPlan:
+    slug = _slugify(source.title)
+    app_root = f"src/{slug}/application"
+    workflow_path = f"src/{slug}/workflows"
+    verification_focus = "network_flow" if contractor_profile.shape_class == "network_application" else "service_flow"
+    return _contractor_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+        primary_surface_kind="application_shell",
+        primary_surface_path=app_root,
+        primary_surface_purpose="Expose the bounded networked product shell for the Contractor-resolved business slice.",
+        component_base_dir=app_root,
+        workflow_surface_kind="workflow_surface",
+        workflow_surface_path=workflow_path,
+        workflow_surface_purpose="Keep state transitions, workflow handoff, and bounded service behavior coherent.",
+        verification_surfaces=(
+            (
+                "flow_verification",
+                f"tests/{slug}/{verification_focus}",
+                "Lock the primary networked business flow with explicit workflow proof.",
+            ),
+            (
+                "regression_verification",
+                f"tests/{slug}/workflow_regression",
+                "Lock bounded business-system regressions and handoff expectations.",
+            ),
+        ),
+        first_step=f"Implement the bounded application shell in `{app_root}` for {_progression_fragment(profile)}.",
+        second_step=f"Implement the next bounded business capabilities in `{app_root}` without collapsing back to placeholder entrypoint paths.",
+        third_step=f"Wire workflow state and handoff behavior in `{workflow_path}` for {_progression_fragment(profile)}.",
+        fourth_step=f"Add focused business-flow coverage in `tests/{slug}/{verification_focus}`.",
+        fifth_step=f"Add bounded workflow regression coverage in `tests/{slug}/workflow_regression`.",
+    )
+
+
+def _automation_tool_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact,
+) -> GoalProductPlan:
+    slug = _slugify(source.title)
+    cli_path = f"src/{slug}/cli"
+    commands_path = f"src/{slug}/commands"
+    return _contractor_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+        primary_surface_kind="command_surface",
+        primary_surface_path=cli_path,
+        primary_surface_purpose="Expose the bounded command-line entry surface for the tool slice.",
+        component_base_dir=commands_path,
+        workflow_surface_kind="exit_contracts",
+        workflow_surface_path=f"src/{slug}/exit_contracts",
+        workflow_surface_purpose="Keep command wiring, validation, and exit-code behavior consistent.",
+        verification_surfaces=(
+            ("cli_flow_verification", f"tests/{slug}/cli_flow", "Lock the primary operator command flow."),
+            ("cli_regression_verification", f"tests/{slug}/cli_regression", "Lock bounded command and exit-code regressions."),
+        ),
+        first_step=f"Implement the bounded CLI surface in `{cli_path}` for {_progression_fragment(profile)}.",
+        second_step=f"Implement the next bounded command capabilities in `{commands_path}`.",
+        third_step=f"Wire validation and exit-code behavior in `src/{slug}/exit_contracts` without widening beyond the tool slice.",
+        fourth_step=f"Add focused CLI flow coverage in `tests/{slug}/cli_flow`.",
+        fifth_step=f"Add bounded CLI regression coverage in `tests/{slug}/cli_regression`.",
+    )
+
+
+def _library_framework_plan(
+    *,
+    source: GoalSource,
+    profile: AcceptanceProfileRecord,
+    contractor_profile: ContractorProfileArtifact,
+) -> GoalProductPlan:
+    slug = _slugify(source.title)
+    api_path = f"src/{slug}/api"
+    adapters_path = f"src/{slug}/adapters"
+    return _contractor_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+        primary_surface_kind="public_api",
+        primary_surface_path=api_path,
+        primary_surface_purpose="Expose the bounded reusable API surface for the library or SDK slice.",
+        component_base_dir=api_path,
+        workflow_surface_kind="adapter_surface",
+        workflow_surface_path=adapters_path,
+        workflow_surface_purpose="Keep adapters and integration seams aligned to the bounded API contract.",
+        verification_surfaces=(
+            ("contract_verification", f"tests/{slug}/contract", "Lock the public API contract for the reusable slice."),
+            ("regression_verification", f"tests/{slug}/regression", "Lock bounded adapter and compatibility regressions."),
+        ),
+        first_step=f"Implement the bounded public API in `{api_path}` for {_progression_fragment(profile)}.",
+        second_step=f"Implement the next bounded library capabilities in `{api_path}` without widening beyond the Contractor-resolved API contract.",
+        third_step=f"Wire adapters and integration seams in `{adapters_path}` for {_progression_fragment(profile)}.",
+        fourth_step=f"Add focused contract coverage in `tests/{slug}/contract`.",
+        fifth_step=f"Add bounded compatibility regression coverage in `tests/{slug}/regression`.",
     )
 
 

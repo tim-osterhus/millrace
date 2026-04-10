@@ -4,7 +4,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from millrace_engine.research.goalspec import AcceptanceProfileRecord, GoalSource
+from millrace_engine.research.goalspec import (
+    AcceptanceProfileRecord,
+    ContractorClassificationPayload,
+    ContractorProfileArtifact,
+    GoalSource,
+)
 from millrace_engine.research.goalspec_helpers import GoalSpecExecutionError
 from millrace_engine.research.goalspec_product_planning import (
     derive_goal_product_plan,
@@ -74,6 +79,56 @@ def _acceptance_profile(
     )
 
 
+def _contractor_profile(
+    *,
+    goal_id: str,
+    run_id: str,
+    shape_class: str,
+    specificity_level: str,
+    fallback_mode: str = "apply_resolved_profiles_only",
+    archetype: str = "",
+    host_platform: str = "",
+    stack_hints: tuple[str, ...] = (),
+    specializations: dict[str, str] | None = None,
+    resolved_profile_ids: tuple[str, ...] = (),
+    unresolved_specializations: tuple[str, ...] = (),
+    contradictions: tuple[str, ...] = (),
+) -> ContractorProfileArtifact:
+    return ContractorProfileArtifact.model_validate(
+        {
+            "goal_id": goal_id,
+            "run_id": run_id,
+            "updated_at": _dt("2026-04-10T18:00:00Z"),
+            "source_path": "agents/ideas/archive/raw/goal.md",
+            "canonical_source_path": "agents/ideas/archive/raw/goal.md",
+            "current_artifact_path": "agents/ideas/staging/goal.md",
+            "profile_report_path": "agents/reports/contractor_profile.md",
+            "specificity_level": specificity_level,
+            "shape_class": shape_class,
+            "classification": ContractorClassificationPayload(
+                shape_class=shape_class,
+                archetype=archetype,
+                host_platform=host_platform,
+                stack_hints=stack_hints,
+                specializations=specializations or {},
+            ).model_dump(mode="json"),
+            "candidate_classifications": [{"label": shape_class, "score": 0.92}],
+            "confidence": 0.92,
+            "fallback_mode": fallback_mode,
+            "resolved_profile_ids": resolved_profile_ids,
+            "unresolved_specializations": unresolved_specializations,
+            "capability_hints": (),
+            "environment_hints": (),
+            "browse_used": False,
+            "browse_notes": "Local evidence was sufficient.",
+            "evidence": ("Planner test fixture.",),
+            "abstentions": (),
+            "contradictions": contradictions,
+            "notes": "",
+        }
+    )
+
+
 def test_derive_goal_product_plan_rejects_contaminated_semantic_labels_for_product_scope() -> None:
     source = _goal_source(
         title="Support Ticket Service",
@@ -113,6 +168,176 @@ def test_derive_goal_product_plan_preserves_framework_internal_runtime_goals() -
     assert plan.implementation_surfaces[0].path == "millrace_engine/research/goalspec_goal_intake.py"
     assert len(plan.phase_steps) >= minimum_phase_step_count("moderate")
     assert not find_abstract_phase_steps(plan.phase_steps)
+
+
+def test_derive_goal_product_plan_prefers_contractor_minecraft_mod_shape_without_loader_overlay() -> None:
+    source = _goal_source(
+        title="Aura Progression Mod",
+        body="Build a Minecraft mod with aura progression, gameplay content, and GameTests.",
+    )
+    profile = _acceptance_profile(
+        title=source.title,
+        objective_summary="Build a Minecraft mod with aura progression, gameplay content, and GameTests.",
+        capability_domains=("Aura Progression", "Registrations", "Gameplay Tests"),
+        progression_lines=("Progression from registrations to gameplay proof in-game.",),
+    )
+    contractor_profile = _contractor_profile(
+        goal_id=source.idea_id,
+        run_id="planner-run-001",
+        shape_class="platform_extension",
+        specificity_level="L4",
+        archetype="gameplay_mod",
+        host_platform="minecraft",
+        stack_hints=("jvm", "gradle"),
+        specializations={"loader": "fabric"},
+        resolved_profile_ids=("shape.platform_extension@1", "host.minecraft@1", "stack.jvm_gradle@1"),
+        unresolved_specializations=("loader=fabric",),
+    )
+
+    plan = derive_goal_product_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+
+    assert plan.planning_profile == "generic_product"
+    assert [surface.path for surface in plan.implementation_surfaces] == [
+        "mods/aura-progression-mod/src/main/java",
+        "mods/aura-progression-mod/src/main/java/aura-progression",
+        "mods/aura-progression-mod/src/main/java/registrations",
+        "mods/aura-progression-mod/src/main/java/gameplay-tests",
+        "mods/aura-progression-mod/src/main/resources",
+    ]
+    assert [surface.path for surface in plan.verification_surfaces] == [
+        "mods/aura-progression-mod/src/gametest/java",
+        "mods/aura-progression-mod/src/test/java",
+    ]
+    assert any("loader-specific overlay" in step for step in plan.phase_steps)
+
+
+def test_derive_goal_product_plan_prefers_contractor_network_business_system_shape() -> None:
+    source = _goal_source(
+        title="Church Management System",
+        body="Build a church management system for membership, check-in, and pastoral follow-up.",
+    )
+    profile = _acceptance_profile(
+        title=source.title,
+        objective_summary="Build a church management system for membership, check-in, and pastoral follow-up.",
+        capability_domains=("Membership Directory", "Check-In Workflow", "Pastoral Follow-Up"),
+        progression_lines=("Progression from member intake to check-in to pastoral follow-up.",),
+    )
+    contractor_profile = _contractor_profile(
+        goal_id=source.idea_id,
+        run_id="planner-run-001",
+        shape_class="network_application",
+        specificity_level="L3",
+        archetype="crud_business_system",
+        resolved_profile_ids=("shape.network_application@1", "archetype.crud_business_system@1"),
+    )
+
+    plan = derive_goal_product_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+
+    assert [surface.path for surface in plan.implementation_surfaces] == [
+        "src/church-management-system/application",
+        "src/church-management-system/application/membership-directory",
+        "src/church-management-system/application/check-in-workflow",
+        "src/church-management-system/application/pastoral-follow-up",
+        "src/church-management-system/workflows",
+    ]
+    assert [surface.path for surface in plan.verification_surfaces] == [
+        "tests/church-management-system/network_flow",
+        "tests/church-management-system/workflow_regression",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("shape_class", "archetype", "expected_paths"),
+    [
+        (
+            "automation_tool",
+            "developer_cli",
+            (
+                "src/release-audit-cli/cli",
+                "src/release-audit-cli/commands/package-selection",
+                "src/release-audit-cli/commands/reporting",
+                "src/release-audit-cli/exit_contracts",
+                "tests/release-audit-cli/cli_flow",
+                "tests/release-audit-cli/cli_regression",
+            ),
+        ),
+        (
+            "library_framework",
+            "sdk_library",
+            (
+                "src/team-workspace-sdk/api",
+                "src/team-workspace-sdk/api/workspace-client",
+                "src/team-workspace-sdk/api/review-api",
+                "src/team-workspace-sdk/adapters",
+                "tests/team-workspace-sdk/contract",
+                "tests/team-workspace-sdk/regression",
+            ),
+        ),
+    ],
+)
+def test_derive_goal_product_plan_prefers_contractor_tool_and_library_shapes(
+    shape_class: str,
+    archetype: str,
+    expected_paths: tuple[str, ...],
+) -> None:
+    title = "Release Audit CLI" if shape_class == "automation_tool" else "Team Workspace SDK"
+    body = "Build a CLI for release audits." if shape_class == "automation_tool" else "Build an SDK for team workspace integrations."
+    profile = _acceptance_profile(
+        title=title,
+        objective_summary=body,
+        capability_domains=("Package Selection", "Reporting") if shape_class == "automation_tool" else ("Workspace Client", "Review API"),
+        progression_lines=("Progression from first bounded command to proof." if shape_class == "automation_tool" else "Progression from first client call to integration proof.",),
+    )
+    source = _goal_source(title=title, body=body)
+    contractor_profile = _contractor_profile(
+        goal_id=source.idea_id,
+        run_id="planner-run-001",
+        shape_class=shape_class,
+        specificity_level="L2",
+        archetype=archetype,
+        resolved_profile_ids=(f"shape.{shape_class}@1", f"archetype.{archetype}@1"),
+    )
+
+    plan = derive_goal_product_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+    actual_paths = tuple(surface.path for surface in (*plan.implementation_surfaces, *plan.verification_surfaces))
+
+    assert actual_paths == expected_paths
+
+
+def test_derive_goal_product_plan_falls_back_for_ambiguous_mixed_shape() -> None:
+    source = _goal_source(
+        title="Team System",
+        body="Build something for teams, maybe a service or a CLI, but the exact product shape is unclear.",
+    )
+    profile = _acceptance_profile(
+        title=source.title,
+        objective_summary="Build something for teams, maybe a service or a CLI, but the exact product shape is unclear.",
+        capability_domains=("Team Operations", "Mixed Delivery"),
+        progression_lines=("Progression remains unclear across service and local-tool expectations.",),
+    )
+    contractor_profile = _contractor_profile(
+        goal_id=source.idea_id,
+        run_id="planner-run-001",
+        shape_class="network_application",
+        specificity_level="L1",
+        fallback_mode="conservative_shape_only",
+        archetype="crud_business_system",
+        contradictions=("The goal mixes standalone product language with service/backend cues.",),
+        resolved_profile_ids=("shape.network_application@1",),
+    )
+
+    plan = derive_goal_product_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+
+    assert [surface.path for surface in plan.implementation_surfaces] == [
+        "src/team-system/entrypoint",
+        "src/team-system/team-operations",
+        "src/team-system/mixed-delivery",
+        "src/team-system/workflow",
+    ]
+    assert [surface.path for surface in plan.verification_surfaces] == [
+        "tests/team-system/flow",
+        "tests/team-system/regression",
+    ]
 
 
 @pytest.mark.parametrize(

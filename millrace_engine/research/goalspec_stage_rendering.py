@@ -7,6 +7,7 @@ from datetime import datetime
 from .goalspec import (
     AcceptanceProfileRecord,
     CompletionManifestDraftStateRecord,
+    ContractorProfileArtifact,
     GoalSource,
     ObjectiveProfileSyncStateRecord,
 )
@@ -117,6 +118,7 @@ def render_queue_spec(
     profile: AcceptanceProfileRecord,
     completion_manifest: CompletionManifestDraftStateRecord,
     completion_manifest_path: str,
+    contractor_profile: ContractorProfileArtifact | None = None,
 ) -> str:
     summary = _product_summary(source=source, profile=profile)
     capability_domains = _capability_domains(profile)
@@ -125,7 +127,11 @@ def render_queue_spec(
     required_artifact_paths = _required_artifact_paths(completion_manifest)
     implementation_surface_paths = _implementation_surface_paths(completion_manifest)
     verification_surface_paths = _verification_surface_paths(completion_manifest)
-    product_plan = derive_goal_product_plan(source=source, profile=profile)
+    product_plan = derive_goal_product_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+    )
     milestone_lines = [f"- {item}" for item in profile.milestones] or [f"- Deliver {summary}."]
     hard_blocker_lines = [f"- {item}" for item in profile.hard_blockers] or ["- No explicit blockers were recorded."]
     implementation_surface_lines = _render_surface_lines(
@@ -306,6 +312,7 @@ def render_phase_spec(
     completion_manifest_path: str,
     objective_profile_path: str,
     planned_spec_ids: tuple[str, ...] = (),
+    contractor_profile: ContractorProfileArtifact | None = None,
 ) -> str:
     timestamp = _isoformat_z(emitted_at)
     summary = _product_summary(source=source, profile=profile)
@@ -315,7 +322,11 @@ def render_phase_spec(
     implementation_surface_paths = _implementation_surface_paths(completion_manifest)
     verification_surface_paths = _verification_surface_paths(completion_manifest)
     required_artifact_paths = _required_artifact_paths(completion_manifest)
-    product_plan = derive_goal_product_plan(source=source, profile=profile)
+    product_plan = derive_goal_product_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+    )
     planned_spec_lines = [f"- `{spec_id}`" for spec_id in planned_spec_ids] or ["- None."]
     implementation_surface_lines = _render_surface_lines(
         tuple(completion_manifest.implementation_surfaces),

@@ -31,6 +31,7 @@ from .goalspec_persistence import (
     _build_goal_spec_family_state,
     _load_objective_profile_inputs,
     _updated_goal_spec_family_state,
+    load_objective_state_contractor_profile,
 )
 from .goalspec_scope_diagnostics import (
     build_goal_anchor_tokens,
@@ -182,6 +183,7 @@ def execute_spec_synthesis(
         )
 
     current_family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
+    contractor_profile = load_objective_state_contractor_profile(paths, objective_state)
     selected_spec = _select_family_spec(source=source, current_family_state=current_family_state)
     spec_id = selected_spec.spec_id
     source = source.model_copy(update={"title": selected_spec.title})
@@ -237,6 +239,7 @@ def execute_spec_synthesis(
         profile=profile,
         completion_manifest=completion_manifest,
         completion_manifest_path=completion_manifest_path,
+        contractor_profile=contractor_profile,
     )
     phase_spec_text = render_phase_spec(
         emitted_at=emitted_at,
@@ -247,6 +250,7 @@ def execute_spec_synthesis(
         completion_manifest_path=completion_manifest_path,
         objective_profile_path=objective_state.profile_path,
         planned_spec_ids=planned_spec_ids,
+        contractor_profile=contractor_profile,
     )
     scope_record = evaluate_scope_divergence(
         run_id=run_id,
@@ -352,6 +356,7 @@ def execute_spec_synthesis(
             profile=profile,
             completion_manifest=completion_manifest,
             completion_manifest_path=completion_manifest_path,
+            contractor_profile=contractor_profile,
         )
         expected_phase_spec = render_phase_spec(
             emitted_at=reused_emitted_at,
@@ -362,6 +367,7 @@ def execute_spec_synthesis(
             completion_manifest_path=completion_manifest_path,
             objective_profile_path=objective_state.profile_path,
             planned_spec_ids=planned_spec_ids,
+            contractor_profile=contractor_profile,
         )
         expected_decision = render_synthesis_decision_record(
             emitted_at=reused_emitted_at,

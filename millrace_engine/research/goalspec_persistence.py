@@ -81,6 +81,21 @@ def load_contractor_execution_record(paths: RuntimePaths, *, run_id: str) -> Con
     return _load_json_model(record_path, ContractorExecutionRecord)
 
 
+def load_objective_state_contractor_profile(
+    paths: RuntimePaths,
+    objective_state: ObjectiveProfileSyncStateRecord,
+) -> ContractorProfileArtifact | None:
+    profile_path_token = objective_state.contractor_profile_path.strip()
+    if not profile_path_token:
+        return None
+    profile_path = _resolve_path_token(profile_path_token, relative_to=paths.root)
+    if not profile_path.exists():
+        raise GoalSpecExecutionError(
+            f"Objective Profile Sync referenced a missing contractor profile: {profile_path.as_posix()}"
+        )
+    return _load_json_model(profile_path, ContractorProfileArtifact)
+
+
 def _build_completion_manifest_draft_state(
     *,
     emitted_at: datetime,
@@ -96,7 +111,12 @@ def _build_completion_manifest_draft_state(
     golden_spec_path = paths.specs_stable_golden_dir / f"{spec_id}__{slug}.md"
     phase_spec_path = paths.specs_stable_phase_dir / f"{spec_id}__phase-01.md"
     decision_path = paths.specs_decisions_dir / f"{Path(source.current_artifact_path).stem}__spec-synthesis.md"
-    product_plan = derive_goal_product_plan(source=source, profile=profile)
+    contractor_profile = load_objective_state_contractor_profile(paths, objective_state)
+    product_plan = derive_goal_product_plan(
+        source=source,
+        profile=profile,
+        contractor_profile=contractor_profile,
+    )
     open_questions = profile.hard_blockers or (
         "Spec Review and task generation remain downstream after this draft synthesis pass.",
     )
