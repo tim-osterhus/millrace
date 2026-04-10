@@ -184,6 +184,11 @@
     {
       "category": "directory",
       "family": "skills",
+      "path": "agents/skills/contractor-classification"
+    },
+    {
+      "category": "directory",
+      "family": "skills",
       "path": "agents/skills/frontend-review"
     },
     {
@@ -647,6 +652,24 @@
       "sha256": "1044e2402612540a13831024f5d40cbb053a39611345f06e72f0c2006e8b04cf",
       "size": 1067,
       "size_bytes": 1067,
+      "source": "reference"
+    },
+    {
+      "category": "objective_contract",
+      "family": "objective",
+      "path": "agents/objective/contractor_profile.example.json",
+      "sha256": "1f793b3e4f996d2afb4368794ed7b6a857f7a91061879d73cf1140a6e2cdc22e",
+      "size": 1860,
+      "size_bytes": 1860,
+      "source": "reference"
+    },
+    {
+      "category": "objective_contract",
+      "family": "objective",
+      "path": "agents/objective/contractor_profile.schema.json",
+      "sha256": "e08e60315ab96d049868a32febf84d186f207bd01c0952927c3da003522cb663",
+      "size": 3883,
+      "size_bytes": 3883,
       "source": "reference"
     },
     {
@@ -1151,6 +1174,69 @@
       "sha256": "dd1db19384c9678085a3270bdf95560f1b5ad47eb6ce3c350dcc85e9853d563a",
       "size": 6060,
       "size_bytes": 6060,
+      "source": "reference"
+    },
+    {
+      "category": "skill_examples",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md",
+      "sha256": "425d732f820a61b11846f0aa997723573b325c02c309ef682f023f9ef18602c4",
+      "size": 2464,
+      "size_bytes": 2464,
+      "source": "reference"
+    },
+    {
+      "category": "skill_support",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/EXAMPLES_INDEX.md",
+      "sha256": "c24ae8c4ca4daf5787e5c719e8cccf69a768195bac237e41bc1d9297b4f27398",
+      "size": 2136,
+      "size_bytes": 2136,
+      "source": "reference"
+    },
+    {
+      "category": "skill_examples",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/EXAMPLES_PLATFORM_EXTENSIONS.md",
+      "sha256": "2b89c637d41b8e82723ac8aab2bda8a3143164a33addb953062acf9604dc9224",
+      "size": 2794,
+      "size_bytes": 2794,
+      "source": "reference"
+    },
+    {
+      "category": "skill_examples",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/EXAMPLES_SHAPES.md",
+      "sha256": "c45d0dba12b877142f2510f0c20f73f02c0a140059cb40e493b4bf8d40c672b4",
+      "size": 2674,
+      "size_bytes": 2674,
+      "source": "reference"
+    },
+    {
+      "category": "skill_examples",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/EXAMPLES_TOOLS_AND_LIBRARIES.md",
+      "sha256": "7d9b491726fa7af38392670c7dbf8ce7cda6137c58aff3ad35eb1dddfc3d89e3",
+      "size": 2016,
+      "size_bytes": 2016,
+      "source": "reference"
+    },
+    {
+      "category": "skill_examples",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/EXAMPLES_WEB_AND_NETWORK.md",
+      "sha256": "5ef27f8576fd945845d32d90abfb22222dedc973d755f50e0a09978deafc8ffd",
+      "size": 2539,
+      "size_bytes": 2539,
+      "source": "reference"
+    },
+    {
+      "category": "skill_definition",
+      "family": "skills",
+      "path": "agents/skills/contractor-classification/SKILL.md",
+      "sha256": "9b016b9f77d15bfabe9a264cb52f0654fe1a38ac8af247156515a2bca963cfb8",
+      "size": 9431,
+      "size_bytes": 9431,
       "source": "reference"
     },
     {

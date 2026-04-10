@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "contractor_profile",
+  "goal_id": "IDEA-AURA-001",
+  "run_id": "goalspec-aura-001",
+  "updated_at": "2026-04-10T18:30:00Z",
+  "source_path": "agents/ideas/archive/raw/aura_goal.md",
+  "canonical_source_path": "agents/ideas/archive/raw/aura_goal.md",
+  "current_artifact_path": "agents/ideas/staging/aura_goal.md",
+  "profile_report_path": "agents/reports/contractor_profile.md",
+  "specificity_level": "L4",
+  "shape_class": "platform_extension",
+  "classification": {
+    "shape_class": "platform_extension",
+    "archetype": "gameplay_mod",
+    "host_platform": "minecraft",
+    "stack_hints": ["jvm", "gradle"],
+    "specializations": {}
+  },
+  "candidate_classifications": [
+    {"label": "platform_extension/gameplay_mod/minecraft", "score": 0.92},
+    {"label": "interactive_application/gameplay_system", "score": 0.31}
+  ],
+  "confidence": 0.92,
+  "fallback_mode": "apply_resolved_profiles_only",
+  "resolved_profile_ids": [
+    "shape.platform_extension@1",
+    "archetype.gameplay_mod@1",
+    "host.minecraft@1",
+    "stack.jvm_gradle@1"
+  ],
+  "unresolved_specializations": [
+    "loader"
+  ],
+  "capability_hints": [
+    "registration_assets",
+    "progression_content",
+    "repo_native_behavior_tests"
+  ],
+  "environment_hints": [
+    "java",
+    "gradle"
+  ],
+  "browse_used": false,
+  "browse_notes": "Local evidence was sufficient; no micro-browsing was required.",
+  "evidence": [
+    "The goal explicitly describes a Minecraft mod.",
+    "The work is clearly host-loaded rather than a standalone application.",
+    "The goal implies content registration, progression, and in-game validation."
+  ],
+  "abstentions": [
+    "Fabric vs Forge vs NeoForge"
+  ],
+  "contradictions": [],
+  "notes": "Broad Minecraft-mod-aware planning is justified, but loader-specific overlays remain unresolved."
+}

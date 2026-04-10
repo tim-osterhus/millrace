@@ -1,0 +1,178 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Millrace Contractor Profile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "goal_id",
+    "run_id",
+    "updated_at",
+    "source_path",
+    "canonical_source_path",
+    "current_artifact_path",
+    "specificity_level",
+    "shape_class",
+    "classification",
+    "confidence",
+    "fallback_mode",
+    "resolved_profile_ids",
+    "unresolved_specializations",
+    "capability_hints",
+    "environment_hints",
+    "browse_used",
+    "evidence",
+    "abstentions",
+    "contradictions"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_type": {
+      "type": "string",
+      "const": "contractor_profile"
+    },
+    "goal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "canonical_source_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_artifact_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_report_path": {
+      "type": "string"
+    },
+    "specificity_level": {
+      "type": "string",
+      "enum": ["L0", "L1", "L2", "L3", "L4", "L5"]
+    },
+    "shape_class": {
+      "type": "string",
+      "enum": [
+        "platform_extension",
+        "interactive_application",
+        "network_application",
+        "service_backend",
+        "automation_tool",
+        "library_framework",
+        "data_system",
+        "content_system",
+        "unknown"
+      ]
+    },
+    "classification": {
+      "type": "object",
+      "required": [
+        "shape_class",
+        "archetype",
+        "host_platform",
+        "stack_hints",
+        "specializations"
+      ],
+      "properties": {
+        "shape_class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "archetype": {
+          "type": "string"
+        },
+        "host_platform": {
+          "type": "string"
+        },
+        "stack_hints": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "specializations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "candidate_classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "score"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1},
+          "score": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "fallback_mode": {
+      "type": "string",
+      "enum": [
+        "apply_resolved_profiles_only",
+        "conservative_shape_only",
+        "abstain_unknown"
+      ]
+    },
+    "resolved_profile_ids": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "unresolved_specializations": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "capability_hints": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "environment_hints": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "browse_used": {
+      "type": "boolean"
+    },
+    "browse_notes": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "abstentions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "contradictions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

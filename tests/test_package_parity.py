@@ -15,6 +15,13 @@ from millrace_engine.contracts import StageType
 
 
 MILLRACE_ROOT = Path(__file__).resolve().parents[1]
+CONTRACTOR_BLUEPRINT_ROOT = (
+    MILLRACE_ROOT.parent
+    / "work"
+    / "contractor_blueprint_bundle"
+    / "millrace_engine"
+    / "assets"
+)
 PUBLIC_DOC_PARITY_PATHS = {
     "README.md": "README.md",
     "ADVISOR.md": "ADVISOR.md",
@@ -22,6 +29,18 @@ PUBLIC_DOC_PARITY_PATHS = {
     "OPERATOR_GUIDE.md": "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
     "docs/TUI_DOCUMENTATION.md": "docs/TUI_DOCUMENTATION.md",
+}
+CONTRACTOR_BUNDLE_PARITY_PATHS = {
+    "agents/_contractor.md": "agents/_contractor.md",
+    "agents/objective/contractor_profile.example.json": "agents/objective/contractor_profile.example.json",
+    "agents/objective/contractor_profile.schema.json": "agents/objective/contractor_profile.schema.json",
+    "agents/skills/contractor-classification/EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md": "agents/skills/contractor-classification/EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md",
+    "agents/skills/contractor-classification/EXAMPLES_INDEX.md": "agents/skills/contractor-classification/EXAMPLES_INDEX.md",
+    "agents/skills/contractor-classification/EXAMPLES_PLATFORM_EXTENSIONS.md": "agents/skills/contractor-classification/EXAMPLES_PLATFORM_EXTENSIONS.md",
+    "agents/skills/contractor-classification/EXAMPLES_SHAPES.md": "agents/skills/contractor-classification/EXAMPLES_SHAPES.md",
+    "agents/skills/contractor-classification/EXAMPLES_TOOLS_AND_LIBRARIES.md": "agents/skills/contractor-classification/EXAMPLES_TOOLS_AND_LIBRARIES.md",
+    "agents/skills/contractor-classification/EXAMPLES_WEB_AND_NETWORK.md": "agents/skills/contractor-classification/EXAMPLES_WEB_AND_NETWORK.md",
+    "agents/skills/contractor-classification/SKILL.md": "agents/skills/contractor-classification/SKILL.md",
 }
 PACKAGED_RESEARCH_CONTRACT_PATHS = {
     "agents/_objective_profile_sync.md": {
@@ -101,6 +120,19 @@ def _assert_public_docs_match_packaged_copies() -> None:
         assert public_text == asset_text, public_relative
 
 
+def _assert_contractor_bundle_matches_blueprint_source_docs() -> None:
+    if not CONTRACTOR_BLUEPRINT_ROOT.is_dir():
+        return
+
+    assets_root = MILLRACE_ROOT / "millrace_engine" / "assets"
+    for blueprint_relative, asset_relative in CONTRACTOR_BUNDLE_PARITY_PATHS.items():
+        blueprint_path = CONTRACTOR_BLUEPRINT_ROOT / blueprint_relative
+        assert blueprint_path.is_file(), blueprint_relative
+        blueprint_text = blueprint_path.read_text(encoding="utf-8")
+        asset_text = (assets_root / asset_relative).read_text(encoding="utf-8")
+        assert asset_text == blueprint_text, asset_relative
+
+
 def test_packaged_docs_and_operator_assets_exist() -> None:
     for relative in (
         "README.md",
@@ -133,6 +165,16 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths
     assert OPERATIONS_SKILL_PATH in manifest_paths
     assert "agents/skills/millrace-operator-intake-control/EXAMPLES.md" in manifest_paths
+    assert "agents/_contractor.md" in manifest_paths
+    assert "agents/objective/contractor_profile.schema.json" in manifest_paths
+    assert "agents/objective/contractor_profile.example.json" in manifest_paths
+    assert "agents/skills/contractor-classification/SKILL.md" in manifest_paths
+    assert "agents/skills/contractor-classification/EXAMPLES_INDEX.md" in manifest_paths
+    assert "agents/skills/contractor-classification/EXAMPLES_SHAPES.md" in manifest_paths
+    assert "agents/skills/contractor-classification/EXAMPLES_PLATFORM_EXTENSIONS.md" in manifest_paths
+    assert "agents/skills/contractor-classification/EXAMPLES_WEB_AND_NETWORK.md" in manifest_paths
+    assert "agents/skills/contractor-classification/EXAMPLES_TOOLS_AND_LIBRARIES.md" in manifest_paths
+    assert "agents/skills/contractor-classification/EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md" in manifest_paths
     for removed_path in (
         "agents/legacy",
         "agents/legacy/README.md",
@@ -145,6 +187,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     ):
         assert removed_path not in manifest_paths
     _assert_public_docs_match_packaged_copies()
+    _assert_contractor_bundle_matches_blueprint_source_docs()
 
     readme = (MILLRACE_ROOT / "README.md").read_text(encoding="utf-8")
     assert "autonomous" in readme.lower()
