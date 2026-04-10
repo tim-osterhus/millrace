@@ -6,7 +6,11 @@ import pytest
 
 from millrace_engine.research.goalspec import AcceptanceProfileRecord, GoalSource
 from millrace_engine.research.goalspec_helpers import GoalSpecExecutionError
-from millrace_engine.research.goalspec_product_planning import derive_goal_product_plan
+from millrace_engine.research.goalspec_product_planning import (
+    derive_goal_product_plan,
+    find_abstract_phase_steps,
+    minimum_phase_step_count,
+)
 from millrace_engine.research.goalspec_semantic_profile import GoalSemanticProfile, SemanticProfileMilestone
 from millrace_engine.research.state import ResearchQueueFamily
 
@@ -15,7 +19,7 @@ def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
-def _goal_source(*, title: str, body: str) -> GoalSource:
+def _goal_source(*, title: str, body: str, decomposition_profile: str = "moderate") -> GoalSource:
     return GoalSource(
         current_artifact_path="/tmp/workspace/agents/ideas/staging/goal.md",
         current_artifact_relative_path="agents/ideas/staging/goal.md",
@@ -26,7 +30,7 @@ def _goal_source(*, title: str, body: str) -> GoalSource:
         queue_family=ResearchQueueFamily.GOALSPEC,
         idea_id="IDEA-PLANNER-001",
         title=title,
-        decomposition_profile="moderate",
+        decomposition_profile=decomposition_profile,
         frontmatter={},
         body=body,
         canonical_body=body,
@@ -107,3 +111,68 @@ def test_derive_goal_product_plan_preserves_framework_internal_runtime_goals() -
 
     assert plan.repo_kind == "millrace_python_runtime"
     assert plan.implementation_surfaces[0].path == "millrace_engine/research/goalspec_goal_intake.py"
+    assert len(plan.phase_steps) >= minimum_phase_step_count("moderate")
+    assert not find_abstract_phase_steps(plan.phase_steps)
+
+
+@pytest.mark.parametrize(
+    ("title", "body", "objective_summary", "capability_domains", "progression_lines", "expected_repo_kind"),
+    [
+        (
+            "Modernize Goal Intake",
+            "Create real GoalSpec intake and objective sync stages.",
+            "Create real GoalSpec intake and objective sync stages.",
+            ("Goal Intake", "Objective Profile Sync"),
+            ("Progression from intake to objective sync to restart-safe completion.",),
+            "millrace_python_runtime",
+        ),
+        (
+            "Aura Workshop Vertical Slice",
+            "Build the first playable aura workshop vertical slice for the mod.",
+            "Build the first playable aura workshop vertical slice for the mod.",
+            ("Aura Collector", "Aura Conduit", "Aura Reservoir"),
+            ("Progression from collection to routing to storage proof.",),
+            "minecraft_fabric_mod",
+        ),
+        (
+            "Support Ticket Service",
+            "Build the first usable support-ticket web app for a Python service.",
+            "Build the first usable support-ticket web app for a Python service.",
+            ("Support Ticket Intake", "Agent Workflow"),
+            ("Progression from intake to triage to reply proof.",),
+            "python_product",
+        ),
+        (
+            "Neighborhood Events Hub",
+            "Build the first usable neighborhood events experience.",
+            "Build the first usable neighborhood events experience.",
+            ("Event Discovery", "RSVP Tracking"),
+            ("Progression from discovery to RSVP confirmation proof.",),
+            "generic_product",
+        ),
+    ],
+)
+@pytest.mark.parametrize("decomposition_profile", ["simple", "moderate", "involved"])
+def test_derive_goal_product_plan_supported_profiles_meet_density_floors(
+    title: str,
+    body: str,
+    objective_summary: str,
+    capability_domains: tuple[str, ...],
+    progression_lines: tuple[str, ...],
+    expected_repo_kind: str,
+    decomposition_profile: str,
+) -> None:
+    source = _goal_source(title=title, body=body, decomposition_profile=decomposition_profile)
+    profile = _acceptance_profile(
+        title=title,
+        objective_summary=objective_summary,
+        capability_domains=capability_domains,
+        progression_lines=progression_lines,
+    )
+
+    plan = derive_goal_product_plan(source=source, profile=profile)
+
+    assert plan.repo_kind == expected_repo_kind
+    assert len(plan.phase_steps) >= minimum_phase_step_count(decomposition_profile)
+    assert not find_abstract_phase_steps(plan.phase_steps)
+    assert any("`" in step for step in plan.phase_steps)

@@ -368,17 +368,38 @@ def _progression_fragment(profile: AcceptanceProfileRecord) -> str:
     return lowered.rstrip(".")
 
 
-def _pad_steps(steps: list[str], *, minimum: int) -> tuple[str, ...]:
-    deduped = list(_dedupe_text(steps))
+def _finalize_phase_steps(
+    base_steps: list[str],
+    *,
+    supplemental_steps: tuple[str, ...],
+    minimum: int,
+    fallback_paths: tuple[str, ...],
+    fallback_focus: str,
+) -> tuple[str, ...]:
+    deduped = list(_dedupe_text(base_steps))
     if not deduped:
         return ()
-    while len(deduped) < minimum:
-        previous = deduped[-1]
-        if "verification" not in previous.casefold():
-            deduped.append(previous + " Preserve the same bounded product path during verification closure.")
-        else:
+    for step in supplemental_steps:
+        if len(deduped) >= minimum:
             break
-    return tuple(deduped[: max(minimum, len(deduped))])
+        if step not in deduped:
+            deduped.append(step)
+    if len(deduped) >= minimum:
+        return tuple(deduped)
+
+    usable_paths = tuple(path for path in _dedupe_text(fallback_paths) if path.strip()) or ("src/product/feature.py",)
+    follow_up_index = 1
+    while len(deduped) < minimum:
+        primary = usable_paths[(follow_up_index - 1) % len(usable_paths)]
+        secondary = usable_paths[follow_up_index % len(usable_paths)]
+        deduped.append(
+            (
+                f"Tighten bounded follow-up slice {follow_up_index:02d} in `{primary}` "
+                f"and `{secondary}` while preserving {fallback_focus}."
+            )
+        )
+        follow_up_index += 1
+    return tuple(deduped)
 
 
 def _millrace_python_runtime_plan(*, source: GoalSource, profile: AcceptanceProfileRecord) -> GoalProductPlan:
@@ -412,7 +433,7 @@ def _millrace_python_runtime_plan(*, source: GoalSource, profile: AcceptanceProf
         ),
     )
     minimum = minimum_phase_step_count(source.decomposition_profile)
-    steps = _pad_steps(
+    steps = _finalize_phase_steps(
         [
             (
                 "Implement the staged intake edge in `millrace_engine/research/goalspec_goal_intake.py` "
@@ -431,7 +452,44 @@ def _millrace_python_runtime_plan(*, source: GoalSource, profile: AcceptanceProf
                 "and keep the state contract explicit in `tests/test_goalspec_state.py`."
             ),
         ],
+        supplemental_steps=(
+            (
+                "Normalize staged goal metadata and archive/restage transitions in "
+                "`millrace_engine/research/goalspec_goal_intake.py` and "
+                "`millrace_engine/research/goalspec_stage_support.py`."
+            ),
+            (
+                "Keep objective-profile product scope aligned with staged inputs in "
+                "`millrace_engine/research/goalspec_objective_profile_sync.py` and "
+                "`millrace_engine/research/goalspec_goal_intake.py`."
+            ),
+            (
+                "Wire checkpoint-facing GoalSpec handoff metadata in "
+                "`millrace_engine/research/goalspec_stage_support.py` and "
+                "`millrace_engine/research/goalspec_objective_profile_sync.py`."
+            ),
+            (
+                "Add regression coverage for staged archive/restage behavior in "
+                "`tests/test_research_dispatcher.py` and `tests/test_goalspec_state.py`."
+            ),
+            (
+                "Add regression coverage for checkpoint-safe resume of the bounded runtime slice in "
+                "`tests/test_research_dispatcher.py` and `tests/test_goalspec_state.py`."
+            ),
+            (
+                "Re-run the GoalSpec runtime regressions in `tests/test_research_dispatcher.py` "
+                "and `tests/test_goalspec_state.py`, fixing any path-specific failures in the research modules."
+            ),
+        ),
         minimum=minimum,
+        fallback_paths=(
+            "millrace_engine/research/goalspec_goal_intake.py",
+            "millrace_engine/research/goalspec_objective_profile_sync.py",
+            "millrace_engine/research/goalspec_stage_support.py",
+            "tests/test_research_dispatcher.py",
+            "tests/test_goalspec_state.py",
+        ),
+        fallback_focus="the staged GoalSpec runtime path",
     )
     return GoalProductPlan(
         repo_kind="millrace_python_runtime",
@@ -504,7 +562,7 @@ def _minecraft_fabric_mod_plan(*, source: GoalSource, profile: AcceptanceProfile
     second_logic_path = implementation_surfaces[2].path if len(implementation_surfaces) > 2 else first_logic_path
     third_logic_path = implementation_surfaces[3].path if len(implementation_surfaces) > 3 else second_logic_path
     minimum = minimum_phase_step_count(source.decomposition_profile)
-    steps = _pad_steps(
+    steps = _finalize_phase_steps(
         [
             (
                 f"Register the first playable {module_slug} content in `{registration_path}` "
@@ -527,7 +585,42 @@ def _minecraft_fabric_mod_plan(*, source: GoalSource, profile: AcceptanceProfile
                 f"and `{game_test_path}`."
             ),
         ],
+        supplemental_steps=(
+            (
+                f"Wire registration flow from `{registration_path}` into `{first_logic_path}` "
+                f"and keep player-facing naming aligned in `{lang_path}`."
+            ),
+            (
+                f"Implement bounded interaction rules between `{second_logic_path}` and `{third_logic_path}` "
+                f"without widening beyond the first playable slice."
+            ),
+            (
+                f"Persist recipe and progression data alignment in `{recipe_path}` and `{advancement_path}` "
+                f"for the first validated gameplay loop."
+            ),
+            (
+                f"Add deterministic happy-path assertions in `{flow_test_path}` for {_progression_fragment(profile)}."
+            ),
+            (
+                f"Add in-game regression coverage in `{game_test_path}` for registration, routing, and progression proof."
+            ),
+            (
+                f"Re-run the focused gameplay validation through `{flow_test_path}` and `{game_test_path}`, "
+                f"fixing any path-specific failures in `{registration_path}` and the gameplay classes."
+            ),
+        ),
         minimum=minimum,
+        fallback_paths=(
+            registration_path,
+            first_logic_path,
+            second_logic_path,
+            third_logic_path,
+            recipe_path,
+            advancement_path,
+            flow_test_path,
+            game_test_path,
+        ),
+        fallback_focus="the first playable gameplay loop",
     )
     return GoalProductPlan(
         repo_kind="minecraft_fabric_mod",
@@ -586,14 +679,33 @@ def _python_product_plan(*, source: GoalSource, profile: AcceptanceProfileRecord
         for path in verification_paths
     )
     minimum = minimum_phase_step_count(source.decomposition_profile)
-    steps = _pad_steps(
+    steps = _finalize_phase_steps(
         [
             f"Expose the bounded product entrypoint in `{entry_path}`.",
             f"Implement the core workflow and domain behavior in `{service_path}`.",
             f"Persist the supporting state or contract in `{support_path}`.",
             f"Add regression coverage in `{verification_paths[0]}` and `{verification_paths[1]}`.",
         ],
+        supplemental_steps=(
+            f"Wire the bounded entry flow from `{entry_path}` into `{service_path}`.",
+            f"Handle bounded validation and failure branches in `{service_path}` and `{support_path}`.",
+            f"Persist serialization or storage transitions in `{support_path}` for the first shipped slice.",
+            f"Add focused entrypoint coverage in `{verification_paths[0]}` for the bounded product path.",
+            f"Add workflow edge-case coverage in `{verification_paths[1]}` for the main service contract.",
+            (
+                f"Re-run the targeted product checks in `{verification_paths[0]}` and `{verification_paths[1]}`, "
+                f"fixing any path-specific regressions in `{entry_path}`, `{service_path}`, and `{support_path}`."
+            ),
+        ),
         minimum=minimum,
+        fallback_paths=(
+            entry_path,
+            service_path,
+            support_path,
+            verification_paths[0],
+            verification_paths[1],
+        ),
+        fallback_focus="the bounded product workflow",
     )
     return GoalProductPlan(
         repo_kind="python_product",
@@ -628,13 +740,38 @@ def _generic_product_plan(*, source: GoalSource, profile: AcceptanceProfileRecor
         ),
     )
     minimum = minimum_phase_step_count(source.decomposition_profile)
-    steps = _pad_steps(
+    steps = _finalize_phase_steps(
         [
             f"Implement the core feature path in `{implementation_surfaces[0].path}`.",
             f"Wire the bounded workflow in `{implementation_surfaces[1].path}`.",
             f"Add regression coverage for {_progression_fragment(profile)} in `{verification_surfaces[0].path}`.",
         ],
+        supplemental_steps=(
+            (
+                f"Connect `{implementation_surfaces[0].path}` into `{implementation_surfaces[1].path}` "
+                f"for the first bounded product flow."
+            ),
+            (
+                f"Handle bounded validation and state transitions in `{implementation_surfaces[0].path}` "
+                f"and `{implementation_surfaces[1].path}`."
+            ),
+            f"Add focused happy-path assertions in `{verification_surfaces[0].path}` for {_progression_fragment(profile)}.",
+            (
+                f"Add bounded edge-case assertions in `{verification_surfaces[0].path}` "
+                f"for the workflow implemented in `{implementation_surfaces[1].path}`."
+            ),
+            (
+                f"Re-run the product flow regression in `{verification_surfaces[0].path}`, "
+                f"fixing any path-specific failures in `{implementation_surfaces[0].path}` and `{implementation_surfaces[1].path}`."
+            ),
+        ),
         minimum=minimum,
+        fallback_paths=(
+            implementation_surfaces[0].path,
+            implementation_surfaces[1].path,
+            verification_surfaces[0].path,
+        ),
+        fallback_focus="the bounded product flow",
     )
     return GoalProductPlan(
         repo_kind="generic_product",

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 import json
+import re
 import sys
 
 import pytest
@@ -3445,6 +3446,96 @@ def test_minimum_phase_package_count_matches_bash_phase_floors() -> None:
     assert minimum_phase_package_count("complex") == 2
     assert minimum_phase_package_count("massive") == 3
     assert minimum_phase_package_count("") == 1
+
+
+@pytest.mark.parametrize(
+    ("title", "body", "decomposition_profile", "expected_phase_keys"),
+    [
+        (
+            "Modernize Goal Intake",
+            (
+                "Create real GoalSpec intake and objective sync stages.\n\n"
+                "## Capability Domains\n"
+                "- Goal Intake\n"
+                "- Objective Profile Sync\n\n"
+                "## Progression Lines\n"
+                "- Progression from intake to objective sync to restart-safe completion.\n"
+            ),
+            "involved",
+            ("PHASE_01", "PHASE_02"),
+        ),
+        (
+            "Aura Workshop Vertical Slice",
+            (
+                "Build the first playable aura workshop vertical slice for the mod.\n\n"
+                "## Capability Domains\n"
+                "- Aura Collector\n"
+                "- Aura Conduit\n"
+                "- Aura Reservoir\n\n"
+                "## Progression Lines\n"
+                "- Progression from collection to routing to storage proof.\n"
+            ),
+            "moderate",
+            ("PHASE_01",),
+        ),
+        (
+            "Support Ticket Service",
+            (
+                "Build the first usable support-ticket web app for a Python service.\n\n"
+                "## Capability Domains\n"
+                "- Support Ticket Intake\n"
+                "- Agent Workflow\n\n"
+                "## Progression Lines\n"
+                "- Progression from intake to triage to reply proof.\n"
+            ),
+            "involved",
+            ("PHASE_01", "PHASE_02"),
+        ),
+        (
+            "Neighborhood Events Hub",
+            (
+                "Build the first usable neighborhood events experience.\n\n"
+                "## Capability Domains\n"
+                "- Event Discovery\n"
+                "- RSVP Tracking\n\n"
+                "## Progression Lines\n"
+                "- Progression from discovery to RSVP confirmation proof.\n"
+            ),
+            "moderate",
+            ("PHASE_01",),
+        ),
+    ],
+)
+def test_execute_spec_review_accepts_generated_supported_repo_kind_phase_plans(
+    tmp_path: Path,
+    title: str,
+    body: str,
+    decomposition_profile: str,
+    expected_phase_keys: tuple[str, ...],
+) -> None:
+    workspace, _config, _paths, synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
+        tmp_path,
+        run_id=f"goalspec-review-supported-{sha256(title.encode('utf-8')).hexdigest()[:8]}",
+        emitted_at=_dt("2026-04-09T18:00:00Z"),
+        title=title,
+        body=body,
+        decomposition_profile=decomposition_profile,
+    )
+
+    assert reviewed_path.exists()
+    phase_text = (workspace / synthesis.phase_spec_path).read_text(encoding="utf-8")
+    _assert_product_grounded_stage_artifacts(
+        reviewed_path.read_text(encoding="utf-8"),
+        phase_text,
+    )
+    numbered_steps = tuple(
+        line
+        for line in phase_text.splitlines()
+        if re.match(r"^\d+\.\s+\S", line.strip())
+    )
+    assert len(numbered_steps) >= minimum_phase_step_count(decomposition_profile)
+    for phase_key in expected_phase_keys:
+        assert f"- Phase key: `{phase_key}`" in phase_text
 
 
 def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:
