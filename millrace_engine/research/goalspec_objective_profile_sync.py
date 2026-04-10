@@ -31,6 +31,7 @@ from .goalspec_semantic_profile import (
     discover_semantic_seed_path,
     load_semantic_seed_document,
 )
+from .goalspec_contractor import execute_contractor
 from .governance import apply_initial_family_policy_pin, build_queue_governor_report
 from .specs import load_goal_spec_family_state
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
@@ -105,6 +106,7 @@ def execute_objective_profile_sync(
     profile_markdown_path = paths.acceptance_profiles_dir / f"{profile_id}.md"
     report_path = paths.reports_dir / "objective_profile_sync.md"
     goal_intake_record_path = paths.goalspec_goal_intake_records_dir / f"{run_id}.json"
+    contractor_result = execute_contractor(paths, checkpoint, run_id=run_id, emitted_at=emitted_at)
 
     semantic_goal_text = source.canonical_body
     if goal_intake_record_path.exists():
@@ -238,6 +240,13 @@ def execute_objective_profile_sync(
         profile_markdown_path=_relative_path(profile_markdown_path, relative_to=paths.root),
         report_path=_relative_path(report_path, relative_to=paths.root),
         goal_intake_record_path=_relative_path(goal_intake_record_path, relative_to=paths.root),
+        contractor_record_path=contractor_result.record_path,
+        contractor_profile_path=contractor_result.profile_path,
+        contractor_report_path=contractor_result.report_path,
+        contractor_schema_path=contractor_result.schema_path,
+        contractor_specificity_level=contractor_result.profile.specificity_level,
+        contractor_shape_class=contractor_result.profile.shape_class,
+        contractor_fallback_mode=contractor_result.profile.fallback_mode,
         initial_family_policy_pin=initial_family_policy_pin,
     )
     _write_json_model(paths.objective_profile_sync_state_file, profile_state)
@@ -259,17 +268,40 @@ def execute_objective_profile_sync(
                     f"- **Profile-State:** "
                     f"`{_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root)}`"
                 ),
+                f"- **Contractor-Record:** `{contractor_result.record_path}`",
+                f"- **Contractor-Profile:** `{contractor_result.profile_path}`",
+                f"- **Contractor-Report:** `{contractor_result.report_path}`",
                 f"- **Family-Cap-Mode:** `{family_policy_payload.get('family_cap_mode', 'adaptive')}`",
                 (
                     f"- **Initial-Family-Max-Specs:** "
                     f"`{int(family_policy_payload.get('initial_family_max_specs', 0) or 0)}`"
                 ),
                 "",
+                "## Contractor Summary",
+                f"- **Shape-Class:** `{contractor_result.profile.shape_class}`",
+                f"- **Specificity-Level:** `{contractor_result.profile.specificity_level}`",
+                f"- **Fallback-Mode:** `{contractor_result.profile.fallback_mode}`",
+                (
+                    f"- **Resolved-Profile-IDs:** "
+                    + ", ".join(f"`{item}`" for item in contractor_result.profile.resolved_profile_ids)
+                    if contractor_result.profile.resolved_profile_ids
+                    else "- **Resolved-Profile-IDs:** none"
+                ),
+                (
+                    f"- **Abstentions:** "
+                    + "; ".join(contractor_result.profile.abstentions)
+                    if contractor_result.profile.abstentions
+                    else "- **Abstentions:** none"
+                ),
+                "",
                 "## Semantic Hygiene Diagnostics",
                 *_semantic_hygiene_diagnostic_lines(semantic_profile),
                 "",
                 "## Outcome",
-                "Objective Profile Sync refreshed the canonical acceptance-profile and current objective state for downstream GoalSpec work.",
+                (
+                    "Objective Profile Sync refreshed the canonical acceptance-profile and current objective state "
+                    "for downstream GoalSpec work after running the inline Contractor classification pass."
+                ),
                 "",
             ]
         ),
@@ -297,6 +329,8 @@ def execute_objective_profile_sync(
                     paths.objective_profile_sync_state_file,
                     relative_to=paths.root,
                 ),
+                "contractor_profile_file": contractor_result.profile_path,
+                "contractor_profile_report_file": contractor_result.report_path,
                 "objective_profile_file": _relative_path(profile_json_path, relative_to=paths.root),
                 "objective_profile_markdown_file": _relative_path(profile_markdown_path, relative_to=paths.root),
                 "completion_manifest_file": _relative_path(
@@ -316,6 +350,13 @@ def execute_objective_profile_sync(
                 "research_brief_path": _relative_path(research_brief_path, relative_to=paths.root),
                 "report_path": _relative_path(report_path, relative_to=paths.root),
                 "goal_intake_record_path": _relative_path(goal_intake_record_path, relative_to=paths.root),
+                "contractor_record_path": contractor_result.record_path,
+                "contractor_profile_path": contractor_result.profile_path,
+                "contractor_report_path": contractor_result.report_path,
+                "contractor_schema_path": contractor_result.schema_path,
+                "contractor_specificity_level": contractor_result.profile.specificity_level,
+                "contractor_shape_class": contractor_result.profile.shape_class,
+                "contractor_fallback_mode": contractor_result.profile.fallback_mode,
                 "semantic_profile": semantic_profile.model_dump(mode="json"),
                 "hard_blockers": list(hard_blockers),
                 "family_policy_path": _relative_path(paths.objective_family_policy_file, relative_to=paths.root),
@@ -357,6 +398,13 @@ def execute_objective_profile_sync(
         profile_path=_relative_path(profile_json_path, relative_to=paths.root),
         profile_markdown_path=_relative_path(profile_markdown_path, relative_to=paths.root),
         report_path=_relative_path(report_path, relative_to=paths.root),
+        contractor_record_path=contractor_result.record_path,
+        contractor_profile_path=contractor_result.profile_path,
+        contractor_report_path=contractor_result.report_path,
+        contractor_schema_path=contractor_result.schema_path,
+        contractor_specificity_level=contractor_result.profile.specificity_level,
+        contractor_shape_class=contractor_result.profile.shape_class,
+        contractor_fallback_mode=contractor_result.profile.fallback_mode,
     )
     record_path = paths.goalspec_objective_profile_sync_records_dir / f"{run_id}.json"
     _write_json_model(record_path, record)
@@ -364,6 +412,7 @@ def execute_objective_profile_sync(
     return ObjectiveProfileSyncExecutionResult(
         record_path=_relative_path(record_path, relative_to=paths.root),
         profile_state_path=_relative_path(paths.objective_profile_sync_state_file, relative_to=paths.root),
+        contractor_record_path=contractor_result.record_path,
         queue_ownership=ResearchQueueOwnership(
             family=ResearchQueueFamily.GOALSPEC,
             queue_path=paths.ideas_staging_dir,

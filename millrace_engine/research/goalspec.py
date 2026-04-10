@@ -242,6 +242,13 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
     profile_markdown_path: str
     report_path: str
     goal_intake_record_path: str
+    contractor_record_path: str = ""
+    contractor_profile_path: str = ""
+    contractor_report_path: str = ""
+    contractor_schema_path: str = ""
+    contractor_specificity_level: ContractorSpecificityLevel | None = None
+    contractor_shape_class: ContractorShapeClass | None = None
+    contractor_fallback_mode: ContractorFallbackMode | None = None
     initial_family_policy_pin: InitialFamilyPolicyPinDecision | None = None
 
     @model_validator(mode="before")
@@ -262,6 +269,17 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
     @classmethod
     def normalize_updated_at(cls, value: datetime | str) -> datetime:
         return _normalize_datetime(value)
+
+    @field_validator(
+        "contractor_record_path",
+        "contractor_profile_path",
+        "contractor_report_path",
+        "contractor_schema_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
 
     @field_validator(
         "profile_id",
@@ -300,6 +318,13 @@ class ObjectiveProfileSyncRecord(ContractModel):
     profile_path: str
     profile_markdown_path: str
     report_path: str
+    contractor_record_path: str = ""
+    contractor_profile_path: str = ""
+    contractor_report_path: str = ""
+    contractor_schema_path: str = ""
+    contractor_specificity_level: ContractorSpecificityLevel | None = None
+    contractor_shape_class: ContractorShapeClass | None = None
+    contractor_fallback_mode: ContractorFallbackMode | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -319,6 +344,17 @@ class ObjectiveProfileSyncRecord(ContractModel):
     @classmethod
     def normalize_emitted_at(cls, value: datetime | str) -> datetime:
         return _normalize_datetime(value)
+
+    @field_validator(
+        "contractor_record_path",
+        "contractor_profile_path",
+        "contractor_report_path",
+        "contractor_schema_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
 
     @field_validator(
         "run_id",
@@ -353,6 +389,7 @@ class ObjectiveProfileSyncExecutionResult(ContractModel):
 
     record_path: str
     profile_state_path: str
+    contractor_record_path: str = ""
     queue_ownership: ResearchQueueOwnership
 
 

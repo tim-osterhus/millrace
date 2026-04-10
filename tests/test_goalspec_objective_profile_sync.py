@@ -72,6 +72,16 @@ Progression from individual planning to coordinated team publishing.
 Automated validation covers entry flow, collaboration state, handoff correctness, and insight delivery.
 """
 
+AMBIGUOUS_GOAL_TEXT = """---
+idea_id: IDEA-MIXED-001
+title: Team System
+---
+
+# Team System
+
+Build something useful for a team. The exact product shape is still unclear.
+"""
+
 SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """---
 idea_id: IDEA-PY-NOISE-001
 title: Shared Workspace Service
@@ -179,7 +189,7 @@ def _run_objective_profile_sync(
     goal_text: str,
     run_id: str,
     emitted_at: datetime,
-) -> tuple[Path, object, dict[str, object], dict[str, object], str, dict[str, object]]:
+) -> tuple[Path, object, dict[str, object], dict[str, object], str, str, dict[str, object]]:
     workspace, paths = _configured_goal_runtime(tmp_path)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     _write_queue_file(raw_goal_path, goal_text)
@@ -208,8 +218,9 @@ def _run_objective_profile_sync(
         (workspace / acceptance_profile["profile_path"]).read_text(encoding="utf-8")
     )
     synced_markdown = (workspace / acceptance_profile["profile_markdown_path"]).read_text(encoding="utf-8")
+    report_text = (workspace / acceptance_profile["report_path"]).read_text(encoding="utf-8")
     family_policy = json.loads(paths.objective_family_policy_file.read_text(encoding="utf-8"))
-    return workspace, paths, acceptance_profile, synced_profile, synced_markdown, family_policy
+    return workspace, paths, acceptance_profile, synced_profile, synced_markdown, report_text, family_policy
 
 
 def test_execute_goal_intake_moves_trace_metadata_to_frontmatter(tmp_path: Path) -> None:
@@ -245,7 +256,7 @@ def test_execute_goal_intake_moves_trace_metadata_to_frontmatter(tmp_path: Path)
 
 
 def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path: Path) -> None:
-    _, _, acceptance_profile, synced_profile, synced_markdown, family_policy = _run_objective_profile_sync(
+    _, _, acceptance_profile, synced_profile, synced_markdown, report_text, family_policy = _run_objective_profile_sync(
         tmp_path=tmp_path,
         goal_text=PRODUCT_GOAL_TEXT,
         run_id="goalspec-workspace-001",
@@ -277,10 +288,21 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert "Workspace Intake" in synced_markdown
     assert "## Objective Summary" in synced_markdown
     assert "## Capability Domains" in synced_markdown
+    assert acceptance_profile["contractor_profile_path"] == "agents/objective/contractor_profile.json"
+    assert acceptance_profile["contractor_report_path"] == "agents/reports/contractor_profile.md"
+    assert acceptance_profile["contractor_record_path"].endswith("/goalspec-workspace-001.json")
+    assert acceptance_profile["contractor_shape_class"] == "unknown"
+    assert acceptance_profile["contractor_specificity_level"] == "L0"
+    assert acceptance_profile["contractor_fallback_mode"] == "abstain_unknown"
+    assert "## Contractor Summary" in report_text
+    assert "- **Contractor-Profile:** `agents/objective/contractor_profile.json`" in report_text
+    assert "- **Shape-Class:** `unknown`" in report_text
+    assert "- **Specificity-Level:** `L0`" in report_text
+    assert "- **Fallback-Mode:** `abstain_unknown`" in report_text
 
 
 def test_execute_objective_profile_sync_surfaces_rejected_control_plane_candidates(tmp_path: Path) -> None:
-    _, _, _, synced_profile, synced_markdown, _ = _run_objective_profile_sync(
+    _, _, _, synced_profile, synced_markdown, _, _ = _run_objective_profile_sync(
         tmp_path=tmp_path,
         goal_text=SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE,
         run_id="goalspec-workspace-noise-001",
@@ -413,13 +435,13 @@ def test_execute_objective_profile_sync_prefers_workspace_semantic_seed(tmp_path
 def test_execute_objective_profile_sync_derives_adaptive_family_policy_from_profile_and_breadth(
     tmp_path: Path,
 ) -> None:
-    _, _, _, _, _, narrow_policy = _run_objective_profile_sync(
+    _, _, _, _, _, _, narrow_policy = _run_objective_profile_sync(
         tmp_path=tmp_path / "narrow",
         goal_text=SMALL_PRODUCT_GOAL_TEXT,
         run_id="goalspec-small-001",
         emitted_at=_dt("2026-04-07T13:00:00Z"),
     )
-    _, _, _, _, _, broad_policy = _run_objective_profile_sync(
+    _, _, _, _, _, _, broad_policy = _run_objective_profile_sync(
         tmp_path=tmp_path / "broad",
         goal_text=BROAD_PRODUCT_GOAL_TEXT,
         run_id="goalspec-broad-001",
@@ -432,6 +454,27 @@ def test_execute_objective_profile_sync_derives_adaptive_family_policy_from_prof
     assert broad_policy["initial_family_max_specs"] == 6
     assert broad_policy["initial_family_max_specs"] > narrow_policy["initial_family_max_specs"]
     assert broad_policy["phase_caps"]["initial_family"] == broad_policy["initial_family_max_specs"]
+
+
+def test_execute_objective_profile_sync_preserves_conservative_contractor_fallback_reporting(
+    tmp_path: Path,
+) -> None:
+    workspace, _, acceptance_profile, _, _, report_text, _ = _run_objective_profile_sync(
+        tmp_path=tmp_path,
+        goal_text=AMBIGUOUS_GOAL_TEXT,
+        run_id="goalspec-ambiguous-001",
+        emitted_at=_dt("2026-04-10T22:00:00Z"),
+    )
+
+    contractor_report_path = acceptance_profile["contractor_report_path"]
+    contractor_report_text = (workspace / contractor_report_path).read_text(encoding="utf-8")
+
+    assert acceptance_profile["contractor_shape_class"] == "unknown"
+    assert acceptance_profile["contractor_specificity_level"] == "L0"
+    assert acceptance_profile["contractor_fallback_mode"] == "abstain_unknown"
+    assert "- **Fallback-Mode:** `abstain_unknown`" in report_text
+    assert "- **Abstentions:** No trustworthy host, archetype, or stack specialization is justified yet." in report_text
+    assert "EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md" in contractor_report_text
 
 
 def test_derive_objective_family_policy_does_not_widen_below_bash_thresholds() -> None:
