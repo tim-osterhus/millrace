@@ -10,16 +10,18 @@ from .goalspec import (
     AcceptanceProfileRecord,
     CompletionManifestDraftArtifact,
     CompletionManifestDraftStateRecord,
+    ContractorExecutionRecord,
+    ContractorProfileArtifact,
     GoalSource,
     ObjectiveProfileSyncStateRecord,
 )
 from .goalspec_helpers import (
     GoalSpecExecutionError,
-    _load_json_object,
     _relative_path,
     _resolve_path_token,
     _slugify,
 )
+from .persistence_helpers import _load_json_model, _load_json_object
 from .goalspec_product_planning import derive_goal_product_plan
 from .governance import (
     evaluate_initial_family_plan_guard,
@@ -53,6 +55,30 @@ def _load_objective_profile_inputs(
         )
     profile = AcceptanceProfileRecord.model_validate(_load_json_object(profile_path))
     return state, profile
+
+
+def contractor_record_path(paths: RuntimePaths, *, run_id: str) -> Path:
+    normalized_run_id = run_id.strip()
+    if not normalized_run_id:
+        raise GoalSpecExecutionError("Contractor record path requires a non-empty run id")
+    return paths.goalspec_contractor_records_dir / f"{normalized_run_id}.json"
+
+
+def load_contractor_profile(paths: RuntimePaths) -> ContractorProfileArtifact:
+    if not paths.contractor_profile_file.exists():
+        raise GoalSpecExecutionError(
+            "Contractor profile is missing; later Contractor-dependent GoalSpec stages cannot proceed"
+        )
+    return _load_json_model(paths.contractor_profile_file, ContractorProfileArtifact)
+
+
+def load_contractor_execution_record(paths: RuntimePaths, *, run_id: str) -> ContractorExecutionRecord:
+    record_path = contractor_record_path(paths, run_id=run_id)
+    if not record_path.exists():
+        raise GoalSpecExecutionError(
+            f"Contractor execution record is missing: {record_path.as_posix()}"
+        )
+    return _load_json_model(record_path, ContractorExecutionRecord)
 
 
 def _build_completion_manifest_draft_state(

@@ -46,6 +46,7 @@ class RuntimePaths:
     ideas_archive_dir: Path
     reports_dir: Path
     acceptance_profiles_dir: Path
+    contractor_profile_report_file: Path
     completion_manifest_plan_file: Path
     staging_manifest_file: Path
     queue_governor_report_file: Path
@@ -55,6 +56,8 @@ class RuntimePaths:
     objective_dir: Path
     objective_contract_file: Path
     objective_profile_sync_state_file: Path
+    contractor_profile_file: Path
+    packaged_contractor_profile_schema_file: Path
     audit_dir: Path
     audit_strict_contract_file: Path
     audit_completion_manifest_file: Path
@@ -81,6 +84,7 @@ class RuntimePaths:
     lab_harness_comparisons_dir: Path
     goal_spec_family_state_file: Path
     goalspec_runtime_dir: Path
+    goalspec_contractor_records_dir: Path
     goalspec_goal_intake_records_dir: Path
     goalspec_objective_profile_sync_records_dir: Path
     goalspec_completion_manifest_records_dir: Path
@@ -135,6 +139,7 @@ class RuntimePaths:
         reports_dir = resolved_agents_dir / "reports"
         tmp_dir = resolved_agents_dir / ".tmp"
         objective_dir = resolved_agents_dir / "objective"
+        packaged_assets_dir = Path(__file__).resolve().parent / "assets"
         audit_dir = resolved_agents_dir / "audit"
         policies_dir = resolved_agents_dir / "policies"
         research_runtime_dir = resolved_agents_dir / ".research_runtime"
@@ -154,6 +159,7 @@ class RuntimePaths:
             ideas_archive_dir=ideas_dir / "archive",
             reports_dir=reports_dir,
             acceptance_profiles_dir=reports_dir / "acceptance_profiles",
+            contractor_profile_report_file=reports_dir / "contractor_profile.md",
             completion_manifest_plan_file=reports_dir / "completion_manifest_plan.md",
             staging_manifest_file=resolved_agents_dir / "staging_manifest.yml",
             queue_governor_report_file=reports_dir / "queue_governor.json",
@@ -163,6 +169,10 @@ class RuntimePaths:
             objective_dir=objective_dir,
             objective_contract_file=objective_dir / "contract.yaml",
             objective_profile_sync_state_file=objective_dir / "profile_sync_state.json",
+            contractor_profile_file=objective_dir / "contractor_profile.json",
+            packaged_contractor_profile_schema_file=(
+                packaged_assets_dir / "agents" / "objective" / "contractor_profile.schema.json"
+            ),
             audit_dir=audit_dir,
             audit_strict_contract_file=audit_dir / "strict_contract.json",
             audit_completion_manifest_file=audit_dir / "completion_manifest.json",
@@ -189,6 +199,7 @@ class RuntimePaths:
             lab_harness_comparisons_dir=lab_dir / "harness_comparisons",
             goal_spec_family_state_file=research_runtime_dir / "spec_family_state.json",
             goalspec_runtime_dir=goalspec_runtime_dir,
+            goalspec_contractor_records_dir=goalspec_runtime_dir / "contractor",
             goalspec_goal_intake_records_dir=goalspec_runtime_dir / "goal_intake",
             goalspec_objective_profile_sync_records_dir=goalspec_runtime_dir / "objective_profile_sync",
             goalspec_completion_manifest_records_dir=goalspec_runtime_dir / "completion_manifest",

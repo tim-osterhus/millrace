@@ -26,6 +26,23 @@ from .specs import (
 from .state import ResearchQueueFamily, ResearchQueueOwnership
 
 GOALSPEC_ARTIFACT_SCHEMA_VERSION = "1.0"
+ContractorSpecificityLevel = Literal["L0", "L1", "L2", "L3", "L4", "L5"]
+ContractorShapeClass = Literal[
+    "platform_extension",
+    "interactive_application",
+    "network_application",
+    "service_backend",
+    "automation_tool",
+    "library_framework",
+    "data_system",
+    "content_system",
+    "unknown",
+]
+ContractorFallbackMode = Literal[
+    "apply_resolved_profiles_only",
+    "conservative_shape_only",
+    "abstain_unknown",
+]
 
 
 class GoalSource(ContractModel):
@@ -337,6 +354,239 @@ class ObjectiveProfileSyncExecutionResult(ContractModel):
     record_path: str
     profile_state_path: str
     queue_ownership: ResearchQueueOwnership
+
+
+class ContractorClassificationCandidate(ContractModel):
+    """One scored candidate label produced during Contractor classification."""
+
+    label: str
+    score: float
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="label")
+
+
+class ContractorClassificationPayload(ContractModel):
+    """Typed Contractor layered-classification payload."""
+
+    shape_class: ContractorShapeClass
+    archetype: str
+    host_platform: str
+    stack_hints: tuple[str, ...]
+    specializations: dict[str, str]
+
+    @field_validator("archetype", "host_platform", mode="before")
+    @classmethod
+    def normalize_scalar_fields(cls, value: str | None) -> str:
+        return "" if value is None else str(value).strip()
+
+    @field_validator("stack_hints", mode="before")
+    @classmethod
+    def normalize_stack_hints(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            items = (value,)
+        else:
+            items = tuple(value)
+        normalized: list[str] = []
+        for item in items:
+            hint = str(item).strip()
+            if hint:
+                normalized.append(hint)
+        return tuple(normalized)
+
+    @field_validator("specializations", mode="before")
+    @classmethod
+    def normalize_specializations(cls, value: object) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("specializations must be a JSON object")
+        normalized: dict[str, str] = {}
+        for raw_key, raw_item in value.items():
+            key = str(raw_key).strip()
+            item = str(raw_item).strip()
+            if not key:
+                raise ValueError("specializations may not contain blank keys")
+            if not item:
+                raise ValueError(f"specializations[{key!r}] may not be blank")
+            normalized[key] = item
+        return normalized
+
+
+class ContractorProfileArtifact(ContractModel):
+    """Validated authoritative Contractor profile artifact."""
+
+    schema_version: Literal["1.0"] = GOALSPEC_ARTIFACT_SCHEMA_VERSION
+    artifact_type: Literal["contractor_profile"] = "contractor_profile"
+    goal_id: str
+    run_id: str
+    updated_at: datetime
+    source_path: str
+    canonical_source_path: str
+    current_artifact_path: str
+    profile_report_path: str = ""
+    specificity_level: ContractorSpecificityLevel
+    shape_class: ContractorShapeClass
+    classification: ContractorClassificationPayload
+    candidate_classifications: tuple[ContractorClassificationCandidate, ...] = ()
+    confidence: float
+    fallback_mode: ContractorFallbackMode
+    resolved_profile_ids: tuple[str, ...]
+    unresolved_specializations: tuple[str, ...]
+    capability_hints: tuple[str, ...]
+    environment_hints: tuple[str, ...]
+    browse_used: bool
+    browse_notes: str = ""
+    evidence: tuple[str, ...]
+    abstentions: tuple[str, ...]
+    contradictions: tuple[str, ...]
+    notes: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(payload.get("current_artifact_path") or payload.get("source_path") or "").strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def normalize_updated_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator(
+        "goal_id",
+        "run_id",
+        "source_path",
+        "canonical_source_path",
+        "current_artifact_path",
+    )
+    @classmethod
+    def validate_required_text(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("profile_report_path", "browse_notes", "notes", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
+
+    @field_validator(
+        "resolved_profile_ids",
+        "unresolved_specializations",
+        "capability_hints",
+        "environment_hints",
+        "evidence",
+        "abstentions",
+        "contradictions",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_sequence(cls, value: object, info: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            items = (value,)
+        else:
+            items = tuple(value)
+        normalized: list[str] = []
+        field_name = getattr(info, "field_name", "value")
+        for item in items:
+            text = str(item).strip()
+            if not text:
+                raise ValueError(f"{field_name} may not contain blank values")
+            normalized.append(text)
+        return tuple(normalized)
+
+    @model_validator(mode="after")
+    def validate_consistency(self) -> "ContractorProfileArtifact":
+        if self.classification.shape_class != self.shape_class:
+            raise ValueError("classification.shape_class must match shape_class")
+        if not self.evidence:
+            raise ValueError("evidence must contain at least one item")
+        return self
+
+
+class ContractorExecutionRecord(ContractModel):
+    """Durable runtime record for one Contractor execution."""
+
+    schema_version: Literal["1.0"] = GOALSPEC_ARTIFACT_SCHEMA_VERSION
+    artifact_type: Literal["contractor_execution"] = "contractor_execution"
+    run_id: str
+    emitted_at: datetime
+    goal_id: str
+    title: str
+    canonical_source_path: str
+    current_artifact_path: str
+    source_path: str
+    research_brief_path: str
+    profile_path: str
+    report_path: str
+    schema_path: str
+    record_path: str = ""
+    profile_specificity_level: ContractorSpecificityLevel
+    shape_class: ContractorShapeClass
+    fallback_mode: ContractorFallbackMode
+    browse_used: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_lineage_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        canonical_source_path = str(payload.get("canonical_source_path") or payload.get("source_path") or "").strip()
+        current_artifact_path = str(
+            payload.get("current_artifact_path") or payload.get("research_brief_path") or ""
+        ).strip()
+        payload.setdefault("canonical_source_path", canonical_source_path)
+        payload.setdefault("current_artifact_path", current_artifact_path)
+        return payload
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_emitted_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator(
+        "run_id",
+        "goal_id",
+        "title",
+        "canonical_source_path",
+        "current_artifact_path",
+        "source_path",
+        "research_brief_path",
+        "profile_path",
+        "report_path",
+        "schema_path",
+        "record_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_required_paths_and_text(cls, value: str | Path, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        if field_name.endswith("_path"):
+            return _normalize_required_text(_normalize_path_token(value), field_name=field_name)
+        return _normalize_required_text(str(value), field_name=field_name)
+
+
+class ContractorExecutionResult(ContractModel):
+    """Resolved outputs from one Contractor execution."""
+
+    record_path: str
+    profile_path: str
+    report_path: str
+    schema_path: str
+    profile: ContractorProfileArtifact
 
 
 class CompletionManifestDraftArtifact(ContractModel):
@@ -710,6 +960,11 @@ def execute_spec_review(paths, checkpoint, *, run_id, emitted_at=None):
 
 __all__ = [
     "AcceptanceProfileRecord",
+    "ContractorClassificationCandidate",
+    "ContractorClassificationPayload",
+    "ContractorExecutionRecord",
+    "ContractorExecutionResult",
+    "ContractorProfileArtifact",
     "CompletionManifestDraftArtifact",
     "CompletionManifestDraftSurface",
     "CompletionManifestDraftExecutionResult",

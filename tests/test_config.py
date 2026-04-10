@@ -27,6 +27,7 @@ from millrace_engine.contracts import (
     ContextFactRetrievalRule,
     ContextFactSelectionReason,
     ContextFactScope,
+    HeadlessPermissionProfile,
     HarnessBenchmarkOutcome,
     HarnessBenchmarkResult,
     HarnessBenchmarkStatus,
@@ -83,9 +84,11 @@ def test_execution_stage_defaults_use_one_hour_timeout() -> None:
     stages = default_stage_configs()
 
     assert StageConfig().timeout_seconds == 3600
+    assert StageConfig().permission_profile is HeadlessPermissionProfile.NORMAL
     assert stages[StageType.BUILDER].timeout_seconds == 3600
     assert stages[StageType.QA].timeout_seconds == 3600
     assert stages[StageType.INTEGRATION].timeout_seconds == 3600
+    assert stages[StageType.BUILDER].permission_profile is HeadlessPermissionProfile.NORMAL
 
 
 def test_config_re_exports_runtime_stage_and_boundary_family() -> None:
@@ -103,6 +106,7 @@ def test_stage_context_default_timeout_matches_stage_defaults(tmp_path: Path) ->
     )
 
     assert context.timeout_seconds == 3600
+    assert context.permission_profile is HeadlessPermissionProfile.NORMAL
 
 
 def test_native_config_is_required_for_runtime_load(tmp_path: Path) -> None:
@@ -266,6 +270,10 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.objective_profile_sync_state_file == (
         workspace_root / "agents/objective/profile_sync_state.json"
     ).resolve()
+    assert paths.contractor_profile_file == (
+        workspace_root / "agents/objective/contractor_profile.json"
+    ).resolve()
+    assert paths.packaged_contractor_profile_schema_file.name == "contractor_profile.schema.json"
     assert paths.audit_completion_manifest_file == (
         workspace_root / "agents/audit/completion_manifest.json"
     ).resolve()
@@ -313,7 +321,13 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.completion_manifest_plan_file == (
         workspace_root / "agents/reports/completion_manifest_plan.md"
     ).resolve()
+    assert paths.contractor_profile_report_file == (
+        workspace_root / "agents/reports/contractor_profile.md"
+    ).resolve()
     assert paths.staging_manifest_file == (workspace_root / "agents/staging_manifest.yml").resolve()
+    assert paths.goalspec_contractor_records_dir == (
+        workspace_root / "agents/.research_runtime/goalspec/contractor"
+    ).resolve()
     assert paths.goalspec_goal_intake_records_dir == (
         workspace_root / "agents/.research_runtime/goalspec/goal_intake"
     ).resolve()
