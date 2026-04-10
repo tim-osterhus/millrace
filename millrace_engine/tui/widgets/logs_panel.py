@@ -221,6 +221,10 @@ class LogsPanel(Static):
         return self._selected_event()
 
     @property
+    def selected_event_key(self) -> RuntimeEventIdentity | None:
+        return self._selected_event_key
+
+    @property
     def selected_artifact_path(self) -> str | None:
         return self._selected_artifact_path
 
@@ -231,6 +235,10 @@ class LogsPanel(Static):
     @property
     def focus_surface(self) -> str:
         return self._focus_surface
+
+    @property
+    def filtered_events(self) -> tuple[RuntimeEventView, ...]:
+        return self._filtered_events()
 
     def on_mount(self) -> None:
         event_table = self.query_one("#logs-table", DataTable)
@@ -367,6 +375,17 @@ class LogsPanel(Static):
         self._follow_mode = not self._follow_mode
         self._focus_surface = "events"
         self._reconcile_selection(updated=False)
+        self._reconcile_artifacts()
+        if self.is_mounted:
+            self._render_state()
+        self.post_message(self.SelectionChanged(self._selected_event_key, self._selected_artifact_path))
+
+    def action_jump_to_live(self) -> None:
+        if self._follow_mode and self._selected_event() is not None:
+            return
+        self._follow_mode = True
+        self._focus_surface = "events"
+        self._reconcile_selection(updated=True)
         self._reconcile_artifacts()
         if self.is_mounted:
             self._render_state()

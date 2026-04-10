@@ -461,6 +461,38 @@ def test_tui_shell_expanded_mode_replaces_main_content_only(monkeypatch, tmp_pat
     _run_app_scenario(config_path, scenario)
 
 
+def test_tui_shell_expanded_mode_restores_logs_focus_on_exit(monkeypatch, tmp_path) -> None:
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.events is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("5")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-logs"
+
+        await pilot.press("e")
+        await pilot.pause()
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == EXPANDED_STREAM_WIDGET_ID
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.query_one("#shell-content", ContentSwitcher).current == "panel-logs"
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "panel-logs"
+
+    _run_app_scenario(config_path, scenario)
+
+
 def test_expanded_stream_operator_mode_renders_narrated_runtime_lines() -> None:
     events = (
         RuntimeEventView(
@@ -536,6 +568,74 @@ def test_expanded_stream_operator_mode_renders_narrated_runtime_lines() -> None:
     assert "[2026-03-26 14:03:07 UTC] Control applied pause" in rendered
     assert "l jumps to the live tail." in rendered
     assert "payload=" not in rendered
+
+
+def test_tui_shell_expanded_logs_stays_frozen_during_appends_and_jump_live_realigns(monkeypatch, tmp_path) -> None:
+    observed_at = datetime(2026, 3, 25, 0, 0, 30, tzinfo=timezone.utc)
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and len(app.screen._store.state.events.events) >= 2,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("5")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        logs_panel = app.screen.query_one("#panel-logs", LogsPanel)
+        await pilot.press("home")
+        await pilot.pause()
+        first_selected = logs_panel.selected_event
+        assert first_selected is not None
+
+        await pilot.press("f")
+        await pilot.pause()
+        assert logs_panel.follow_mode is False
+
+        await pilot.press("e")
+        await pilot.pause()
+        expanded = app.screen.query_one(f"#{EXPANDED_STREAM_WIDGET_ID}", ExpandedStreamView)
+        assert "State: SCROLLBACK" in expanded.summary_text()
+        assert expanded.follow_live is False
+
+        recovery_event = _sample_runtime_event(
+            event_type="execution.stage.completed",
+            source="execution",
+            observed_at=observed_at,
+            category="EXE",
+            summary="stage=qa | status=success",
+            run_id="run-recovery-1",
+            is_research_event=False,
+            payload=(KeyValueView("stage", "qa"), KeyValueView("status", "success")),
+        )
+        app.screen.post_message(EventsAppended((recovery_event,), received_at=observed_at))
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and any(event.run_id == "run-recovery-1" for event in app.screen._store.state.events.events),
+        )
+        await pilot.pause()
+        assert expanded.follow_live is False
+        assert "Qa completed" in expanded.summary_text()
+        assert logs_panel.follow_mode is False
+        assert logs_panel.selected_event == first_selected
+
+        await pilot.press("l")
+        await _wait_for_condition(
+            pilot,
+            lambda: expanded.follow_live and logs_panel.follow_mode and logs_panel.selected_run_id == "run-recovery-1",
+        )
+        assert "State: LIVE TAIL" in expanded.summary_text()
+        assert expanded.at_live_tail is True
+
+    _run_app_scenario(config_path, scenario)
 
 
 def test_expanded_stream_debug_mode_renders_raw_structured_event_lines() -> None:

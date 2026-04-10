@@ -9,7 +9,7 @@ from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Static
 
 from ..formatting import compact_run_label, render_runtime_event_debug_line
-from ..models import DisplayMode, EventLogView, KeyValueView, RuntimeEventView
+from ..models import DisplayMode, EventLogView, KeyValueView, RuntimeEventIdentity, RuntimeEventView, runtime_event_identity
 
 
 def _operator_timestamp(moment: datetime) -> str:
@@ -186,7 +186,7 @@ class ExpandedStreamView(Static):
         Binding("pagedown", "page_down", show=False),
         Binding("home", "scroll_home", show=False),
         Binding("end", "scroll_end", show=False),
-        Binding("l", "jump_to_live", show=False),
+        Binding("l", "jump_shell_live", show=False),
     )
 
     def __init__(self, *, id: str | None = None) -> None:
@@ -197,8 +197,12 @@ class ExpandedStreamView(Static):
         self._display_mode = DisplayMode.OPERATOR
         self._active_panel_label = "Overview"
         self._events: EventLogView | None = None
+        self._event_items: tuple[RuntimeEventView, ...] = ()
         self._follow_live = True
         self._rendered_text = ""
+        self._rendered_event_keys: tuple[RuntimeEventIdentity, ...] = ()
+        self._anchor_event_key: RuntimeEventIdentity | None = None
+        self._context_label: str | None = None
 
     def show_snapshot(
         self,
@@ -206,23 +210,31 @@ class ExpandedStreamView(Static):
         active_panel_label: str,
         display_mode: DisplayMode,
         events: EventLogView | None,
-        live: bool = True,
+        live: bool | None = None,
+        event_items: tuple[RuntimeEventView, ...] | None = None,
+        anchor_event_key: RuntimeEventIdentity | None = None,
+        context_label: str | None = None,
     ) -> None:
         previous_scroll_y = self.scroll_y
         self._active_panel_label = active_panel_label
         self._display_mode = display_mode
         self._events = events
+        self._event_items = event_items if event_items is not None else (() if events is None else events.events)
+        self._anchor_event_key = anchor_event_key
+        self._context_label = context_label
+        if live is not None:
+            self._follow_live = live
         self._rendered_text = self.summary_text()
         self._update_border_subtitle()
         if self.is_mounted:
             self.update(self._rendered_text)
-            self.call_after_refresh(self._restore_viewport, previous_scroll_y, live)
+            self.call_after_refresh(self._restore_viewport, previous_scroll_y)
 
     def on_mount(self) -> None:
         self._rendered_text = self.summary_text()
         self._update_border_subtitle()
         self.update(self._rendered_text)
-        self.call_after_refresh(self._restore_viewport, self.scroll_y, True)
+        self.call_after_refresh(self._restore_viewport, self.scroll_y)
 
     @property
     def follow_live(self) -> bool:
@@ -271,6 +283,13 @@ class ExpandedStreamView(Static):
             self._scroll_to_live_tail()
             self.call_after_refresh(self._scroll_to_live_tail)
 
+    def action_jump_shell_live(self) -> None:
+        screen = self.screen
+        if screen is not None and hasattr(screen, "action_jump_expanded_stream_live"):
+            screen.action_jump_expanded_stream_live()
+            return
+        self.action_jump_to_live()
+
     def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
         self._disengage_follow_live()
         self.scroll_up(animate=False, immediate=True)
@@ -283,7 +302,8 @@ class ExpandedStreamView(Static):
         event.stop()
 
     def _render_operator_text(self) -> str:
-        events = self._events.events if self._events is not None else ()
+        events = self._event_items
+        self._rendered_event_keys = tuple(runtime_event_identity(event) for event in events)
         live_state = "LIVE TAIL" if self._follow_live else "SCROLLBACK"
         lines = [
             f"{self._display_mode.value.upper()} EXPANDED | {self._active_panel_label}",
@@ -294,9 +314,10 @@ class ExpandedStreamView(Static):
                 else "Browsing older lines. New events still append off-screen until you press l to jump live."
             ),
             f"Cached runtime events: {len(events)}",
-            "",
-            "Narrated activity feed",
         ]
+        if self._context_label:
+            lines.append(f"Context: {self._context_label}")
+        lines.extend(("", "Narrated activity feed"))
         if events:
             lines.extend(render_runtime_event_operator_line(event) for event in events)
         else:
@@ -310,7 +331,8 @@ class ExpandedStreamView(Static):
         return "\n".join(lines)
 
     def _render_debug_text(self) -> str:
-        events = self._events.events if self._events is not None else ()
+        events = self._event_items
+        self._rendered_event_keys = tuple(runtime_event_identity(event) for event in events)
         live_state = "LIVE TAIL" if self._follow_live else "SCROLLBACK"
         lines = [
             f"{self._display_mode.value.upper()} EXPANDED | {self._active_panel_label}",
@@ -323,9 +345,10 @@ class ExpandedStreamView(Static):
             "Raw structured runtime events from the current shell event stream.",
             "This debug view stays unsynthesized even if operator rendering changes later.",
             f"Cached runtime events: {len(events)}",
-            "",
-            "Debug event feed",
         ]
+        if self._context_label:
+            lines.append(f"Context: {self._context_label}")
+        lines.extend(("", "Debug event feed"))
         if events:
             lines.extend(render_runtime_event_debug_line(event) for event in events)
         else:
@@ -346,17 +369,31 @@ class ExpandedStreamView(Static):
         state = "live" if self._follow_live else "scrollback"
         self.border_subtitle = f"{self._display_mode.value} | {self._active_panel_label} | {state}"
 
-    def _restore_viewport(self, previous_scroll_y: float, live: bool) -> None:
+    def _restore_viewport(self, previous_scroll_y: float) -> None:
         if not self.is_mounted:
             return
-        if live and self._follow_live:
+        if self._follow_live:
             self._scroll_to_live_tail()
+            return
+        anchor_y = self._anchor_scroll_y()
+        if anchor_y is not None:
+            self.scroll_to(y=anchor_y, animate=False, immediate=True, force=True)
             return
         target = min(previous_scroll_y, self.max_scroll_y)
         self.scroll_to(y=target, animate=False, immediate=True, force=True)
 
     def _scroll_to_live_tail(self) -> None:
         self.scroll_to(y=self.max_scroll_y, animate=False, immediate=True, force=True)
+
+    def _anchor_scroll_y(self) -> int | None:
+        if self._anchor_event_key is None or not self._rendered_event_keys:
+            return None
+        try:
+            index = self._rendered_event_keys.index(self._anchor_event_key)
+        except ValueError:
+            return None
+        header_lines = 4 + (1 if self._context_label else 0) + 2
+        return min(header_lines + index, int(self.max_scroll_y))
 
 
 __all__ = ["ExpandedStreamView", "render_runtime_event_operator_line"]
