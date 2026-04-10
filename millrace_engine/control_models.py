@@ -174,6 +174,39 @@ class QueueSnapshot(ContractModel):
     backlog_depth: int = Field(ge=0)
     next_task: QueueItemView | None = None
     backlog: tuple[QueueItemView, ...] = ()
+    mailbox_task_intake: MailboxTaskIntakeView | None = None
+
+
+class MailboxTaskIntakeView(ContractModel):
+    """Accepted mailbox add-task intent that has not reached visible backlog state yet."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    buffered_count: int = Field(ge=0)
+    oldest_issued_at: datetime | None = None
+    newest_issued_at: datetime | None = None
+    task_titles: tuple[str, ...] = ()
+    issuers: tuple[str, ...] = ()
+
+    @field_validator("oldest_issued_at", "newest_issued_at", mode="before")
+    @classmethod
+    def normalize_optional_datetimes(cls, value: datetime | str | None) -> datetime | None:
+        return normalize_datetime(value)
+
+    @field_validator("task_titles", "issuers", mode="before")
+    @classmethod
+    def normalize_text_tuple(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized: list[str] = []
+        for item in value:
+            collapsed = " ".join(str(item).strip().split())
+            if collapsed:
+                normalized.append(collapsed)
+        return tuple(normalized)
 
 
 class ResearchQueueFamilyView(ContractModel):
@@ -385,6 +418,7 @@ class StatusReport(ContractModel):
     research: ResearchReport | None = None
     active_task: QueueItemView | None = None
     next_task: QueueItemView | None = None
+    mailbox_task_intake: MailboxTaskIntakeView | None = None
 
     @field_validator("config_path", mode="before")
     @classmethod
@@ -443,6 +477,9 @@ class SupervisorReport(ContractModel):
     next_task: QueueItemView | None = None
     backlog_depth: int = Field(ge=0)
     deferred_queue_size: int = Field(ge=0)
+    pending_active_task_clear: DeferredActiveTaskClear | None = None
+    last_active_task_clear: ActiveTaskRemediationResult | None = None
+    mailbox_task_intake: MailboxTaskIntakeView | None = None
     current_run_id: str | None = None
     current_stage: str | None = None
     time_in_current_status_seconds: float | None = Field(default=None, ge=0)

@@ -35,6 +35,13 @@ def _queue_card_label(label: str, value: str) -> str:
     return f"{label:<7} {value}"
 
 
+def _mailbox_buffer_label(queue: QueueOverviewView) -> str:
+    count = queue.mailbox_task_intake_count
+    if count <= 0:
+        return "mailbox clear"
+    return f"{count} mailbox buffered"
+
+
 class QueuePanel(Static):
     """Display queue state and allow keyboard navigation of the visible backlog."""
 
@@ -376,7 +383,11 @@ class QueuePanel(Static):
         self._update_metric("queue-active", _task_operator_label(queue.active_task), f"{active_count} active task")
         next_meta = "queued next task" if queue.next_task is not None else "no next task queued"
         self._update_metric("queue-next", _task_operator_label(queue.next_task), next_meta)
-        backlog_meta = f"{len(backlog)} visible" if queue.backlog_depth == len(backlog) else f"{len(backlog)} of {queue.backlog_depth} visible"
+        backlog_meta = (
+            f"{len(backlog)} visible | {_mailbox_buffer_label(queue)}"
+            if queue.backlog_depth == len(backlog)
+            else f"{len(backlog)} of {queue.backlog_depth} visible | {_mailbox_buffer_label(queue)}"
+        )
         self._update_metric("queue-backlog", str(queue.backlog_depth), backlog_meta)
 
         if self._run_id is None:
@@ -385,11 +396,17 @@ class QueuePanel(Static):
             self._update_section("queue-run", self._run_id, "press o for concise provenance detail")
 
         if not backlog:
-            detail = (
-                "one task is active and nothing is queued behind it"
-                if queue.active_task is not None
-                else "no queued tasks are waiting"
-            )
+            if queue.mailbox_task_intake_count > 0:
+                detail = (
+                    f"{queue.mailbox_task_intake_count} add-task request buffered in the mailbox "
+                    "and not yet visible in backlog"
+                )
+            else:
+                detail = (
+                    "one task is active and nothing is queued behind it"
+                    if queue.active_task is not None
+                    else "no queued tasks are waiting"
+                )
             self._set_backlog_content(headline="Backlog empty", detail=detail, focus="")
         else:
             live_order = {task.task_id: index for index, task in enumerate(self._backlog(), start=1)}
@@ -519,16 +536,24 @@ class QueuePanel(Static):
             f"active {active_count}"
             f" | next {'set' if queue.next_task is not None else 'none'}"
             f" | backlog {queue.backlog_depth}"
+            f" | mailbox {queue.mailbox_task_intake_count}"
         )
         lines.append(_queue_card_label("ACTIVE", _task_operator_label(queue.active_task)))
         lines.append(_queue_card_label("NEXT", _task_operator_label(queue.next_task)))
+        if queue.mailbox_task_intake_count > 0:
+            title = queue.mailbox_task_intake_titles[0] if queue.mailbox_task_intake_titles else "buffered add-task request"
+            lines.append(f"MAILBOX {queue.mailbox_task_intake_count} buffered | {title}")
         if self._run_id is not None:
             lines.append(f"RUN     {self._run_id} | o detail")
         if queue.backlog_depth != len(backlog):
             lines.append(f"LIST    partial snapshot showing {len(backlog)} of {queue.backlog_depth}")
         lines.append("")
         if not backlog:
-            if queue.active_task is not None:
+            if queue.mailbox_task_intake_count > 0:
+                lines.append(
+                    f"BACKLOG empty | {queue.mailbox_task_intake_count} add-task request buffered in mailbox"
+                )
+            elif queue.active_task is not None:
                 lines.append("BACKLOG empty | one task is active and nothing is queued behind it")
             else:
                 lines.append("BACKLOG empty | no queued tasks are waiting")
@@ -580,9 +605,14 @@ class QueuePanel(Static):
         queue = self._queue
         backlog = self._visible_backlog()
         active_count = 1 if queue.active_task is not None else 0
-        lines.append(f"COUNTS  active {active_count} | backlog {queue.backlog_depth} | listed {len(backlog)}")
+        lines.append(
+            f"COUNTS  active {active_count} | backlog {queue.backlog_depth} | listed {len(backlog)} | mailbox {queue.mailbox_task_intake_count}"
+        )
         lines.append(f"ACTIVE  {_task_label(queue.active_task)}")
         lines.append(f"NEXT    {_task_label(queue.next_task)}")
+        if queue.mailbox_task_intake_count > 0:
+            detail = queue.mailbox_task_intake_titles[0] if queue.mailbox_task_intake_titles else "buffered add-task request"
+            lines.append(f"MAILBOX {queue.mailbox_task_intake_count} buffered | {detail}")
         if self._run_id is None:
             lines.append("RUN     none")
         else:
@@ -591,7 +621,9 @@ class QueuePanel(Static):
             lines.append(f"LIST    partial snapshot showing {len(backlog)} of {queue.backlog_depth}")
         lines.append("")
         if not backlog:
-            if queue.active_task is not None:
+            if queue.mailbox_task_intake_count > 0:
+                lines.append("BACKLOG empty. Accepted add-task work is still buffered in the mailbox.")
+            elif queue.active_task is not None:
                 lines.append("BACKLOG empty. One task is active and nothing is queued behind it.")
             else:
                 lines.append("BACKLOG empty. No queued tasks are waiting.")

@@ -210,6 +210,8 @@ def config_value(config: object, key: str) -> object:
 
 def runtime_overview_view(status: object) -> RuntimeOverviewView:
     runtime = getattr(status, "runtime")
+    pending_active_task_clear = getattr(runtime, "pending_active_task_clear")
+    last_active_task_clear = getattr(runtime, "last_active_task_clear")
     return RuntimeOverviewView(
         workspace_path=Path(getattr(status, "config_path")).parent.as_posix(),
         config_path=Path(getattr(status, "config_path")).as_posix(),
@@ -236,6 +238,21 @@ def runtime_overview_view(status: object) -> RuntimeOverviewView:
         ),
         pending_config_fields=tuple(getattr(runtime, "pending_config_fields")),
         rollback_armed=bool(getattr(runtime, "rollback_armed")),
+        pending_active_task_clear_reason=(
+            str(getattr(getattr(pending_active_task_clear, "request"), "reason"))
+            if pending_active_task_clear is not None
+            else None
+        ),
+        pending_active_task_clear_requested_at=(
+            getattr(getattr(pending_active_task_clear, "request"), "requested_at")
+            if pending_active_task_clear is not None
+            else None
+        ),
+        last_active_task_clear_outcome=(
+            str(getattr(getattr(last_active_task_clear, "outcome_state"), "value", getattr(last_active_task_clear, "outcome_state")))
+            if last_active_task_clear is not None
+            else None
+        ),
         started_at=getattr(runtime, "started_at"),
         updated_at=getattr(runtime, "updated_at"),
         selection=selection_summary_view(getattr(status, "selection")),
@@ -282,11 +299,22 @@ def config_overview_view(report: object) -> ConfigOverviewView:
 
 
 def queue_overview_view(queue: object) -> QueueOverviewView:
+    mailbox_task_intake = getattr(queue, "mailbox_task_intake", None)
     return QueueOverviewView(
         active_task=task_view(getattr(queue, "active_task")),
         next_task=task_view(getattr(queue, "next_task")),
         backlog_depth=int(getattr(queue, "backlog_depth")),
         backlog=tuple(task_view(task) for task in getattr(queue, "backlog") if task_view(task) is not None),
+        mailbox_task_intake_count=(
+            int(getattr(mailbox_task_intake, "buffered_count"))
+            if mailbox_task_intake is not None
+            else 0
+        ),
+        mailbox_task_intake_titles=(
+            tuple(str(title) for title in getattr(mailbox_task_intake, "task_titles"))
+            if mailbox_task_intake is not None
+            else ()
+        ),
     )
 
 

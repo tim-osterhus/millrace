@@ -136,6 +136,9 @@ class RuntimeOverviewView:
     liveness_authority: str = "snapshot_absent"
     liveness_degraded: bool = False
     liveness_summary: str | None = None
+    pending_active_task_clear_reason: str | None = None
+    pending_active_task_clear_requested_at: datetime | None = None
+    last_active_task_clear_outcome: str | None = None
 
 
 class LifecycleState(StrEnum):
@@ -218,6 +221,8 @@ class QueueOverviewView:
     next_task: QueueTaskView | None
     backlog_depth: int
     backlog: tuple[QueueTaskView, ...] = ()
+    mailbox_task_intake_count: int = 0
+    mailbox_task_intake_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

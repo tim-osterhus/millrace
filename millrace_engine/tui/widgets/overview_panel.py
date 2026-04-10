@@ -101,6 +101,12 @@ def _task_label(task: QueueTaskView | None, *, include_id: bool = False) -> str:
     return label
 
 
+def _mailbox_intake_fragment(queue: QueueOverviewView | None) -> str:
+    if queue is None or queue.mailbox_task_intake_count <= 0:
+        return "mailbox 0"
+    return f"mailbox {queue.mailbox_task_intake_count}"
+
+
 def _parse_latest_error(error: str) -> tuple[str, tuple[str, ...]]:
     normalized = " ".join(error.split())
     if not normalized:
@@ -235,7 +241,7 @@ class OverviewPanel(Static):
         route = selection_decision.route_decision if selection_decision is not None else "unknown"
         active_meta = f"{runtime.execution_status.lower()} | {selected_size}"
         next_meta = f"queued | {route}"
-        backlog_meta = f"{runtime.deferred_queue_size} deferred | route {route}"
+        backlog_meta = f"{runtime.deferred_queue_size} deferred | {_mailbox_intake_fragment(queue)} | route {route}"
 
         self._update_metric("active", active_value, active_meta)
         self._update_metric("next", next_value, next_meta)
@@ -248,6 +254,8 @@ class OverviewPanel(Static):
         runtime_detail = (
             f"{paused_label} | exec {runtime.execution_status.lower()} | uptime {_format_duration(runtime.uptime_seconds)}"
         )
+        if runtime.pending_active_task_clear_reason:
+            runtime_detail = f"{runtime_detail} | clear pending"
         if runtime.liveness_degraded and runtime.liveness_summary:
             runtime_detail = f"{runtime_detail} | {runtime.liveness_summary}"
         self._update_detail("runtime", runtime_headline, runtime_detail)
@@ -315,6 +323,20 @@ class OverviewPanel(Static):
             return (summary.note, "latest run metadata is incomplete", "state-notice")
         if runtime.paused and runtime.pause_reason:
             return (runtime.pause_reason, "daemon paused until resumed", "state-warning")
+        if runtime.pending_active_task_clear_reason:
+            return (
+                "Active clear pending",
+                f"accepted and waiting for a legal daemon boundary | {runtime.pending_active_task_clear_reason}",
+                "state-warning",
+            )
+        if self._queue is not None and self._queue.mailbox_task_intake_count > 0:
+            count = self._queue.mailbox_task_intake_count
+            label = "request" if count == 1 else "requests"
+            title = self._queue.mailbox_task_intake_titles[0] if self._queue.mailbox_task_intake_titles else None
+            detail = f"{count} buffered add-task {label} accepted but not yet visible in backlog"
+            if title:
+                detail = f"{detail} | next buffered: {title}"
+            return (f"Mailbox buffered {count}", detail, "state-warning")
         if self._research is not None and self._research.deferred_request_count > 0:
             count = self._research.deferred_request_count
             label = "request" if count == 1 else "requests"
@@ -433,12 +455,14 @@ class OverviewPanel(Static):
         lines.append(
             "BACKLOG  "
             f"{runtime.backlog_depth} | deferred {runtime.deferred_queue_size} | route "
-            f"{selection_decision.route_decision if selection_decision is not None else 'unknown'}"
+            f"{selection_decision.route_decision if selection_decision is not None else 'unknown'} | "
+            f"{_mailbox_intake_fragment(queue)}"
         )
         lines.append(
             "RUNTIME  "
             f"{'running' if runtime.process_running else 'stopped'} | mode {runtime.mode} | "
             f"exec {runtime.execution_status} | uptime {_format_duration(runtime.uptime_seconds)}"
+            f"{' | clear pending' if runtime.pending_active_task_clear_reason else ''}"
         )
         latest_headline, latest_detail, _ = self._latest_run_card_content()
         lines.append(f"LATEST   {latest_headline} | {latest_detail}")
@@ -507,10 +531,13 @@ class OverviewPanel(Static):
             "WORK     "
             f"queued {runtime.backlog_depth}"
             f" | deferred {runtime.deferred_queue_size}"
+            f" | {_mailbox_intake_fragment(queue)}"
             f" | active "
             f"{_task_label(queue.active_task, include_id=True) if queue is not None else _runtime_label(runtime.active_task_id)}"
             f" | next {_task_label(queue.next_task) if queue is not None else 'waiting'}"
         )
+        if runtime.pending_active_task_clear_reason:
+            lines.append(f"CLEAR    pending | {runtime.pending_active_task_clear_reason}")
         lines.extend(self._latest_run_debug_lines())
         return "\n".join(lines)
 

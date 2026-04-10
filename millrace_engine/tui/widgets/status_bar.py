@@ -75,6 +75,14 @@ def _operator_refresh_fragment(*, refreshed_at: datetime | None, failure: Gatewa
     return ""
 
 
+def _intent_fragment(runtime: RuntimeOverviewView | None, queue: QueueOverviewView | None) -> str | None:
+    if runtime is not None and runtime.pending_active_task_clear_reason:
+        return "intent clear"
+    if queue is not None and queue.mailbox_task_intake_count > 0:
+        return f"mailbox {queue.mailbox_task_intake_count}"
+    return None
+
+
 class StatusBar(Static):
     """Compact workspace summary that remains visible above the active panel."""
 
@@ -196,6 +204,9 @@ class StatusBar(Static):
             f"active {active_fragment}",
             telemetry_fragment,
         ]
+        intent_fragment = _intent_fragment(runtime, queue)
+        if intent_fragment is not None:
+            segments.insert(4, intent_fragment)
         lifecycle_label = _compact_lifecycle_label(lifecycle)
         if lifecycle_label not in {"idle", "running"}:
             segments.insert(2, f"state {lifecycle_label}")
@@ -253,6 +264,9 @@ class StatusBar(Static):
             f" | {health_fragment}"
             f" | {refresh_fragment}"
         )
+        intent_fragment = _intent_fragment(runtime, queue)
+        if intent_fragment is not None:
+            line += f" | {intent_fragment}"
         if busy_message is not None:
             line += f" | action {busy_message}"
         return line

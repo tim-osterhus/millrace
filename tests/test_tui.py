@@ -2400,7 +2400,7 @@ def test_status_bar_and_overview_panel_render_runtime_cockpit_summary() -> None:
     )
     status_text = _static_text(status_bar)
     assert "OPERATOR | Overview | daemon stopped | backlog 1 | active none" in status_text
-    assert "health pending | 00:00:00Z" in status_text
+    assert "health --" in status_text
 
     overview = OverviewPanel(id="panel-overview")
     overview.show_snapshot(
@@ -2427,7 +2427,7 @@ def test_status_bar_and_overview_panel_render_runtime_cockpit_summary() -> None:
     )
     debug_overview_text = overview.summary_text()
     assert "GOVERN  pending 3 | proc 1 | facts 1 | harness 1 | recs 0 | used smoke-standard p1/f1" in debug_overview_text
-    assert "WORK     queued 1 | deferred 0 | active none | next Example task" in debug_overview_text
+    assert "WORK     queued 1 | deferred 0 | mailbox 0 | active none | next Example task" in debug_overview_text
     assert "LATEST   WARN smoke-standard" in debug_overview_text
 
 
@@ -2448,7 +2448,7 @@ def test_tui_shell_operator_overview_and_status_fit_single_line_at_standard_shel
             if strip.text.strip()
         ]
         assert len(status_lines) == 1
-        assert status_lines[0].startswith("OPERATOR | Overview | daemon running | backlog 1 | active none")
+        assert status_lines[0].startswith("OPERATOR | Overview | daemon stopped* | backlog 1 | active none")
 
         overview = app.screen.query_one(OverviewPanel)
         assert _static_text(overview.query_one("#overview-active-label", Static)) == "Active task"
@@ -2518,7 +2518,7 @@ def test_queue_panel_renders_empty_and_active_only_states_truthfully() -> None:
     )
     panel.show_snapshot(active_only)
     active_text = panel.summary_text()
-    assert "SUMMARY active 1 | next none | backlog 0" in active_text
+    assert "SUMMARY active 1 | next none | backlog 0 | mailbox 0" in active_text
     assert "ACTIVE  Ship the active task" in active_text
     assert "NEXT    none" in active_text
     assert "BACKLOG empty | one task is active and nothing is queued behind it" in active_text
@@ -2532,7 +2532,7 @@ def test_queue_panel_renders_empty_and_active_only_states_truthfully() -> None:
     )
     panel.show_snapshot(empty_queue)
     empty_text = panel.summary_text()
-    assert "SUMMARY active 0 | next none | backlog 0" in empty_text
+    assert "SUMMARY active 0 | next none | backlog 0 | mailbox 0" in empty_text
     assert "BACKLOG empty | no queued tasks are waiting" in empty_text
     assert panel.selected_task_id is None
 
@@ -2546,6 +2546,65 @@ def test_queue_panel_renders_empty_and_active_only_states_truthfully() -> None:
     debug_text = panel.summary_text()
     assert "NEXT    Queued with metadata [task-1] | SPEC-001" in debug_text
     assert "Queued with metadata [task-1 | SPEC-001]" in debug_text
+
+
+def test_tui_surfaces_pending_clear_and_mailbox_buffered_task_intent() -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    payload = _sample_refresh_payload(observed_at=observed_at)
+    assert payload.runtime is not None
+    assert payload.queue is not None
+
+    runtime = replace(
+        payload.runtime,
+        process_running=True,
+        mode="daemon",
+        backlog_depth=0,
+        pending_active_task_clear_reason="operator requested clear",
+    )
+    queue = QueueOverviewView(
+        active_task=None,
+        next_task=None,
+        backlog_depth=0,
+        backlog=(),
+        mailbox_task_intake_count=1,
+        mailbox_task_intake_titles=("Mailbox buffered task",),
+    )
+    lifecycle = lifecycle_signal_from_context(runtime=runtime)
+
+    status_bar = StatusBar(id="shell-status")
+    status_bar.show_state(
+        workspace_path=Path("/tmp/workspace"),
+        active_panel_label="Queue",
+        expanded_mode=False,
+        display_mode=DisplayMode.OPERATOR,
+        lifecycle=lifecycle,
+        health_report=None,
+        runtime=runtime,
+        queue=queue,
+        last_refreshed_at=observed_at,
+        refresh_failure=None,
+        busy_message=None,
+    )
+    assert "intent clear" in _static_text(status_bar)
+
+    overview = OverviewPanel(id="panel-overview")
+    overview.show_snapshot(
+        runtime=runtime,
+        queue=queue,
+        research=payload.research,
+        compounding=payload.compounding,
+        latest_run=None,
+    )
+    overview_text = overview.summary_text()
+    assert "BACKLOG  0 | deferred 0 | route default | mailbox 1" in overview_text
+    assert "RUNTIME  running | mode daemon | exec IDLE | uptime -- | clear pending" in overview_text
+    assert "ATTN     Active clear pending | accepted and waiting for a legal daemon boundary" in overview_text
+
+    panel = QueuePanel(id="panel-queue")
+    panel.show_snapshot(queue)
+    queue_text = panel.summary_text()
+    assert "MAILBOX 1 buffered | Mailbox buffered task" in queue_text
+    assert "BACKLOG empty | 1 add-task request buffered in mailbox" in queue_text
 
 
 def test_research_panel_renders_audit_governance_and_recent_activity() -> None:

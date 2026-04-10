@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from .adapters.control_mailbox import ControlCommand, list_incoming_command_paths, read_command
 from .assets.resolver import AssetFamilyEntry, AssetResolutionError, AssetResolver, ResolvedAsset
 from .baseline_assets import packaged_baseline_asset, packaged_baseline_bundle_version
 from .compiler import CompileTimeResolvedSnapshot
@@ -43,6 +44,7 @@ from .control_models import (
     AssetResolutionView,
     CompletionStateView,
     DeferredActiveTaskClear,
+    MailboxTaskIntakeView,
     PolicyHookSummary,
     QueueItemView,
     ResearchQueueFamilyView,
@@ -458,6 +460,38 @@ def count_deferred(paths: RuntimePaths) -> int:
     if not paths.deferred_dir.exists():
         return 0
     return len([path for path in paths.deferred_dir.iterdir() if path.is_file()])
+
+
+def mailbox_task_intake_view(paths: RuntimePaths) -> MailboxTaskIntakeView | None:
+    add_task_paths = [
+        path
+        for path in list_incoming_command_paths(paths)
+        if path.name.endswith(f"__{ControlCommand.ADD_TASK.value}.json")
+    ]
+    if not add_task_paths:
+        return None
+
+    titles: list[str] = []
+    issuers: list[str] = []
+    issued_at: list[datetime] = []
+    for path in add_task_paths:
+        try:
+            envelope = read_command(path)
+        except ValidationError:
+            continue
+        issued_at.append(envelope.issued_at)
+        title = " ".join(str(envelope.payload.get("title") or "").strip().split())
+        if title:
+            titles.append(title)
+        if envelope.issuer not in issuers:
+            issuers.append(envelope.issuer)
+    return MailboxTaskIntakeView(
+        buffered_count=len(add_task_paths),
+        oldest_issued_at=min(issued_at) if issued_at else None,
+        newest_issued_at=max(issued_at) if issued_at else None,
+        task_titles=tuple(titles),
+        issuers=tuple(issuers),
+    )
 
 
 def research_queue_family_view(

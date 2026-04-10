@@ -13,6 +13,7 @@ from .control_mutations import apply_native_config_value
 from .control_reports import (
     asset_inventory_for,
     config_hash,
+    mailbox_task_intake_view,
     selection_explanation,
     selection_preview_for,
     size_status_view,
@@ -103,6 +104,7 @@ def queue(control) -> QueueSnapshot:
             active_task=task_view(queue.active_task()),
             backlog_depth=queue.backlog_depth(),
             next_task=task_view(queue.peek_next()),
+            mailbox_task_intake=mailbox_task_intake_view(control.paths),
         )
     except (FileNotFoundError, QueueError, ValidationError, ValueError) as exc:
         raise queue_control_error(exc, prefix="queue state could not be read") from exc
@@ -122,6 +124,7 @@ def queue_inspect(control) -> QueueSnapshot:
             backlog_depth=len(backlog),
             next_task=task_view(backlog[0] if backlog else None),
             backlog=tuple(task_view(card) for card in backlog if task_view(card) is not None),
+            mailbox_task_intake=mailbox_task_intake_view(control.paths),
         )
     except (FileNotFoundError, QueueError, ValidationError, ValueError) as exc:
         raise queue_control_error(exc, prefix="queue state could not be read") from exc

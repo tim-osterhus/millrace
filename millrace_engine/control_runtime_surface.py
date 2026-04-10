@@ -33,6 +33,7 @@ from .control_reports import (
     count_deferred,
     decision_report_paths,
     live_research_runtime_state,
+    mailbox_task_intake_view,
     read_control_research_state,
     read_control_runtime_state,
     read_event_log,
@@ -131,6 +132,7 @@ def _attention_reason_for(
     runtime = status.runtime
     research = status.research
     assert research is not None
+    mailbox_task_intake = status.mailbox_task_intake
 
     if not health.bootstrap_ready:
         return SupervisorAttentionReason.NOT_BOOTSTRAPPED, "Workspace bootstrap checks are failing."
@@ -159,7 +161,15 @@ def _attention_reason_for(
         return SupervisorAttentionReason.DEGRADED_STATE, "Workspace is degraded and may require supervisor action."
     if runtime.execution_status is ExecutionStatus.IDLE:
         research_ready = any(family.ready for family in research.queue_families)
-        if runtime.backlog_depth > 0 or research_ready:
+        mailbox_buffered = mailbox_task_intake is not None and mailbox_task_intake.buffered_count > 0
+        if runtime.backlog_depth > 0 or research_ready or mailbox_buffered:
+            if mailbox_buffered and runtime.backlog_depth == 0 and not research_ready:
+                count = mailbox_task_intake.buffered_count
+                label = "request" if count == 1 else "requests"
+                return (
+                    SupervisorAttentionReason.IDLE_WITH_PENDING_WORK,
+                    f"Execution is idle while {count} mailbox-buffered add-task {label} await daemon drain.",
+                )
             return (
                 SupervisorAttentionReason.IDLE_WITH_PENDING_WORK,
                 "Execution is idle while pending work remains available.",
@@ -197,6 +207,7 @@ def status(control, *, detail: bool = False) -> StatusReport:
         current_status=runtime.execution_status,
     )
     queue = control.queue_inspect() if detail else control.queue()
+    mailbox_task_intake = mailbox_task_intake_view(control.paths)
     return StatusReport.model_validate(
         {
             "runtime": runtime,
@@ -226,6 +237,7 @@ def status(control, *, detail: bool = False) -> StatusReport:
             "research": control.research_report() if detail else None,
             "active_task": queue.active_task if detail else None,
             "next_task": queue.next_task if detail else None,
+            "mailbox_task_intake": mailbox_task_intake,
         }
     )
 
@@ -281,6 +293,9 @@ def supervisor_report(control, *, recent_event_limit: int = 10) -> SupervisorRep
         next_task=status_report.next_task,
         backlog_depth=status_report.runtime.backlog_depth,
         deferred_queue_size=status_report.runtime.deferred_queue_size,
+        pending_active_task_clear=status_report.runtime.pending_active_task_clear,
+        last_active_task_clear=status_report.runtime.last_active_task_clear,
+        mailbox_task_intake=status_report.mailbox_task_intake,
         current_run_id=current_run_id,
         current_stage=current_stage,
         time_in_current_status_seconds=time_in_current_status_seconds,

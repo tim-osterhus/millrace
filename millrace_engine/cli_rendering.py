@@ -53,6 +53,12 @@ def _bool_label(value: bool | None) -> str:
     return "yes" if value else "no"
 
 
+def _pluralize(count: int, singular: str, plural: str | None = None) -> str:
+    if count == 1:
+        return singular
+    return plural or f"{singular}s"
+
+
 def _object_selection_line(label: str, selection: RegistryObjectSelectionView | None) -> str | None:
     if selection is None:
         return None
@@ -522,6 +528,27 @@ def render_status(report: StatusReport, *, json_mode: bool) -> None:
         lines.append(f"Previous config hash: {runtime.previous_config_hash}")
     if runtime.rollback_armed:
         lines.append("Rollback armed: yes")
+    if runtime.pending_active_task_clear is not None:
+        request = runtime.pending_active_task_clear.request
+        lines.append(
+            "Active clear pending: "
+            f"{request.intent} requested at {request.requested_at.isoformat().replace('+00:00', 'Z')} "
+            f"(reason={request.reason})"
+        )
+    if runtime.last_active_task_clear is not None:
+        lines.append(
+            "Active clear last outcome: "
+            f"{runtime.last_active_task_clear.outcome_state.value} "
+            f"(mode={runtime.last_active_task_clear.mode}, applied={_bool_label(runtime.last_active_task_clear.applied)})"
+        )
+    if report.mailbox_task_intake is not None:
+        buffered = report.mailbox_task_intake.buffered_count
+        lines.append(
+            "Mailbox task intake: "
+            f"{buffered} buffered add-task {_pluralize(buffered, 'request')} accepted but not yet visible in backlog"
+        )
+        if report.mailbox_task_intake.task_titles:
+            lines.append(f"Mailbox task titles: {', '.join(report.mailbox_task_intake.task_titles)}")
     if report.active_task is not None:
         lines.append(f"Active task title: {report.active_task.title}")
     if report.next_task is not None:
@@ -568,6 +595,31 @@ def render_supervisor_report(report: SupervisorReport, *, json_mode: bool) -> No
             if report.time_in_current_status_seconds is not None
             else "Time in current status seconds: n/a"
         ),
+        (
+            "Active clear pending: "
+            + (
+                f"{report.pending_active_task_clear.request.intent} ({report.pending_active_task_clear.request.reason})"
+                if report.pending_active_task_clear is not None
+                else "none"
+            )
+        ),
+        (
+            "Active clear last outcome: "
+            + (
+                report.last_active_task_clear.outcome_state.value
+                if report.last_active_task_clear is not None
+                else "none"
+            )
+        ),
+        (
+            "Mailbox task intake: "
+            + (
+                f"{report.mailbox_task_intake.buffered_count} buffered add-task "
+                f"{_pluralize(report.mailbox_task_intake.buffered_count, 'request')}"
+                if report.mailbox_task_intake is not None
+                else "none"
+            )
+        ),
         f"Attention reason: {report.attention_reason.value}",
         f"Attention summary: {report.attention_summary}",
         (
@@ -589,6 +641,8 @@ def render_supervisor_report(report: SupervisorReport, *, json_mode: bool) -> No
         )
     if report.liveness.degraded:
         lines.append("Liveness degraded: yes")
+    if report.mailbox_task_intake is not None and report.mailbox_task_intake.task_titles:
+        lines.append(f"Mailbox task titles: {', '.join(report.mailbox_task_intake.task_titles)}")
     if report.recent_events:
         lines.append("Recent events:")
         lines.extend(f"- {render_event_record_line(event)}" for event in report.recent_events)

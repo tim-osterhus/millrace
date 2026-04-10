@@ -52,7 +52,7 @@ from millrace_engine.contracts import (
 )
 from millrace_engine.events import EventRecord, EventSource, EventType
 from millrace_engine.engine import MillraceEngine
-from millrace_engine.control_models import RuntimeState
+from millrace_engine.control_models import ActiveTaskRemediationRequest, DeferredActiveTaskClear, RuntimeState
 from millrace_engine.markdown import parse_task_cards
 from millrace_engine.planes.research import ResearchPlane
 from millrace_engine.policies.outage import OutageProbeResult, StaticOutageProbe
@@ -5942,3 +5942,73 @@ def test_cli_supervisor_report_renders_json(tmp_path: Path) -> None:
         "queue_cleanup_quarantine",
     ]
     assert payload["recent_events"] == []
+
+
+def test_cli_status_and_supervisor_report_surface_pending_clear_and_mailbox_task_intent(
+    tmp_path: Path,
+) -> None:
+    _workspace, config_path = runtime_workspace(tmp_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    runtime_state = RuntimeState(
+        process_running=True,
+        process_id=os.getpid(),
+        paused=False,
+        execution_status=ExecutionStatus.IDLE,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-10T22:30:00Z",
+        started_at="2026-04-10T22:00:00Z",
+        mode="daemon",
+    )
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    pending_clear = DeferredActiveTaskClear(
+        command_id="20260410T223100000000Z__active_task_clear",
+        request=ActiveTaskRemediationRequest(
+            intent="clear",
+            reason="operator requested clear",
+            requested_at="2026-04-10T22:31:00Z",
+        ),
+        deferred_at="2026-04-10T22:31:01Z",
+    )
+    (paths.runtime_dir / "pending_active_task_clear.json").write_text(
+        pending_clear.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    queued = EngineControl(config_path).add_task("Mailbox buffered task")
+    assert queued.mode == "mailbox"
+
+    status_payload = invoke_cli_report_json(config_path, "status", "--detail")
+    status_text = invoke_cli_report_text(config_path, "status")
+    supervisor_payload = invoke_cli_report_json(
+        config_path,
+        "supervisor",
+        "report",
+        "--recent-events",
+        "0",
+    )
+    supervisor_text = invoke_cli_report_text(
+        config_path,
+        "supervisor",
+        "report",
+        "--recent-events",
+        "0",
+    )
+
+    assert status_payload["runtime"]["pending_active_task_clear"]["request"]["reason"] == "operator requested clear"
+    assert status_payload["mailbox_task_intake"]["buffered_count"] == 1
+    assert status_payload["mailbox_task_intake"]["task_titles"] == ["Mailbox buffered task"]
+    assert "Active clear pending: clear requested at 2026-04-10T22:31:00Z" in status_text
+    assert (
+        "Mailbox task intake: 1 buffered add-task request accepted but not yet visible in backlog"
+        in status_text
+    )
+
+    assert supervisor_payload["pending_active_task_clear"]["request"]["reason"] == "operator requested clear"
+    assert supervisor_payload["mailbox_task_intake"]["buffered_count"] == 1
+    assert supervisor_payload["attention_reason"] == "idle_with_pending_work"
+    assert "mailbox-buffered add-task request" in supervisor_payload["attention_summary"]
+    assert "Active clear pending: clear (operator requested clear)" in supervisor_text
+    assert "Mailbox task intake: 1 buffered add-task request" in supervisor_text
