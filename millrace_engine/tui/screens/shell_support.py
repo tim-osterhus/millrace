@@ -49,6 +49,7 @@ LIFECYCLE_WORKER_GROUP = "lifecycle"
 LIFECYCLE_WORKER_PREFIX = "lifecycle."
 PUBLISH_REFRESH_WORKER_NAME = "refresh.publish"
 PUBLISH_REFRESH_WORKER_GROUP = "refresh.publish"
+TARGETED_REFRESH_WORKER_PREFIX = "refresh.targeted."
 LIFECYCLE_ACTION_NAMES = {
     "start_once",
     "start_daemon",
@@ -57,6 +58,23 @@ LIFECYCLE_ACTION_NAMES = {
     "pause",
     "resume",
     "stop",
+}
+ACTION_REFRESH_PANELS: dict[str, tuple[PanelId, ...]] = {
+    "add_task": (PanelId.OVERVIEW, PanelId.QUEUE),
+    "add_idea": (PanelId.OVERVIEW, PanelId.RESEARCH),
+    "reorder_queue": (PanelId.OVERVIEW, PanelId.QUEUE),
+    "interview_answer": (PanelId.OVERVIEW, PanelId.RESEARCH),
+    "interview_accept": (PanelId.OVERVIEW, PanelId.RESEARCH),
+    "interview_skip": (PanelId.OVERVIEW, PanelId.RESEARCH),
+    "reload_config": (PanelId.OVERVIEW, PanelId.CONFIG),
+    "set_config": (PanelId.OVERVIEW, PanelId.CONFIG),
+    "pause": WORKSPACE_REFRESH_PANELS,
+    "resume": WORKSPACE_REFRESH_PANELS,
+    "stop": WORKSPACE_REFRESH_PANELS,
+    "start_once": WORKSPACE_REFRESH_PANELS,
+    "start_daemon": WORKSPACE_REFRESH_PANELS,
+    "start.once": WORKSPACE_REFRESH_PANELS,
+    "start.daemon": WORKSPACE_REFRESH_PANELS,
 }
 
 
@@ -362,6 +380,15 @@ def is_lifecycle_action(name: str) -> bool:
     return normalized in LIFECYCLE_ACTION_NAMES
 
 
+def refresh_panels_for_action(action: str) -> tuple[PanelId, ...] | None:
+    normalized = " ".join(action.split())
+    return ACTION_REFRESH_PANELS.get(normalized)
+
+
+def targeted_refresh_worker_name(action: str) -> str:
+    return f"{TARGETED_REFRESH_WORKER_PREFIX}{' '.join(action.split())}"
+
+
 def worker_state_outcome(
     *,
     worker_name: str,
@@ -400,6 +427,23 @@ def worker_state_outcome(
                 message=RefreshFailed(
                     gateway_failure_from_exception("refresh.publish", error),
                     panels=(PanelId.PUBLISH,),
+                )
+            )
+        return None
+    if worker_name.startswith(TARGETED_REFRESH_WORKER_PREFIX):
+        action = worker_name.removeprefix(TARGETED_REFRESH_WORKER_PREFIX)
+        panels = refresh_panels_for_action(action)
+        if panels is None:
+            return None
+        if state == WorkerState.SUCCESS:
+            return WorkerStateOutcome(
+                message=_refresh_message_from_result(result, panels=panels)
+            )
+        if state == WorkerState.ERROR and error is not None:
+            return WorkerStateOutcome(
+                message=RefreshFailed(
+                    gateway_failure_from_exception("refresh.workspace", error),
+                    panels=panels,
                 )
             )
         return None
@@ -457,6 +501,7 @@ __all__ = [
     "LIFECYCLE_ACTION_NAMES",
     "LIFECYCLE_WORKER_GROUP",
     "LIFECYCLE_WORKER_PREFIX",
+    "TARGETED_REFRESH_WORKER_PREFIX",
     "PUBLISH_REFRESH_WORKER_GROUP",
     "PUBLISH_REFRESH_WORKER_NAME",
     "WORKSPACE_REFRESH_PANELS",
@@ -467,6 +512,8 @@ __all__ = [
     "notification_severity",
     "publish_confirmation_lines",
     "queue_reorder_confirmation_lines",
+    "refresh_panels_for_action",
     "selected_config_field",
+    "targeted_refresh_worker_name",
     "worker_state_outcome",
 ]

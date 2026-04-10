@@ -434,6 +434,14 @@ class ShellWorkflowMixin:
             return
         self._requested_run_id = normalized_run_id
         self.open_panel(PanelId.RUNS)
+        if self.is_mounted:
+            self.query_one(RunsPanel).show_snapshot(
+                self._store.state.runs,
+                requested_run_id=normalized_run_id,
+                failure=self._store.panel_failure(PanelId.RUNS),
+                display_mode=self._store.state.display_mode,
+            )
+            self._render_state()
         self._push_modal(RunDetailModal(config_path=self.config_path, run_id=normalized_run_id))
 
     def _push_modal(self, screen, callback: Callable[[object], None] | None = None) -> None:

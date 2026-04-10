@@ -72,6 +72,8 @@ from .shell_support import (
     build_shell_inspector_view,
     is_lifecycle_action,
     latest_run_summary_from_runs,
+    refresh_panels_for_action,
+    targeted_refresh_worker_name,
     worker_state_outcome,
 )
 from .shell_workflows import ShellWorkflowMixin
@@ -272,6 +274,23 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             thread=True,
         )
 
+    def _start_targeted_refresh(self, action: str) -> None:
+        panels = refresh_panels_for_action(action)
+        if panels is None:
+            return
+        self.run_worker(
+            lambda: load_workspace_refresh(
+                self.config_path,
+                include_events=False,
+                settings=self.worker_settings,
+            ),
+            name=targeted_refresh_worker_name(action),
+            group=REFRESH_WORKER_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+            thread=True,
+        )
+
     def _start_publish_refresh(self) -> None:
         self.run_worker(
             lambda: RuntimeGateway(self.config_path).load_publish_status(),
@@ -325,7 +344,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     def on_refresh_succeeded(self, message: RefreshSucceeded) -> None:
         self._store.apply_refresh_success(message.payload, panels=message.panels)
         self._latest_run_summary = latest_run_summary_from_runs(self._store.state.runs)
-        self._render_state()
+        self._render_for_panels(message.panels, include_shell_chrome=True)
         self._maybe_offer_startup_daemon_launch()
         if self.active_panel is PanelId.PUBLISH and PanelId.PUBLISH not in message.panels:
             self._start_publish_refresh()
@@ -338,7 +357,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         notice = notice_from_failure(message.failure)
         previous_notices = self._store.state.notices
         self._store.apply_refresh_failure(message.failure, panels=message.panels, notice=notice)
-        self._render_state()
+        self._render_for_panels(message.panels, include_shell_chrome=True, include_notices=True)
         self._notify_if_added(previous_notices)
 
     def on_action_succeeded(self, message: ActionSucceeded) -> None:
@@ -349,12 +368,14 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         notice = notice_from_action(message.result)
         previous_notices = self._store.state.notices
         self._store.apply_action_success(message.result, notice=notice)
-        self._render_state()
+        if message.result.action == "reorder_queue":
+            self._render_for_panels((PanelId.QUEUE,), include_inspector=True)
+        self._render_notices()
         self._notify_if_added(previous_notices)
         if message.result.action in {"publish_sync", "publish_commit"}:
             self._start_publish_refresh()
-        if message.result.applied:
-            self._start_periodic_refresh()
+        elif message.result.applied:
+            self._start_targeted_refresh(message.result.action)
 
     def on_action_failed(self, message: ActionFailed) -> None:
         if is_lifecycle_action(message.failure.operation):
@@ -362,18 +383,20 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         notice = notice_from_failure(message.failure)
         previous_notices = self._store.state.notices
         self._store.apply_action_failure(message.failure, notice=notice)
-        self._render_state()
+        self._render_shell_chrome()
+        self._render_inspector()
+        self._render_notices()
         self._notify_if_added(previous_notices)
 
     def on_events_appended(self, message: EventsAppended) -> None:
         self._store.append_events(message.events, received_at=message.received_at, clear_panels=(PanelId.LOGS,))
-        self._render_state()
+        self._render_for_panels((PanelId.LOGS,), include_expanded=True)
 
     def on_event_stream_failed(self, message: EventStreamFailed) -> None:
         notice = notice_from_failure(message.failure)
         previous_notices = self._store.state.notices
         self._store.apply_panel_failure(message.failure, panels=(PanelId.LOGS,), notice=notice)
-        self._render_state()
+        self._render_for_panels((PanelId.LOGS,), include_notices=True)
         self._notify_if_added(previous_notices)
 
     def action_toggle_display_mode(self) -> None:
@@ -437,6 +460,33 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         return None
 
     def _render_state(self) -> None:
+        self._render_shell_chrome()
+        self._render_panels(PANELS)
+        self._render_expanded_stream()
+        self._render_inspector()
+        self._render_notices()
+
+    def _render_for_panels(
+        self,
+        panels: tuple[PanelId, ...],
+        *,
+        include_shell_chrome: bool = False,
+        include_inspector: bool = False,
+        include_notices: bool = False,
+        include_expanded: bool = False,
+    ) -> None:
+        if include_shell_chrome:
+            self._render_shell_chrome()
+        render_panels = list(dict.fromkeys((*panels, *((PanelId.OVERVIEW,) if PanelId.RUNS in panels else ()))))
+        self._render_panels(render_panels)
+        if include_expanded or PanelId.LOGS in render_panels:
+            self._render_expanded_stream()
+        if include_inspector or self.active_panel in render_panels:
+            self._render_inspector()
+        if include_notices:
+            self._render_notices()
+
+    def _render_shell_chrome(self) -> None:
         state = self._store.state
         active = PANEL_BY_ID[self.active_panel]
         lifecycle_signal = self._lifecycle_signal()
@@ -457,54 +507,83 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             refresh_failure=state.last_refresh_failure,
             busy_message=self._lifecycle_busy_message,
         )
-        self.query_one(OverviewPanel).show_snapshot(
-            runtime=state.runtime,
-            queue=state.queue,
-            research=state.research,
-            compounding=state.compounding,
-            latest_run=self._latest_run_summary,
-            failure=self._store.panel_failure(PanelId.OVERVIEW),
-            display_mode=state.display_mode,
-        )
-        self.query_one(QueuePanel).show_snapshot(
-            state.queue,
-            run_id=(state.runtime.selection.run_id if state.runtime is not None else None),
-            failure=self._store.panel_failure(PanelId.QUEUE),
-            display_mode=state.display_mode,
-        )
-        self.query_one(RunsPanel).show_snapshot(
-            state.runs,
-            requested_run_id=self._requested_run_id,
-            failure=self._store.panel_failure(PanelId.RUNS),
-            display_mode=state.display_mode,
-        )
-        self.query_one(ResearchPanel).show_snapshot(
-            state.research,
-            failure=self._store.panel_failure(PanelId.RESEARCH),
-            display_mode=state.display_mode,
-        )
-        self.query_one(LogsPanel).show_snapshot(
-            state.events,
-            failure=self._store.panel_failure(PanelId.LOGS),
-            display_mode=state.display_mode,
-        )
-        self.query_one(ConfigPanel).show_snapshot(
-            state.config,
-            runtime=state.runtime,
-            failure=self._store.panel_failure(PanelId.CONFIG),
-            display_mode=state.display_mode,
-        )
-        self.query_one(PublishPanel).show_snapshot(
-            state.publish,
-            failure=self._store.panel_failure(PanelId.PUBLISH),
-            display_mode=state.display_mode,
-        )
+
+    def _render_panels(self, panels: tuple | list) -> None:
+        for panel in panels:
+            panel_id = panel.id if hasattr(panel, "id") else panel
+            self._render_panel(panel_id)
+
+    def _render_panel(self, panel_id: PanelId) -> None:
+        state = self._store.state
+        if panel_id is PanelId.OVERVIEW:
+            self.query_one(OverviewPanel).show_snapshot(
+                runtime=state.runtime,
+                queue=state.queue,
+                research=state.research,
+                compounding=state.compounding,
+                latest_run=self._latest_run_summary,
+                failure=self._store.panel_failure(PanelId.OVERVIEW),
+                display_mode=state.display_mode,
+            )
+            return
+        if panel_id is PanelId.QUEUE:
+            self.query_one(QueuePanel).show_snapshot(
+                state.queue,
+                run_id=(state.runtime.selection.run_id if state.runtime is not None else None),
+                failure=self._store.panel_failure(PanelId.QUEUE),
+                display_mode=state.display_mode,
+            )
+            return
+        if panel_id is PanelId.RUNS:
+            self.query_one(RunsPanel).show_snapshot(
+                state.runs,
+                requested_run_id=self._requested_run_id,
+                failure=self._store.panel_failure(PanelId.RUNS),
+                display_mode=state.display_mode,
+            )
+            return
+        if panel_id is PanelId.RESEARCH:
+            self.query_one(ResearchPanel).show_snapshot(
+                state.research,
+                failure=self._store.panel_failure(PanelId.RESEARCH),
+                display_mode=state.display_mode,
+            )
+            return
+        if panel_id is PanelId.LOGS:
+            self.query_one(LogsPanel).show_snapshot(
+                state.events,
+                failure=self._store.panel_failure(PanelId.LOGS),
+                display_mode=state.display_mode,
+            )
+            return
+        if panel_id is PanelId.CONFIG:
+            self.query_one(ConfigPanel).show_snapshot(
+                state.config,
+                runtime=state.runtime,
+                failure=self._store.panel_failure(PanelId.CONFIG),
+                display_mode=state.display_mode,
+            )
+            return
+        if panel_id is PanelId.PUBLISH:
+            self.query_one(PublishPanel).show_snapshot(
+                state.publish,
+                failure=self._store.panel_failure(PanelId.PUBLISH),
+                display_mode=state.display_mode,
+            )
+
+    def _render_expanded_stream(self) -> None:
+        state = self._store.state
+        active = PANEL_BY_ID[self.active_panel]
         self.query_one(ExpandedStreamView).show_snapshot(
             active_panel_label=active.label,
             display_mode=state.display_mode,
             events=state.events,
             live=self._shell_body_mode is ShellBodyMode.EXPANDED,
         )
+
+    def _render_inspector(self) -> None:
+        state = self._store.state
+        active = PANEL_BY_ID[self.active_panel]
         self.query_one(ShellInspector).show_view(
             build_shell_inspector_view(
                 active_panel=active,
@@ -525,6 +604,8 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
                 selected_config_field_key=self.query_one(ConfigPanel).selected_field_key,
             )
         )
+
+    def _render_notices(self) -> None:
         self.query_one(NoticesView).show_notices(self._store.state.notices)
 
     def _pending_lifecycle_action_name(self) -> str | None:

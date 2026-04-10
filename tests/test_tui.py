@@ -4747,6 +4747,22 @@ def test_tui_messages_wrap_shaped_payloads() -> None:
     assert health_failure.failure == failure
 
 
+def test_worker_state_outcome_routes_targeted_refresh_workers_to_action_panels() -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    result = GatewayResult(value=_sample_refresh_payload(observed_at=observed_at))
+
+    outcome = shell_support_module.worker_state_outcome(
+        worker_name=shell_support_module.targeted_refresh_worker_name("add_task"),
+        state=WorkerState.SUCCESS,
+        result=result,
+        error=None,
+    )
+
+    assert outcome is not None
+    assert isinstance(outcome.message, RefreshSucceeded)
+    assert outcome.message.panels == (PanelId.OVERVIEW, PanelId.QUEUE)
+
+
 def test_tui_shell_refresh_failure_keeps_last_good_snapshot(monkeypatch, tmp_path) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
     (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
@@ -4794,6 +4810,77 @@ def test_tui_shell_refresh_failure_keeps_last_good_snapshot(monkeypatch, tmp_pat
         config_path,
         scenario,
         worker_settings=WorkerSettings(refresh_interval_seconds=0.01, event_retry_delay_seconds=0.01),
+    )
+
+
+def test_tui_shell_events_appended_updates_logs_without_full_shell_render(monkeypatch, tmp_path) -> None:
+    observed_at = datetime(2026, 3, 25, 0, 0, 30, tzinfo=timezone.utc)
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    payload = replace(
+        _sample_refresh_payload(observed_at=observed_at),
+        events=EventLogView(
+            events=(
+                _sample_runtime_event(
+                    event_type="engine.started",
+                    source="engine",
+                    observed_at=observed_at,
+                    category="ENG",
+                    summary="stage=bootstrap",
+                    is_research_event=False,
+                ),
+            ),
+            last_loaded_at=observed_at,
+        ),
+    )
+    monkeypatch.setattr(
+        shell_module,
+        "load_workspace_refresh",
+        lambda *args, **kwargs: GatewayResult(value=payload),
+    )
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and app.screen._store.state.events.events,
+        )
+        assert isinstance(app.screen, ShellScreen)
+        render_calls = {"count": 0}
+
+        def counted_render_state() -> None:
+            render_calls["count"] += 1
+
+        app.screen._render_state = counted_render_state  # type: ignore[method-assign]
+
+        recovery_event = _sample_runtime_event(
+            event_type="execution.stage.completed",
+            source="execution",
+            observed_at=observed_at,
+            category="EXE",
+            summary="stage=qa | status=success",
+            run_id="run-recovery-1",
+            is_research_event=False,
+            payload=(KeyValueView("stage", "qa"), KeyValueView("status", "success")),
+        )
+        app.screen.post_message(EventsAppended((recovery_event,), received_at=observed_at))
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and any(event.run_id == "run-recovery-1" for event in app.screen._store.state.events.events),
+        )
+
+        logs_text = _panel_text(app.screen.query_one("#panel-logs", LogsPanel))
+        assert "run run-recovery-1" in logs_text
+        assert render_calls["count"] == 0
+
+    _run_app_scenario(
+        config_path,
+        scenario,
+        worker_settings=WorkerSettings(refresh_interval_seconds=60.0, event_retry_delay_seconds=0.01),
     )
 
 
