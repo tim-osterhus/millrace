@@ -4487,7 +4487,7 @@ def test_execute_spec_review_blocks_unpromotable_family_state_before_taskmaster(
     assert any("is not promotable from family state" in item["summary"] for item in review_record["findings"])
 
 
-def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_truthfully(
+def test_research_plane_routes_blocked_spec_review_into_bounded_mechanic_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4517,6 +4517,9 @@ def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_tr
     original_execute_spec_review = research_plane_module.execute_spec_review
     original_execute_spec_synthesis = research_plane_module.execute_spec_synthesis
     review_attempts = 0
+    mechanic_attempts = 0
+    deleted_phase_path: Path | None = None
+    deleted_phase_text = ""
 
     def _counted_spec_review(*args: object, **kwargs: object):
         nonlocal review_attempts
@@ -4524,15 +4527,40 @@ def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_tr
         return original_execute_spec_review(*args, **kwargs)
 
     def _execute_spec_synthesis_with_missing_phase_artifact(*args: object, **kwargs: object):
+        nonlocal deleted_phase_path, deleted_phase_text
         result = original_execute_spec_synthesis(*args, **kwargs)
-        (workspace / result.phase_spec_path).unlink()
+        deleted_phase_path = workspace / result.phase_spec_path
+        deleted_phase_text = deleted_phase_path.read_text(encoding="utf-8")
+        deleted_phase_path.unlink()
         return result
+
+    def _repair_missing_phase_artifact(*args: object, **kwargs: object):
+        nonlocal mechanic_attempts
+        mechanic_attempts += 1
+        assert deleted_phase_path is not None
+        deleted_phase_path.parent.mkdir(parents=True, exist_ok=True)
+        deleted_phase_path.write_text(deleted_phase_text, encoding="utf-8")
+        (workspace / "agents" / "mechanic_report.md").write_text(
+            "# Mechanic Report\n\n- Restored the missing phase spec.\n",
+            encoding="utf-8",
+        )
+        return object()
 
     monkeypatch.setattr(research_plane_module, "execute_spec_review", _counted_spec_review)
     monkeypatch.setattr(
         research_plane_module,
         "execute_spec_synthesis",
         _execute_spec_synthesis_with_missing_phase_artifact,
+    )
+    monkeypatch.setattr(
+        goalspec_spec_review_module,
+        "_execute_goalspec_mechanic_stage",
+        _repair_missing_phase_artifact,
+    )
+    monkeypatch.setattr(
+        goalspec_spec_review_module,
+        "_execute_agentic_spec_review_stage",
+        lambda *args, **kwargs: object(),
     )
 
     with pytest.raises(
@@ -4548,6 +4576,7 @@ def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_tr
     first_snapshot = plane.snapshot_state()
     assert plane.status_store.read() is ResearchStatus.BLOCKED
     assert review_attempts == 1
+    assert mechanic_attempts == 0
     assert first_snapshot.retry_state is not None
     assert first_snapshot.retry_state.attempt == 1
     assert first_snapshot.retry_state.exhausted() is False
@@ -4555,37 +4584,179 @@ def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_tr
         "Spec Review blocked SPEC-714; resolve the recorded decomposition findings before Taskmaster"
     )
     assert first_snapshot.checkpoint is not None
-    assert first_snapshot.checkpoint.node_id == "spec_review"
+    assert first_snapshot.checkpoint.node_id == "mechanic"
 
     review_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "spec_review" / f"{run_id}.json"
     review_record = json.loads(review_record_path.read_text(encoding="utf-8"))
     assert review_record["review_status"] == "blocked"
     assert any("missing the required `phase` copy" in item["summary"] for item in review_record["findings"])
+    remediation_bundle_path = (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "spec_review_remediation"
+        / f"{run_id}.json"
+    )
+    remediation_bundle = json.loads(remediation_bundle_path.read_text(encoding="utf-8"))
+    assert remediation_bundle["remediation_status"] == "pending"
+    assert remediation_bundle["mechanic_attempt_count"] == 0
+    assert review_record_path.exists()
+    decision_path = workspace / remediation_bundle["decision_path"]
+    assert "Remediation-Bundle" in decision_path.read_text(encoding="utf-8")
+
+    dispatch = _resume_research_until_settled(
+        plane,
+        trigger="daemon-loop",
+        run_id=run_id,
+        resolve_assets=False,
+    )
+
+    snapshot = plane.snapshot_state()
+    remediation_bundle = json.loads(remediation_bundle_path.read_text(encoding="utf-8"))
+    assert dispatch is not None
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert mechanic_attempts == 1
+    assert review_attempts == 2
+    assert snapshot.checkpoint is None
+    assert snapshot.retry_state is None
+    assert remediation_bundle["remediation_status"] == "repaired"
+    assert remediation_bundle["mechanic_attempt_count"] == 1
+    assert remediation_bundle["last_mechanic_status"] == "repaired"
+    assert remediation_bundle["last_mechanic_report_path"] == "agents/mechanic_report.md"
+
+
+def test_research_plane_reruns_spec_review_after_mechanic_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    config.research.stage_retry_backoff_seconds = 0
+    config.research.stage_retry_max = 2
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-remediation-715"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-715\n"
+            "title: Team Workspace Vertical Slice\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Team Workspace Vertical Slice\n\n"
+            "Build the first usable team workspace vertical slice for collaborative planning.\n\n"
+            "## Capability Domains\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n\n"
+            "## Progression Lines\n"
+            "- Progression from intake to shared drafting to first usable proof.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+    original_execute_spec_review = research_plane_module.execute_spec_review
+    original_execute_spec_synthesis = research_plane_module.execute_spec_synthesis
+    review_attempts = 0
+    mechanic_attempts = 0
+    deleted_phase_path: Path | None = None
+    deleted_phase_text = ""
+
+    def _counted_spec_review(*args: object, **kwargs: object):
+        nonlocal review_attempts
+        review_attempts += 1
+        return original_execute_spec_review(*args, **kwargs)
+
+    def _execute_spec_synthesis_with_missing_phase_artifact(*args: object, **kwargs: object):
+        nonlocal deleted_phase_path, deleted_phase_text
+        result = original_execute_spec_synthesis(*args, **kwargs)
+        deleted_phase_path = workspace / result.phase_spec_path
+        deleted_phase_text = deleted_phase_path.read_text(encoding="utf-8")
+        deleted_phase_path.unlink()
+        return result
+
+    def _repair_on_second_mechanic(*args: object, **kwargs: object):
+        nonlocal mechanic_attempts
+        mechanic_attempts += 1
+        if mechanic_attempts < 2:
+            return object()
+        assert deleted_phase_path is not None
+        deleted_phase_path.parent.mkdir(parents=True, exist_ok=True)
+        deleted_phase_path.write_text(deleted_phase_text, encoding="utf-8")
+        (workspace / "agents" / "mechanic_report.md").write_text(
+            "# Mechanic Report\n\n- Restored the missing phase spec on the second attempt.\n",
+            encoding="utf-8",
+        )
+        return object()
+
+    monkeypatch.setattr(research_plane_module, "execute_spec_review", _counted_spec_review)
+    monkeypatch.setattr(
+        research_plane_module,
+        "execute_spec_synthesis",
+        _execute_spec_synthesis_with_missing_phase_artifact,
+    )
+    monkeypatch.setattr(
+        goalspec_spec_review_module,
+        "_execute_goalspec_mechanic_stage",
+        _repair_on_second_mechanic,
+    )
+    monkeypatch.setattr(
+        goalspec_spec_review_module,
+        "_execute_agentic_spec_review_stage",
+        lambda *args, **kwargs: object(),
+    )
 
     with pytest.raises(
         research_plane_module.GoalSpecExecutionError,
-        match="Spec Review blocked SPEC-714",
+        match="Spec Review blocked SPEC-715",
     ):
-        plane.sync_runtime(trigger="daemon-loop", resolve_assets=False)
+        _run_research_until_settled(
+            plane,
+            run_id=run_id,
+            resolve_assets=False,
+        )
 
-    resumed_snapshot = plane.snapshot_state()
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-715",
+    ):
+        _resume_research_until_settled(
+            plane,
+            trigger="daemon-loop",
+            run_id=run_id,
+            resolve_assets=False,
+        )
+    blocked_snapshot = plane.snapshot_state()
     assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert mechanic_attempts == 1
     assert review_attempts == 2
-    assert resumed_snapshot.retry_state is not None
-    assert resumed_snapshot.retry_state.attempt == 2
-    assert resumed_snapshot.retry_state.max_attempts == 2
-    assert resumed_snapshot.retry_state.next_retry_at is None
-    assert resumed_snapshot.retry_state.exhausted() is True
-    assert resumed_snapshot.checkpoint is not None
-    assert resumed_snapshot.checkpoint.node_id == "spec_review"
-    assert resumed_snapshot.queue_snapshot.ownerships == resumed_snapshot.checkpoint.owned_queues
+    assert blocked_snapshot.retry_state is not None
+    assert blocked_snapshot.retry_state.attempt == 2
+    assert blocked_snapshot.checkpoint is not None
+    assert blocked_snapshot.checkpoint.node_id == "mechanic"
 
-    assert plane.sync_runtime(trigger="daemon-loop", resolve_assets=False) is None
-
-    exhausted_snapshot = plane.snapshot_state()
-    assert plane.status_store.read() is ResearchStatus.BLOCKED
-    assert review_attempts == 2
-    assert exhausted_snapshot == resumed_snapshot
+    dispatch = _resume_research_until_settled(
+        plane,
+        trigger="daemon-loop",
+        run_id=run_id,
+        resolve_assets=False,
+    )
+    remediation_bundle_path = (
+        workspace
+        / "agents"
+        / ".research_runtime"
+        / "goalspec"
+        / "spec_review_remediation"
+        / f"{run_id}.json"
+    )
+    remediation_bundle = json.loads(remediation_bundle_path.read_text(encoding="utf-8"))
+    snapshot = plane.snapshot_state()
+    assert dispatch is not None
+    assert plane.status_store.read() is ResearchStatus.IDLE
+    assert mechanic_attempts == 2
+    assert review_attempts == 3
+    assert snapshot.checkpoint is None
+    assert snapshot.retry_state is None
+    assert remediation_bundle["mechanic_attempt_count"] == 2
+    assert remediation_bundle["last_mechanic_status"] == "repaired"
 
 
 def test_research_plane_runs_grounded_supported_minecraft_goal_to_taskmaster_in_daemon_mode(

@@ -188,11 +188,29 @@ def record_dispatch_failure(
     checkpoint = self.state.checkpoint
     queue_snapshot = discovery.to_snapshot(last_scanned_at=failed_at)
     if checkpoint is not None:
+        checkpoint_update: dict[str, object] = {
+            "attempt": retry_state.attempt,
+            "updated_at": failed_at,
+        }
+        try:
+            from .goalspec import GoalSpecReviewBlockedError
+        except Exception:  # pragma: no cover - defensive import fallback
+            GoalSpecReviewBlockedError = None  # type: ignore[assignment]
+        if (
+            GoalSpecReviewBlockedError is not None
+            and isinstance(error, GoalSpecReviewBlockedError)
+            and checkpoint.node_id == "spec_review"
+            and retry_state.attempt <= 2
+        ):
+            checkpoint_update.update(
+                {
+                    "node_id": "mechanic",
+                    "stage_kind_id": "research.mechanic",
+                    "status": ResearchStatus.GOALSPEC_RUNNING,
+                }
+            )
         checkpoint = checkpoint.model_copy(
-            update={
-                "attempt": retry_state.attempt,
-                "updated_at": failed_at,
-            }
+            update=checkpoint_update
         )
         configured_mode = checkpoint.mode
         queue_snapshot = discovery.to_snapshot(

@@ -13,6 +13,7 @@ from .goalspec import (
     GoalIntakeExecutionResult,
     ObjectiveProfileSyncExecutionResult,
     SpecInterviewExecutionResult,
+    SpecReviewRemediationExecutionResult,
     SpecReviewExecutionResult,
     SpecSynthesisExecutionResult,
 )
@@ -28,6 +29,7 @@ from .goalspec_objective_profile_sync import (
 )
 from .goalspec_spec_interview import execute_spec_interview as _execute_spec_interview
 from .goalspec_spec_review import execute_spec_review as _execute_spec_review
+from .goalspec_spec_review import execute_spec_review_remediation as _execute_spec_review_remediation
 from .goalspec_spec_synthesis import execute_spec_synthesis as _execute_spec_synthesis
 from .state import ResearchCheckpoint
 
@@ -141,4 +143,23 @@ def execute_spec_review(
         emitted_at=emitted_at,
         config=config,
         stage_plan=stage_plan,
+    )
+
+
+def execute_spec_review_remediation(
+    paths: RuntimePaths,
+    checkpoint: ResearchCheckpoint,
+    *,
+    run_id: str,
+    emitted_at: datetime | None = None,
+    config: EngineConfig | None = None,
+) -> SpecReviewRemediationExecutionResult:
+    """Delegate bounded Mechanic repair for blocked Spec Review outcomes."""
+
+    return _execute_spec_review_remediation(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+        config=config,
     )

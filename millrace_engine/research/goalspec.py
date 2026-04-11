@@ -1099,6 +1099,25 @@ class SpecReviewExecutionResult(ContractModel):
     queue_ownership: ResearchQueueOwnership
 
 
+class SpecReviewRemediationExecutionResult(ContractModel):
+    """Resolved outputs from one bounded GoalSpec Mechanic remediation pass."""
+
+    remediation_bundle_path: str
+    report_path: str = ""
+    queue_ownership: ResearchQueueOwnership
+
+
+class GoalSpecReviewBlockedError(GoalSpecExecutionError):
+    """Typed blocked-review failure carrying its remediation bundle path."""
+
+    def __init__(self, message: str, *, remediation_bundle_path: str) -> None:
+        super().__init__(message)
+        self.remediation_bundle_path = _normalize_required_text(
+            remediation_bundle_path,
+            field_name="remediation_bundle_path",
+        )
+
+
 def _goalspec_stage_support_module():
     return import_module(".goalspec_stage_support", __package__)
 
@@ -1176,6 +1195,16 @@ def execute_spec_review(paths, checkpoint, *, run_id, emitted_at=None, config=No
     )
 
 
+def execute_spec_review_remediation(paths, checkpoint, *, run_id, emitted_at=None, config=None):
+    return _goalspec_stage_support_module().execute_spec_review_remediation(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+        config=config,
+    )
+
+
 __all__ = [
     "AcceptanceProfileRecord",
     "ContractorClassificationCandidate",
@@ -1192,12 +1221,14 @@ __all__ = [
     "GoalIntakeExecutionResult",
     "GoalIntakeRecord",
     "GoalSource",
+    "GoalSpecReviewBlockedError",
     "GoalSpecExecutionError",
     "ObjectiveProfileSyncExecutionResult",
     "ObjectiveProfileSyncRecord",
     "ObjectiveProfileSyncStateRecord",
     "SpecInterviewExecutionResult",
     "SpecInterviewRecord",
+    "SpecReviewRemediationExecutionResult",
     "ScopeDivergenceRecord",
     "ScopeSurfaceDiagnostic",
     "SpecSynthesisExecutionResult",
@@ -1208,6 +1239,7 @@ __all__ = [
     "execute_goal_intake",
     "execute_objective_profile_sync",
     "execute_spec_review",
+    "execute_spec_review_remediation",
     "execute_spec_synthesis",
     "next_stage_for_success",
     "research_stage_for_node",

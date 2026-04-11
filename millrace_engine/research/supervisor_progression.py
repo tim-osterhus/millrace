@@ -59,7 +59,10 @@ def persist_resume_state(
     reason: str,
 ) -> None:
     retry_state = self.state.retry_state
-    if self._resume_selected_family(checkpoint) is not ResearchQueueFamily.GOALSPEC or checkpoint.node_id != "spec_review":
+    if self._resume_selected_family(checkpoint) is not ResearchQueueFamily.GOALSPEC or checkpoint.node_id not in {
+        "spec_review",
+        "mechanic",
+    }:
         retry_state = None
     self.status_store.write_raw(checkpoint.status)
     queue_snapshot = self.state.queue_snapshot.model_copy(
@@ -98,6 +101,7 @@ def supports_goalspec_stage_execution(self: Any, checkpoint: ResearchCheckpoint 
         "spec_synthesis",
         "spec_interview",
         "spec_review",
+        "mechanic",
         "taskmaster",
     }
 
@@ -176,6 +180,7 @@ def advance_goalspec_checkpoint(
             "spec_synthesis",
             "spec_interview",
             "spec_review",
+            "mechanic",
             "taskmaster",
         }
         else ResearchStatus.GOALSPEC_RUNNING

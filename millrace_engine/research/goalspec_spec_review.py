@@ -13,7 +13,11 @@ from ..contracts import ResearchStatus, RunnerKind, StageContext, StageType
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
 from ..runner import ClaudeRunner, CodexRunner, SubprocessRunner, detect_last_marker
-from .goalspec import SpecReviewExecutionResult
+from .goalspec import (
+    GoalSpecReviewBlockedError,
+    SpecReviewExecutionResult,
+    SpecReviewRemediationExecutionResult,
+)
 from .goalspec_helpers import (
     GoalSpecExecutionError,
     _load_json_model,
@@ -45,11 +49,13 @@ from .goalspec_stage_rendering import (
 )
 from .specs import (
     GoalSpecLineageRecord,
+    GoalSpecReviewRemediationBundle,
     GoalSpecReviewFinding,
     GoalSpecReviewRecord,
     GoalSpecFamilySpecState,
     GoalSpecFamilyState,
     load_goal_spec_family_state,
+    load_goal_spec_review_remediation_bundle,
     load_stable_spec_registry,
     refresh_stable_spec_registry,
     stable_spec_metadata_from_file,
@@ -112,6 +118,14 @@ def _bound_spec_review_stage_config(
             else base.allow_search
         ),
     )
+
+
+def _goalspec_review_remediation_bundle_path(paths: RuntimePaths, *, run_id: str) -> Path:
+    return paths.goalspec_runtime_dir / "spec_review_remediation" / f"{run_id}.json"
+
+
+def _goalspec_mechanic_record_path(paths: RuntimePaths, *, run_id: str) -> Path:
+    return paths.goalspec_runtime_dir / "mechanic" / f"{run_id}.json"
 
 
 def _resolve_spec_review_prompt(
@@ -215,6 +229,170 @@ def _execute_agentic_spec_review_stage(
             "Agentic Spec Review did not report a successful terminal marker before runtime promotion"
         )
     return runner_result
+
+
+def _execute_goalspec_mechanic_stage(
+    paths: RuntimePaths,
+    *,
+    config: EngineConfig,
+    run_id: str,
+    remediation_bundle: GoalSpecReviewRemediationBundle,
+):
+    stage_config = config.stages[StageType.MECHANIC]
+    prompt_text, prompt_path, prompt_ref = _resolve_spec_review_prompt(
+        paths,
+        stage_config=stage_config,
+        stage_plan=None,
+    )
+    prompt = "\n\n".join(
+        (
+            prompt_text,
+            f"Stage: {StageType.MECHANIC.value}",
+            f"Prompt asset: {prompt_ref}",
+            "Review remediation bundle:",
+            f"- Bundle: {_goalspec_review_remediation_bundle_path(paths, run_id=run_id).relative_to(paths.root).as_posix()}",
+            f"- Queue spec: {remediation_bundle.queue_spec_path}",
+            f"- Review record: {remediation_bundle.review_record_path}",
+            f"- Decision: {remediation_bundle.decision_path}",
+            f"- Questions: {remediation_bundle.questions_path}",
+            f"- Family state: {remediation_bundle.family_state_path}",
+            f"- Stable registry: {remediation_bundle.stable_registry_path}",
+            "Allowed edit scope:",
+            *(f"- {path}" for path in remediation_bundle.allowed_edit_paths),
+            "If you repair the structural issue, keep the runtime ready for Spec Review to rerun next.",
+        )
+    ).rstrip("\n") + "\n"
+    runners = {
+        RunnerKind.SUBPROCESS: SubprocessRunner(paths),
+        RunnerKind.CODEX: CodexRunner(paths),
+        RunnerKind.CLAUDE: ClaudeRunner(paths),
+    }
+    context = StageContext.model_validate(
+        {
+            "stage": StageType.MECHANIC,
+            "runner": stage_config.runner,
+            "model": stage_config.model,
+            "prompt": prompt,
+            "working_dir": paths.root,
+            "run_id": run_id,
+            "permission_profile": stage_config.permission_profile,
+            "timeout_seconds": stage_config.timeout_seconds,
+            "prompt_path": prompt_path,
+            "status_fallback_path": paths.research_status_file,
+            "allow_search": stage_config.allow_search,
+            "allow_network": True,
+            "effort": stage_config.effort,
+        }
+    )
+    runner_result = runners[stage_config.runner].execute(context)
+    detected_marker, raw_marker_line = _agentic_spec_review_marker(
+        paths,
+        runner_result.detected_marker,
+        runner_result.raw_marker_line,
+    )
+    if detected_marker != runner_result.detected_marker or raw_marker_line != runner_result.raw_marker_line:
+        runner_result = runner_result.model_copy(
+            update={
+                "detected_marker": detected_marker,
+                "raw_marker_line": raw_marker_line,
+            }
+        )
+    if runner_result.exit_code != 0:
+        raise GoalSpecExecutionError(f"Mechanic runner exited {runner_result.exit_code} before repair handoff")
+    if detected_marker == ResearchStatus.BLOCKED.value:
+        raise GoalSpecExecutionError("Mechanic blocked during bounded review remediation")
+    if detected_marker != ResearchStatus.IDLE.value:
+        raise GoalSpecExecutionError("Mechanic did not report a successful terminal marker before Spec Review rerun")
+    return runner_result
+
+
+def _review_remediation_allowed_edit_paths(
+    paths: RuntimePaths,
+    *,
+    queue_spec_path: Path,
+    questions_path: Path,
+    decision_path: Path,
+    lineage_path: Path,
+) -> tuple[str, ...]:
+    return tuple(
+        _relative_path(path, relative_to=paths.root)
+        for path in (
+            queue_spec_path,
+            questions_path,
+            decision_path,
+            lineage_path,
+            paths.goal_spec_family_state_file,
+            paths.specs_index_file,
+            paths.research_status_file,
+            paths.historylog_file,
+            paths.agents_dir / "mechanic_report.md",
+            paths.diagnostics_dir,
+        )
+    )
+
+
+def _write_review_remediation_bundle(
+    paths: RuntimePaths,
+    *,
+    run_id: str,
+    emitted_at: datetime,
+    spec_id: str,
+    goal_id: str,
+    title: str,
+    record_path: Path,
+    questions_path: Path,
+    decision_path: Path,
+    queue_spec_path: Path,
+    reviewed_path: Path,
+    lineage_path: Path,
+    findings: tuple[GoalSpecReviewFinding, ...],
+) -> GoalSpecReviewRemediationBundle:
+    bundle_path = _goalspec_review_remediation_bundle_path(paths, run_id=run_id)
+    existing_attempt_count = 0
+    existing_report_path = ""
+    existing_run_id = ""
+    existing_status = "pending"
+    if bundle_path.exists():
+        existing = load_goal_spec_review_remediation_bundle(bundle_path)
+        existing_attempt_count = existing.mechanic_attempt_count
+        existing_report_path = existing.last_mechanic_report_path
+        existing_run_id = existing.last_mechanic_run_id
+        existing_status = existing.last_mechanic_status
+    bundle = GoalSpecReviewRemediationBundle(
+        run_id=run_id,
+        emitted_at=emitted_at,
+        spec_id=spec_id,
+        goal_id=goal_id,
+        title=title,
+        review_status="blocked",
+        remediation_status="pending",
+        review_record_path=_relative_path(record_path, relative_to=paths.root),
+        questions_path=_relative_path(questions_path, relative_to=paths.root),
+        decision_path=_relative_path(decision_path, relative_to=paths.root),
+        queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),
+        reviewed_path=(
+            _relative_path(reviewed_path, relative_to=paths.root)
+            if reviewed_path.exists()
+            else ""
+        ),
+        lineage_path=_relative_path(lineage_path, relative_to=paths.root),
+        family_state_path=_relative_path(paths.goal_spec_family_state_file, relative_to=paths.root),
+        stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
+        allowed_edit_paths=_review_remediation_allowed_edit_paths(
+            paths,
+            queue_spec_path=queue_spec_path,
+            questions_path=questions_path,
+            decision_path=decision_path,
+            lineage_path=lineage_path,
+        ),
+        findings=findings,
+        mechanic_attempt_count=existing_attempt_count,
+        last_mechanic_run_id=existing_run_id,
+        last_mechanic_status=existing_status,
+        last_mechanic_report_path=existing_report_path,
+    )
+    _write_json_model(bundle_path, bundle)
+    return bundle
 
 
 def _phase_steps(phase_text: str) -> tuple[str, ...]:
@@ -644,6 +822,94 @@ def _review_findings(
     return tuple(findings)
 
 
+def execute_spec_review_remediation(
+    paths: RuntimePaths,
+    checkpoint: ResearchCheckpoint,
+    *,
+    run_id: str,
+    emitted_at: datetime | None = None,
+    config: EngineConfig | None = None,
+) -> SpecReviewRemediationExecutionResult:
+    """Run one bounded Mechanic pass for a persisted blocked-review remediation bundle."""
+
+    if config is None:
+        raise GoalSpecExecutionError("Mechanic remediation requires engine config")
+    bundle_path = _goalspec_review_remediation_bundle_path(paths, run_id=run_id)
+    if not bundle_path.exists():
+        raise GoalSpecExecutionError(f"Missing Spec Review remediation bundle for {run_id}")
+    bundle = load_goal_spec_review_remediation_bundle(bundle_path)
+    _write_json_model(
+        bundle_path,
+        bundle.model_copy(
+            update={
+                "remediation_status": "repairing",
+                "last_mechanic_run_id": run_id,
+                "last_mechanic_status": "repairing",
+            }
+        ),
+    )
+    try:
+        _execute_goalspec_mechanic_stage(
+            paths,
+            config=config,
+            run_id=run_id,
+            remediation_bundle=bundle,
+        )
+    except GoalSpecExecutionError:
+        _write_json_model(
+            bundle_path,
+            bundle.model_copy(
+                update={
+                    "remediation_status": "blocked",
+                    "last_mechanic_run_id": run_id,
+                    "last_mechanic_status": "blocked",
+                }
+            ),
+        )
+        raise
+    report_path = ""
+    for candidate in (
+        paths.agents_dir / "mechanic_report.md",
+        paths.diagnostics_dir / run_id / "mechanic_report.md",
+    ):
+        if candidate.exists():
+            report_path = _relative_path(candidate, relative_to=paths.root)
+            break
+    updated_bundle = bundle.model_copy(
+        update={
+            "remediation_status": "repaired",
+            "mechanic_attempt_count": bundle.mechanic_attempt_count + 1,
+            "last_mechanic_run_id": run_id,
+            "last_mechanic_status": "repaired",
+            "last_mechanic_report_path": report_path,
+        }
+    )
+    _write_json_model(bundle_path, updated_bundle)
+    record_path = _goalspec_mechanic_record_path(paths, run_id=run_id)
+    _write_json_model(record_path, updated_bundle)
+    queue_path = (
+        checkpoint.owned_queues[0].queue_path
+        if checkpoint.owned_queues
+        else paths.ideas_specs_dir
+    )
+    item_path = (
+        checkpoint.owned_queues[0].item_path
+        if checkpoint.owned_queues
+        else _resolve_path_token(bundle.queue_spec_path, relative_to=paths.root)
+    )
+    return SpecReviewRemediationExecutionResult(
+        remediation_bundle_path=_relative_path(bundle_path, relative_to=paths.root),
+        report_path=report_path,
+        queue_ownership=ResearchQueueOwnership(
+            family=ResearchQueueFamily.GOALSPEC,
+            queue_path=queue_path,
+            item_path=item_path,
+            owner_token=run_id,
+            acquired_at=emitted_at or _utcnow(),
+        ),
+    )
+
+
 def execute_spec_review(
     paths: RuntimePaths,
     checkpoint: ResearchCheckpoint,
@@ -704,6 +970,8 @@ def execute_spec_review(
             stage_plan=stage_plan,
         )
     review_status = "blocked" if blocking_findings else "no_material_delta"
+    remediation_bundle_path = _goalspec_review_remediation_bundle_path(paths, run_id=run_id)
+    remediation_bundle_relative_path = _relative_path(remediation_bundle_path, relative_to=paths.root)
 
     if (
         record_path.exists()
@@ -738,6 +1006,7 @@ def execute_spec_review(
             stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
             lineage_path=_relative_path(lineage_path, relative_to=paths.root),
             findings=findings,
+            remediation_bundle_path=(remediation_bundle_relative_path if blocking_findings else ""),
         )
         if blocking_findings:
             if (
@@ -754,8 +1023,24 @@ def execute_spec_review(
                 and questions_path.read_text(encoding="utf-8") == expected_questions
                 and decision_path.read_text(encoding="utf-8") == expected_decision
             ):
-                raise GoalSpecExecutionError(
-                    f"Spec Review blocked {spec_id}; resolve the recorded decomposition findings before Taskmaster"
+                _write_review_remediation_bundle(
+                    paths,
+                    run_id=run_id,
+                    emitted_at=review_timestamp,
+                    spec_id=spec_id,
+                    goal_id=source.idea_id,
+                    title=source.title,
+                    record_path=record_path,
+                    questions_path=questions_path,
+                    decision_path=decision_path,
+                    queue_spec_path=queue_spec_path,
+                    reviewed_path=reviewed_path,
+                    lineage_path=lineage_path,
+                    findings=findings,
+                )
+                raise GoalSpecReviewBlockedError(
+                    f"Spec Review blocked {spec_id}; resolve the recorded decomposition findings before Taskmaster",
+                    remediation_bundle_path=remediation_bundle_relative_path,
                 )
         elif reviewed_path.exists() and lineage_path.exists() and paths.specs_index_file.exists():
             expected_family_state, lineage_record = _build_goal_spec_review_state(
@@ -841,10 +1126,26 @@ def execute_spec_review(
             stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
             lineage_path=_relative_path(lineage_path, relative_to=paths.root),
             findings=findings,
+            remediation_bundle_path=(remediation_bundle_relative_path if review_status == "blocked" else ""),
         ),
     )
 
     if review_status == "blocked":
+        _write_review_remediation_bundle(
+            paths,
+            run_id=run_id,
+            emitted_at=review_timestamp,
+            spec_id=spec_id,
+            goal_id=source.idea_id,
+            title=source.title,
+            record_path=record_path,
+            questions_path=questions_path,
+            decision_path=decision_path,
+            queue_spec_path=queue_spec_path,
+            reviewed_path=reviewed_path,
+            lineage_path=lineage_path,
+            findings=findings,
+        )
         _write_json_model(
             record_path,
             GoalSpecReviewRecord(
@@ -857,8 +1158,9 @@ def execute_spec_review(
                 findings=findings,
             ),
         )
-        raise GoalSpecExecutionError(
-            f"Spec Review blocked {spec_id}; resolve the recorded decomposition findings before Taskmaster"
+        raise GoalSpecReviewBlockedError(
+            f"Spec Review blocked {spec_id}; resolve the recorded decomposition findings before Taskmaster",
+            remediation_bundle_path=remediation_bundle_relative_path,
         )
 
     lineage_path.parent.mkdir(parents=True, exist_ok=True)

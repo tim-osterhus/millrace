@@ -41,6 +41,7 @@ SpecReviewRemediationIntent = Literal[
 GoalSpecReviewStatus = SpecReviewStatus
 GoalSpecReviewSeverity = SpecReviewSeverity
 GoalSpecReviewRemediationIntent = SpecReviewRemediationIntent
+GoalSpecReviewRemediationStatus = Literal["pending", "repairing", "repaired", "blocked"]
 
 
 def _utcnow() -> datetime:
@@ -274,6 +275,69 @@ class GoalSpecReviewRecord(ContractModel):
     def normalize_reviewed_at(cls, value: datetime | str | None) -> datetime | None:
         return _normalize_optional_datetime(value)
 
+
+class GoalSpecReviewRemediationBundle(ContractModel):
+    """Durable remediation bundle for one blocked GoalSpec review outcome."""
+
+    run_id: str
+    emitted_at: datetime
+    spec_id: str
+    goal_id: str
+    title: str
+    review_status: GoalSpecReviewStatus = "blocked"
+    remediation_status: GoalSpecReviewRemediationStatus = "pending"
+    review_record_path: str
+    questions_path: str
+    decision_path: str
+    queue_spec_path: str
+    reviewed_path: str = ""
+    lineage_path: str
+    family_state_path: str
+    stable_registry_path: str
+    allowed_edit_paths: tuple[str, ...] = ()
+    findings: tuple[GoalSpecReviewFinding, ...] = ()
+    mechanic_attempt_count: int = Field(default=0, ge=0)
+    last_mechanic_run_id: str = ""
+    last_mechanic_status: GoalSpecReviewRemediationStatus = "pending"
+    last_mechanic_report_path: str = ""
+
+    @field_validator(
+        "run_id",
+        "spec_id",
+        "goal_id",
+        "title",
+        "review_record_path",
+        "questions_path",
+        "decision_path",
+        "queue_spec_path",
+        "lineage_path",
+        "family_state_path",
+        "stable_registry_path",
+    )
+    @classmethod
+    def validate_required_text(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("reviewed_path", "last_mechanic_run_id", "last_mechanic_report_path", mode="before")
+    @classmethod
+    def normalize_optional_paths(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value)
+
+    @field_validator("allowed_edit_paths", mode="before")
+    @classmethod
+    def normalize_allowed_edit_paths(
+        cls,
+        value: tuple[str, ...] | list[str] | tuple[Path, ...] | list[Path] | None,
+    ) -> tuple[str, ...]:
+        if value in (None, ""):
+            return ()
+        return _normalize_path_sequence(list(value))
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_emitted_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
 
 class GoalSpecFamilyGovernorState(ContractModel):
     """Family-governor snapshot needed by initial-family plan freezing."""
@@ -603,6 +667,12 @@ def load_stable_spec_registry(index_path: Path) -> StableSpecRegistry:
     return StableSpecRegistry.model_validate(json.loads(index_path.read_text(encoding="utf-8")))
 
 
+def load_goal_spec_review_remediation_bundle(path: Path) -> GoalSpecReviewRemediationBundle:
+    """Load one persisted blocked-review remediation bundle."""
+
+    return GoalSpecReviewRemediationBundle.model_validate(_load_json_object(path))
+
+
 def write_stable_spec_registry(index_path: Path, registry: StableSpecRegistry) -> StableSpecRegistry:
     """Persist the stable-spec registry deterministically."""
 
@@ -779,6 +849,8 @@ __all__ = [
     "GoalSpecFamilyState",
     "GoalSpecLineageRecord",
     "GoalSpecReviewFinding",
+    "GoalSpecReviewRemediationBundle",
+    "GoalSpecReviewRemediationStatus",
     "GoalSpecReviewRecord",
     "GoalSpecReviewStatus",
     "GoalSpecReviewSeverity",
@@ -792,6 +864,7 @@ __all__ = [
     "build_initial_family_plan_snapshot",
     "default_goal_spec_family_state",
     "load_goal_spec_family_state",
+    "load_goal_spec_review_remediation_bundle",
     "load_stable_spec_registry",
     "refresh_stable_spec_registry",
     "stable_spec_metadata_from_file",

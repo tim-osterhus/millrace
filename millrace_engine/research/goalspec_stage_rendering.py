@@ -776,6 +776,7 @@ def render_spec_review_decision(
     stable_registry_path: str,
     lineage_path: str,
     findings: tuple[GoalSpecReviewFinding, ...],
+    remediation_bundle_path: str = "",
 ) -> str:
     finding_lines = _render_review_finding_lines(findings) or [
         "- No blocking findings were recorded during decomposition review."
@@ -803,6 +804,11 @@ def render_spec_review_decision(
             f"- **Reviewed-Spec:** `{reviewed_path}`",
             f"- **Stable-Registry:** `{stable_registry_path}`",
             f"- **Lineage-Record:** `{lineage_path}`",
+            *(
+                [f"- **Remediation-Bundle:** `{remediation_bundle_path}`"]
+                if remediation_bundle_path
+                else []
+            ),
             "",
             "## Decision",
             decision_line,

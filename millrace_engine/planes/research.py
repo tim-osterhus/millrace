@@ -30,12 +30,14 @@ from ..research.dispatcher import (
     resolve_research_dispatch_selection,
 )
 from ..research.goalspec import (
+    GoalSpecReviewBlockedError,
     GoalSpecExecutionError,
     execute_completion_manifest_draft,
     execute_goal_intake,
     execute_objective_profile_sync,
     execute_spec_interview,
     execute_spec_review,
+    execute_spec_review_remediation,
     execute_spec_synthesis,
     next_stage_for_success,
     research_stage_for_node,
@@ -228,6 +230,8 @@ _REQUEST_FAMILY_BY_EVENT = {
 }
 _GOALSPEC_COMPLETION_MANIFEST_NODE_ID = "completion_manifest_draft"
 _GOALSPEC_COMPLETION_MANIFEST_KIND_ID = "research.completion-manifest-draft"
+_GOALSPEC_MECHANIC_NODE_ID = "mechanic"
+_GOALSPEC_MECHANIC_KIND_ID = "research.mechanic"
 _GOALSPEC_TASKAUDIT_NODE_ID = "taskaudit"
 _GOALSPEC_TASKAUDIT_KIND_ID = "research.taskaudit"
 _GOALSPEC_EARLIER_STAGE_ENTRY_NODE_IDS = frozenset({"goal_intake", "objective_profile_sync"})
@@ -427,6 +431,7 @@ class ResearchPlane:
         if checkpoint is None:
             return False
         if checkpoint.node_id in {
+            _GOALSPEC_MECHANIC_NODE_ID,
             _GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
             _GOALSPEC_TASKAUDIT_NODE_ID,
         }:
@@ -446,6 +451,8 @@ class ResearchPlane:
             )
         if checkpoint.node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID:
             return next_stage_for_success(dispatch.research_plan, "objective_profile_sync")
+        if checkpoint.node_id == _GOALSPEC_MECHANIC_NODE_ID:
+            return research_stage_for_node(dispatch.research_plan, "spec_review")
         return self._next_goalspec_stage(dispatch, checkpoint)
 
     def _advance_local_goalspec_checkpoint(
@@ -460,20 +467,29 @@ class ResearchPlane:
             next_stage is not None
             and getattr(next_stage, "node_id", None)
             in {
+                _GOALSPEC_MECHANIC_NODE_ID,
                 _GOALSPEC_COMPLETION_MANIFEST_NODE_ID,
                 _GOALSPEC_TASKAUDIT_NODE_ID,
             }
         ):
             next_node_id = getattr(next_stage, "node_id", None)
             next_status = (
-                ResearchStatus.COMPLETION_MANIFEST_RUNNING
-                if next_node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
-                else ResearchStatus.TASKAUDIT_RUNNING
+                ResearchStatus.GOALSPEC_RUNNING
+                if next_node_id == _GOALSPEC_MECHANIC_NODE_ID
+                else (
+                    ResearchStatus.COMPLETION_MANIFEST_RUNNING
+                    if next_node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
+                    else ResearchStatus.TASKAUDIT_RUNNING
+                )
             )
             next_kind_id = (
-                _GOALSPEC_COMPLETION_MANIFEST_KIND_ID
-                if next_node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
-                else _GOALSPEC_TASKAUDIT_KIND_ID
+                _GOALSPEC_MECHANIC_KIND_ID
+                if next_node_id == _GOALSPEC_MECHANIC_NODE_ID
+                else (
+                    _GOALSPEC_COMPLETION_MANIFEST_KIND_ID
+                    if next_node_id == _GOALSPEC_COMPLETION_MANIFEST_NODE_ID
+                    else _GOALSPEC_TASKAUDIT_KIND_ID
+                )
             )
             updated = checkpoint.model_copy(
                 update={
@@ -502,6 +518,48 @@ class ResearchPlane:
             )
             self._persist_state()
             self._set_research_status(next_status)
+            return
+
+        if (
+            checkpoint.node_id == _GOALSPEC_MECHANIC_NODE_ID
+            and next_stage is not None
+            and getattr(next_stage, "node_id", None) == "spec_review"
+        ):
+            updated = checkpoint.model_copy(
+                update={
+                    "status": ResearchStatus.SPEC_REVIEW_RUNNING,
+                    "node_id": "spec_review",
+                    "stage_kind_id": getattr(next_stage, "kind_id", "research.spec-review"),
+                    "updated_at": observed_at,
+                    "owned_queues": (queue_ownership,),
+                }
+            )
+            queue_snapshot = self.state.queue_snapshot.model_copy(
+                update={
+                    "ownerships": updated.owned_queues,
+                    "last_scanned_at": observed_at,
+                    "selected_family": ResearchQueueFamily.GOALSPEC,
+                    "selected_family_authority": ResearchQueueSelectionAuthority.CHECKPOINT,
+                }
+            )
+            retry_state = self.state.retry_state
+            if retry_state is not None:
+                retry_state = retry_state.model_copy(
+                    update={
+                        "backoff_seconds": 0.0,
+                        "next_retry_at": None,
+                    }
+                )
+            self.state = self.state.model_copy(
+                update={
+                    "updated_at": observed_at,
+                    "queue_snapshot": queue_snapshot,
+                    "retry_state": retry_state,
+                    "checkpoint": updated,
+                }
+            )
+            self._persist_state()
+            self._set_research_status(ResearchStatus.SPEC_REVIEW_RUNNING)
             return
 
         self._advance_goalspec_checkpoint(
@@ -984,6 +1042,15 @@ class ResearchPlane:
                 emitted_at=stage_started_at,
                 config=self.config,
                 stage_plan=research_stage_for_node(dispatch.research_plan, checkpoint.node_id),
+            )
+        elif checkpoint.node_id == _GOALSPEC_MECHANIC_NODE_ID:
+            self._set_research_status(ResearchStatus.GOALSPEC_RUNNING)
+            result = execute_spec_review_remediation(
+                self.paths,
+                checkpoint,
+                run_id=dispatch.run_id,
+                emitted_at=stage_started_at,
+                config=self.config,
             )
         elif checkpoint.node_id == "taskmaster":
             self._set_research_status(ResearchStatus.TASKMASTER_RUNNING)
