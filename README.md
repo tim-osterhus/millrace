@@ -358,6 +358,8 @@ millrace publish commit --no-push --json
 
 `publish preflight` is read-only. It reports the resolved staging repo, manifest source, git readiness, and changed paths without mutating git state.
 
+The TUI Publish panel uses that same staging workflow. It acts on the resolved staging repo and explains blocked commit versus blocked push states separately so operators can see the next safe action before starting a publish flow.
+
 ## Runtime Inputs
 
 By default the daemon watches:

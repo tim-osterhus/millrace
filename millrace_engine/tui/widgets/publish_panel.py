@@ -12,16 +12,17 @@ from textual.message import Message
 from textual.widgets import ContentSwitcher, Static, Tree
 
 from ..models import DisplayMode, GatewayFailure, PublishOverviewView
+from ..publish_support import (
+    publish_commit_block_reason,
+    publish_push_block_reason,
+    publish_push_ready,
+    publish_safe_next_step_detail,
+    publish_safe_next_step_headline,
+    publish_skip_reason_copy,
+    publish_status_copy,
+)
 from .progressive_disclosure import append_operator_debug_hint, append_panel_failure_lines
 
-_SKIP_REASON_COPY = {
-    "missing_git_worktree": "staging repo is missing a git worktree",
-    "invalid_git_worktree": "staging repo is not a valid git worktree",
-    "no_changes": "no git working tree changes are waiting",
-    "missing_origin": "origin is not configured for the staging repo",
-    "detached_head": "staging repo HEAD is detached",
-    "push_disabled": "preflight stayed local so push was intentionally skipped",
-}
 _DISPLAY_PATH_LIMIT = 6
 _OPERATOR_PATH_LIMIT = 3
 
@@ -30,29 +31,8 @@ def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def _skip_reason_copy(reason: str | None) -> str:
-    if reason is None:
-        return "none"
-    return _SKIP_REASON_COPY.get(reason, reason)
-
-
 def _operator_blocked_reason(publish: PublishOverviewView) -> str | None:
-    if publish.status != "skip_publish":
-        return None
-    if publish.skip_reason is None:
-        return "publish preflight reported a blocked state"
-    return _skip_reason_copy(publish.skip_reason)
-
-
-def _operator_status_copy(publish: PublishOverviewView) -> str:
-    blocked_reason = _operator_blocked_reason(publish)
-    if blocked_reason is not None:
-        return f"blocked | {blocked_reason}"
-    if publish.commit_allowed:
-        return "ready | commit path available"
-    if publish.has_changes:
-        return "attention | refresh preflight before commit"
-    return "idle | no publishable changes yet"
+    return publish_commit_block_reason(publish) or publish_push_block_reason(publish)
 
 
 def _path_state_class(publish: PublishOverviewView) -> str:
@@ -248,28 +228,41 @@ class PublishPanel(Static):
             return
 
         publish = self._publish
-        push_ready = publish.commit_allowed and publish.origin_configured and publish.branch is not None
-        blocked_reason = _operator_blocked_reason(publish)
+        push_ready = publish_push_ready(publish)
+        commit_blocked = publish_commit_block_reason(publish)
+        push_blocked = publish_push_block_reason(publish)
+        blocked_reason = commit_blocked or push_blocked
 
         self._update_section(
             "publish-status",
-            _operator_status_copy(publish),
+            publish_status_copy(publish),
             self._failure_operator_detail(has_snapshot=True)
             if self._failure is not None
-            else ("publish is blocked until staging health is fixed" if blocked_reason is not None else "staging readiness is current"),
+            else (
+                f"commit blocked by {commit_blocked}"
+                if commit_blocked is not None
+                else (
+                    f"push blocked by {push_blocked}; local commit stays available"
+                    if push_blocked is not None
+                    else "staging repo looks ready for the default local-commit path"
+                )
+            ),
         )
         self._update_metric("publish-ready", "yes" if publish.commit_allowed else "no", f"branch {publish.branch or 'detached'}")
         self._update_metric("publish-push", "yes" if push_ready else "no", "origin configured" if publish.origin_configured else "origin missing")
         self._update_metric("publish-changed", str(len(publish.changed_paths)), f"selected {len(publish.selected_paths)} manifest paths")
         self._update_section(
             "publish-repo",
-            publish.staging_repo_dir,
-            f"manifest {publish.manifest_source_kind} | branch {publish.branch or 'detached'}",
+            f"resolved staging repo | {publish.staging_repo_dir}",
+            "Publish acts on the staging repo shown here, not the main workspace checkout directly.",
         )
         self._update_section(
             "publish-health",
-            f"worktree {_yes_no(publish.git_worktree_present)} | valid {_yes_no(publish.git_worktree_valid)} | origin {_yes_no(publish.origin_configured)}",
-            blocked_reason or "preflight is truthful and read-only until sync or commit is requested",
+            (
+                f"worktree {_yes_no(publish.git_worktree_present)} | valid {_yes_no(publish.git_worktree_valid)}"
+                f" | branch {publish.branch or 'detached'} | origin {_yes_no(publish.origin_configured)}"
+            ),
+            blocked_reason or "preflight is read-only; use R to reload facts before any publish action",
         )
 
         if publish.changed_paths:
@@ -284,11 +277,11 @@ class PublishPanel(Static):
             self._set_path_items(headline="No staging worktree changes detected", detail="sync staging or refresh preflight to re-check readiness")
             self._render_path_tree(())
 
-        if publish.commit_allowed:
-            action_detail = "N commit locally | P commit and push | G sync staging | R refresh preflight"
-        else:
-            action_detail = "G sync staging, then R refresh preflight to re-check readiness"
-        self._update_section("publish-actions", "Publish controls", action_detail)
+        self._update_section(
+            "publish-actions",
+            publish_safe_next_step_headline(publish),
+            publish_safe_next_step_detail(publish),
+        )
 
     def _update_metric(self, suffix: str, value: str, meta: str) -> None:
         self.query_one(f"#{suffix}-value", Static).update(value)
@@ -367,7 +360,7 @@ class PublishPanel(Static):
         if self._failure is None:
             return ""
         if has_snapshot:
-            return _skip_reason_copy(self._failure.message)
+            return publish_skip_reason_copy(self._failure.message)
         return "open debug once publish preflight is available for deeper gateway detail"
 
     def _render_operator_text(self) -> str:
@@ -384,11 +377,12 @@ class PublishPanel(Static):
             return "\n".join(lines)
 
         publish = self._publish
-        push_ready = publish.commit_allowed and publish.origin_configured and publish.branch is not None
-        blocked_reason = _operator_blocked_reason(publish)
+        push_ready = publish_push_ready(publish)
+        commit_blocked = publish_commit_block_reason(publish)
+        push_blocked = publish_push_block_reason(publish)
         lines.append(
             "STATUS  "
-            f"{_operator_status_copy(publish)}"
+            f"{publish_status_copy(publish)}"
             f" | changed {len(publish.changed_paths)}"
         )
         lines.append(
@@ -400,27 +394,28 @@ class PublishPanel(Static):
         lines.append(
             "REPO    "
             f"{publish.staging_repo_dir}"
-            f" | manifest {publish.manifest_source_kind}"
+            f" | staging repo only; main workspace checkout is not committed directly here"
+        )
+        lines.append(
+            "MODEL   "
+            f"manifest {publish.manifest_source_kind}"
+            f" | branch {publish.branch or 'detached'}"
             f" | selected {len(publish.selected_paths)}"
         )
         lines.append(
-            "HEALTH  "
+            "GIT     "
             f"worktree {_yes_no(publish.git_worktree_present)}"
             f" | valid {_yes_no(publish.git_worktree_valid)}"
             f" | origin {_yes_no(publish.origin_configured)}"
         )
-        lines.append(
-            "NEXT    "
-            + (
-                "N commit locally (default safe path) | P commit and push (higher friction)"
-                if publish.commit_allowed
-                else "G sync staging, then R refresh preflight to re-check readiness"
-            )
-        )
 
-        if blocked_reason is not None:
-            lines.append("ALERT   publish is blocked until staging health is fixed")
+        if commit_blocked is not None:
+            lines.append(f"BLOCK   commit blocked by {commit_blocked}")
+        elif push_blocked is not None:
+            lines.append(f"BLOCK   push blocked by {push_blocked}")
 
+        lines.append(f"NEXT    {publish_safe_next_step_headline(publish)}")
+        lines.append(f"DETAIL  {publish_safe_next_step_detail(publish)}")
         lines.append("")
         lines.append("CHANGED")
         if publish.changed_paths:
@@ -431,8 +426,6 @@ class PublishPanel(Static):
         else:
             lines.append("- no git working tree changes detected")
 
-        lines.append("")
-        lines.append("DETAIL  G sync manifest paths into staging | R refreshes read-only preflight")
         append_operator_debug_hint(lines, detail_hint="open debug for raw status, manifest refs, and full path lists")
         return "\n".join(lines)
 
@@ -485,7 +478,7 @@ class PublishPanel(Static):
         )
         lines.append(
             "SKIP    "
-            f"{_skip_reason_copy(publish.skip_reason)}"
+            f"{publish_skip_reason_copy(publish.skip_reason)}"
             f" | publish_allowed {_yes_no(publish.publish_allowed)}"
         )
 

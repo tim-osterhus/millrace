@@ -28,6 +28,15 @@ from ..models import (
     RuntimeEventView,
     RuntimeOverviewView,
 )
+from ..publish_support import (
+    publish_commit_block_reason,
+    publish_push_block_reason,
+    publish_push_ready,
+    publish_safe_next_step_detail,
+    publish_safe_next_step_headline,
+    publish_skip_reason_copy,
+    publish_status_copy,
+)
 from ..widgets.overview_panel import LatestRunSummary
 from ..widgets.shell_inspector import ShellInspectorView
 from ..workers import (
@@ -228,10 +237,13 @@ def build_shell_inspector_view(
         if publish is None:
             headline = "publish preflight not loaded"
         else:
+            commit_blocked = publish_commit_block_reason(publish)
+            push_blocked = publish_push_block_reason(publish)
             if selected_publish_path is not None:
                 title = selected_publish_path
-                headline = f"{publish.status} | changed path"
+                headline = f"{publish_status_copy(publish)} | changed path"
                 detail = [
+                    f"resolved staging repo {publish.staging_repo_dir}",
                     f"branch {publish.branch or 'detached'} | origin {'configured' if publish.origin_configured else 'missing'}",
                     (
                         "tracked by the staging manifest"
@@ -241,12 +253,25 @@ def build_shell_inspector_view(
                 ]
                 detail_lines = tuple(detail)
             else:
-                headline = f"{publish.status} | changed {len(publish.changed_paths)}"
+                headline = f"{publish_status_copy(publish)} | changed {len(publish.changed_paths)}"
                 detail_lines = (
-                    f"branch {publish.branch or 'detached'} | origin {'configured' if publish.origin_configured else 'missing'}",
-                    f"selected manifest paths {len(publish.selected_paths)}",
+                    f"resolved staging repo {publish.staging_repo_dir}",
+                    "Publish acts on staging, not the main workspace checkout directly.",
                 )
-            action_lines = ("Up/Down inspects changed paths.", "Publish sync and commit actions remain available in palette and footer.")
+            action_lines = (
+                "Up/Down inspects changed paths.",
+                publish_safe_next_step_headline(publish),
+            )
+            if commit_blocked is not None:
+                detail_lines = (*detail_lines, f"commit blocked by {commit_blocked}")
+            elif push_blocked is not None:
+                detail_lines = (
+                    *detail_lines,
+                    f"push blocked by {push_blocked}",
+                    "local commit still stays available from this panel",
+                )
+            elif publish_push_ready(publish):
+                detail_lines = (*detail_lines, "local commit is the safer default even though push looks ready")
 
     if panel_failure is not None:
         detail_lines = (*detail_lines, f"refresh degraded: {panel_failure.message}")
@@ -310,7 +335,9 @@ def selected_config_field(
 def publish_confirmation_lines(publish: PublishOverviewView | None, *, push: bool) -> tuple[str, ...]:
     if publish is None:
         return ("Publish preflight is not loaded yet.",)
-    push_ready = publish.commit_allowed and publish.origin_configured and publish.branch is not None
+    commit_blocked = publish_commit_block_reason(publish)
+    push_blocked = publish_push_block_reason(publish)
+    push_ready = publish_push_ready(publish)
     lines = [
         (
             "Create a staging commit and push it to the configured origin?"
@@ -318,26 +345,34 @@ def publish_confirmation_lines(publish: PublishOverviewView | None, *, push: boo
             else "Create a local staging commit without pushing?"
         ),
         "",
-        f"Status: {publish.status}",
+        f"Status: {publish_status_copy(publish)}",
         f"Staging repo: {publish.staging_repo_dir}",
+        "Scope: this action operates on the resolved staging repo, not the main workspace checkout directly.",
         f"Branch: {publish.branch or 'detached'}",
         f"Origin configured: {'yes' if publish.origin_configured else 'no'}",
         f"Changed paths: {len(publish.changed_paths)}",
-        f"Skip reason: {publish.skip_reason or 'none'}",
+        f"Skip reason: {publish_skip_reason_copy(publish.skip_reason)}",
         f"Push ready from current facts: {'yes' if push_ready else 'no'}",
     ]
+    if commit_blocked is not None:
+        lines.append(f"Commit blocked by: {commit_blocked}")
+    elif push_blocked is not None:
+        lines.append(f"Push blocked by: {push_blocked}")
     if push:
         lines.extend(
             [
                 "",
                 "Push stays intentionally higher friction than the default local-commit path.",
+                publish_safe_next_step_headline(publish),
+                publish_safe_next_step_detail(publish),
             ]
         )
     else:
         lines.extend(
             [
                 "",
-                "This is the default no-push publish surface. Remote orchestration stays out of scope here.",
+                "This is the default safer publish path from the TUI.",
+                publish_safe_next_step_detail(publish),
             ]
         )
     return tuple(lines)

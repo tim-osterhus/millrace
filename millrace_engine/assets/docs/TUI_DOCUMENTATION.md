@@ -12,7 +12,7 @@ If you only need the basics, this is the normal flow:
 2. Launch the TUI:
 
 ```bash
-./.venv/bin/python -m millrace_engine.tui --config millrace.toml
+./.venv/bin/python -m millrace_engine.tui
 ```
 
 3. Let the startup health gate run.
@@ -84,7 +84,7 @@ The TUI can observe and act through the same control plane for a local operator,
 From the workspace root:
 
 ```bash
-./.venv/bin/python -m millrace_engine.tui --config millrace.toml
+./.venv/bin/python -m millrace_engine.tui
 ```
 
 You can also point it at another workspace:
@@ -207,7 +207,7 @@ Enter and leave it with:
 Expanded mode changes renderer with the current display mode:
 
 - `operator expanded`: a narrated activity feed synthesized from runtime events for day-to-day operation
-- `debug expanded`: the raw structured event stream, close to `python3 -m millrace_engine --config millrace.toml logs --follow`
+- `debug expanded`: the raw structured event stream, close to `python3 -m millrace_engine logs --follow`
 
 Scroll behavior matters:
 
@@ -403,13 +403,13 @@ It shows:
 - publish status
 - whether commit is allowed
 - whether push appears ready from current facts
-- staging repo path and branch
+- resolved staging repo path and branch
 - origin status
 - manifest source and selected paths
 - changed paths
 - skip reasons when publish is not currently allowed
 
-In operator mode, publish state is grouped into readiness and health cards plus a changed-paths list card.
+In operator mode, publish state is grouped into status, repo-truth, git-facts, changed-path inspection, and safe-next-action cards.
 
 Publish controls:
 
@@ -421,7 +421,9 @@ Publish controls:
 Important behavior:
 
 - publish preflight is read-only
+- Publish acts on the resolved staging repo shown in the panel, not directly on the main workspace checkout
 - the local no-push commit path is the default safer path
+- blocked states explain whether commit is blocked or only push is blocked
 - the push path is intentionally higher friction and asks for explicit confirmation
 
 ## Status Bar And Notices
@@ -597,10 +599,11 @@ Go to `Publish`.
 Typical workflow:
 
 1. Press `r` to refresh publish preflight.
-2. Review staging repo, branch, origin, manifest source, and changed paths.
-3. Press `g` to sync manifest-selected files into staging if needed.
-4. Press `n` for a local commit.
-5. Press `p` only when you intentionally want commit-and-push behavior.
+2. Review the resolved staging repo path and confirm that Publish is acting on staging rather than the main checkout directly.
+3. Review branch, origin, manifest source, and changed paths.
+4. If preflight says there is nothing to commit or staging looks stale, press `g` to sync manifest-selected files into staging, then `r` to refresh facts.
+5. Press `n` for the safer local commit path when commit is available.
+6. Press `p` only when you intentionally want commit-and-push behavior and the panel says push facts are ready.
 
 The push flow is intentionally higher friction than the local-only commit path.
 

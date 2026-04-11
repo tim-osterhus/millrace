@@ -41,6 +41,7 @@ from ..models import (
     panel_widget_id,
     shell_content_target,
 )
+from ..publish_support import publish_push_ready
 from ..store import TUIStore
 from ..widgets.config_panel import ConfigPanel
 from ..widgets.expanded_stream import ExpandedStreamView
@@ -664,6 +665,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         self.query_one(NoticesView).show_notices(self._store.state.notices)
 
     def current_action_surface(self):
+        publish = self._store.state.publish
         return build_shell_action_surface(
             active_panel=self.active_panel,
             focus_zone=self._focus_zone.value,
@@ -673,6 +675,10 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             logs_selected_run_id=self.query_one(LogsPanel).selected_run_id,
             research_has_question=self.query_one(ResearchPanel).selected_question_id is not None,
             config_has_field=self.query_one(ConfigPanel).selected_field_key is not None,
+            publish_commit_allowed=publish.commit_allowed if publish is not None else False,
+            publish_push_ready=publish_push_ready(publish) if publish is not None else False,
+            publish_has_changes=publish.has_changes if publish is not None else False,
+            publish_git_worktree_valid=publish.git_worktree_valid if publish is not None else False,
         )
 
     def _render_footer(self) -> None:

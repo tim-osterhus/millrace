@@ -48,6 +48,10 @@ def build_shell_action_surface(
     logs_selected_run_id: str | None = None,
     research_has_question: bool = False,
     config_has_field: bool = False,
+    publish_commit_allowed: bool = False,
+    publish_push_ready: bool = False,
+    publish_has_changes: bool = False,
+    publish_git_worktree_valid: bool = False,
 ) -> ShellActionSurface:
     """Return the readable shell actions for the current context."""
 
@@ -158,12 +162,36 @@ def build_shell_action_surface(
             ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
         )
     elif active_panel is PanelId.PUBLISH:
-        context_actions = (
-            ActionHint("R", "Refresh", "R refreshes publish preflight facts."),
-            ActionHint("G", "Sync", "G syncs the staging repo selection."),
-            ActionHint("N / P", "Commit", "N starts a local commit flow and P starts commit-and-push."),
-            ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
-        )
+        if not publish_commit_allowed:
+            if publish_has_changes and not publish_git_worktree_valid:
+                context_actions = (
+                    ActionHint("R", "Refresh", "R reloads publish preflight facts after you repair staging git state."),
+                    ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+                )
+            elif not publish_has_changes:
+                context_actions = (
+                    ActionHint("G", "Sync", "G syncs manifest-selected files into staging if you expected diffs."),
+                    ActionHint("R", "Refresh", "R refreshes read-only publish facts."),
+                    ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+                )
+            else:
+                context_actions = (
+                    ActionHint("R", "Refresh", "R refreshes read-only publish facts."),
+                    ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+                )
+        elif not publish_push_ready:
+            context_actions = (
+                ActionHint("N", "Commit locally", "N opens the safer local-only staging commit flow."),
+                ActionHint("R", "Refresh", "R refreshes publish facts after you fix origin or branch prerequisites."),
+                ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+            )
+        else:
+            context_actions = (
+                ActionHint("N", "Commit locally", "N opens the safer local-only staging commit flow."),
+                ActionHint("P", "Commit and push", "P opens the higher-friction commit-and-push flow."),
+                ActionHint("R", "Refresh", "R refreshes publish preflight facts."),
+                ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+            )
     else:
         context_actions = (
             ActionHint("D", "Mode", "D toggles between operator and debug views."),

@@ -1267,6 +1267,35 @@ def test_tui_shell_footer_updates_with_focus_and_panel_context(monkeypatch, tmp_
     _run_app_scenario(config_path, scenario)
 
 
+def test_tui_shell_publish_footer_prefers_safe_next_actions_for_blocked_staging(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.runtime is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("7")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.publish is not None,
+        )
+        await pilot.press("c")
+        await pilot.pause()
+
+        footer_text = _static_text(app.screen.query_one(ActionFooter))
+        assert "Publish Workspace" in footer_text
+        assert "[R] Refresh" in footer_text
+        assert "[N] Commit locally" not in footer_text
+        assert "[P] Commit and push" not in footer_text
+
+    _run_app_scenario(config_path, scenario)
+
+
 def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path) -> None:
     _, config_path = load_operator_workspace(tmp_path)
     monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
@@ -3195,9 +3224,11 @@ def test_publish_panel_operator_and_debug_modes_split_action_summary_and_interna
     operator_text = panel.summary_text()
     assert "STATUS  blocked | staging repo is missing a git worktree | changed 0" in operator_text
     assert "READY   commit no | push-ready no | branch detached" in operator_text
-    assert "HEALTH  worktree no | valid no | origin no" in operator_text
-    assert "NEXT    G sync staging, then R refresh preflight to re-check readiness" in operator_text
-    assert "ALERT   publish is blocked until staging health is fixed" in operator_text
+    assert "REPO    /tmp/workspace/staging | staging repo only; main workspace checkout is not committed directly here" in operator_text
+    assert "GIT     worktree no | valid no | origin no" in operator_text
+    assert "BLOCK   commit blocked by staging repo is missing a git worktree" in operator_text
+    assert "NEXT    Repair or create the staging git repo outside TUI, then refresh preflight." in operator_text
+    assert "DETAIL  G only syncs manifest-selected files into staging; it does not create git history." in operator_text
     assert "DETAIL  open debug for raw status, manifest refs, and full path lists" in operator_text
 
     panel.show_snapshot(publish, display_mode=DisplayMode.DEBUG)
@@ -3220,10 +3251,10 @@ def test_publish_panel_operator_ready_no_push_path_is_not_blocked() -> None:
     )
     panel.show_snapshot(publish, display_mode=DisplayMode.OPERATOR)
     operator_text = panel.summary_text()
-    assert "STATUS  ready | commit path available | changed 2" in operator_text
+    assert "STATUS  ready | local commit available; push looks ready from current facts | changed 2" in operator_text
     assert "READY   commit yes | push-ready yes | branch main" in operator_text
-    assert "NEXT    N commit locally (default safe path) | P commit and push (higher friction)" in operator_text
-    assert "ALERT   blocked" not in operator_text
+    assert "NEXT    N local commit is the safe default; P is only for intentional remote publish." in operator_text
+    assert "BLOCK   " not in operator_text
 
     class Host(App[None]):
         def compose(self) -> ComposeResult:
@@ -3969,7 +4000,9 @@ def test_tui_shell_publish_confirmation_lines_reflect_push_readiness() -> None:
     lines = shell_support_module.publish_confirmation_lines(_sample_publish_overview(), push=True)
 
     assert "Push ready from current facts: yes" in lines
-    assert lines[-1] == "Push stays intentionally higher friction than the default local-commit path."
+    assert "Scope: this action operates on the resolved staging repo, not the main workspace checkout directly." in lines
+    assert "Push stays intentionally higher friction than the default local-commit path." in lines
+    assert lines[-1] == "R refreshes read-only preflight facts first, and G re-syncs manifest-selected files when staging looks stale."
 
 
 def test_run_detail_modal_renders_loaded_provenance(monkeypatch, tmp_path) -> None:
@@ -5017,13 +5050,17 @@ def test_tui_shell_publish_panel_renders_skip_state_and_preflight_details(monkey
         panel = app.screen.query_one("#panel-publish", PublishPanel)
         text = _panel_text(panel)
         assert "STATUS  blocked | staging repo is missing a git worktree | changed 0" in text
-        assert "HEALTH  worktree no | valid no | origin no" in text
-        assert "ALERT   publish is blocked until staging health is fixed" in text
-        assert "NEXT    G sync staging, then R refresh preflight to re-check readiness" in text
+        assert "REPO    " in text
+        assert "staging repo only; main workspace checkout is not committed directly here" in text
+        assert "GIT     worktree no | valid no | origin no" in text
+        assert "BLOCK   commit blocked by staging repo is missing a git worktree" in text
+        assert "NEXT    Repair or create the staging git repo outside TUI, then refresh preflight." in text
         assert "blocked | staging repo is missing a git worktree" in _static_text(
             panel.query_one("#publish-status-headline", Static)
         )
-        assert "worktree no | valid no | origin no" in _static_text(panel.query_one("#publish-health-headline", Static))
+        assert "worktree no | valid no | branch detached | origin no" in _static_text(
+            panel.query_one("#publish-health-headline", Static)
+        )
         assert app.screen._store.state.publish is not None
         assert app.screen._store.state.publish.staging_repo_dir.endswith("/staging")
 
