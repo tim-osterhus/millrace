@@ -280,9 +280,9 @@
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "e077ee9f6aa2c9e4911ff7e971889be439799ec691be47a13aab9a39dea5db39",
+      "sha256": "c8586a93ef1b31dfc3a2d0e3d764554c5b2a0fda956fb4938ec4d9d514f19126",
       "size": 23394,
-      "size_bytes": 23627,
+      "size_bytes": 23662,
       "source": "runtime"
     },
     {
@@ -1540,9 +1540,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
-      "sha256": "cee970fdbf58c7a388f69ac06236473209bd19833eb7c01f12e4e88ec1c67ba2",
+      "sha256": "e8d1f58772c8a8829fec8a1f33cfdffd2b596bf5231effbc26075ba594e0a263",
       "size": 24542,
-      "size_bytes": 25872,
+      "size_bytes": 26967,
       "source": "runtime"
     },
     {

@@ -169,10 +169,10 @@ What it provides:
 - one toggleable expanded stream mode that takes over the main content area while leaving the sidebar, status strip, inspector, notices, and footer discovery surfaces visible
 - a persistent shell with sidebar navigation, a compact status strip, a right-hand inspector, a real footer, and widget-composed overview/queue/runs/research/logs/config/publish panels
 - explicit lifecycle signaling across the sidebar daemon badge, top status strip, inspector context, and notices rail
-- guided task, idea, queue reorder, config edit, and publish confirmation flows
+- guided task, idea, queue cleanup/reorder, research interview, config edit, and publish confirmation flows
 - lifecycle actions for `start --once`, `start --daemon`, `pause`, `resume`, and `stop`
 - a command palette for common actions, including display-mode toggle, lifecycle controls, focus movement, and expanded-stream actions
-- built-in keyboard help (`?`) and panel shortcuts (`1` through `7`)
+- built-in keyboard help toggle (`?`) and panel shortcuts (`1` through `7`)
 - read-only governance visibility for recent compounding knowledge usage and pending review items
 - concise run-detail drilldown that now includes procedure and context-fact usage summaries when present
 - the same runtime semantics as the CLI, including mailbox-safe daemon mutations and the same file-backed truth surfaces

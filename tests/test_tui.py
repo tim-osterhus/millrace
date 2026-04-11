@@ -1103,6 +1103,39 @@ def test_tui_help_modal_restores_content_focus_after_close(monkeypatch, tmp_path
     _run_app_scenario(config_path, scenario)
 
 
+def test_tui_help_modal_question_mark_closes_and_restores_sidebar_focus(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    _write_runtime_state_snapshot(workspace, process_running=True, backlog_depth=0)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        if not isinstance(app.screen, ShellScreen):
+            app.enter_shell(
+                SimpleNamespace(
+                    status=SimpleNamespace(value="pass"),
+                    summary=SimpleNamespace(passed_checks=1, total_checks=1),
+                )
+            )
+            await pilot.pause()
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "nav-overview"
+
+        await pilot.press("question_mark")
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, HelpModal))
+        assert isinstance(app.screen, HelpModal)
+
+        await pilot.press("question_mark")
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == "nav-overview"
+
+    _run_app_scenario(config_path, scenario)
+
+
 def test_tui_shell_cycles_focus_and_restores_sidebar_after_expanded_exit(monkeypatch, tmp_path) -> None:
     workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
     (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
@@ -4753,6 +4786,40 @@ def test_tui_shell_prompts_to_launch_daemon_on_startup_when_runtime_is_idle(monk
         )
         assert calls["daemon"] == 1
         assert app.screen._store.state.notices[-1].message == "daemon launched"
+
+    _run_app_scenario(
+        config_path,
+        scenario,
+        offer_startup_daemon_launch=True,
+    )
+
+
+def test_tui_shell_startup_daemon_prompt_stay_idle_is_session_scoped(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        assert isinstance(app.screen, ConfirmModal)
+        assert app.screen.query_one("#confirm-cancel", Button).label == "Stay Idle"
+
+        await pilot.click("#confirm-cancel")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen) and app.screen._store.state.runtime is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen._store.state.last_action is None
+
+        await pilot.press("2")
+        await pilot.pause()
+        assert app.screen.active_panel == PanelId.QUEUE
+
+        app.screen._maybe_offer_startup_daemon_launch()
+        await pilot.pause()
+        assert isinstance(app.screen, ShellScreen)
+        assert app.screen.active_panel == PanelId.QUEUE
 
     _run_app_scenario(
         config_path,

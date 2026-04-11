@@ -22,7 +22,7 @@ If you only need the basics, this is the normal flow:
    - `i` to queue an idea file
    - `Ctrl+P` to open the command palette
    - `1` through `7` to switch panels
-   - `?` to open keyboard help
+   - `?` to open or close keyboard help
 6. If you want one single foreground cycle, choose `Start Once`.
 7. If you want continuous operation, choose `Start Daemon`.
 8. Watch the system in:
@@ -283,6 +283,8 @@ Queue controls:
 - `r` starts a reorder draft
 - `[` moves the selected task earlier in the draft
 - `]` moves the selected task later in the draft
+- `q` quarantines the selected queued task after confirmation
+- `x` removes the selected queued task after confirmation
 - `Escape` cancels the draft
 - `o` opens run detail for the active run context
 
@@ -291,6 +293,7 @@ Important behavior:
 - queue reordering is draft-only at first
 - the live backlog does not change until you confirm the reorder
 - when the daemon is running, the reorder request is queued through the mailbox first
+- queue cleanup actions also stay confirmation-first, and when the daemon is running they queue through the mailbox instead of mutating live state directly
 
 ### 3. Runs
 
@@ -330,6 +333,13 @@ It shows:
 - recent research activity
 
 In operator mode, those signals are grouped into status/audit/activity cards plus a family queue card stack.
+
+Research controls:
+
+- `Up` and `Down` move between pending interview questions when research is waiting on operator input
+- `Home` and `End` jump within the pending interview list
+- `Enter` opens the selected interview workflow
+- `o` also opens the selected interview workflow
 
 Use `Research` when you want to know whether research is active, deferred, blocked, or completing governed work as part of the same overall runtime.
 
@@ -705,10 +715,17 @@ You can also test a mixed workflow:
 - `1` through `7`: open the main panels
 - `s`: focus sidebar
 - `c`: focus content
+- `d`: toggle operator/debug display mode
+- `e`: toggle expanded stream mode for the active panel
 - `t`: open Add Task
 - `i`: open Add Idea
 - `Ctrl+P`: open command palette
-- `?`: open keyboard help
+- `?`: open or close keyboard help
+
+### Expanded Stream
+
+- `Escape`: return from expanded mode to the compact panel body
+- `l`: jump the expanded stream back to the live tail
 
 ### Queue
 
@@ -717,6 +734,8 @@ You can also test a mixed workflow:
 - `r`: begin reorder
 - `[`: move selected task earlier
 - `]`: move selected task later
+- `q`: quarantine the selected task after confirmation
+- `x`: remove the selected task after confirmation
 - `Escape`: cancel reorder
 - `o`: open run detail for the current active run
 
@@ -724,6 +743,12 @@ You can also test a mixed workflow:
 
 - `Up`, `Down`, `Home`, `End`: move selection
 - `Enter`: open selected run detail
+
+### Research
+
+- `Up`, `Down`, `Home`, `End`: move between pending interview questions
+- `Enter`: open the selected interview workflow
+- `o`: open the selected interview workflow
 
 ### Logs
 
