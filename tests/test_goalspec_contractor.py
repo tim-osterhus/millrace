@@ -28,6 +28,23 @@ Build a Minecraft mod that adds aura-powered progression, new registrations, and
 Use Gradle for the project build.
 """
 
+MINECRAFT_FABRIC_GOAL_TEXT = """---
+idea_id: IDEA-AURA-LOADER-001
+title: Aura Progression Mod
+---
+
+# Aura Progression Mod
+
+Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.
+
+- Add progression content
+- Register new aura items and systems
+- Validate gameplay behavior with GameTests
+
+Use Gradle for the project build.
+Loader discussion currently points at Fabric.
+"""
+
 AMBIGUOUS_GOAL_TEXT = """---
 idea_id: IDEA-MIXED-001
 title: Team System
@@ -60,6 +77,13 @@ def _write_canonical_goal(paths: RuntimePaths, body: str) -> Path:
     goal_path.parent.mkdir(parents=True, exist_ok=True)
     goal_path.write_text(body, encoding="utf-8")
     return goal_path
+
+
+def _write_fabric_workspace_evidence(paths: RuntimePaths) -> Path:
+    evidence_path = paths.root / "mods" / "aura-progression-mod" / "src" / "main" / "resources" / "fabric.mod.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text('{"schemaVersion":1,"id":"aura-progression"}\n', encoding="utf-8")
+    return evidence_path
 
 
 def _checkpoint(*, run_id: str, emitted_at: datetime, item_path: Path) -> ResearchCheckpoint:
@@ -223,3 +247,51 @@ def test_execute_contractor_stays_conservative_for_ambiguous_goals(tmp_path: Pat
     assert result.profile.fallback_mode == "abstain_unknown"
     assert "No trustworthy host, archetype, or stack specialization is justified yet." in result.profile.abstentions
     assert "EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md" in report_text
+
+
+def test_execute_contractor_emits_typed_specialization_provenance_for_unsupported_loader(tmp_path: Path) -> None:
+    paths = _runtime_paths(tmp_path)
+    emitted_at = _dt("2026-04-10T20:40:00Z")
+    evidence_path = _write_fabric_workspace_evidence(paths)
+    goal_path = _write_staged_goal(paths, MINECRAFT_FABRIC_GOAL_TEXT)
+
+    result = execute_contractor(
+        paths,
+        _checkpoint(run_id="goalspec-contractor-loader-001", emitted_at=emitted_at, item_path=goal_path),
+        run_id="goalspec-contractor-loader-001",
+        emitted_at=emitted_at,
+    )
+
+    report_text = (paths.root / result.report_path).read_text(encoding="utf-8")
+    provenance = {(item.provenance, item.support_state, item.key, item.value) for item in result.profile.specialization_provenance}
+
+    assert result.profile.unresolved_specializations == ("loader=fabric",)
+    assert provenance == {
+        ("source_requested", "unsupported", "loader", "fabric"),
+        ("workspace_grounded", "unsupported", "loader", "fabric"),
+    }
+    grounded_record = next(item for item in result.profile.specialization_provenance if item.provenance == "workspace_grounded")
+    assert grounded_record.evidence_path == evidence_path.relative_to(paths.root).as_posix()
+    assert "Specialization-Provenance" in report_text
+    assert "source_requested" in report_text
+    assert "workspace_grounded" in report_text
+
+
+def test_execute_contractor_keeps_loader_as_source_requested_only_without_repo_evidence(tmp_path: Path) -> None:
+    paths = _runtime_paths(tmp_path)
+    emitted_at = _dt("2026-04-10T20:45:00Z")
+    goal_path = _write_staged_goal(paths, MINECRAFT_FABRIC_GOAL_TEXT)
+
+    result = execute_contractor(
+        paths,
+        _checkpoint(run_id="goalspec-contractor-loader-002", emitted_at=emitted_at, item_path=goal_path),
+        run_id="goalspec-contractor-loader-002",
+        emitted_at=emitted_at,
+    )
+
+    provenance = {(item.provenance, item.support_state, item.key, item.value) for item in result.profile.specialization_provenance}
+
+    assert result.profile.unresolved_specializations == ("loader=fabric",)
+    assert provenance == {
+        ("source_requested", "unsupported", "loader", "fabric"),
+    }

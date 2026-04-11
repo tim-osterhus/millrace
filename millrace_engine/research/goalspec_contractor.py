@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
+from pathlib import Path
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -18,6 +19,7 @@ from .goalspec import (
     ContractorShapeClass,
     ContractorSpecificityLevel,
     GoalSource,
+    GoalSpecSpecializationRecord,
 )
 from .goalspec_helpers import (
     GoalSpecExecutionError,
@@ -74,6 +76,7 @@ class _ContractorDecision:
     fallback_mode: ContractorFallbackMode
     resolved_profile_ids: tuple[str, ...]
     unresolved_specializations: tuple[str, ...]
+    specialization_provenance: tuple[GoalSpecSpecializationRecord, ...]
     capability_hints: tuple[str, ...]
     environment_hints: tuple[str, ...]
     evidence: tuple[str, ...]
@@ -108,7 +111,7 @@ def execute_contractor(
     if reused is not None:
         return reused
 
-    decision = _build_contractor_decision(source)
+    decision = _build_contractor_decision(paths=paths, source=source)
     profile_path = paths.contractor_profile_file
     report_path = paths.contractor_profile_report_file
     schema_path = paths.packaged_contractor_profile_schema_file
@@ -154,6 +157,7 @@ def execute_contractor(
         profile_specificity_level=profile.specificity_level,
         shape_class=profile.shape_class,
         fallback_mode=profile.fallback_mode,
+        specialization_provenance=profile.specialization_provenance,
         browse_used=profile.browse_used,
     )
     _write_json_model(record_path, record)
@@ -238,6 +242,7 @@ def _build_profile_payload(
         "fallback_mode": decision.fallback_mode,
         "resolved_profile_ids": decision.resolved_profile_ids,
         "unresolved_specializations": decision.unresolved_specializations,
+        "specialization_provenance": [item.model_dump(mode="json") for item in decision.specialization_provenance],
         "capability_hints": decision.capability_hints,
         "environment_hints": decision.environment_hints,
         "browse_used": False,
@@ -249,7 +254,7 @@ def _build_profile_payload(
     }
 
 
-def _build_contractor_decision(source: GoalSource) -> _ContractorDecision:
+def _build_contractor_decision(*, paths: RuntimePaths, source: GoalSource) -> _ContractorDecision:
     text = f"{source.title}\n{source.canonical_body}".casefold()
     evidence: list[str] = []
     abstentions: list[str] = []
@@ -384,6 +389,13 @@ def _build_contractor_decision(source: GoalSource) -> _ContractorDecision:
         archetype=archetype,
         host_platform=host_platform,
     )
+    unresolved_specializations_tuple = _ordered_unique(unresolved_specializations)
+    specialization_provenance = _specialization_provenance(
+        paths=paths,
+        source=source,
+        specializations=specializations,
+        unresolved_specializations=unresolved_specializations_tuple,
+    )
 
     return _ContractorDecision(
         shape_class=shape_class,
@@ -395,7 +407,8 @@ def _build_contractor_decision(source: GoalSource) -> _ContractorDecision:
         confidence=confidence,
         fallback_mode=fallback_mode,
         resolved_profile_ids=resolved_profile_ids,
-        unresolved_specializations=_ordered_unique(unresolved_specializations),
+        unresolved_specializations=unresolved_specializations_tuple,
+        specialization_provenance=specialization_provenance,
         capability_hints=capability_hints_tuple,
         environment_hints=environment_hints,
         evidence=_ordered_unique(evidence),
@@ -531,6 +544,62 @@ def _candidate_classifications(
     return tuple(candidates)
 
 
+def _specialization_provenance(
+    *,
+    paths: RuntimePaths,
+    source: GoalSource,
+    specializations: dict[str, str],
+    unresolved_specializations: tuple[str, ...],
+) -> tuple[GoalSpecSpecializationRecord, ...]:
+    if not specializations:
+        return ()
+    records: list[GoalSpecSpecializationRecord] = []
+    unresolved_tokens = set(unresolved_specializations)
+    canonical_text = source.canonical_body.casefold()
+    for key, value in specializations.items():
+        token = f"{key}={value}"
+        support_state = "unsupported" if token in unresolved_tokens else "supported"
+        grounded_hint = _specialization_grounded_hint(key=key, value=value)
+        if grounded_hint in canonical_text:
+            records.append(
+                GoalSpecSpecializationRecord(
+                    key=key,
+                    value=value,
+                    provenance="source_requested",
+                    support_state=support_state,
+                    evidence_path=source.canonical_relative_source_path,
+                    evidence=(f"The canonical source explicitly references `{value}`.",),
+                    notes="Specialization request preserved from the source goal.",
+                )
+            )
+        workspace_evidence = _probe_workspace_specialization_evidence(paths=paths, key=key, value=value)
+        if workspace_evidence is not None:
+            evidence_path, evidence_summary, notes = workspace_evidence
+            records.append(
+                GoalSpecSpecializationRecord(
+                    key=key,
+                    value=value,
+                    provenance="workspace_grounded",
+                    support_state=support_state,
+                    evidence_path=evidence_path,
+                    evidence=(evidence_summary,),
+                    notes=notes,
+                )
+            )
+        if support_state == "supported":
+            records.append(
+                GoalSpecSpecializationRecord(
+                    key=key,
+                    value=value,
+                    provenance="contractor_resolved",
+                    support_state="supported",
+                    evidence=("Contractor resolved this specialization into a supported overlay.",),
+                    notes="This specialization is safe for downstream consumers to treat as supported.",
+                )
+            )
+    return tuple(records)
+
+
 def _environment_hints_for_stack(stack_hints: tuple[str, ...]) -> tuple[str, ...]:
     hints: list[str] = []
     for stack_hint in stack_hints:
@@ -546,6 +615,119 @@ def _detect_loader(text: str) -> str:
     if "forge" in text:
         return "forge"
     return ""
+
+
+def _specialization_grounded_hint(*, key: str, value: str) -> str:
+    if key == "loader":
+        return value.casefold()
+    return value.casefold()
+
+
+def _probe_workspace_specialization_evidence(
+    *,
+    paths: RuntimePaths,
+    key: str,
+    value: str,
+) -> tuple[str, str, str] | None:
+    if key != "loader":
+        return None
+    return _probe_loader_workspace_evidence(paths.root, value.casefold())
+
+
+def _probe_loader_workspace_evidence(
+    workspace_root: Path,
+    loader: str,
+) -> tuple[str, str, str] | None:
+    if loader == "fabric":
+        candidate = _first_existing_workspace_path(
+            workspace_root,
+            direct_paths=(
+                "fabric.mod.json",
+                "src/main/resources/fabric.mod.json",
+            ),
+            glob_patterns=(
+                "mods/*/src/main/resources/fabric.mod.json",
+                "*/src/main/resources/fabric.mod.json",
+            ),
+        )
+        if candidate is not None:
+            relative = candidate.relative_to(workspace_root).as_posix()
+            return (
+                relative,
+                "Workspace repo evidence includes Fabric loader metadata.",
+                "Local repo files ground the requested Fabric loader without promoting it to a supported overlay.",
+            )
+        return None
+    if loader in {"forge", "neoforge"}:
+        token = "neoforge" if loader == "neoforge" else "forge"
+        candidate = _first_workspace_text_match(
+            workspace_root,
+            direct_paths=(
+                "build.gradle",
+                "build.gradle.kts",
+                "gradle.properties",
+                "settings.gradle",
+                "settings.gradle.kts",
+                "src/main/resources/META-INF/mods.toml",
+            ),
+            glob_patterns=(
+                "mods/*/build.gradle",
+                "mods/*/build.gradle.kts",
+                "mods/*/gradle.properties",
+                "mods/*/src/main/resources/META-INF/mods.toml",
+            ),
+            token=token,
+        )
+        if candidate is not None:
+            relative = candidate.relative_to(workspace_root).as_posix()
+            return (
+                relative,
+                f"Workspace repo evidence references the `{loader}` loader.",
+                f"Local repo files ground the requested `{loader}` loader without promoting it to a supported overlay.",
+            )
+    return None
+
+
+def _first_existing_workspace_path(
+    workspace_root: Path,
+    *,
+    direct_paths: tuple[str, ...],
+    glob_patterns: tuple[str, ...],
+) -> Path | None:
+    for relative_path in direct_paths:
+        candidate = workspace_root / relative_path
+        if candidate.exists():
+            return candidate
+    for pattern in glob_patterns:
+        for candidate in sorted(workspace_root.glob(pattern)):
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _first_workspace_text_match(
+    workspace_root: Path,
+    *,
+    direct_paths: tuple[str, ...],
+    glob_patterns: tuple[str, ...],
+    token: str,
+) -> Path | None:
+    lowered_token = token.casefold()
+    for relative_path in direct_paths:
+        candidate = workspace_root / relative_path
+        if _workspace_file_contains(candidate, lowered_token):
+            return candidate
+    for pattern in glob_patterns:
+        for candidate in sorted(workspace_root.glob(pattern)):
+            if _workspace_file_contains(candidate, lowered_token):
+                return candidate
+    return None
+
+
+def _workspace_file_contains(path: Path, token: str) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    return token in path.read_text(encoding="utf-8", errors="replace").casefold()
 
 
 def _render_contractor_report(
@@ -582,6 +764,12 @@ def _render_contractor_report(
             f"- **Resolved-Profile-IDs:** {', '.join(f'`{item}`' for item in profile.resolved_profile_ids)}"
             if profile.resolved_profile_ids
             else "- **Resolved-Profile-IDs:** none"
+        ),
+        (
+            "- **Specialization-Provenance:** "
+            + "; ".join(_format_specialization_record(item) for item in profile.specialization_provenance)
+            if profile.specialization_provenance
+            else "- **Specialization-Provenance:** none"
         ),
         "",
         "## Example Shards",
@@ -624,6 +812,11 @@ def _ordered_unique(items) -> tuple:
         seen.add(text)
         ordered.append(text)
     return tuple(ordered)
+
+
+def _format_specialization_record(record: GoalSpecSpecializationRecord) -> str:
+    path_suffix = f" @ `{record.evidence_path}`" if record.evidence_path else ""
+    return f"`{record.key}={record.value}` ({record.provenance}, {record.support_state}{path_suffix})"
 
 
 __all__ = ["execute_contractor"]

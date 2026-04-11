@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import re
 import sys
+from typing import Callable
 
 import pytest
 
@@ -136,6 +137,12 @@ def _write_queue_file(path: Path, body: str = "# queued\n") -> None:
 def _write_json_file(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_fabric_workspace_evidence(workspace: Path) -> None:
+    evidence_path = workspace / "mods" / "aura-progression-mod" / "src" / "main" / "resources" / "fabric.mod.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text('{"schemaVersion":1,"id":"aura-progression"}\n', encoding="utf-8")
 
 
 def _replace_markdown_section(document: str, heading: str, replacement: str) -> str:
@@ -271,8 +278,11 @@ def _prepare_reviewed_spec_for_taskmaster(
     body: str,
     decomposition_profile: str = "simple",
     idea_id: str | None = None,
+    workspace_setup: Callable[[Path], None] | None = None,
 ) -> tuple[Path, object, object, object, Path]:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    if workspace_setup is not None:
+        workspace_setup(workspace)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     suffix = run_id.rsplit("-", 1)[-1]
     resolved_idea_id = idea_id or f"IDEA-{suffix.upper()}"
@@ -1993,8 +2003,10 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     stale_deferred_text = "Spec synthesis and review are intentionally deferred to later Phase 05 runs."
     downstream_pending_text = "Implementation remains open for the profiled product"
     assert "status: finished" in finished_text
-    assert "## Route Decision" in finished_text
     assert "agents/_goal_intake.md" in finished_text
+    assert "# Modernize Goal Intake" in finished_text
+    assert "Create real GoalSpec intake and objective sync stages." in finished_text
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in finished_text
     assert archived_reviewed_path.read_text(encoding="utf-8") == golden_text
     assert "agents/audit/completion_manifest.json" in archived_reviewed_path.read_text(encoding="utf-8")
     assert "SPEC-42" in decision_text
@@ -2868,10 +2880,9 @@ def test_execute_goal_intake_keeps_trace_metadata_out_of_semantic_body(tmp_path:
     assert "Source artifact" not in staged_text
     assert "Stage contract" not in staged_text
     assert "compiled GoalSpec loop" not in staged_text
-    assert "## Evidence" in staged_text
-    assert "No additional product evidence was provided." in staged_text
-    assert "## Route Decision" in staged_text
-    assert "Ready for staging now." in staged_text
+    assert staged_text.endswith("# Goal Intake Trace Split\n\nKeep staged idea semantics product-facing.\n")
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in staged_text
+    assert "Ready for staging now." not in staged_text
 
 
 def test_execute_objective_profile_sync_pins_frozen_family_policy_fields(tmp_path: Path) -> None:
@@ -3807,7 +3818,7 @@ def test_execute_spec_review_accepts_generated_supported_planning_profile_phase_
         assert f"- Phase key: `{phase_key}`" in phase_text
 
 
-def test_execute_spec_review_blocks_invented_minecraft_loader_specificity(tmp_path: Path) -> None:
+def test_execute_spec_review_routes_source_requested_loader_to_workspace_confirmation_block(tmp_path: Path) -> None:
     workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     run_id = "goalspec-review-loader-306"
@@ -3933,8 +3944,455 @@ def test_execute_spec_review_blocks_invented_minecraft_loader_specificity(tmp_pa
         ).read_text(encoding="utf-8")
     )
     assert review_record["review_status"] == "blocked"
+    assert any(item["remediation_intent"] == "missing_workspace_confirmation" for item in review_record["findings"])
     assert any("loader=fabric" in item["summary"] for item in review_record["findings"])
-    assert any("fabric.mod.json" in item["summary"] for item in review_record["findings"])
+    decision_text = (workspace / review_record["decision_path"]).read_text(encoding="utf-8")
+    assert "`missing_workspace_confirmation`" in decision_text
+    assert "do not promote it into resolved planning text until workspace evidence confirms it" in decision_text
+
+
+def test_execute_spec_review_routes_grounded_loader_promotion_to_overlay_block(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    _write_fabric_workspace_evidence(workspace)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-loader-grounded-307"
+    emitted_at = _dt("2026-04-10T18:12:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-307\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    phase_path = workspace / synthesis.phase_spec_path
+    phase_text = phase_path.read_text(encoding="utf-8")
+    phase_text = _replace_markdown_section(
+        phase_text,
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                "1. Implement bounded Minecraft registrations in `mods/aura-progression-mod/src/main/java/registrations`.",
+                "2. Add Fabric loader bootstrap in `mods/aura-progression-mod/src/main/resources/fabric.mod.json`.",
+                "3. Extend gameplay proof in `mods/aura-progression-mod/src/gametest/java`.",
+                "4. Verify Gradle-backed tests in `mods/aura-progression-mod/src/test/java`.",
+                "5. Keep resource packaging aligned in `mods/aura-progression-mod/src/main/resources`.",
+                "6. Close the bounded mod slice with traceable proof in `mods/aura-progression-mod/src/gametest/java`.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+    queue_spec_path = workspace / synthesis.queue_spec_path
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-307",
+    ):
+        execute_spec_review(
+            paths,
+            _goal_queue_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                queue_path=queue_spec_path.parent,
+                item_path=queue_spec_path,
+                status=ResearchStatus.SPEC_REVIEW_RUNNING,
+                node_id="spec_review",
+                stage_kind_id="research.spec-review",
+            ),
+            run_id=run_id,
+            emitted_at=emitted_at,
+        )
+
+    review_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "spec_review"
+            / f"{run_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert review_record["review_status"] == "blocked"
+    assert any(item["remediation_intent"] == "unsupported_overlay_promotion" for item in review_record["findings"])
+    decision_text = (workspace / review_record["decision_path"]).read_text(encoding="utf-8")
+    assert "`unsupported_overlay_promotion`" in decision_text
+    assert "do not promote it into a resolved overlay or bootstrap step yet" in decision_text
+
+
+def test_execute_spec_review_routes_invented_loader_token_to_true_invention_block(tmp_path: Path) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-loader-invented-308"
+    emitted_at = _dt("2026-04-10T18:14:00Z")
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-308\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+        ),
+    )
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=raw_goal_path.parent,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    staged_path = workspace / goal_intake.research_brief_path
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="objective_profile_sync",
+            stage_kind_id="research.objective-profile-sync",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest.draft_state,
+        emitted_at=emitted_at,
+    )
+    phase_path = workspace / synthesis.phase_spec_path
+    phase_text = phase_path.read_text(encoding="utf-8")
+    phase_text = _replace_markdown_section(
+        phase_text,
+        "Work Plan",
+        "\n".join(
+            [
+                "## Work Plan",
+                "1. Implement bounded Minecraft registrations in `mods/aura-progression-mod/src/main/java/registrations`.",
+                "2. Resolve `loader=fabric` bootstrap in `mods/aura-progression-mod/src/main/resources`.",
+                "3. Extend gameplay proof in `mods/aura-progression-mod/src/gametest/java`.",
+                "4. Verify Gradle-backed tests in `mods/aura-progression-mod/src/test/java`.",
+                "5. Keep resource packaging aligned in `mods/aura-progression-mod/src/main/resources`.",
+                "6. Close the bounded mod slice with traceable proof in `mods/aura-progression-mod/src/gametest/java`.",
+            ]
+        ),
+    )
+    phase_path.write_text(phase_text, encoding="utf-8")
+    queue_spec_path = workspace / synthesis.queue_spec_path
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-308",
+    ):
+        execute_spec_review(
+            paths,
+            _goal_queue_checkpoint(
+                run_id=run_id,
+                emitted_at=emitted_at,
+                queue_path=queue_spec_path.parent,
+                item_path=queue_spec_path,
+                status=ResearchStatus.SPEC_REVIEW_RUNNING,
+                node_id="spec_review",
+                stage_kind_id="research.spec-review",
+            ),
+            run_id=run_id,
+            emitted_at=emitted_at,
+        )
+
+    review_record = json.loads(
+        (
+            workspace
+            / "agents"
+            / ".research_runtime"
+            / "goalspec"
+            / "spec_review"
+            / f"{run_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert review_record["review_status"] == "blocked"
+    assert any(item["remediation_intent"] == "true_invention" for item in review_record["findings"])
+    decision_text = (workspace / review_record["decision_path"]).read_text(encoding="utf-8")
+    assert "`true_invention`" in decision_text
+    assert "Remove the invented specialization detail" in decision_text
+
+
+def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_truthfully(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    config.research.stage_retry_backoff_seconds = 0
+    config.research.stage_retry_max = 1
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-retry-714"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-714\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+    original_execute_spec_review = research_plane_module.execute_spec_review
+    original_execute_spec_synthesis = research_plane_module.execute_spec_synthesis
+    review_attempts = 0
+
+    def _counted_spec_review(*args: object, **kwargs: object):
+        nonlocal review_attempts
+        review_attempts += 1
+        return original_execute_spec_review(*args, **kwargs)
+
+    def _execute_spec_synthesis_with_loader_promotion(*args: object, **kwargs: object):
+        result = original_execute_spec_synthesis(*args, **kwargs)
+        phase_path = workspace / result.phase_spec_path
+        phase_text = phase_path.read_text(encoding="utf-8")
+        phase_text = _replace_markdown_section(
+            phase_text,
+            "Work Plan",
+            "\n".join(
+                [
+                    "## Work Plan",
+                    "1. Implement bounded Minecraft registrations in `mods/aura-progression-mod/src/main/java/registrations`.",
+                    "2. Add Fabric loader bootstrap in `mods/aura-progression-mod/src/main/resources/fabric.mod.json`.",
+                    "3. Extend gameplay proof in `mods/aura-progression-mod/src/gametest/java`.",
+                    "4. Verify Gradle-backed tests in `mods/aura-progression-mod/src/test/java`.",
+                    "5. Keep resource packaging aligned in `mods/aura-progression-mod/src/main/resources`.",
+                    "6. Close the bounded mod slice with traceable proof in `mods/aura-progression-mod/src/gametest/java`.",
+                ]
+            ),
+        )
+        phase_path.write_text(phase_text, encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(research_plane_module, "execute_spec_review", _counted_spec_review)
+    monkeypatch.setattr(
+        research_plane_module,
+        "execute_spec_synthesis",
+        _execute_spec_synthesis_with_loader_promotion,
+    )
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-714",
+    ):
+        _run_research_until_settled(
+            plane,
+            run_id=run_id,
+            resolve_assets=False,
+        )
+
+    first_snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert review_attempts == 1
+    assert first_snapshot.retry_state is not None
+    assert first_snapshot.retry_state.attempt == 1
+    assert first_snapshot.retry_state.exhausted() is False
+    assert first_snapshot.retry_state.last_failure_reason == (
+        "Spec Review blocked SPEC-MINECRAFT-714; resolve the recorded decomposition findings before Taskmaster"
+    )
+    assert first_snapshot.checkpoint is not None
+    assert first_snapshot.checkpoint.node_id == "spec_review"
+
+    review_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "spec_review" / f"{run_id}.json"
+    review_record = json.loads(review_record_path.read_text(encoding="utf-8"))
+    assert review_record["review_status"] == "blocked"
+    assert any(item["remediation_intent"] == "missing_workspace_confirmation" for item in review_record["findings"])
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-714",
+    ):
+        plane.sync_runtime(trigger="daemon-loop", resolve_assets=False)
+
+    resumed_snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert review_attempts == 2
+    assert resumed_snapshot.retry_state is not None
+    assert resumed_snapshot.retry_state.attempt == 2
+    assert resumed_snapshot.retry_state.max_attempts == 2
+    assert resumed_snapshot.retry_state.next_retry_at is None
+    assert resumed_snapshot.retry_state.exhausted() is True
+    assert resumed_snapshot.checkpoint is not None
+    assert resumed_snapshot.checkpoint.node_id == "spec_review"
+    assert resumed_snapshot.queue_snapshot.ownerships == resumed_snapshot.checkpoint.owned_queues
+
+    assert plane.sync_runtime(trigger="daemon-loop", resolve_assets=False) is None
+
+    exhausted_snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert review_attempts == 2
+    assert exhausted_snapshot == resumed_snapshot
+
+
+def test_research_plane_runs_grounded_supported_minecraft_goal_to_taskmaster_in_daemon_mode(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    _write_fabric_workspace_evidence(workspace)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-daemon-minecraft-715"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-715\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = _run_research_until_settled(
+        plane,
+        run_id=run_id,
+        resolve_assets=False,
+    )
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is None
+    assert snapshot.retry_state is None
+    assert plane.status_store.read() is ResearchStatus.IDLE
+
+    review_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "spec_review" / f"{run_id}.json"
+    taskmaster_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskmaster" / f"{run_id}.json"
+    taskaudit_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / f"{run_id}.json"
+
+    review_record = json.loads(review_record_path.read_text(encoding="utf-8"))
+    taskaudit_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    backlog = parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file)
+
+    assert review_record["review_status"] == "no_material_delta"
+    assert taskmaster_record_path.exists()
+    assert taskaudit_record["status"] == "merged"
+    assert backlog.cards
+    assert any("`loader=fabric`" in card.body for card in backlog.cards)
+    assert any("do not invent a resolved overlay" in card.body for card in backlog.cards)
 
 
 def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:
@@ -4010,6 +4468,7 @@ def test_execute_taskmaster_preserves_contractor_boundaries_for_supported_minecr
         title="Aura Progression Mod",
         decomposition_profile="moderate",
         idea_id="IDEA-MINECRAFT-713",
+        workspace_setup=_write_fabric_workspace_evidence,
         body=(
             "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
             "## Capability Domains\n"
@@ -4627,6 +5086,7 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
         title="Aura Progression Mod",
         decomposition_profile="moderate",
         idea_id="IDEA-MINECRAFT-712",
+        workspace_setup=_write_fabric_workspace_evidence,
         body=(
             "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
             "## Capability Domains\n"
@@ -4656,6 +5116,13 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
     ]
     assert completion_manifest["contractor_environment_hints"] == ["java", "gradle"]
     assert completion_manifest["contractor_unresolved_specializations"] == ["loader=fabric"]
+    assert {
+        (item["provenance"], item["support_state"], item["key"], item["value"])
+        for item in completion_manifest["contractor_specialization_provenance"]
+    } == {
+        ("source_requested", "unsupported", "loader", "fabric"),
+        ("workspace_grounded", "unsupported", "loader", "fabric"),
+    }
     assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
         "mods/aura-progression-mod/src/main/java",
         "mods/aura-progression-mod/src/main/java/aura-progression",
@@ -4673,16 +5140,19 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
     )
     assert "- **Environment-Hints:** `java`, `gradle`" in completion_report_text
     assert "- **Unresolved-Specializations:** `loader=fabric`" in completion_report_text
+    assert "- **Specialization-Provenance:** `loader=fabric` (source_requested, unsupported" in completion_report_text
 
     golden_spec_text = (workspace / synthesis.golden_spec_path).read_text(encoding="utf-8")
     phase_spec_text = (workspace / synthesis.phase_spec_path).read_text(encoding="utf-8")
     assert "## Contractor Grounding" in golden_spec_text
     assert "Environment assumptions remain explicit: `java`, `gradle`." in golden_spec_text
+    assert "Specialization provenance remains explicit: `loader=fabric` (source_requested, unsupported" in golden_spec_text
     assert "Unsupported specialization remains unresolved: `loader=fabric`." in golden_spec_text
     assert "mods/aura-progression-mod/src/main/java" in golden_spec_text
     assert "mods/aura-progression-mod/src/main/resources" in golden_spec_text
     assert "## Contractor Grounding" in phase_spec_text
     assert "Contractor environment assumptions remain bounded to `java`, `gradle`" in phase_spec_text
+    assert "Specialization provenance remains explicit: `loader=fabric` (source_requested, unsupported" in phase_spec_text
     assert "Unsupported contractor specialization stays unresolved: `loader=fabric`." in phase_spec_text
     assert "mods/aura-progression-mod/src/gametest/java" in phase_spec_text
     assert "loader-specific overlay" in phase_spec_text

@@ -48,6 +48,16 @@ def _join_human_list(items: tuple[str, ...], *, limit: int = 4) -> str:
     return f"{', '.join(selected[:-1])}, and {selected[-1]}"
 
 
+def _format_specialization_record(item: object) -> str:
+    key = str(getattr(item, "key", "")).strip()
+    value = str(getattr(item, "value", "")).strip()
+    provenance = str(getattr(item, "provenance", "")).strip() or "unknown"
+    support_state = str(getattr(item, "support_state", "")).strip() or "unknown"
+    evidence_path = str(getattr(item, "evidence_path", "")).strip()
+    path_suffix = f" @ `{evidence_path}`" if evidence_path else ""
+    return f"`{key}={value}` ({provenance}, {support_state}{path_suffix})"
+
+
 def _build_product_hard_blockers(*, title: str, semantic_profile: object) -> tuple[str, ...]:
     capability_domains = tuple(getattr(semantic_profile, "capability_domains", ()) or ())
     progression_lines = tuple(getattr(semantic_profile, "progression_lines", ()) or ())
@@ -247,6 +257,7 @@ def execute_objective_profile_sync(
         contractor_specificity_level=contractor_result.profile.specificity_level,
         contractor_shape_class=contractor_result.profile.shape_class,
         contractor_fallback_mode=contractor_result.profile.fallback_mode,
+        contractor_specialization_provenance=contractor_result.profile.specialization_provenance,
         initial_family_policy_pin=initial_family_policy_pin,
     )
     _write_json_model(paths.objective_profile_sync_state_file, profile_state)
@@ -292,6 +303,12 @@ def execute_objective_profile_sync(
                     + "; ".join(contractor_result.profile.abstentions)
                     if contractor_result.profile.abstentions
                     else "- **Abstentions:** none"
+                ),
+                (
+                    "- **Specialization-Provenance:** "
+                    + "; ".join(_format_specialization_record(item) for item in contractor_result.profile.specialization_provenance)
+                    if contractor_result.profile.specialization_provenance
+                    else "- **Specialization-Provenance:** none"
                 ),
                 "",
                 "## Semantic Hygiene Diagnostics",
@@ -357,6 +374,9 @@ def execute_objective_profile_sync(
                 "contractor_specificity_level": contractor_result.profile.specificity_level,
                 "contractor_shape_class": contractor_result.profile.shape_class,
                 "contractor_fallback_mode": contractor_result.profile.fallback_mode,
+                "contractor_specialization_provenance": [
+                    item.model_dump(mode="json") for item in contractor_result.profile.specialization_provenance
+                ],
                 "semantic_profile": semantic_profile.model_dump(mode="json"),
                 "hard_blockers": list(hard_blockers),
                 "family_policy_path": _relative_path(paths.objective_family_policy_file, relative_to=paths.root),
@@ -405,6 +425,7 @@ def execute_objective_profile_sync(
         contractor_specificity_level=contractor_result.profile.specificity_level,
         contractor_shape_class=contractor_result.profile.shape_class,
         contractor_fallback_mode=contractor_result.profile.fallback_mode,
+        contractor_specialization_provenance=contractor_result.profile.specialization_provenance,
     )
     record_path = paths.goalspec_objective_profile_sync_records_dir / f"{run_id}.json"
     _write_json_model(record_path, record)

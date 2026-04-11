@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+from typing import Callable
 
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.contracts import ResearchMode, ResearchStatus
@@ -14,12 +15,7 @@ from millrace_engine.research.state import ResearchCheckpoint, ResearchQueueFami
 from tests.support import load_workspace_fixture
 
 
-PRODUCT_GOAL_TEXT = """---
-idea_id: IDEA-WORKSPACE-001
-title: Team Workspace Vertical Slice
----
-
-# Team Workspace Vertical Slice
+PRODUCT_GOAL_BODY = """# Team Workspace Vertical Slice
 
 Build the first usable team workspace vertical slice for collaborative planning.
 
@@ -33,6 +29,43 @@ Progression from intake to shared drafting to review handoff.
 Minimal onboarding guidance.
 Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.
 """
+
+PRODUCT_GOAL_TEXT = f"""---
+idea_id: IDEA-WORKSPACE-001
+title: Team Workspace Vertical Slice
+---
+
+{PRODUCT_GOAL_BODY}"""
+
+MULTI_SECTION_GOAL_BODY = """# Layered Runtime Contract
+
+Ship the layered runtime contract without losing product requirements.
+
+## Problem Statement
+Preserve the full seeded contract in the staged handoff.
+
+## Scope
+- Goal Intake preserves every named section.
+- Objective Profile Sync receives a truthful staged artifact.
+
+## Constraints
+- Keep canonical lineage intact.
+- Do not move trace metadata into the semantic body.
+
+## Unknowns Ledger
+- Final provenance classes can land later.
+
+## Evidence
+- Operators supplied the seeded markdown directly.
+"""
+
+MULTI_SECTION_GOAL_TEXT = f"""---
+idea_id: IDEA-LAYERED-001
+title: Layered Runtime Contract
+decomposition_profile: involved
+---
+
+{MULTI_SECTION_GOAL_BODY}"""
 
 SMALL_PRODUCT_GOAL_TEXT = """---
 idea_id: IDEA-SMALL-001
@@ -82,6 +115,28 @@ title: Team System
 Build something useful for a team. The exact product shape is still unclear.
 """
 
+MINECRAFT_FABRIC_GOAL_TEXT = """---
+idea_id: IDEA-MINECRAFT-001
+title: Aura Progression Mod
+decomposition_profile: moderate
+---
+
+# Aura Progression Mod
+
+Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.
+
+## Capability Domains
+- Aura Progression
+- Registrations
+- Gameplay Tests
+
+## Progression Lines
+- Progression from registrations to gameplay proof in-game.
+- Automated validation covers GameTests and bounded host behavior.
+- Use Gradle for the project build.
+- Loader discussion currently points at Fabric.
+"""
+
 SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """---
 idea_id: IDEA-PY-NOISE-001
 title: Shared Workspace Service
@@ -120,6 +175,12 @@ def _configured_goal_runtime(tmp_path: Path) -> tuple[Path, object]:
 def _write_queue_file(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
+
+
+def _write_fabric_workspace_evidence(workspace: Path) -> None:
+    evidence_path = workspace / "mods" / "aura-progression-mod" / "src" / "main" / "resources" / "fabric.mod.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text('{"schemaVersion":1,"id":"aura-progression"}\n', encoding="utf-8")
 
 
 def _semantic_profile(
@@ -189,8 +250,11 @@ def _run_objective_profile_sync(
     goal_text: str,
     run_id: str,
     emitted_at: datetime,
+    workspace_setup: Callable[[Path], None] | None = None,
 ) -> tuple[Path, object, dict[str, object], dict[str, object], str, str, dict[str, object]]:
     workspace, paths = _configured_goal_runtime(tmp_path)
+    if workspace_setup is not None:
+        workspace_setup(workspace)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     _write_queue_file(raw_goal_path, goal_text)
     goal_intake = execute_goal_intake(
@@ -249,10 +313,41 @@ def test_execute_goal_intake_moves_trace_metadata_to_frontmatter(tmp_path: Path)
     assert "Source artifact" not in staged_text
     assert "Stage contract" not in staged_text
     assert "compiled GoalSpec loop" not in staged_text
+    assert staged_text.endswith(PRODUCT_GOAL_BODY)
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in staged_text
+    assert "Ready for staging now." not in staged_text
+
+
+def test_execute_goal_intake_preserves_full_multisection_source_contract(tmp_path: Path) -> None:
+    workspace, paths = _configured_goal_runtime(tmp_path)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-lossless-contract-001"
+    emitted_at = _dt("2026-04-10T12:00:00Z")
+
+    _write_queue_file(raw_goal_path, MULTI_SECTION_GOAL_TEXT)
+    result = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    staged_text = (workspace / result.research_brief_path).read_text(encoding="utf-8")
+
+    assert staged_text.endswith(MULTI_SECTION_GOAL_BODY)
+    assert "## Problem Statement" in staged_text
+    assert "## Scope" in staged_text
+    assert "## Constraints" in staged_text
+    assert "## Unknowns Ledger" in staged_text
     assert "## Evidence" in staged_text
-    assert "No additional product evidence was provided." in staged_text
-    assert "## Route Decision" in staged_text
-    assert "Ready for staging now." in staged_text
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in staged_text
+    assert "No additional constraints were extracted during deterministic Goal Intake." not in staged_text
+    assert "Ready for staging now." not in staged_text
 
 
 def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path: Path) -> None:
@@ -294,6 +389,7 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert acceptance_profile["contractor_shape_class"] == "unknown"
     assert acceptance_profile["contractor_specificity_level"] == "L0"
     assert acceptance_profile["contractor_fallback_mode"] == "abstain_unknown"
+    assert acceptance_profile["contractor_specialization_provenance"] == []
     assert "## Contractor Summary" in report_text
     assert "- **Contractor-Profile:** `agents/objective/contractor_profile.json`" in report_text
     assert "- **Shape-Class:** `unknown`" in report_text
@@ -475,6 +571,29 @@ def test_execute_objective_profile_sync_preserves_conservative_contractor_fallba
     assert "- **Fallback-Mode:** `abstain_unknown`" in report_text
     assert "- **Abstentions:** No trustworthy host, archetype, or stack specialization is justified yet." in report_text
     assert "EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md" in contractor_report_text
+
+
+def test_execute_objective_profile_sync_persists_typed_specialization_provenance(tmp_path: Path) -> None:
+    _, _, profile_state, _, _, report_text, _ = _run_objective_profile_sync(
+        tmp_path=tmp_path,
+        goal_text=MINECRAFT_FABRIC_GOAL_TEXT,
+        run_id="goalspec-minecraft-loader-001",
+        emitted_at=_dt("2026-04-10T18:10:00Z"),
+        workspace_setup=_write_fabric_workspace_evidence,
+    )
+
+    provenance = {
+        (item["provenance"], item["support_state"], item["key"], item["value"])
+        for item in profile_state["contractor_specialization_provenance"]
+    }
+
+    assert provenance == {
+        ("source_requested", "unsupported", "loader", "fabric"),
+        ("workspace_grounded", "unsupported", "loader", "fabric"),
+    }
+    assert "Specialization-Provenance" in report_text
+    assert "source_requested" in report_text
+    assert "workspace_grounded" in report_text
 
 
 def test_derive_objective_family_policy_does_not_widen_below_bash_thresholds() -> None:
