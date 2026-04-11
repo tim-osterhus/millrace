@@ -1165,12 +1165,14 @@ def execute_spec_interview(paths, checkpoint, *, run_id, policy, emitted_at=None
     )
 
 
-def execute_spec_review(paths, checkpoint, *, run_id, emitted_at=None):
+def execute_spec_review(paths, checkpoint, *, run_id, emitted_at=None, config=None, stage_plan=None):
     return _goalspec_stage_support_module().execute_spec_review(
         paths,
         checkpoint,
         run_id=run_id,
         emitted_at=emitted_at,
+        config=config,
+        stage_plan=stage_plan,
     )
 
 

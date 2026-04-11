@@ -12,6 +12,7 @@ import pytest
 
 import millrace_engine.planes.research as research_plane_module
 import millrace_engine.research.goalspec_scope_diagnostics as goalspec_scope_diagnostics_module
+import millrace_engine.research.goalspec_spec_review as goalspec_spec_review_module
 import millrace_engine.research.goalspec_spec_synthesis as goalspec_spec_synthesis_module
 from millrace_engine.config import ConfigApplyBoundary, build_runtime_paths, load_engine_config
 from millrace_engine.contracts import (
@@ -3516,6 +3517,155 @@ def test_execute_spec_synthesis_restores_frozen_sibling_profile_and_taskmaster_c
     assert taskmaster_record["spec_id"] == "SPEC-BROAD-402-02"
     assert taskmaster_record["profile_selection"]["expected_min_cards"] == 3
     assert taskmaster_record["profile_selection"]["expected_max_cards"] == 5
+
+
+def test_execute_spec_review_preserves_one_spec_promotion_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted_at = _dt("2026-04-11T09:00:00Z")
+    workspace, config, paths, _synthesis, queue_spec_path, _staged_path = _prepare_emitted_spec_family(
+        tmp_path,
+        run_id="goalspec-agentic-review-901",
+        emitted_at=emitted_at,
+        title="Team Workspace Program",
+        body=(
+            "Build a broader team workspace program that should preserve bounded one-spec promotion.\n\n"
+            "## Capability Domains\n"
+            "- Workspace Intake\n"
+            "- Shared Drafts\n"
+            "- Review Queue\n"
+            "- Activity Feed\n"
+            "- Template Library\n"
+            "- Insights Panel\n\n"
+            "## Progression Lines\n"
+            "- Progression from intake to drafting to review handoff.\n"
+            "- Progression from shared planning to program-level insight delivery.\n"
+        ),
+        decomposition_profile="moderate",
+        idea_id="IDEA-AGENTIC-901",
+    )
+    extra_queue_spec = workspace / "agents" / "ideas" / "specs" / "SPEC-ZZZ-999__later-spec.md"
+    _write_queue_file(
+        extra_queue_spec,
+        (
+            "---\n"
+            "spec_id: SPEC-ZZZ-999\n"
+            "title: Later Spec\n"
+            "decomposition_profile: simple\n"
+            "---\n\n"
+            "# Later Spec\n\n"
+            "Leave this queued spec untouched during the current review run.\n"
+        ),
+    )
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(ResearchMode.GOALSPEC, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-agentic-review-901",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+    stage_plan = next(stage for stage in dispatch.research_plan.stages if stage.node_id == "spec_review")
+    calls: list[tuple[bool, str]] = []
+
+    def _fake_agentic_spec_review(*args: object, **kwargs: object) -> object:
+        del args
+        stage_plan = kwargs["stage_plan"]
+        prompt_file = kwargs["config"].stages[StageType.SPEC_REVIEW].prompt_file
+        calls.append((prompt_file is not None and prompt_file.as_posix().endswith("agents/_spec_review.md"), kwargs["run_id"]))
+        assert stage_plan.node_id == "spec_review"
+        assert queue_spec_path.exists()
+        assert not (workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name).exists()
+        return object()
+
+    monkeypatch.setattr(
+        goalspec_spec_review_module,
+        "_execute_agentic_spec_review_stage",
+        _fake_agentic_spec_review,
+    )
+
+    result = execute_spec_review(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-agentic-review-901",
+            emitted_at=emitted_at,
+            queue_path=queue_spec_path.parent,
+            item_path=queue_spec_path,
+            status=ResearchStatus.SPEC_REVIEW_RUNNING,
+            node_id="spec_review",
+            stage_kind_id="research.spec-review",
+        ),
+        run_id="goalspec-agentic-review-901",
+        emitted_at=emitted_at,
+        config=config,
+        stage_plan=stage_plan,
+    )
+
+    reviewed_path = workspace / result.reviewed_path
+    assert calls == [(True, "goalspec-agentic-review-901")]
+    assert not queue_spec_path.exists()
+    assert reviewed_path.exists()
+    assert extra_queue_spec.exists()
+    assert (workspace / result.family_state_path).exists()
+
+
+def test_research_plane_runs_agentic_spec_review_before_runtime_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted_at = _dt("2026-04-11T09:15:00Z")
+    workspace, config, paths, _synthesis, queue_spec_path, _staged_path = _prepare_emitted_spec_family(
+        tmp_path,
+        run_id="goalspec-agentic-plane-902",
+        emitted_at=emitted_at,
+        title="Agentic Review Runtime Handoff",
+        body="Restore the runtime spec review handoff through the packaged stage contract.",
+        decomposition_profile="simple",
+        idea_id="IDEA-AGENTIC-902",
+    )
+    _staged_path.unlink()
+    calls: list[tuple[bool, bool, bool]] = []
+
+    def _fake_agentic_spec_review(*args: object, **kwargs: object) -> object:
+        del args
+        stage_plan = kwargs["stage_plan"]
+        reviewed_path = workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name
+        prompt_file = kwargs["config"].stages[StageType.SPEC_REVIEW].prompt_file
+        calls.append(
+            (
+                prompt_file is not None and prompt_file.as_posix().endswith("agents/_spec_review.md"),
+                queue_spec_path.exists(),
+                reviewed_path.exists(),
+            )
+        )
+        assert stage_plan.node_id == "spec_review"
+        return object()
+
+    monkeypatch.setattr(
+        goalspec_spec_review_module,
+        "_execute_agentic_spec_review_stage",
+        _fake_agentic_spec_review,
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = plane.run_ready_work(
+        run_id="goalspec-agentic-plane-902",
+        resolve_assets=False,
+    )
+
+    snapshot = plane.snapshot_state()
+    reviewed_path = workspace / "agents" / "ideas" / "specs_reviewed" / queue_spec_path.name
+    assert dispatch is not None
+    assert calls == [(True, True, False)]
+    assert not queue_spec_path.exists()
+    assert reviewed_path.exists()
+    assert snapshot.checkpoint is not None
+    assert snapshot.checkpoint.node_id == "taskmaster"
+    assert snapshot.checkpoint.owned_queues[0].queue_path == reviewed_path.parent
+    assert snapshot.checkpoint.owned_queues[0].item_path == reviewed_path
 
 
 def test_execute_spec_synthesis_respects_single_spec_broad_cap_for_broad_goal(tmp_path: Path) -> None:

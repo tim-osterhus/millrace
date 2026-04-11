@@ -982,6 +982,8 @@ class ResearchPlane:
                 checkpoint,
                 run_id=dispatch.run_id,
                 emitted_at=stage_started_at,
+                config=self.config,
+                stage_plan=research_stage_for_node(dispatch.research_plan, checkpoint.node_id),
             )
         elif checkpoint.node_id == "taskmaster":
             self._set_research_status(ResearchStatus.TASKMASTER_RUNNING)

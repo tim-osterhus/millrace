@@ -6,8 +6,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from ..assets.resolver import AssetResolver, AssetSourceKind
+from ..compiler_models import FrozenStagePlan
+from ..config import EngineConfig, StageConfig
+from ..contracts import ResearchStatus, RunnerKind, StageContext, StageType
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
+from ..runner import ClaudeRunner, CodexRunner, SubprocessRunner, detect_last_marker
 from .goalspec import SpecReviewExecutionResult
 from .goalspec_helpers import (
     GoalSpecExecutionError,
@@ -32,7 +37,6 @@ from .goalspec_product_planning import (
     is_product_surface_path,
     minimum_phase_package_count,
     minimum_phase_step_count,
-    surface_paths,
 )
 from .goalspec_scope_diagnostics import infer_goal_scope_kind
 from .goalspec_stage_rendering import (
@@ -80,6 +84,141 @@ _MINECRAFT_LOADER_HINTS = {
     "neoforge": ("neoforge", "neoforge.mods.toml"),
     "quilt": ("quilt", "quilt.mod.json"),
 }
+
+
+def _bound_spec_review_stage_config(
+    config: EngineConfig,
+    *,
+    stage_plan: FrozenStagePlan | None,
+) -> StageConfig:
+    base = config.stages[StageType.SPEC_REVIEW]
+    prompt_file = base.prompt_file
+    if stage_plan is not None and stage_plan.prompt_asset_ref is not None:
+        prompt_file = Path(stage_plan.prompt_asset_ref)
+    return StageConfig(
+        runner=stage_plan.runner if stage_plan is not None and stage_plan.runner is not None else base.runner,
+        model=stage_plan.model if stage_plan is not None and stage_plan.model is not None else base.model,
+        effort=stage_plan.effort if stage_plan is not None and stage_plan.effort is not None else base.effort,
+        permission_profile=(
+            stage_plan.permission_profile
+            if stage_plan is not None and stage_plan.permission_profile is not None
+            else base.permission_profile
+        ),
+        timeout_seconds=(
+            stage_plan.timeout_seconds
+            if stage_plan is not None and stage_plan.timeout_seconds is not None
+            else base.timeout_seconds
+        ),
+        prompt_file=prompt_file,
+        allow_search=(
+            stage_plan.allow_search
+            if stage_plan is not None and stage_plan.allow_search is not None
+            else base.allow_search
+        ),
+    )
+
+
+def _resolve_spec_review_prompt(
+    paths: RuntimePaths,
+    *,
+    stage_config: StageConfig,
+    stage_plan: FrozenStagePlan | None,
+) -> tuple[str, Path | None, str]:
+    if stage_plan is not None and stage_plan.prompt_asset is not None:
+        prompt_path = stage_plan.prompt_asset.workspace_path
+        prompt_text = prompt_path.read_text(encoding="utf-8").strip()
+        prompt_ref = stage_plan.prompt_asset.resolved_ref
+        if stage_plan.prompt_asset.source_kind is AssetSourceKind.WORKSPACE:
+            return prompt_text, prompt_path, prompt_ref
+        return prompt_text, None, prompt_ref
+
+    prompt_file = stage_config.prompt_file
+    if prompt_file is None:
+        raise GoalSpecExecutionError("Spec Review stage config is missing its prompt asset")
+    resolved = AssetResolver(paths.root).resolve_file(prompt_file)
+    prompt_text = resolved.read_text(encoding="utf-8").strip()
+    prompt_path = resolved.prompt_path if resolved.source_kind is AssetSourceKind.WORKSPACE else None
+    return prompt_text, prompt_path, resolved.resolved_ref
+
+
+def _agentic_spec_review_marker(
+    paths: RuntimePaths,
+    marker: str | None,
+    raw_marker_line: str | None,
+) -> tuple[str | None, str | None]:
+    if marker is not None:
+        return marker, raw_marker_line
+    if not paths.research_status_file.exists():
+        return None, None
+    return detect_last_marker(paths.research_status_file.read_text(encoding="utf-8", errors="replace"))
+
+
+def _execute_agentic_spec_review_stage(
+    paths: RuntimePaths,
+    *,
+    config: EngineConfig,
+    run_id: str,
+    stage_plan: FrozenStagePlan | None = None,
+):
+    stage_config = _bound_spec_review_stage_config(config, stage_plan=stage_plan)
+    prompt_text, prompt_path, prompt_ref = _resolve_spec_review_prompt(
+        paths,
+        stage_config=stage_config,
+        stage_plan=stage_plan,
+    )
+    prompt = "\n\n".join(
+        (
+            prompt_text,
+            f"Stage: {StageType.SPEC_REVIEW.value}",
+            f"Prompt asset: {prompt_ref}",
+        )
+    ).rstrip("\n") + "\n"
+    runners = {
+        RunnerKind.SUBPROCESS: SubprocessRunner(paths),
+        RunnerKind.CODEX: CodexRunner(paths),
+        RunnerKind.CLAUDE: ClaudeRunner(paths),
+    }
+    context = StageContext.model_validate(
+        {
+            "stage": StageType.SPEC_REVIEW,
+            "runner": stage_config.runner,
+            "model": stage_config.model,
+            "prompt": prompt,
+            "working_dir": paths.root,
+            "run_id": run_id,
+            "permission_profile": stage_config.permission_profile,
+            "timeout_seconds": stage_config.timeout_seconds,
+            "prompt_path": prompt_path,
+            "status_fallback_path": paths.research_status_file,
+            "allow_search": stage_config.allow_search,
+            "allow_network": True,
+            "effort": stage_config.effort,
+        }
+    )
+    runner_result = runners[stage_config.runner].execute(context)
+    detected_marker, raw_marker_line = _agentic_spec_review_marker(
+        paths,
+        runner_result.detected_marker,
+        runner_result.raw_marker_line,
+    )
+    if detected_marker != runner_result.detected_marker or raw_marker_line != runner_result.raw_marker_line:
+        runner_result = runner_result.model_copy(
+            update={
+                "detected_marker": detected_marker,
+                "raw_marker_line": raw_marker_line,
+            }
+        )
+    if runner_result.exit_code != 0:
+        raise GoalSpecExecutionError(
+            f"Agentic Spec Review runner exited {runner_result.exit_code} before runtime promotion"
+        )
+    if detected_marker == ResearchStatus.BLOCKED.value:
+        raise GoalSpecExecutionError("Agentic Spec Review blocked before runtime promotion")
+    if detected_marker != ResearchStatus.IDLE.value:
+        raise GoalSpecExecutionError(
+            "Agentic Spec Review did not report a successful terminal marker before runtime promotion"
+        )
+    return runner_result
 
 
 def _phase_steps(phase_text: str) -> tuple[str, ...]:
@@ -462,10 +601,19 @@ def execute_spec_review(
     *,
     run_id: str,
     emitted_at: datetime | None = None,
+    config: EngineConfig | None = None,
+    stage_plan: FrozenStagePlan | None = None,
 ) -> SpecReviewExecutionResult:
     """Promote one synthesized queue spec into reviewed state plus lineage/registry artifacts."""
 
     emitted_at = emitted_at or _utcnow()
+    if config is not None:
+        _execute_agentic_spec_review_stage(
+            paths,
+            config=config,
+            run_id=run_id,
+            stage_plan=stage_plan,
+        )
     source = resolve_goal_source(paths, checkpoint)
     family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
     spec_id = source.frontmatter.get("spec_id", "").strip() or _spec_id_for_goal(source.idea_id)

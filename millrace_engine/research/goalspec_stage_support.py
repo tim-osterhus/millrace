@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from ..compiler_models import FrozenLoopPlan, FrozenStagePlan
+from ..config import EngineConfig
 from ..contracts import SpecInterviewPolicy
 from ..paths import RuntimePaths
 from .goalspec import (
@@ -128,7 +129,16 @@ def execute_spec_review(
     *,
     run_id: str,
     emitted_at: datetime | None = None,
+    config: EngineConfig | None = None,
+    stage_plan: FrozenStagePlan | None = None,
 ) -> SpecReviewExecutionResult:
     """Delegate Spec Review execution to the dedicated later-stage module."""
 
-    return _execute_spec_review(paths, checkpoint, run_id=run_id, emitted_at=emitted_at)
+    return _execute_spec_review(
+        paths,
+        checkpoint,
+        run_id=run_id,
+        emitted_at=emitted_at,
+        config=config,
+        stage_plan=stage_plan,
+    )
