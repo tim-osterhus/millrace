@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
+import re
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -38,15 +39,6 @@ _WEB_FILE = "EXAMPLES_WEB_AND_NETWORK.md"
 _TOOLS_FILE = "EXAMPLES_TOOLS_AND_LIBRARIES.md"
 _AMBIGUOUS_FILE = "EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md"
 
-_HOST_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "minecraft": ("minecraft", "fabric", "forge", "neoforge", "spigot", "paper"),
-    "wordpress": ("wordpress", "wp plugin", "wp-plugin"),
-    "shopify": ("shopify",),
-    "obsidian": ("obsidian",),
-    "slack": ("slack",),
-    "discord": ("discord",),
-}
-
 _STACK_ENVIRONMENT_HINTS: dict[str, tuple[str, ...]] = {
     "jvm": ("java",),
     "gradle": ("gradle",),
@@ -62,6 +54,39 @@ _STACK_PROFILE_IDS: dict[str, str] = {
     "node_service": "stack.node_service@1",
     "postgres_backed": "stack.postgres_backed@1",
 }
+_HOST_PLATFORM_PATTERNS = (
+    re.compile(
+        r"\b(?:build|create|ship|make)\s+(?:a|an|the)\s+([a-z0-9][a-z0-9+._-]*(?: [a-z0-9][a-z0-9+._-]*){0,2})\s+mod\b"
+    ),
+    re.compile(
+        r"\b(?:build|create|ship|make)\s+(?:a|an|the)\s+([a-z0-9][a-z0-9+._-]*(?: [a-z0-9][a-z0-9+._-]*){0,2})\s+"
+        r"(?:plugin|extension|integration|bot|app)\b"
+    ),
+    re.compile(r"\b(?:plugin|extension|integration|bot|app)\s+for\s+(?:the\s+)?([a-z0-9][a-z0-9+._-]*(?: [a-z0-9][a-z0-9+._-]*){0,2})\b"),
+    re.compile(r"\b([a-z0-9][a-z0-9+._-]*(?: [a-z0-9][a-z0-9+._-]*){0,2})\s+(?:plugin|extension|integration|bot|app)\b"),
+    re.compile(r"\b([a-z0-9][a-z0-9+._-]*(?: [a-z0-9][a-z0-9+._-]*){0,2})\s+mod\b"),
+)
+_HOST_PLATFORM_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "app",
+        "bot",
+        "build",
+        "extension",
+        "for",
+        "host",
+        "integration",
+        "mod",
+        "new",
+        "our",
+        "platform",
+        "plugin",
+        "the",
+        "usable",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -255,6 +280,7 @@ def _build_profile_payload(
 
 
 def _build_contractor_decision(*, paths: RuntimePaths, source: GoalSource) -> _ContractorDecision:
+    body_text = source.canonical_body.casefold()
     text = f"{source.title}\n{source.canonical_body}".casefold()
     evidence: list[str] = []
     abstentions: list[str] = []
@@ -267,19 +293,19 @@ def _build_contractor_decision(*, paths: RuntimePaths, source: GoalSource) -> _C
     shape_class = _select_shape_class(candidate_scores)
     example_shards = _select_example_shards(text=text, shape_class=shape_class)
 
-    host_platform = ""
-    for host, keywords in _HOST_KEYWORDS.items():
-        if _contains_any(text, keywords):
-            host_platform = host
-            evidence.append(f"The goal explicitly references the host platform `{host}`.")
-            break
+    host_platform = _detect_host_platform(body_text) or _detect_host_platform(text)
+    if host_platform:
+        evidence.append(f"The goal explicitly references the host platform `{host_platform}`.")
 
     if shape_class == "platform_extension":
         evidence.append("The goal reads like host-loaded work rather than a standalone product.")
-        if host_platform == "minecraft" and _contains_any(text, ("mod", "plugin")):
+        if _contains_any(text, ("mod", "plugin")) and _contains_any(
+            text,
+            ("progression", "content", "gameplay", "registration"),
+        ):
             archetype = "gameplay_mod"
             capability_hints.extend(("registration_assets", "progression_content"))
-            evidence.append("The goal explicitly describes a Minecraft mod or plugin.")
+            evidence.append("The goal explicitly describes a host extension with bounded gameplay/content scope.")
         else:
             archetype = "plugin_integration"
             capability_hints.append("host_platform_integration")
@@ -317,9 +343,9 @@ def _build_contractor_decision(*, paths: RuntimePaths, source: GoalSource) -> _C
         archetype = ""
         evidence.append("The goal does not justify more than a broad software-shape classification.")
 
-    if _contains_any(text, ("gradle", "fabric", "forge", "neoforge", "minecraft", "plugin.yml")):
+    if _contains_any(text, ("java", "kotlin", "gradle", "jvm", "jar")):
         stack_hints.append("jvm")
-    if _contains_any(text, ("gradle", "build.gradle", "settings.gradle", "fabric", "forge", "neoforge")):
+    if _contains_any(text, ("gradle", "build.gradle", "settings.gradle", "gradle.kts")):
         stack_hints.append("gradle")
     if _contains_any(text, ("python", "pyproject", "pip", "typer", "click", "setuptools")):
         stack_hints.append("python_package")
@@ -433,9 +459,7 @@ def _shape_scores(text: str) -> dict[ContractorShapeClass, float]:
         "unknown": 0.45,
     }
     if _contains_any(text, ("plugin", "extension", "mod", "host-loaded", "bot for", "app for")):
-        scores["platform_extension"] += 0.42
-    if _contains_any(text, ("minecraft", "wordpress", "shopify", "obsidian", "slack", "discord")):
-        scores["platform_extension"] += 0.34
+        scores["platform_extension"] += 0.56
     if _contains_any(text, ("web app", "dashboard", "portal", "crm", "workspace", "review queue", "support tool")):
         scores["network_application"] += 0.34
     if _contains_any(text, ("service", "backend", "api", "webhook", "worker")):
@@ -465,9 +489,7 @@ def _select_shape_class(candidate_scores: dict[ContractorShapeClass, float]) -> 
 
 def _select_example_shards(*, text: str, shape_class: ContractorShapeClass) -> tuple[str, ...]:
     selected = [_SHAPES_FILE]
-    if shape_class == "platform_extension" or _contains_any(
-        text, ("plugin", "extension", "mod", "minecraft", "wordpress", "shopify", "obsidian", "slack", "discord")
-    ):
+    if shape_class == "platform_extension" or _contains_any(text, ("plugin", "extension", "mod", "host-loaded")):
         selected.append(_PLATFORM_FILE)
     elif shape_class in {"network_application", "service_backend"} or _contains_any(
         text, ("web app", "dashboard", "portal", "crm", "workspace", "support")
@@ -605,6 +627,25 @@ def _environment_hints_for_stack(stack_hints: tuple[str, ...]) -> tuple[str, ...
     for stack_hint in stack_hints:
         hints.extend(_STACK_ENVIRONMENT_HINTS.get(stack_hint, ()))
     return _ordered_unique(hints)
+
+
+def _detect_host_platform(text: str) -> str:
+    for pattern in _HOST_PLATFORM_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        host = _normalize_host_platform(match.group(1))
+        if host:
+            return host
+    return ""
+
+
+def _normalize_host_platform(raw: str) -> str:
+    tokens = [token for token in re.split(r"[\s/_-]+", raw.casefold()) if token]
+    filtered = [token for token in tokens if token not in _HOST_PLATFORM_STOPWORDS]
+    if not filtered:
+        return ""
+    return "-".join(filtered)
 
 
 def _detect_loader(text: str) -> str:

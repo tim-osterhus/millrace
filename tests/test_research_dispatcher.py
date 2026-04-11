@@ -5124,15 +5124,15 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
         ("workspace_grounded", "unsupported", "loader", "fabric"),
     }
     assert [surface["path"] for surface in completion_manifest["implementation_surfaces"]] == [
-        "mods/aura-progression-mod/src/main/java",
-        "mods/aura-progression-mod/src/main/java/aura-progression",
-        "mods/aura-progression-mod/src/main/java/registrations",
-        "mods/aura-progression-mod/src/main/java/gameplay-tests",
-        "mods/aura-progression-mod/src/main/resources",
+        "extensions/aura-progression-mod/integration",
+        "extensions/aura-progression-mod/integration/aura-progression",
+        "extensions/aura-progression-mod/integration/registrations",
+        "extensions/aura-progression-mod/integration/gameplay-tests",
+        "extensions/aura-progression-mod/assets",
     ]
     assert [surface["path"] for surface in completion_manifest["verification_surfaces"]] == [
-        "mods/aura-progression-mod/src/gametest/java",
-        "mods/aura-progression-mod/src/test/java",
+        "tests/aura-progression-mod/host-flow",
+        "tests/aura-progression-mod/host-regression",
     ]
     assert "## Contractor Grounding" in completion_report_text
     assert (
@@ -5153,14 +5153,14 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
     assert "Environment assumptions remain explicit: `java`, `gradle`." in golden_spec_text
     assert "Specialization provenance remains explicit: `loader=fabric` (source_requested, unsupported" in golden_spec_text
     assert "Unsupported specialization remains unresolved: `loader=fabric`." in golden_spec_text
-    assert "mods/aura-progression-mod/src/main/java" in golden_spec_text
-    assert "mods/aura-progression-mod/src/main/resources" in golden_spec_text
+    assert "extensions/aura-progression-mod/integration" in golden_spec_text
+    assert "extensions/aura-progression-mod/assets" in golden_spec_text
     assert "## Contractor Grounding" in phase_spec_text
     assert "Contractor environment assumptions remain bounded to `java`, `gradle`" in phase_spec_text
     assert "Specialization provenance remains explicit: `loader=fabric` (source_requested, unsupported" in phase_spec_text
     assert "Unsupported contractor specialization stays unresolved: `loader=fabric`." in phase_spec_text
-    assert "mods/aura-progression-mod/src/gametest/java" in phase_spec_text
-    assert "loader-specific overlay" in phase_spec_text
+    assert "tests/aura-progression-mod/host-flow" in phase_spec_text
+    assert "`minecraft` integration slice" in phase_spec_text
 
 
 def test_research_plane_run_ready_work_merges_second_product_domain_seed_into_backlog(

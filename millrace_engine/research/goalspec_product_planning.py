@@ -599,9 +599,6 @@ def _contractor_resolved_product_plan(
 
     shape_class = contractor_profile.shape_class
     if shape_class == "platform_extension":
-        host_platform = contractor_profile.classification.host_platform
-        if host_platform == "minecraft":
-            return _minecraft_mod_plan(source=source, profile=profile, contractor_profile=contractor_profile)
         return _platform_extension_plan(source=source, profile=profile, contractor_profile=contractor_profile)
     if shape_class in {"network_application", "service_backend"}:
         return _network_business_system_plan(source=source, profile=profile, contractor_profile=contractor_profile)
@@ -745,49 +742,6 @@ def _contractor_plan(
         verification_commands=tuple(
             f"confirm repo-native verification covering {path}" for _, path, _ in verification_surfaces
         ),
-    )
-
-
-def _minecraft_mod_plan(
-    *,
-    source: GoalSource,
-    profile: AcceptanceProfileRecord,
-    contractor_profile: ContractorProfileArtifact,
-) -> GoalProductPlan:
-    slug = _slugify(source.title)
-    module_root = _surface_root("mods", slug)
-    source_root = f"{module_root}/src/main/java"
-    resources_path = f"{module_root}/src/main/resources"
-    gametest_path = f"{module_root}/src/gametest/java"
-    behavior_test_path = f"{module_root}/src/test/java"
-    return _contractor_plan(
-        source=source,
-        profile=profile,
-        contractor_profile=contractor_profile,
-        primary_surface_kind="host_module",
-        primary_surface_path=source_root,
-        primary_surface_purpose="Own the host-loaded gameplay implementation surface for the bounded mod slice.",
-        component_base_dir=source_root,
-        workflow_surface_kind="registration_assets",
-        workflow_surface_path=resources_path,
-        workflow_surface_purpose="Keep registrations, metadata, and packaged host assets aligned to the mod slice.",
-        verification_surfaces=(
-            ("gametest_verification", gametest_path, "Lock in-game behavior and host-loaded proof expectations."),
-            ("behavior_verification", behavior_test_path, "Lock bounded host integration and regression behavior."),
-        ),
-        first_step=(
-            f"Implement the bounded Minecraft mod slice in `{source_root}` so the core gameplay path lands without "
-            "inventing a loader-specific overlay."
-        ),
-        second_step=(
-            f"Add registration and packaged host assets in `{resources_path}` for {_progression_fragment(profile)}."
-        ),
-        third_step=(
-            f"Implement the next bounded gameplay capabilities in `{source_root}` while keeping unresolved loader hints "
-            "documented rather than promoted into a fake specialization."
-        ),
-        fourth_step=f"Add in-game proof coverage in `{gametest_path}` for {_progression_fragment(profile)}.",
-        fifth_step=f"Add bounded host-regression coverage in `{behavior_test_path}` for the mod slice.",
     )
 
 

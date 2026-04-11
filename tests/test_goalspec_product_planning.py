@@ -220,17 +220,17 @@ def test_derive_goal_product_plan_prefers_contractor_minecraft_mod_shape_without
 
     assert plan.planning_profile == "generic_product"
     assert [surface.path for surface in plan.implementation_surfaces] == [
-        "mods/aura-progression-mod/src/main/java",
-        "mods/aura-progression-mod/src/main/java/aura-progression",
-        "mods/aura-progression-mod/src/main/java/registrations",
-        "mods/aura-progression-mod/src/main/java/gameplay-tests",
-        "mods/aura-progression-mod/src/main/resources",
+        "extensions/aura-progression-mod/integration",
+        "extensions/aura-progression-mod/integration/aura-progression",
+        "extensions/aura-progression-mod/integration/registrations",
+        "extensions/aura-progression-mod/integration/gameplay-tests",
+        "extensions/aura-progression-mod/assets",
     ]
     assert [surface.path for surface in plan.verification_surfaces] == [
-        "mods/aura-progression-mod/src/gametest/java",
-        "mods/aura-progression-mod/src/test/java",
+        "tests/aura-progression-mod/host-flow",
+        "tests/aura-progression-mod/host-regression",
     ]
-    assert any("loader-specific overlay" in step for step in plan.phase_steps)
+    assert any("`minecraft` integration slice" in step for step in plan.phase_steps)
 
 
 def test_derive_goal_product_plan_falls_back_when_loader_is_not_workspace_grounded() -> None:
