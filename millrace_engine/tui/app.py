@@ -13,6 +13,10 @@ from .bindings import APP_BINDINGS
 from .models import PANEL_BY_ID, PANELS, PanelId
 from .screens.health_gate import HealthGateScreen
 from .screens.shell import ShellScreen
+from .widgets.logs_panel import LogsPanel
+from .widgets.queue_panel import QueuePanel
+from .widgets.research_panel import ResearchPanel
+from .widgets.runs_panel import RunsPanel
 from .workers import WorkerSettings
 
 
@@ -278,6 +282,58 @@ class MillraceTUIApplication(App[None]):
             "Show shortcuts plus operator/debug guidance for the active panel.",
             self.action_open_help,
         )
+        if self._shell_screen.active_panel is PanelId.QUEUE:
+            queue_panel = self._shell_screen.query_one(QueuePanel)
+            if queue_panel.reorder_mode:
+                yield SystemCommand(
+                    "Review Queue Reorder",
+                    "Review the staged queue reorder for the selected task.",
+                    queue_panel.action_submit_selection,
+                )
+                yield SystemCommand(
+                    "Cancel Queue Reorder",
+                    "Cancel the current queue reorder draft.",
+                    queue_panel.action_cancel_reorder,
+                )
+            else:
+                yield SystemCommand(
+                    "Start Queue Reorder",
+                    "Begin a reorder draft for the selected queue task.",
+                    queue_panel.action_begin_reorder,
+                )
+            if self._shell_screen._store.state.runtime is not None and self._shell_screen._store.state.runtime.selection.run_id:
+                yield SystemCommand(
+                    "Open Active Queue Run Detail",
+                    "Open concise run detail for the queue's active run context.",
+                    queue_panel.action_open_run_detail,
+                )
+        elif self._shell_screen.active_panel is PanelId.RUNS:
+            runs_panel = self._shell_screen.query_one(RunsPanel)
+            yield SystemCommand(
+                "Open Selected Run Detail",
+                "Open concise detail for the selected run.",
+                runs_panel.action_submit_selection,
+            )
+        elif self._shell_screen.active_panel is PanelId.RESEARCH:
+            research_panel = self._shell_screen.query_one(ResearchPanel)
+            if research_panel.selected_question_id is not None:
+                yield SystemCommand(
+                    "Open Selected Interview",
+                    "Open the selected interview workflow.",
+                    research_panel.action_open_interview,
+                )
+        elif self._shell_screen.active_panel is PanelId.LOGS:
+            logs_panel = self._shell_screen.query_one(LogsPanel)
+            yield SystemCommand(
+                "Freeze Or Resume Live Logs",
+                "Toggle between live follow and frozen scrollback.",
+                logs_panel.action_toggle_follow,
+            )
+            yield SystemCommand(
+                "Switch Logs Focus Surface",
+                "Move between runtime events and artifact browsing.",
+                logs_panel.action_toggle_focus_surface,
+            )
         active = PANEL_BY_ID[self._shell_screen.active_panel]
         yield SystemCommand(
             "Open Active Panel",

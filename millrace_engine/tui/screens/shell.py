@@ -12,10 +12,11 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import ContentSwitcher, Footer
+from textual.widgets import ContentSwitcher
 from textual.worker import Worker, WorkerState
 
 from ...health import WorkspaceHealthReport
+from ..action_discovery import build_shell_action_surface
 from ..gateway import RuntimeGateway
 from ..launcher import launch_start_daemon, launch_start_once
 from ..messages import (
@@ -45,6 +46,7 @@ from ..widgets.config_panel import ConfigPanel
 from ..widgets.expanded_stream import ExpandedStreamView
 from ..widgets.logs_panel import LogsPanel
 from ..widgets.notices import NoticesView
+from ..widgets.action_footer import ActionFooter
 from ..widgets.overview_panel import LatestRunSummary, OverviewPanel
 from ..widgets.publish_panel import PublishPanel
 from ..widgets.queue_panel import QueuePanel
@@ -174,7 +176,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
                 yield ShellInspector(id="shell-inspector")
             with Horizontal(id="shell-bottom"):
                 yield NoticesView(id="shell-notices")
-                yield Footer(id="shell-footer")
+                yield ActionFooter(id="shell-footer")
 
     def on_mount(self) -> None:
         self._sync_panel_state()
@@ -206,13 +208,16 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     def focus_sidebar(self) -> None:
         self._focus_zone = ShellFocusZone.SIDEBAR
         self.query_one(SidebarNav).focus_active_button()
+        self._render_footer()
 
     def focus_content(self) -> None:
         self._focus_zone = ShellFocusZone.WORKSPACE
         if self._shell_body_mode is ShellBodyMode.EXPANDED:
             self.query_one(f"#{EXPANDED_STREAM_WIDGET_ID}").focus()
+            self._render_footer()
             return
         self.query_one(f"#{panel_widget_id(self.active_panel)}").focus()
+        self._render_footer()
 
     def action_focus_next(self) -> None:
         if self._focus_zone is ShellFocusZone.WORKSPACE:
@@ -468,8 +473,9 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         zone = self._focused_zone(event.widget)
-        if zone is not None:
+        if zone is not None and zone is not self._focus_zone:
             self._focus_zone = zone
+            self._render_footer()
 
     def _focused_zone(self, widget: Widget | None) -> ShellFocusZone | None:
         current = widget
@@ -531,6 +537,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             refresh_failure=state.last_refresh_failure,
             busy_message=self._lifecycle_busy_message,
         )
+        self._render_footer()
 
     def _render_panels(self, panels: tuple | list) -> None:
         for panel in panels:
@@ -656,6 +663,21 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     def _render_notices(self) -> None:
         self.query_one(NoticesView).show_notices(self._store.state.notices)
 
+    def current_action_surface(self):
+        return build_shell_action_surface(
+            active_panel=self.active_panel,
+            focus_zone=self._focus_zone.value,
+            expanded_mode=self._shell_body_mode is ShellBodyMode.EXPANDED,
+            queue_reorder_mode=self.query_one(QueuePanel).reorder_mode,
+            logs_follow_mode=self.query_one(LogsPanel).follow_mode,
+            logs_selected_run_id=self.query_one(LogsPanel).selected_run_id,
+            research_has_question=self.query_one(ResearchPanel).selected_question_id is not None,
+            config_has_field=self.query_one(ConfigPanel).selected_field_key is not None,
+        )
+
+    def _render_footer(self) -> None:
+        self.query_one(ActionFooter).show_surface(self.current_action_surface())
+
     def _pending_lifecycle_action_name(self) -> str | None:
         if self._lifecycle_worker_name is None:
             return None
@@ -690,36 +712,42 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
     def _handle_queue_selection_changed(self, message: QueuePanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.QUEUE:
             self._render_inspector()
+            self._render_footer()
         message.stop()
 
     @on(RunsPanel.SelectionChanged)
     def _handle_runs_selection_changed(self, message: RunsPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.RUNS:
             self._render_inspector()
+            self._render_footer()
         message.stop()
 
     @on(LogsPanel.SelectionChanged)
     def _handle_logs_selection_changed(self, message: LogsPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.LOGS:
             self._render_inspector()
+            self._render_footer()
         message.stop()
 
     @on(ResearchPanel.SelectionChanged)
     def _handle_research_selection_changed(self, message: ResearchPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.RESEARCH:
             self._render_inspector()
+            self._render_footer()
         message.stop()
 
     @on(ConfigPanel.SelectionChanged)
     def _handle_config_selection_changed(self, message: ConfigPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.CONFIG:
             self._render_inspector()
+            self._render_footer()
         message.stop()
 
     @on(PublishPanel.SelectionChanged)
     def _handle_publish_selection_changed(self, message: PublishPanel.SelectionChanged) -> None:
         if self.active_panel is PanelId.PUBLISH:
             self._render_inspector()
+            self._render_footer()
         message.stop()
 
 

@@ -70,6 +70,8 @@ class ShellWorkflowMixin:
 
     def restore_focus_after_modal(self) -> None: ...
 
+    def current_action_surface(self): ...
+
     def action_open_add_task(self) -> None:
         self._push_modal(AddTaskModal(), self._handle_add_task_request)
 
@@ -80,7 +82,7 @@ class ShellWorkflowMixin:
         )
 
     def action_open_help(self) -> None:
-        self._push_modal(HelpModal(active_panel=self.active_panel))
+        self._push_modal(HelpModal(active_panel=self.active_panel, action_surface=self.current_action_surface()))
 
     def action_start_once(self) -> None:
         self._run_lifecycle_action(

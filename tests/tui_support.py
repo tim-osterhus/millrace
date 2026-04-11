@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -117,6 +118,7 @@ def write_runtime_state_snapshot(
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "process_running": process_running,
+        "process_id": os.getpid() if process_running else None,
         "paused": False,
         "pause_reason": None,
         "pause_run_id": None,

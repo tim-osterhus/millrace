@@ -67,13 +67,11 @@
 
 #shell-footer {
     width: auto;
-    min-width: 36;
+    min-width: 56;
     background: #0e0e10;
     color: #d4d2dc;
-}
-
-#shell-footer > .footer--highlight-key {
-    color: #ef4444;
+    padding: 0 1;
+    height: auto;
 }
 
 .sidebar-frame {

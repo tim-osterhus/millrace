@@ -14,7 +14,7 @@ import pytest
 from textual.app import App, SystemCommand
 from textual.geometry import Region
 from textual.worker import WorkerState
-from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Input, Static, TextArea, Tree
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, Static, TextArea, Tree
 
 import millrace_engine.tui.gateway as gateway_module
 import millrace_engine.tui.gateway_support as gateway_support_module
@@ -97,6 +97,7 @@ from millrace_engine.tui.screens.help_modal import HelpModal
 from millrace_engine.tui.screens.interview_modal import InterviewModal
 from millrace_engine.tui.screens.run_detail_modal import RunDetailModal
 from millrace_engine.tui.screens.shell import ShellScreen
+from millrace_engine.tui.widgets.action_footer import ActionFooter
 from millrace_engine.tui.widgets.config_panel import ConfigPanel
 from millrace_engine.tui.widgets.expanded_stream import (
     ExpandedStreamView,
@@ -348,6 +349,39 @@ def test_tui_registers_minimal_system_commands(tmp_path) -> None:
         await pilot.press("7")
         await pilot.pause()
         assert app.screen.active_panel == PanelId.PUBLISH
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_registers_contextual_system_commands_for_active_panel(monkeypatch, tmp_path) -> None:
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and app.screen._store.state.runtime is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("2")
+        await pilot.pause()
+        queue_titles = {
+            command.title for command in app.get_system_commands(app.screen) if isinstance(command, SystemCommand)
+        }
+        assert "Start Queue Reorder" in queue_titles
+
+        await pilot.press("5")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        logs_titles = {
+            command.title for command in app.get_system_commands(app.screen) if isinstance(command, SystemCommand)
+        }
+        assert "Freeze Or Resume Live Logs" in logs_titles
+        assert "Switch Logs Focus Surface" in logs_titles
 
     _run_app_scenario(config_path, scenario)
 
@@ -993,11 +1027,12 @@ def test_tui_help_modal_surfaces_global_and_panel_shortcuts(monkeypatch, tmp_pat
         assert isinstance(app.screen, HelpModal)
         overview_help = _static_text(app.screen.query_one("#help-modal-body", Static))
         assert "Current panel: Overview" in overview_help
-        assert "s focuses the sidebar, c focuses the workspace, and Tab or Shift+Tab cycles between them." in overview_help
-        assert "d toggles operator and debug display modes for the current shell session." in overview_help
-        assert "e toggles expanded stream mode and Escape exits it." in overview_help
-        assert "Ctrl+P opens the command palette" in overview_help
-        assert "This panel does not add extra keyboard controls." in overview_help
+        assert "Action bar" in overview_help
+        assert "1-7 switches between the main panels." in overview_help
+        assert "Ctrl+P opens the action palette for lifecycle, publish, config, and contextual shell actions." in overview_help
+        assert "Overview Sidebar" in overview_help
+        assert "Enter reopens the highlighted sidebar panel." in overview_help
+        assert "C moves focus from the sidebar into the active workspace." in overview_help
 
         await pilot.press("escape")
         await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
@@ -1005,13 +1040,17 @@ def test_tui_help_modal_surfaces_global_and_panel_shortcuts(monkeypatch, tmp_pat
 
         await pilot.press("5")
         await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
         await pilot.press("question_mark")
         await _wait_for_condition(pilot, lambda: isinstance(app.screen, HelpModal))
         assert isinstance(app.screen, HelpModal)
         logs_help = _static_text(app.screen.query_one("#help-modal-body", Static))
         assert "Current panel: Logs" in logs_help
-        assert "f toggles follow and freeze." in logs_help
-        assert "Ctrl+Left/Right changes the source filter" in logs_help
+        assert "Logs Workspace" in logs_help
+        assert "F freezes the live log tail so you can browse older events." in logs_help
+        assert "Tab switches the logs workspace between events and artifacts." in logs_help
+        assert "S moves focus back to the sidebar." in logs_help
 
     _run_app_scenario(config_path, scenario)
 
@@ -1169,13 +1208,61 @@ def test_tui_shell_frame_mounts_footer_and_inspector(monkeypatch, tmp_path) -> N
         assert isinstance(app.screen, ShellScreen)
         await pilot.pause()
 
-        footer = app.screen.query_one(Footer)
+        footer = app.screen.query_one(ActionFooter)
         inspector = app.screen.query_one("#shell-inspector", ShellInspector)
         assert footer.id == "shell-footer"
+        footer_text = _static_text(footer)
+        assert "Global" in footer_text
+        assert "[Ctrl+P] Palette" in footer_text
+        assert "Overview Sidebar" in footer_text
         inspector_text = _static_text(inspector)
         assert "PANEL   Overview" in inspector_text
         assert "FOCUS   Overview" in inspector_text
         assert "NEXT" in inspector_text
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_footer_updates_with_focus_and_panel_context(monkeypatch, tmp_path) -> None:
+    _, config_path = load_operator_workspace(tmp_path)
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.events is not None
+            and app.screen._store.state.runtime is not None,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        footer = app.screen.query_one(ActionFooter)
+        assert "Overview Sidebar" in _static_text(footer)
+        assert "[C] Workspace" in _static_text(footer)
+
+        await pilot.press("c")
+        await pilot.pause()
+        assert "Overview Workspace" in _static_text(footer)
+        assert "[E] Expanded" in _static_text(footer)
+
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        queue_footer = _static_text(footer)
+        assert "Queue Workspace" in queue_footer
+        assert "[R] Reorder" in queue_footer
+        assert "[O] Run detail" in queue_footer
+
+        await pilot.press("5")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        logs_footer = _static_text(footer)
+        assert "Logs Workspace" in logs_footer
+        assert "[F] Freeze" in logs_footer
+        assert "[Tab] Events/artifacts" in logs_footer
+        assert "[S] Sidebar" in logs_footer
 
     _run_app_scenario(config_path, scenario)
 

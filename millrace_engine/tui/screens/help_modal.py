@@ -9,46 +9,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from ..action_discovery import ShellActionSurface
 from ..models import PANEL_BY_ID, PanelId
-
-_GLOBAL_LINES = (
-    "1-7 open the main panels.",
-    "s focuses the sidebar, c focuses the workspace, and Tab or Shift+Tab cycles between them.",
-    "d toggles operator and debug display modes for the current shell session.",
-    "e toggles expanded stream mode and Escape exits it.",
-    "t opens Add Task and i opens Add Idea.",
-    "Ctrl+P opens the command palette for panel, lifecycle, config, and publish actions.",
-    "? opens or closes this help.",
-)
-
-_PANEL_LINES: dict[PanelId, tuple[str, ...]] = {
-    PanelId.QUEUE: (
-        "Up/Down/Home/End move through the visible backlog.",
-        "Enter starts or applies a queue reorder draft for the selected task.",
-        "r starts a reorder draft, [ and ] move the selected task, and Escape cancels the draft.",
-        "o opens run detail for the current active run context.",
-    ),
-    PanelId.RUNS: (
-        "Up/Down/Home/End move through recent runs.",
-        "Enter opens detail for the selected run.",
-    ),
-    PanelId.LOGS: (
-        "Up/Down/Home/End move through the filtered event list.",
-        "Enter opens run detail when the selected event includes a run id.",
-        "f toggles follow and freeze.",
-        "Ctrl+Left/Right changes the source filter and Ctrl+Up/Down changes the event-type filter.",
-    ),
-    PanelId.CONFIG: (
-        "Up/Down/Home/End move through editable config fields.",
-        "e or Enter opens the guided edit modal for the selected field.",
-        "r reloads config through the supported control path.",
-    ),
-    PanelId.PUBLISH: (
-        "r refreshes publish preflight.",
-        "g syncs the staging repo selection.",
-        "n starts the local-only commit flow and p starts the higher-friction commit-and-push flow.",
-    ),
-}
 
 
 class HelpModal(ModalScreen[None]):
@@ -59,9 +21,10 @@ class HelpModal(ModalScreen[None]):
         Binding("question_mark", "close", "Close", show=False),
     )
 
-    def __init__(self, *, active_panel: PanelId) -> None:
+    def __init__(self, *, active_panel: PanelId, action_surface: ShellActionSurface) -> None:
         super().__init__()
         self._active_panel = active_panel
+        self._action_surface = action_surface
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal-dialog"):
@@ -95,21 +58,17 @@ class HelpModal(ModalScreen[None]):
             "- Notices are short action outcomes and failure signals.",
             "- Open debug mode or detail modals when you need deeper context.",
             "",
-            "Global shortcuts",
-            *[f"- {line}" for line in _GLOBAL_LINES],
+            "Action bar",
+            *[f"- {action.help_text}" for action in self._action_surface.global_actions],
             "",
-            f"{panel.label} shortcuts",
+            self._action_surface.context_title.title(),
         ]
-        panel_lines = _PANEL_LINES.get(self._active_panel)
-        if panel_lines is None:
-            lines.append("- This panel does not add extra keyboard controls.")
-        else:
-            lines.extend(f"- {line}" for line in panel_lines)
+        lines.extend(f"- {action.help_text}" for action in self._action_surface.context_actions)
         lines.extend(
             [
                 "",
                 "Operator note",
-                "- The command palette stays available even when a panel has no local shortcuts.",
+                "- The footer and action palette are intentionally limited to the highest-value actions for the current context.",
             ]
         )
         return "\n".join(lines)
