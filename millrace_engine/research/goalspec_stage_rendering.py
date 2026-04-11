@@ -17,6 +17,7 @@ from .goalspec_helpers import (
     _isoformat_z,
 )
 from .goalspec_product_planning import derive_goal_product_plan, minimum_phase_package_count
+from .specs import GoalSpecReviewFinding
 
 
 def _dedupe_ordered(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -728,10 +729,10 @@ def render_spec_review_questions(
     title: str,
     queue_spec_path: str,
     stable_spec_paths: tuple[str, ...],
-    findings: tuple[str, ...],
+    findings: tuple[GoalSpecReviewFinding, ...],
 ) -> str:
     stable_lines = [f"- `{path}`" for path in stable_spec_paths] or ["- No stable spec copies were discovered."]
-    finding_lines = [f"- {finding}" for finding in findings] or [
+    finding_lines = _render_review_finding_lines(findings) or [
         "- No blocking findings; the package is decomposition-ready as written."
     ]
     return "\n".join(
@@ -766,16 +767,21 @@ def render_spec_review_decision(
     reviewed_path: str,
     stable_registry_path: str,
     lineage_path: str,
-    findings: tuple[str, ...],
+    findings: tuple[GoalSpecReviewFinding, ...],
 ) -> str:
-    finding_lines = [f"- {finding}" for finding in findings] or [
+    finding_lines = _render_review_finding_lines(findings) or [
         "- No blocking findings were recorded during decomposition review."
     ]
-    decision_line = (
-        "- Approved for downstream decomposition without material spec edits in this run."
-        if review_status != "blocked"
-        else "- Blocked before downstream decomposition until the listed review findings are resolved."
-    )
+    if review_status == "blocked":
+        decision_line = "- Blocked before downstream decomposition until the blocker-grade review findings are resolved."
+    elif findings:
+        decision_line = (
+            "- Approved for downstream decomposition without material spec edits in this run, "
+            "but the recorded review findings still carry deterministic remediation guidance."
+        )
+    else:
+        decision_line = "- Approved for downstream decomposition without material spec edits in this run."
+    remediation_lines = _render_review_remediation_lines(findings)
     return "\n".join(
         [
             "# Spec Review Decision",
@@ -796,5 +802,38 @@ def render_spec_review_decision(
             "## Findings",
             *finding_lines,
             "",
+            "## Remediation Routes",
+            *remediation_lines,
+            "",
         ]
     )
+
+
+def _render_review_finding_lines(findings: tuple[GoalSpecReviewFinding, ...]) -> list[str]:
+    lines: list[str] = []
+    for finding in findings:
+        suffix = (
+            ""
+            if finding.remediation_intent == "none"
+            else f" (remediation: `{finding.remediation_intent}`)"
+        )
+        lines.append(f"- [{finding.severity}] {finding.summary}{suffix}")
+    return lines
+
+
+def _render_review_remediation_lines(findings: tuple[GoalSpecReviewFinding, ...]) -> list[str]:
+    guidance = {
+        "true_invention": "Remove the invented specialization detail or restate it as an unsupported assumption that stays outside the stable plan.",
+        "missing_grounding": "Add trustworthy grounding evidence for the specialization or remove the resolved specialization detail from the stable plan.",
+        "missing_workspace_confirmation": "Keep the source-requested specialization explicit, but do not promote it into resolved planning text until workspace evidence confirms it.",
+        "unsupported_overlay_promotion": "Keep the grounded specialization visible only as an unsupported constraint; do not promote it into a resolved overlay or bootstrap step yet.",
+    }
+    ordered_intents: list[str] = []
+    for finding in findings:
+        intent = finding.remediation_intent
+        if intent == "none" or intent in ordered_intents:
+            continue
+        ordered_intents.append(intent)
+    if not ordered_intents:
+        return ["- No explicit remediation routing was required for this review pass."]
+    return [f"- `{intent}`: {guidance[intent]}" for intent in ordered_intents]

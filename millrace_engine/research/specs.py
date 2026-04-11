@@ -31,8 +31,16 @@ GoalSpecDecompositionProfile = Literal["", "trivial", "simple", "moderate", "inv
 FrozenTier = Literal["", "golden", "phase"]
 SpecReviewStatus = Literal["pending", "approved", "blocked", "no_material_delta"]
 SpecReviewSeverity = Literal["blocker", "major", "minor", "note"]
+SpecReviewRemediationIntent = Literal[
+    "none",
+    "true_invention",
+    "missing_grounding",
+    "missing_workspace_confirmation",
+    "unsupported_overlay_promotion",
+]
 GoalSpecReviewStatus = SpecReviewStatus
 GoalSpecReviewSeverity = SpecReviewSeverity
+GoalSpecReviewRemediationIntent = SpecReviewRemediationIntent
 
 
 def _utcnow() -> datetime:
@@ -225,6 +233,7 @@ class GoalSpecReviewFinding(ContractModel):
     finding_id: str
     severity: SpecReviewSeverity
     summary: str
+    remediation_intent: SpecReviewRemediationIntent = "none"
     artifact_path: str = ""
 
     @field_validator("finding_id", "summary")

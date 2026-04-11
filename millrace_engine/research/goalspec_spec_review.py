@@ -160,6 +160,24 @@ def _line_is_safe_unresolved_reference(line: str, *, token: str) -> bool:
     return token.casefold() in lowered and any(hint in lowered for hint in _SAFE_UNRESOLVED_LINE_HINTS)
 
 
+def _specialization_finding(
+    *,
+    finding_id: str,
+    severity: str,
+    summary: str,
+    remediation_intent: str = "none",
+    queue_spec_path: Path,
+    paths: RuntimePaths,
+) -> GoalSpecReviewFinding:
+    return GoalSpecReviewFinding(
+        finding_id=finding_id,
+        severity=severity,
+        summary=summary,
+        remediation_intent=remediation_intent,
+        artifact_path=_relative_path(queue_spec_path, relative_to=paths.root),
+    )
+
+
 def _contractor_specificity_findings(
     *,
     contractor_profile: object | None,
@@ -174,11 +192,31 @@ def _contractor_specificity_findings(
 
     findings: list[GoalSpecReviewFinding] = []
     unresolved_specializations = set(contractor_profile.unresolved_specializations)
+    source_requested_tokens = {
+        f"{item.key}={item.value}"
+        for item in contractor_profile.specialization_provenance
+        if item.provenance == "source_requested"
+    }
+    workspace_grounded_tokens = {
+        f"{item.key}={item.value}"
+        for item in contractor_profile.specialization_provenance
+        if item.provenance == "workspace_grounded"
+    }
     specialization_keys = {
         specialization.partition("=")[0].strip().casefold()
         for specialization in contractor_profile.unresolved_specializations
         if "=" in specialization
     }
+    specialization_keys.update(
+        key.strip().casefold()
+        for key in contractor_profile.classification.specializations
+        if key.strip()
+    )
+    if (
+        contractor_profile.shape_class == "platform_extension"
+        and contractor_profile.classification.host_platform == "minecraft"
+    ):
+        specialization_keys.add("loader")
     explicit_specializations = {
         match.group(1).strip()
         for line in artifact_lines
@@ -189,14 +227,16 @@ def _contractor_specificity_findings(
         if specialization in unresolved_specializations:
             continue
         findings.append(
-            GoalSpecReviewFinding(
+            _specialization_finding(
                 finding_id="REV-CONTRACTOR-INVENTED-SPECIALIZATION",
                 severity="blocker",
                 summary=(
                     "Stable planning text invents unsupported specialization "
                     f"`{specialization}` beyond the contractor profile."
                 ),
-                artifact_path=_relative_path(queue_spec_path, relative_to=paths.root),
+                remediation_intent="true_invention",
+                queue_spec_path=queue_spec_path,
+                paths=paths,
             )
         )
 
@@ -210,20 +250,55 @@ def _contractor_specificity_findings(
             if specialization.startswith("loader=")
         }
         for loader, hints in _MINECRAFT_LOADER_HINTS.items():
+            token = f"loader={loader}"
+            is_source_requested = token in source_requested_tokens
+            is_workspace_grounded = token in workspace_grounded_tokens
             for line in artifact_lines:
-                if not _line_mentions_specialization(line, token=f"loader={loader}", hints=hints):
+                if not _line_mentions_specialization(line, token=token, hints=hints):
                     continue
-                if loader in unresolved_loaders and _line_is_safe_unresolved_reference(line, token=f"loader={loader}"):
+                if loader in unresolved_loaders and _line_is_safe_unresolved_reference(line, token=token):
                     continue
+                if not is_source_requested:
+                    findings.append(
+                        _specialization_finding(
+                            finding_id="REV-CONTRACTOR-MISSING-GROUNDING",
+                            severity="blocker",
+                            summary=(
+                                "Stable planning text resolves loader-specific detail "
+                                f"`{token}` without any typed grounding evidence: {line}"
+                            ),
+                            remediation_intent="missing_grounding",
+                            queue_spec_path=queue_spec_path,
+                            paths=paths,
+                        )
+                    )
+                    break
+                if not is_workspace_grounded:
+                    findings.append(
+                        _specialization_finding(
+                            finding_id="REV-CONTRACTOR-MISSING-WORKSPACE-CONFIRMATION",
+                            severity="blocker",
+                            summary=(
+                                "Stable planning text promotes source-requested loader-specific detail "
+                                f"`{token}` without workspace confirmation: {line}"
+                            ),
+                            remediation_intent="missing_workspace_confirmation",
+                            queue_spec_path=queue_spec_path,
+                            paths=paths,
+                        )
+                    )
+                    break
                 findings.append(
-                    GoalSpecReviewFinding(
-                        finding_id="REV-CONTRACTOR-UNSUPPORTED-SPECIALIZATION",
+                    _specialization_finding(
+                        finding_id="REV-CONTRACTOR-UNSUPPORTED-OVERLAY-PROMOTION",
                         severity="blocker",
                         summary=(
-                            "Stable planning text resolves loader-specific specialization "
-                            f"`loader={loader}` beyond contractor grounding: {line}"
+                            "Stable planning text promotes grounded loader-specific detail "
+                            f"`{token}` into a resolved overlay before support is confirmed: {line}"
                         ),
-                        artifact_path=_relative_path(queue_spec_path, relative_to=paths.root),
+                        remediation_intent="unsupported_overlay_promotion",
+                        queue_spec_path=queue_spec_path,
+                        paths=paths,
                     )
                 )
                 break
@@ -421,8 +496,8 @@ def execute_spec_review(
         queue_spec_path=queue_spec_path,
         queue_spec_text=queue_spec_text,
     )
-    review_status = "blocked" if findings else "no_material_delta"
-    finding_summaries = tuple(finding.summary for finding in findings)
+    blocking_findings = tuple(finding for finding in findings if finding.severity == "blocker")
+    review_status = "blocked" if blocking_findings else "no_material_delta"
 
     if (
         record_path.exists()
@@ -440,7 +515,7 @@ def execute_spec_review(
             title=source.title,
             queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),
             stable_spec_paths=relative_stable_spec_paths,
-            findings=finding_summaries,
+            findings=findings,
         )
         expected_decision = render_spec_review_decision(
             reviewed_at=review_timestamp,
@@ -456,9 +531,9 @@ def execute_spec_review(
             ),
             stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
             lineage_path=_relative_path(lineage_path, relative_to=paths.root),
-            findings=finding_summaries,
+            findings=findings,
         )
-        if findings:
+        if blocking_findings:
             if (
                 existing_review_record
                 == GoalSpecReviewRecord(
@@ -500,7 +575,7 @@ def execute_spec_review(
                     decision_path=_relative_path(decision_path, relative_to=paths.root),
                     reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
                     reviewed_at=review_timestamp,
-                    findings=(),
+                    findings=findings,
                 )
                 and GoalSpecLineageRecord.model_validate(_load_json_object(lineage_path)) == lineage_record
                 and current_family_state == expected_family_state
@@ -540,7 +615,7 @@ def execute_spec_review(
             title=source.title,
             queue_spec_path=_relative_path(queue_spec_path, relative_to=paths.root),
             stable_spec_paths=relative_stable_spec_paths,
-            findings=finding_summaries,
+            findings=findings,
         ),
     )
     write_text_atomic(
@@ -554,16 +629,16 @@ def execute_spec_review(
             review_status=review_status,
             reviewed_path=(
                 _relative_path(reviewed_path, relative_to=paths.root)
-                if not findings
+                if review_status != "blocked"
                 else _relative_path(queue_spec_path, relative_to=paths.root)
             ),
             stable_registry_path=_relative_path(paths.specs_index_file, relative_to=paths.root),
             lineage_path=_relative_path(lineage_path, relative_to=paths.root),
-            findings=finding_summaries,
+            findings=findings,
         ),
     )
 
-    if findings:
+    if review_status == "blocked":
         _write_json_model(
             record_path,
             GoalSpecReviewRecord(
@@ -614,7 +689,7 @@ def execute_spec_review(
             decision_path=_relative_path(decision_path, relative_to=paths.root),
             reviewed_path=_relative_path(reviewed_path, relative_to=paths.root),
             reviewed_at=review_timestamp,
-            findings=(),
+            findings=findings,
         ),
     )
     refresh_stable_spec_registry(
