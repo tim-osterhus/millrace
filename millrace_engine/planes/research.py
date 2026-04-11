@@ -1043,6 +1043,15 @@ class ResearchPlane:
                 config=self.config,
                 stage_plan=research_stage_for_node(dispatch.research_plan, checkpoint.node_id),
             )
+            if result.escalated_to_goal_gap_remediation:
+                self._advance_local_goalspec_checkpoint(
+                    checkpoint,
+                    next_stage=research_stage_for_node(dispatch.research_plan, "objective_profile_sync"),
+                    queue_ownership=result.queue_ownership,
+                    observed_at=stage_started_at,
+                )
+                self._release_execution_lock(observed_at=_utcnow())
+                return
         elif checkpoint.node_id == _GOALSPEC_MECHANIC_NODE_ID:
             self._set_research_status(ResearchStatus.GOALSPEC_RUNNING)
             result = execute_spec_review_remediation(

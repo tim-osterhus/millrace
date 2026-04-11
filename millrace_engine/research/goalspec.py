@@ -1096,6 +1096,8 @@ class SpecReviewExecutionResult(ContractModel):
     lineage_path: str
     stable_registry_path: str
     family_state_path: str
+    goal_gap_remediation_selection_path: str = ""
+    escalated_to_goal_gap_remediation: bool = False
     queue_ownership: ResearchQueueOwnership
 
 
@@ -1110,11 +1112,21 @@ class SpecReviewRemediationExecutionResult(ContractModel):
 class GoalSpecReviewBlockedError(GoalSpecExecutionError):
     """Typed blocked-review failure carrying its remediation bundle path."""
 
-    def __init__(self, message: str, *, remediation_bundle_path: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        remediation_bundle_path: str,
+        failure_signature: str,
+    ) -> None:
         super().__init__(message)
         self.remediation_bundle_path = _normalize_required_text(
             remediation_bundle_path,
             field_name="remediation_bundle_path",
+        )
+        self.failure_signature = _normalize_required_text(
+            failure_signature,
+            field_name="failure_signature",
         )
 
 

@@ -289,7 +289,13 @@ def next_retry_state(
     failed_at: datetime,
 ) -> ResearchStageRetryState:
     previous = self.state.retry_state
-    signature = f"{type(error).__name__}:{error}"
+    typed_signature = getattr(error, "failure_signature", None)
+    normalized_typed_signature = str(typed_signature).strip() if typed_signature is not None else ""
+    signature = (
+        f"{type(error).__name__}:{normalized_typed_signature}"
+        if normalized_typed_signature
+        else f"{type(error).__name__}:{error}"
+    )
     same_failure = previous is not None and previous.last_failure_signature == signature
     max_attempts = self.config.research.stage_retry_max + 1
     attempt = (previous.attempt + 1) if same_failure and previous is not None else 1

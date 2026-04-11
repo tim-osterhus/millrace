@@ -296,10 +296,14 @@ class GoalSpecReviewRemediationBundle(ContractModel):
     stable_registry_path: str
     allowed_edit_paths: tuple[str, ...] = ()
     findings: tuple[GoalSpecReviewFinding, ...] = ()
+    failure_signature: str = ""
     mechanic_attempt_count: int = Field(default=0, ge=0)
     last_mechanic_run_id: str = ""
     last_mechanic_status: GoalSpecReviewRemediationStatus = "pending"
     last_mechanic_report_path: str = ""
+    exhausted_failure_signature: str = ""
+    goal_gap_remediation_selection_path: str = ""
+    goal_gap_remediation_idea_path: str = ""
 
     @field_validator(
         "run_id",
@@ -313,13 +317,22 @@ class GoalSpecReviewRemediationBundle(ContractModel):
         "lineage_path",
         "family_state_path",
         "stable_registry_path",
+        "failure_signature",
     )
     @classmethod
     def validate_required_text(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "value")
         return _normalize_required_text(value, field_name=field_name)
 
-    @field_validator("reviewed_path", "last_mechanic_run_id", "last_mechanic_report_path", mode="before")
+    @field_validator(
+        "reviewed_path",
+        "last_mechanic_run_id",
+        "last_mechanic_report_path",
+        "exhausted_failure_signature",
+        "goal_gap_remediation_selection_path",
+        "goal_gap_remediation_idea_path",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_paths(cls, value: str | Path | None) -> str:
         return _normalize_path_token(value)
@@ -338,6 +351,62 @@ class GoalSpecReviewRemediationBundle(ContractModel):
     @classmethod
     def normalize_emitted_at(cls, value: datetime | str) -> datetime:
         return _normalize_datetime(value)
+
+
+class GoalSpecReviewGoalGapRemediationRecord(ContractModel):
+    """Durable escalation record for review-driven goal-gap remediation staging."""
+
+    run_id: str
+    emitted_at: datetime
+    spec_id: str
+    goal_id: str
+    title: str
+    family_phase: Literal["goal_gap_remediation"] = "goal_gap_remediation"
+    remediation_bundle_path: str
+    canonical_goal_path: str
+    selection_markdown_path: str
+    output_idea_path: str
+    family_state_path: str
+    family_decomposition_profile: GoalSpecDecompositionProfile = "simple"
+    applied_family_max_specs: int = Field(default=0, ge=0)
+    failure_signature: str
+    triggering_finding_ids: tuple[str, ...] = ()
+    remediation_id: str
+    remediation_title: str
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_record_emitted_at(cls, value: datetime | str) -> datetime:
+        return _normalize_datetime(value)
+
+    @field_validator(
+        "run_id",
+        "spec_id",
+        "goal_id",
+        "title",
+        "remediation_bundle_path",
+        "canonical_goal_path",
+        "selection_markdown_path",
+        "output_idea_path",
+        "family_state_path",
+        "failure_signature",
+        "remediation_id",
+        "remediation_title",
+    )
+    @classmethod
+    def validate_record_text(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("triggering_finding_ids", mode="before")
+    @classmethod
+    def normalize_triggering_finding_ids(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if value in (None, ""):
+            return ()
+        return _normalize_token_sequence([str(item) for item in value])
 
 class GoalSpecFamilyGovernorState(ContractModel):
     """Family-governor snapshot needed by initial-family plan freezing."""
@@ -849,6 +918,7 @@ __all__ = [
     "GoalSpecFamilyState",
     "GoalSpecLineageRecord",
     "GoalSpecReviewFinding",
+    "GoalSpecReviewGoalGapRemediationRecord",
     "GoalSpecReviewRemediationBundle",
     "GoalSpecReviewRemediationStatus",
     "GoalSpecReviewRecord",
