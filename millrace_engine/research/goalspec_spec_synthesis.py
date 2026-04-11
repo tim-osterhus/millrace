@@ -49,13 +49,23 @@ from .governance import (
     evaluate_spec_synthesis_idempotency,
     resolve_family_governor_state,
 )
-from .specs import GoalSpecFamilySpecState, GoalSpecFamilyState, load_goal_spec_family_state
+from .specs import GoalSpecDecompositionProfile, GoalSpecFamilySpecState, GoalSpecFamilyState, load_goal_spec_family_state
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
+
+_PROFILE_ORDER: tuple[GoalSpecDecompositionProfile, ...] = (
+    "trivial",
+    "simple",
+    "moderate",
+    "involved",
+    "complex",
+    "massive",
+)
 
 
 class PlannedFamilySpec(NamedTuple):
     spec_id: str
     title: str
+    decomposition_profile: GoalSpecDecompositionProfile
     depends_on_specs: tuple[str, ...]
 
 
@@ -67,6 +77,7 @@ def _select_family_spec(
     default_spec = PlannedFamilySpec(
         spec_id=_spec_id_for_goal(source.idea_id),
         title=source.title,
+        decomposition_profile=source.decomposition_profile,
         depends_on_specs=(),
     )
     if (
@@ -84,9 +95,22 @@ def _select_family_spec(
         return PlannedFamilySpec(
             spec_id=spec_id,
             title=plan_entry.title,
+            decomposition_profile=plan_entry.decomposition_profile,
             depends_on_specs=plan_entry.depends_on_specs,
         )
     return default_spec
+
+
+def _derive_planned_spec_profile(
+    source_profile: GoalSpecDecompositionProfile,
+    *,
+    planned_spec_index: int,
+) -> GoalSpecDecompositionProfile:
+    if source_profile not in _PROFILE_ORDER:
+        return "simple"
+    source_rank = _PROFILE_ORDER.index(source_profile)
+    derived_rank = max(0, source_rank - (planned_spec_index + 1))
+    return _PROFILE_ORDER[derived_rank]
 
 
 def _planned_family_breadth_budget(
@@ -129,6 +153,7 @@ def _plan_initial_family_specs(
             PlannedFamilySpec(
                 spec_id=planned_spec_id,
                 title=current_family_state.initial_family_plan.specs[planned_spec_id].title,
+                decomposition_profile=current_family_state.initial_family_plan.specs[planned_spec_id].decomposition_profile,
                 depends_on_specs=current_family_state.initial_family_plan.specs[planned_spec_id].depends_on_specs,
             )
             for planned_spec_id in current_family_state.initial_family_plan.spec_order
@@ -154,6 +179,10 @@ def _plan_initial_family_specs(
             PlannedFamilySpec(
                 spec_id=planned_spec_id,
                 title=f"{source.title} Slice {index:02d}",
+                decomposition_profile=_derive_planned_spec_profile(
+                    source.decomposition_profile,
+                    planned_spec_index=index - 2,
+                ),
                 depends_on_specs=(previous_spec_id,),
             )
         )
@@ -187,7 +216,12 @@ def execute_spec_synthesis(
     contractor_profile = load_objective_state_contractor_profile(paths, objective_state)
     selected_spec = _select_family_spec(source=source, current_family_state=current_family_state)
     spec_id = selected_spec.spec_id
-    source = source.model_copy(update={"title": selected_spec.title})
+    source = source.model_copy(
+        update={
+            "title": selected_spec.title,
+            "decomposition_profile": selected_spec.decomposition_profile,
+        }
+    )
     slug = _slugify(source.title)
     queue_spec_path = paths.ideas_specs_dir / f"{spec_id}__{slug}.md"
     golden_spec_path = paths.specs_stable_golden_dir / f"{spec_id}__{slug}.md"
@@ -217,7 +251,7 @@ def execute_spec_synthesis(
         GoalSpecFamilySpecState(
             status="planned",
             title=spec.title,
-            decomposition_profile=source.decomposition_profile,
+            decomposition_profile=spec.decomposition_profile,
             depends_on_specs=spec.depends_on_specs,
         )
         for spec in planned_family_specs

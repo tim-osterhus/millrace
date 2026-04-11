@@ -3208,9 +3208,13 @@ def test_execute_spec_synthesis_declares_bounded_later_specs_for_broad_goal(
     assert family_state["active_spec_id"] == "SPEC-BROAD-201"
     assert family_state["spec_order"] == ["SPEC-BROAD-201", "SPEC-BROAD-201-02"]
     assert family_state["specs"]["SPEC-BROAD-201"]["status"] == "emitted"
+    assert family_state["specs"]["SPEC-BROAD-201"]["decomposition_profile"] == "simple"
     assert family_state["specs"]["SPEC-BROAD-201-02"]["status"] == "planned"
+    assert family_state["specs"]["SPEC-BROAD-201-02"]["decomposition_profile"] == "trivial"
     assert family_state["specs"]["SPEC-BROAD-201-02"]["depends_on_specs"] == ["SPEC-BROAD-201"]
     assert family_state["initial_family_plan"]["spec_order"] == ["SPEC-BROAD-201", "SPEC-BROAD-201-02"]
+    assert family_state["initial_family_plan"]["specs"]["SPEC-BROAD-201"]["decomposition_profile"] == "simple"
+    assert family_state["initial_family_plan"]["specs"]["SPEC-BROAD-201-02"]["decomposition_profile"] == "trivial"
     assert phase_text.count("Planned later initial-family specs:") == 1
     assert "- None." not in phase_text
     assert "`SPEC-BROAD-201-02`" in phase_text
@@ -3316,6 +3320,7 @@ def test_execute_spec_synthesis_realizes_full_bounded_initial_family_breadth(
     assert family_state["initial_family_plan"]["spec_order"] == family_state["spec_order"]
     assert family_state["initial_family_plan"]["applied_family_max_specs"] == 4
     assert family_state["specs"]["SPEC-BROAD-401"]["status"] == "emitted"
+    assert family_state["specs"]["SPEC-BROAD-401"]["decomposition_profile"] == "moderate"
     for spec_id, expected_dep in (
         ("SPEC-BROAD-401-02", ["SPEC-BROAD-401"]),
         ("SPEC-BROAD-401-03", ["SPEC-BROAD-401-02"]),
@@ -3325,6 +3330,192 @@ def test_execute_spec_synthesis_realizes_full_bounded_initial_family_breadth(
         assert family_state["specs"][spec_id]["depends_on_specs"] == expected_dep
         assert f"`{spec_id}`" in phase_text
         assert f"`{spec_id}`" in decision_text
+    assert family_state["specs"]["SPEC-BROAD-401-02"]["decomposition_profile"] == "simple"
+    assert family_state["specs"]["SPEC-BROAD-401-03"]["decomposition_profile"] == "trivial"
+    assert family_state["specs"]["SPEC-BROAD-401-04"]["decomposition_profile"] == "trivial"
+    assert family_state["initial_family_plan"]["specs"]["SPEC-BROAD-401"]["decomposition_profile"] == "moderate"
+    assert family_state["initial_family_plan"]["specs"]["SPEC-BROAD-401-02"]["decomposition_profile"] == "simple"
+    assert family_state["initial_family_plan"]["specs"]["SPEC-BROAD-401-03"]["decomposition_profile"] == "trivial"
+    assert family_state["initial_family_plan"]["specs"]["SPEC-BROAD-401-04"]["decomposition_profile"] == "trivial"
+
+
+def test_execute_spec_synthesis_restores_frozen_sibling_profile_and_taskmaster_consumes_it(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    raw_goal_text = (
+        "---\n"
+        "idea_id: IDEA-BROAD-402\n"
+        "title: Team Workspace Program Follow-on\n"
+        "decomposition_profile: moderate\n"
+        "---\n"
+        "\n"
+        "# Team Workspace Program Follow-on\n\n"
+        "Build a broader team workspace program and preserve per-spec family sizing.\n\n"
+        "## Capability Domains\n"
+        "- Workspace Intake\n"
+        "- Shared Drafts\n"
+        "- Review Queue\n"
+        "- Activity Feed\n"
+        "- Template Library\n"
+        "- Insights Panel\n\n"
+        "## Progression Lines\n"
+        "- Progression from intake to drafting to review handoff.\n"
+        "- Progression from shared planning to program-level insight delivery.\n"
+    )
+    initial_emitted_at = _dt("2026-04-07T12:15:00Z")
+    initial_run_id = "goalspec-broad-family-402"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-402__team-workspace-program-follow-on.md"
+
+    _write_queue_file(raw_goal_path, raw_goal_text)
+    execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=initial_run_id,
+            emitted_at=initial_emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=initial_run_id,
+        emitted_at=initial_emitted_at,
+    )
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=initial_run_id,
+            emitted_at=initial_emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=initial_run_id,
+        emitted_at=initial_emitted_at,
+    )
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=initial_run_id,
+            emitted_at=initial_emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=initial_run_id,
+        emitted_at=initial_emitted_at,
+    ).draft_state
+
+    execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=initial_run_id,
+            emitted_at=initial_emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=initial_run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=initial_emitted_at,
+    )
+
+    family_state = GoalSpecFamilyState.model_validate(
+        json.loads(paths.goal_spec_family_state_file.read_text(encoding="utf-8"))
+    )
+    assert family_state.specs["SPEC-BROAD-402"].decomposition_profile == "moderate"
+    assert family_state.specs["SPEC-BROAD-402-02"].decomposition_profile == "simple"
+
+    promoted_specs = dict(family_state.specs)
+    promoted_specs["SPEC-BROAD-402"] = promoted_specs["SPEC-BROAD-402"].model_copy(update={"status": "decomposed"})
+    promoted_state = family_state.model_copy(
+        update={
+            "active_spec_id": "SPEC-BROAD-402",
+            "specs": promoted_specs,
+        }
+    )
+    paths.goal_spec_family_state_file.write_text(
+        promoted_state.model_dump_json(indent=2, exclude_none=True) + "\n",
+        encoding="utf-8",
+    )
+
+    follow_on_emitted_at = _dt("2026-04-07T12:25:00Z")
+    follow_on_run_id = "goalspec-broad-family-402-follow-on"
+    synthesis = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=follow_on_run_id,
+            emitted_at=follow_on_emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=follow_on_run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=follow_on_emitted_at,
+    )
+
+    queue_spec_path = workspace / synthesis.queue_spec_path
+    queue_spec_text = queue_spec_path.read_text(encoding="utf-8")
+    family_state_payload = json.loads((workspace / synthesis.family_state_path).read_text(encoding="utf-8"))
+
+    assert synthesis.queue_spec_path.startswith("agents/ideas/specs/SPEC-BROAD-402-02__")
+    assert "decomposition_profile: simple" in queue_spec_text
+    assert family_state_payload["active_spec_id"] == "SPEC-BROAD-402-02"
+    assert family_state_payload["specs"]["SPEC-BROAD-402-02"]["status"] == "emitted"
+    assert family_state_payload["specs"]["SPEC-BROAD-402-02"]["decomposition_profile"] == "simple"
+    assert family_state_payload["initial_family_plan"]["specs"]["SPEC-BROAD-402-02"]["decomposition_profile"] == (
+        "simple"
+    )
+
+    review = execute_spec_review(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-broad-family-402-review",
+            emitted_at=follow_on_emitted_at,
+            queue_path=queue_spec_path.parent,
+            item_path=queue_spec_path,
+            status=ResearchStatus.SPEC_REVIEW_RUNNING,
+            node_id="spec_review",
+            stage_kind_id="research.spec-review",
+        ),
+        run_id="goalspec-broad-family-402-review",
+        emitted_at=follow_on_emitted_at,
+    )
+    reviewed_path = workspace / review.reviewed_path
+
+    discovery = discover_research_queues(paths)
+    selection = resolve_research_dispatch_selection(config.research.mode, discovery)
+    assert selection is not None
+    dispatch = compile_research_dispatch(
+        paths,
+        selection,
+        run_id="goalspec-broad-family-402-taskmaster",
+        queue_discovery=discovery,
+        resolve_assets=False,
+    )
+
+    taskmaster = execute_taskmaster(
+        paths,
+        _goal_queue_checkpoint(
+            run_id="goalspec-broad-family-402-taskmaster",
+            emitted_at=_dt("2026-04-07T12:30:00Z"),
+            queue_path=reviewed_path.parent,
+            item_path=reviewed_path,
+            status=ResearchStatus.TASKMASTER_RUNNING,
+            node_id="taskmaster",
+            stage_kind_id="research.taskmaster",
+        ),
+        dispatch=dispatch,
+        run_id="goalspec-broad-family-402-taskmaster",
+        emitted_at=_dt("2026-04-07T12:30:00Z"),
+    )
+    taskmaster_record = json.loads((workspace / taskmaster.record_path).read_text(encoding="utf-8"))
+
+    assert taskmaster_record["spec_id"] == "SPEC-BROAD-402-02"
+    assert taskmaster_record["profile_selection"]["expected_min_cards"] == 3
+    assert taskmaster_record["profile_selection"]["expected_max_cards"] == 5
 
 
 def test_execute_spec_synthesis_respects_single_spec_broad_cap_for_broad_goal(tmp_path: Path) -> None:
