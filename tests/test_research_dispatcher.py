@@ -3219,6 +3219,114 @@ def test_execute_spec_synthesis_declares_bounded_later_specs_for_broad_goal(
     assert "`SPEC-BROAD-201-02`" in decision_text
 
 
+def test_execute_spec_synthesis_realizes_full_bounded_initial_family_breadth(
+    tmp_path: Path,
+) -> None:
+    workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    raw_goal_text = (
+        "---\n"
+        "idea_id: IDEA-BROAD-401\n"
+        "title: Team Workspace Program\n"
+        "decomposition_profile: moderate\n"
+        "---\n"
+        "\n"
+        "# Team Workspace Program\n\n"
+        "Build a broader team workspace program that should realize the full bounded initial family.\n\n"
+        "## Capability Domains\n"
+        "- Workspace Intake\n"
+        "- Shared Drafts\n"
+        "- Review Queue\n"
+        "- Activity Feed\n"
+        "- Template Library\n"
+        "- Insights Panel\n\n"
+        "## Progression Lines\n"
+        "- Progression from intake to drafting to review handoff.\n"
+        "- Progression from shared planning to program-level insight delivery.\n"
+    )
+    emitted_at = _dt("2026-04-07T12:10:00Z")
+    run_id = "goalspec-broad-family-401"
+    staged_path = workspace / "agents" / "ideas" / "staging" / "IDEA-BROAD-401__team-workspace-program.md"
+
+    _write_queue_file(raw_goal_path, raw_goal_text)
+    execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    family_policy = json.loads(paths.objective_family_policy_file.read_text(encoding="utf-8"))
+    completion_manifest = execute_completion_manifest_draft(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    ).draft_state
+
+    result = execute_spec_synthesis(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=staged_path,
+            status=ResearchStatus.SPEC_SYNTHESIS_RUNNING,
+            node_id="spec_synthesis",
+            stage_kind_id="research.spec-synthesis",
+        ),
+        run_id=run_id,
+        completion_manifest=completion_manifest,
+        emitted_at=emitted_at,
+    )
+
+    family_state = json.loads((workspace / result.family_state_path).read_text(encoding="utf-8"))
+    phase_text = (workspace / result.phase_spec_path).read_text(encoding="utf-8")
+    decision_text = (workspace / result.decision_path).read_text(encoding="utf-8")
+
+    assert family_policy["initial_family_max_specs"] == 4
+    assert family_state["family_complete"] is False
+    assert family_state["spec_order"] == [
+        "SPEC-BROAD-401",
+        "SPEC-BROAD-401-02",
+        "SPEC-BROAD-401-03",
+        "SPEC-BROAD-401-04",
+    ]
+    assert family_state["initial_family_plan"]["spec_order"] == family_state["spec_order"]
+    assert family_state["initial_family_plan"]["applied_family_max_specs"] == 4
+    assert family_state["specs"]["SPEC-BROAD-401"]["status"] == "emitted"
+    for spec_id, expected_dep in (
+        ("SPEC-BROAD-401-02", ["SPEC-BROAD-401"]),
+        ("SPEC-BROAD-401-03", ["SPEC-BROAD-401-02"]),
+        ("SPEC-BROAD-401-04", ["SPEC-BROAD-401-03"]),
+    ):
+        assert family_state["specs"][spec_id]["status"] == "planned"
+        assert family_state["specs"][spec_id]["depends_on_specs"] == expected_dep
+        assert f"`{spec_id}`" in phase_text
+        assert f"`{spec_id}`" in decision_text
+
+
 def test_execute_spec_synthesis_respects_single_spec_broad_cap_for_broad_goal(tmp_path: Path) -> None:
     workspace, _, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"

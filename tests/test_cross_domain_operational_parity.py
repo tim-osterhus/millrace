@@ -490,7 +490,7 @@ def test_cross_domain_spec_synthesis_declares_bounded_later_specs_for_broad_goal
     assert family_policy["adaptive_inputs"]["capability_domain_count"] == 6
     assert family_policy["adaptive_inputs"]["progression_line_count"] == 2
     assert family_state["family_complete"] is False
-    assert len(family_state["spec_order"]) == min(family_policy["initial_family_max_specs"], 3)
+    assert len(family_state["spec_order"]) == family_policy["initial_family_max_specs"]
     assert len(family_state["specs"]) == len(family_state["spec_order"])
     assert any(spec_id.endswith("-02") for spec_id in family_state["specs"])
     active_spec_id = family_state["active_spec_id"]

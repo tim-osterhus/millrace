@@ -102,13 +102,14 @@ def _planned_family_breadth_budget(
     milestone_count = len(profile.milestones)
 
     # Keep fresh-family widening conservative: require clear breadth signals before
-    # declaring later specs, then clamp the total family size to a small bounded set.
+    # declaring later specs, then realize the full bounded family cap when widening
+    # is allowed.
     if capability_domain_count < 6:
         return 0
     if progression_line_count < 2 and milestone_count < 7:
         return 0
 
-    return min(family_cap, 3)
+    return family_cap
 
 
 def _plan_initial_family_specs(

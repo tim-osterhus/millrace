@@ -444,6 +444,80 @@ def test_initial_family_plan_guard_blocks_added_specs_after_freeze(tmp_path: Pat
     assert "added-spec-ids" in decision.violation_codes
 
 
+def test_initial_family_plan_guard_blocks_reordered_broad_frozen_plan(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    goal_file = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    policy_file = workspace / "agents" / "objective" / "family_policy.json"
+    goal_file.parent.mkdir(parents=True, exist_ok=True)
+    policy_file.parent.mkdir(parents=True, exist_ok=True)
+    goal_file.write_text("# Goal\n", encoding="utf-8")
+    policy_file.write_text(json.dumps({"initial_family_max_specs": 4}) + "\n", encoding="utf-8")
+
+    state = GoalSpecFamilyState.model_validate(
+        {
+            "goal_id": "IDEA-42",
+            "source_idea_path": "agents/ideas/raw/goal.md",
+            "family_phase": "initial_family",
+            "family_complete": False,
+            "active_spec_id": "SPEC-ALPHA",
+            "spec_order": ["SPEC-ALPHA", "SPEC-BETA", "SPEC-GAMMA", "SPEC-DELTA"],
+            "specs": {
+                "SPEC-ALPHA": {
+                    "status": "emitted",
+                    "title": "Alpha",
+                    "decomposition_profile": "moderate",
+                },
+                "SPEC-BETA": {
+                    "status": "planned",
+                    "title": "Beta",
+                    "decomposition_profile": "moderate",
+                    "depends_on_specs": ["SPEC-ALPHA"],
+                },
+                "SPEC-GAMMA": {
+                    "status": "planned",
+                    "title": "Gamma",
+                    "decomposition_profile": "moderate",
+                    "depends_on_specs": ["SPEC-BETA"],
+                },
+                "SPEC-DELTA": {
+                    "status": "planned",
+                    "title": "Delta",
+                    "decomposition_profile": "moderate",
+                    "depends_on_specs": ["SPEC-GAMMA"],
+                },
+            },
+            "family_governor": {
+                "policy_path": "agents/objective/family_policy.json",
+                "initial_family_max_specs": 4,
+                "applied_family_max_specs": 4,
+            },
+        }
+    )
+    frozen_state = state.model_copy(
+        update={
+            "initial_family_plan": build_initial_family_plan_snapshot(
+                state,
+                repo_root=workspace,
+                goal_file=goal_file,
+                policy_path=policy_file,
+                frozen_at="2026-03-21T10:05:00Z",
+            )
+        }
+    )
+
+    decision = evaluate_initial_family_plan_guard(
+        current_state=frozen_state,
+        candidate_spec_id="SPEC-ALPHA",
+        proposed_spec_order=("SPEC-ALPHA", "SPEC-GAMMA", "SPEC-BETA", "SPEC-DELTA"),
+        proposed_specs=dict(frozen_state.specs),
+    )
+
+    assert decision.action == "block"
+    assert decision.reason == "frozen-initial-family-plan-drift"
+    assert decision.frozen is True
+    assert "spec-order-changed" in decision.violation_codes
+
+
 def test_apply_initial_family_policy_pin_preserves_frozen_family_fields(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     paths = RuntimePaths.from_workspace(workspace, Path("agents"))
