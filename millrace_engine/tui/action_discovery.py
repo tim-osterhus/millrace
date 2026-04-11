@@ -44,6 +44,9 @@ def build_shell_action_surface(
     focus_zone: str,
     expanded_mode: bool,
     queue_reorder_mode: bool = False,
+    queue_has_selection: bool = False,
+    queue_has_run: bool = False,
+    queue_cleanup_via_mailbox: bool = False,
     logs_follow_mode: bool = True,
     logs_selected_run_id: str | None = None,
     research_has_question: bool = False,
@@ -98,14 +101,51 @@ def build_shell_action_surface(
                 ActionHint("Enter", "Review reorder", "Enter reviews the staged queue reorder."),
                 ActionHint("[ / ]", "Move task", "[ and ] move the selected task through the reorder draft."),
                 ActionHint("Esc", "Cancel", "Escape cancels the active queue reorder draft."),
-                ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+                ActionHint(
+                    "O" if queue_has_run else "S",
+                    "Run detail" if queue_has_run else "Sidebar",
+                    (
+                        "O opens concise run detail for the active queue run context."
+                        if queue_has_run
+                        else "S moves focus back to the sidebar."
+                    ),
+                ),
             )
         else:
             context_actions = (
-                ActionHint("R", "Reorder", "R starts a queue reorder draft for the selected task."),
-                ActionHint("Enter", "Review", "Enter reviews the selected queue item or staged reorder."),
-                ActionHint("O", "Run detail", "O opens concise run detail for the active run context."),
-                ActionHint("S", "Sidebar", "S moves focus back to the sidebar."),
+                ActionHint("Up/Down", "Select", "Up and Down move through queued tasks without losing the active selection."),
+                ActionHint(
+                    "R",
+                    "Reorder" if queue_has_selection else "No task",
+                    (
+                        "R starts a queue reorder draft for the selected task."
+                        if queue_has_selection
+                        else "Select a queued task before starting a reorder draft."
+                    ),
+                ),
+                ActionHint(
+                    "Q / X",
+                    "Quarantine/remove" if queue_has_selection else "No cleanup",
+                    (
+                        "Q quarantines and X removes the selected queued task after confirmation; "
+                        + (
+                            "cleanup queues through the mailbox first."
+                            if queue_cleanup_via_mailbox
+                            else "cleanup applies directly."
+                        )
+                        if queue_has_selection
+                        else "Select a queued task before using cleanup actions."
+                    ),
+                ),
+                ActionHint(
+                    "O" if queue_has_run else "S",
+                    "Run detail" if queue_has_run else "Sidebar",
+                    (
+                        "O opens concise run detail for the active queue run context."
+                        if queue_has_run
+                        else "S moves focus back to the sidebar."
+                    ),
+                ),
             )
     elif active_panel is PanelId.RUNS:
         context_actions = (

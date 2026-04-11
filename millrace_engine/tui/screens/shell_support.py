@@ -73,6 +73,8 @@ ACTION_REFRESH_PANELS: dict[str, tuple[PanelId, ...]] = {
     "add_task": (PanelId.OVERVIEW, PanelId.QUEUE),
     "add_idea": (PanelId.OVERVIEW, PanelId.RESEARCH),
     "reorder_queue": (PanelId.OVERVIEW, PanelId.QUEUE),
+    "queue_cleanup_remove": (PanelId.OVERVIEW, PanelId.QUEUE),
+    "queue_cleanup_quarantine": (PanelId.OVERVIEW, PanelId.QUEUE),
     "interview_answer": (PanelId.OVERVIEW, PanelId.RESEARCH),
     "interview_accept": (PanelId.OVERVIEW, PanelId.RESEARCH),
     "interview_skip": (PanelId.OVERVIEW, PanelId.RESEARCH),
@@ -109,6 +111,7 @@ def build_shell_inspector_view(
     latest_run: LatestRunSummary | None,
     panel_failure: GatewayFailure | None,
     selected_task_id: str | None = None,
+    queue_reorder_mode: bool = False,
     selected_run_id: str | None = None,
     selected_event: RuntimeEventView | None = None,
     selected_log_artifact_path: str | None = None,
@@ -142,14 +145,33 @@ def build_shell_inspector_view(
             headline = "queue snapshot not loaded"
         elif selected is not None:
             title = selected.title
-            headline = f"task {selected.task_id}"
-            detail = [f"backlog depth {queue.backlog_depth}"]
-            if selected.spec_id:
-                detail.append(f"spec {selected.spec_id}")
-            if runtime is not None and runtime.process_running:
-                detail.append("daemon running | reorder requests queue through mailbox")
+            position = _queue_task_position(queue, selected.task_id)
+            lane = "next up" if queue.next_task is not None and queue.next_task.task_id == selected.task_id else "queued"
+            headline = f"{lane} | task {selected.task_id}"
+            cleanup_mode = (
+                "cleanup and reorder queue through the mailbox first"
+                if runtime is not None and runtime.process_running
+                else "cleanup and reorder apply directly"
+            )
+            detail = [f"backlog depth {queue.backlog_depth} | position {position or '?'}"]
+            detail.append(f"spec {selected.spec_id or 'none'}")
+            detail.append(cleanup_mode)
+            if queue_reorder_mode:
+                detail.append("cleanup is paused until the active reorder draft is confirmed or cancelled")
+                action_lines = (
+                    "Enter reviews the staged reorder draft.",
+                    "[ and ] move the selected task through the draft.",
+                    "Escape cancels the active reorder draft.",
+                )
+            else:
+                action_lines = (
+                    "R starts a reorder draft for this queued task.",
+                    "Q quarantines it after confirmation.",
+                    "X removes it after confirmation.",
+                )
+            if runtime is not None and runtime.selection.run_id:
+                action_lines = (*action_lines, "O opens concise active-run detail.")
             detail_lines = tuple(detail)
-            action_lines = ("Up/Down select backlog items.", "Enter reviews a staged reorder draft.")
         else:
             headline = f"backlog {queue.backlog_depth}"
             detail_lines = ("No backlog item selected yet.",)
@@ -293,6 +315,25 @@ def _queue_task_by_id(queue: QueueOverviewView | None, task_id: str | None) -> Q
     return None
 
 
+def _queue_task_position(queue: QueueOverviewView | None, task_id: str | None) -> int | None:
+    if queue is None or task_id is None:
+        return None
+    for index, task in enumerate(queue.backlog, start=1):
+        if task.task_id == task_id:
+            return index
+    return None
+
+
+QUEUE_CLEANUP_REASONS = {
+    "remove": "Removed from queue via TUI queue board.",
+    "quarantine": "Quarantined from queue via TUI queue board.",
+}
+
+
+def queue_cleanup_reason(cleanup_action: str) -> str:
+    return QUEUE_CLEANUP_REASONS.get(cleanup_action, "Cleaned up from queue via TUI queue board.")
+
+
 def _run_by_id(runs: RunsOverviewView | None, run_id: str | None) -> RunSummaryView | None:
     if runs is None or run_id is None:
         return None
@@ -405,6 +446,46 @@ def queue_reorder_confirmation_lines(
             [
                 "",
                 "This will rewrite the visible backlog order immediately.",
+            ]
+    )
+    return tuple(lines)
+
+
+def queue_cleanup_confirmation_lines(
+    cleanup_action: str,
+    *,
+    task_id: str,
+    queue: QueueOverviewView | None,
+    runtime: RuntimeOverviewView | None,
+) -> tuple[str, ...]:
+    task = _queue_task_by_id(queue, task_id)
+    position = _queue_task_position(queue, task_id)
+    reason = queue_cleanup_reason(cleanup_action)
+    action_label = "Remove" if cleanup_action == "remove" else "Quarantine"
+    lines = [
+        f"{action_label} this queued task?",
+        "",
+        (
+            f"{task.title} [{task.task_id}]"
+            if task is not None
+            else task_id
+        ),
+        f"Position: {position if position is not None else 'unknown'}",
+        f"Spec: {task.spec_id if task is not None and task.spec_id else 'none'}",
+        f"Recorded reason: {reason}",
+    ]
+    if runtime is not None and runtime.process_running:
+        lines.extend(
+            [
+                "",
+                "The daemon is running. This cleanup will be queued to the mailbox first.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "This cleanup will be applied immediately through the supported control path.",
             ]
         )
     return tuple(lines)
@@ -575,6 +656,8 @@ __all__ = [
     "latest_run_summary_from_runs",
     "notification_severity",
     "publish_confirmation_lines",
+    "queue_cleanup_confirmation_lines",
+    "queue_cleanup_reason",
     "queue_reorder_confirmation_lines",
     "refresh_panels_for_action",
     "selected_config_field",

@@ -212,6 +212,38 @@ class RuntimeGateway:
             lambda control: action_result_view("reorder_queue", control.queue_reorder(normalized_ids)),
         )
 
+    def queue_cleanup_remove(self, task_id: str, *, reason: str) -> GatewayResult[ActionResultView]:
+        normalized_task_id = " ".join(task_id.strip().split())
+        normalized_reason = " ".join(reason.strip().split())
+        if not normalized_task_id:
+            return input_failure("action.queue_cleanup_remove", "task_id is required")
+        if not normalized_reason:
+            return input_failure("action.queue_cleanup_remove", "reason is required")
+        return execute_gateway_operation(
+            self._new_control,
+            "action.queue_cleanup_remove",
+            lambda control: action_result_view(
+                "queue_cleanup_remove",
+                control.supervisor_queue_cleanup_remove(normalized_task_id, reason=normalized_reason, issuer="tui"),
+            ),
+        )
+
+    def queue_cleanup_quarantine(self, task_id: str, *, reason: str) -> GatewayResult[ActionResultView]:
+        normalized_task_id = " ".join(task_id.strip().split())
+        normalized_reason = " ".join(reason.strip().split())
+        if not normalized_task_id:
+            return input_failure("action.queue_cleanup_quarantine", "task_id is required")
+        if not normalized_reason:
+            return input_failure("action.queue_cleanup_quarantine", "reason is required")
+        return execute_gateway_operation(
+            self._new_control,
+            "action.queue_cleanup_quarantine",
+            lambda control: action_result_view(
+                "queue_cleanup_quarantine",
+                control.supervisor_queue_cleanup_quarantine(normalized_task_id, reason=normalized_reason, issuer="tui"),
+            ),
+        )
+
     def publish_sync(self, *, staging_repo_dir: Path | str | None = None) -> GatewayResult[ActionResultView]:
         return execute_gateway_operation(
             self._new_control,

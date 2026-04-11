@@ -28,6 +28,8 @@ from .shell_support import (
     LIFECYCLE_WORKER_PREFIX,
     notification_severity,
     publish_confirmation_lines,
+    queue_cleanup_confirmation_lines,
+    queue_cleanup_reason,
     queue_reorder_confirmation_lines,
     selected_config_field,
 )
@@ -48,6 +50,7 @@ class ShellWorkflowMixin:
     _store: TUIStore
     _startup_prompt_window_open: bool
     _pending_queue_reorder: tuple[str, ...] | None
+    _pending_queue_cleanup: tuple[str, str] | None
     _pending_publish_push: bool | None
     _requested_run_id: str | None
     _lifecycle_busy_message: str | None
@@ -277,6 +280,25 @@ class ShellWorkflowMixin:
         )
         message.stop()
 
+    @on(QueuePanel.CleanupRequested)
+    def _handle_queue_cleanup_requested(self, message: QueuePanel.CleanupRequested) -> None:
+        self._pending_queue_cleanup = (message.cleanup_action, message.task_id)
+        confirm_label = "Remove Task" if message.cleanup_action == "remove" else "Quarantine Task"
+        self._push_modal(
+            ConfirmModal(
+                title=confirm_label,
+                body_lines=queue_cleanup_confirmation_lines(
+                    message.cleanup_action,
+                    task_id=message.task_id,
+                    queue=self._store.state.queue,
+                    runtime=self._store.state.runtime,
+                ),
+                confirm_label=confirm_label,
+            ),
+            self._handle_queue_cleanup_confirmation,
+        )
+        message.stop()
+
     @on(ConfigPanel.EditRequested)
     def _handle_config_edit_requested(self, message: ConfigPanel.EditRequested) -> None:
         self._open_config_edit_modal(message.field_key)
@@ -428,6 +450,24 @@ class ShellWorkflowMixin:
         self._run_gateway_action(
             "reorder_queue",
             lambda: self._runtime_gateway().reorder_queue(task_ids),
+        )
+
+    def _handle_queue_cleanup_confirmation(self, confirmed: bool) -> None:
+        pending = self._pending_queue_cleanup
+        self._pending_queue_cleanup = None
+        if not confirmed or pending is None:
+            return
+        cleanup_action, task_id = pending
+        reason = queue_cleanup_reason(cleanup_action)
+        if cleanup_action == "remove":
+            self._run_gateway_action(
+                "queue_cleanup_remove",
+                lambda: self._runtime_gateway().queue_cleanup_remove(task_id, reason=reason),
+            )
+            return
+        self._run_gateway_action(
+            "queue_cleanup_quarantine",
+            lambda: self._runtime_gateway().queue_cleanup_quarantine(task_id, reason=reason),
         )
 
     def _open_run_workflow(self, run_id: str) -> None:

@@ -301,6 +301,17 @@ class MillraceTUIApplication(App[None]):
                     "Begin a reorder draft for the selected queue task.",
                     queue_panel.action_begin_reorder,
                 )
+                if queue_panel.selected_task_id is not None:
+                    yield SystemCommand(
+                        "Quarantine Selected Queue Task",
+                        "Safely quarantine the selected queued task after confirmation.",
+                        queue_panel.action_quarantine_selected,
+                    )
+                    yield SystemCommand(
+                        "Remove Selected Queue Task",
+                        "Safely remove the selected queued task after confirmation.",
+                        queue_panel.action_remove_selected,
+                    )
             if self._shell_screen._store.state.runtime is not None and self._shell_screen._store.state.runtime.selection.run_id:
                 yield SystemCommand(
                     "Open Active Queue Run Detail",

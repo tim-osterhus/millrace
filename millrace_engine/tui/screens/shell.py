@@ -128,6 +128,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
         self._latest_run_summary: LatestRunSummary | None = None
         self._requested_run_id: str | None = None
         self._pending_queue_reorder: tuple[str, ...] | None = None
+        self._pending_queue_cleanup: tuple[str, str] | None = None
         self._pending_publish_push: bool | None = None
         self._lifecycle_busy_message: str | None = None
         self._lifecycle_worker_name: str | None = None
@@ -562,6 +563,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
             self.query_one(QueuePanel).show_snapshot(
                 state.queue,
                 run_id=(state.runtime.selection.run_id if state.runtime is not None else None),
+                daemon_running=(state.runtime.process_running if state.runtime is not None else False),
                 failure=self._store.panel_failure(PanelId.QUEUE),
                 display_mode=state.display_mode,
             )
@@ -650,6 +652,7 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
                 latest_run=self._latest_run_summary,
                 panel_failure=self._store.panel_failure(self.active_panel),
                 selected_task_id=self.query_one(QueuePanel).selected_task_id,
+                queue_reorder_mode=self.query_one(QueuePanel).reorder_mode,
                 selected_run_id=self.query_one(RunsPanel).selected_run_id,
                 selected_event=self.query_one(LogsPanel).selected_event,
                 selected_log_artifact_path=self.query_one(LogsPanel).selected_artifact_path,
@@ -666,11 +669,15 @@ class ShellScreen(ShellWorkflowMixin, Screen[None]):
 
     def current_action_surface(self):
         publish = self._store.state.publish
+        runtime = self._store.state.runtime
         return build_shell_action_surface(
             active_panel=self.active_panel,
             focus_zone=self._focus_zone.value,
             expanded_mode=self._shell_body_mode is ShellBodyMode.EXPANDED,
             queue_reorder_mode=self.query_one(QueuePanel).reorder_mode,
+            queue_has_selection=self.query_one(QueuePanel).selected_task_id is not None,
+            queue_has_run=bool(runtime.selection.run_id) if runtime is not None else False,
+            queue_cleanup_via_mailbox=bool(runtime.process_running) if runtime is not None else False,
             logs_follow_mode=self.query_one(LogsPanel).follow_mode,
             logs_selected_run_id=self.query_one(LogsPanel).selected_run_id,
             research_has_question=self.query_one(ResearchPanel).selected_question_id is not None,
@@ -762,6 +769,7 @@ _PANEL_MESSAGE_HANDLERS = (
     (RunsPanel.RunRequested, ShellWorkflowMixin._handle_runs_run_requested),
     (QueuePanel.RunRequested, ShellWorkflowMixin._handle_queue_run_requested),
     (QueuePanel.ReorderRequested, ShellWorkflowMixin._handle_queue_reorder_requested),
+    (QueuePanel.CleanupRequested, ShellWorkflowMixin._handle_queue_cleanup_requested),
     (ConfigPanel.EditRequested, ShellWorkflowMixin._handle_config_edit_requested),
     (ConfigPanel.ReloadRequested, ShellWorkflowMixin._handle_config_reload_requested),
     (ResearchPanel.InterviewRequested, ShellWorkflowMixin._handle_research_interview_requested),

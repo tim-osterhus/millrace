@@ -372,6 +372,8 @@ def test_tui_registers_contextual_system_commands_for_active_panel(monkeypatch, 
             command.title for command in app.get_system_commands(app.screen) if isinstance(command, SystemCommand)
         }
         assert "Start Queue Reorder" in queue_titles
+        assert "Quarantine Selected Queue Task" in queue_titles
+        assert "Remove Selected Queue Task" in queue_titles
 
         await pilot.press("5")
         await pilot.pause()
@@ -1252,6 +1254,7 @@ def test_tui_shell_footer_updates_with_focus_and_panel_context(monkeypatch, tmp_
         queue_footer = _static_text(footer)
         assert "Queue Workspace" in queue_footer
         assert "[R] Reorder" in queue_footer
+        assert "[Q / X] Quarantine/remove" in queue_footer
         assert "[O] Run detail" in queue_footer
 
         await pilot.press("5")
@@ -1323,7 +1326,8 @@ def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path
         inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
         assert "PANEL   Queue" in inspector_text
         assert f"FOCUS   {selected_task.title}" in inspector_text
-        assert f"STATE   task {selected_task.task_id}" in inspector_text
+        assert selected_task.task_id in inspector_text
+        assert "cleanup and reorder queue through the mailbox first" in inspector_text
 
         await pilot.press("6")
         await pilot.pause()
@@ -2809,7 +2813,7 @@ def test_queue_panel_renders_empty_and_active_only_states_truthfully() -> None:
     panel.show_snapshot(debug_queue, display_mode=DisplayMode.DEBUG)
     debug_text = panel.summary_text()
     assert "NEXT    Queued with metadata [task-1] | SPEC-001" in debug_text
-    assert "Queued with metadata [task-1 | SPEC-001]" in debug_text
+    assert "Queued with metadata [task-1 | SPEC-001 | next up]" in debug_text
 
 
 def test_tui_surfaces_pending_clear_and_mailbox_buffered_task_intent() -> None:
@@ -3723,6 +3727,30 @@ def test_queue_panel_preserves_reorder_and_emits_run_requests() -> None:
     assert panel.reorder_mode is True
 
 
+def test_queue_panel_emits_cleanup_requests_for_selected_task() -> None:
+    panel = QueuePanel(id="panel-queue")
+    queue = QueueOverviewView(
+        active_task=None,
+        next_task=QueueTaskView(task_id="task-1", title="First task"),
+        backlog_depth=2,
+        backlog=(
+            QueueTaskView(task_id="task-1", title="First task"),
+            QueueTaskView(task_id="task-2", title="Second task"),
+        ),
+    )
+    panel.show_snapshot(queue, daemon_running=True)
+
+    posted: list[QueuePanel.CleanupRequested] = []
+    panel.post_message = posted.append  # type: ignore[method-assign]
+    panel.action_quarantine_selected()
+    panel.action_remove_selected()
+
+    assert [(message.task_id, message.cleanup_action) for message in posted] == [
+        ("task-1", "quarantine"),
+        ("task-1", "remove"),
+    ]
+
+
 def test_queue_panel_preserves_selected_task_across_refresh_when_identity_survives() -> None:
     panel = QueuePanel(id="panel-queue")
     initial = QueueOverviewView(
@@ -4330,11 +4358,12 @@ def test_tui_shell_queue_panel_navigation_preserves_selection_across_panel_switc
         await pilot.pause()
         assert panel.selected_task_id == "2026-03-20__second-queued-task"
         assert "FOCUS   Second queued task" in panel.summary_text()
+        assert "cleanup direct" in panel.summary_text()
         assert table.cursor_row == 1
         inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
         assert "PANEL   Queue" in inspector_text
         assert "FOCUS   Second queued task" in inspector_text
-        assert "STATE   task 2026-03-20__second-queued-task" in inspector_text
+        assert "2026-03-20__second-queued-task" in inspector_text
 
         await pilot.press("1")
         await pilot.pause()
@@ -4900,6 +4929,61 @@ def test_tui_shell_queue_reorder_uses_draft_and_confirmation(monkeypatch, tmp_pa
             "Second queued task",
             "First queued task",
         ]
+
+    _run_app_scenario(config_path, scenario)
+
+
+def test_tui_shell_queue_remove_selected_task_uses_confirmation_and_updates_queue(monkeypatch, tmp_path) -> None:
+    workspace, config_path = load_workspace_fixture(tmp_path, "control_mailbox")
+    (workspace / "agents" / "size_status.md").write_text("### SMALL\n", encoding="utf-8")
+    _write_backlog(
+        workspace,
+        [
+            ("2026-03-19", "First queued task", "SPEC-001"),
+            ("2026-03-20", "Second queued task", "SPEC-002"),
+        ],
+    )
+    monkeypatch.setattr(shell_module, "stream_event_updates", lambda *args, **kwargs: None)
+
+    async def scenario(app: MillraceTUIApplication, pilot) -> None:
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.queue is not None
+            and app.screen._store.state.queue.backlog_depth == 2,
+        )
+        assert isinstance(app.screen, ShellScreen)
+
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+
+        panel = app.screen.query_one("#panel-queue", QueuePanel)
+        assert panel.selected_task_id == "2026-03-19__first-queued-task"
+        await pilot.press("x")
+        await _wait_for_condition(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        assert isinstance(app.screen, ConfirmModal)
+        modal_text = _static_text(app.screen.query_one(".modal-copy", Static))
+        assert "Remove this queued task?" in modal_text
+        assert "Recorded reason: Removed from queue via TUI queue board." in modal_text
+        await pilot.click("#confirm-submit")
+
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(app.screen, ShellScreen)
+            and app.screen._store.state.queue is not None
+            and [task.title for task in app.screen._store.state.queue.backlog] == ["Second queued task"],
+        )
+        assert isinstance(app.screen, ShellScreen)
+        panel = app.screen.query_one("#panel-queue", QueuePanel)
+        assert panel.selected_task_id == "2026-03-20__second-queued-task"
+        assert app.screen._store.state.notices[-1].message == "queue cleanup removed task"
+        assert [card.title for card in parse_task_cards((workspace / "agents" / "tasksbacklog.md").read_text(encoding="utf-8"))] == [
+            "Second queued task",
+        ]
+        footer_text = _static_text(app.screen.query_one(ActionFooter))
+        assert "[Q / X] Quarantine/remove" in footer_text
 
     _run_app_scenario(config_path, scenario)
 
