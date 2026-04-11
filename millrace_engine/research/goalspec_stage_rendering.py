@@ -115,53 +115,53 @@ def _contractor_grounding_lines(
     contractor_profile: ContractorProfileArtifact | None,
     completion_manifest: CompletionManifestDraftStateRecord,
 ) -> list[str]:
-    if contractor_profile is None or not completion_manifest.contractor_shape_class:
+    if contractor_profile is None:
         return []
     lines = [
         "## Contractor Grounding",
         (
             f"- Contractor resolved {_contractor_shape_phrase(contractor_profile)} at specificity "
-            f"`{completion_manifest.contractor_specificity_level or contractor_profile.specificity_level}`."
+            f"`{contractor_profile.specificity_level}`."
         ),
         (
             f"- Planning remains bounded by fallback mode "
-            f"`{completion_manifest.contractor_fallback_mode or contractor_profile.fallback_mode}`."
+            f"`{contractor_profile.fallback_mode}`."
         ),
     ]
-    if completion_manifest.contractor_capability_hints:
+    if contractor_profile.capability_hints:
         lines.append(
             "- Carry forward capability hints: "
-            + ", ".join(f"`{item}`" for item in completion_manifest.contractor_capability_hints)
+            + ", ".join(f"`{item}`" for item in contractor_profile.capability_hints)
             + "."
         )
-    if completion_manifest.contractor_environment_hints:
+    if contractor_profile.environment_hints:
         lines.append(
             "- Environment assumptions remain explicit: "
-            + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+            + ", ".join(f"`{item}`" for item in contractor_profile.environment_hints)
             + "."
         )
-    if completion_manifest.contractor_specialization_provenance:
+    if contractor_profile.specialization_provenance:
         lines.append(
             "- Specialization provenance remains explicit: "
-            + "; ".join(_format_specialization_record(item) for item in completion_manifest.contractor_specialization_provenance)
+            + "; ".join(_format_specialization_record(item) for item in contractor_profile.specialization_provenance)
             + "."
         )
-    if completion_manifest.contractor_unresolved_specializations:
+    if contractor_profile.unresolved_specializations:
         lines.append(
             "- Unsupported specialization remains unresolved: "
-            + ", ".join(f"`{item}`" for item in completion_manifest.contractor_unresolved_specializations)
+            + ", ".join(f"`{item}`" for item in contractor_profile.unresolved_specializations)
             + "."
         )
-    if completion_manifest.contractor_abstentions:
+    if contractor_profile.abstentions:
         lines.append(
             "- Contractor abstentions remain in force: "
-            + "; ".join(completion_manifest.contractor_abstentions[:2])
+            + "; ".join(contractor_profile.abstentions[:2])
             + "."
         )
-    if completion_manifest.contractor_contradictions:
+    if contractor_profile.contradictions:
         lines.append(
             "- Contractor contradictions to preserve: "
-            + "; ".join(completion_manifest.contractor_contradictions[:2])
+            + "; ".join(contractor_profile.contradictions[:2])
             + "."
         )
     lines.append("")
@@ -235,6 +235,10 @@ def render_queue_spec(
     contractor_grounding_lines = _contractor_grounding_lines(
         contractor_profile=contractor_profile,
         completion_manifest=completion_manifest,
+    )
+    contractor_environment_hints = tuple(contractor_profile.environment_hints) if contractor_profile is not None else ()
+    contractor_unresolved_specializations = (
+        tuple(contractor_profile.unresolved_specializations) if contractor_profile is not None else ()
     )
     timestamp = _isoformat_z(emitted_at)
     return "\n".join(
@@ -348,11 +352,11 @@ def render_queue_spec(
                 [
                     (
                         "- Contractor-specific environment assumptions stay bounded to "
-                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+                        + ", ".join(f"`{item}`" for item in contractor_environment_hints)
                         + " (source: contractor profile)."
                     )
                 ]
-                if completion_manifest.contractor_environment_hints
+                if contractor_environment_hints
                 else []
             ),
             "",
@@ -391,11 +395,11 @@ def render_queue_spec(
                 [
                     (
                         "- Risk: unresolved contractor specialization could be overclaimed. Mitigation: keep "
-                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_unresolved_specializations)
+                        + ", ".join(f"`{item}`" for item in contractor_unresolved_specializations)
                         + " explicit and unsupported in this slice."
                     )
                 ]
-                if completion_manifest.contractor_unresolved_specializations
+                if contractor_unresolved_specializations
                 else []
             ),
             "",
@@ -488,6 +492,10 @@ def render_phase_spec(
         contractor_profile=contractor_profile,
         completion_manifest=completion_manifest,
     )
+    contractor_environment_hints = tuple(contractor_profile.environment_hints) if contractor_profile is not None else ()
+    contractor_unresolved_specializations = (
+        tuple(contractor_profile.unresolved_specializations) if contractor_profile is not None else ()
+    )
     return "\n".join(
         [
             _FRONTMATTER_BOUNDARY,
@@ -567,11 +575,11 @@ def render_phase_spec(
                 [
                     (
                         "- Contractor environment assumptions remain bounded to "
-                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+                        + ", ".join(f"`{item}`" for item in contractor_environment_hints)
                         + " (confidence: contractor profile)."
                     )
                 ]
-                if completion_manifest.contractor_environment_hints
+                if contractor_environment_hints
                 else []
             ),
             "",
@@ -621,11 +629,11 @@ def render_phase_spec(
                 [
                     (
                         "- Unsupported contractor specialization stays unresolved: "
-                        + ", ".join(f"`{item}`" for item in completion_manifest.contractor_unresolved_specializations)
+                        + ", ".join(f"`{item}`" for item in contractor_unresolved_specializations)
                         + "."
                     )
                 ]
-                if completion_manifest.contractor_unresolved_specializations
+                if contractor_unresolved_specializations
                 else []
             ),
             "",
@@ -835,5 +843,9 @@ def _render_review_remediation_lines(findings: tuple[GoalSpecReviewFinding, ...]
             continue
         ordered_intents.append(intent)
     if not ordered_intents:
+        if findings:
+            return [
+                "- Resolve the recorded structural review findings in the queue spec, stable artifacts, or family state, then rerun Spec Review.",
+            ]
         return ["- No explicit remediation routing was required for this review pass."]
     return [f"- `{intent}`: {guidance[intent]}" for intent in ordered_intents]

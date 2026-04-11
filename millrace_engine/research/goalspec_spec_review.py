@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from pathlib import Path
+import re
 
 from ..assets.resolver import AssetResolver, AssetSourceKind
 from ..compiler_models import FrozenStagePlan
@@ -47,12 +47,16 @@ from .specs import (
     GoalSpecLineageRecord,
     GoalSpecReviewFinding,
     GoalSpecReviewRecord,
+    GoalSpecFamilySpecState,
+    GoalSpecFamilyState,
     load_goal_spec_family_state,
     load_stable_spec_registry,
     refresh_stable_spec_registry,
+    stable_spec_metadata_from_file,
     write_goal_spec_family_state,
 )
 from .state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership
+from .governance import evaluate_initial_family_plan_guard
 
 _NUMBERED_LINE_RE = re.compile(r"^\d+\.\s+(.*\S)\s*$")
 _BACKTICKED_TOKEN_RE = re.compile(r"`([^`\n]+)`")
@@ -76,14 +80,6 @@ _EPIC_PHASE_STEP_HINTS = (
     "whole-gate",
     "repo-wide",
 )
-_SPECIALIZATION_TOKEN_RE = re.compile(r"\b([a-z_]+=[a-z0-9._-]+)\b", re.IGNORECASE)
-_SAFE_UNRESOLVED_LINE_HINTS = ("unresolved", "unsupported", "abstention", "fallback", "do not invent")
-_MINECRAFT_LOADER_HINTS = {
-    "fabric": ("fabric", "fabric.mod.json"),
-    "forge": ("forge", "mods.toml"),
-    "neoforge": ("neoforge", "neoforge.mods.toml"),
-    "quilt": ("quilt", "quilt.mod.json"),
-}
 
 
 def _bound_spec_review_stage_config(
@@ -286,20 +282,7 @@ def _review_text_lines(*texts: str) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _line_mentions_specialization(line: str, *, token: str, hints: tuple[str, ...]) -> bool:
-    lowered = line.casefold()
-    token_value = token.partition("=")[2].casefold()
-    if token.casefold() in lowered:
-        return True
-    return any(hint.casefold() in lowered for hint in hints if hint)
-
-
-def _line_is_safe_unresolved_reference(line: str, *, token: str) -> bool:
-    lowered = line.casefold()
-    return token.casefold() in lowered and any(hint in lowered for hint in _SAFE_UNRESOLVED_LINE_HINTS)
-
-
-def _specialization_finding(
+def _review_finding(
     *,
     finding_id: str,
     severity: str,
@@ -317,141 +300,192 @@ def _specialization_finding(
     )
 
 
-def _contractor_specificity_findings(
+def _promotability_findings(
     *,
-    contractor_profile: object | None,
-    artifact_lines: tuple[str, ...],
+    family_state: GoalSpecFamilyState,
+    spec_id: str,
+    spec_state: GoalSpecFamilySpecState,
     queue_spec_path: Path,
     paths: RuntimePaths,
 ) -> tuple[GoalSpecReviewFinding, ...]:
-    from .goalspec import ContractorProfileArtifact
-
-    if not isinstance(contractor_profile, ContractorProfileArtifact):
-        return ()
-
     findings: list[GoalSpecReviewFinding] = []
-    unresolved_specializations = set(contractor_profile.unresolved_specializations)
-    source_requested_tokens = {
-        f"{item.key}={item.value}"
-        for item in contractor_profile.specialization_provenance
-        if item.provenance == "source_requested"
-    }
-    workspace_grounded_tokens = {
-        f"{item.key}={item.value}"
-        for item in contractor_profile.specialization_provenance
-        if item.provenance == "workspace_grounded"
-    }
-    specialization_keys = {
-        specialization.partition("=")[0].strip().casefold()
-        for specialization in contractor_profile.unresolved_specializations
-        if "=" in specialization
-    }
-    specialization_keys.update(
-        key.strip().casefold()
-        for key in contractor_profile.classification.specializations
-        if key.strip()
-    )
-    if (
-        contractor_profile.shape_class == "platform_extension"
-        and contractor_profile.classification.host_platform == "minecraft"
-    ):
-        specialization_keys.add("loader")
-    explicit_specializations = {
-        match.group(1).strip()
-        for line in artifact_lines
-        for match in _SPECIALIZATION_TOKEN_RE.finditer(line)
-        if match.group(1).partition("=")[0].strip().casefold() in specialization_keys
-    }
-    for specialization in sorted(explicit_specializations):
-        if specialization in unresolved_specializations:
-            continue
+    if spec_state.status != "emitted":
         findings.append(
-            _specialization_finding(
-                finding_id="REV-CONTRACTOR-INVENTED-SPECIALIZATION",
+            _review_finding(
+                finding_id="REV-PROMOTION-STATE",
                 severity="blocker",
                 summary=(
-                    "Stable planning text invents unsupported specialization "
-                    f"`{specialization}` beyond the contractor profile."
+                    f"Spec `{spec_id}` is not promotable from family state because its status is "
+                    f"`{spec_state.status or 'unknown'}` instead of `emitted`."
                 ),
-                remediation_intent="true_invention",
                 queue_spec_path=queue_spec_path,
                 paths=paths,
             )
         )
-
-    if (
-        contractor_profile.shape_class == "platform_extension"
-        and contractor_profile.classification.host_platform == "minecraft"
-    ):
-        unresolved_loaders = {
-            specialization.partition("=")[2].casefold()
-            for specialization in contractor_profile.unresolved_specializations
-            if specialization.startswith("loader=")
-        }
-        for loader, hints in _MINECRAFT_LOADER_HINTS.items():
-            token = f"loader={loader}"
-            is_source_requested = token in source_requested_tokens
-            is_workspace_grounded = token in workspace_grounded_tokens
-            for line in artifact_lines:
-                if not _line_mentions_specialization(line, token=token, hints=hints):
-                    continue
-                if loader in unresolved_loaders and _line_is_safe_unresolved_reference(line, token=token):
-                    continue
-                if not is_source_requested:
-                    findings.append(
-                        _specialization_finding(
-                            finding_id="REV-CONTRACTOR-MISSING-GROUNDING",
-                            severity="blocker",
-                            summary=(
-                                "Stable planning text resolves loader-specific detail "
-                                f"`{token}` without any typed grounding evidence: {line}"
-                            ),
-                            remediation_intent="missing_grounding",
-                            queue_spec_path=queue_spec_path,
-                            paths=paths,
-                        )
-                    )
-                    break
-                if not is_workspace_grounded:
-                    findings.append(
-                        _specialization_finding(
-                            finding_id="REV-CONTRACTOR-MISSING-WORKSPACE-CONFIRMATION",
-                            severity="blocker",
-                            summary=(
-                                "Stable planning text promotes source-requested loader-specific detail "
-                                f"`{token}` without workspace confirmation: {line}"
-                            ),
-                            remediation_intent="missing_workspace_confirmation",
-                            queue_spec_path=queue_spec_path,
-                            paths=paths,
-                        )
-                    )
-                    break
-                findings.append(
-                    _specialization_finding(
-                        finding_id="REV-CONTRACTOR-UNSUPPORTED-OVERLAY-PROMOTION",
-                        severity="blocker",
-                        summary=(
-                            "Stable planning text promotes grounded loader-specific detail "
-                            f"`{token}` into a resolved overlay before support is confirmed: {line}"
-                        ),
-                        remediation_intent="unsupported_overlay_promotion",
-                        queue_spec_path=queue_spec_path,
-                        paths=paths,
-                    )
-                )
-                break
-
+    if family_state.active_spec_id and family_state.active_spec_id != spec_id:
+        findings.append(
+            _review_finding(
+                finding_id="REV-ACTIVE-SPEC-MISMATCH",
+                severity="blocker",
+                summary=(
+                    f"Spec `{spec_id}` is not the active family member for promotion; "
+                    f"`{family_state.active_spec_id}` is still marked active."
+                ),
+                queue_spec_path=queue_spec_path,
+                paths=paths,
+            )
+        )
+    queue_path = _relative_path(queue_spec_path, relative_to=paths.root)
+    if spec_state.queue_path and spec_state.queue_path != queue_path:
+        findings.append(
+            _review_finding(
+                finding_id="REV-QUEUE-PATH-MISMATCH",
+                severity="blocker",
+                summary=(
+                    f"Family state still points `{spec_id}` at queue artifact `{spec_state.queue_path}`, "
+                    f"but Spec Review is running against `{queue_path}`."
+                ),
+                queue_spec_path=queue_spec_path,
+                paths=paths,
+            )
+        )
     return tuple(findings)
+
+
+def _stable_artifact_findings(
+    *,
+    paths: RuntimePaths,
+    spec_id: str,
+    expected_decomposition_profile: str,
+    stable_spec_paths: tuple[Path, ...],
+    stable_spec_error: str | None,
+    queue_spec_path: Path,
+) -> tuple[GoalSpecReviewFinding, ...]:
+    findings: list[GoalSpecReviewFinding] = []
+    if stable_spec_error is not None or not stable_spec_paths:
+        findings.append(
+            _review_finding(
+                finding_id="REV-STABLE-ARTIFACTS-MISSING",
+                severity="blocker",
+                summary=(
+                    f"Stable review artifacts are incomplete for `{spec_id}`: "
+                    f"{stable_spec_error or 'expected frozen golden and phase specs before promotion'}."
+                ),
+                queue_spec_path=queue_spec_path,
+                paths=paths,
+            )
+        )
+        return tuple(findings)
+
+    seen_tiers: set[str] = set()
+    for stable_path in stable_spec_paths:
+        stable_token = _relative_path(stable_path, relative_to=paths.root)
+        if "/golden/" in stable_token:
+            seen_tiers.add("golden")
+        if "/phase/" in stable_token:
+            seen_tiers.add("phase")
+        try:
+            metadata = stable_spec_metadata_from_file(stable_path, relative_to=paths.root)
+        except ValueError as exc:
+            findings.append(
+                _review_finding(
+                    finding_id="REV-STABLE-ARTIFACT-METADATA",
+                    severity="blocker",
+                    summary=f"Stable review artifact `{stable_token}` has invalid frontmatter: {exc}",
+                    queue_spec_path=queue_spec_path,
+                    paths=paths,
+                )
+            )
+            continue
+        if metadata.spec_id != spec_id:
+            findings.append(
+                _review_finding(
+                    finding_id="REV-STABLE-SPEC-ID-MISMATCH",
+                    severity="blocker",
+                    summary=(
+                        f"Stable review artifact `{stable_token}` declares spec id `{metadata.spec_id}`, "
+                        f"expected `{spec_id}`."
+                    ),
+                    queue_spec_path=queue_spec_path,
+                    paths=paths,
+                )
+            )
+        if metadata.decomposition_profile and metadata.decomposition_profile != expected_decomposition_profile:
+            findings.append(
+                _review_finding(
+                    finding_id="REV-STABLE-DECOMPOSITION-PROFILE",
+                    severity="blocker",
+                    summary=(
+                        f"Stable review artifact `{stable_token}` declares decomposition profile "
+                        f"`{metadata.decomposition_profile or 'missing'}`, expected "
+                        f"`{expected_decomposition_profile or 'simple'}`."
+                    ),
+                    queue_spec_path=queue_spec_path,
+                    paths=paths,
+                )
+            )
+
+    for required_tier in ("golden", "phase"):
+        if required_tier in seen_tiers:
+            continue
+        findings.append(
+            _review_finding(
+                finding_id="REV-STABLE-ARTIFACT-TIER",
+                severity="blocker",
+                summary=(
+                    f"Stable review artifacts for `{spec_id}` are missing the required `{required_tier}` copy."
+                ),
+                queue_spec_path=queue_spec_path,
+                paths=paths,
+            )
+        )
+    return tuple(findings)
+
+
+def _frozen_family_integrity_findings(
+    *,
+    family_state: GoalSpecFamilyState,
+    spec_id: str,
+    queue_spec_path: Path,
+    paths: RuntimePaths,
+) -> tuple[GoalSpecReviewFinding, ...]:
+    decision = evaluate_initial_family_plan_guard(
+        current_state=family_state,
+        candidate_spec_id=spec_id,
+        proposed_spec_order=family_state.spec_order,
+        proposed_specs=family_state.specs,
+    )
+    if decision.action != "block":
+        return ()
+    summary_parts = [
+        "Frozen initial family plan no longer matches the live family state before promotion",
+    ]
+    if decision.mutated_spec_ids:
+        summary_parts.append(f"mutated specs: {', '.join(f'`{item}`' for item in decision.mutated_spec_ids)}")
+    if decision.violation_codes:
+        summary_parts.append(f"violations: {', '.join(f'`{item}`' for item in decision.violation_codes)}")
+    return (
+        _review_finding(
+            finding_id="REV-FROZEN-FAMILY-INTEGRITY",
+            severity="blocker",
+            summary="; ".join(summary_parts) + ".",
+            queue_spec_path=queue_spec_path,
+            paths=paths,
+        ),
+    )
 
 
 def _review_findings(
     *,
     paths: RuntimePaths,
+    spec_id: str,
+    family_state: GoalSpecFamilyState,
+    spec_state: GoalSpecFamilySpecState,
     source_body: str,
     source_title: str,
     decomposition_profile: str,
     stable_spec_paths: tuple[Path, ...],
+    stable_spec_error: str | None,
     queue_spec_path: Path,
     queue_spec_text: str,
 ) -> tuple[GoalSpecReviewFinding, ...]:
@@ -526,7 +560,7 @@ def _review_findings(
         )
 
     objective_state, profile = _load_objective_profile_inputs(paths)
-    contractor_profile = load_objective_state_contractor_profile(paths, objective_state)
+    load_objective_state_contractor_profile(paths, objective_state)
     expected_scope = infer_goal_scope_kind(
         title=source_title,
         source_body=source_body,
@@ -579,14 +613,29 @@ def _review_findings(
                 )
             )
 
-    artifact_lines = _review_text_lines(
-        queue_spec_text,
-        *(path.read_text(encoding="utf-8") for path in stable_spec_paths),
+    findings.extend(
+        _promotability_findings(
+            family_state=family_state,
+            spec_id=spec_id,
+            spec_state=spec_state,
+            queue_spec_path=queue_spec_path,
+            paths=paths,
+        )
     )
     findings.extend(
-        _contractor_specificity_findings(
-            contractor_profile=contractor_profile,
-            artifact_lines=artifact_lines,
+        _stable_artifact_findings(
+            queue_spec_path=queue_spec_path,
+            spec_id=spec_id,
+            expected_decomposition_profile=decomposition_profile,
+            stable_spec_paths=stable_spec_paths,
+            stable_spec_error=stable_spec_error,
+            paths=paths,
+        )
+    )
+    findings.extend(
+        _frozen_family_integrity_findings(
+            family_state=family_state,
+            spec_id=spec_id,
             queue_spec_path=queue_spec_path,
             paths=paths,
         )
@@ -607,13 +656,6 @@ def execute_spec_review(
     """Promote one synthesized queue spec into reviewed state plus lineage/registry artifacts."""
 
     emitted_at = emitted_at or _utcnow()
-    if config is not None:
-        _execute_agentic_spec_review_stage(
-            paths,
-            config=config,
-            run_id=run_id,
-            stage_plan=stage_plan,
-        )
     source = resolve_goal_source(paths, checkpoint)
     family_state = load_goal_spec_family_state(paths.goal_spec_family_state_file)
     spec_id = source.frontmatter.get("spec_id", "").strip() or _spec_id_for_goal(source.idea_id)
@@ -628,7 +670,12 @@ def execute_spec_review(
     decision_path = paths.specs_decisions_dir / f"{source_slug}__spec-review.md"
     record_path = paths.goalspec_spec_review_records_dir / f"{run_id}.json"
     lineage_path = paths.goalspec_lineage_dir / f"{spec_id}.json"
-    stable_spec_paths = _stable_spec_paths_for_review(paths, spec_id=spec_id)
+    stable_spec_error: str | None = None
+    try:
+        stable_spec_paths = _stable_spec_paths_for_review(paths, spec_id=spec_id)
+    except GoalSpecExecutionError as exc:
+        stable_spec_paths = ()
+        stable_spec_error = str(exc)
     relative_stable_spec_paths = tuple(_relative_path(path, relative_to=paths.root) for path in stable_spec_paths)
     review_timestamp = emitted_at
     queue_spec_text = _resolve_path_token(source.source_path, relative_to=paths.root).read_text(
@@ -637,14 +684,25 @@ def execute_spec_review(
     )
     findings = _review_findings(
         paths=paths,
+        spec_id=spec_id,
+        family_state=family_state,
+        spec_state=spec_state,
         source_body=source.body,
         source_title=source.title,
         decomposition_profile=source.decomposition_profile,
         stable_spec_paths=stable_spec_paths,
+        stable_spec_error=stable_spec_error,
         queue_spec_path=queue_spec_path,
         queue_spec_text=queue_spec_text,
     )
     blocking_findings = tuple(finding for finding in findings if finding.severity == "blocker")
+    if not blocking_findings and config is not None:
+        _execute_agentic_spec_review_stage(
+            paths,
+            config=config,
+            run_id=run_id,
+            stage_plan=stage_plan,
+        )
     review_status = "blocked" if blocking_findings else "no_material_delta"
 
     if (
