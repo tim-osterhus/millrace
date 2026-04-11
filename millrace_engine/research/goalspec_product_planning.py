@@ -616,8 +616,13 @@ def _supported_unresolved_specializations(contractor_profile: ContractorProfileA
     unresolved = contractor_profile.unresolved_specializations
     if not unresolved:
         return True
+    grounded_tokens = {
+        f"{item.key}={item.value}"
+        for item in contractor_profile.specialization_provenance
+        if item.provenance == "workspace_grounded"
+    }
     return contractor_profile.shape_class == "platform_extension" and all(
-        item.startswith("loader=") for item in unresolved
+        item.startswith("loader=") and item in grounded_tokens for item in unresolved
     )
 
 

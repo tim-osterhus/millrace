@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+from typing import Callable
 
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.contracts import ResearchMode, ResearchStatus
@@ -176,6 +177,12 @@ def _write_queue_file(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def _write_fabric_workspace_evidence(workspace: Path) -> None:
+    evidence_path = workspace / "mods" / "aura-progression-mod" / "src" / "main" / "resources" / "fabric.mod.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text('{"schemaVersion":1,"id":"aura-progression"}\n', encoding="utf-8")
+
+
 def _semantic_profile(
     *,
     capability_domain_count: int,
@@ -243,8 +250,11 @@ def _run_objective_profile_sync(
     goal_text: str,
     run_id: str,
     emitted_at: datetime,
+    workspace_setup: Callable[[Path], None] | None = None,
 ) -> tuple[Path, object, dict[str, object], dict[str, object], str, str, dict[str, object]]:
     workspace, paths = _configured_goal_runtime(tmp_path)
+    if workspace_setup is not None:
+        workspace_setup(workspace)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     _write_queue_file(raw_goal_path, goal_text)
     goal_intake = execute_goal_intake(
@@ -569,6 +579,7 @@ def test_execute_objective_profile_sync_persists_typed_specialization_provenance
         goal_text=MINECRAFT_FABRIC_GOAL_TEXT,
         run_id="goalspec-minecraft-loader-001",
         emitted_at=_dt("2026-04-10T18:10:00Z"),
+        workspace_setup=_write_fabric_workspace_evidence,
     )
 
     provenance = {

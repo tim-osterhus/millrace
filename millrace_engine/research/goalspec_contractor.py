@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
+from pathlib import Path
 
 from ..markdown import write_text_atomic
 from ..paths import RuntimePaths
@@ -110,7 +111,7 @@ def execute_contractor(
     if reused is not None:
         return reused
 
-    decision = _build_contractor_decision(source)
+    decision = _build_contractor_decision(paths=paths, source=source)
     profile_path = paths.contractor_profile_file
     report_path = paths.contractor_profile_report_file
     schema_path = paths.packaged_contractor_profile_schema_file
@@ -253,7 +254,7 @@ def _build_profile_payload(
     }
 
 
-def _build_contractor_decision(source: GoalSource) -> _ContractorDecision:
+def _build_contractor_decision(*, paths: RuntimePaths, source: GoalSource) -> _ContractorDecision:
     text = f"{source.title}\n{source.canonical_body}".casefold()
     evidence: list[str] = []
     abstentions: list[str] = []
@@ -390,6 +391,7 @@ def _build_contractor_decision(source: GoalSource) -> _ContractorDecision:
     )
     unresolved_specializations_tuple = _ordered_unique(unresolved_specializations)
     specialization_provenance = _specialization_provenance(
+        paths=paths,
         source=source,
         specializations=specializations,
         unresolved_specializations=unresolved_specializations_tuple,
@@ -544,6 +546,7 @@ def _candidate_classifications(
 
 def _specialization_provenance(
     *,
+    paths: RuntimePaths,
     source: GoalSource,
     specializations: dict[str, str],
     unresolved_specializations: tuple[str, ...],
@@ -553,7 +556,6 @@ def _specialization_provenance(
     records: list[GoalSpecSpecializationRecord] = []
     unresolved_tokens = set(unresolved_specializations)
     canonical_text = source.canonical_body.casefold()
-    staged_text = source.body.casefold()
     for key, value in specializations.items():
         token = f"{key}={value}"
         support_state = "unsupported" if token in unresolved_tokens else "supported"
@@ -570,16 +572,18 @@ def _specialization_provenance(
                     notes="Specialization request preserved from the source goal.",
                 )
             )
-        if grounded_hint in staged_text:
+        workspace_evidence = _probe_workspace_specialization_evidence(paths=paths, key=key, value=value)
+        if workspace_evidence is not None:
+            evidence_path, evidence_summary, notes = workspace_evidence
             records.append(
                 GoalSpecSpecializationRecord(
                     key=key,
                     value=value,
                     provenance="workspace_grounded",
                     support_state=support_state,
-                    evidence_path=source.current_artifact_relative_path,
-                    evidence=("The staged workspace artifact preserves the specialization request.",),
-                    notes="Lossless Goal Intake kept this specialization visible in the current staged artifact.",
+                    evidence_path=evidence_path,
+                    evidence=(evidence_summary,),
+                    notes=notes,
                 )
             )
         if support_state == "supported":
@@ -617,6 +621,113 @@ def _specialization_grounded_hint(*, key: str, value: str) -> str:
     if key == "loader":
         return value.casefold()
     return value.casefold()
+
+
+def _probe_workspace_specialization_evidence(
+    *,
+    paths: RuntimePaths,
+    key: str,
+    value: str,
+) -> tuple[str, str, str] | None:
+    if key != "loader":
+        return None
+    return _probe_loader_workspace_evidence(paths.root, value.casefold())
+
+
+def _probe_loader_workspace_evidence(
+    workspace_root: Path,
+    loader: str,
+) -> tuple[str, str, str] | None:
+    if loader == "fabric":
+        candidate = _first_existing_workspace_path(
+            workspace_root,
+            direct_paths=(
+                "fabric.mod.json",
+                "src/main/resources/fabric.mod.json",
+            ),
+            glob_patterns=(
+                "mods/*/src/main/resources/fabric.mod.json",
+                "*/src/main/resources/fabric.mod.json",
+            ),
+        )
+        if candidate is not None:
+            relative = candidate.relative_to(workspace_root).as_posix()
+            return (
+                relative,
+                "Workspace repo evidence includes Fabric loader metadata.",
+                "Local repo files ground the requested Fabric loader without promoting it to a supported overlay.",
+            )
+        return None
+    if loader in {"forge", "neoforge"}:
+        token = "neoforge" if loader == "neoforge" else "forge"
+        candidate = _first_workspace_text_match(
+            workspace_root,
+            direct_paths=(
+                "build.gradle",
+                "build.gradle.kts",
+                "gradle.properties",
+                "settings.gradle",
+                "settings.gradle.kts",
+                "src/main/resources/META-INF/mods.toml",
+            ),
+            glob_patterns=(
+                "mods/*/build.gradle",
+                "mods/*/build.gradle.kts",
+                "mods/*/gradle.properties",
+                "mods/*/src/main/resources/META-INF/mods.toml",
+            ),
+            token=token,
+        )
+        if candidate is not None:
+            relative = candidate.relative_to(workspace_root).as_posix()
+            return (
+                relative,
+                f"Workspace repo evidence references the `{loader}` loader.",
+                f"Local repo files ground the requested `{loader}` loader without promoting it to a supported overlay.",
+            )
+    return None
+
+
+def _first_existing_workspace_path(
+    workspace_root: Path,
+    *,
+    direct_paths: tuple[str, ...],
+    glob_patterns: tuple[str, ...],
+) -> Path | None:
+    for relative_path in direct_paths:
+        candidate = workspace_root / relative_path
+        if candidate.exists():
+            return candidate
+    for pattern in glob_patterns:
+        for candidate in sorted(workspace_root.glob(pattern)):
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _first_workspace_text_match(
+    workspace_root: Path,
+    *,
+    direct_paths: tuple[str, ...],
+    glob_patterns: tuple[str, ...],
+    token: str,
+) -> Path | None:
+    lowered_token = token.casefold()
+    for relative_path in direct_paths:
+        candidate = workspace_root / relative_path
+        if _workspace_file_contains(candidate, lowered_token):
+            return candidate
+    for pattern in glob_patterns:
+        for candidate in sorted(workspace_root.glob(pattern)):
+            if _workspace_file_contains(candidate, lowered_token):
+                return candidate
+    return None
+
+
+def _workspace_file_contains(path: Path, token: str) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    return token in path.read_text(encoding="utf-8", errors="replace").casefold()
 
 
 def _render_contractor_report(

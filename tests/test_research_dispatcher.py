@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import re
 import sys
+from typing import Callable
 
 import pytest
 
@@ -136,6 +137,12 @@ def _write_queue_file(path: Path, body: str = "# queued\n") -> None:
 def _write_json_file(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_fabric_workspace_evidence(workspace: Path) -> None:
+    evidence_path = workspace / "mods" / "aura-progression-mod" / "src" / "main" / "resources" / "fabric.mod.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text('{"schemaVersion":1,"id":"aura-progression"}\n', encoding="utf-8")
 
 
 def _replace_markdown_section(document: str, heading: str, replacement: str) -> str:
@@ -271,8 +278,11 @@ def _prepare_reviewed_spec_for_taskmaster(
     body: str,
     decomposition_profile: str = "simple",
     idea_id: str | None = None,
+    workspace_setup: Callable[[Path], None] | None = None,
 ) -> tuple[Path, object, object, object, Path]:
     workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    if workspace_setup is not None:
+        workspace_setup(workspace)
     raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
     suffix = run_id.rsplit("-", 1)[-1]
     resolved_idea_id = idea_id or f"IDEA-{suffix.upper()}"
@@ -4011,6 +4021,7 @@ def test_execute_taskmaster_preserves_contractor_boundaries_for_supported_minecr
         title="Aura Progression Mod",
         decomposition_profile="moderate",
         idea_id="IDEA-MINECRAFT-713",
+        workspace_setup=_write_fabric_workspace_evidence,
         body=(
             "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
             "## Capability Domains\n"
@@ -4628,6 +4639,7 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
         title="Aura Progression Mod",
         decomposition_profile="moderate",
         idea_id="IDEA-MINECRAFT-712",
+        workspace_setup=_write_fabric_workspace_evidence,
         body=(
             "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
             "## Capability Domains\n"

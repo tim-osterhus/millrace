@@ -92,6 +92,7 @@ def _contractor_profile(
     specializations: dict[str, str] | None = None,
     resolved_profile_ids: tuple[str, ...] = (),
     unresolved_specializations: tuple[str, ...] = (),
+    specialization_provenance: tuple[dict[str, object], ...] = (),
     contradictions: tuple[str, ...] = (),
 ) -> ContractorProfileArtifact:
     return ContractorProfileArtifact.model_validate(
@@ -117,6 +118,7 @@ def _contractor_profile(
             "fallback_mode": fallback_mode,
             "resolved_profile_ids": resolved_profile_ids,
             "unresolved_specializations": unresolved_specializations,
+            "specialization_provenance": specialization_provenance,
             "capability_hints": (),
             "environment_hints": (),
             "browse_used": False,
@@ -192,6 +194,26 @@ def test_derive_goal_product_plan_prefers_contractor_minecraft_mod_shape_without
         specializations={"loader": "fabric"},
         resolved_profile_ids=("shape.platform_extension@1", "host.minecraft@1", "stack.jvm_gradle@1"),
         unresolved_specializations=("loader=fabric",),
+        specialization_provenance=(
+            {
+                "key": "loader",
+                "value": "fabric",
+                "provenance": "source_requested",
+                "support_state": "unsupported",
+                "evidence_path": "agents/ideas/archive/raw/goal.md",
+                "evidence": ["The canonical source explicitly references `fabric`."],
+                "notes": "Specialization request preserved from the source goal.",
+            },
+            {
+                "key": "loader",
+                "value": "fabric",
+                "provenance": "workspace_grounded",
+                "support_state": "unsupported",
+                "evidence_path": "mods/aura-progression-mod/src/main/resources/fabric.mod.json",
+                "evidence": ["Workspace repo evidence includes Fabric loader metadata."],
+                "notes": "Local repo files ground the requested Fabric loader without promoting it to a supported overlay.",
+            },
+        ),
     )
 
     plan = derive_goal_product_plan(source=source, profile=profile, contractor_profile=contractor_profile)
@@ -209,6 +231,56 @@ def test_derive_goal_product_plan_prefers_contractor_minecraft_mod_shape_without
         "mods/aura-progression-mod/src/test/java",
     ]
     assert any("loader-specific overlay" in step for step in plan.phase_steps)
+
+
+def test_derive_goal_product_plan_falls_back_when_loader_is_not_workspace_grounded() -> None:
+    source = _goal_source(
+        title="Aura Progression Mod",
+        body="Build a Minecraft mod with aura progression, gameplay content, and GameTests.",
+    )
+    profile = _acceptance_profile(
+        title=source.title,
+        objective_summary="Build a Minecraft mod with aura progression, gameplay content, and GameTests.",
+        capability_domains=("Aura Progression", "Registrations", "Gameplay Tests"),
+        progression_lines=("Progression from registrations to gameplay proof in-game.",),
+    )
+    contractor_profile = _contractor_profile(
+        goal_id=source.idea_id,
+        run_id="planner-run-001",
+        shape_class="platform_extension",
+        specificity_level="L4",
+        archetype="gameplay_mod",
+        host_platform="minecraft",
+        stack_hints=("jvm", "gradle"),
+        specializations={"loader": "fabric"},
+        resolved_profile_ids=("shape.platform_extension@1", "host.minecraft@1", "stack.jvm_gradle@1"),
+        unresolved_specializations=("loader=fabric",),
+        specialization_provenance=(
+            {
+                "key": "loader",
+                "value": "fabric",
+                "provenance": "source_requested",
+                "support_state": "unsupported",
+                "evidence_path": "agents/ideas/archive/raw/goal.md",
+                "evidence": ["The canonical source explicitly references `fabric`."],
+                "notes": "Specialization request preserved from the source goal.",
+            },
+        ),
+    )
+
+    plan = derive_goal_product_plan(source=source, profile=profile, contractor_profile=contractor_profile)
+
+    assert [surface.path for surface in plan.implementation_surfaces] == [
+        "src/aura-progression-mod/entrypoint",
+        "src/aura-progression-mod/aura-progression",
+        "src/aura-progression-mod/registrations",
+        "src/aura-progression-mod/gameplay-tests",
+        "src/aura-progression-mod/workflow",
+    ]
+    assert [surface.path for surface in plan.verification_surfaces] == [
+        "tests/aura-progression-mod/flow",
+        "tests/aura-progression-mod/regression",
+    ]
 
 
 def test_derive_goal_product_plan_prefers_contractor_network_business_system_shape() -> None:
