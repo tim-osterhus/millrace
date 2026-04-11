@@ -58,6 +58,9 @@ def persist_resume_state(
     observed_at: datetime,
     reason: str,
 ) -> None:
+    retry_state = self.state.retry_state
+    if self._resume_selected_family(checkpoint) is not ResearchQueueFamily.GOALSPEC or checkpoint.node_id != "spec_review":
+        retry_state = None
     self.status_store.write_raw(checkpoint.status)
     queue_snapshot = self.state.queue_snapshot.model_copy(
         update={
@@ -72,7 +75,7 @@ def persist_resume_state(
             "updated_at": observed_at,
             "mode_reason": reason,
             "queue_snapshot": queue_snapshot,
-            "retry_state": None,
+            "retry_state": retry_state,
             "checkpoint": checkpoint.model_copy(update={"updated_at": observed_at}),
             "next_poll_at": None,
         }

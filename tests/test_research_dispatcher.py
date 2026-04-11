@@ -4215,6 +4215,186 @@ def test_execute_spec_review_routes_invented_loader_token_to_true_invention_bloc
     assert "Remove the invented specialization detail" in decision_text
 
 
+def test_research_plane_retries_and_exhausts_deterministic_spec_review_blocks_truthfully(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    config.research.stage_retry_backoff_seconds = 0
+    config.research.stage_retry_max = 1
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-review-retry-714"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-714\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+    original_execute_spec_review = research_plane_module.execute_spec_review
+    original_execute_spec_synthesis = research_plane_module.execute_spec_synthesis
+    review_attempts = 0
+
+    def _counted_spec_review(*args: object, **kwargs: object):
+        nonlocal review_attempts
+        review_attempts += 1
+        return original_execute_spec_review(*args, **kwargs)
+
+    def _execute_spec_synthesis_with_loader_promotion(*args: object, **kwargs: object):
+        result = original_execute_spec_synthesis(*args, **kwargs)
+        phase_path = workspace / result.phase_spec_path
+        phase_text = phase_path.read_text(encoding="utf-8")
+        phase_text = _replace_markdown_section(
+            phase_text,
+            "Work Plan",
+            "\n".join(
+                [
+                    "## Work Plan",
+                    "1. Implement bounded Minecraft registrations in `mods/aura-progression-mod/src/main/java/registrations`.",
+                    "2. Add Fabric loader bootstrap in `mods/aura-progression-mod/src/main/resources/fabric.mod.json`.",
+                    "3. Extend gameplay proof in `mods/aura-progression-mod/src/gametest/java`.",
+                    "4. Verify Gradle-backed tests in `mods/aura-progression-mod/src/test/java`.",
+                    "5. Keep resource packaging aligned in `mods/aura-progression-mod/src/main/resources`.",
+                    "6. Close the bounded mod slice with traceable proof in `mods/aura-progression-mod/src/gametest/java`.",
+                ]
+            ),
+        )
+        phase_path.write_text(phase_text, encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(research_plane_module, "execute_spec_review", _counted_spec_review)
+    monkeypatch.setattr(
+        research_plane_module,
+        "execute_spec_synthesis",
+        _execute_spec_synthesis_with_loader_promotion,
+    )
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-714",
+    ):
+        _run_research_until_settled(
+            plane,
+            run_id=run_id,
+            resolve_assets=False,
+        )
+
+    first_snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert review_attempts == 1
+    assert first_snapshot.retry_state is not None
+    assert first_snapshot.retry_state.attempt == 1
+    assert first_snapshot.retry_state.exhausted() is False
+    assert first_snapshot.retry_state.last_failure_reason == (
+        "Spec Review blocked SPEC-MINECRAFT-714; resolve the recorded decomposition findings before Taskmaster"
+    )
+    assert first_snapshot.checkpoint is not None
+    assert first_snapshot.checkpoint.node_id == "spec_review"
+
+    review_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "spec_review" / f"{run_id}.json"
+    review_record = json.loads(review_record_path.read_text(encoding="utf-8"))
+    assert review_record["review_status"] == "blocked"
+    assert any(item["remediation_intent"] == "missing_workspace_confirmation" for item in review_record["findings"])
+
+    with pytest.raises(
+        research_plane_module.GoalSpecExecutionError,
+        match="Spec Review blocked SPEC-MINECRAFT-714",
+    ):
+        plane.sync_runtime(trigger="daemon-loop", resolve_assets=False)
+
+    resumed_snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert review_attempts == 2
+    assert resumed_snapshot.retry_state is not None
+    assert resumed_snapshot.retry_state.attempt == 2
+    assert resumed_snapshot.retry_state.max_attempts == 2
+    assert resumed_snapshot.retry_state.next_retry_at is None
+    assert resumed_snapshot.retry_state.exhausted() is True
+    assert resumed_snapshot.checkpoint is not None
+    assert resumed_snapshot.checkpoint.node_id == "spec_review"
+    assert resumed_snapshot.queue_snapshot.ownerships == resumed_snapshot.checkpoint.owned_queues
+
+    assert plane.sync_runtime(trigger="daemon-loop", resolve_assets=False) is None
+
+    exhausted_snapshot = plane.snapshot_state()
+    assert plane.status_store.read() is ResearchStatus.BLOCKED
+    assert review_attempts == 2
+    assert exhausted_snapshot == resumed_snapshot
+
+
+def test_research_plane_runs_grounded_supported_minecraft_goal_to_taskmaster_in_daemon_mode(
+    tmp_path: Path,
+) -> None:
+    workspace, config, paths = _configured_runtime(tmp_path, mode=ResearchMode.GOALSPEC)
+    _write_fabric_workspace_evidence(workspace)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-daemon-minecraft-715"
+    _write_queue_file(
+        raw_goal_path,
+        (
+            "---\n"
+            "idea_id: IDEA-MINECRAFT-715\n"
+            "title: Aura Progression Mod\n"
+            "decomposition_profile: moderate\n"
+            "---\n\n"
+            "# Aura Progression Mod\n\n"
+            "Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.\n\n"
+            "## Capability Domains\n"
+            "- Aura Progression\n"
+            "- Registrations\n"
+            "- Gameplay Tests\n\n"
+            "## Progression Lines\n"
+            "- Progression from registrations to gameplay proof in-game.\n"
+            "- Automated validation covers GameTests and bounded host behavior.\n"
+            "- Use Gradle for the project build.\n"
+            "- Loader discussion currently points at Fabric.\n"
+        ),
+    )
+    plane = ResearchPlane(config, paths)
+
+    dispatch = _run_research_until_settled(
+        plane,
+        run_id=run_id,
+        resolve_assets=False,
+    )
+
+    assert dispatch is not None
+    snapshot = plane.snapshot_state()
+    assert snapshot.checkpoint is None
+    assert snapshot.retry_state is None
+    assert plane.status_store.read() is ResearchStatus.IDLE
+
+    review_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "spec_review" / f"{run_id}.json"
+    taskmaster_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskmaster" / f"{run_id}.json"
+    taskaudit_record_path = workspace / "agents" / ".research_runtime" / "goalspec" / "taskaudit" / f"{run_id}.json"
+
+    review_record = json.loads(review_record_path.read_text(encoding="utf-8"))
+    taskaudit_record = json.loads(taskaudit_record_path.read_text(encoding="utf-8"))
+    backlog = parse_task_store(paths.backlog_file.read_text(encoding="utf-8"), source_file=paths.backlog_file)
+
+    assert review_record["review_status"] == "no_material_delta"
+    assert taskmaster_record_path.exists()
+    assert taskaudit_record["status"] == "merged"
+    assert backlog.cards
+    assert any("`loader=fabric`" in card.body for card in backlog.cards)
+    assert any("do not invent a resolved overlay" in card.body for card in backlog.cards)
+
+
 def test_execute_taskmaster_emits_product_first_shard_for_open_product_objective(tmp_path: Path) -> None:
     workspace, config, paths, _synthesis, reviewed_path = _prepare_reviewed_spec_for_taskmaster(
         tmp_path,
