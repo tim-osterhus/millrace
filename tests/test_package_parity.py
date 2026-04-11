@@ -233,7 +233,13 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`agents/_completion_manifest_draft.md` remains the dedicated completion-manifest draft asset" in readme
     assert "`agents/skills/contractor-classification/`" in readme
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in readme
+    assert "full bounded initial-family cap" in readme
+    assert "sibling-specific decomposition profiles" in readme
+    assert "bounded one-spec agentic review/edit pass" in readme
+    assert "deterministic structural validator before Taskmaster promotion" in readme
     assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in readme
+    assert "bounded local Mechanic repair" in readme
+    assert "GoalSpec-owned `goal_gap_remediation` family" in readme
     assert "goal-gap remediation-family staging" in readme
     assert "Execution `IDLE` is the execution plane's neutral state" in readme
 
@@ -294,7 +300,13 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`agents/_completion_manifest_draft.md` remains the dedicated completion-manifest draft asset" in operator_guide
     assert "`agents/skills/contractor-classification/`" in operator_guide
     assert "semantic_profile_seed.json`, `.yaml`, or `.yml`" in operator_guide
+    assert "full bounded initial-family cap" in operator_guide
+    assert "sibling-specific decomposition profiles" in operator_guide
+    assert "uses the shipped agentic review contract" in operator_guide
+    assert "deterministic structural validator before Taskmaster promotion" in operator_guide
     assert "mixed-ready GoalSpec, incident, and audit queues follow deterministic family precedence" in operator_guide
+    assert "bounded local Mechanic repair" in operator_guide
+    assert "GoalSpec-owned `goal_gap_remediation` family" in operator_guide
     assert "goal-gap remediation-family staging" in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
@@ -323,8 +335,14 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "`_contractor.md` is not the completion-manifest entrypoint" in runtime_deep_dive
     assert "`agents/skills/contractor-classification/`" in runtime_deep_dive
     assert "semantic_profile_seed.yaml" in runtime_deep_dive
+    assert "full bounded initial-family cap" in runtime_deep_dive
+    assert "sibling-specific decomposition profiles" in runtime_deep_dive
+    assert "bounded one-spec agentic review/edit stage" in runtime_deep_dive
+    assert "deterministic structural validator" in runtime_deep_dive
     assert "Taskmaster emits product-first per-spec shards" in runtime_deep_dive
     assert "mixed-ready `AUTO` queues follow deterministic family precedence" in runtime_deep_dive
+    assert "bounded local Mechanic repair" in runtime_deep_dive
+    assert "GoalSpec-owned `goal_gap_remediation` family" in runtime_deep_dive
     assert "goal-gap remediation-family staging" in runtime_deep_dive
     assert "`thaw()` rehydrates previously frozen cards once visible backlog work reappears" in runtime_deep_dive
 
@@ -351,6 +369,59 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "tools/repo_guardrails.py",
     ):
         assert (MILLRACE_ROOT / relative).exists(), relative
+
+
+def test_packaged_goalspec_truth_surfaces_describe_review_recovery_contract() -> None:
+    assets_root = MILLRACE_ROOT / "millrace_engine" / "assets"
+
+    goalspec_loop = json.loads(
+        (
+            assets_root
+            / "registry"
+            / "loops"
+            / "research"
+            / "research.goalspec__1.0.0.json"
+        ).read_text(encoding="utf-8")
+    )
+    goalspec_loop_md = (
+        assets_root
+        / "registry"
+        / "loops"
+        / "research"
+        / "research.goalspec__1.0.0.md"
+    ).read_text(encoding="utf-8")
+    spec_review_stage = json.loads(
+        (
+            assets_root
+            / "registry"
+            / "stages"
+            / "research.spec-review__1.0.0.json"
+        ).read_text(encoding="utf-8")
+    )
+    spec_review_stage_md = (
+        assets_root
+        / "registry"
+        / "stages"
+        / "research.spec-review__1.0.0.md"
+    ).read_text(encoding="utf-8")
+    mechanic_prompt = (assets_root / "agents" / "_mechanic.md").read_text(
+        encoding="utf-8"
+    )
+
+    for contents in (goalspec_loop["summary"], goalspec_loop_md):
+        assert "broad bounded family synthesis" in contents
+        assert "sibling-specific sizing" in contents
+        assert "runtime-owned local repair or remediation-family escalation" in contents
+
+    for contents in (spec_review_stage["summary"], spec_review_stage_md):
+        assert "bounded GoalSpec review stage" in contents
+        assert "shipped agentic review contract" in contents
+        assert "structural validator" in contents
+        assert "bounded remediation routing" in contents
+
+    assert "bounded local repair" in mechanic_prompt
+    assert "structural remediation bundle already exists" in mechanic_prompt
+    assert "broader remediation family" in mechanic_prompt
 
 
 def test_default_public_stage_prompt_assets_exist(tmp_path: Path) -> None:

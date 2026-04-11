@@ -82,7 +82,7 @@
     "ref": "registry/stages/research.spec-review__1.0.0.json"
   },
   "status": "active",
-  "summary": "Packaged scaffold for validating synthesized spec-family artifacts before task generation.",
+  "summary": "Packaged bounded GoalSpec review stage: one queue spec runs through the shipped agentic review contract, then the runtime applies a structural validator before Taskmaster promotion or bounded remediation routing.",
   "tier": "default",
   "title": "Research Spec Review",
   "updated_at": "2026-03-19T00:00:00Z",

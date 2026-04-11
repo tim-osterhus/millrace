@@ -17,7 +17,7 @@
 
 ## Summary
 
-Packaged scaffold for validating synthesized spec-family artifacts before task generation.
+Packaged bounded GoalSpec review stage: one queue spec runs through the shipped agentic review contract, then the runtime applies a structural validator before Taskmaster promotion or bounded remediation routing.
 
 ## Payload
 

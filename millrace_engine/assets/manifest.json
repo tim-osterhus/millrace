@@ -291,18 +291,18 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "e003fe893f7ec4526f184d997af06d072b1562ca6cb94283194e6262fcd9ab80",
+      "sha256": "a28a210aa241e668e9e7c0b616a778ca7365091c1c3c32d449d317d0d7cb895b",
       "size": 19937,
-      "size_bytes": 19937,
+      "size_bytes": 20586,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "c8586a93ef1b31dfc3a2d0e3d764554c5b2a0fda956fb4938ec4d9d514f19126",
+      "sha256": "3768accf0764c5047527f02174614e47acaeef46207b3c8fcd062325e1a8f37c",
       "size": 23394,
-      "size_bytes": 23662,
+      "size_bytes": 24261,
       "source": "runtime"
     },
     {
@@ -480,9 +480,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_mechanic.md",
-      "sha256": "a2ef55e3921b3c317bb9b94ccd701e6abae3e512b195ff4c6422852576d779e7",
+      "sha256": "2dca31305160afb8acd80b5fdcab6a7c03bc93de4b9eb8c31abf0cfc6af6cb7f",
       "size": 3106,
-      "size_bytes": 3106,
+      "size_bytes": 3253,
       "source": "reference"
     },
     {
@@ -1551,9 +1551,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "7cf429ee57a1dd830a2edd2d5ca52a4ca58b7772a9de04b5a43318c904540e2d",
+      "sha256": "aa247dcc1347b5c846d75a35f3efe80cacf7152fecce3fd7083a460bb0a6bab0",
       "size": 56418,
-      "size_bytes": 56418,
+      "size_bytes": 56905,
       "source": "runtime"
     },
     {

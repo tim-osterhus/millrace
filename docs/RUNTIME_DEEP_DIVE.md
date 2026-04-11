@@ -1040,11 +1040,12 @@ The important contract details are:
 - objective-profile sync may read `agents/objective/semantic_profile_seed.json`, `agents/objective/semantic_profile_seed.yaml`, or `agents/objective/semantic_profile_seed.yml` to pin workspace-local capability milestones
 - the completion manifest keeps governance artifacts separate from product implementation surfaces and verification surfaces
 - mixed-ready `AUTO` selection reevaluates after each defer boundary instead of draining a whole research family inline
-- spec synthesis may freeze an initial-family plan with planned later specs instead of forcing one oversized spec
-- spec review blocks traceable but still too-coarse packages before Taskmaster runs
+- spec synthesis may realize the full bounded initial-family cap, freeze later planned specs, and preserve sibling-specific decomposition profiles instead of forcing one oversized spec or flattening every sibling to the same source profile
+- spec review is a bounded one-spec agentic review/edit stage, followed by a deterministic structural validator that blocks traceable but still too-coarse packages before Taskmaster runs
+- blocked spec review can emit a remediation bundle, retry through bounded local Mechanic repair for the same structural failure signature, and escalate into a separate GoalSpec-owned `goal_gap_remediation` family if those local attempts exhaust
 - Taskmaster emits product-first per-spec shards, and Taskaudit is the only stage that merges a completed family into backlog
 - pending shards and prepared finalization records are healthy in-flight delivery state; delivery integrity reserves fatal recycling for families that have emitted work without a valid shard or merged backlog handoff
-- queue-empty completion failures may continue into marathon audit, goal-gap review, and bounded remediation-family staging instead of reducing only to deterministic PASS/FAIL
+- queue-empty completion failures may continue into marathon audit, goal-gap review, and bounded audit-owned remediation-family staging instead of reducing only to deterministic PASS/FAIL
 
 ### 17.4 Stub Compatibility Path
 

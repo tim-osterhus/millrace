@@ -17,7 +17,7 @@
 
 ## Summary
 
-Packaged GoalSpec research loop scaffold for the Phase 04 runtime foundation.
+Packaged GoalSpec research loop scaffold for the current runtime: broad bounded family synthesis, sibling-specific sizing, bounded agentic Spec Review, and runtime-owned local repair or remediation-family escalation around blocked review remain outside the canonical DAG but inside the shipped GoalSpec contract.
 
 ## Payload
 

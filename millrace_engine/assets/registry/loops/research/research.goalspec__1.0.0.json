@@ -341,7 +341,7 @@
     "ref": "registry/loops/research/research.goalspec__1.0.0.json"
   },
   "status": "active",
-  "summary": "Packaged GoalSpec research loop scaffold for the Phase 04 runtime foundation.",
+  "summary": "Packaged GoalSpec research loop scaffold for the current runtime: broad bounded family synthesis, sibling-specific sizing, bounded agentic Spec Review, and runtime-owned local repair or remediation-family escalation around blocked review remain outside the canonical DAG but inside the shipped GoalSpec contract.",
   "tier": "default",
   "title": "Research GoalSpec Loop",
   "updated_at": "2026-03-19T00:00:00Z",
