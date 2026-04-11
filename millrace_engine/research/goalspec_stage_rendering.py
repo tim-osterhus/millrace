@@ -99,6 +99,16 @@ def _contractor_shape_phrase(contractor_profile: ContractorProfileArtifact) -> s
     return ", ".join(parts)
 
 
+def _format_specialization_record(item: object) -> str:
+    key = str(getattr(item, "key", "")).strip()
+    value = str(getattr(item, "value", "")).strip()
+    provenance = str(getattr(item, "provenance", "")).strip() or "unknown"
+    support_state = str(getattr(item, "support_state", "")).strip() or "unknown"
+    evidence_path = str(getattr(item, "evidence_path", "")).strip()
+    path_suffix = f" @ `{evidence_path}`" if evidence_path else ""
+    return f"`{key}={value}` ({provenance}, {support_state}{path_suffix})"
+
+
 def _contractor_grounding_lines(
     *,
     contractor_profile: ContractorProfileArtifact | None,
@@ -127,6 +137,12 @@ def _contractor_grounding_lines(
         lines.append(
             "- Environment assumptions remain explicit: "
             + ", ".join(f"`{item}`" for item in completion_manifest.contractor_environment_hints)
+            + "."
+        )
+    if completion_manifest.contractor_specialization_provenance:
+        lines.append(
+            "- Specialization provenance remains explicit: "
+            + "; ".join(_format_specialization_record(item) for item in completion_manifest.contractor_specialization_provenance)
             + "."
         )
     if completion_manifest.contractor_unresolved_specializations:

@@ -43,6 +43,23 @@ ContractorFallbackMode = Literal[
     "conservative_shape_only",
     "abstain_unknown",
 ]
+GoalSpecSpecializationProvenance = Literal[
+    "source_requested",
+    "workspace_grounded",
+    "contractor_resolved",
+    "planner_invented",
+]
+GoalSpecSpecializationSupportState = Literal["supported", "unsupported", "proposed"]
+
+
+def _normalize_model_sequence(value: object, *, field_name: str) -> tuple[object, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, dict):
+        return (value,)
+    if isinstance(value, str):
+        raise ValueError(f"{field_name} must be a sequence of objects")
+    return tuple(value)
 
 
 class GoalSource(ContractModel):
@@ -249,6 +266,7 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
     contractor_specificity_level: ContractorSpecificityLevel | None = None
     contractor_shape_class: ContractorShapeClass | None = None
     contractor_fallback_mode: ContractorFallbackMode | None = None
+    contractor_specialization_provenance: tuple[GoalSpecSpecializationRecord, ...] = ()
     initial_family_policy_pin: InitialFamilyPolicyPinDecision | None = None
 
     @model_validator(mode="before")
@@ -280,6 +298,13 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
     @classmethod
     def normalize_optional_text(cls, value: str | Path | None) -> str:
         return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
+
+    @field_validator("contractor_specialization_provenance", mode="before")
+    @classmethod
+    def normalize_specialization_provenance(
+        cls, value: object
+    ) -> tuple[GoalSpecSpecializationRecord | dict[str, object], ...]:
+        return _normalize_model_sequence(value, field_name="contractor_specialization_provenance")
 
     @field_validator(
         "profile_id",
@@ -325,6 +350,7 @@ class ObjectiveProfileSyncRecord(ContractModel):
     contractor_specificity_level: ContractorSpecificityLevel | None = None
     contractor_shape_class: ContractorShapeClass | None = None
     contractor_fallback_mode: ContractorFallbackMode | None = None
+    contractor_specialization_provenance: tuple[GoalSpecSpecializationRecord, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -355,6 +381,13 @@ class ObjectiveProfileSyncRecord(ContractModel):
     @classmethod
     def normalize_optional_text(cls, value: str | Path | None) -> str:
         return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
+
+    @field_validator("contractor_specialization_provenance", mode="before")
+    @classmethod
+    def normalize_specialization_provenance(
+        cls, value: object
+    ) -> tuple[GoalSpecSpecializationRecord | dict[str, object], ...]:
+        return _normalize_model_sequence(value, field_name="contractor_specialization_provenance")
 
     @field_validator(
         "run_id",
@@ -391,6 +424,46 @@ class ObjectiveProfileSyncExecutionResult(ContractModel):
     profile_state_path: str
     contractor_record_path: str = ""
     queue_ownership: ResearchQueueOwnership
+
+
+class GoalSpecSpecializationRecord(ContractModel):
+    """Typed specialization provenance carried through GoalSpec runtime state."""
+
+    key: str
+    value: str
+    provenance: GoalSpecSpecializationProvenance
+    support_state: GoalSpecSpecializationSupportState
+    evidence_path: str = ""
+    evidence: tuple[str, ...] = ()
+    notes: str = ""
+
+    @field_validator("key", "value")
+    @classmethod
+    def validate_required_text(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        return _normalize_required_text(value, field_name=field_name)
+
+    @field_validator("evidence_path", "notes", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: str | Path | None) -> str:
+        return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            items = (value,)
+        else:
+            items = tuple(value)
+        normalized: list[str] = []
+        for item in items:
+            text = str(item).strip()
+            if not text:
+                raise ValueError("evidence may not contain blank values")
+            normalized.append(text)
+        return tuple(normalized)
 
 
 class ContractorClassificationCandidate(ContractModel):
@@ -474,6 +547,7 @@ class ContractorProfileArtifact(ContractModel):
     fallback_mode: ContractorFallbackMode
     resolved_profile_ids: tuple[str, ...]
     unresolved_specializations: tuple[str, ...]
+    specialization_provenance: tuple[GoalSpecSpecializationRecord, ...] = ()
     capability_hints: tuple[str, ...]
     environment_hints: tuple[str, ...]
     browse_used: bool
@@ -517,6 +591,13 @@ class ContractorProfileArtifact(ContractModel):
     def normalize_optional_text(cls, value: str | Path | None) -> str:
         return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
 
+    @field_validator("specialization_provenance", mode="before")
+    @classmethod
+    def normalize_specialization_provenance(
+        cls, value: object
+    ) -> tuple[GoalSpecSpecializationRecord | dict[str, object], ...]:
+        return _normalize_model_sequence(value, field_name="specialization_provenance")
+
     @field_validator(
         "resolved_profile_ids",
         "unresolved_specializations",
@@ -550,6 +631,13 @@ class ContractorProfileArtifact(ContractModel):
             raise ValueError("classification.shape_class must match shape_class")
         if not self.evidence:
             raise ValueError("evidence must contain at least one item")
+        unresolved_tokens = set(self.unresolved_specializations)
+        for item in self.specialization_provenance:
+            token = f"{item.key}={item.value}"
+            if item.support_state == "supported" and token in unresolved_tokens:
+                raise ValueError(
+                    "specialization_provenance may not mark an unresolved specialization as supported"
+                )
         return self
 
 
@@ -575,6 +663,7 @@ class ContractorExecutionRecord(ContractModel):
     profile_specificity_level: ContractorSpecificityLevel
     shape_class: ContractorShapeClass
     fallback_mode: ContractorFallbackMode
+    specialization_provenance: tuple[GoalSpecSpecializationRecord, ...] = ()
     browse_used: bool
 
     @model_validator(mode="before")
@@ -616,6 +705,13 @@ class ContractorExecutionRecord(ContractModel):
         if field_name.endswith("_path"):
             return _normalize_required_text(_normalize_path_token(value), field_name=field_name)
         return _normalize_required_text(str(value), field_name=field_name)
+
+    @field_validator("specialization_provenance", mode="before")
+    @classmethod
+    def normalize_specialization_provenance(
+        cls, value: object
+    ) -> tuple[GoalSpecSpecializationRecord | dict[str, object], ...]:
+        return _normalize_model_sequence(value, field_name="specialization_provenance")
 
     @field_validator("source_checksum_sha256", mode="before")
     @classmethod
@@ -694,6 +790,7 @@ class CompletionManifestDraftStateRecord(ContractModel):
     contractor_capability_hints: tuple[str, ...] = ()
     contractor_environment_hints: tuple[str, ...] = ()
     contractor_unresolved_specializations: tuple[str, ...] = ()
+    contractor_specialization_provenance: tuple[GoalSpecSpecializationRecord, ...] = ()
     contractor_abstentions: tuple[str, ...] = ()
     contractor_contradictions: tuple[str, ...] = ()
     required_artifacts: tuple[CompletionManifestDraftArtifact, ...]
@@ -755,6 +852,16 @@ class CompletionManifestDraftStateRecord(ContractModel):
     @classmethod
     def normalize_optional_text(cls, value: str | Path | None) -> str:
         return _normalize_path_token(value) if isinstance(value, Path) else ("" if value is None else str(value).strip())
+
+    @field_validator(
+        "contractor_specialization_provenance",
+        mode="before",
+    )
+    @classmethod
+    def normalize_specialization_provenance(
+        cls, value: object
+    ) -> tuple[GoalSpecSpecializationRecord | dict[str, object], ...]:
+        return _normalize_model_sequence(value, field_name="contractor_specialization_provenance")
 
     @field_validator(
         "acceptance_focus",

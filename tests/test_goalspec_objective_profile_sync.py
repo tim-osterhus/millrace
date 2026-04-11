@@ -114,6 +114,28 @@ title: Team System
 Build something useful for a team. The exact product shape is still unclear.
 """
 
+MINECRAFT_FABRIC_GOAL_TEXT = """---
+idea_id: IDEA-MINECRAFT-001
+title: Aura Progression Mod
+decomposition_profile: moderate
+---
+
+# Aura Progression Mod
+
+Build a Minecraft mod that adds aura-powered progression, new registrations, and in-game validation.
+
+## Capability Domains
+- Aura Progression
+- Registrations
+- Gameplay Tests
+
+## Progression Lines
+- Progression from registrations to gameplay proof in-game.
+- Automated validation covers GameTests and bounded host behavior.
+- Use Gradle for the project build.
+- Loader discussion currently points at Fabric.
+"""
+
 SUPPORT_TICKET_GOAL_WITH_ADMIN_NOISE = """---
 idea_id: IDEA-PY-NOISE-001
 title: Shared Workspace Service
@@ -357,6 +379,7 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert acceptance_profile["contractor_shape_class"] == "unknown"
     assert acceptance_profile["contractor_specificity_level"] == "L0"
     assert acceptance_profile["contractor_fallback_mode"] == "abstain_unknown"
+    assert acceptance_profile["contractor_specialization_provenance"] == []
     assert "## Contractor Summary" in report_text
     assert "- **Contractor-Profile:** `agents/objective/contractor_profile.json`" in report_text
     assert "- **Shape-Class:** `unknown`" in report_text
@@ -538,6 +561,28 @@ def test_execute_objective_profile_sync_preserves_conservative_contractor_fallba
     assert "- **Fallback-Mode:** `abstain_unknown`" in report_text
     assert "- **Abstentions:** No trustworthy host, archetype, or stack specialization is justified yet." in report_text
     assert "EXAMPLES_AMBIGUOUS_AND_EDGE_CASES.md" in contractor_report_text
+
+
+def test_execute_objective_profile_sync_persists_typed_specialization_provenance(tmp_path: Path) -> None:
+    _, _, profile_state, _, _, report_text, _ = _run_objective_profile_sync(
+        tmp_path=tmp_path,
+        goal_text=MINECRAFT_FABRIC_GOAL_TEXT,
+        run_id="goalspec-minecraft-loader-001",
+        emitted_at=_dt("2026-04-10T18:10:00Z"),
+    )
+
+    provenance = {
+        (item["provenance"], item["support_state"], item["key"], item["value"])
+        for item in profile_state["contractor_specialization_provenance"]
+    }
+
+    assert provenance == {
+        ("source_requested", "unsupported", "loader", "fabric"),
+        ("workspace_grounded", "unsupported", "loader", "fabric"),
+    }
+    assert "Specialization-Provenance" in report_text
+    assert "source_requested" in report_text
+    assert "workspace_grounded" in report_text
 
 
 def test_derive_objective_family_policy_does_not_widen_below_bash_thresholds() -> None:

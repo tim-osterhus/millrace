@@ -146,6 +146,9 @@ def _build_completion_manifest_draft_state(
         contractor_unresolved_specializations=(
             contractor_profile.unresolved_specializations if contractor_profile is not None else ()
         ),
+        contractor_specialization_provenance=(
+            contractor_profile.specialization_provenance if contractor_profile is not None else ()
+        ),
         contractor_abstentions=contractor_profile.abstentions if contractor_profile is not None else (),
         contractor_contradictions=contractor_profile.contradictions if contractor_profile is not None else (),
         required_artifacts=(

@@ -96,6 +96,17 @@ def test_contractor_execution_record_round_trips_from_runtime_record_dir(tmp_pat
         profile_specificity_level="L4",
         shape_class="platform_extension",
         fallback_mode="apply_resolved_profiles_only",
+        specialization_provenance=[
+            {
+                "key": "loader",
+                "value": "fabric",
+                "provenance": "source_requested",
+                "support_state": "unsupported",
+                "evidence_path": "agents/ideas/archive/raw/aura_goal.md",
+                "evidence": ["The canonical source explicitly references `fabric`."],
+                "notes": "Specialization request preserved from the source goal.",
+            }
+        ],
         browse_used=False,
     )
 
@@ -105,6 +116,7 @@ def test_contractor_execution_record_round_trips_from_runtime_record_dir(tmp_pat
 
     assert record_path == paths.goalspec_contractor_records_dir / "goalspec-contractor-001.json"
     assert loaded == record
+    assert loaded.specialization_provenance[0].provenance == "source_requested"
 
 
 def test_load_contractor_execution_record_fails_when_record_missing(tmp_path: Path) -> None:

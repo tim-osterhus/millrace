@@ -27,6 +27,16 @@ from .goalspec_persistence import (
 from .state import ResearchCheckpoint
 
 
+def _format_specialization_record(item: object) -> str:
+    key = str(getattr(item, "key", "")).strip()
+    value = str(getattr(item, "value", "")).strip()
+    provenance = str(getattr(item, "provenance", "")).strip() or "unknown"
+    support_state = str(getattr(item, "support_state", "")).strip() or "unknown"
+    evidence_path = str(getattr(item, "evidence_path", "")).strip()
+    path_suffix = f" @ `{evidence_path}`" if evidence_path else ""
+    return f"`{key}={value}` ({provenance}, {support_state}{path_suffix})"
+
+
 def _render_completion_manifest_report(
     *,
     run_id: str,
@@ -58,6 +68,11 @@ def _render_completion_manifest_report(
             contractor_lines.append(
                 "- **Unresolved-Specializations:** "
                 + ", ".join(f"`{item}`" for item in draft_state.contractor_unresolved_specializations)
+            )
+        if draft_state.contractor_specialization_provenance:
+            contractor_lines.append(
+                "- **Specialization-Provenance:** "
+                + "; ".join(_format_specialization_record(item) for item in draft_state.contractor_specialization_provenance)
             )
         if draft_state.contractor_abstentions:
             contractor_lines.extend(
