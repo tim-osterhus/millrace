@@ -14,12 +14,7 @@ from millrace_engine.research.state import ResearchCheckpoint, ResearchQueueFami
 from tests.support import load_workspace_fixture
 
 
-PRODUCT_GOAL_TEXT = """---
-idea_id: IDEA-WORKSPACE-001
-title: Team Workspace Vertical Slice
----
-
-# Team Workspace Vertical Slice
+PRODUCT_GOAL_BODY = """# Team Workspace Vertical Slice
 
 Build the first usable team workspace vertical slice for collaborative planning.
 
@@ -33,6 +28,43 @@ Progression from intake to shared drafting to review handoff.
 Minimal onboarding guidance.
 Automated validation covers entry flow, collaboration state, handoff correctness, and the happy path.
 """
+
+PRODUCT_GOAL_TEXT = f"""---
+idea_id: IDEA-WORKSPACE-001
+title: Team Workspace Vertical Slice
+---
+
+{PRODUCT_GOAL_BODY}"""
+
+MULTI_SECTION_GOAL_BODY = """# Layered Runtime Contract
+
+Ship the layered runtime contract without losing product requirements.
+
+## Problem Statement
+Preserve the full seeded contract in the staged handoff.
+
+## Scope
+- Goal Intake preserves every named section.
+- Objective Profile Sync receives a truthful staged artifact.
+
+## Constraints
+- Keep canonical lineage intact.
+- Do not move trace metadata into the semantic body.
+
+## Unknowns Ledger
+- Final provenance classes can land later.
+
+## Evidence
+- Operators supplied the seeded markdown directly.
+"""
+
+MULTI_SECTION_GOAL_TEXT = f"""---
+idea_id: IDEA-LAYERED-001
+title: Layered Runtime Contract
+decomposition_profile: involved
+---
+
+{MULTI_SECTION_GOAL_BODY}"""
 
 SMALL_PRODUCT_GOAL_TEXT = """---
 idea_id: IDEA-SMALL-001
@@ -249,10 +281,41 @@ def test_execute_goal_intake_moves_trace_metadata_to_frontmatter(tmp_path: Path)
     assert "Source artifact" not in staged_text
     assert "Stage contract" not in staged_text
     assert "compiled GoalSpec loop" not in staged_text
+    assert staged_text.endswith(PRODUCT_GOAL_BODY)
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in staged_text
+    assert "Ready for staging now." not in staged_text
+
+
+def test_execute_goal_intake_preserves_full_multisection_source_contract(tmp_path: Path) -> None:
+    workspace, paths = _configured_goal_runtime(tmp_path)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    run_id = "goalspec-lossless-contract-001"
+    emitted_at = _dt("2026-04-10T12:00:00Z")
+
+    _write_queue_file(raw_goal_path, MULTI_SECTION_GOAL_TEXT)
+    result = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    staged_text = (workspace / result.research_brief_path).read_text(encoding="utf-8")
+
+    assert staged_text.endswith(MULTI_SECTION_GOAL_BODY)
+    assert "## Problem Statement" in staged_text
+    assert "## Scope" in staged_text
+    assert "## Constraints" in staged_text
+    assert "## Unknowns Ledger" in staged_text
     assert "## Evidence" in staged_text
-    assert "No additional product evidence was provided." in staged_text
-    assert "## Route Decision" in staged_text
-    assert "Ready for staging now." in staged_text
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in staged_text
+    assert "No additional constraints were extracted during deterministic Goal Intake." not in staged_text
+    assert "Ready for staging now." not in staged_text
 
 
 def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path: Path) -> None:

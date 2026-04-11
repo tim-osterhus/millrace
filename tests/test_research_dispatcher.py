@@ -1993,8 +1993,10 @@ def test_taskaudit_pending_merge(tmp_path: Path) -> None:
     stale_deferred_text = "Spec synthesis and review are intentionally deferred to later Phase 05 runs."
     downstream_pending_text = "Implementation remains open for the profiled product"
     assert "status: finished" in finished_text
-    assert "## Route Decision" in finished_text
     assert "agents/_goal_intake.md" in finished_text
+    assert "# Modernize Goal Intake" in finished_text
+    assert "Create real GoalSpec intake and objective sync stages." in finished_text
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in finished_text
     assert archived_reviewed_path.read_text(encoding="utf-8") == golden_text
     assert "agents/audit/completion_manifest.json" in archived_reviewed_path.read_text(encoding="utf-8")
     assert "SPEC-42" in decision_text
@@ -2868,10 +2870,9 @@ def test_execute_goal_intake_keeps_trace_metadata_out_of_semantic_body(tmp_path:
     assert "Source artifact" not in staged_text
     assert "Stage contract" not in staged_text
     assert "compiled GoalSpec loop" not in staged_text
-    assert "## Evidence" in staged_text
-    assert "No additional product evidence was provided." in staged_text
-    assert "## Route Decision" in staged_text
-    assert "Ready for staging now." in staged_text
+    assert staged_text.endswith("# Goal Intake Trace Split\n\nKeep staged idea semantics product-facing.\n")
+    assert "Preserve the queued goal scope for downstream spec synthesis." not in staged_text
+    assert "Ready for staging now." not in staged_text
 
 
 def test_execute_objective_profile_sync_pins_frozen_family_policy_fields(tmp_path: Path) -> None:

@@ -11,9 +11,7 @@ from .goalspec import GOALSPEC_ARTIFACT_SCHEMA_VERSION, GoalIntakeExecutionResul
 from .goalspec_helpers import (
     _FRONTMATTER_BOUNDARY,
     _archive_filename_for_execution,
-    _first_paragraph,
     _isoformat_z,
-    _markdown_section,
     _relative_path,
     _slugify,
     _utcnow,
@@ -52,23 +50,6 @@ def execute_goal_intake(
         archived_source_path = _relative_path(archived_path, relative_to=paths.root)
         canonical_source_path = archived_source_path
 
-    summary = _first_paragraph(source.body) or source.title
-    problem_statement = _markdown_section(source.body, "Problem Statement") or summary
-    scope = _markdown_section(
-        source.body, "Scope"
-    ) or "Preserve the queued goal scope for downstream spec synthesis."
-    constraints = _markdown_section(
-        source.body, "Constraints"
-    ) or "No additional constraints were extracted during deterministic Goal Intake."
-    unknowns = _markdown_section(
-        source.body, "Unknowns Ledger"
-    ) or "Downstream GoalSpec stages still need to refine acceptance details and decomposition boundaries."
-    evidence = _markdown_section(source.body, "Evidence") or "No additional product evidence was provided."
-    route_decision = (
-        "Ready for staging now. "
-        "Remaining assumptions are preserved explicitly in the unknowns ledger for Objective Profile Sync and later spec synthesis."
-    )
-
     frontmatter_lines = [
         _FRONTMATTER_BOUNDARY,
         f"idea_id: {source.idea_id}",
@@ -86,29 +67,7 @@ def execute_goal_intake(
         _FRONTMATTER_BOUNDARY,
         "",
     ]
-    body_lines = [
-        "## Summary",
-        summary,
-        "",
-        "## Problem Statement",
-        problem_statement,
-        "",
-        "## Scope",
-        scope,
-        "",
-        "## Constraints",
-        constraints,
-        "",
-        "## Unknowns Ledger",
-        unknowns,
-        "",
-        "## Evidence",
-        evidence,
-        "",
-        "## Route Decision",
-        route_decision,
-        "",
-    ]
+    body_lines = [source.body.strip(), ""]
     research_brief_path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(research_brief_path, "\n".join(frontmatter_lines + body_lines))
 
