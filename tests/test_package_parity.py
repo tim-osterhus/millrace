@@ -133,6 +133,10 @@ def _assert_contractor_bundle_matches_blueprint_source_docs() -> None:
         assert asset_text == blueprint_text, asset_relative
 
 
+def test_contractor_bundle_matches_blueprint_source_docs() -> None:
+    _assert_contractor_bundle_matches_blueprint_source_docs()
+
+
 def test_packaged_docs_and_operator_assets_exist() -> None:
     for relative in (
         "README.md",

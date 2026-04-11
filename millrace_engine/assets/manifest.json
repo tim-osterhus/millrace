@@ -74,7 +74,27 @@
     {
       "category": "directory",
       "family": "options",
+      "path": "agents/options/integrate"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/permission"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/troubleshoot"
+    },
+    {
+      "category": "directory",
+      "family": "options",
       "path": "agents/options/ui-verify"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/update"
     },
     {
       "category": "directory",
@@ -262,7 +282,7 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "381b14967eb8b2535e37062a80e091ebd5c98edc09233fd2cd8c203783de8333",
+      "sha256": "3ea6372ede6f74b811132a29c2a5f5b8b784a366e094ab40ea7ed0eb48273fcc",
       "size": 10145,
       "size_bytes": 10145,
       "source": "runtime"
@@ -370,9 +390,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_contractor.md",
-      "sha256": "4706f3854716166d68ed5cd5983bf7ddcb6a5a5ad96cf7b3f8878236000f80f4",
-      "size": 6539,
-      "size_bytes": 6524,
+      "sha256": "f9e62b0ff5b3edcbe8552d482b8d68af9d56ddc8f03d4473b15a8cf9b4742de8",
+      "size": 6706,
+      "size_bytes": 6706,
       "source": "reference"
     },
     {
@@ -658,9 +678,9 @@
       "category": "objective_contract",
       "family": "objective",
       "path": "agents/objective/contractor_profile.example.json",
-      "sha256": "1f793b3e4f996d2afb4368794ed7b6a857f7a91061879d73cf1140a6e2cdc22e",
-      "size": 1878,
-      "size_bytes": 1860,
+      "sha256": "2b80fc5f224d0e82c69a41a6cc17ee1cfc2620bdba15034b882e8aab24831809",
+      "size": 1892,
+      "size_bytes": 1892,
       "source": "reference"
     },
     {
@@ -1234,9 +1254,9 @@
       "category": "skill_definition",
       "family": "skills",
       "path": "agents/skills/contractor-classification/SKILL.md",
-      "sha256": "9b016b9f77d15bfabe9a264cb52f0654fe1a38ac8af247156515a2bca963cfb8",
-      "size": 9446,
-      "size_bytes": 9431,
+      "sha256": "0ece286b782e2f4c190542e380f25dfdf4cc4cb85b30075fb77ec69eaaa3843d",
+      "size": 9555,
+      "size_bytes": 9555,
       "source": "reference"
     },
     {

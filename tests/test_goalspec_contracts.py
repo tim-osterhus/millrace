@@ -8,14 +8,18 @@ import pytest
 
 from millrace_engine.paths import RuntimePaths
 from millrace_engine.research.goalspec import (
+    CompletionManifestDraftStateRecord,
     ContractorExecutionRecord,
     ContractorProfileArtifact,
     GoalSpecExecutionError,
+    ObjectiveProfileSyncStateRecord,
 )
 from millrace_engine.research.goalspec_persistence import (
     contractor_record_path,
+    load_completion_manifest_contractor_profile,
     load_contractor_execution_record,
     load_contractor_profile,
+    load_objective_state_contractor_profile,
 )
 from millrace_engine.research.persistence_helpers import _write_json_model
 
@@ -40,7 +44,8 @@ def test_contractor_profile_artifact_validates_packaged_example_payload(tmp_path
     profile = ContractorProfileArtifact.model_validate(_example_payload(paths))
 
     assert profile.artifact_type == "contractor_profile"
-    assert profile.shape_class == "platform_extension"
+    assert profile.shape_class == "automation_tool"
+    assert profile.classification.archetype == "developer_cli"
     assert profile.classification.shape_class == profile.shape_class
     assert profile.evidence
 
@@ -73,6 +78,80 @@ def test_load_contractor_profile_fails_when_profile_missing(tmp_path: Path) -> N
 
     with pytest.raises(GoalSpecExecutionError, match="Contractor profile is missing"):
         load_contractor_profile(paths)
+
+
+def test_load_objective_state_contractor_profile_uses_canonical_profile_over_stale_mirrors(
+    tmp_path: Path,
+) -> None:
+    paths = _runtime_paths(tmp_path)
+    profile = ContractorProfileArtifact.model_validate(_example_payload(paths))
+    _write_json_model(paths.contractor_profile_file, profile, create_parent=True)
+
+    state = ObjectiveProfileSyncStateRecord(
+        profile_id="goal-profile",
+        goal_id="IDEA-AURA-001",
+        title="Aura Mod",
+        run_id="goalspec-contractor-001",
+        updated_at=_dt("2026-04-10T19:10:00Z"),
+        canonical_source_path="agents/ideas/archive/raw/aura_goal.md",
+        current_artifact_path="agents/ideas/staging/aura_goal.md",
+        source_path="agents/ideas/archive/raw/aura_goal.md",
+        research_brief_path="agents/ideas/staging/aura_goal.md",
+        profile_path="agents/reports/acceptance_profiles/goal-profile.json",
+        profile_markdown_path="agents/reports/acceptance_profiles/goal-profile.md",
+        report_path="agents/reports/objective_profile_sync.md",
+        goal_intake_record_path="agents/.research_runtime/goalspec/goal_intake/goalspec-contractor-001.json",
+        contractor_profile_path="agents/objective/stale_profile.json",
+        contractor_specificity_level="L0",
+        contractor_shape_class="unknown",
+        contractor_fallback_mode="abstain_unknown",
+    )
+
+    loaded = load_objective_state_contractor_profile(paths, state)
+
+    assert loaded == profile
+    assert loaded.shape_class == "automation_tool"
+    assert loaded.specificity_level == "L4"
+
+
+def test_load_completion_manifest_contractor_profile_uses_canonical_profile_over_stale_mirrors(
+    tmp_path: Path,
+) -> None:
+    paths = _runtime_paths(tmp_path)
+    profile = ContractorProfileArtifact.model_validate(_example_payload(paths))
+    _write_json_model(paths.contractor_profile_file, profile, create_parent=True)
+
+    manifest = CompletionManifestDraftStateRecord(
+        draft_id="goal-completion-manifest",
+        goal_id="IDEA-AURA-001",
+        title="Aura Mod",
+        run_id="goalspec-contractor-001",
+        updated_at=_dt("2026-04-10T19:10:00Z"),
+        canonical_source_path="agents/ideas/archive/raw/aura_goal.md",
+        current_artifact_path="agents/ideas/staging/aura_goal.md",
+        source_path="agents/ideas/archive/raw/aura_goal.md",
+        research_brief_path="agents/ideas/staging/aura_goal.md",
+        objective_profile_state_path="agents/.research_runtime/goalspec/objective_profile_sync.json",
+        objective_profile_path="agents/reports/acceptance_profiles/goal-profile.json",
+        completion_manifest_plan_path="agents/reports/completion_manifest_plan.md",
+        goal_intake_record_path="agents/.research_runtime/goalspec/goal_intake/goalspec-contractor-001.json",
+        planning_profile="generic_product",
+        contractor_profile_path="agents/objective/stale_profile.json",
+        contractor_specificity_level="L0",
+        contractor_shape_class="unknown",
+        contractor_fallback_mode="abstain_unknown",
+        acceptance_focus=("Build the product slice.",),
+        open_questions=("Review and task generation remain downstream.",),
+        required_artifacts=(),
+        implementation_surfaces=(),
+        verification_surfaces=(),
+    )
+
+    loaded = load_completion_manifest_contractor_profile(paths, manifest)
+
+    assert loaded == profile
+    assert loaded.shape_class == "automation_tool"
+    assert loaded.fallback_mode == "apply_resolved_profiles_only"
 
 
 def test_contractor_execution_record_round_trips_from_runtime_record_dir(tmp_path: Path) -> None:

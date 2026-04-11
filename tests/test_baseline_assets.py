@@ -69,6 +69,19 @@ REQUIRED_BUNDLE_PATHS = (
     "agents/specs/templates/audit_template.md",
     "agents/specs/governance/decision_log_schema.json",
 )
+CONTRACTOR_NON_EXAMPLE_ASSET_PATHS = (
+    "agents/_contractor.md",
+    "agents/skills/contractor-classification/SKILL.md",
+    "agents/objective/contractor_profile.example.json",
+)
+CONTRACTOR_EXAMPLE_ONLY_MARKERS = (
+    "Build a Minecraft mod",
+    "Build a Forge 1.20.1 Minecraft progression mod",
+    "Create an Obsidian plugin",
+    "Build a Shopify app",
+    "Create a Discord bot",
+    "loader=fabric",
+)
 RUNTIME_DOC_PATHS = (
     "README.md",
     "ADVISOR.md",
@@ -323,6 +336,35 @@ def test_packaged_markdown_assets_do_not_embed_repo_local_paths() -> None:
         contents = path.read_text(encoding="utf-8")
         for marker in REPO_LOCAL_MARKERS:
             assert marker not in contents, path.relative_to(ASSETS_ROOT).as_posix()
+
+
+def test_contractor_non_example_assets_keep_concrete_examples_in_example_shards_only() -> None:
+    non_example_assets = {
+        relative_path: packaged_baseline_asset(relative_path).read_text(encoding="utf-8")
+        for relative_path in CONTRACTOR_NON_EXAMPLE_ASSET_PATHS
+    }
+    example_shards = {
+        path.relative_to(ASSETS_ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted((ASSETS_ROOT / "agents/skills/contractor-classification").glob("EXAMPLES_*.md"))
+    }
+
+    assert example_shards
+
+    for marker in CONTRACTOR_EXAMPLE_ONLY_MARKERS:
+        assert any(marker in contents for contents in example_shards.values()), marker
+        for relative_path, contents in non_example_assets.items():
+            assert marker not in contents, f"{relative_path} leaked {marker!r}"
+
+
+def test_contractor_non_example_assets_match_packaged_manifest_entries() -> None:
+    manifest_entries = {entry["path"]: entry for entry in iter_packaged_baseline_files()}
+
+    for relative_path in CONTRACTOR_NON_EXAMPLE_ASSET_PATHS:
+        payload = packaged_baseline_asset(relative_path).read_bytes()
+        entry = manifest_entries[relative_path]
+        assert _sha256_bytes(payload) == entry["sha256"], relative_path
+        assert len(payload) == entry["size_bytes"], relative_path
+        assert entry["size"] == entry["size_bytes"], relative_path
 
 
 def test_packaged_runtime_docs_reflect_current_resolver_behavior() -> None:

@@ -86,14 +86,11 @@ Examples:
 ### Layer 3 - Host / domain
 Choose only when justified.
 Examples:
-- `minecraft`
-- `shopify`
-- `wordpress`
-- `obsidian`
-- `slack`
-- `discord`
-- `church_ops`
-- `support_operations`
+- `named_host_platform`
+- `commerce_platform`
+- `knowledge_workspace`
+- `collaboration_runtime`
+- `operations_domain`
 
 ### Layer 4 - Stack hints
 Add only when justified.
@@ -108,12 +105,11 @@ Examples:
 ### Layer 5 - Specializations
 Use narrow overlays only when the evidence actually supports them.
 Examples:
-- `loader=fabric`
-- `loader=forge`
-- `loader=neoforge`
 - `auth=required`
 - `delivery=realtime`
+- `deployment=self_hosted`
 - `extension_mode=host_loaded`
+- `integration_scope=workspace_local`
 
 ## Specificity ladder
 
@@ -181,6 +177,7 @@ The output must include at minimum:
 - Do not author specs or task cards.
 - Do not mutate product code.
 - Do not rewrite planning scripts or governance files.
+- Keep concrete ecosystem-specific examples in the selected `EXAMPLES_*.md` shards only; use generic language in this entrypoint and its non-example companion assets.
 - Do not invent unsupported profile IDs.
 - Do not bluff narrow certainty when only broad shape is justified.
 - Do not collapse to a useless generic fallback when a broader shape classification is still justified.

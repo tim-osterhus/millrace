@@ -37,6 +37,7 @@ Do NOT use when (non-goals):
 - **Selector, not mutator.** The Contractor emits profile artifacts; it does not rewrite the system's truth.
 - **The lowest adequate specificity wins.**
 - **Abstention beats bluffing.**
+- **Concrete ecosystem examples stay in `EXAMPLES_*.md` only.** The non-example skill surface stays generic.
 - **Examples calibrate judgment; they do not act as templates to copy blindly.**
 
 ## Classification axes
@@ -67,14 +68,11 @@ Examples:
 
 ### 3) Host / domain
 Examples:
-- `minecraft`
-- `wordpress`
-- `shopify`
-- `obsidian`
-- `slack`
-- `discord`
-- `church_ops`
-- `support_operations`
+- `named_host_platform`
+- `commerce_platform`
+- `knowledge_workspace`
+- `collaboration_runtime`
+- `operations_domain`
 
 ### 4) Stack hints
 Examples:
@@ -87,12 +85,11 @@ Examples:
 
 ### 5) Specializations
 Examples:
-- `loader=fabric`
-- `loader=forge`
-- `loader=neoforge`
 - `auth=required`
 - `delivery=realtime`
+- `deployment=self_hosted`
 - `extension_mode=host_loaded`
+- `integration_scope=workspace_local`
 
 ## Specificity ladder
 - `L0`: abstain / unknown
@@ -125,7 +122,7 @@ Examples:
 ### C) Decomposition vocabulary
 Give downstream synthesis and review the right nouns.
 Examples:
-- registrations, assets, recipes, progression, GameTests
+- commands, assets, rules, progression, integration checks
 - auth, CRUD, migrations, inbox, workflow, permissions
 - command surface, exit codes, config, stdout contract
 
@@ -247,7 +244,7 @@ Rules:
 
 ## Guardrails + anti-patterns
 - Do not flatten narrow platform details into top-level categories.
-- Do not treat `minecraft_fabric_mod` as a peer of `web_app`, `library`, or `service`.
+- Do not treat `named_host_variant` as a peer of `web_app`, `library`, or `service`.
 - Do not collapse to `generic_product` when a broader shape classification is justified.
 - Do not let one framework keyword force a stack guess that the prompt never made.
 - Do not convert example patterns into mandatory templates.
