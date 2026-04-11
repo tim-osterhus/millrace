@@ -1,13 +1,13 @@
 .panel-card {
     height: 1fr;
-    background: #121214;
+    background: #111114;
     color: #e8e6ed;
-    border: round #252528;
-    padding: 1 2;
+    border: solid #17171b;
+    padding: 0 1 1 1;
 }
 
 .panel-card:focus {
-    border: heavy #dc2626;
+    border: solid #5b1a23;
 }
 
 #overview-mode-switcher {
@@ -35,12 +35,12 @@
 
 .overview-metrics {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .panel-metrics {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .overview-stack {
@@ -48,9 +48,9 @@
 }
 
 .overview-card {
-    background: #17171a;
-    border: round #252528;
-    padding: 1 2;
+    background: #16161a;
+    border: none;
+    padding: 0 1;
     margin-bottom: 1;
 }
 
@@ -80,31 +80,32 @@
 
 .panel-section-card {
     min-height: 5;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .panel-list-card {
     height: auto;
+    padding-top: 1;
 }
 
 .panel-item-stack {
     height: auto;
-    margin-top: 1;
+    margin-top: 0;
 }
 
 .panel-item-card {
-    background: #141417;
-    border: round #252528;
+    background: #18181c;
+    border: none;
     padding: 0 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .panel-item-card.is-selected {
-    border: heavy #dc2626;
+    background: #2b1015;
 }
 
 .panel-item-card.is-moved {
-    border: round #7c3aed;
+    background: #1e1832;
 }
 
 .panel-item-card.state-ok .panel-item-title {
@@ -138,14 +139,14 @@
 
 .panel-data-table {
     height: 8;
-    margin-top: 1;
-    background: #141417;
+    margin-top: 0;
+    background: #16161a;
     color: #e8e6ed;
-    border: round #252528;
+    border: solid #1f1f24;
 }
 
 .panel-data-table > .datatable--header {
-    background: #1b1b20;
+    background: #121216;
     color: #807e88;
     text-style: bold;
 }
@@ -155,21 +156,21 @@
 }
 
 .panel-data-table > .datatable--odd-row {
-    background: #17171a;
+    background: #18181c;
 }
 
 .panel-data-table > .datatable--cursor {
-    background: #2b0f14;
+    background: #311116;
     color: #f0eef5;
     text-style: bold;
 }
 
 .panel-tree {
     height: 8;
-    margin-top: 1;
-    background: #141417;
+    margin-top: 0;
+    background: #16161a;
     color: #e8e6ed;
-    border: round #252528;
+    border: solid #1f1f24;
 }
 
 .panel-tree > .tree--guides {
@@ -178,7 +179,7 @@
 
 .panel-tree > .tree--highlight,
 .panel-tree > .tree--cursor {
-    background: #2b0f14;
+    background: #311116;
     color: #f0eef5;
     text-style: bold;
 }
@@ -222,19 +223,19 @@
 }
 
 #overview-attention-card.state-calm {
-    border: round #252528;
+    background: #16161a;
 }
 
 #overview-attention-card.state-notice {
-    border: round #3b3b45;
+    background: #19191d;
 }
 
 #overview-attention-card.state-warning {
-    border: round #7c2d12;
+    background: #23160d;
 }
 
 #overview-attention-card.state-failure {
-    border: round #991b1b;
+    background: #251214;
 }
 
 #overview-debug {
