@@ -42,6 +42,10 @@
     color: #d4d2dc;
 }
 
+#shell-inspector.is-collapsed {
+    display: none;
+}
+
 #shell-bottom {
     height: auto;
     min-height: 3;

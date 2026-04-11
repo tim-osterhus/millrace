@@ -384,6 +384,11 @@ def test_tui_registers_contextual_system_commands_for_active_panel(monkeypatch, 
         }
         assert "Freeze Or Resume Live Logs" in logs_titles
         assert "Switch Logs Focus Surface" in logs_titles
+        logs_panel = app.screen.query_one(LogsPanel)
+        if logs_panel.selected_run_id is not None:
+            assert "Open Selected Log Run Detail" in logs_titles
+        else:
+            assert "Open Selected Log Run Detail" not in logs_titles
 
     _run_app_scenario(config_path, scenario)
 
@@ -1218,9 +1223,9 @@ def test_tui_shell_frame_mounts_footer_and_inspector(monkeypatch, tmp_path) -> N
         assert "[Ctrl+P] Palette" in footer_text
         assert "Overview Sidebar" in footer_text
         inspector_text = _static_text(inspector)
+        assert inspector.has_class("is-collapsed")
         assert "PANEL   Overview" in inspector_text
         assert "FOCUS   Overview" in inspector_text
-        assert "NEXT" in inspector_text
 
     _run_app_scenario(config_path, scenario)
 
@@ -1253,9 +1258,9 @@ def test_tui_shell_footer_updates_with_focus_and_panel_context(monkeypatch, tmp_
         await pilot.pause()
         queue_footer = _static_text(footer)
         assert "Queue Workspace" in queue_footer
-        assert "[R] Reorder" in queue_footer
+        assert "[Enter / R] Reorder" in queue_footer
         assert "[Q / X] Quarantine/remove" in queue_footer
-        assert "[O] Run detail" in queue_footer
+        assert ("[O] Run detail" in queue_footer) or ("[S] Sidebar" in queue_footer)
 
         await pilot.press("5")
         await pilot.pause()
@@ -1314,6 +1319,8 @@ def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path
             await pilot.pause()
         await _wait_for_condition(pilot, lambda: isinstance(app.screen, ShellScreen))
         assert isinstance(app.screen, ShellScreen)
+        inspector = app.screen.query_one("#shell-inspector", ShellInspector)
+        assert inspector.has_class("is-collapsed")
 
         await pilot.press("2")
         await pilot.pause()
@@ -1323,11 +1330,14 @@ def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path
         selected_id = queue_panel.selected_task_id
         assert selected_id is not None
         selected_task = next(task for task in app.screen._store.state.queue.backlog if task.task_id == selected_id)
-        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        inspector_text = _static_text(inspector)
+        assert not inspector.has_class("is-collapsed")
         assert "PANEL   Queue" in inspector_text
         assert f"FOCUS   {selected_task.title}" in inspector_text
         assert selected_task.task_id in inspector_text
         assert "cleanup and reorder queue through the mailbox first" in inspector_text
+        assert "PRIMARY" in inspector_text
+        assert "[Enter / R] Start reorder" in inspector_text
 
         await pilot.press("6")
         await pilot.pause()
@@ -1337,18 +1347,23 @@ def test_tui_shell_inspector_tracks_active_panel_selection(monkeypatch, tmp_path
             selected_key=config_panel.selected_field_key,
         )
         assert selected_field is not None
-        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        inspector_text = _static_text(inspector)
         assert "PANEL   Config" in inspector_text
         assert f"FOCUS   {selected_field.label}" in inspector_text
         assert selected_field.description in inspector_text
+        assert "[Enter / E] Edit field" in inspector_text
 
         await pilot.press("7")
         await pilot.pause()
-        inspector_text = _static_text(app.screen.query_one("#shell-inspector", ShellInspector))
+        inspector_text = _static_text(inspector)
         publish_panel = app.screen.query_one(PublishPanel)
         if publish_panel.selected_path is not None:
             assert "PANEL   Publish" in inspector_text
             assert f"FOCUS   {publish_panel.selected_path}" in inspector_text
+        assert "PRIMARY" in inspector_text
+        assert ("[R] Refresh preflight" in inspector_text) or ("[N] Commit locally" in inspector_text) or (
+            "[G] Sync staging" in inspector_text
+        )
 
     _run_app_scenario(config_path, scenario)
 

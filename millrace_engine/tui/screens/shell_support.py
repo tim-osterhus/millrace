@@ -38,7 +38,7 @@ from ..publish_support import (
     publish_status_copy,
 )
 from ..widgets.overview_panel import LatestRunSummary
-from ..widgets.shell_inspector import ShellInspectorView
+from ..widgets.shell_inspector import ShellInspectorAction, ShellInspectorView
 from ..workers import (
     INITIAL_REFRESH_WORKER_NAME,
     PERIODIC_REFRESH_WORKER_NAME,
@@ -124,7 +124,9 @@ def build_shell_inspector_view(
     title = active_panel.label
     headline = "waiting for the first workspace snapshot"
     detail_lines: tuple[str, ...] = ()
-    action_lines: tuple[str, ...] = ()
+    primary_action: ShellInspectorAction | None = None
+    action_lines: tuple[ShellInspectorAction, ...] = ()
+    collapsed = False
 
     if active_panel.id is PanelId.OVERVIEW:
         if runtime is not None:
@@ -138,7 +140,7 @@ def build_shell_inspector_view(
             if runtime.selection.selection_ref:
                 detail.append(f"selection {runtime.selection.selection_ref}")
             detail_lines = tuple(detail)
-            action_lines = ("Use the left rail or 1-7 to switch work surfaces.",)
+            collapsed = True
     elif active_panel.id is PanelId.QUEUE:
         selected = _queue_task_by_id(queue, selected_task_id)
         if queue is None:
@@ -158,24 +160,47 @@ def build_shell_inspector_view(
             detail.append(cleanup_mode)
             if queue_reorder_mode:
                 detail.append("cleanup is paused until the active reorder draft is confirmed or cancelled")
+                primary_action = _inspector_action(
+                    "Enter",
+                    "Review reorder",
+                    "Confirm the staged queue order after you finish moving the selected task.",
+                )
                 action_lines = (
-                    "Enter reviews the staged reorder draft.",
-                    "[ and ] move the selected task through the draft.",
-                    "Escape cancels the active reorder draft.",
+                    _inspector_action("[ / ]", "Move task", "Shift the selected task earlier or later inside the draft."),
+                    _inspector_action("Esc", "Cancel draft", "Drop the staged reorder and return to normal queue actions."),
                 )
             else:
+                primary_action = _inspector_action(
+                    "Enter / R",
+                    "Start reorder",
+                    "Stage a queue reorder draft for the selected task.",
+                )
                 action_lines = (
-                    "R starts a reorder draft for this queued task.",
-                    "Q quarantines it after confirmation.",
-                    "X removes it after confirmation.",
+                    _inspector_action(
+                        "Q",
+                        "Quarantine",
+                        "Quarantine the selected task after confirmation through the supported cleanup path.",
+                    ),
+                    _inspector_action(
+                        "X",
+                        "Remove",
+                        "Remove the selected task after confirmation through the supported cleanup path.",
+                    ),
                 )
             if runtime is not None and runtime.selection.run_id:
-                action_lines = (*action_lines, "O opens concise active-run detail.")
+                action_lines = (
+                    *action_lines,
+                    _inspector_action("O", "Run detail", "Open concise detail for the queue's current active run context."),
+                )
             detail_lines = tuple(detail)
         else:
             headline = f"backlog {queue.backlog_depth}"
             detail_lines = ("No backlog item selected yet.",)
-            action_lines = ("Focus content and use Up/Down to choose a task.",)
+            primary_action = _inspector_action(
+                "Up/Down",
+                "Choose task",
+                "Move the queue cursor to unlock reorder, cleanup, and run-detail actions.",
+            )
     elif active_panel.id is PanelId.RUNS:
         selected = _run_by_id(runs, selected_run_id)
         if runs is None:
@@ -191,7 +216,12 @@ def build_shell_inspector_view(
             if selected.issue:
                 detail.append(selected.issue)
             detail_lines = tuple(detail or ("Press Enter to open concise run detail.",))
-            action_lines = ("Up/Down changes the selected run.", "Enter opens the run-detail workflow.")
+            primary_action = _inspector_action(
+                "Enter",
+                "Open run detail",
+                "Inspect concise frozen-plan, transition, and provenance detail for the selected run.",
+            )
+            action_lines = (_inspector_action("Up/Down", "Change run", "Move through recent runs without losing selection."),)
         else:
             headline = "no run selected"
             detail_lines = ("The recent-runs list is empty.",)
@@ -206,11 +236,22 @@ def build_shell_inspector_view(
             if selected.why_this_matters:
                 detail.append(selected.why_this_matters)
             detail_lines = tuple(detail)
-            action_lines = ("Up/Down chooses the pending question.", "Enter opens answer, accept, and skip actions.")
+            primary_action = _inspector_action(
+                "Enter",
+                "Open interview",
+                "Answer, accept, or skip the selected research question through the guided workflow.",
+            )
+            action_lines = (
+                _inspector_action("Up/Down", "Change question", "Move through pending questions and keep interview context visible."),
+            )
         else:
             headline = f"{research.status} | mode {research.current_mode}"
             detail_lines = (f"selected family {research.selected_family or 'none'}",)
-            action_lines = ("Research drilldown will become richer in later panel slices.",)
+            primary_action = _inspector_action(
+                "Up/Down",
+                "Choose question",
+                "Move to a pending interview question to unlock the research workflow.",
+            )
     elif active_panel.id is PanelId.LOGS:
         if selected_event is not None:
             title = selected_event.event_type
@@ -234,11 +275,38 @@ def build_shell_inspector_view(
             headline = "live log stream"
             detail_lines = ("Focus content to select an event and populate this inspector.",)
         if expanded_mode:
-            action_lines = ("Escape returns from expanded stream mode.", "L jumps the expanded stream back to live.")
-        else:
+            primary_action = _inspector_action(
+                "Esc",
+                "Return to panel",
+                "Leave expanded stream mode and go back to the active compact panel.",
+            )
+            action_lines = (_inspector_action("L", "Jump live", "Pin the expanded stream back to the newest runtime lines."),)
+        elif selected_event is not None and selected_event.run_id:
+            primary_action = _inspector_action(
+                "Enter",
+                "Open run detail",
+                "Inspect concise run detail for the run attached to the selected log event.",
+            )
             action_lines = (
-                f"Tab switches between events and artifacts ({logs_focus_surface or 'events'} active).",
-                "Enter opens run detail when the selected event has a run id.",
+                _inspector_action("Tab", "Events or artifacts", "Switch between event focus and artifact browsing."),
+                _inspector_action(
+                    "F",
+                    "Freeze live" if selected_event is not None else "Toggle follow",
+                    "Leave the live tail when you need to inspect older runtime output.",
+                ),
+            )
+        else:
+            primary_action = _inspector_action(
+                "Tab",
+                "Switch surface",
+                f"Move between events and artifacts while {logs_focus_surface or 'events'} stays active.",
+            )
+            action_lines = (
+                _inspector_action(
+                    "F",
+                    "Freeze live",
+                    "Pause live-follow when you need to inspect older runtime lines without jumping back.",
+                ),
             )
     elif active_panel.id is PanelId.CONFIG:
         selected = selected_config_field(config, selected_key=selected_config_field_key)
@@ -251,7 +319,15 @@ def build_shell_inspector_view(
             if selected.editable:
                 detail.append("editable through the guided config modal")
             detail_lines = tuple(detail)
-            action_lines = ("Up/Down changes the selected field.", "Enter or E opens guided editing.")
+            primary_action = _inspector_action(
+                "Enter / E",
+                "Edit field",
+                "Open guided validation and apply the selected config change through the supported control path.",
+            )
+            action_lines = (
+                _inspector_action("R", "Reload config", "Refresh runtime config from disk through the supported control path."),
+                _inspector_action("Up/Down", "Change field", "Move through editable fields without leaving the panel."),
+            )
         else:
             headline = f"{config.source_kind} | guided edits unavailable"
             detail_lines = (config.editing_disabled_reason or "no editable fields are visible",)
@@ -280,10 +356,8 @@ def build_shell_inspector_view(
                     f"resolved staging repo {publish.staging_repo_dir}",
                     "Publish acts on staging, not the main workspace checkout directly.",
                 )
-            action_lines = (
-                "Up/Down inspects changed paths.",
-                publish_safe_next_step_headline(publish),
-            )
+            primary_action = _publish_primary_action(publish)
+            action_lines = (_inspector_action("Up/Down", "Inspect paths", "Review changed staging paths and manifest coverage."),)
             if commit_blocked is not None:
                 detail_lines = (*detail_lines, f"commit blocked by {commit_blocked}")
             elif push_blocked is not None:
@@ -297,12 +371,47 @@ def build_shell_inspector_view(
 
     if panel_failure is not None:
         detail_lines = (*detail_lines, f"refresh degraded: {panel_failure.message}")
+        collapsed = False
     return ShellInspectorView(
         panel_label=active_panel.label,
         title=title,
         headline=headline,
         detail_lines=detail_lines,
+        primary_action=primary_action,
         action_lines=action_lines,
+        collapsed=collapsed,
+    )
+
+
+def _inspector_action(key: str, label: str, detail: str) -> ShellInspectorAction:
+    return ShellInspectorAction(key=key, label=label, detail=detail)
+
+
+def _publish_primary_action(publish: PublishOverviewView) -> ShellInspectorAction:
+    commit_blocked = publish_commit_block_reason(publish)
+    push_blocked = publish_push_block_reason(publish)
+    if commit_blocked == publish_skip_reason_copy("no_changes"):
+        return _inspector_action(
+            "G",
+            "Sync staging",
+            "Re-sync manifest-selected files into staging when you expected diffs but none are visible.",
+        )
+    if commit_blocked is not None:
+        return _inspector_action(
+            "R",
+            "Refresh preflight",
+            publish_safe_next_step_headline(publish),
+        )
+    if push_blocked is not None:
+        return _inspector_action(
+            "N",
+            "Commit locally",
+            "Create the safer local staging commit now and resolve push prerequisites before using P.",
+        )
+    return _inspector_action(
+        "N",
+        "Commit locally",
+        "Create the safer local staging commit first; use P only for an intentional remote publish.",
     )
 
 

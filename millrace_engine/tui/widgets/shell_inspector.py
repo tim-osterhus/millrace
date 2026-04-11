@@ -8,6 +8,15 @@ from textual.widgets import Static
 
 
 @dataclass(frozen=True, slots=True)
+class ShellInspectorAction:
+    """A discoverable action rendered inside the shell inspector."""
+
+    key: str
+    label: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class ShellInspectorView:
     """Rendered shell-owned inspector state for the active panel."""
 
@@ -15,7 +24,9 @@ class ShellInspectorView:
     title: str
     headline: str
     detail_lines: tuple[str, ...]
-    action_lines: tuple[str, ...] = ()
+    primary_action: ShellInspectorAction | None = None
+    action_lines: tuple[ShellInspectorAction, ...] = ()
+    collapsed: bool = False
 
 
 def render_shell_inspector(view: ShellInspectorView) -> str:
@@ -28,11 +39,19 @@ def render_shell_inspector(view: ShellInspectorView) -> str:
         lines.append("")
         lines.append("DETAIL")
         lines.extend(f"- {line}" for line in view.detail_lines)
+    if view.primary_action is not None:
+        lines.append("")
+        lines.append("PRIMARY")
+        lines.append(_render_action_line(view.primary_action))
     if view.action_lines:
         lines.append("")
         lines.append("NEXT")
-        lines.extend(f"- {line}" for line in view.action_lines)
+        lines.extend(_render_action_line(action) for action in view.action_lines)
     return "\n".join(lines)
+
+
+def _render_action_line(action: ShellInspectorAction) -> str:
+    return f"- [{action.key}] {action.label}: {action.detail}"
 
 
 class ShellInspector(Static):
@@ -43,8 +62,17 @@ class ShellInspector(Static):
         self.border_title = "Inspector"
 
     def show_view(self, view: ShellInspectorView) -> None:
+        if view.collapsed:
+            self.add_class("is-collapsed")
+        else:
+            self.remove_class("is-collapsed")
         self.border_subtitle = view.panel_label
         self.update(render_shell_inspector(view))
 
 
-__all__ = ["ShellInspector", "ShellInspectorView", "render_shell_inspector"]
+__all__ = [
+    "ShellInspector",
+    "ShellInspectorAction",
+    "ShellInspectorView",
+    "render_shell_inspector",
+]

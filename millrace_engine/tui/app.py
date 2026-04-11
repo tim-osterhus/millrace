@@ -345,6 +345,12 @@ class MillraceTUIApplication(App[None]):
                 "Move between runtime events and artifact browsing.",
                 logs_panel.action_toggle_focus_surface,
             )
+            if logs_panel.selected_run_id is not None:
+                yield SystemCommand(
+                    "Open Selected Log Run Detail",
+                    "Open concise run detail for the run attached to the selected log event.",
+                    logs_panel.action_submit_selection,
+                )
         active = PANEL_BY_ID[self._shell_screen.active_panel]
         yield SystemCommand(
             "Open Active Panel",

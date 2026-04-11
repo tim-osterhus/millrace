@@ -115,10 +115,10 @@ def build_shell_action_surface(
             context_actions = (
                 ActionHint("Up/Down", "Select", "Up and Down move through queued tasks without losing the active selection."),
                 ActionHint(
-                    "R",
+                    "Enter / R",
                     "Reorder" if queue_has_selection else "No task",
                     (
-                        "R starts a queue reorder draft for the selected task."
+                        "Enter or R starts a queue reorder draft for the selected task."
                         if queue_has_selection
                         else "Select a queued task before starting a reorder draft."
                     ),
