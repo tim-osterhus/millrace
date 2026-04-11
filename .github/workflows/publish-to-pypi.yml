@@ -61,6 +61,8 @@ jobs:
               "troubleshoot": ("troubleshoot complete", "TROUBLESHOOT_COMPLETE"),
               "consult": ("consult complete", "CONSULT_COMPLETE"),
               "update": ("update complete", "UPDATE_COMPLETE"),
+              "spec_review": ("spec review complete", "IDLE"),
+              "mechanic": ("mechanic complete", "IDLE"),
           }
 
           def output_path_from_args(argv: list[str]) -> Path | None:
@@ -135,7 +137,11 @@ jobs:
 
           payload = json.loads(Path("/tmp/millrace-publish-smoke-research-report.json").read_text(encoding="utf-8"))
           runtime = payload.get("runtime") or {}
-          raise SystemExit(0 if payload.get("status") == "BLOCKED" and runtime.get("last_mode") == "GOALSPEC" else 1)
+          raise SystemExit(
+              0
+              if payload.get("status") == "TASKMASTER_RUNNING" and runtime.get("current_mode") == "GOALSPEC"
+              else 1
+          )
           PY
             then
               break
