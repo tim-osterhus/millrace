@@ -282,6 +282,11 @@ def execute_objective_profile_sync(
                 f"- **Contractor-Record:** `{contractor_result.record_path}`",
                 f"- **Contractor-Profile:** `{contractor_result.profile_path}`",
                 f"- **Contractor-Report:** `{contractor_result.report_path}`",
+                (
+                    "- **Contractor-Authority:** Semantic Contractor truth comes from "
+                    "`agents/objective/contractor_profile.json`; any mirrored summary fields in current state "
+                    "are observational only."
+                ),
                 f"- **Family-Cap-Mode:** `{family_policy_payload.get('family_cap_mode', 'adaptive')}`",
                 (
                     f"- **Initial-Family-Max-Specs:** "

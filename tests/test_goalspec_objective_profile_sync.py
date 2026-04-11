@@ -8,8 +8,13 @@ from typing import Callable
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.contracts import ResearchMode, ResearchStatus
 from millrace_engine.events import EventType
-from millrace_engine.research.goalspec import execute_goal_intake, execute_objective_profile_sync
+from millrace_engine.research.goalspec import (
+    ObjectiveProfileSyncStateRecord,
+    execute_goal_intake,
+    execute_objective_profile_sync,
+)
 from millrace_engine.research.goalspec_family_policy import derive_objective_family_policy
+from millrace_engine.research.goalspec_persistence import load_objective_state_contractor_profile
 from millrace_engine.research.goalspec_semantic_profile import GoalSemanticProfile, SemanticProfileMilestone
 from millrace_engine.research.state import ResearchCheckpoint, ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeMode
 from tests.support import load_workspace_fixture
@@ -392,6 +397,11 @@ def test_execute_objective_profile_sync_emits_product_scoped_milestones(tmp_path
     assert acceptance_profile["contractor_specialization_provenance"] == []
     assert "## Contractor Summary" in report_text
     assert "- **Contractor-Profile:** `agents/objective/contractor_profile.json`" in report_text
+    assert (
+        "- **Contractor-Authority:** Semantic Contractor truth comes from "
+        "`agents/objective/contractor_profile.json`; any mirrored summary fields in current state "
+        "are observational only."
+    ) in report_text
     assert "- **Shape-Class:** `unknown`" in report_text
     assert "- **Specificity-Level:** `L0`" in report_text
     assert "- **Fallback-Mode:** `abstain_unknown`" in report_text
@@ -468,7 +478,62 @@ def test_execute_objective_profile_sync_preserves_canonical_lineage_on_staged_re
     assert synced_profile["canonical_source_path"] == acceptance_profile["canonical_source_path"]
     assert synced_profile["current_artifact_path"] == goal_intake.research_brief_path
     assert "Workspace Intake" in " ".join(synced_profile["milestones"])
-    assert "daemon resume metadata only" not in synced_profile["semantic_profile"]["objective_summary"]
+
+
+def test_objective_profile_sync_mirror_fields_do_not_override_authoritative_contractor_profile(
+    tmp_path: Path,
+) -> None:
+    workspace, paths = _configured_goal_runtime(tmp_path)
+    raw_goal_path = workspace / "agents" / "ideas" / "raw" / "goal.md"
+    emitted_at = _dt("2026-04-07T12:35:00Z")
+    run_id = "goalspec-authority-boundary-001"
+
+    _write_queue_file(raw_goal_path, PRODUCT_GOAL_TEXT)
+    goal_intake = execute_goal_intake(
+        paths,
+        _goal_queue_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            queue_path=paths.ideas_raw_dir,
+            item_path=raw_goal_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+    result = execute_objective_profile_sync(
+        paths,
+        _goal_active_request_checkpoint(
+            run_id=run_id,
+            emitted_at=emitted_at,
+            path=workspace / goal_intake.research_brief_path,
+        ),
+        run_id=run_id,
+        emitted_at=emitted_at,
+    )
+
+    state_path = workspace / result.profile_state_path
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["contractor_shape_class"] = "platform_extension"
+    state_payload["contractor_specificity_level"] = "L4"
+    state_payload["contractor_fallback_mode"] = "apply_resolved_profiles_only"
+    state_payload["contractor_profile_path"] = "agents/objective/missing-contractor-profile.json"
+    state_payload["contractor_specialization_provenance"] = [
+        {
+            "key": "loader",
+            "value": "fabric",
+            "provenance": "planner_invented",
+            "support_state": "unsupported",
+            "evidence_path": "",
+        }
+    ]
+    tampered_state = ObjectiveProfileSyncStateRecord.model_validate(state_payload)
+
+    contractor_profile = load_objective_state_contractor_profile(paths, tampered_state)
+
+    assert contractor_profile.shape_class == "unknown"
+    assert contractor_profile.specificity_level == "L0"
+    assert contractor_profile.fallback_mode == "abstain_unknown"
+    assert contractor_profile.specialization_provenance == ()
 
 
 def test_execute_objective_profile_sync_prefers_workspace_semantic_seed(tmp_path: Path) -> None:

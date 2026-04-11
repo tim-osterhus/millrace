@@ -67,7 +67,7 @@ def contractor_record_path(paths: RuntimePaths, *, run_id: str) -> Path:
 def load_contractor_profile(paths: RuntimePaths) -> ContractorProfileArtifact:
     if not paths.contractor_profile_file.exists():
         raise GoalSpecExecutionError(
-            "Contractor profile is missing; later Contractor-dependent GoalSpec stages cannot proceed"
+            "Authoritative Contractor profile is missing; later Contractor-dependent GoalSpec stages cannot proceed"
         )
     return _load_json_model(paths.contractor_profile_file, ContractorProfileArtifact)
 
@@ -81,19 +81,48 @@ def load_contractor_execution_record(paths: RuntimePaths, *, run_id: str) -> Con
     return _load_json_model(record_path, ContractorExecutionRecord)
 
 
+def load_authoritative_contractor_profile(
+    paths: RuntimePaths,
+    *,
+    profile_path: str = "",
+) -> ContractorProfileArtifact:
+    profile_token = profile_path.strip()
+    canonical_path = paths.contractor_profile_file
+    if profile_token:
+        resolved_path = _resolve_path_token(profile_token, relative_to=paths.root)
+        if resolved_path.exists():
+            return _load_json_model(resolved_path, ContractorProfileArtifact)
+        if canonical_path.exists():
+            return _load_json_model(canonical_path, ContractorProfileArtifact)
+        raise GoalSpecExecutionError(
+            "Authoritative Contractor profile artifact is missing: "
+            f"{resolved_path.as_posix()} (fallback missing: {canonical_path.as_posix()})"
+        )
+    if not canonical_path.exists():
+        raise GoalSpecExecutionError(
+            f"Authoritative Contractor profile artifact is missing: {canonical_path.as_posix()}"
+        )
+    return _load_json_model(canonical_path, ContractorProfileArtifact)
+
+
 def load_objective_state_contractor_profile(
     paths: RuntimePaths,
     objective_state: ObjectiveProfileSyncStateRecord,
 ) -> ContractorProfileArtifact | None:
-    profile_path_token = objective_state.contractor_profile_path.strip()
-    if not profile_path_token:
-        return None
-    profile_path = _resolve_path_token(profile_path_token, relative_to=paths.root)
-    if not profile_path.exists():
-        raise GoalSpecExecutionError(
-            f"Objective Profile Sync referenced a missing contractor profile: {profile_path.as_posix()}"
-        )
-    return _load_json_model(profile_path, ContractorProfileArtifact)
+    return load_authoritative_contractor_profile(
+        paths,
+        profile_path=objective_state.contractor_profile_path,
+    )
+
+
+def load_completion_manifest_contractor_profile(
+    paths: RuntimePaths,
+    completion_manifest: CompletionManifestDraftStateRecord,
+) -> ContractorProfileArtifact | None:
+    return load_authoritative_contractor_profile(
+        paths,
+        profile_path=completion_manifest.contractor_profile_path,
+    )
 
 
 def _build_completion_manifest_draft_state(
@@ -135,7 +164,11 @@ def _build_completion_manifest_draft_state(
         completion_manifest_plan_path=_relative_path(paths.completion_manifest_plan_file, relative_to=paths.root),
         goal_intake_record_path=objective_state.goal_intake_record_path,
         planning_profile=product_plan.planning_profile,
-        contractor_profile_path=objective_state.contractor_profile_path,
+        contractor_profile_path=(
+            _relative_path(paths.contractor_profile_file, relative_to=paths.root)
+            if contractor_profile is not None
+            else ""
+        ),
         contractor_specificity_level=contractor_profile.specificity_level if contractor_profile is not None else "",
         contractor_shape_class=contractor_profile.shape_class if contractor_profile is not None else "",
         contractor_fallback_mode=contractor_profile.fallback_mode if contractor_profile is not None else "",

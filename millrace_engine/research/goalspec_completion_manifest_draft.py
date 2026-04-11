@@ -10,6 +10,7 @@ from .goalspec import (
     CompletionManifestDraftExecutionResult,
     CompletionManifestDraftRecord,
     CompletionManifestDraftStateRecord,
+    ContractorProfileArtifact,
     GoalSource,
 )
 from .goalspec_helpers import (
@@ -23,6 +24,7 @@ from .goalspec_helpers import (
 from .goalspec_persistence import (
     _build_completion_manifest_draft_state,
     _load_objective_profile_inputs,
+    load_completion_manifest_contractor_profile,
 )
 from .state import ResearchCheckpoint
 
@@ -42,50 +44,56 @@ def _render_completion_manifest_report(
     run_id: str,
     source: GoalSource,
     draft_state: CompletionManifestDraftStateRecord,
+    contractor_profile: ContractorProfileArtifact,
 ) -> str:
     contractor_lines = []
-    if draft_state.contractor_shape_class:
+    if draft_state.contractor_profile_path:
         contractor_lines.extend(
             [
                 "## Contractor Grounding",
-                f"- **Contractor-Profile:** `{draft_state.contractor_profile_path or 'none'}`",
-                f"- **Shape-Class:** `{draft_state.contractor_shape_class}`",
-                f"- **Specificity-Level:** `{draft_state.contractor_specificity_level or 'unknown'}`",
-                f"- **Fallback-Mode:** `{draft_state.contractor_fallback_mode or 'unknown'}`",
+                (
+                    "- **Authority:** Semantic Contractor truth comes from "
+                    "`agents/objective/contractor_profile.json`; mirrored completion-manifest summary fields "
+                    "remain observational only."
+                ),
+                f"- **Contractor-Profile:** `{draft_state.contractor_profile_path or 'agents/objective/contractor_profile.json'}`",
+                f"- **Shape-Class:** `{contractor_profile.shape_class}`",
+                f"- **Specificity-Level:** `{contractor_profile.specificity_level}`",
+                f"- **Fallback-Mode:** `{contractor_profile.fallback_mode}`",
             ]
         )
-        if draft_state.contractor_capability_hints:
+        if contractor_profile.capability_hints:
             contractor_lines.append(
                 "- **Capability-Hints:** "
-                + ", ".join(f"`{item}`" for item in draft_state.contractor_capability_hints)
+                + ", ".join(f"`{item}`" for item in contractor_profile.capability_hints)
             )
-        if draft_state.contractor_environment_hints:
+        if contractor_profile.environment_hints:
             contractor_lines.append(
                 "- **Environment-Hints:** "
-                + ", ".join(f"`{item}`" for item in draft_state.contractor_environment_hints)
+                + ", ".join(f"`{item}`" for item in contractor_profile.environment_hints)
             )
-        if draft_state.contractor_unresolved_specializations:
+        if contractor_profile.unresolved_specializations:
             contractor_lines.append(
                 "- **Unresolved-Specializations:** "
-                + ", ".join(f"`{item}`" for item in draft_state.contractor_unresolved_specializations)
+                + ", ".join(f"`{item}`" for item in contractor_profile.unresolved_specializations)
             )
-        if draft_state.contractor_specialization_provenance:
+        if contractor_profile.specialization_provenance:
             contractor_lines.append(
                 "- **Specialization-Provenance:** "
-                + "; ".join(_format_specialization_record(item) for item in draft_state.contractor_specialization_provenance)
+                + "; ".join(_format_specialization_record(item) for item in contractor_profile.specialization_provenance)
             )
-        if draft_state.contractor_abstentions:
+        if contractor_profile.abstentions:
             contractor_lines.extend(
                 [
                     "- **Abstentions:**",
-                    *(f"  - {item}" for item in draft_state.contractor_abstentions),
+                    *(f"  - {item}" for item in contractor_profile.abstentions),
                 ]
             )
-        if draft_state.contractor_contradictions:
+        if contractor_profile.contradictions:
             contractor_lines.extend(
                 [
                     "- **Contradictions:**",
-                    *(f"  - {item}" for item in draft_state.contractor_contradictions),
+                    *(f"  - {item}" for item in contractor_profile.contradictions),
                 ]
             )
         contractor_lines.append("")
@@ -178,6 +186,7 @@ def execute_completion_manifest_draft(
         spec_id=spec_id,
         paths=paths,
     )
+    contractor_profile = load_completion_manifest_contractor_profile(paths, draft_state)
     if (
         record_path.exists()
         and paths.audit_completion_manifest_file.exists()
@@ -201,6 +210,7 @@ def execute_completion_manifest_draft(
             run_id=run_id,
             source=source,
             draft_state=expected_draft_state,
+            contractor_profile=contractor_profile,
         )
         if (
             existing_record == expected_record
@@ -222,6 +232,7 @@ def execute_completion_manifest_draft(
             run_id=run_id,
             source=source,
             draft_state=draft_state,
+            contractor_profile=contractor_profile,
         ),
     )
 

@@ -5135,6 +5135,11 @@ def test_goalspec_completion_manifest_and_specs_use_contractor_supported_minecra
         "mods/aura-progression-mod/src/test/java",
     ]
     assert "## Contractor Grounding" in completion_report_text
+    assert (
+        "- **Authority:** Semantic Contractor truth comes from "
+        "`agents/objective/contractor_profile.json`; mirrored completion-manifest summary fields "
+        "remain observational only."
+    ) in completion_report_text
     assert "- **Capability-Hints:** `registration_assets`, `progression_content`, `repo_native_behavior_tests`" in (
         completion_report_text
     )

@@ -243,7 +243,11 @@ class AcceptanceProfileRecord(ContractModel):
 
 
 class ObjectiveProfileSyncStateRecord(ContractModel):
-    """Canonical current objective-profile sync state."""
+    """Canonical current objective-profile sync state.
+
+    Contractor summary fields here are observational mirrors only. Semantic
+    Contractor truth still lives in ``agents/objective/contractor_profile.json``.
+    """
 
     schema_version: Literal["1.0"] = GOALSPEC_ARTIFACT_SCHEMA_VERSION
     profile_id: str
@@ -327,7 +331,11 @@ class ObjectiveProfileSyncStateRecord(ContractModel):
 
 
 class ObjectiveProfileSyncRecord(ContractModel):
-    """Durable runtime record for one objective-profile sync execution."""
+    """Durable runtime record for one objective-profile sync execution.
+
+    Contractor summary fields here are observational mirrors only. Semantic
+    Contractor truth still lives in ``agents/objective/contractor_profile.json``.
+    """
 
     schema_version: Literal["1.0"] = GOALSPEC_ARTIFACT_SCHEMA_VERSION
     artifact_type: Literal["objective_profile_sync"] = "objective_profile_sync"
@@ -763,7 +771,11 @@ class CompletionManifestDraftSurface(ContractModel):
 
 
 class CompletionManifestDraftStateRecord(ContractModel):
-    """Canonical completion-manifest draft state for the current GoalSpec source."""
+    """Canonical completion-manifest draft state for the current GoalSpec source.
+
+    Contractor summary fields here are observational mirrors only. Semantic
+    Contractor truth still lives in ``agents/objective/contractor_profile.json``.
+    """
 
     schema_version: Literal["1.0"] = GOALSPEC_ARTIFACT_SCHEMA_VERSION
     artifact_type: Literal["completion_manifest_draft"] = "completion_manifest_draft"

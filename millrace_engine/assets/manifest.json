@@ -371,7 +371,7 @@
       "family": "entrypoints",
       "path": "agents/_contractor.md",
       "sha256": "4706f3854716166d68ed5cd5983bf7ddcb6a5a5ad96cf7b3f8878236000f80f4",
-      "size": 6524,
+      "size": 6539,
       "size_bytes": 6524,
       "source": "reference"
     },
@@ -659,7 +659,7 @@
       "family": "objective",
       "path": "agents/objective/contractor_profile.example.json",
       "sha256": "1f793b3e4f996d2afb4368794ed7b6a857f7a91061879d73cf1140a6e2cdc22e",
-      "size": 1860,
+      "size": 1878,
       "size_bytes": 1860,
       "source": "reference"
     },
@@ -1235,7 +1235,7 @@
       "family": "skills",
       "path": "agents/skills/contractor-classification/SKILL.md",
       "sha256": "9b016b9f77d15bfabe9a264cb52f0654fe1a38ac8af247156515a2bca963cfb8",
-      "size": 9431,
+      "size": 9446,
       "size_bytes": 9431,
       "source": "reference"
     },
