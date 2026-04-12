@@ -183,6 +183,7 @@ from .control_models import (
     PolicyHookSummary,
     QueueItemView,
     QueueSnapshot,
+    RecoveryRequestResult,
     ResearchQueueFamilyView,
     ResearchReport,
     RunProvenanceReport,
@@ -203,6 +204,7 @@ from .control_mutation_surface import (
 )
 from .control_mutation_surface import (
     add_task as add_task_surface,
+    recovery_request as recovery_request_surface,
 )
 from .control_mutation_surface import (
     interview_accept as interview_accept_surface,
@@ -624,6 +626,7 @@ class EngineControl:
     queue_reorder = queue_reorder_surface
     queue_cleanup_remove = queue_cleanup_remove_surface
     queue_cleanup_quarantine = queue_cleanup_quarantine_surface
+    recovery_request = recovery_request_surface
     supervisor_queue_reorder = supervisor_queue_reorder_surface
     supervisor_queue_cleanup_remove = supervisor_queue_cleanup_remove_surface
     supervisor_queue_cleanup_quarantine = supervisor_queue_cleanup_quarantine_surface

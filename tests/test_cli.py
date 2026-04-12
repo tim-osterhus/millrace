@@ -218,6 +218,143 @@ def test_cli_sentinel_check_when_disabled_is_diagnostic_only(tmp_path: Path) -> 
     assert Path(payload["latest_check_path"]).exists()
 
 
+def test_manual_recovery_request_cli_requires_force_queue(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "recovery",
+            "request",
+            "troubleshoot",
+            "--issuer",
+            "sentinel.test",
+            "--reason",
+            "execution stalled",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--force-queue" in result.output
+
+
+def test_manual_recovery_request_cli_persists_direct_artifact_and_audit_evidence(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    payload = invoke_cli_report_json(
+        config_path,
+        "recovery",
+        "request",
+        "troubleshoot",
+        "--issuer",
+        "sentinel.test",
+        "--reason",
+        "execution stalled",
+        "--force-queue",
+    )
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+
+    assert payload["mode"] == "direct"
+    assert payload["applied"] is True
+    assert payload["message"] == "recovery request queued"
+    assert payload["request"]["target"] == "troubleshoot"
+    assert payload["request"]["issuer"] == "sentinel.test"
+    assert payload["request"]["reason"] == "execution stalled"
+    assert payload["request"]["mode"] == "direct"
+    assert payload["request"]["force_queue"] is True
+    assert payload["artifact_path"] == str(paths.recovery_requests_dir / f"{payload['request']['request_id']}.json")
+    assert Path(payload["artifact_path"]).exists()
+    assert paths.latest_recovery_request_file.exists()
+
+    persisted = json.loads(Path(payload["artifact_path"]).read_text(encoding="utf-8"))
+    assert persisted["request_id"] == payload["request"]["request_id"]
+    assert persisted["target"] == "troubleshoot"
+    assert persisted["issuer"] == "sentinel.test"
+    assert persisted["mode"] == "direct"
+
+    assert "control.recovery_request.queued" in read_event_types(workspace)
+    historylog = (workspace / "agents/historylog.md").read_text(encoding="utf-8")
+    assert "control.recovery_request.queued" in historylog
+    history_details = [
+        path.read_text(encoding="utf-8")
+        for path in sorted((workspace / "agents/historylog").glob("*.md"))
+    ]
+    assert any(payload["request"]["request_id"] in detail for detail in history_details)
+
+
+def test_manual_recovery_request_mailbox_round_trip_archives_and_persists(tmp_path: Path) -> None:
+    import asyncio
+
+    workspace, config_path = runtime_workspace(tmp_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    RUNNER.invoke(app, ["--config", str(config_path), "add-task", "Mailbox recovery context"])
+    active_card = TaskQueue(paths).promote_next()
+
+    runtime_state = RuntimeState(
+        process_running=True,
+        process_id=os.getpid(),
+        paused=False,
+        execution_status=ExecutionStatus.BUILDER_RUNNING,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-11T02:00:00Z",
+    )
+    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    control = EngineControl(config_path)
+    result = control.recovery_request(
+        "mechanic",
+        issuer="sentinel.test",
+        reason="research plane stalled",
+        force_queue=True,
+    )
+
+    assert result.mode == "mailbox"
+    assert result.applied is True
+    assert result.command_id is not None
+    assert result.request.target == "mechanic"
+    assert result.request.mode == "mailbox"
+    assert result.request.active_task_id == active_card.task_id
+
+    incoming = sorted(paths.commands_incoming_dir.glob("*.json"))
+    assert len(incoming) == 1
+    envelope = json.loads(incoming[0].read_text(encoding="utf-8"))
+    assert envelope["command"] == "recovery_request"
+    assert envelope["issuer"] == "sentinel.test"
+    assert envelope["payload"]["request_id"] == result.request.request_id
+    assert envelope["payload"]["target"] == "mechanic"
+
+    engine = MillraceEngine(config_path)
+    asyncio.run(engine.mailbox_processor.process_mailbox())
+
+    processed = sorted(paths.commands_processed_dir.glob("*.json"))
+    assert len(processed) == 1
+    archived = json.loads(processed[0].read_text(encoding="utf-8"))
+    assert archived["envelope"]["command"] == "recovery_request"
+    assert archived["result"]["payload"]["request_id"] == result.request.request_id
+
+    assert result.artifact_path.exists()
+    persisted = json.loads(result.artifact_path.read_text(encoding="utf-8"))
+    assert persisted["request_id"] == result.request.request_id
+    assert persisted["target"] == "mechanic"
+    assert persisted["mode"] == "mailbox"
+    assert persisted["command_id"] == result.command_id
+    assert persisted["active_task_id"] == active_card.task_id
+
+    assert "control.recovery_request.queued" in read_event_types(workspace)
+    historylog = (workspace / "agents/historylog.md").read_text(encoding="utf-8")
+    assert "control.recovery_request.queued" in historylog
+    history_details = [
+        path.read_text(encoding="utf-8")
+        for path in sorted((workspace / "agents/historylog").glob("*.md"))
+    ]
+    assert any(result.request.request_id in detail for detail in history_details)
+
+
 def fake_runner_env(tmp_path: Path, *, executables: tuple[str, ...]) -> dict[str, str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)

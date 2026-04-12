@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from .adapters.control_mailbox import ControlCommand, normalize_command_issuer, write_command
 from .compounding import deprecate_procedure, promote_procedure
+from .contracts import ExecutionStatus, ResearchStatus
 from .control_common import ControlError, queue_control_error
 from .control_models import (
     DeferredActiveTaskClear,
@@ -17,11 +18,16 @@ from .control_models import (
     ActiveTaskRemediationRequest,
     ActiveTaskRemediationResult,
     OperationResult,
+    RecoveryRequestRecord,
+    RecoveryRequestResult,
+    RecoveryRequestTarget,
 )
 from .control_mutations import append_task_to_backlog, copy_idea_into_raw_queue
+from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEventSubscriber
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
 from .queue import QueueEmptyError, QueueError, TaskQueue
+from .status import ControlPlane, StatusStore
 
 
 def normalize_supervisor_issuer(issuer: str) -> str:
@@ -152,6 +158,61 @@ def _record_last_active_task_clear(
 ) -> ActiveTaskRemediationResult:
     write_last_active_task_clear(paths, result)
     return result
+
+
+def _emit_direct_control_event(
+    paths: RuntimePaths,
+    event_type: EventType,
+    payload: dict[str, object],
+) -> None:
+    EventBus([JsonlEventSubscriber(paths), HistorySubscriber(paths)]).emit(
+        event_type,
+        source=EventSource.CONTROL,
+        payload=payload,
+    )
+
+
+def _recovery_request_id(target: RecoveryRequestTarget, *, requested_at: datetime) -> str:
+    return f"recovery-{requested_at.strftime('%Y%m%dT%H%M%S%fZ')}-{target.value}"
+
+
+def _recovery_request_path(paths: RuntimePaths, *, request_id: str) -> Path:
+    return paths.recovery_requests_dir / f"{request_id}.json"
+
+
+def _read_status_marker(paths: RuntimePaths, plane: ControlPlane) -> str | None:
+    store_path = paths.status_file if plane is ControlPlane.EXECUTION else paths.research_status_file
+    if not store_path.exists():
+        return None
+    try:
+        status = StatusStore(store_path, plane).read()
+    except (FileNotFoundError, ValueError):
+        return None
+    if isinstance(status, (ExecutionStatus, ResearchStatus)):
+        return status.value
+    return str(status)
+
+
+def _recovery_request_snapshot(paths: RuntimePaths) -> dict[str, str | None]:
+    try:
+        active_task = TaskQueue(paths).active_task()
+    except (FileNotFoundError, QueueError, ValueError):
+        active_task = None
+    return {
+        "active_task_id": None if active_task is None else active_task.task_id,
+        "execution_status": _read_status_marker(paths, ControlPlane.EXECUTION),
+        "research_status": _read_status_marker(paths, ControlPlane.RESEARCH),
+    }
+
+
+def write_recovery_request_record(paths: RuntimePaths, request: RecoveryRequestRecord) -> Path:
+    artifact_path = _recovery_request_path(paths, request_id=request.request_id)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.recovery_runtime_dir.mkdir(parents=True, exist_ok=True)
+    payload = request.model_dump_json(indent=2) + "\n"
+    write_text_atomic(artifact_path, payload)
+    write_text_atomic(paths.latest_recovery_request_file, payload)
+    return artifact_path
 
 
 def active_task_remediate(
@@ -345,6 +406,88 @@ def active_task_remediate(
         clear_pending_active_task_clear(paths, command_id=command_id)
         return _record_last_active_task_clear(paths, result)
     return result
+
+
+def recovery_request(
+    paths: RuntimePaths,
+    *,
+    target: str,
+    reason: str,
+    issuer: str,
+    force_queue: bool,
+    daemon_running: bool,
+) -> RecoveryRequestResult:
+    """Queue one supported manual recovery request with durable audit evidence."""
+
+    if not force_queue:
+        raise ControlError("manual recovery request requires --force-queue")
+    normalized_target = RecoveryRequestTarget(str(target).strip().lower())
+    normalized_issuer = normalize_supervisor_issuer(issuer)
+    normalized_reason = " ".join(reason.strip().split())
+    if not normalized_reason:
+        raise ControlError("recovery request requires a reason")
+    requested_at = datetime.now(timezone.utc)
+    snapshot = _recovery_request_snapshot(paths)
+    request = RecoveryRequestRecord(
+        request_id=_recovery_request_id(normalized_target, requested_at=requested_at),
+        requested_at=requested_at,
+        target=normalized_target,
+        issuer=normalized_issuer,
+        reason=normalized_reason,
+        force_queue=True,
+        source="manual",
+        mode="mailbox" if daemon_running else "direct",
+        active_task_id=snapshot["active_task_id"],
+        execution_status=snapshot["execution_status"],
+        research_status=snapshot["research_status"],
+    )
+    artifact_path = _recovery_request_path(paths, request_id=request.request_id)
+    payload: dict[str, object] = {
+        "request_id": request.request_id,
+        "target": request.target.value,
+        "issuer": request.issuer,
+        "reason": request.reason,
+        "force_queue": request.force_queue,
+        "artifact_path": artifact_path.as_posix(),
+        "active_task_id": request.active_task_id,
+        "execution_status": request.execution_status,
+        "research_status": request.research_status,
+    }
+    if daemon_running:
+        envelope = write_command(
+            paths,
+            ControlCommand.RECOVERY_REQUEST,
+            payload=payload,
+            issuer=normalized_issuer,
+        )
+        request = request.model_copy(update={"command_id": envelope.command_id, "mode": "mailbox"})
+        return RecoveryRequestResult(
+            command_id=envelope.command_id,
+            mode="mailbox",
+            applied=True,
+            message="recovery request queued",
+            payload=payload,
+            request=request,
+            artifact_path=artifact_path,
+        )
+
+    write_recovery_request_record(paths, request)
+    _emit_direct_control_event(
+        paths,
+        EventType.RECOVERY_REQUEST_QUEUED,
+        {
+            **payload,
+            "command_id": request.command_id,
+        },
+    )
+    return RecoveryRequestResult(
+        mode="direct",
+        applied=True,
+        message="recovery request queued",
+        payload=payload,
+        request=request,
+        artifact_path=artifact_path,
+    )
 
 
 def active_task_rejected(

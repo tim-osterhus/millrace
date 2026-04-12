@@ -585,6 +585,57 @@ class SentinelCheckSurface(ContractModel):
         return Path(value)
 
 
+class RecoveryRequestTarget(str, Enum):
+    """Supported high-privilege recovery entrypoints."""
+
+    TROUBLESHOOT = "troubleshoot"
+    MECHANIC = "mechanic"
+
+
+class RecoveryRequestRecord(ContractModel):
+    """Durable manual recovery-request artifact."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    artifact_type: Literal["manual_recovery_request"] = "manual_recovery_request"
+    request_id: str
+    requested_at: datetime
+    target: RecoveryRequestTarget
+    issuer: str
+    reason: str
+    force_queue: bool = True
+    source: Literal["manual"] = "manual"
+    mode: Literal["direct", "mailbox"] = "direct"
+    command_id: str | None = None
+    active_task_id: str | None = None
+    execution_status: str | None = None
+    research_status: str | None = None
+
+    @field_validator(
+        "request_id",
+        "issuer",
+        "reason",
+        "command_id",
+        "active_task_id",
+        "execution_status",
+        "research_status",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | None, info: object) -> str | None:
+        normalized = " ".join(str(value or "").strip().split())
+        field_name = getattr(info, "field_name", "value")
+        if field_name in {"request_id", "issuer", "reason"}:
+            if not normalized:
+                raise ValueError(f"{field_name} may not be empty")
+            return normalized
+        return normalized or None
+
+    @field_validator("requested_at", mode="before")
+    @classmethod
+    def normalize_requested_at(cls, value: datetime | str) -> datetime:
+        return normalize_datetime(value)
+
+
 class PolicyHookSummary(ContractModel):
     """Compact operator-facing summary of persisted policy-hook records."""
 
@@ -1381,6 +1432,18 @@ class OperationResult(ContractModel):
     applied: bool
     message: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class RecoveryRequestResult(OperationResult):
+    """Operator-facing result for one manual recovery request."""
+
+    request: RecoveryRequestRecord
+    artifact_path: Path
+
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def normalize_artifact_path(cls, value: str | Path) -> Path:
+        return Path(value)
 
 
 class ActiveTaskRemediationIntent(str, Enum):

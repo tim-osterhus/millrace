@@ -18,6 +18,7 @@ from .control_actions import (
 from .control_actions import (
     active_task_remediate as active_task_remediate_operation,
     clear_pending_active_task_clear,
+    write_recovery_request_record,
     read_pending_active_task_clear,
 )
 from .control_common import ControlError
@@ -31,6 +32,7 @@ from .control_mutations import (
 from .events import EventSource, EventType
 from .paths import RuntimePaths
 from .queue import TaskQueue
+from .control_models import RecoveryRequestRecord, RecoveryRequestResult, RecoveryRequestTarget
 
 
 class EngineMailboxHookSet(Protocol):
@@ -113,6 +115,7 @@ def build_engine_mailbox_command_registry() -> EngineMailboxCommandRegistry:
             ControlCommand.QUEUE_REORDER: _handle_queue_reorder,
             ControlCommand.QUEUE_CLEANUP_REMOVE: _handle_queue_cleanup_remove,
             ControlCommand.QUEUE_CLEANUP_QUARANTINE: _handle_queue_cleanup_quarantine,
+            ControlCommand.RECOVERY_REQUEST: _handle_recovery_request,
             ControlCommand.COMPOUNDING_PROMOTE: _handle_compounding_promote,
             ControlCommand.COMPOUNDING_DEPRECATE: _handle_compounding_deprecate,
         }
@@ -278,6 +281,88 @@ def _handle_add_idea(
     copied = copy_idea_into_raw_queue(context.hooks.get_paths(), Path(file_value).expanduser().resolve())
     return EngineMailboxCommandExecution(
         operation=OperationResult(mode="direct", applied=True, message="idea queued", payload={"path": copied})
+    )
+
+
+def _handle_recovery_request(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    target = str(envelope.payload.get("target", "")).strip().lower()
+    reason = str(envelope.payload.get("reason", "")).strip()
+    request_id = str(envelope.payload.get("request_id", "")).strip()
+    force_queue = bool(envelope.payload.get("force_queue", False))
+    if not target:
+        raise ControlError("recovery_request requires a target")
+    if not reason:
+        raise ControlError("recovery_request requires a reason")
+    if not request_id:
+        raise ControlError("recovery_request requires a request id")
+    if not force_queue:
+        raise ControlError("recovery_request requires force_queue=true")
+    request = RecoveryRequestRecord(
+        request_id=request_id,
+        requested_at=envelope.issued_at,
+        target=RecoveryRequestTarget(target),
+        issuer=envelope.issuer,
+        reason=reason,
+        force_queue=True,
+        source="manual",
+        mode="mailbox",
+        command_id=envelope.command_id,
+        active_task_id=(
+            None
+            if envelope.payload.get("active_task_id") in (None, "")
+            else str(envelope.payload.get("active_task_id"))
+        ),
+        execution_status=(
+            None
+            if envelope.payload.get("execution_status") in (None, "")
+            else str(envelope.payload.get("execution_status"))
+        ),
+        research_status=(
+            None
+            if envelope.payload.get("research_status") in (None, "")
+            else str(envelope.payload.get("research_status"))
+        ),
+    )
+    artifact_path = write_recovery_request_record(context.hooks.get_paths(), request)
+    context.hooks.emit_event(
+        EventType.RECOVERY_REQUEST_QUEUED,
+        EventSource.CONTROL,
+        {
+            "request_id": request.request_id,
+            "target": request.target.value,
+            "issuer": request.issuer,
+            "reason": request.reason,
+            "force_queue": request.force_queue,
+            "command_id": envelope.command_id,
+            "artifact_path": artifact_path.as_posix(),
+            "active_task_id": request.active_task_id,
+            "execution_status": request.execution_status,
+            "research_status": request.research_status,
+        },
+    )
+    return EngineMailboxCommandExecution(
+        operation=RecoveryRequestResult(
+            command_id=envelope.command_id,
+            mode="mailbox",
+            applied=True,
+            message="recovery request queued",
+            payload={
+                "request_id": request.request_id,
+                "target": request.target.value,
+                "issuer": request.issuer,
+                "reason": request.reason,
+                "force_queue": request.force_queue,
+                "artifact_path": artifact_path.as_posix(),
+                "active_task_id": request.active_task_id,
+                "execution_status": request.execution_status,
+                "research_status": request.research_status,
+            },
+            request=request,
+            artifact_path=artifact_path,
+        )
     )
 
 

@@ -119,6 +119,9 @@ class RuntimePaths:
     runs_dir: Path
     diagnostics_dir: Path
     runtime_dir: Path
+    recovery_runtime_dir: Path
+    recovery_requests_dir: Path
+    latest_recovery_request_file: Path
     sentinel_runtime_dir: Path
     sentinel_state_file: Path
     sentinel_check_records_dir: Path
@@ -142,6 +145,7 @@ class RuntimePaths:
         else:
             resolved_agents_dir = (root / agents_dir).resolve()
         runtime_dir = resolved_agents_dir / ".runtime"
+        recovery_runtime_dir = runtime_dir / "recovery"
         sentinel_runtime_dir = runtime_dir / "sentinel"
         commands_dir = runtime_dir / "commands"
         ideas_dir = resolved_agents_dir / "ideas"
@@ -244,6 +248,9 @@ class RuntimePaths:
             runs_dir=resolved_agents_dir / "runs",
             diagnostics_dir=resolved_agents_dir / "diagnostics",
             runtime_dir=runtime_dir,
+            recovery_runtime_dir=recovery_runtime_dir,
+            recovery_requests_dir=recovery_runtime_dir / "requests",
+            latest_recovery_request_file=recovery_runtime_dir / "latest.json",
             sentinel_runtime_dir=sentinel_runtime_dir,
             sentinel_state_file=sentinel_runtime_dir / "state.json",
             sentinel_check_records_dir=sentinel_runtime_dir / "checks",

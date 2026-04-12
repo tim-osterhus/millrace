@@ -22,6 +22,7 @@ class EventType(str, Enum):
     ENGINE_RESUMED = "engine.resumed"
     CONTROL_COMMAND_RECEIVED = "control.command.received"
     CONTROL_COMMAND_APPLIED = "control.command.applied"
+    RECOVERY_REQUEST_QUEUED = "control.recovery_request.queued"
     TASK_PROMOTED = "execution.task.promoted"
     TASK_ARCHIVED = "execution.task.archived"
     TASK_QUARANTINED = "execution.task.quarantined"

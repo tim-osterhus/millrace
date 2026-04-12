@@ -13,6 +13,7 @@ from .control_actions import (
     add_task as add_task_operation,
     active_task_remediate as active_task_remediate_operation,
     active_task_rejected as active_task_rejected_operation,
+    recovery_request as recovery_request_operation,
     write_last_active_task_clear as write_last_active_task_clear_operation,
 )
 from .control_actions import (
@@ -64,6 +65,7 @@ from .control_models import (
     InterviewMutationReport,
     InterviewQuestionReport,
     OperationResult,
+    RecoveryRequestResult,
 )
 from .control_publish import (
     publish_commit as publish_commit_operation,
@@ -164,6 +166,24 @@ def supervisor_queue_cleanup_quarantine(control, task_id: str, *, reason: str, i
         task_id=task_id,
         reason=reason,
         issuer=issuer,
+        daemon_running=control.is_daemon_running(),
+    )
+
+
+def recovery_request(
+    control,
+    target: str,
+    *,
+    reason: str,
+    issuer: str,
+    force_queue: bool,
+) -> RecoveryRequestResult:
+    return recovery_request_operation(
+        control.paths,
+        target=target,
+        reason=reason,
+        issuer=issuer,
+        force_queue=force_queue,
         daemon_running=control.is_daemon_running(),
     )
 

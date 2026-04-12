@@ -62,6 +62,7 @@ from .control_models import (
     InterviewListReport,
     InterviewMutationReport,
     InterviewQuestionReport,
+    RecoveryRequestTarget,
 )
 from .events import EventRecord
 
@@ -81,6 +82,7 @@ compounding_harness_recommendations_app = typer.Typer(help="Inspect bounded harn
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
+recovery_app = typer.Typer(help="Queue high-privilege manual recovery requests.")
 sentinel_app = typer.Typer(help="Run one-shot Sentinel diagnosis and inspect persisted Sentinel results.")
 supervisor_app = typer.Typer(help="External supervisor report surfaces.")
 supervisor_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work with issuer attribution.")
@@ -100,6 +102,7 @@ compounding_harness_app.add_typer(compounding_harness_recommendations_app, name=
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
+app.add_typer(recovery_app, name="recovery")
 app.add_typer(sentinel_app, name="sentinel")
 app.add_typer(supervisor_app, name="supervisor")
 supervisor_app.add_typer(supervisor_cleanup_app, name="cleanup")
@@ -485,6 +488,39 @@ def sentinel_status_command(
 
     _render_sentinel_status(
         _run_expected(lambda: _control(ctx).sentinel_status(), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@recovery_app.command("request")
+def recovery_request_command(
+    ctx: typer.Context,
+    target: Annotated[RecoveryRequestTarget, typer.Argument(help="Recovery entrypoint to request.")],
+    issuer: Annotated[str, typer.Option("--issuer", help="Issuer identity to record.")],
+    reason: Annotated[str, typer.Option("--reason", help="Why the out-of-order recovery path is being requested.")],
+    force_queue: Annotated[
+        bool,
+        typer.Option(
+            "--force-queue",
+            help="Explicitly authorize this high-privilege out-of-order recovery request.",
+        ),
+    ] = False,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Queue one high-privilege manual recovery request."""
+
+    if not force_queue:
+        raise typer.BadParameter("pass --force-queue to authorize a manual recovery request")
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).recovery_request(
+                target.value,
+                reason=reason,
+                issuer=issuer,
+                force_queue=True,
+            ),
+            json_mode=json_mode,
+        ),
         json_mode=json_mode,
     )
 
