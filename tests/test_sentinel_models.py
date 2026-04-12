@@ -8,6 +8,8 @@ from millrace_engine.sentinel_models import (
     SentinelCadenceState,
     SentinelCapState,
     SentinelCheckRecord,
+    SentinelNotificationAttemptRecord,
+    SentinelNotificationPayload,
     SentinelMonitoringState,
     SentinelReport,
     SentinelState,
@@ -117,19 +119,47 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
         caps=caps,
         monitoring=monitoring,
     )
+    notification = SentinelNotificationAttemptRecord(
+        attempt_id="sentinel-notify-001",
+        attempted_at="2026-04-11T10:00:00Z",
+        adapter_id="openclaw",
+        adapter_kind="openclaw",
+        transport="hook",
+        outcome="delivered",
+        status="openclaw-delivered",
+        detail='{"returncode": 0}',
+        payload=SentinelNotificationPayload(
+            severity="critical",
+            reason="hard-cap-triggered",
+            summary="Sentinel reached hard cap",
+            workspace_root="/tmp/workspace",
+            route_target="notify",
+            evidence_paths=("agents/.runtime/sentinel/state.json", "agents/reports/sentinel/latest.json"),
+            linked_incident_id="INC-001",
+            linked_incident_path="agents/ideas/incidents/incoming/incident.md",
+            linked_recovery_request_id="sentinel-req-001",
+            latest_check_id="check-001",
+            sentinel_state_path="agents/.runtime/sentinel/state.json",
+            sentinel_report_path="agents/reports/sentinel/latest.json",
+        ),
+        artifact_path="agents/.runtime/sentinel/notifications/sentinel-notify-001.json",
+    )
 
     check_json = check.model_dump_json(indent=2)
     state_json = state.model_dump_json(indent=2)
     report_json = report.model_dump_json(indent=2)
+    notification_json = notification.model_dump_json(indent=2)
 
     assert SentinelCheckRecord.model_validate_json(check_json) == check
     assert SentinelState.model_validate_json(state_json) == state
     assert SentinelReport.model_validate_json(report_json) == report
+    assert SentinelNotificationAttemptRecord.model_validate_json(notification_json) == notification
     assert json.loads(check_json)["report_path"] == "agents/reports/sentinel/latest.json"
     assert json.loads(report_json)["state_path"] == "agents/.runtime/sentinel/state.json"
     assert json.loads(state_json)["caps"]["soft_cap_active"] is True
     assert json.loads(state_json)["monitoring"]["incident_path"] == "agents/ideas/incidents/incoming/incident.md"
     assert json.loads(state_json)["monitoring"]["suppression_active"] is True
+    assert json.loads(notification_json)["payload"]["linked_recovery_request_id"] == "sentinel-req-001"
 
 
 def test_sentinel_models_normalize_to_utc() -> None:

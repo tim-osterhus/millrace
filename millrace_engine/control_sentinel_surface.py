@@ -11,6 +11,7 @@ from .control_models import OperationResult, SentinelCheckSurface, SentinelIncid
 from .control_runtime_surface import supervisor_report as supervisor_report_surface
 from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEventSubscriber
 from .sentinel_models import SentinelCheckRecord, SentinelIncidentBundle, SentinelReport, SentinelState
+from .sentinel_notify import build_sentinel_notification_payload, deliver_sentinel_notification
 from .sentinel_runtime import persist_sentinel_artifacts, run_sentinel_diagnostic
 from .sentinel_watch import run_sentinel_watch
 
@@ -122,13 +123,52 @@ def sentinel_check(control, *, trigger: str = "manual", now: datetime | None = N
                 "halt_on_hard_cap": state.caps.halt_on_hard_cap,
             },
         )
+        attempt = deliver_sentinel_notification(
+            config=control.loaded.config,
+            paths=control.paths,
+            payload=build_sentinel_notification_payload(
+                paths=control.paths,
+                status=report.status,
+                reason=report.reason,
+                route_target=report.summary.route_target,
+                summary=report.reason,
+                latest_check_id=check.check_id,
+                linked_incident_id=state.last_incident_id,
+                linked_incident_path=state.last_incident_path,
+                linked_recovery_request_id=state.last_recovery_request_id,
+            ),
+            attempted_at=emitted_at,
+        )
+        updated_state = state.model_copy(
+            update={
+                "caps": state.caps.model_copy(
+                    update={
+                        "last_notification_attempt_at": attempt.attempted_at,
+                        "last_notification_status": attempt.status,
+                    }
+                )
+            }
+        )
+        state, report, check = _persist_sentinel_update(
+            control,
+            state=updated_state,
+            report=report,
+            check=check,
+        )
         bus.emit(
             EventType.SENTINEL_NOTIFICATION_ATTEMPT_RECORDED,
             source=EventSource.CONTROL,
             payload={
                 "check_id": check.check_id,
-                "status": state.caps.last_notification_status,
-                "attempted_at": state.caps.last_notification_attempt_at,
+                "attempt_id": attempt.attempt_id,
+                "adapter_id": attempt.adapter_id,
+                "adapter_kind": attempt.adapter_kind,
+                "transport": attempt.transport,
+                "outcome": attempt.outcome,
+                "status": attempt.status,
+                "detail": attempt.detail,
+                "attempted_at": attempt.attempted_at,
+                "artifact_path": attempt.artifact_path,
             },
         )
     if (

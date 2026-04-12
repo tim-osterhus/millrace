@@ -493,12 +493,73 @@ def test_run_sentinel_cap_hard_cap_records_notification_and_halt_guardrail(
     assert surface.report.status == "escalated"
     assert surface.state.caps.recovery_cycles_queued == 3
     assert surface.state.caps.hard_cap_triggered is True
-    assert surface.state.caps.last_notification_status == "local-record-only-notification-attempt-recorded"
+    assert surface.state.caps.last_notification_status == "notify-disabled"
+    assert surface.state.caps.last_notification_attempt_at == surface.check.checked_at
     assert surface.state.caps.last_halt_action_status == "engine is not running"
     assert surface.state.lifecycle_status == "escalated"
     assert surface.check.auto_queue_allowed is False
+    notification_artifacts = sorted(paths.sentinel_notification_attempts_dir.glob("*.json"))
+    attempt = json.loads(notification_artifacts[-1].read_text(encoding="utf-8"))
+
+    assert attempt["status"] == "notify-disabled"
+    assert attempt["outcome"] == "skipped"
+    assert attempt["payload"]["linked_recovery_request_id"] == surface.state.last_recovery_request_id
+    assert attempt["payload"]["linked_incident_id"] == surface.state.last_incident_id
     assert "control.sentinel.hard_cap_triggered" in event_types
     assert "control.sentinel.notification_attempt_recorded" in event_types
+
+
+def test_run_sentinel_cap_hard_cap_records_openclaw_adapter_failure_without_breaking_check(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    failure_script = tmp_path / "openclaw_fail.py"
+    failure_script.write_text("import sys\nsys.exit(7)\n", encoding="utf-8")
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[sentinel.notify]\n"
+        + 'enabled = true\n'
+        + 'adapter = "openclaw"\n'
+        + f'openclaw_command = ["python3", {json.dumps(str(failure_script))}]\n',
+        encoding="utf-8",
+    )
+    control = EngineControl(config_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+
+    control.sentinel_check(now=t0)
+    for index in range(4):
+        requested_at = t0 + timedelta(seconds=10 + (index * 30))
+        request = RecoveryRequestRecord(
+            request_id=f"recovery-fail-{index + 1}",
+            requested_at=requested_at,
+            target=RecoveryRequestTarget.TROUBLESHOOT,
+            issuer="sentinel.test",
+            reason="execution stalled",
+            force_queue=True,
+            source="manual",
+            mode="direct",
+        )
+        write_recovery_request_record(paths, request)
+        control.sentinel_incident(
+            failure_signature=f"sentinel:hard-cap-fail-{index + 1}",
+            summary="Sentinel detected repeated unresolved execution stalls.",
+            severity="S2",
+            routing_target="troubleshoot",
+            recovery_request_id=request.request_id,
+            issuer="sentinel.test",
+        )
+        surface = control.sentinel_check(now=requested_at + timedelta(seconds=10))
+
+    notification_artifacts = sorted(paths.sentinel_notification_attempts_dir.glob("*.json"))
+    attempt = json.loads(notification_artifacts[-1].read_text(encoding="utf-8"))
+
+    assert surface.report.status == "escalated"
+    assert surface.state.caps.hard_cap_triggered is True
+    assert surface.state.caps.last_notification_status == "openclaw-exit-7"
+    assert attempt["adapter_id"] == "openclaw"
+    assert attempt["outcome"] == "failed"
+    assert attempt["status"] == "openclaw-exit-7"
 
 
 def test_run_sentinel_acknowledge_rejects_non_cap_degraded_state(

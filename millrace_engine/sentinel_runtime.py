@@ -168,8 +168,6 @@ def _cap_state(
     hard_cap_count = caps.hard_cap_count
     last_soft_cap_at = caps.last_soft_cap_at
     last_hard_cap_at = caps.last_hard_cap_at
-    last_notification_attempt_at = caps.last_notification_attempt_at
-    last_notification_status = caps.last_notification_status
     if caps.recovery_cycles_queued >= caps.soft_cap_threshold and not soft_cap_active:
         soft_cap_active = True
         soft_cap_count += 1
@@ -178,8 +176,6 @@ def _cap_state(
         hard_cap_triggered = True
         hard_cap_count += 1
         last_hard_cap_at = checked_at
-        last_notification_attempt_at = checked_at
-        last_notification_status = "local-record-only-notification-attempt-recorded"
     return caps.model_copy(
         update={
             "soft_cap_count": soft_cap_count,
@@ -189,8 +185,6 @@ def _cap_state(
             "acknowledgment_required": soft_cap_active or hard_cap_triggered,
             "last_soft_cap_at": last_soft_cap_at,
             "last_hard_cap_at": last_hard_cap_at,
-            "last_notification_attempt_at": last_notification_attempt_at,
-            "last_notification_status": last_notification_status,
         }
     )
 

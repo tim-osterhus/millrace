@@ -27,6 +27,9 @@ SentinelMonitorResolution = Literal["none", "pending", "resolved", "stalled", "e
 SentinelLifecycleStatus = Literal["idle", "monitoring", "suppressed", "escalated", "disabled"]
 SentinelProgressState = Literal["unknown", "progressing", "stale"]
 SentinelIncidentRoutingTarget = Literal["troubleshoot", "mechanic"]
+SentinelNotificationSeverity = Literal["info", "warning", "critical"]
+SentinelNotificationOutcome = Literal["delivered", "skipped", "failed"]
+SentinelNotificationTransport = Literal["hook", "http", "file_watch", "polling", "os_notification", "none"]
 
 
 def _normalize_datetime_or_none(value: datetime | str | None) -> datetime | None:
@@ -320,6 +323,86 @@ class SentinelReport(ContractModel):
     @classmethod
     def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
         return _normalize_optional_text(value)
+
+
+class SentinelNotificationPayload(ContractModel):
+    severity: SentinelNotificationSeverity = "warning"
+    reason: str
+    summary: str
+    workspace_root: str
+    route_target: SentinelRouteTarget = "none"
+    evidence_paths: tuple[str, ...] = ()
+    linked_incident_id: str = ""
+    linked_incident_path: str = ""
+    linked_recovery_request_id: str = ""
+    latest_check_id: str = ""
+    sentinel_state_path: str = ""
+    sentinel_report_path: str = ""
+
+    @field_validator(
+        "reason",
+        "summary",
+        "workspace_root",
+        mode="before",
+    )
+    @classmethod
+    def normalize_required_text_fields(cls, value: str | Path | None, info: object) -> str:
+        return _normalize_required_text(value, field_name=getattr(info, "field_name", "value"))
+
+    @field_validator(
+        "linked_incident_id",
+        "linked_incident_path",
+        "linked_recovery_request_id",
+        "latest_check_id",
+        "sentinel_state_path",
+        "sentinel_report_path",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+    @field_validator("evidence_paths", mode="before")
+    @classmethod
+    def normalize_evidence_paths(
+        cls,
+        value: tuple[str, ...] | list[str] | tuple[Path, ...] | list[Path] | None,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return tuple(_normalize_optional_text(item) for item in value if _normalize_optional_text(item))
+
+
+class SentinelNotificationAttemptRecord(ContractModel):
+    schema_version: Literal["1.0"] = SENTINEL_ARTIFACT_SCHEMA_VERSION
+    attempt_id: str
+    attempted_at: datetime
+    adapter_id: str
+    adapter_kind: str
+    transport: SentinelNotificationTransport = "none"
+    outcome: SentinelNotificationOutcome = "skipped"
+    status: str
+    detail: str = ""
+    payload: SentinelNotificationPayload
+    artifact_path: str = ""
+
+    @field_validator("attempt_id", "adapter_id", "adapter_kind", "status", mode="before")
+    @classmethod
+    def normalize_required_text_fields(cls, value: str | Path | None, info: object) -> str:
+        return _normalize_required_text(value, field_name=getattr(info, "field_name", "value"))
+
+    @field_validator("detail", "artifact_path", mode="before")
+    @classmethod
+    def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+    @field_validator("attempted_at", mode="before")
+    @classmethod
+    def normalize_attempted_at(cls, value: datetime | str) -> datetime:
+        normalized = _normalize_datetime_or_none(value)
+        if normalized is None:
+            raise ValueError("attempted_at may not be empty")
+        return normalized
 
 
 class SentinelStatusMarkerEvidence(ContractModel):

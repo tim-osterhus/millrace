@@ -239,6 +239,21 @@ class SentinelNotifyConfig(MillraceModel):
     enabled: bool = False
     adapter: str | None = None
     allow_direct_notify_when_supervised: bool = False
+    openclaw_command: tuple[str, ...] = ()
+    openclaw_timeout_seconds: int = Field(default=10, ge=1)
+
+    @field_validator("openclaw_command", mode="before")
+    @classmethod
+    def normalize_openclaw_command(
+        cls,
+        value: tuple[str, ...] | list[str] | str | None,
+    ) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            normalized = " ".join(value.strip().split())
+            return () if not normalized else (normalized,)
+        return tuple(str(item).strip() for item in value if str(item).strip())
 
 
 class SentinelConfig(MillraceModel):
