@@ -58,7 +58,15 @@ from .research.governance import ResearchGovernanceReport
 from .research.interview import InterviewDecisionRecord, InterviewQuestionRecord
 from .research.queues import ResearchQueueItem
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
-from .sentinel_models import SentinelCheckRecord, SentinelIncidentBundle, SentinelReport, SentinelState
+from .sentinel_models import (
+    SentinelCheckRecord,
+    SentinelHealthStatus,
+    SentinelIncidentBundle,
+    SentinelLifecycleStatus,
+    SentinelReport,
+    SentinelRouteTarget,
+    SentinelState,
+)
 from .standard_runtime import RuntimeSelectionView
 from .status import ControlPlane
 
@@ -456,6 +464,38 @@ class SupervisorAction(str, Enum):
     STOP = "stop"
 
 
+class SupervisorSentinelSummary(ContractModel):
+    """Compact machine-readable Sentinel summary for external supervisor consumers."""
+
+    available: bool = False
+    config_enabled: bool
+    runtime_enabled: bool | None = None
+    lifecycle_status: SentinelLifecycleStatus | None = None
+    status: SentinelHealthStatus | None = None
+    reason: str = ""
+    last_check_at: datetime | None = None
+    next_check_at: datetime | None = None
+    checks_performed: int = Field(default=0, ge=0)
+    monitoring_active: bool = False
+    route_target: SentinelRouteTarget = "none"
+    recovery_cycles_queued: int = Field(default=0, ge=0)
+    soft_cap_active: bool = False
+    hard_cap_triggered: bool = False
+    acknowledgment_required: bool = False
+    last_notification_status: str = ""
+    queued_recovery_request_id: str = ""
+
+    @field_validator("reason", "last_notification_status", "queued_recovery_request_id", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str:
+        return " ".join(str(value or "").strip().split())
+
+    @field_validator("last_check_at", "next_check_at", mode="before")
+    @classmethod
+    def normalize_optional_datetimes(cls, value: datetime | str | None) -> datetime | None:
+        return normalize_datetime(value)
+
+
 class SupervisorReport(ContractModel):
     """Aggregated one-workspace external-supervisor report."""
 
@@ -486,6 +526,7 @@ class SupervisorReport(ContractModel):
     time_in_current_status_seconds: float | None = Field(default=None, ge=0)
     attention_reason: SupervisorAttentionReason
     attention_summary: str
+    sentinel: SupervisorSentinelSummary
     allowed_actions: tuple[SupervisorAction, ...] = ()
     recent_events: tuple[EventRecord, ...] = ()
 

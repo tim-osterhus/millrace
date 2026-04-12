@@ -6355,6 +6355,21 @@ def test_engine_control_supervisor_report_contract_for_idle_workspace(tmp_path: 
     assert report.recent_events[-1].type is EventType.RESEARCH_IDLE
 
 
+def test_engine_control_supervisor_report_exposes_unavailable_sentinel_summary(tmp_path: Path) -> None:
+    _workspace, config_path = runtime_workspace(tmp_path)
+
+    report = EngineControl(config_path).supervisor_report(recent_event_limit=0)
+
+    assert report.sentinel.available is False
+    assert report.sentinel.config_enabled is True
+    assert report.sentinel.runtime_enabled is None
+    assert report.sentinel.status is None
+    assert report.sentinel.reason == "no-persisted-sentinel-result"
+    assert report.sentinel.last_check_at is None
+    assert report.sentinel.next_check_at is None
+    assert report.sentinel.last_notification_status == ""
+
+
 def test_cli_status_and_supervisor_report_surface_degraded_liveness_for_unverifiable_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -6483,6 +6498,36 @@ def test_cli_supervisor_report_renders_json(tmp_path: Path) -> None:
         "queue_cleanup_quarantine",
     ]
     assert payload["recent_events"] == []
+
+
+def test_cli_supervisor_report_renders_persisted_sentinel_summary_json(tmp_path: Path) -> None:
+    _workspace, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    checked_at = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+    sentinel_payload = control.sentinel_check(now=checked_at).model_dump(mode="json")
+
+    result = RUNNER.invoke(
+        app,
+        ["--config", str(config_path), "supervisor", "report", "--recent-events", "0", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+
+    assert payload["sentinel"]["available"] is True
+    assert payload["sentinel"]["config_enabled"] is True
+    assert payload["sentinel"]["runtime_enabled"] is True
+    assert payload["sentinel"]["status"] == sentinel_payload["report"]["status"]
+    assert payload["sentinel"]["reason"] == sentinel_payload["report"]["reason"]
+    assert payload["sentinel"]["last_check_at"] == sentinel_payload["report"]["summary"]["last_check_at"]
+    assert payload["sentinel"]["next_check_at"] == sentinel_payload["report"]["summary"]["next_check_at"]
+    assert payload["sentinel"]["checks_performed"] == sentinel_payload["report"]["summary"]["checks_performed"]
+    assert payload["sentinel"]["monitoring_active"] == sentinel_payload["report"]["summary"]["monitoring_active"]
+    assert payload["sentinel"]["recovery_cycles_queued"] == sentinel_payload["report"]["summary"]["recovery_cycles_queued"]
+    assert payload["sentinel"]["soft_cap_active"] == sentinel_payload["report"]["summary"]["soft_cap_active"]
+    assert payload["sentinel"]["hard_cap_triggered"] == sentinel_payload["report"]["summary"]["hard_cap_triggered"]
+    assert payload["sentinel"]["acknowledgment_required"] == sentinel_payload["report"]["summary"]["acknowledgment_required"]
+    assert payload["sentinel"]["last_notification_status"] == sentinel_payload["report"]["summary"]["last_notification_status"]
 
 
 def test_cli_status_and_supervisor_report_surface_pending_clear_and_mailbox_task_intent(

@@ -25,6 +25,7 @@ from .control_models import (
     SupervisorAction,
     SupervisorAttentionReason,
     SupervisorReport,
+    SupervisorSentinelSummary,
 )
 from .control_reports import (
     asset_inventory_for,
@@ -58,6 +59,7 @@ from .research.queues import discover_research_queues
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership
 from .standard_runtime import RuntimeSelectionView, runtime_selection_view_from_snapshot
 from .status import ControlPlane, StatusError, StatusStore
+from .sentinel_models import SentinelReport, SentinelState
 
 
 def _supervisor_allowed_actions(
@@ -176,6 +178,92 @@ def _attention_reason_for(
             )
         return SupervisorAttentionReason.IDLE_WITH_NO_WORK, "Workspace is idle with no pending work."
     return SupervisorAttentionReason.NONE, "Workspace is active and does not currently require supervisor attention."
+
+
+def _supervisor_sentinel_summary(control) -> SupervisorSentinelSummary:
+    state = None
+    report = None
+    if control.paths.sentinel_state_file.exists():
+        state = SentinelState.model_validate_json(control.paths.sentinel_state_file.read_text(encoding="utf-8"))
+    if control.paths.sentinel_latest_report_file.exists():
+        report = SentinelReport.model_validate_json(
+            control.paths.sentinel_latest_report_file.read_text(encoding="utf-8")
+        )
+    available = state is not None or report is not None
+    summary = None if report is None else report.summary
+    monitoring_active = (
+        summary.monitoring_active
+        if summary is not None
+        else state is not None and state.monitoring is not None and state.monitoring.active
+    )
+    route_target = (
+        summary.route_target
+        if summary is not None
+        else (
+            state.monitoring.route_target
+            if state is not None and state.monitoring is not None
+            else "none"
+        )
+    )
+    return SupervisorSentinelSummary(
+        available=available,
+        config_enabled=control.loaded.config.sentinel.enabled,
+        runtime_enabled=None if state is None else state.enabled,
+        lifecycle_status=None if state is None else state.lifecycle_status,
+        status=None if report is None else report.status,
+        reason=(
+            report.reason
+            if report is not None
+            else (state.reason if state is not None else "no-persisted-sentinel-result")
+        ),
+        last_check_at=(
+            summary.last_check_at
+            if summary is not None
+            else (state.cadence.last_check_at if state is not None else None)
+        ),
+        next_check_at=(
+            summary.next_check_at
+            if summary is not None
+            else (state.cadence.next_check_at if state is not None else None)
+        ),
+        checks_performed=(
+            summary.checks_performed
+            if summary is not None
+            else (state.checks_performed if state is not None else 0)
+        ),
+        monitoring_active=bool(monitoring_active),
+        route_target=route_target,
+        recovery_cycles_queued=(
+            summary.recovery_cycles_queued
+            if summary is not None
+            else (state.caps.recovery_cycles_queued if state is not None else 0)
+        ),
+        soft_cap_active=(
+            summary.soft_cap_active
+            if summary is not None
+            else (state.caps.soft_cap_active if state is not None else False)
+        ),
+        hard_cap_triggered=(
+            summary.hard_cap_triggered
+            if summary is not None
+            else (state.caps.hard_cap_triggered if state is not None else False)
+        ),
+        acknowledgment_required=(
+            summary.acknowledgment_required
+            if summary is not None
+            else (state.acknowledgment.required if state is not None else False)
+        ),
+        last_notification_status=(
+            summary.last_notification_status
+            if summary is not None
+            else (state.caps.last_notification_status if state is not None else "")
+        ),
+        queued_recovery_request_id=(
+            summary.queued_recovery_request_id
+            if summary is not None
+            else (state.last_recovery_request_id if state is not None else "")
+        ),
+    )
 
 
 def status(control, *, detail: bool = False) -> StatusReport:
@@ -301,6 +389,7 @@ def supervisor_report(control, *, recent_event_limit: int = 10) -> SupervisorRep
         time_in_current_status_seconds=time_in_current_status_seconds,
         attention_reason=attention_reason,
         attention_summary=attention_summary,
+        sentinel=_supervisor_sentinel_summary(control),
         allowed_actions=_supervisor_allowed_actions(
             status_report.runtime,
             backlog_depth=status_report.runtime.backlog_depth,
