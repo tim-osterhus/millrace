@@ -44,14 +44,26 @@ Use `docs/RUNTIME_DEEP_DIVE.md` when you need architecture detail for the superv
 
 ## Command Inventory
 
-Supported one-shot Sentinel CLI in this tranche:
+Supported Sentinel CLI and control surfaces in this repo:
 
 ```bash
 millrace --config millrace.toml sentinel check --json
 millrace --config millrace.toml sentinel status --json
+millrace --config millrace.toml sentinel watch --json
+millrace --config millrace.toml sentinel acknowledge --issuer <name> --reason "..." --json
+millrace --config millrace.toml sentinel incident --failure-signature <token> --summary "..." --json
+millrace --config millrace.toml recovery request troubleshoot --issuer <name> --reason "..." --force-queue --json
+millrace --config millrace.toml recovery request mechanic --issuer <name> --reason "..." --force-queue --json
 ```
 
-These commands are bounded check/status surfaces only. Long-lived watch behavior, recovery request commands, and notification delivery are not part of this tranche yet.
+Contract notes:
+
+- `sentinel check` runs one bounded diagnostic pass and persists the result.
+- `sentinel status` reads the latest persisted Sentinel state/report/check bundle.
+- `sentinel watch` is the standalone one-workspace companion watch loop; it is separate from the engine daemon lifecycle.
+- `sentinel acknowledge` is the explicit operator acknowledgment seam for soft-cap or escalated Sentinel states and should be used only when acknowledgment is actually pending.
+- `sentinel incident` writes one compatible incident document into `agents/ideas/incidents/incoming/` and links it to current Sentinel state plus any known recovery request id.
+- manual `recovery request ... --force-queue` is the supported high-privilege recovery queueing path; it is a separate control surface, not a raw queue edit and not a hidden Sentinel-only backdoor.
 
 ## Observation Contract
 
@@ -66,6 +78,8 @@ millrace --config millrace.toml status --detail --json
 millrace --config millrace.toml research --json
 millrace --config millrace.toml logs --tail 50 --json
 ```
+
+`supervisor report --json` is also the supported exported Sentinel summary for external one-workspace harnesses. It includes a compact `sentinel` section derived from persisted Sentinel artifacts, and the local TUI Overview and inspector surfaces render that same summary instead of recomputing Sentinel logic.
 
 Authoritative read-only files you may inspect:
 
@@ -93,8 +107,9 @@ Do not require a host-precomputed evidence packet. Sentinel reads current eviden
   - `agents/reports/sentinel/latest.json`
   - `agents/reports/sentinel/summary.json`
 - Do not write `agents/.runtime/commands/incoming/`, task-store files, queue files, incident files, or other engine-owned runtime files directly during normal Sentinel operation.
-- In this tranche, the supported public Sentinel CLI is the one-shot `check` and `status` surface only.
-- Keep long-lived watch behavior, recovery request commands, and notification delivery out of scope unless a later shipped surface explicitly adds them.
+- The shipped public Sentinel CLI in this repo includes `check`, `status`, `watch`, `acknowledge`, and `incident`.
+- Manual recovery queueing remains the separate top-level `recovery request` control surface with explicit `--force-queue` authorization.
+- Sentinel notifications remain optional edge delivery. The monitor stays useful through local persisted reports, supervisor report summary, and TUI visibility even when no adapter is configured.
 
 ## Health Semantics You Must Not Misread
 
@@ -109,9 +124,10 @@ Do not require a host-precomputed evidence packet. Sentinel reads current eviden
 
 - The host may wake Sentinel on any schedule, but Sentinel owns its own cadence state, cap counters, and acknowledgment/suppression state in Sentinel-owned persisted files.
 - Track cadence progression and cap history through Sentinel state, not through host-side hidden memory.
-- A notify signal in this tranche is a durable Sentinel recommendation, not guaranteed adapter delivery.
+- A notify signal is durably recorded Sentinel attempt/result evidence, not the system of record for monitor state.
 - Notification adapters are optional edge layers. Their absence does not make Sentinel useless.
-- If notify delivery is unavailable or unimplemented, keep the decision legible through Sentinel reports and explicit handoff guidance instead of pretending delivery succeeded.
+- This repo ships an optional reference OpenClaw adapter seam, but adapter delivery remains secondary to persisted Sentinel evidence.
+- If notify delivery is unavailable or fails, keep the decision legible through Sentinel reports, supervisor report summary, TUI visibility, and explicit handoff guidance instead of pretending delivery succeeded.
 
 ## Handoff Rules
 
@@ -132,3 +148,5 @@ When evidence is ambiguous, prefer notify-only or handoff behavior over improvis
 ## Boundary Reminder
 
 Sentinel is a first-class Supervisor-lineage companion monitor. It performs adversarial health assessment from current evidence, keeps its own bounded monitor state, and leaves durable audit artifacts. It does not become a hidden stage prompt, a shadow runtime authority, or a justification for bypassing Millrace's supported control plane.
+
+This repo ships only the local one-workspace Sentinel monitor surfaces. It does not ship a hosted `live.millrace.ai` dashboard, and it does not turn Millrace core into a multi-workspace Sentinel portfolio supervisor.

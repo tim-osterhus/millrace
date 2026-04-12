@@ -387,7 +387,7 @@ def test_cli_sentinel_check_records_hard_cap_evidence_with_halt_guardrail(
 
     assert payload["report"]["status"] == "escalated"
     assert payload["state"]["caps"]["hard_cap_triggered"] is True
-    assert payload["state"]["caps"]["last_notification_status"] == "local-record-only-notification-attempt-recorded"
+    assert payload["state"]["caps"]["last_notification_status"] == "notify-disabled"
     assert payload["state"]["caps"]["last_halt_action_status"] == "engine is not running"
 
 

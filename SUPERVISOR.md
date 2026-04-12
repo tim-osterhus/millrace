@@ -13,6 +13,12 @@ Before you observe or mutate runtime state, load the shared Millrace operations 
 - `agents/skills/millrace-operator-intake-control/SKILL.md`
 - load `agents/skills/millrace-operator-intake-control/EXAMPLES.md` only when you need concrete good/bad intake or command-boundary examples
 
+If you need to compose a manually structured task for supervisor submission, use the repo-exact task-card authoring skill as a formatting reference only:
+
+- `agents/skills/task-card-authoring-repo-exact/SKILL.md`
+- load `agents/skills/task-card-authoring-repo-exact/EXAMPLES.md` only when you need concrete task-card examples
+- use it to shape the task payload you submit through `millrace --config millrace.toml supervisor add-task ... --issuer <name>`; do not use it as permission to edit task-store files directly
+
 Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequence. Use `docs/RUNTIME_DEEP_DIVE.md` when you need architecture details for the one-workspace supervisor seam.
 
 ## Role
@@ -51,6 +57,7 @@ millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer
 ## Attention Handling
 
 - Treat `attention_reason`, `attention_summary`, and `allowed_actions` from `supervisor report --json` as the supported machine-readable decision surface.
+- Treat the report's `sentinel` section as the supported one-workspace Sentinel summary when persisted Sentinel state is available; it is exported monitor state for this workspace, not a multi-workspace dashboard or scheduler surface.
 - When `attention_reason` is `none`, keep the workspace on the current external polling or heartbeat schedule.
 - When `attention_reason` is non-`none`, decide whether to wait, message, escalate, or issue one of the listed supervisor-safe actions.
 - Keep poll intervals, heartbeat checks, wakeups, and outbound messaging policy in the external harness, layered over Millrace-owned report and event truth.

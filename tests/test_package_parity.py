@@ -270,15 +270,23 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert OPERATIONS_SKILL_PATH in sentinel
     assert "millrace --config millrace.toml sentinel check --json" in sentinel
     assert "millrace --config millrace.toml sentinel status --json" in sentinel
-    assert "supported public Sentinel CLI is the one-shot `check` and `status` surface only" in sentinel
+    assert "millrace --config millrace.toml sentinel watch --json" in sentinel
+    assert "millrace --config millrace.toml sentinel acknowledge --issuer <name> --reason \"...\" --json" in sentinel
+    assert "millrace --config millrace.toml sentinel incident --failure-signature <token> --summary \"...\" --json" in sentinel
+    assert "millrace --config millrace.toml recovery request troubleshoot --issuer <name> --reason \"...\" --force-queue --json" in sentinel
+    assert "The shipped public Sentinel CLI in this repo includes `check`, `status`, `watch`, `acknowledge`, and `incident`." in sentinel
+    assert "supervisor report --json" in sentinel
     assert "Execution `IDLE` is the execution plane's neutral state." in sentinel
     assert "Sentinel is a first-class Supervisor-lineage companion monitor." in sentinel
+    assert "live.millrace.ai" in sentinel
+    assert "does not turn Millrace core into a multi-workspace Sentinel portfolio supervisor" in sentinel
 
     supervisor = (MILLRACE_ROOT / "SUPERVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the external one-workspace supervisor" in supervisor
     assert OPERATIONS_SKILL_PATH in supervisor
     assert "supervisor report --json" in supervisor
     assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in supervisor
+    assert "report's `sentinel` section" in supervisor
     assert "poll frequency, heartbeat strategy, and wakeup delivery" in supervisor
     assert 'supervisor add-task "Example task" --issuer <name> --json' in supervisor
     assert 'supervisor cleanup remove <task-id> --issuer <name> --reason "Invalid queued work" --json' in supervisor
@@ -322,6 +330,10 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "bounded local Mechanic repair" in operator_guide
     assert "GoalSpec-owned `goal_gap_remediation` family" in operator_guide
     assert "goal-gap remediation-family staging" in operator_guide
+    assert "## Sentinel Monitor Workflow" in operator_guide
+    assert "sentinel watch --json" in operator_guide
+    assert "sentinel` section" in operator_guide
+    assert "live.millrace.ai" in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
     assert "### 5.7 Governed Compounding Operating Model" in runtime_deep_dive
@@ -332,12 +344,23 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in runtime_deep_dive
     assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
     assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in runtime_deep_dive
+    assert "`sentinel` summary derived from those persisted artifacts" in runtime_deep_dive
     assert "supervisor cleanup remove|quarantine" in runtime_deep_dive
     assert "structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`" in runtime_deep_dive
     assert "the markdown files remain the instruction layer" in runtime_deep_dive
     assert "`engine_runtime.py`: shared engine runtime dependency bundle" in runtime_deep_dive
     assert "`engine_config_coordinator.py`: config reload/apply/rollback coordinator" in runtime_deep_dive
     assert "`engine_mailbox_processor.py`: daemon mailbox intake, dispatch, and archive coordinator" in runtime_deep_dive
+    assert "overview snapshots of runtime, Sentinel summary, config, queue, and research state" in runtime_deep_dive
+
+    readme_tui = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
+    assert "persisted one-workspace Sentinel summary exported through `supervisor report --json`" in readme_tui
+    assert "runtime/sentinel/latest-run/research/governance/attention detail cards" in readme_tui
+    assert "not a hosted dashboard or a multi-workspace supervision surface" in readme_tui
+
+    assert "## Sentinel Companion Monitor" in readme
+    assert "sentinel acknowledge --issuer <name> --reason \"...\" --json" in readme
+    assert "hosted `live.millrace.ai` dashboard" in readme
     assert "`engine_runtime_loop.py`: daemon-loop, watcher, wakeup, and post-cycle control coordinator" in runtime_deep_dive
     assert "`execution_flows/`: quickfix, QA, builder-success, and cycle-runner flow-family modules" in runtime_deep_dive
     assert "`goalspec_stage_support.py` remains as a thin routing/re-export facade" in runtime_deep_dive

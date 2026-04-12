@@ -330,6 +330,8 @@ millrace --config millrace.toml supervisor report --json
 
 That report is the supported first-pass decision surface for one workspace. It collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons into one payload without requiring raw runtime-file synthesis. External harnesses should treat `attention_reason`, `attention_summary`, and `allowed_actions` as the supported machine-readable trigger for wait/message/escalate/act decisions.
 
+When local Sentinel is enabled, that same `supervisor report --json` payload also exposes a compact `sentinel` summary sourced from persisted Sentinel artifacts. External harnesses can read that one-workspace monitor state from the report, while the local TUI Overview and inspector surfaces render the same summary for operators.
+
 If the harness decides action is needed, use the supported supervisor-safe CLI path with explicit issuer attribution:
 
 ```bash
@@ -345,6 +347,21 @@ millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer
 Scheduling, messaging, wakeups, and multi-workspace registry stay outside Millrace core. Millrace owns one-workspace runtime truth, event history, and safe action semantics; the external harness owns cadence, heartbeat policy, portfolio ordering, and outbound communication.
 
 Optional adapters may translate `supervisor report`, research/status surfaces, or structured events into wakeups, webhooks, or inbox items, but they remain edge layers over Millrace-owned truth. This keeps the OpenClaw/Supervisor compatibility seam attributable and file-safe. Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime files directly during normal supervision.
+
+## Sentinel Companion Monitor
+
+Millrace also ships a local one-workspace Sentinel companion monitor layered over the same runtime and supervisor truth. The supported local surface is:
+
+```bash
+millrace --config millrace.toml sentinel check --json
+millrace --config millrace.toml sentinel status --json
+millrace --config millrace.toml sentinel watch --json
+millrace --config millrace.toml sentinel acknowledge --issuer <name> --reason "..." --json
+millrace --config millrace.toml sentinel incident --failure-signature <token> --summary "..." --json
+millrace --config millrace.toml recovery request troubleshoot --issuer <name> --reason "..." --force-queue --json
+```
+
+Sentinel persists its own bounded monitor artifacts under `agents/.runtime/sentinel/` and `agents/reports/sentinel/`, exports a machine-readable summary through `supervisor report --json`, and surfaces that same summary in the local TUI. This repo does not ship a hosted `live.millrace.ai` dashboard or multi-workspace Sentinel portfolio supervisor; external harnesses consume the exported one-workspace reports instead.
 
 ## Publish And Staging
 

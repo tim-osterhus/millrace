@@ -295,6 +295,21 @@ Scheduling, messaging, wakeups, and multi-workspace registry remain external-har
 
 Optional adapters may translate supervisor reports or structured events into local wakeups, webhooks, or inbox delivery, but they stay at the edge. The TUI remains a local operator shell for one workspace; it is not the remote compatibility surface. Mailbox files remain runtime-owned. Do not write `agents/.runtime/commands/incoming/` directly during normal supervision.
 
+## Sentinel Monitor Workflow
+
+Use Sentinel when you want a local one-workspace companion monitor over the same Millrace truth surfaces:
+
+```bash
+millrace --config millrace.toml sentinel check --json
+millrace --config millrace.toml sentinel status --json
+millrace --config millrace.toml sentinel watch --json
+millrace --config millrace.toml sentinel acknowledge --issuer <name> --reason "..." --json
+millrace --config millrace.toml sentinel incident --failure-signature <token> --summary "..." --json
+millrace --config millrace.toml recovery request mechanic --issuer <name> --reason "..." --force-queue --json
+```
+
+The local TUI Overview and inspector now expose the same persisted Sentinel summary that `supervisor report --json` exports in its `sentinel` section. Sentinel remains a one-workspace local monitor; this repo does not ship a hosted `live.millrace.ai` dashboard or multi-workspace Sentinel portfolio supervisor.
+
 ### 6. Inspect Outcomes
 
 ```bash

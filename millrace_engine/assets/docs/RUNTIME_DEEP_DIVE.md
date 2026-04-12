@@ -1322,7 +1322,7 @@ Operationally, the TUI gives the operator:
 
 - a startup health gate with retry plus config and log recovery previews
 - one persistent shell with a sidebar, panel shortcuts, a command palette, and `?` help
-- overview snapshots of runtime, config, queue, and research state
+- overview snapshots of runtime, Sentinel summary, config, queue, and research state
 - queue visibility and reorder workflows
 - research status, queue, governance, and recent-activity visibility
 - live event log tailing plus filtering and run-id handoff into run detail
@@ -1342,6 +1342,8 @@ The supported compatibility seam is intentionally narrow:
 - `millrace --config millrace.toml supervisor cleanup remove|quarantine ... --issuer <name> --reason <text> --json` for bounded queued-work correction with issuer preservation
 
 That report collapses health, readiness, runtime status, research status, queue depth, recent events, and machine-readable attention reasons without requiring the harness to synthesize raw runtime files. External harnesses should treat `attention_reason`, `attention_summary`, and `allowed_actions` as the supported machine-readable decision surface.
+
+When local Sentinel has persisted state, `supervisor report --json` also carries a compact `sentinel` summary derived from those persisted artifacts. External harnesses may read that one-workspace monitor summary, and the local TUI renders the same summary for operators without recomputing Sentinel logic.
 
 Scheduling, messaging, wakeups, and multi-workspace portfolio logic stay outside the core runtime. Poll cadence, heartbeat strategy, and wakeup delivery remain harness policy layered over Millrace-owned reports and events. External harnesses must not write `agents/.runtime/commands/incoming/` or other engine-owned files directly during normal supervision.
 

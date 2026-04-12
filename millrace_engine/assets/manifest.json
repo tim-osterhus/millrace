@@ -271,36 +271,36 @@
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "a28a210aa241e668e9e7c0b616a778ca7365091c1c3c32d449d317d0d7cb895b",
+      "sha256": "095c3bab6801297ce000eab2271d5aab762eee02c08760ea0ac9d2a0c5761342",
       "size": 19937,
-      "size_bytes": 20586,
+      "size_bytes": 21513,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "3768accf0764c5047527f02174614e47acaeef46207b3c8fcd062325e1a8f37c",
+      "sha256": "d28e894d36806952f92403a71f141b81900d0a1719a3d212bebe8150c91914f1",
       "size": 23394,
-      "size_bytes": 24261,
+      "size_bytes": 25682,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "SENTINEL.md",
-      "sha256": "02569e0979ccc3df32c30e6ebd7ba2fe2d772642ae1ba4a9dd90550db6704f91",
+      "sha256": "82d39bb5adc2c8ef94db58fc737ce25a4292ce3031c343a571d41a789654b1d0",
       "size": 6964,
-      "size_bytes": 7330,
+      "size_bytes": 9394,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "SUPERVISOR.md",
-      "sha256": "4e94d7543585499cd302ea810646c5a1b7856d1e0f2234fba63a0fc14fd70746",
+      "sha256": "3dc8a51bfe0f6cefaead38bbf5b85067fe6852410eb36079e35e5d972c1ed56d",
       "size": 5177,
-      "size_bytes": 5177,
+      "size_bytes": 5930,
       "source": "runtime"
     },
     {
@@ -1540,18 +1540,18 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "aa247dcc1347b5c846d75a35f3efe80cacf7152fecce3fd7083a460bb0a6bab0",
+      "sha256": "210077a143e6e9a3fc416f9e0c377ad1cf7e559d6120662cdbd7e981606a62b6",
       "size": 56418,
-      "size_bytes": 56905,
+      "size_bytes": 57231,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
-      "sha256": "e8d1f58772c8a8829fec8a1f33cfdffd2b596bf5231effbc26075ba594e0a263",
+      "sha256": "818b4925b9981b1eba450c3a352fbebeef27d3401b302d76db89e3f26c91872d",
       "size": 24542,
-      "size_bytes": 26967,
+      "size_bytes": 27292,
       "source": "runtime"
     },
     {

@@ -79,6 +79,8 @@ millrace --config millrace.toml supervisor cleanup remove <task-id> --issuer <na
 
 The TUI can observe and act through the same control plane for a local operator, but it is not the remote harness interface and it should not replace the attributable supervisor contract.
 
+The local TUI Sentinel card and overview inspector are intentionally one-workspace local visibility surfaces sourced from `supervisor report --json`. They are not a hosted dashboard or a multi-workspace supervision surface.
+
 ## Launching The TUI
 
 From the workspace root:
@@ -253,6 +255,7 @@ It summarizes:
 
 - whether the daemon is running
 - execution mode and pause state
+- the persisted one-workspace Sentinel summary exported through `supervisor report --json`
 - research status
 - backlog depth and active task
 - the latest visible run artifact
@@ -260,7 +263,7 @@ It summarizes:
 - the most recent governed procedure/context-fact usage visible from local runs
 - basic route and stage information from the current runtime selection
 
-In operator mode, those signals land in metric cards plus runtime/latest-run/research/governance/attention detail cards.
+In operator mode, those signals land in metric cards plus runtime/sentinel/latest-run/research/governance/attention detail cards.
 
 Use `Overview` when you want the fastest single-screen answer to: "What is Millrace doing right now?"
 
