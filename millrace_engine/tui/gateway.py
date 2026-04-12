@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from .gateway_views import (
     run_detail_view,
     runs_overview_view,
     runtime_overview_view,
+    sentinel_overview_view,
     sync_action_result_view,
 )
 from .models import ActionResultView, FailureCategory, GatewayFailure, GatewayResult, RefreshPayload
@@ -54,6 +56,7 @@ class RuntimeGateway:
         def callback(control: EngineControl) -> RefreshPayload:
             refreshed_at = _utcnow()
             status = control.status(detail=False)
+            supervisor = control.supervisor_report(recent_event_limit=0)
             config = control.config_show()
             queue = control.queue_inspect()
             research = control.research_report()
@@ -61,9 +64,10 @@ class RuntimeGateway:
             interview = control.interview_list()
             research_activity = control.research_history(RESEARCH_ACTIVITY_LIMIT)
             events = control.logs(log_limit)
+            runtime = replace(runtime_overview_view(status), sentinel=sentinel_overview_view(supervisor.sentinel))
             return RefreshPayload(
                 refreshed_at=refreshed_at,
-                runtime=runtime_overview_view(status),
+                runtime=runtime,
                 config=config_overview_view(config),
                 queue=queue_overview_view(queue),
                 research=research_overview_view(

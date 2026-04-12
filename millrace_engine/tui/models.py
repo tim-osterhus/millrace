@@ -107,6 +107,27 @@ class SelectionDecisionView:
 
 
 @dataclass(frozen=True, slots=True)
+class SentinelOverviewView:
+    available: bool
+    config_enabled: bool
+    runtime_enabled: bool | None
+    lifecycle_status: str | None
+    status: str | None
+    reason: str | None
+    last_check_at: datetime | None
+    next_check_at: datetime | None
+    checks_performed: int
+    monitoring_active: bool
+    route_target: str
+    recovery_cycles_queued: int
+    soft_cap_active: bool
+    hard_cap_triggered: bool
+    acknowledgment_required: bool
+    last_notification_status: str | None
+    queued_recovery_request_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeOverviewView:
     workspace_path: str
     config_path: str
@@ -133,6 +154,7 @@ class RuntimeOverviewView:
     updated_at: datetime
     selection: SelectionSummaryView
     selection_decision: SelectionDecisionView
+    sentinel: SentinelOverviewView | None = None
     liveness_authority: str = "snapshot_absent"
     liveness_degraded: bool = False
     liveness_summary: str | None = None

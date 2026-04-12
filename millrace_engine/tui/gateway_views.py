@@ -41,6 +41,7 @@ from .models import (
     RunsOverviewView,
     RunSummaryView,
     RuntimeOverviewView,
+    SentinelOverviewView,
     RunTransitionView,
     SelectionDecisionView,
     SelectionSummaryView,
@@ -257,9 +258,34 @@ def runtime_overview_view(status: object) -> RuntimeOverviewView:
         updated_at=getattr(runtime, "updated_at"),
         selection=selection_summary_view(getattr(status, "selection")),
         selection_decision=selection_decision_view(getattr(status, "selection_explanation")),
+        sentinel=None,
         liveness_authority=str(getattr(getattr(status, "liveness"), "authority")),
         liveness_degraded=bool(getattr(getattr(status, "liveness"), "degraded")),
         liveness_summary=str(getattr(getattr(status, "liveness"), "summary")),
+    )
+
+
+def sentinel_overview_view(summary: object | None) -> SentinelOverviewView | None:
+    if summary is None:
+        return None
+    return SentinelOverviewView(
+        available=bool(getattr(summary, "available")),
+        config_enabled=bool(getattr(summary, "config_enabled")),
+        runtime_enabled=getattr(summary, "runtime_enabled"),
+        lifecycle_status=stringify_value(getattr(summary, "lifecycle_status", None)),
+        status=stringify_value(getattr(summary, "status", None)),
+        reason=stringify_value(getattr(summary, "reason", None)),
+        last_check_at=getattr(summary, "last_check_at", None),
+        next_check_at=getattr(summary, "next_check_at", None),
+        checks_performed=int(getattr(summary, "checks_performed", 0)),
+        monitoring_active=bool(getattr(summary, "monitoring_active")),
+        route_target=stringify_value(getattr(summary, "route_target", None)) or "none",
+        recovery_cycles_queued=int(getattr(summary, "recovery_cycles_queued", 0)),
+        soft_cap_active=bool(getattr(summary, "soft_cap_active")),
+        hard_cap_triggered=bool(getattr(summary, "hard_cap_triggered")),
+        acknowledgment_required=bool(getattr(summary, "acknowledgment_required")),
+        last_notification_status=stringify_value(getattr(summary, "last_notification_status", None)),
+        queued_recovery_request_id=stringify_value(getattr(summary, "queued_recovery_request_id", None)),
     )
 
 

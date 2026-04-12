@@ -135,6 +135,29 @@ def build_shell_inspector_view(
             detail = [
                 f"research {runtime.research_status.lower()} | backlog {runtime.backlog_depth}",
             ]
+            if runtime.sentinel is not None:
+                sentinel = runtime.sentinel
+                sentinel_status = "unavailable"
+                if sentinel.available:
+                    sentinel_status = (sentinel.status or "unknown").lower()
+                    if sentinel.monitoring_active:
+                        sentinel_status = f"{sentinel_status} | monitoring {sentinel.route_target}"
+                    elif sentinel.hard_cap_triggered:
+                        sentinel_status = f"{sentinel_status} | hard cap"
+                    elif sentinel.soft_cap_active:
+                        sentinel_status = f"{sentinel_status} | soft cap"
+                elif not sentinel.config_enabled:
+                    sentinel_status = "disabled by config"
+                detail.append(f"sentinel {sentinel_status}")
+                if sentinel.available:
+                    sentinel_detail = [f"checks {sentinel.checks_performed}"]
+                    if sentinel.recovery_cycles_queued > 0:
+                        sentinel_detail.append(f"recovery {sentinel.recovery_cycles_queued}")
+                    if sentinel.acknowledgment_required:
+                        sentinel_detail.append("ack required")
+                    if sentinel.last_notification_status:
+                        sentinel_detail.append(f"notify {sentinel.last_notification_status.lower()}")
+                    detail.append(" | ".join(sentinel_detail))
             if latest_run is not None:
                 detail.append(f"latest run {latest_run.run_id} | status {latest_run.latest_status or 'unknown'}")
             if runtime.selection.selection_ref:

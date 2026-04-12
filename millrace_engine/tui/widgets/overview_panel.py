@@ -17,6 +17,7 @@ from ..models import (
     QueueTaskView,
     ResearchOverviewView,
     RuntimeOverviewView,
+    SentinelOverviewView,
 )
 from .progressive_disclosure import append_panel_failure_lines, collapse_operator_text
 
@@ -90,6 +91,14 @@ def _compact_timestamp(value: str | None) -> str | None:
     return moment.astimezone(timezone.utc).strftime("%H:%M:%SZ")
 
 
+def _compact_datetime(moment: datetime | None) -> str | None:
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%H:%M:%SZ")
+
+
 def _task_label(task: QueueTaskView | None, *, include_id: bool = False) -> str:
     if task is None:
         return "none"
@@ -154,6 +163,7 @@ class OverviewPanel(Static):
                     yield self._metric_card("backlog", "Backlog")
                 with Vertical(classes="overview-stack"):
                     yield self._detail_card("runtime", "Runtime")
+                    yield self._detail_card("sentinel", "Sentinel")
                     yield self._detail_card("latest", "Latest run")
                     yield self._detail_card("research", "Research")
                     yield self._detail_card("governance", "Governance")
@@ -224,6 +234,7 @@ class OverviewPanel(Static):
             self._update_metric("next", "--", "queue unavailable")
             self._update_metric("backlog", "--", "runtime unavailable")
             self._update_detail("runtime", "Waiting for the runtime snapshot.", self._failure_summary())
+            self._update_detail("sentinel", "Waiting for runtime snapshot", "sentinel summary unavailable")
             self._update_detail("latest", "No run snapshot yet", "latest run artifacts unavailable")
             self._update_detail("research", "Waiting for research snapshot", "research status unavailable")
             self._update_detail("governance", "Waiting for governance snapshot", "compounding summary unavailable")
@@ -260,6 +271,8 @@ class OverviewPanel(Static):
             runtime_detail = f"{runtime_detail} | {runtime.liveness_summary}"
         self._update_detail("runtime", runtime_headline, runtime_detail)
 
+        sentinel_headline, sentinel_detail = self._sentinel_card_content()
+        self._update_detail("sentinel", sentinel_headline, sentinel_detail)
         latest_headline, latest_detail, latest_state = self._latest_run_card_content()
         self._update_detail("latest", latest_headline, latest_detail)
         self._set_latest_state(latest_state)
@@ -372,6 +385,40 @@ class OverviewPanel(Static):
             )
         return (headline, " | ".join(fragments))
 
+    def _sentinel_card_content(self) -> tuple[str, str]:
+        sentinel = None if self._runtime is None else self._runtime.sentinel
+        if sentinel is None:
+            return ("waiting", "supervisor sentinel summary not available")
+        if not sentinel.available:
+            headline = "disabled by config" if not sentinel.config_enabled else "no persisted state"
+            detail = sentinel.reason or "sentinel has not written persisted artifacts yet"
+            return (headline, detail)
+
+        headline = _runtime_label(sentinel.status).lower()
+        if sentinel.monitoring_active:
+            headline = f"{headline} | monitoring {sentinel.route_target}"
+        elif sentinel.hard_cap_triggered:
+            headline = f"{headline} | hard cap"
+        elif sentinel.soft_cap_active:
+            headline = f"{headline} | soft cap"
+
+        fragments = [f"checks {sentinel.checks_performed}"]
+        last_check = _compact_datetime(sentinel.last_check_at)
+        next_check = _compact_datetime(sentinel.next_check_at)
+        if last_check:
+            fragments.append(f"last {last_check}")
+        if next_check:
+            fragments.append(f"next {next_check}")
+        if sentinel.recovery_cycles_queued > 0:
+            fragments.append(f"recovery {sentinel.recovery_cycles_queued}")
+        if sentinel.acknowledgment_required:
+            fragments.append("ack required")
+        if sentinel.last_notification_status:
+            fragments.append(f"notify {sentinel.last_notification_status.lower()}")
+        elif sentinel.hard_cap_triggered:
+            fragments.append("notify pending")
+        return (headline, " | ".join(fragments))
+
     def _latest_run_card_content(self) -> tuple[str, str, str]:
         summary = self._latest_run
         if summary is None:
@@ -437,6 +484,7 @@ class OverviewPanel(Static):
             lines.append("NEXT     --")
             lines.append("BACKLOG  --")
             lines.append("RUNTIME  waiting for runtime snapshot")
+            lines.append("SENTINEL waiting for runtime snapshot")
             lines.append("LATEST   no run artifacts")
             lines.append("RESEARCH waiting for research snapshot")
             lines.append("GOVERN  waiting for governance snapshot")
@@ -464,6 +512,8 @@ class OverviewPanel(Static):
             f"exec {runtime.execution_status} | uptime {_format_duration(runtime.uptime_seconds)}"
             f"{' | clear pending' if runtime.pending_active_task_clear_reason else ''}"
         )
+        sentinel_headline, sentinel_detail = self._sentinel_card_content()
+        lines.append(f"SENTINEL {sentinel_headline} | {sentinel_detail}")
         latest_headline, latest_detail, _ = self._latest_run_card_content()
         lines.append(f"LATEST   {latest_headline} | {latest_detail}")
         if self._research is None:
@@ -515,6 +565,7 @@ class OverviewPanel(Static):
             f" | route {selection_decision.route_decision if selection_decision is not None else 'unknown'}"
             f" | stages {len(runtime.selection.stage_labels)}"
         )
+        lines.append(f"SENTINEL {self._debug_sentinel_summary(runtime.sentinel)}")
         if research is None:
             lines.append(f"RESEARCH {runtime.research_status} | waiting for the research snapshot")
         else:
@@ -540,6 +591,32 @@ class OverviewPanel(Static):
             lines.append(f"CLEAR    pending | {runtime.pending_active_task_clear_reason}")
         lines.extend(self._latest_run_debug_lines())
         return "\n".join(lines)
+
+    @staticmethod
+    def _debug_sentinel_summary(sentinel: SentinelOverviewView | None) -> str:
+        if sentinel is None:
+            return "summary unavailable"
+        if not sentinel.available:
+            return sentinel.reason or "no persisted state"
+        fragments = [
+            _runtime_label(sentinel.status),
+            f"lifecycle {_runtime_label(sentinel.lifecycle_status)}",
+            f"route {sentinel.route_target}",
+            f"checks {sentinel.checks_performed}",
+        ]
+        if sentinel.monitoring_active:
+            fragments.append("monitoring on")
+        if sentinel.soft_cap_active:
+            fragments.append("soft cap")
+        if sentinel.hard_cap_triggered:
+            fragments.append("hard cap")
+        if sentinel.acknowledgment_required:
+            fragments.append("ack required")
+        if sentinel.queued_recovery_request_id:
+            fragments.append(f"req {sentinel.queued_recovery_request_id}")
+        if sentinel.last_notification_status:
+            fragments.append(f"notify {sentinel.last_notification_status}")
+        return " | ".join(fragments)
 
     def _latest_run_debug_lines(self) -> list[str]:
         summary = self._latest_run

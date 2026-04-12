@@ -82,6 +82,7 @@ from millrace_engine.tui.models import (
     RunsOverviewView,
     RuntimeEventView,
     RuntimeOverviewView,
+    SentinelOverviewView,
     SelectionDecisionView,
     SelectionSummaryView,
     lifecycle_signal_from_context,
@@ -1720,6 +1721,25 @@ def _sample_refresh_payload(
             updated_at=observed_at,
             selection=_selection_summary(run_id=selection_run_id),
             selection_decision=_selection_decision(),
+            sentinel=SentinelOverviewView(
+                available=True,
+                config_enabled=True,
+                runtime_enabled=True,
+                lifecycle_status="watching",
+                status="DEGRADED",
+                reason="stale-workspace",
+                last_check_at=observed_at,
+                next_check_at=observed_at + timedelta(minutes=15),
+                checks_performed=4,
+                monitoring_active=True,
+                route_target="mechanic",
+                recovery_cycles_queued=2,
+                soft_cap_active=True,
+                hard_cap_triggered=False,
+                acknowledgment_required=True,
+                last_notification_status="delivered",
+                queued_recovery_request_id="recovery-2",
+            ),
         ),
         config=_sample_config_overview(),
         queue=QueueOverviewView(
@@ -2361,6 +2381,30 @@ def test_runtime_gateway_shapes_research_audit_governance_and_recent_activity(mo
                 selection_explanation=_selection_decision(),
             )
 
+        def supervisor_report(self, *, recent_event_limit: int = 10):
+            assert recent_event_limit == 0
+            return SimpleNamespace(
+                sentinel=SimpleNamespace(
+                    available=True,
+                    config_enabled=True,
+                    runtime_enabled=True,
+                    lifecycle_status="watching",
+                    status="HEALTHY",
+                    reason="steady",
+                    last_check_at=observed_at,
+                    next_check_at=observed_at + timedelta(minutes=15),
+                    checks_performed=3,
+                    monitoring_active=False,
+                    route_target="none",
+                    recovery_cycles_queued=0,
+                    soft_cap_active=False,
+                    hard_cap_triggered=False,
+                    acknowledgment_required=False,
+                    last_notification_status="",
+                    queued_recovery_request_id="",
+                )
+            )
+
         def queue_inspect(self):
             return SimpleNamespace(
                 active_task=None,
@@ -2574,6 +2618,30 @@ def test_runtime_gateway_load_workspace_snapshot_includes_recent_runs(monkeypatc
                 selection_explanation=_selection_decision(),
             )
 
+        def supervisor_report(self, *, recent_event_limit: int = 10):
+            assert recent_event_limit == 0
+            return SimpleNamespace(
+                sentinel=SimpleNamespace(
+                    available=True,
+                    config_enabled=True,
+                    runtime_enabled=True,
+                    lifecycle_status="watching",
+                    status="HEALTHY",
+                    reason="steady",
+                    last_check_at=observed_at,
+                    next_check_at=observed_at + timedelta(minutes=15),
+                    checks_performed=3,
+                    monitoring_active=False,
+                    route_target="none",
+                    recovery_cycles_queued=0,
+                    soft_cap_active=False,
+                    hard_cap_triggered=False,
+                    acknowledgment_required=False,
+                    last_notification_status="",
+                    queued_recovery_request_id="",
+                )
+            )
+
         def queue_inspect(self):
             return SimpleNamespace(active_task=None, next_task=None, backlog_depth=0, backlog=())
 
@@ -2678,7 +2746,11 @@ def test_runtime_gateway_load_workspace_snapshot_includes_recent_runs(monkeypatc
     assert result.ok
     payload = result.value
     assert payload is not None
+    assert payload.runtime is not None
     assert payload.runs is not None
+    assert payload.runtime.sentinel is not None
+    assert payload.runtime.sentinel.status == "HEALTHY"
+    assert payload.runtime.sentinel.checks_performed == 3
     run_by_id = {run.run_id: run for run in payload.runs.runs}
     assert set(run_by_id) == {"run-empty", "run-bad", "run-ok"}
     assert run_by_id["run-empty"].note == "run provenance artifacts missing"
@@ -2729,6 +2801,7 @@ def test_status_bar_and_overview_panel_render_runtime_cockpit_summary() -> None:
     overview_text = overview.summary_text()
     assert "RUNTIME  stopped | mode once | exec IDLE | uptime --" in overview_text
     assert "NEXT     Example task" in overview_text
+    assert "SENTINEL degraded | monitoring mechanic | checks 4 | last 00:00:00Z | next 00:15:00Z | recovery 2 | ack required | notify delivered" in overview_text
     assert "LATEST   WARN smoke-standard | sel mode.std | 00:00:00Z | stg 2 | hist no | transition history not present" in overview_text
     assert "GOVERN  pending 3 | proc 1 | facts 1 | harness 1 | recs 0 | used smoke-standard p1/f1" in overview_text
     assert "ATTN     transition history not present | latest run metadata is incomplete" in overview_text
@@ -2744,7 +2817,30 @@ def test_status_bar_and_overview_panel_render_runtime_cockpit_summary() -> None:
     debug_overview_text = overview.summary_text()
     assert "GOVERN  pending 3 | proc 1 | facts 1 | harness 1 | recs 0 | used smoke-standard p1/f1" in debug_overview_text
     assert "WORK     queued 1 | deferred 0 | mailbox 0 | active none | next Example task" in debug_overview_text
+    assert "SENTINEL DEGRADED | lifecycle watching | route mechanic | checks 4 | monitoring on | soft cap | ack required | req recovery-2 | notify delivered" in debug_overview_text
     assert "LATEST   WARN smoke-standard" in debug_overview_text
+
+
+def test_build_shell_inspector_view_includes_sentinel_overview_context() -> None:
+    observed_at = datetime(2026, 3, 25, tzinfo=timezone.utc)
+    payload = _sample_refresh_payload(observed_at=observed_at)
+
+    inspector = shell_support_module.build_shell_inspector_view(
+        active_panel=shell_models.PANEL_BY_ID[PanelId.OVERVIEW],
+        display_mode=DisplayMode.OPERATOR,
+        expanded_mode=False,
+        runtime=payload.runtime,
+        queue=payload.queue,
+        runs=None,
+        research=payload.research,
+        config=payload.config,
+        publish=None,
+        latest_run=LatestRunSummary(run_id="smoke-standard", latest_status="DEGRADED"),
+        panel_failure=None,
+    )
+
+    assert "sentinel degraded | monitoring mechanic" in inspector.detail_lines
+    assert "checks 4 | recovery 2 | ack required | notify delivered" in inspector.detail_lines
 
 
 def test_tui_shell_operator_overview_and_status_fit_single_line_at_standard_shell_size(tmp_path) -> None:
