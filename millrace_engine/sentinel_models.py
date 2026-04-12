@@ -245,6 +245,8 @@ class SentinelReport(ContractModel):
     cadence: SentinelCadenceState
     caps: SentinelCapState
     monitoring: SentinelMonitoringState | None = None
+    evidence: SentinelEvidenceSnapshot | None = None
+    progress: SentinelProgressAssessment | None = None
 
     @field_validator("generated_at", mode="before")
     @classmethod

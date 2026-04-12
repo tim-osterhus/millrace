@@ -25,6 +25,7 @@ CONTRACTOR_BLUEPRINT_ROOT = (
 PUBLIC_DOC_PARITY_PATHS = {
     "README.md": "README.md",
     "ADVISOR.md": "ADVISOR.md",
+    "SENTINEL.md": "SENTINEL.md",
     "SUPERVISOR.md": "SUPERVISOR.md",
     "OPERATOR_GUIDE.md": "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
@@ -142,6 +143,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "README.md",
         "docs/RUNTIME_DEEP_DIVE.md",
         "ADVISOR.md",
+        "SENTINEL.md",
         "SUPERVISOR.md",
         "OPERATOR_GUIDE.md",
         "docs/TUI_DOCUMENTATION.md",
@@ -152,6 +154,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     for relative in (
         "README.md",
         "ADVISOR.md",
+        "SENTINEL.md",
         "SUPERVISOR.md",
         "OPERATOR_GUIDE.md",
         "docs/RUNTIME_DEEP_DIVE.md",
@@ -163,6 +166,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     manifest = json.loads((assets_root / "manifest.json").read_text(encoding="utf-8"))
     manifest_paths = {entry["path"] for entry in manifest["files"]}
     assert "README.md" in manifest_paths
+    assert "SENTINEL.md" in manifest_paths
     assert "SUPERVISOR.md" in manifest_paths
     assert "OPERATOR_GUIDE.md" in manifest_paths
     assert "docs/RUNTIME_DEEP_DIVE.md" in manifest_paths
@@ -185,6 +189,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "agents/legacy/README.md",
         "agents/legacy/_orchestrate.md",
         "agents/legacy/_supervisor.md",
+        "agents/_sentinel.md",
         "agents/options/model_config.md",
         "agents/options/workflow_config.md",
         "agents/orchestrate_loop.sh",
@@ -259,6 +264,13 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "publish preflight --json" in advisor
     assert OPERATIONS_SKILL_PATH in advisor
     assert "Read execution `IDLE` as the execution plane's neutral state" in advisor
+
+    sentinel = (MILLRACE_ROOT / "SENTINEL.md").read_text(encoding="utf-8")
+    assert "one-workspace Sentinel companion monitor" in sentinel
+    assert OPERATIONS_SKILL_PATH in sentinel
+    assert "Do not assume the public `millrace sentinel ...` CLI exists yet" in sentinel
+    assert "Execution `IDLE` is the execution plane's neutral state." in sentinel
+    assert "Sentinel is a first-class Supervisor-lineage companion monitor." in sentinel
 
     supervisor = (MILLRACE_ROOT / "SUPERVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the external one-workspace supervisor" in supervisor
@@ -472,15 +484,16 @@ def test_packaged_research_entrypoint_docs_match_shipped_python_runtime_contract
             assert marker in contents, f"{relative_path} missing shipped runtime seam {marker}"
 
 
-def test_advisor_and_supervisor_entrypoints_explicitly_load_shared_operations_skill() -> None:
+def test_advisor_supervisor_and_sentinel_entrypoints_explicitly_load_shared_operations_skill() -> None:
     assets_root = MILLRACE_ROOT / "millrace_engine" / "assets"
 
     public_advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
+    public_sentinel = (MILLRACE_ROOT / "SENTINEL.md").read_text(encoding="utf-8")
     public_supervisor = (MILLRACE_ROOT / "SUPERVISOR.md").read_text(encoding="utf-8")
     packaged_advisor = (assets_root / "agents" / "_advisor.md").read_text(encoding="utf-8")
     packaged_supervisor = (assets_root / "agents" / "_supervisor.md").read_text(encoding="utf-8")
 
-    for contents in (public_advisor, public_supervisor, packaged_advisor, packaged_supervisor):
+    for contents in (public_advisor, public_sentinel, public_supervisor, packaged_advisor, packaged_supervisor):
         assert OPERATIONS_SKILL_PATH in contents
 
     assert "SUPERVISOR.md" in packaged_advisor

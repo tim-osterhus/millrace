@@ -288,6 +288,15 @@
     {
       "category": "doc",
       "family": "docs",
+      "path": "SENTINEL.md",
+      "sha256": "6a1790aef38265a1902389dec0b7ae84bcaacc1dc8d6fb1d08560c95af2567a1",
+      "size": 6964,
+      "size_bytes": 6964,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
       "path": "SUPERVISOR.md",
       "sha256": "4e94d7543585499cd302ea810646c5a1b7856d1e0f2234fba63a0fc14fd70746",
       "size": 5177,

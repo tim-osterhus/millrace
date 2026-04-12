@@ -28,6 +28,7 @@ REQUIRED_BUNDLE_PATHS = (
     "README.md",
     "docs/RUNTIME_DEEP_DIVE.md",
     "ADVISOR.md",
+    "SENTINEL.md",
     "SUPERVISOR.md",
     "OPERATOR_GUIDE.md",
     "docs/TUI_DOCUMENTATION.md",
@@ -85,6 +86,7 @@ CONTRACTOR_EXAMPLE_ONLY_MARKERS = (
 RUNTIME_DOC_PATHS = (
     "README.md",
     "ADVISOR.md",
+    "SENTINEL.md",
     "SUPERVISOR.md",
     "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md",
@@ -143,6 +145,15 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "Do not write `agents/.runtime/commands/incoming/`",
         "run-provenance <run-id> --json",
         "config show --json",
+    ),
+    "SENTINEL.md": (
+        "This file is for agents acting as the one-workspace Sentinel companion monitor",
+        "use `ADVISOR.md` instead",
+        "use `SUPERVISOR.md` instead",
+        "agents/skills/millrace-operator-intake-control/SKILL.md",
+        "Do not assume the public `millrace sentinel ...` CLI exists yet",
+        "Execution `IDLE` is the execution plane's neutral state.",
+        "Sentinel is a first-class Supervisor-lineage companion monitor.",
     ),
     "SUPERVISOR.md": (
         "This file is for agents acting as the external one-workspace supervisor",
