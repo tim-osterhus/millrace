@@ -268,7 +268,9 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     sentinel = (MILLRACE_ROOT / "SENTINEL.md").read_text(encoding="utf-8")
     assert "one-workspace Sentinel companion monitor" in sentinel
     assert OPERATIONS_SKILL_PATH in sentinel
-    assert "Do not assume the public `millrace sentinel ...` CLI exists yet" in sentinel
+    assert "millrace --config millrace.toml sentinel check --json" in sentinel
+    assert "millrace --config millrace.toml sentinel status --json" in sentinel
+    assert "supported public Sentinel CLI is the one-shot `check` and `status` surface only" in sentinel
     assert "Execution `IDLE` is the execution plane's neutral state." in sentinel
     assert "Sentinel is a first-class Supervisor-lineage companion monitor." in sentinel
 

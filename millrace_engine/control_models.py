@@ -58,6 +58,7 @@ from .research.governance import ResearchGovernanceReport
 from .research.interview import InterviewDecisionRecord, InterviewQuestionRecord
 from .research.queues import ResearchQueueItem
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
+from .sentinel_models import SentinelCheckRecord, SentinelReport, SentinelState
 from .standard_runtime import RuntimeSelectionView
 from .status import ControlPlane
 
@@ -524,6 +525,64 @@ class ConfigShowReport(ContractModel):
         if not normalized:
             raise ValueError("config_hash may not be empty")
         return normalized
+
+
+class SentinelStatusSurface(ContractModel):
+    """Latest persisted Sentinel status payload."""
+
+    config_enabled: bool
+    available: bool = False
+    reason: str
+    state_path: Path
+    summary_path: Path
+    latest_report_path: Path
+    latest_check_path: Path | None = None
+    state: SentinelState | None = None
+    report: SentinelReport | None = None
+    check: SentinelCheckRecord | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("reason may not be empty")
+        return normalized
+
+    @field_validator("state_path", "summary_path", "latest_report_path", "latest_check_path", mode="before")
+    @classmethod
+    def normalize_paths(cls, value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
+        return Path(value)
+
+
+class SentinelCheckSurface(ContractModel):
+    """One-shot Sentinel check result payload."""
+
+    config_enabled: bool
+    autonomous_state_applied: bool
+    supervisor_observation_error: str | None = None
+    state_path: Path
+    summary_path: Path
+    latest_report_path: Path
+    latest_check_path: Path
+    state: SentinelState
+    report: SentinelReport
+    check: SentinelCheckRecord
+
+    @field_validator("supervisor_observation_error")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        return normalized or None
+
+    @field_validator("state_path", "summary_path", "latest_report_path", "latest_check_path", mode="before")
+    @classmethod
+    def normalize_paths(cls, value: str | Path) -> Path:
+        return Path(value)
 
 
 class PolicyHookSummary(ContractModel):

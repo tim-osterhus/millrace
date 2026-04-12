@@ -42,6 +42,17 @@ Use `docs/RUNTIME_DEEP_DIVE.md` when you need architecture detail for the superv
 - not the local operator shell from `ADVISOR.md`
 - not permission to edit task stores, mailbox files, or runtime-owned state outside Sentinel's own paths
 
+## Command Inventory
+
+Supported one-shot Sentinel CLI in this tranche:
+
+```bash
+millrace --config millrace.toml sentinel check --json
+millrace --config millrace.toml sentinel status --json
+```
+
+These commands are bounded check/status surfaces only. Long-lived watch behavior, recovery request commands, and notification delivery are not part of this tranche yet.
+
 ## Observation Contract
 
 Read current Millrace truth for yourself on each bounded pass. Prefer shipped CLI/report surfaces first, then read the authoritative files they summarize when you need more detail.
@@ -82,7 +93,8 @@ Do not require a host-precomputed evidence packet. Sentinel reads current eviden
   - `agents/reports/sentinel/latest.json`
   - `agents/reports/sentinel/summary.json`
 - Do not write `agents/.runtime/commands/incoming/`, task-store files, queue files, incident files, or other engine-owned runtime files directly during normal Sentinel operation.
-- Do not assume the public `millrace sentinel ...` CLI exists yet in every shipped build. In this tranche, Sentinel's durable contract is the packaged role doc plus Sentinel-owned persisted artifacts and the existing read-only CLI/control surfaces above.
+- In this tranche, the supported public Sentinel CLI is the one-shot `check` and `status` surface only.
+- Keep long-lived watch behavior, recovery request commands, and notification delivery out of scope unless a later shipped surface explicitly adds them.
 
 ## Health Semantics You Must Not Misread
 

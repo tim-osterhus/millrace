@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
 from .config import EngineConfig
 from .control_models import SupervisorReport
@@ -59,7 +60,16 @@ def _cadence_state(
     *,
     checked_at: datetime,
     previous_state: SentinelState | None,
+    autonomous_state_applied: bool,
 ) -> SentinelCadenceState:
+    if not autonomous_state_applied:
+        if previous_state is not None:
+            return previous_state.cadence.model_copy(
+                update={
+                    "reset_on_recovery": config.sentinel.reset_cadence_on_recovery,
+                }
+            )
+        return SentinelCadenceState(reset_on_recovery=config.sentinel.reset_cadence_on_recovery)
     previous_cadence = None if previous_state is None else previous_state.cadence
     schedule_started_at = (
         None if previous_cadence is None else previous_cadence.schedule_started_at
@@ -82,7 +92,12 @@ def _cadence_state(
     )
 
 
-def _cap_state(config: EngineConfig, previous_state: SentinelState | None) -> SentinelCapState:
+def _cap_state(
+    config: EngineConfig,
+    previous_state: SentinelState | None,
+    *,
+    autonomous_state_applied: bool,
+) -> SentinelCapState:
     if previous_state is not None:
         previous_caps = previous_state.caps
         return previous_caps.model_copy(
@@ -91,6 +106,12 @@ def _cap_state(config: EngineConfig, previous_state: SentinelState | None) -> Se
                 "hard_cap_threshold": config.sentinel.caps.hard_cap_threshold,
                 "halt_on_hard_cap": config.sentinel.caps.halt_on_hard_cap,
             }
+        )
+    if not autonomous_state_applied:
+        return SentinelCapState(
+            soft_cap_threshold=config.sentinel.caps.soft_cap_threshold,
+            hard_cap_threshold=config.sentinel.caps.hard_cap_threshold,
+            halt_on_hard_cap=config.sentinel.caps.halt_on_hard_cap,
         )
     return SentinelCapState(
         soft_cap_threshold=config.sentinel.caps.soft_cap_threshold,
@@ -135,11 +156,17 @@ def _classify_status(
     *,
     checked_at: datetime,
     supervisor_report: SupervisorReport | None,
+    supervisor_error: str | None,
     progress_state: str,
     latest_progress_at: datetime | None,
+    autonomous_state_applied: bool,
 ) -> tuple[str, str]:
-    if not config.sentinel.enabled:
+    if not config.sentinel.enabled and autonomous_state_applied:
         return "disabled", "sentinel-disabled-by-config"
+    if supervisor_error is not None:
+        return "degraded", f"supervisor-observation-unavailable: {supervisor_error}"
+    if not config.sentinel.enabled:
+        return "disabled", "manual-diagnostic-only-while-sentinel-disabled"
     if progress_state == "stale" and latest_progress_at is not None:
         stale_seconds = max(0, int((checked_at - latest_progress_at).total_seconds()))
         if stale_seconds >= config.sentinel.progress_thresholds.no_progress_seconds:
@@ -160,12 +187,15 @@ def run_sentinel_diagnostic(
     config: EngineConfig,
     paths: RuntimePaths,
     supervisor_report: SupervisorReport | None = None,
+    supervisor_error: str | None = None,
     trigger: str = "manual",
+    autonomous_state_applied: bool | None = None,
     now: datetime | None = None,
 ) -> tuple[SentinelState, SentinelReport, SentinelCheckRecord]:
     """Run one bounded Sentinel diagnostic pass and persist the resulting artifacts."""
 
     checked_at = _normalize_datetime(now)
+    applied_autonomy = config.sentinel.enabled if autonomous_state_applied is None else autonomous_state_applied
     previous_state = _load_sentinel_state(paths)
     previous_report = _load_sentinel_report(paths)
     previous_evidence = None if previous_report is None else previous_report.evidence
@@ -179,15 +209,22 @@ def run_sentinel_diagnostic(
         previous=previous_evidence,
         now=checked_at,
     )
-    cadence = _cadence_state(config, checked_at=checked_at, previous_state=previous_state)
-    caps = _cap_state(config, previous_state)
+    cadence = _cadence_state(
+        config,
+        checked_at=checked_at,
+        previous_state=previous_state,
+        autonomous_state_applied=applied_autonomy,
+    )
+    caps = _cap_state(config, previous_state, autonomous_state_applied=applied_autonomy)
     acknowledgment = _acknowledgment_state(previous_state)
     status, reason = _classify_status(
         config,
         checked_at=checked_at,
         supervisor_report=supervisor_report,
+        supervisor_error=supervisor_error,
         progress_state=progress.state,
         latest_progress_at=progress.latest_progress_at,
+        autonomous_state_applied=applied_autonomy,
     )
     monitoring = _monitoring_state(
         stale=status in {"monitoring", "degraded"},

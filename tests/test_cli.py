@@ -150,6 +150,74 @@ def invoke_cli_report_json(config_path: Path, *args: str) -> dict[str, object]:
     return json.loads(result.stdout)
 
 
+def test_cli_sentinel_status_reports_unavailable_without_prior_check(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+
+    payload = invoke_cli_report_json(config_path, "sentinel", "status")
+
+    assert payload["config_enabled"] is True
+    assert payload["available"] is False
+    assert payload["reason"] == "no-persisted-sentinel-result"
+    assert payload["state"] is None
+    assert payload["report"] is None
+    assert payload["check"] is None
+
+
+def test_cli_sentinel_check_persists_report_and_returns_json(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    payload = invoke_cli_report_json(config_path, "sentinel", "check")
+
+    assert payload["config_enabled"] is True
+    assert payload["autonomous_state_applied"] is True
+    assert payload["supervisor_observation_error"] is None
+    assert payload["report"]["status"] == "healthy"
+    assert payload["report"]["reason"] == "execution-idle-is-neutral-when-no-stall-is-observed"
+    assert payload["state"]["lifecycle_status"] == "idle"
+    assert payload["check"]["status_snapshot_hash"] == payload["report"]["evidence"]["progress_signature"]
+    assert Path(payload["state_path"]).exists()
+    assert Path(payload["summary_path"]).exists()
+    assert Path(payload["latest_report_path"]).exists()
+    assert Path(payload["latest_check_path"]).exists()
+
+
+def test_cli_sentinel_status_returns_latest_persisted_result(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    check_payload = invoke_cli_report_json(config_path, "sentinel", "check")
+
+    payload = invoke_cli_report_json(config_path, "sentinel", "status")
+
+    assert payload["config_enabled"] is True
+    assert payload["available"] is True
+    assert payload["reason"] == "latest-sentinel-result-available"
+    assert payload["state"] == check_payload["state"]
+    assert payload["report"] == check_payload["report"]
+    assert payload["check"] == check_payload["check"]
+    assert payload["latest_check_path"] == check_payload["latest_check_path"]
+
+
+def test_cli_sentinel_check_when_disabled_is_diagnostic_only(tmp_path: Path) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    control.config_set("sentinel.enabled", "false")
+
+    payload = invoke_cli_report_json(config_path, "sentinel", "check")
+
+    assert payload["config_enabled"] is False
+    assert payload["autonomous_state_applied"] is False
+    assert payload["supervisor_observation_error"] is None
+    assert payload["report"]["status"] == "disabled"
+    assert payload["report"]["reason"] == "manual-diagnostic-only-while-sentinel-disabled"
+    assert payload["state"]["enabled"] is False
+    assert payload["state"]["lifecycle_status"] == "disabled"
+    assert payload["state"]["cadence"]["current_interval_seconds"] == 0
+    assert payload["state"]["cadence"]["last_check_at"] is None
+    assert payload["state"]["cadence"]["next_check_at"] is None
+    assert payload["state"]["caps"]["soft_cap_count"] == 0
+    assert payload["state"]["caps"]["hard_cap_count"] == 0
+    assert Path(payload["latest_report_path"]).exists()
+    assert Path(payload["latest_check_path"]).exists()
+
+
 def fake_runner_env(tmp_path: Path, *, executables: tuple[str, ...]) -> dict[str, str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)

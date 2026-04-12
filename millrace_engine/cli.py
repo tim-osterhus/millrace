@@ -81,6 +81,7 @@ compounding_harness_recommendations_app = typer.Typer(help="Inspect bounded harn
 research_app = typer.Typer(help="Inspect research runtime state and history.")
 interview_app = typer.Typer(help="Inspect and resolve manual GoalSpec interview questions.")
 publish_app = typer.Typer(help="Sync and publish the staging surface.")
+sentinel_app = typer.Typer(help="Run one-shot Sentinel diagnosis and inspect persisted Sentinel results.")
 supervisor_app = typer.Typer(help="External supervisor report surfaces.")
 supervisor_cleanup_app = typer.Typer(help="Remove or quarantine invalid queued work with issuer attribution.")
 supervisor_active_task_app = typer.Typer(help="Supervisor-attributed active-task remediation.")
@@ -99,6 +100,7 @@ compounding_harness_app.add_typer(compounding_harness_recommendations_app, name=
 app.add_typer(research_app, name="research")
 app.add_typer(interview_app, name="interview")
 app.add_typer(publish_app, name="publish")
+app.add_typer(sentinel_app, name="sentinel")
 app.add_typer(supervisor_app, name="supervisor")
 supervisor_app.add_typer(supervisor_cleanup_app, name="cleanup")
 supervisor_app.add_typer(supervisor_active_task_app, name="active-task")
@@ -226,6 +228,50 @@ def _render_interview_mutation(report: InterviewMutationReport, *, json_mode: bo
                 f"Decision artifact: {report.decision_path.as_posix()}",
             ]
         )
+    typer.echo("\n".join(lines))
+
+
+def _render_sentinel_status(report: Any, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Config enabled: {'yes' if report.config_enabled else 'no'}",
+        f"Available: {'yes' if report.available else 'no'}",
+        f"Reason: {report.reason}",
+        f"State path: {report.state_path.as_posix()}",
+        f"Summary path: {report.summary_path.as_posix()}",
+        f"Latest report path: {report.latest_report_path.as_posix()}",
+    ]
+    if report.latest_check_path is not None:
+        lines.append(f"Latest check path: {report.latest_check_path.as_posix()}")
+    if report.report is not None:
+        lines.extend(
+            [
+                f"Status: {report.report.status}",
+                f"Report reason: {report.report.reason}",
+            ]
+        )
+    typer.echo("\n".join(lines))
+
+
+def _render_sentinel_check(report: Any, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Config enabled: {'yes' if report.config_enabled else 'no'}",
+        f"Autonomous state applied: {'yes' if report.autonomous_state_applied else 'no'}",
+        f"Status: {report.report.status}",
+        f"Reason: {report.report.reason}",
+        f"Check ID: {report.check.check_id}",
+        f"State path: {report.state_path.as_posix()}",
+        f"Summary path: {report.summary_path.as_posix()}",
+        f"Latest report path: {report.latest_report_path.as_posix()}",
+        f"Latest check path: {report.latest_check_path.as_posix()}",
+    ]
+    if report.supervisor_observation_error:
+        lines.append(f"Supervisor observation error: {report.supervisor_observation_error}")
     typer.echo("\n".join(lines))
 
 
@@ -415,6 +461,32 @@ def run_provenance_command(
 
     report = _run_expected(lambda: _control(ctx).run_provenance(run_id), json_mode=json_mode)
     render_run_provenance(report, json_mode=json_mode)
+
+
+@sentinel_app.command("check")
+def sentinel_check_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Run one bounded Sentinel diagnostic pass and persist the result."""
+
+    _render_sentinel_check(
+        _run_expected(lambda: _control(ctx).sentinel_check(), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@sentinel_app.command("status")
+def sentinel_status_command(
+    ctx: typer.Context,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Show the latest persisted Sentinel state and report."""
+
+    _render_sentinel_status(
+        _run_expected(lambda: _control(ctx).sentinel_status(), json_mode=json_mode),
+        json_mode=json_mode,
+    )
 
 
 @config_app.command("show")
