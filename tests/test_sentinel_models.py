@@ -28,6 +28,8 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
         soft_cap_count=1,
         hard_cap_count=0,
         queued_recovery_request_id="sentinel-req-001",
+        last_incident_id="INC-001",
+        last_incident_path="agents/ideas/incidents/incoming/incident.md",
     )
     cadence = SentinelCadenceState(
         schedule_started_at="2026-04-11T09:00:00Z",
@@ -57,6 +59,9 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
         last_observed_progress_at="2026-04-11T09:50:00Z",
         last_observed_status_snapshot_hash="abc123",
         resolution="pending",
+        suppression_active=True,
+        suppression_reason="repeat-route-suppressed-for-unresolved-monitoring-cycle",
+        resolution_changed_at="2026-04-11T10:00:00Z",
     )
     check = SentinelCheckRecord(
         check_id="check-001",
@@ -78,6 +83,9 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
         last_healthy_at="2026-04-11T09:45:00Z",
         latest_check_id=check.check_id,
         latest_report_path=Path("agents/reports/sentinel/latest.json"),
+        last_incident_id="INC-001",
+        last_incident_path="agents/ideas/incidents/incoming/incident.md",
+        last_recovery_request_id="sentinel-req-001",
         cadence=cadence,
         caps=caps,
         monitoring=monitoring,
@@ -105,6 +113,7 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
     assert json.loads(check_json)["report_path"] == "agents/reports/sentinel/latest.json"
     assert json.loads(report_json)["state_path"] == "agents/.runtime/sentinel/state.json"
     assert json.loads(state_json)["monitoring"]["incident_path"] == "agents/ideas/incidents/incoming/incident.md"
+    assert json.loads(state_json)["monitoring"]["suppression_active"] is True
 
 
 def test_sentinel_models_normalize_to_utc() -> None:

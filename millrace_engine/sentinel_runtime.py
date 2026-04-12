@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from .config import EngineConfig
-from .control_models import SupervisorReport
+from .control_models import RecoveryRequestRecord, SupervisorReport
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
 from .sentinel_evidence import assess_meaningful_progress, collect_sentinel_evidence
@@ -53,6 +53,16 @@ def _load_sentinel_report(paths: RuntimePaths) -> SentinelReport | None:
     if not paths.sentinel_latest_report_file.exists():
         return None
     return SentinelReport.model_validate_json(paths.sentinel_latest_report_file.read_text(encoding="utf-8"))
+
+
+def _load_recovery_request(paths: RuntimePaths, *, request_id: str) -> RecoveryRequestRecord | None:
+    normalized = request_id.strip()
+    if not normalized:
+        return None
+    artifact_path = paths.recovery_requests_dir / f"{normalized}.json"
+    if not artifact_path.exists():
+        return None
+    return RecoveryRequestRecord.model_validate_json(artifact_path.read_text(encoding="utf-8"))
 
 
 def _cadence_state(
@@ -128,18 +138,101 @@ def _acknowledgment_state(previous_state: SentinelState | None) -> SentinelAckno
 
 def _monitoring_state(
     *,
-    stale: bool,
+    config: EngineConfig,
+    paths: RuntimePaths,
+    checked_at: datetime,
+    previous_state: SentinelState | None,
+    progress_state: str,
+    changed_sources: tuple[str, ...],
     progress_signature: str,
     latest_progress_at: datetime | None,
+    supervisor_error: str | None,
 ) -> SentinelMonitoringState | None:
-    if not stale:
+    previous_monitoring = None if previous_state is None else previous_state.monitoring
+    linked_request_id = "" if previous_state is None else previous_state.last_recovery_request_id
+    monitored_request_id = (
+        ""
+        if previous_monitoring is None
+        else previous_monitoring.queued_recovery_request_id
+    )
+    request_id = monitored_request_id
+    if linked_request_id and linked_request_id != monitored_request_id:
+        request_id = linked_request_id
+    elif linked_request_id:
+        request_id = linked_request_id
+    recovery_request = _load_recovery_request(paths, request_id=request_id)
+    if recovery_request is None:
         return None
+
+    route_target = recovery_request.target.value
+    incident_id = "" if previous_state is None else previous_state.last_incident_id
+    incident_path = "" if previous_state is None else previous_state.last_incident_path
+    if (
+        previous_monitoring is not None
+        and not previous_monitoring.active
+        and previous_monitoring.queued_recovery_request_id == recovery_request.request_id
+        and previous_monitoring.resolution in {"resolved", "escalated"}
+        and progress_state != "progressing"
+        and supervisor_error is None
+        ):
+        return previous_monitoring.model_copy(
+            update={
+                "last_observed_progress_at": latest_progress_at,
+                "last_observed_status_snapshot_hash": progress_signature,
+            }
+        )
+    effective_progress_state = progress_state
+    if progress_state == "progressing" and set(changed_sources).issubset({"incident_queues"}):
+        effective_progress_state = "stale"
+    if supervisor_error is not None:
+        return SentinelMonitoringState(
+            active=False,
+            route_target=route_target,
+            queued_recovery_request_id=recovery_request.request_id,
+            incident_id=incident_id,
+            incident_path=incident_path,
+            queued_at=recovery_request.requested_at,
+            last_observed_progress_at=latest_progress_at,
+            last_observed_status_snapshot_hash=progress_signature,
+            resolution="escalated",
+            suppression_active=False,
+            suppression_reason="",
+            resolution_changed_at=checked_at,
+        )
+    if effective_progress_state == "progressing":
+        return SentinelMonitoringState(
+            active=False,
+            route_target=route_target,
+            queued_recovery_request_id=recovery_request.request_id,
+            incident_id=incident_id,
+            incident_path=incident_path,
+            queued_at=recovery_request.requested_at,
+            last_observed_progress_at=latest_progress_at,
+            last_observed_status_snapshot_hash=progress_signature,
+            resolution="resolved",
+            suppression_active=False,
+            suppression_reason="",
+            resolution_changed_at=checked_at,
+        )
+    pending_deadline = recovery_request.requested_at + timedelta(
+        seconds=config.sentinel.progress_thresholds.no_progress_seconds
+    )
+    resolution: Literal["pending", "stalled"] = "pending"
+    if checked_at >= pending_deadline:
+        resolution = "stalled"
     return SentinelMonitoringState(
         active=True,
-        route_target="none",
+        route_target=route_target,
+        queued_recovery_request_id=recovery_request.request_id,
+        incident_id=incident_id,
+        incident_path=incident_path,
+        queued_at=recovery_request.requested_at,
         last_observed_progress_at=latest_progress_at,
         last_observed_status_snapshot_hash=progress_signature,
-        resolution="pending",
+        resolution=resolution,
+        suppression_active=True,
+        suppression_reason="repeat-route-suppressed-for-unresolved-monitoring-cycle",
+        resolution_changed_at=checked_at,
     )
 
 
@@ -160,6 +253,7 @@ def _classify_status(
     progress_state: str,
     latest_progress_at: datetime | None,
     autonomous_state_applied: bool,
+    monitoring: SentinelMonitoringState | None,
 ) -> tuple[str, str]:
     if not config.sentinel.enabled and autonomous_state_applied:
         return "disabled", "sentinel-disabled-by-config"
@@ -167,11 +261,20 @@ def _classify_status(
         return "degraded", f"supervisor-observation-unavailable: {supervisor_error}"
     if not config.sentinel.enabled:
         return "disabled", "manual-diagnostic-only-while-sentinel-disabled"
+    if monitoring is not None:
+        if monitoring.active:
+            if monitoring.resolution == "stalled":
+                return "monitoring", "recovery-cycle-stalled-while-repeat-route-remains-suppressed"
+            return "monitoring", "recovery-cycle-pending-while-repeat-route-remains-suppressed"
+        if monitoring.resolution == "resolved" and progress_state == "progressing":
+            return "healthy", "recovery-cycle-resolved-after-meaningful-progress"
+        if monitoring.resolution == "escalated" and supervisor_error is not None:
+            return "degraded", "monitoring-cycle-materially-changed-and-suppression-cleared"
     if progress_state == "stale" and latest_progress_at is not None:
         stale_seconds = max(0, int((checked_at - latest_progress_at).total_seconds()))
         if stale_seconds >= config.sentinel.progress_thresholds.no_progress_seconds:
             return "degraded", f"no-meaningful-progress-for-{stale_seconds}-seconds"
-        return "monitoring", f"unchanged-progress-signature-for-{stale_seconds}-seconds"
+        return "degraded", f"unchanged-progress-signature-for-{stale_seconds}-seconds"
     healthy_idle_reason = _healthy_idle_reason(supervisor_report)
     if healthy_idle_reason is not None:
         return "healthy", healthy_idle_reason
@@ -217,6 +320,17 @@ def run_sentinel_diagnostic(
     )
     caps = _cap_state(config, previous_state, autonomous_state_applied=applied_autonomy)
     acknowledgment = _acknowledgment_state(previous_state)
+    monitoring = _monitoring_state(
+        config=config,
+        paths=paths,
+        checked_at=checked_at,
+        previous_state=previous_state,
+        progress_state=progress.state,
+        changed_sources=progress.changed_sources,
+        progress_signature=evidence.progress_signature,
+        latest_progress_at=progress.latest_progress_at,
+        supervisor_error=supervisor_error,
+    )
     status, reason = _classify_status(
         config,
         checked_at=checked_at,
@@ -225,12 +339,13 @@ def run_sentinel_diagnostic(
         progress_state=progress.state,
         latest_progress_at=progress.latest_progress_at,
         autonomous_state_applied=applied_autonomy,
+        monitoring=monitoring,
     )
-    monitoring = _monitoring_state(
-        stale=status in {"monitoring", "degraded"},
-        progress_signature=evidence.progress_signature,
-        latest_progress_at=progress.latest_progress_at,
-    )
+    route_target = "none" if monitoring is None else monitoring.route_target
+    queued_recovery_request_id = "" if monitoring is None else monitoring.queued_recovery_request_id
+    last_incident_id = "" if previous_state is None else previous_state.last_incident_id
+    last_incident_path = "" if previous_state is None else previous_state.last_incident_path
+    last_recovery_request_id = queued_recovery_request_id or ("" if previous_state is None else previous_state.last_recovery_request_id)
     check_id = _check_id_for(checked_at)
     check_path = paths.sentinel_check_records_dir / f"{check_id}.json"
     summary = SentinelSummary(
@@ -238,12 +353,15 @@ def run_sentinel_diagnostic(
         reason=reason,
         last_check_at=checked_at,
         next_check_at=cadence.next_check_at,
-        route_target="none",
+        route_target=route_target,
         monitoring_active=monitoring is not None and monitoring.active,
         acknowledgment_required=acknowledgment.required,
         current_interval_seconds=cadence.current_interval_seconds,
         soft_cap_count=caps.soft_cap_count,
         hard_cap_count=caps.hard_cap_count,
+        queued_recovery_request_id=queued_recovery_request_id,
+        last_incident_id=last_incident_id,
+        last_incident_path=last_incident_path,
     )
     state = SentinelState(
         updated_at=checked_at,
@@ -261,6 +379,9 @@ def run_sentinel_diagnostic(
         ),
         latest_check_id=check_id,
         latest_report_path=_relative_path(paths.sentinel_latest_report_file, root=paths.root),
+        last_incident_id=last_incident_id,
+        last_incident_path=last_incident_path,
+        last_recovery_request_id=last_recovery_request_id,
         cadence=cadence,
         caps=caps,
         monitoring=monitoring,
@@ -286,8 +407,8 @@ def run_sentinel_diagnostic(
         trigger=trigger,
         status=status,
         reason=reason,
-        route_target="none",
-        auto_queue_allowed=False,
+        route_target=route_target,
+        auto_queue_allowed=not (monitoring is not None and monitoring.suppression_active),
         status_snapshot_hash=evidence.progress_signature,
         report_path=_relative_path(paths.sentinel_latest_report_file, root=paths.root),
         summary=summary,

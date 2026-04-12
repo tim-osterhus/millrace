@@ -125,8 +125,11 @@ class SentinelMonitoringState(ContractModel):
     last_observed_progress_at: datetime | None = None
     last_observed_status_snapshot_hash: str = ""
     resolution: SentinelMonitorResolution = "none"
+    suppression_active: bool = False
+    suppression_reason: str = ""
+    resolution_changed_at: datetime | None = None
 
-    @field_validator("queued_at", "last_observed_progress_at", mode="before")
+    @field_validator("queued_at", "last_observed_progress_at", "resolution_changed_at", mode="before")
     @classmethod
     def normalize_datetime_fields(cls, value: datetime | str | None) -> datetime | None:
         return _normalize_datetime_or_none(value)
@@ -136,6 +139,7 @@ class SentinelMonitoringState(ContractModel):
         "incident_id",
         "incident_path",
         "last_observed_status_snapshot_hash",
+        "suppression_reason",
         mode="before",
     )
     @classmethod
