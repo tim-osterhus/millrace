@@ -26,6 +26,7 @@ SentinelCheckTrigger = Literal["manual", "watch", "startup", "unknown"]
 SentinelMonitorResolution = Literal["none", "pending", "resolved", "stalled", "escalated"]
 SentinelLifecycleStatus = Literal["idle", "monitoring", "suppressed", "escalated", "disabled"]
 SentinelProgressState = Literal["unknown", "progressing", "stale"]
+SentinelIncidentRoutingTarget = Literal["troubleshoot", "mechanic"]
 
 
 def _normalize_datetime_or_none(value: datetime | str | None) -> datetime | None:
@@ -154,6 +155,8 @@ class SentinelSummary(ContractModel):
     soft_cap_count: int = Field(default=0, ge=0)
     hard_cap_count: int = Field(default=0, ge=0)
     queued_recovery_request_id: str = ""
+    last_incident_id: str = ""
+    last_incident_path: str = ""
 
     @field_validator("reason", mode="before")
     @classmethod
@@ -165,7 +168,7 @@ class SentinelSummary(ContractModel):
     def normalize_datetime_fields(cls, value: datetime | str | None) -> datetime | None:
         return _normalize_datetime_or_none(value)
 
-    @field_validator("queued_recovery_request_id", mode="before")
+    @field_validator("queued_recovery_request_id", "last_incident_id", "last_incident_path", mode="before")
     @classmethod
     def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
         return _normalize_optional_text(value)
@@ -212,6 +215,9 @@ class SentinelState(ContractModel):
     last_healthy_at: datetime | None = None
     latest_check_id: str = ""
     latest_report_path: str = ""
+    last_incident_id: str = ""
+    last_incident_path: str = ""
+    last_recovery_request_id: str = ""
     cadence: SentinelCadenceState
     caps: SentinelCapState
     monitoring: SentinelMonitoringState | None = None
@@ -227,7 +233,14 @@ class SentinelState(ContractModel):
     def normalize_reason(cls, value: str | Path | None) -> str:
         return _normalize_required_text(value, field_name="reason")
 
-    @field_validator("latest_check_id", "latest_report_path", mode="before")
+    @field_validator(
+        "latest_check_id",
+        "latest_report_path",
+        "last_incident_id",
+        "last_incident_path",
+        "last_recovery_request_id",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
         return _normalize_optional_text(value)
@@ -508,6 +521,88 @@ class SentinelProgressAssessment(ContractModel):
         return tuple(_normalize_optional_text(item) for item in value if _normalize_optional_text(item))
 
 
+class SentinelIncidentPayload(ContractModel):
+    failure_signature: str
+    summary: str
+    severity: Literal["S1", "S2", "S3", "S4"] = "S2"
+    routing_target: SentinelIncidentRoutingTarget
+    evidence_pointers: tuple[str, ...] = ()
+    observed_status_markers: tuple[SentinelStatusMarkerEvidence, ...] = ()
+    elapsed_since_last_progress_seconds: int = Field(ge=0)
+    source: Literal["sentinel"] = "sentinel"
+    suggested_recovery: str = ""
+    recovery_request_id: str = ""
+    sentinel_check_id: str = ""
+    sentinel_report_path: str = ""
+    sentinel_state_path: str = ""
+    report_status: SentinelHealthStatus = "healthy"
+    report_reason: str = ""
+
+    @field_validator(
+        "failure_signature",
+        "summary",
+        "suggested_recovery",
+        "recovery_request_id",
+        "sentinel_check_id",
+        "sentinel_report_path",
+        "sentinel_state_path",
+        "report_reason",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        if field_name in {"failure_signature", "summary"}:
+            return _normalize_required_text(value, field_name=field_name)
+        return _normalize_optional_text(value)
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def normalize_severity(cls, value: str) -> str:
+        normalized = _normalize_required_text(value, field_name="severity").upper()
+        if normalized not in {"S1", "S2", "S3", "S4"}:
+            raise ValueError("severity must be one of S1, S2, S3, or S4")
+        return normalized
+
+    @field_validator("evidence_pointers", mode="before")
+    @classmethod
+    def normalize_evidence_pointers(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return tuple(_normalize_optional_text(item) for item in value if _normalize_optional_text(item))
+
+
+class SentinelIncidentBundle(ContractModel):
+    schema_version: Literal["1.0"] = SENTINEL_ARTIFACT_SCHEMA_VERSION
+    emitted_at: datetime
+    incident_id: str
+    incident_path: str
+    bundle_path: str
+    issuer: str
+    command_id: str = ""
+    payload: SentinelIncidentPayload
+    linked_to_persisted_sentinel_state: bool = False
+
+    @field_validator("emitted_at", mode="before")
+    @classmethod
+    def normalize_emitted_at(cls, value: datetime | str) -> datetime:
+        normalized = _normalize_datetime_or_none(value)
+        if normalized is None:
+            raise ValueError("emitted_at may not be empty")
+        return normalized
+
+    @field_validator("incident_id", "incident_path", "bundle_path", "issuer", "command_id", mode="before")
+    @classmethod
+    def normalize_required_or_optional_text(cls, value: str | Path | None, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        if field_name in {"incident_id", "incident_path", "bundle_path", "issuer"}:
+            return _normalize_required_text(value, field_name=field_name)
+        return _normalize_optional_text(value)
+
+
 __all__ = [
     "SENTINEL_ARTIFACT_SCHEMA_VERSION",
     "SentinelAcknowledgmentState",
@@ -517,6 +612,9 @@ __all__ = [
     "SentinelEvidenceSnapshot",
     "SentinelEventEvidence",
     "SentinelHistoryEvidence",
+    "SentinelIncidentBundle",
+    "SentinelIncidentPayload",
+    "SentinelIncidentRoutingTarget",
     "SentinelArtifactEvidence",
     "SentinelIncidentQueueEvidence",
     "SentinelProgressAssessment",

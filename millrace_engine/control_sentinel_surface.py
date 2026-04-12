@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .control_models import SentinelCheckSurface, SentinelStatusSurface
+from .control_actions import sentinel_incident as sentinel_incident_operation
+from .control_models import SentinelCheckSurface, SentinelIncidentSurface, SentinelStatusSurface
 from .control_runtime_surface import supervisor_report as supervisor_report_surface
-from .sentinel_models import SentinelCheckRecord, SentinelReport, SentinelState
+from .sentinel_models import SentinelCheckRecord, SentinelIncidentBundle, SentinelReport, SentinelState
 from .sentinel_runtime import run_sentinel_diagnostic
 
 
@@ -84,4 +86,96 @@ def sentinel_status(control) -> SentinelStatusSurface:
     )
 
 
-__all__ = ["sentinel_check", "sentinel_status"]
+def sentinel_incident(
+    control,
+    *,
+    failure_signature: str,
+    summary: str,
+    severity: str,
+    routing_target: str,
+    evidence_pointers: tuple[str, ...] | list[str] | None = None,
+    recovery_request_id: str = "",
+    suggested_recovery: str = "",
+    issuer: str = "sentinel",
+) -> SentinelIncidentSurface:
+    control.reload_local_config()
+    normalized_issuer = control._normalize_supervisor_issuer(issuer)
+    status_markers = []
+    if control.paths.status_file.exists():
+        status_markers.append(
+            {
+                "plane": "execution",
+                "marker": control.paths.status_file.read_text(encoding="utf-8").strip(),
+                "source_path": control.paths.status_file.relative_to(control.paths.root).as_posix(),
+            }
+        )
+    if control.paths.research_status_file.exists():
+        status_markers.append(
+            {
+                "plane": "research",
+                "marker": control.paths.research_status_file.read_text(encoding="utf-8").strip(),
+                "source_path": control.paths.research_status_file.relative_to(control.paths.root).as_posix(),
+            }
+        )
+    report = None
+    if control.paths.sentinel_latest_report_file.exists():
+        report = SentinelReport.model_validate_json(control.paths.sentinel_latest_report_file.read_text(encoding="utf-8"))
+    payload = {
+        "failure_signature": failure_signature,
+        "summary": summary,
+        "severity": severity,
+        "routing_target": routing_target,
+        "evidence_pointers": tuple(evidence_pointers or ()),
+        "observed_status_markers": tuple(status_markers),
+        "elapsed_since_last_progress_seconds": (
+            0
+            if report is None or report.evidence is None or report.evidence.latest_progress_at is None
+            else max(
+                0,
+                int(
+                    (
+                        datetime.now(timezone.utc) - report.evidence.latest_progress_at
+                    ).total_seconds()
+                ),
+            )
+        ),
+        "source": "sentinel",
+        "suggested_recovery": suggested_recovery,
+        "recovery_request_id": recovery_request_id,
+        "sentinel_check_id": "" if report is None else Path(report.latest_check_path).stem,
+        "sentinel_report_path": control.paths.sentinel_latest_report_file.relative_to(control.paths.root).as_posix(),
+        "sentinel_state_path": control.paths.sentinel_state_file.relative_to(control.paths.root).as_posix(),
+        "report_status": "healthy" if report is None else report.status,
+        "report_reason": "" if report is None else report.reason,
+    }
+    command_id, mode, emitted_at, incident_payload, incident_path, bundle_path = sentinel_incident_operation(
+        control.paths,
+        payload=payload,
+        issuer=normalized_issuer,
+        daemon_running=control.is_daemon_running(),
+    )
+    if mode == "direct":
+        bundle = SentinelIncidentBundle.model_validate_json(bundle_path.read_text(encoding="utf-8"))
+    else:
+        bundle = SentinelIncidentBundle(
+            emitted_at=emitted_at,
+            incident_id=incident_path.stem,
+            incident_path=incident_path.as_posix(),
+            bundle_path=bundle_path.as_posix(),
+            issuer=normalized_issuer,
+            command_id=command_id or "",
+            payload=incident_payload,
+            linked_to_persisted_sentinel_state=control.paths.sentinel_state_file.exists(),
+        )
+    return SentinelIncidentSurface(
+        command_id=command_id,
+        mode=mode,
+        applied=True,
+        message="sentinel incident generated" if mode == "direct" else "sentinel incident queued",
+        incident_path=incident_path,
+        bundle_path=bundle_path,
+        bundle=bundle,
+    )
+
+
+__all__ = ["sentinel_check", "sentinel_incident", "sentinel_status"]

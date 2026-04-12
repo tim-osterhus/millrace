@@ -27,6 +27,8 @@ from .events import EventBus, EventSource, EventType, HistorySubscriber, JsonlEv
 from .markdown import write_text_atomic
 from .paths import RuntimePaths
 from .queue import QueueEmptyError, QueueError, TaskQueue
+from .sentinel_incidents import persist_sentinel_incident
+from .sentinel_models import SentinelIncidentPayload
 from .status import ControlPlane, StatusStore
 
 
@@ -488,6 +490,60 @@ def recovery_request(
         request=request,
         artifact_path=artifact_path,
     )
+
+
+def sentinel_incident(
+    paths: RuntimePaths,
+    *,
+    payload: dict[str, object],
+    issuer: str,
+    daemon_running: bool,
+) -> tuple[str | None, str, datetime, SentinelIncidentPayload, Path, Path]:
+    """Generate one supported Sentinel incident through direct or mailbox-safe control paths."""
+
+    normalized_issuer = normalize_supervisor_issuer(issuer)
+    incident_payload = SentinelIncidentPayload.model_validate(payload)
+    emitted_at = datetime.now(timezone.utc)
+    incident_id = f"INC-SENTINEL-{emitted_at.strftime('%Y%m%dT%H%M%SZ')}"
+    incident_path = paths.ideas_dir / "incidents" / "incoming" / f"{incident_id}.md"
+    bundle_path = paths.sentinel_incident_bundles_dir / f"{incident_id}.json"
+    mailbox_payload: dict[str, object] = {
+        **incident_payload.model_dump(mode="json"),
+        "incident_id": incident_id,
+        "incident_path": incident_path.as_posix(),
+        "bundle_path": bundle_path.as_posix(),
+        "emitted_at": emitted_at,
+    }
+    if daemon_running:
+        envelope = write_command(
+            paths,
+            ControlCommand.SENTINEL_INCIDENT,
+            payload=mailbox_payload,
+            issuer=normalized_issuer,
+        )
+        return envelope.command_id, "mailbox", emitted_at, incident_payload, incident_path, bundle_path
+
+    bundle = persist_sentinel_incident(
+        paths,
+        payload=incident_payload,
+        issuer=normalized_issuer,
+        emitted_at=emitted_at,
+        incident_id=incident_id,
+    )
+    _emit_direct_control_event(
+        paths,
+        EventType.SENTINEL_INCIDENT_GENERATED,
+        {
+            "incident_id": bundle.incident_id,
+            "incident_path": bundle.incident_path,
+            "bundle_path": bundle.bundle_path,
+            "issuer": bundle.issuer,
+            "routing_target": bundle.payload.routing_target,
+            "recovery_request_id": bundle.payload.recovery_request_id,
+            "sentinel_check_id": bundle.payload.sentinel_check_id,
+        },
+    )
+    return None, "direct", emitted_at, incident_payload, paths.root / bundle.incident_path, paths.root / bundle.bundle_path
 
 
 def active_task_rejected(

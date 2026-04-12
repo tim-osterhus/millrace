@@ -59,6 +59,7 @@ from millrace_engine.policies.outage import OutageProbeResult, StaticOutageProbe
 from millrace_engine.policies.transport import TransportProbeResult, TransportReadiness
 from millrace_engine.provenance import read_transition_history
 from millrace_engine.queue import TaskQueue, load_research_recovery_latch
+from millrace_engine.research.incident_documents import load_incident_document
 from millrace_engine.research.specs import GoalSpecFamilyState, build_initial_family_plan_snapshot
 from millrace_engine.registry import discover_registry_state, persist_workspace_registry_object
 from millrace_engine.status import ControlPlane, StatusStore
@@ -216,6 +217,138 @@ def test_cli_sentinel_check_when_disabled_is_diagnostic_only(tmp_path: Path) -> 
     assert payload["state"]["caps"]["hard_cap_count"] == 0
     assert Path(payload["latest_report_path"]).exists()
     assert Path(payload["latest_check_path"]).exists()
+
+
+def test_cli_sentinel_incident_generates_parseable_direct_artifacts_and_links_report_state(tmp_path: Path) -> None:
+    workspace, config_path = runtime_workspace(tmp_path)
+    check_payload = invoke_cli_report_json(config_path, "sentinel", "check")
+    recovery_payload = invoke_cli_report_json(
+        config_path,
+        "recovery",
+        "request",
+        "troubleshoot",
+        "--issuer",
+        "sentinel.test",
+        "--reason",
+        "execution stalled",
+        "--force-queue",
+    )
+
+    payload = invoke_cli_report_json(
+        config_path,
+        "sentinel",
+        "incident",
+        "--failure-signature",
+        "sentinel:no-progress",
+        "--summary",
+        "Sentinel detected no meaningful progress.",
+        "--severity",
+        "S2",
+        "--routing-target",
+        "troubleshoot",
+        "--evidence",
+        "agents/reports/sentinel/latest.json",
+        "--evidence",
+        "agents/.runtime/recovery/latest.json",
+        "--recovery-request-id",
+        recovery_payload["request"]["request_id"],
+        "--issuer",
+        "sentinel.test",
+    )
+
+    assert payload["mode"] == "direct"
+    assert payload["message"] == "sentinel incident generated"
+    assert Path(payload["incident_path"]).exists()
+    assert Path(payload["bundle_path"]).exists()
+    assert payload["bundle"]["payload"]["recovery_request_id"] == recovery_payload["request"]["request_id"]
+    assert payload["bundle"]["payload"]["sentinel_check_id"] == check_payload["check"]["check_id"]
+
+    incident_document = load_incident_document(Path(payload["incident_path"]))
+    assert incident_document.failure_signature == "sentinel:no-progress"
+    assert incident_document.severity is not None and incident_document.severity.value == "S2"
+
+    sentinel_status = invoke_cli_report_json(config_path, "sentinel", "status")
+    assert sentinel_status["state"]["last_incident_id"] == payload["bundle"]["incident_id"]
+    assert sentinel_status["state"]["last_incident_path"] == payload["bundle"]["incident_path"]
+    assert sentinel_status["state"]["last_recovery_request_id"] == recovery_payload["request"]["request_id"]
+    assert sentinel_status["report"]["summary"]["last_incident_path"] == payload["bundle"]["incident_path"]
+    assert sentinel_status["report"]["summary"]["queued_recovery_request_id"] == recovery_payload["request"]["request_id"]
+
+    assert "control.sentinel_incident.generated" in read_event_types(workspace)
+
+
+def test_cli_sentinel_incident_mailbox_round_trip_persists_bundle_and_incident(tmp_path: Path) -> None:
+    import asyncio
+
+    workspace, config_path = runtime_workspace(tmp_path)
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    invoke_cli_report_json(config_path, "sentinel", "check")
+    recovery_payload = invoke_cli_report_json(
+        config_path,
+        "recovery",
+        "request",
+        "mechanic",
+        "--issuer",
+        "sentinel.test",
+        "--reason",
+        "research plane stalled",
+        "--force-queue",
+    )
+
+    runtime_state = RuntimeState(
+        process_running=True,
+        process_id=os.getpid(),
+        paused=False,
+        execution_status=ExecutionStatus.IDLE,
+        research_status=ResearchStatus.IDLE,
+        backlog_depth=0,
+        deferred_queue_size=0,
+        config_hash="fixture-hash",
+        updated_at="2026-04-11T02:00:00Z",
+    )
+    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    (paths.runtime_dir / "state.json").write_text(runtime_state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    payload = invoke_cli_report_json(
+        config_path,
+        "sentinel",
+        "incident",
+        "--failure-signature",
+        "sentinel:research-stalled",
+        "--summary",
+        "Sentinel detected a stalled research plane.",
+        "--severity",
+        "S3",
+        "--routing-target",
+        "mechanic",
+        "--recovery-request-id",
+        recovery_payload["request"]["request_id"],
+        "--issuer",
+        "sentinel.test",
+    )
+
+    assert payload["mode"] == "mailbox"
+    assert payload["command_id"] is not None
+    assert Path(payload["incident_path"]).exists() is False
+
+    incoming = sorted(paths.commands_incoming_dir.glob("*.json"))
+    assert len(incoming) == 1
+    envelope = json.loads(incoming[0].read_text(encoding="utf-8"))
+    assert envelope["command"] == "sentinel_incident"
+
+    engine = MillraceEngine(config_path)
+    asyncio.run(engine.mailbox_processor.process_mailbox())
+
+    processed = sorted(paths.commands_processed_dir.glob("*.json"))
+    assert len(processed) == 1
+    archived = json.loads(processed[0].read_text(encoding="utf-8"))
+    assert archived["envelope"]["command"] == "sentinel_incident"
+
+    assert Path(payload["incident_path"]).exists()
+    assert Path(payload["bundle_path"]).exists()
+    incident_document = load_incident_document(Path(payload["incident_path"]))
+    assert incident_document.failure_signature == "sentinel:research-stalled"
+    assert "control.sentinel_incident.generated" in read_event_types(workspace)
 
 
 def test_manual_recovery_request_cli_requires_force_queue(tmp_path: Path) -> None:

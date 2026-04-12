@@ -278,6 +278,24 @@ def _render_sentinel_check(report: Any, *, json_mode: bool) -> None:
     typer.echo("\n".join(lines))
 
 
+def _render_sentinel_incident(report: Any, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Mode: {report.mode}",
+        f"Applied: {'yes' if report.applied else 'no'}",
+        f"Message: {report.message}",
+        f"Incident path: {report.incident_path.as_posix()}",
+        f"Bundle path: {report.bundle_path.as_posix()}",
+        f"Incident ID: {report.bundle.incident_id}",
+        f"Routing target: {report.bundle.payload.routing_target}",
+    ]
+    if report.bundle.payload.recovery_request_id:
+        lines.append(f"Recovery request ID: {report.bundle.payload.recovery_request_id}")
+    typer.echo("\n".join(lines))
+
+
 @app.callback()
 def root(
     ctx: typer.Context,
@@ -488,6 +506,51 @@ def sentinel_status_command(
 
     _render_sentinel_status(
         _run_expected(lambda: _control(ctx).sentinel_status(), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@sentinel_app.command("incident")
+def sentinel_incident_command(
+    ctx: typer.Context,
+    failure_signature: Annotated[str, typer.Option("--failure-signature", help="Failure signature for the incident.")],
+    summary: Annotated[str, typer.Option("--summary", help="One-line incident summary.")],
+    severity: Annotated[str, typer.Option("--severity", help="Incident severity class (S1-S4).")] = "S2",
+    routing_target: Annotated[
+        RecoveryRequestTarget,
+        typer.Option("--routing-target", help="Recovery route this incident points at."),
+    ] = RecoveryRequestTarget.TROUBLESHOOT,
+    evidence: Annotated[
+        list[str] | None,
+        typer.Option("--evidence", help="Repeatable evidence pointer path or token."),
+    ] = None,
+    recovery_request_id: Annotated[
+        str,
+        typer.Option("--recovery-request-id", help="Linked recovery request id, if already queued."),
+    ] = "",
+    suggested_recovery: Annotated[
+        str,
+        typer.Option("--suggested-recovery", help="Optional bounded suggested recovery text."),
+    ] = "",
+    issuer: Annotated[str, typer.Option("--issuer", help="Issuer identity to record.")] = "sentinel",
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Generate one compatible Sentinel incident in the incoming incident queue."""
+
+    _render_sentinel_incident(
+        _run_expected(
+            lambda: _control(ctx).sentinel_incident(
+                failure_signature=failure_signature,
+                summary=summary,
+                severity=severity,
+                routing_target=routing_target.value,
+                evidence_pointers=tuple(evidence or ()),
+                recovery_request_id=recovery_request_id,
+                suggested_recovery=suggested_recovery,
+                issuer=issuer,
+            ),
+            json_mode=json_mode,
+        ),
         json_mode=json_mode,
     )
 

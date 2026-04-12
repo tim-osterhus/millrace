@@ -125,6 +125,7 @@ class RuntimePaths:
     sentinel_runtime_dir: Path
     sentinel_state_file: Path
     sentinel_check_records_dir: Path
+    sentinel_incident_bundles_dir: Path
     sentinel_acknowledgments_dir: Path
     sentinel_notification_attempts_dir: Path
     commands_incoming_dir: Path
@@ -254,6 +255,7 @@ class RuntimePaths:
             sentinel_runtime_dir=sentinel_runtime_dir,
             sentinel_state_file=sentinel_runtime_dir / "state.json",
             sentinel_check_records_dir=sentinel_runtime_dir / "checks",
+            sentinel_incident_bundles_dir=sentinel_runtime_dir / "incidents",
             sentinel_acknowledgments_dir=sentinel_runtime_dir / "acknowledgments",
             sentinel_notification_attempts_dir=sentinel_runtime_dir / "notifications",
             commands_incoming_dir=commands_dir / "incoming",

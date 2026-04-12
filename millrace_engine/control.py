@@ -189,6 +189,7 @@ from .control_models import (
     RunProvenanceReport,
     RuntimeState,
     SentinelCheckSurface,
+    SentinelIncidentSurface,
     SentinelStatusSurface,
     SelectionExplanationView,
     StatusReport,
@@ -302,6 +303,9 @@ from .control_queue_config_surface import (
 )
 from .control_sentinel_surface import (
     sentinel_check as sentinel_check_surface,
+)
+from .control_sentinel_surface import (
+    sentinel_incident as sentinel_incident_surface,
 )
 from .control_sentinel_surface import (
     sentinel_status as sentinel_status_surface,
@@ -634,6 +638,7 @@ class EngineControl:
     research_report = research_report_surface
     research_history = research_history_surface
     sentinel_check = sentinel_check_surface
+    sentinel_incident = sentinel_incident_surface
     sentinel_status = sentinel_status_surface
     interview_list = interview_list_surface
     interview_show = interview_show_surface

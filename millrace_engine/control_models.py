@@ -58,7 +58,7 @@ from .research.governance import ResearchGovernanceReport
 from .research.interview import InterviewDecisionRecord, InterviewQuestionRecord
 from .research.queues import ResearchQueueItem
 from .research.state import ResearchQueueFamily, ResearchQueueOwnership, ResearchRuntimeState
-from .sentinel_models import SentinelCheckRecord, SentinelReport, SentinelState
+from .sentinel_models import SentinelCheckRecord, SentinelIncidentBundle, SentinelReport, SentinelState
 from .standard_runtime import RuntimeSelectionView
 from .status import ControlPlane
 
@@ -580,6 +580,31 @@ class SentinelCheckSurface(ContractModel):
         return normalized or None
 
     @field_validator("state_path", "summary_path", "latest_report_path", "latest_check_path", mode="before")
+    @classmethod
+    def normalize_paths(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
+class SentinelIncidentSurface(ContractModel):
+    """Sentinel incident generation result payload."""
+
+    command_id: str | None = None
+    mode: Literal["direct", "mailbox"]
+    applied: bool
+    message: str
+    incident_path: Path
+    bundle_path: Path
+    bundle: SentinelIncidentBundle
+
+    @field_validator("message")
+    @classmethod
+    def normalize_message(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("message may not be empty")
+        return normalized
+
+    @field_validator("incident_path", "bundle_path", mode="before")
     @classmethod
     def normalize_paths(cls, value: str | Path) -> Path:
         return Path(value)

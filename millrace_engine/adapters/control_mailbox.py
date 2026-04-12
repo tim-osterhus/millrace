@@ -28,6 +28,7 @@ class ControlCommand(str, Enum):
     QUEUE_CLEANUP_REMOVE = "queue_cleanup_remove"
     QUEUE_CLEANUP_QUARANTINE = "queue_cleanup_quarantine"
     RECOVERY_REQUEST = "recovery_request"
+    SENTINEL_INCIDENT = "sentinel_incident"
     COMPOUNDING_PROMOTE = "compounding_promote"
     COMPOUNDING_DEPRECATE = "compounding_deprecate"
 

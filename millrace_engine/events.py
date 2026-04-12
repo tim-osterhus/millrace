@@ -23,6 +23,7 @@ class EventType(str, Enum):
     CONTROL_COMMAND_RECEIVED = "control.command.received"
     CONTROL_COMMAND_APPLIED = "control.command.applied"
     RECOVERY_REQUEST_QUEUED = "control.recovery_request.queued"
+    SENTINEL_INCIDENT_GENERATED = "control.sentinel_incident.generated"
     TASK_PROMOTED = "execution.task.promoted"
     TASK_ARCHIVED = "execution.task.archived"
     TASK_QUARANTINED = "execution.task.quarantined"

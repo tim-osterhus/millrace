@@ -13,6 +13,8 @@ from millrace_engine.research.incident_state_helpers import incident_archive_evi
 from millrace_engine.research.incidents import IncidentFixSpecRecord, IncidentRemediationRecord, resolve_incident_source
 from millrace_engine.research.path_helpers import _normalize_path_token, _relative_path, _resolve_path_token
 from millrace_engine.research.state import ResearchCheckpoint
+from millrace_engine.sentinel_incidents import persist_sentinel_incident
+from millrace_engine.sentinel_models import SentinelIncidentPayload
 from tests.support import load_workspace_fixture
 
 
@@ -254,3 +256,50 @@ def test_incident_document_rendering_slugify_keeps_ascii_only_legacy_contract() 
     assert _slugify("Café Incident") == "caf-incident"
     assert _slugify("Δelta failure") == "elta-failure"
     assert _slugify("中文 事件") == "incident"
+
+
+def test_persist_sentinel_incident_generates_parseable_incident_and_bundle(tmp_path: Path) -> None:
+    workspace, paths = _configured_paths(tmp_path)
+    bundle = persist_sentinel_incident(
+        paths,
+        payload=SentinelIncidentPayload(
+            failure_signature="sentinel:no-progress",
+            summary="Sentinel detected no meaningful progress.",
+            severity="S2",
+            routing_target="troubleshoot",
+            evidence_pointers=(
+                "agents/reports/sentinel/latest.json",
+                "agents/.runtime/recovery/latest.json",
+            ),
+            observed_status_markers=(
+                {"plane": "execution", "marker": "IDLE", "source_path": "agents/status.md"},
+                {"plane": "research", "marker": "IDLE", "source_path": "agents/research_status.md"},
+            ),
+            elapsed_since_last_progress_seconds=900,
+            source="sentinel",
+            suggested_recovery="Queue troubleshoot with the linked recovery request.",
+            recovery_request_id="recovery-20260411T010000000000Z-troubleshoot",
+            sentinel_check_id="sentinel-20260411T010000Z",
+            sentinel_report_path="agents/reports/sentinel/latest.json",
+            sentinel_state_path="agents/.runtime/sentinel/state.json",
+            report_status="degraded",
+            report_reason="no-meaningful-progress-for-900-seconds",
+        ),
+        issuer="sentinel.test",
+        emitted_at=_dt("2026-04-11T01:00:00Z"),
+        incident_id="INC-SENTINEL-TROUBLESHOOT-20260411T010000Z-TEST0001",
+    )
+
+    incident_path = workspace / bundle.incident_path
+    assert incident_path.exists()
+    document = load_incident_document(incident_path)
+    assert document.incident_id == "INC-SENTINEL-TROUBLESHOOT-20260411T010000Z-TEST0001"
+    assert document.failure_signature == "sentinel:no-progress"
+    assert document.severity is not None and document.severity.value == "S2"
+    assert document.source_task == "sentinel :: sentinel-20260411T010000Z"
+
+    incident_text = incident_path.read_text(encoding="utf-8")
+    assert "source: sentinel" in incident_text
+    assert "routing_target: troubleshoot" in incident_text
+    assert "`recovery-20260411T010000000000Z-troubleshoot`" in incident_text
+    assert (workspace / bundle.bundle_path).exists()

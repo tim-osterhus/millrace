@@ -33,6 +33,8 @@ from .events import EventSource, EventType
 from .paths import RuntimePaths
 from .queue import TaskQueue
 from .control_models import RecoveryRequestRecord, RecoveryRequestResult, RecoveryRequestTarget
+from .sentinel_incidents import persist_sentinel_incident
+from .sentinel_models import SentinelIncidentBundle, SentinelIncidentPayload
 
 
 class EngineMailboxHookSet(Protocol):
@@ -116,6 +118,7 @@ def build_engine_mailbox_command_registry() -> EngineMailboxCommandRegistry:
             ControlCommand.QUEUE_CLEANUP_REMOVE: _handle_queue_cleanup_remove,
             ControlCommand.QUEUE_CLEANUP_QUARANTINE: _handle_queue_cleanup_quarantine,
             ControlCommand.RECOVERY_REQUEST: _handle_recovery_request,
+            ControlCommand.SENTINEL_INCIDENT: _handle_sentinel_incident,
             ControlCommand.COMPOUNDING_PROMOTE: _handle_compounding_promote,
             ControlCommand.COMPOUNDING_DEPRECATE: _handle_compounding_deprecate,
         }
@@ -362,6 +365,64 @@ def _handle_recovery_request(
             },
             request=request,
             artifact_path=artifact_path,
+        )
+    )
+
+
+def _handle_sentinel_incident(
+    context: EngineMailboxCommandContext,
+    envelope: ControlCommandEnvelope,
+) -> EngineMailboxCommandExecution:
+    incident_id = str(envelope.payload.get("incident_id", "")).strip()
+    if not incident_id:
+        raise ControlError("sentinel_incident requires an incident_id")
+    payload = SentinelIncidentPayload.model_validate(
+        {
+            "failure_signature": envelope.payload.get("failure_signature"),
+            "summary": envelope.payload.get("summary"),
+            "severity": envelope.payload.get("severity"),
+            "routing_target": envelope.payload.get("routing_target"),
+            "evidence_pointers": envelope.payload.get("evidence_pointers"),
+            "observed_status_markers": envelope.payload.get("observed_status_markers"),
+            "elapsed_since_last_progress_seconds": envelope.payload.get("elapsed_since_last_progress_seconds"),
+            "source": envelope.payload.get("source", "sentinel"),
+            "suggested_recovery": envelope.payload.get("suggested_recovery"),
+            "recovery_request_id": envelope.payload.get("recovery_request_id"),
+            "sentinel_check_id": envelope.payload.get("sentinel_check_id"),
+            "sentinel_report_path": envelope.payload.get("sentinel_report_path"),
+            "sentinel_state_path": envelope.payload.get("sentinel_state_path"),
+            "report_status": envelope.payload.get("report_status", "healthy"),
+            "report_reason": envelope.payload.get("report_reason", ""),
+        }
+    )
+    bundle = persist_sentinel_incident(
+        context.hooks.get_paths(),
+        payload=payload,
+        issuer=envelope.issuer,
+        emitted_at=envelope.issued_at,
+        incident_id=incident_id,
+        command_id=envelope.command_id,
+    )
+    context.hooks.emit_event(
+        EventType.SENTINEL_INCIDENT_GENERATED,
+        EventSource.CONTROL,
+        {
+            "incident_id": bundle.incident_id,
+            "incident_path": bundle.incident_path,
+            "bundle_path": bundle.bundle_path,
+            "issuer": bundle.issuer,
+            "routing_target": bundle.payload.routing_target,
+            "recovery_request_id": bundle.payload.recovery_request_id,
+            "sentinel_check_id": bundle.payload.sentinel_check_id,
+            "command_id": envelope.command_id,
+        },
+    )
+    return EngineMailboxCommandExecution(
+        operation=OperationResult(
+            mode="direct",
+            applied=True,
+            message="sentinel incident generated",
+            payload=SentinelIncidentBundle.model_validate(bundle).model_dump(mode="json"),
         )
     )
 
