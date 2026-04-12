@@ -25,6 +25,7 @@ SentinelRouteTarget = Literal["none", "troubleshoot", "mechanic", "notify", "hal
 SentinelCheckTrigger = Literal["manual", "watch", "startup", "unknown"]
 SentinelMonitorResolution = Literal["none", "pending", "resolved", "stalled", "escalated"]
 SentinelLifecycleStatus = Literal["idle", "monitoring", "suppressed", "escalated", "disabled"]
+SentinelProgressState = Literal["unknown", "progressing", "stale"]
 
 
 def _normalize_datetime_or_none(value: datetime | str | None) -> datetime | None:
@@ -264,14 +265,266 @@ class SentinelReport(ContractModel):
         return _normalize_optional_text(value)
 
 
+class SentinelStatusMarkerEvidence(ContractModel):
+    plane: Literal["execution", "research"]
+    marker: str = ""
+    observed_at: datetime | None = None
+    source_path: str = ""
+
+    @field_validator("marker", "source_path", mode="before")
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def normalize_observed_at(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+
+class SentinelSupervisorEvidence(ContractModel):
+    generated_at: datetime | None = None
+    process_running: bool = False
+    paused: bool = False
+    execution_status: str = ""
+    research_status: str = ""
+    active_task_id: str = ""
+    next_task_id: str = ""
+    backlog_depth: int = Field(default=0, ge=0)
+    deferred_queue_size: int = Field(default=0, ge=0)
+    current_run_id: str = ""
+    current_stage: str = ""
+    attention_reason: str = ""
+    attention_summary: str = ""
+
+    @field_validator(
+        "execution_status",
+        "research_status",
+        "active_task_id",
+        "next_task_id",
+        "current_run_id",
+        "current_stage",
+        "attention_reason",
+        "attention_summary",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+    @field_validator("generated_at", mode="before")
+    @classmethod
+    def normalize_generated_at_field(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+
+class SentinelEventEvidence(ContractModel):
+    timestamp: datetime
+    event_type: str
+    source: str
+    progress_class: str
+    signature: str
+    summary: str = ""
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime | str) -> datetime:
+        normalized = _normalize_datetime_or_none(value)
+        if normalized is None:
+            raise ValueError("timestamp may not be empty")
+        return normalized
+
+    @field_validator("event_type", "source", "progress_class", "signature", "summary", mode="before")
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None, info: object) -> str:
+        field_name = getattr(info, "field_name", "value")
+        text = _normalize_optional_text(value)
+        if field_name in {"event_type", "source", "progress_class", "signature"} and not text:
+            raise ValueError(f"{field_name} may not be empty")
+        return text
+
+
+class SentinelHistoryEvidence(ContractModel):
+    timestamp: datetime | None = None
+    event_type: str = ""
+    task_id: str = ""
+    detail_path: str = ""
+    detail_exists: bool = False
+    line: str = ""
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator("event_type", "task_id", "detail_path", "line", mode="before")
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+
+class SentinelArtifactEvidence(ContractModel):
+    category: Literal["diagnostic", "run"]
+    relative_path: str
+    modified_at: datetime | None = None
+    size_bytes: int = Field(default=0, ge=0)
+    entry_count: int = Field(default=0, ge=0)
+    signature: str
+
+    @field_validator("relative_path", "signature", mode="before")
+    @classmethod
+    def normalize_required_text_fields(cls, value: str | Path | None, info: object) -> str:
+        return _normalize_required_text(value, field_name=getattr(info, "field_name", "value"))
+
+    @field_validator("modified_at", mode="before")
+    @classmethod
+    def normalize_modified_at(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+
+class SentinelIncidentQueueEvidence(ContractModel):
+    incoming_count: int = Field(default=0, ge=0)
+    working_count: int = Field(default=0, ge=0)
+    resolved_count: int = Field(default=0, ge=0)
+    archived_count: int = Field(default=0, ge=0)
+    latest_change_at: datetime | None = None
+    signature: str = ""
+
+    @field_validator("latest_change_at", mode="before")
+    @classmethod
+    def normalize_latest_change_at(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator("signature", mode="before")
+    @classmethod
+    def normalize_signature(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+
+class SentinelProgressWatchdogEvidence(ContractModel):
+    updated_at: datetime | None = None
+    status: str = ""
+    reason: str = ""
+    batch_id: str = ""
+    remediation_spec_id: str = ""
+    visible_recovery_task_count: int = Field(default=0, ge=0)
+    escalation_action: str = ""
+    signature: str = ""
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def normalize_updated_at_field(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator(
+        "status",
+        "reason",
+        "batch_id",
+        "remediation_spec_id",
+        "escalation_action",
+        "signature",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+
+class SentinelProgressComponent(ContractModel):
+    component: str
+    signature: str
+    observed_at: datetime | None = None
+    summary: str = ""
+
+    @field_validator("component", "signature", mode="before")
+    @classmethod
+    def normalize_required_text_fields(cls, value: str | Path | None, info: object) -> str:
+        return _normalize_required_text(value, field_name=getattr(info, "field_name", "value"))
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def normalize_observed_at_field(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+
+class SentinelEvidenceSnapshot(ContractModel):
+    schema_version: Literal["1.0"] = SENTINEL_ARTIFACT_SCHEMA_VERSION
+    collected_at: datetime
+    execution_status: SentinelStatusMarkerEvidence
+    research_status: SentinelStatusMarkerEvidence
+    supervisor: SentinelSupervisorEvidence | None = None
+    incidents: SentinelIncidentQueueEvidence
+    progress_watchdog: SentinelProgressWatchdogEvidence | None = None
+    recent_events: tuple[SentinelEventEvidence, ...] = ()
+    recent_history: tuple[SentinelHistoryEvidence, ...] = ()
+    diagnostics: tuple[SentinelArtifactEvidence, ...] = ()
+    runs: tuple[SentinelArtifactEvidence, ...] = ()
+    progress_components: tuple[SentinelProgressComponent, ...] = ()
+    progress_signature: str
+    latest_progress_at: datetime | None = None
+
+    @field_validator("collected_at", "latest_progress_at", mode="before")
+    @classmethod
+    def normalize_datetime_fields(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator("progress_signature", mode="before")
+    @classmethod
+    def normalize_progress_signature(cls, value: str | Path | None) -> str:
+        return _normalize_required_text(value, field_name="progress_signature")
+
+
+class SentinelProgressAssessment(ContractModel):
+    checked_at: datetime
+    state: SentinelProgressState = "unknown"
+    reason: str
+    progress_signature: str
+    latest_progress_at: datetime | None = None
+    changed_sources: tuple[str, ...] = ()
+    evidence_summaries: tuple[str, ...] = ()
+
+    @field_validator("checked_at", "latest_progress_at", mode="before")
+    @classmethod
+    def normalize_datetime_fields(cls, value: datetime | str | None) -> datetime | None:
+        return _normalize_datetime_or_none(value)
+
+    @field_validator("reason", "progress_signature", mode="before")
+    @classmethod
+    def normalize_required_text_fields(cls, value: str | Path | None, info: object) -> str:
+        return _normalize_required_text(value, field_name=getattr(info, "field_name", "value"))
+
+    @field_validator("changed_sources", "evidence_summaries", mode="before")
+    @classmethod
+    def normalize_sequences(cls, value: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if not value:
+            return ()
+        return tuple(_normalize_optional_text(item) for item in value if _normalize_optional_text(item))
+
+
 __all__ = [
     "SENTINEL_ARTIFACT_SCHEMA_VERSION",
     "SentinelAcknowledgmentState",
     "SentinelCadenceState",
     "SentinelCapState",
     "SentinelCheckRecord",
+    "SentinelEvidenceSnapshot",
+    "SentinelEventEvidence",
+    "SentinelHistoryEvidence",
+    "SentinelArtifactEvidence",
+    "SentinelIncidentQueueEvidence",
+    "SentinelProgressAssessment",
+    "SentinelProgressComponent",
+    "SentinelProgressState",
+    "SentinelProgressWatchdogEvidence",
     "SentinelMonitoringState",
     "SentinelReport",
     "SentinelState",
+    "SentinelStatusMarkerEvidence",
     "SentinelSummary",
+    "SentinelSupervisorEvidence",
 ]
