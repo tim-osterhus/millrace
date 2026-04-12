@@ -45,6 +45,9 @@ class RuntimePaths:
     ideas_specs_reviewed_dir: Path
     ideas_archive_dir: Path
     reports_dir: Path
+    sentinel_reports_dir: Path
+    sentinel_summary_file: Path
+    sentinel_latest_report_file: Path
     acceptance_profiles_dir: Path
     contractor_profile_report_file: Path
     completion_manifest_plan_file: Path
@@ -116,6 +119,11 @@ class RuntimePaths:
     runs_dir: Path
     diagnostics_dir: Path
     runtime_dir: Path
+    sentinel_runtime_dir: Path
+    sentinel_state_file: Path
+    sentinel_check_records_dir: Path
+    sentinel_acknowledgments_dir: Path
+    sentinel_notification_attempts_dir: Path
     commands_incoming_dir: Path
     commands_processed_dir: Path
     commands_failed_dir: Path
@@ -134,9 +142,11 @@ class RuntimePaths:
         else:
             resolved_agents_dir = (root / agents_dir).resolve()
         runtime_dir = resolved_agents_dir / ".runtime"
+        sentinel_runtime_dir = runtime_dir / "sentinel"
         commands_dir = runtime_dir / "commands"
         ideas_dir = resolved_agents_dir / "ideas"
         reports_dir = resolved_agents_dir / "reports"
+        sentinel_reports_dir = reports_dir / "sentinel"
         tmp_dir = resolved_agents_dir / ".tmp"
         objective_dir = resolved_agents_dir / "objective"
         packaged_assets_dir = Path(__file__).resolve().parent / "assets"
@@ -158,6 +168,9 @@ class RuntimePaths:
             ideas_specs_reviewed_dir=ideas_dir / "specs_reviewed",
             ideas_archive_dir=ideas_dir / "archive",
             reports_dir=reports_dir,
+            sentinel_reports_dir=sentinel_reports_dir,
+            sentinel_summary_file=sentinel_reports_dir / "summary.json",
+            sentinel_latest_report_file=sentinel_reports_dir / "latest.json",
             acceptance_profiles_dir=reports_dir / "acceptance_profiles",
             contractor_profile_report_file=reports_dir / "contractor_profile.md",
             completion_manifest_plan_file=reports_dir / "completion_manifest_plan.md",
@@ -231,6 +244,11 @@ class RuntimePaths:
             runs_dir=resolved_agents_dir / "runs",
             diagnostics_dir=resolved_agents_dir / "diagnostics",
             runtime_dir=runtime_dir,
+            sentinel_runtime_dir=sentinel_runtime_dir,
+            sentinel_state_file=sentinel_runtime_dir / "state.json",
+            sentinel_check_records_dir=sentinel_runtime_dir / "checks",
+            sentinel_acknowledgments_dir=sentinel_runtime_dir / "acknowledgments",
+            sentinel_notification_attempts_dir=sentinel_runtime_dir / "notifications",
             commands_incoming_dir=commands_dir / "incoming",
             commands_processed_dir=commands_dir / "processed",
             commands_failed_dir=commands_dir / "failed",

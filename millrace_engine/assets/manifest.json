@@ -74,27 +74,7 @@
     {
       "category": "directory",
       "family": "options",
-      "path": "agents/options/integrate"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/permission"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/troubleshoot"
-    },
-    {
-      "category": "directory",
-      "family": "options",
       "path": "agents/options/ui-verify"
-    },
-    {
-      "category": "directory",
-      "family": "options",
-      "path": "agents/options/update"
     },
     {
       "category": "directory",
@@ -282,7 +262,7 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "3ea6372ede6f74b811132a29c2a5f5b8b784a366e094ab40ea7ed0eb48273fcc",
+      "sha256": "f51f98a991a379562d25ee98bb59edb07bc966997f158b5722594967fbe1ac8a",
       "size": 10145,
       "size_bytes": 10145,
       "source": "runtime"

@@ -12,6 +12,7 @@ from millrace_engine.config import (
     CompoundingProfile,
     ConfigApplyBoundary,
     ComplexityBand,
+    EngineConfig,
     StageConfig,
     WatchRoot,
     build_runtime_paths,
@@ -78,6 +79,21 @@ def test_default_stage_configs_use_real_shipped_model_ids() -> None:
     assert stages[StageType.GOAL_INTAKE].model == "gpt-5.3-codex"
     assert stages[StageType.SPEC_SYNTHESIS].model == "gpt-5.2"
     assert stages[StageType.CLARIFY].model == "gpt-5.2"
+
+
+def test_engine_config_includes_default_enabled_sentinel_settings() -> None:
+    config = EngineConfig()
+
+    assert config.sentinel.enabled is True
+    assert config.sentinel.diagnostic.runner is RunnerKind.CODEX
+    assert config.sentinel.diagnostic.model == "gpt-5.3-codex"
+    assert config.sentinel.diagnostic.effort.value == "medium"
+    assert config.sentinel.progress_thresholds.no_progress_seconds == 900
+    assert config.sentinel.caps.soft_cap_threshold == 2
+    assert config.sentinel.caps.hard_cap_threshold == 3
+    assert [step.activate_after_seconds for step in config.sentinel.cadence] == [0, 900, 1800, 3600, 10800]
+    assert [step.interval_seconds for step in config.sentinel.cadence] == [300, 450, 600, 1200, 1800]
+    assert config.boundaries.classify_field("sentinel.enabled") is ConfigApplyBoundary.CYCLE_BOUNDARY
 
 
 def test_execution_stage_defaults_use_one_hour_timeout() -> None:
@@ -324,6 +340,9 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.contractor_profile_report_file == (
         workspace_root / "agents/reports/contractor_profile.md"
     ).resolve()
+    assert paths.sentinel_reports_dir == (workspace_root / "agents/reports/sentinel").resolve()
+    assert paths.sentinel_summary_file == (workspace_root / "agents/reports/sentinel/summary.json").resolve()
+    assert paths.sentinel_latest_report_file == (workspace_root / "agents/reports/sentinel/latest.json").resolve()
     assert paths.staging_manifest_file == (workspace_root / "agents/staging_manifest.yml").resolve()
     assert paths.goalspec_contractor_records_dir == (
         workspace_root / "agents/.research_runtime/goalspec/contractor"
@@ -360,6 +379,15 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.research_state_file == (workspace_root / "agents/research_state.json").resolve()
     assert paths.runs_dir == (workspace_root / "agents/runs").resolve()
     assert paths.diagnostics_dir == (workspace_root / "agents/diagnostics").resolve()
+    assert paths.sentinel_runtime_dir == (workspace_root / "agents/.runtime/sentinel").resolve()
+    assert paths.sentinel_state_file == (workspace_root / "agents/.runtime/sentinel/state.json").resolve()
+    assert paths.sentinel_check_records_dir == (workspace_root / "agents/.runtime/sentinel/checks").resolve()
+    assert paths.sentinel_acknowledgments_dir == (
+        workspace_root / "agents/.runtime/sentinel/acknowledgments"
+    ).resolve()
+    assert paths.sentinel_notification_attempts_dir == (
+        workspace_root / "agents/.runtime/sentinel/notifications"
+    ).resolve()
     assert paths.commands_incoming_dir == (workspace_root / "agents/.runtime/commands/incoming").resolve()
     assert paths.research_recovery_latch_file == (
         workspace_root / "agents/.runtime/research_recovery_latch.json"
@@ -373,6 +401,45 @@ def test_runtime_paths_are_resolved_under_runtime_workspace(tmp_path: Path) -> N
     assert paths.incident_recurrence_ledger_file == (
         workspace_root / "agents/.research_runtime/incidents/recurrence_ledger.json"
     ).resolve()
+
+
+def test_native_config_accepts_explicit_sentinel_disable_and_overrides(tmp_path: Path) -> None:
+    workspace_root, config_path = runtime_workspace(tmp_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n"
+        + "\n".join(
+            [
+                "[sentinel]",
+                "enabled = false",
+                "reset_cadence_on_recovery = false",
+                "",
+                "[sentinel.diagnostic]",
+                'runner = "claude"',
+                'model = "gpt-5.2"',
+                'effort = "high"',
+                "",
+                "[sentinel.caps]",
+                "soft_cap_threshold = 4",
+                "hard_cap_threshold = 6",
+                "halt_on_hard_cap = true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_engine_config(config_path)
+
+    assert loaded.config.paths.workspace == workspace_root.resolve()
+    assert loaded.config.sentinel.enabled is False
+    assert loaded.config.sentinel.reset_cadence_on_recovery is False
+    assert loaded.config.sentinel.diagnostic.runner.value == "claude"
+    assert loaded.config.sentinel.diagnostic.model == "gpt-5.2"
+    assert loaded.config.sentinel.diagnostic.effort.value == "high"
+    assert loaded.config.sentinel.caps.soft_cap_threshold == 4
+    assert loaded.config.sentinel.caps.hard_cap_threshold == 6
+    assert loaded.config.sentinel.caps.halt_on_hard_cap is True
 
 
 def test_historylog_entry_names_use_canonical_utc_format() -> None:

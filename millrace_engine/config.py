@@ -196,6 +196,88 @@ class ResearchConfig(MillraceModel):
     interview_policy: SpecInterviewPolicy = SpecInterviewPolicy.OFF
 
 
+class SentinelDiagnosticConfig(MillraceModel):
+    runner: RunnerKind = RunnerKind.CODEX
+    model: str = "gpt-5.3-codex"
+    effort: ReasoningEffort | None = ReasoningEffort.MEDIUM
+
+
+class SentinelCadenceStep(MillraceModel):
+    activate_after_seconds: int = Field(default=0, ge=0)
+    interval_seconds: int = Field(default=300, ge=1)
+
+
+def _default_sentinel_cadence() -> tuple[SentinelCadenceStep, ...]:
+    return (
+        SentinelCadenceStep(activate_after_seconds=0, interval_seconds=300),
+        SentinelCadenceStep(activate_after_seconds=900, interval_seconds=450),
+        SentinelCadenceStep(activate_after_seconds=1800, interval_seconds=600),
+        SentinelCadenceStep(activate_after_seconds=3600, interval_seconds=1200),
+        SentinelCadenceStep(activate_after_seconds=10800, interval_seconds=1800),
+    )
+
+
+class SentinelProgressThresholds(MillraceModel):
+    no_progress_seconds: int = Field(default=900, ge=1)
+    stale_status_seconds: int = Field(default=1800, ge=1)
+    stalled_recovery_seconds: int = Field(default=1800, ge=1)
+
+
+class SentinelCapPolicy(MillraceModel):
+    soft_cap_threshold: int = Field(default=2, ge=1)
+    hard_cap_threshold: int = Field(default=3, ge=1)
+    halt_on_hard_cap: bool = False
+
+    @model_validator(mode="after")
+    def validate_threshold_order(self) -> "SentinelCapPolicy":
+        if self.hard_cap_threshold < self.soft_cap_threshold:
+            raise ValueError("hard_cap_threshold must be greater than or equal to soft_cap_threshold")
+        return self
+
+
+class SentinelNotifyConfig(MillraceModel):
+    enabled: bool = False
+    adapter: str | None = None
+    allow_direct_notify_when_supervised: bool = False
+
+
+class SentinelConfig(MillraceModel):
+    enabled: bool = True
+    diagnostic: SentinelDiagnosticConfig = Field(default_factory=SentinelDiagnosticConfig)
+    cadence: tuple[SentinelCadenceStep, ...] = Field(default_factory=_default_sentinel_cadence)
+    progress_thresholds: SentinelProgressThresholds = Field(default_factory=SentinelProgressThresholds)
+    reset_cadence_on_recovery: bool = True
+    caps: SentinelCapPolicy = Field(default_factory=SentinelCapPolicy)
+    notify: SentinelNotifyConfig = Field(default_factory=SentinelNotifyConfig)
+
+    @field_validator("cadence", mode="before")
+    @classmethod
+    def normalize_cadence(
+        cls,
+        value: tuple[SentinelCadenceStep, ...] | list[SentinelCadenceStep | dict[str, Any]] | None,
+    ) -> tuple[SentinelCadenceStep, ...]:
+        if value is None:
+            return _default_sentinel_cadence()
+        return tuple(value)
+
+    @field_validator("cadence")
+    @classmethod
+    def validate_cadence(
+        cls,
+        value: tuple[SentinelCadenceStep, ...],
+    ) -> tuple[SentinelCadenceStep, ...]:
+        if not value:
+            raise ValueError("sentinel cadence may not be empty")
+        previous_start = -1
+        for step in value:
+            if step.activate_after_seconds <= previous_start:
+                raise ValueError("sentinel cadence steps must use strictly increasing activate_after_seconds")
+            previous_start = step.activate_after_seconds
+        if value[0].activate_after_seconds != 0:
+            raise ValueError("sentinel cadence must start at activate_after_seconds=0")
+        return value
+
+
 class WatchRoot(str, Enum):
     AGENTS = "agents"
     IDEAS_RAW = "ideas_raw"
@@ -417,6 +499,7 @@ class EngineConfig(MillraceModel):
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     sizing: SizingConfig = Field(default_factory=SizingConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
+    sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
     watchers: WatcherConfig = Field(default_factory=WatcherConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     policies: PolicyConfig = Field(default_factory=PolicyConfig)

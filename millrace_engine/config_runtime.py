@@ -214,6 +214,7 @@ class ConfigBoundaries(MillraceRuntimeConfigModel):
         "research.stage_retry_max",
         "research.stage_retry_backoff_seconds",
         "research.interview_policy",
+        "sentinel",
         "watchers",
     )
 
