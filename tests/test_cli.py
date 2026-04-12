@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 import millrace_engine.cli as cli_module
+import millrace_engine.sentinel_watch as sentinel_watch_module
 from millrace_engine.cli import app
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import EngineControl
@@ -217,6 +218,83 @@ def test_cli_sentinel_check_when_disabled_is_diagnostic_only(tmp_path: Path) -> 
     assert payload["state"]["caps"]["hard_cap_count"] == 0
     assert Path(payload["latest_report_path"]).exists()
     assert Path(payload["latest_check_path"]).exists()
+
+
+def test_cli_sentinel_watch_runs_bounded_loop_and_persists_check_count(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    t0 = datetime(2026, 4, 11, 22, 0, tzinfo=timezone.utc)
+    moments = iter((t0, t0, t0 + timedelta(minutes=5)))
+
+    monkeypatch.setattr(sentinel_watch_module, "_utc_now", lambda: next(moments))
+    monkeypatch.setattr(sentinel_watch_module.time, "sleep", lambda seconds: None)
+
+    payload = invoke_cli_report_json(config_path, "sentinel", "watch", "--max-checks", "2")
+
+    assert payload["config_enabled"] is True
+    assert payload["autonomous_state_applied"] is True
+    assert payload["iterations_completed"] == 2
+    assert payload["stop_reason"] == "max_checks_reached"
+    assert payload["check"]["trigger"] == "watch"
+    assert payload["state"]["checks_performed"] == 2
+    assert payload["report"]["summary"]["checks_performed"] == 2
+    assert payload["state"]["cadence"]["last_check_at"] == "2026-04-11T22:05:00Z"
+    assert payload["state"]["cadence"]["next_check_at"] == "2026-04-11T22:10:00Z"
+    assert Path(payload["latest_check_path"]).exists()
+
+
+def test_cli_sentinel_watch_stops_after_disabled_diagnostic_pass(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    control.config_set("sentinel.enabled", "false")
+    t0 = datetime(2026, 4, 11, 23, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sentinel_watch_module, "_utc_now", lambda: t0)
+    monkeypatch.setattr(sentinel_watch_module.time, "sleep", lambda seconds: None)
+
+    payload = invoke_cli_report_json(config_path, "sentinel", "watch", "--max-checks", "2")
+
+    assert payload["config_enabled"] is False
+    assert payload["autonomous_state_applied"] is False
+    assert payload["iterations_completed"] == 1
+    assert payload["stop_reason"] == "no_next_check_scheduled"
+    assert payload["report"]["status"] == "disabled"
+    assert payload["state"]["enabled"] is False
+    assert payload["state"]["checks_performed"] == 1
+    assert payload["state"]["cadence"]["last_check_at"] is None
+    assert payload["state"]["cadence"]["next_check_at"] is None
+
+
+def test_cli_sentinel_watch_stops_after_disabled_pass_even_with_prior_enabled_cadence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    seed_control = EngineControl(config_path)
+    seed_control.sentinel_check(now=datetime(2026, 4, 11, 19, 0, tzinfo=timezone.utc))
+    seed_control.config_set("sentinel.enabled", "false")
+    disabled_checked_at = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sentinel_watch_module, "_utc_now", lambda: disabled_checked_at)
+    monkeypatch.setattr(sentinel_watch_module.time, "sleep", lambda seconds: None)
+
+    payload = invoke_cli_report_json(config_path, "sentinel", "watch", "--max-checks", "3")
+
+    assert payload["config_enabled"] is False
+    assert payload["autonomous_state_applied"] is False
+    assert payload["iterations_completed"] == 1
+    assert payload["stop_reason"] == "no_next_check_scheduled"
+    assert payload["report"]["status"] == "disabled"
+    assert payload["state"]["enabled"] is False
+    assert payload["state"]["checks_performed"] == 2
+    assert payload["state"]["cadence"]["current_interval_seconds"] == 0
+    assert payload["state"]["cadence"]["last_check_at"] is None
+    assert payload["state"]["cadence"]["next_check_at"] is None
 
 
 def test_cli_sentinel_incident_generates_parseable_direct_artifacts_and_links_report_state(tmp_path: Path) -> None:

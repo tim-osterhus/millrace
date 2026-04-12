@@ -585,6 +585,27 @@ class SentinelCheckSurface(ContractModel):
         return Path(value)
 
 
+class SentinelWatchSurface(ContractModel):
+    """Long-lived Sentinel watch result payload."""
+
+    config_enabled: bool
+    autonomous_state_applied: bool
+    iterations_completed: int = Field(ge=0)
+    stop_reason: Literal["max_checks_reached", "no_next_check_scheduled", "interrupted"]
+    state_path: Path
+    summary_path: Path
+    latest_report_path: Path
+    latest_check_path: Path
+    state: SentinelState
+    report: SentinelReport
+    check: SentinelCheckRecord
+
+    @field_validator("state_path", "summary_path", "latest_report_path", "latest_check_path", mode="before")
+    @classmethod
+    def normalize_paths(cls, value: str | Path) -> Path:
+        return Path(value)
+
+
 class SentinelIncidentSurface(ContractModel):
     """Sentinel incident generation result payload."""
 

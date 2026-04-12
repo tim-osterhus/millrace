@@ -10,6 +10,7 @@ from millrace_engine.control_models import RecoveryRequestRecord, RecoveryReques
 from millrace_engine.control_runtime_surface import supervisor_report
 from millrace_engine.sentinel_models import SentinelCheckRecord, SentinelReport, SentinelState
 from millrace_engine.sentinel_runtime import run_sentinel_diagnostic
+import millrace_engine.sentinel_watch as sentinel_watch_module
 
 from .support import runtime_workspace
 
@@ -383,3 +384,83 @@ def test_run_sentinel_diagnostic_rebases_monitoring_to_newer_linked_recovery_cyc
     assert rebased_report.monitoring.route_target == "mechanic"
     assert rebased_check.route_target == "mechanic"
     assert rebased_check.auto_queue_allowed is False
+
+
+def test_sentinel_watch_runs_repeated_checks_and_persists_check_count(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+    observed_sleeps: list[float] = []
+    moments = iter((t0, t0, t0 + timedelta(minutes=5)))
+
+    monkeypatch.setattr(sentinel_watch_module, "_utc_now", lambda: next(moments))
+    monkeypatch.setattr(sentinel_watch_module.time, "sleep", lambda seconds: observed_sleeps.append(seconds))
+
+    watch = control.sentinel_watch(max_checks=2)
+
+    assert watch.config_enabled is True
+    assert watch.autonomous_state_applied is True
+    assert watch.iterations_completed == 2
+    assert watch.stop_reason == "max_checks_reached"
+    assert watch.check.trigger == "watch"
+    assert watch.state.checks_performed == 2
+    assert watch.report.summary.checks_performed == 2
+    assert watch.state.cadence.last_check_at == t0 + timedelta(minutes=5)
+    assert watch.state.cadence.next_check_at == t0 + timedelta(minutes=10)
+    assert observed_sleeps == [300.0]
+
+
+def test_sentinel_watch_stops_after_one_disabled_diagnostic_pass(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    control.config_set("sentinel.enabled", "false")
+    t0 = datetime(2026, 4, 11, 21, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sentinel_watch_module, "_utc_now", lambda: t0)
+    monkeypatch.setattr(sentinel_watch_module.time, "sleep", lambda seconds: None)
+
+    watch = control.sentinel_watch(max_checks=2)
+
+    assert watch.config_enabled is False
+    assert watch.autonomous_state_applied is False
+    assert watch.iterations_completed == 1
+    assert watch.stop_reason == "no_next_check_scheduled"
+    assert watch.report.status == "disabled"
+    assert watch.state.enabled is False
+    assert watch.state.checks_performed == 1
+    assert watch.state.cadence.last_check_at is None
+    assert watch.state.cadence.next_check_at is None
+
+
+def test_sentinel_watch_stops_after_one_disabled_pass_even_with_prior_enabled_cadence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    initial_checked_at = datetime(2026, 4, 11, 19, 0, tzinfo=timezone.utc)
+    control.sentinel_check(now=initial_checked_at)
+    control.config_set("sentinel.enabled", "false")
+    disabled_checked_at = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sentinel_watch_module, "_utc_now", lambda: disabled_checked_at)
+    monkeypatch.setattr(sentinel_watch_module.time, "sleep", lambda seconds: None)
+
+    watch = control.sentinel_watch(max_checks=3)
+
+    assert watch.config_enabled is False
+    assert watch.autonomous_state_applied is False
+    assert watch.iterations_completed == 1
+    assert watch.stop_reason == "no_next_check_scheduled"
+    assert watch.report.status == "disabled"
+    assert watch.state.enabled is False
+    assert watch.state.checks_performed == 2
+    assert watch.state.cadence.current_interval_seconds == 0
+    assert watch.state.cadence.last_check_at is None
+    assert watch.state.cadence.next_check_at is None

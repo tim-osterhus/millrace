@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .control_actions import sentinel_incident as sentinel_incident_operation
-from .control_models import SentinelCheckSurface, SentinelIncidentSurface, SentinelStatusSurface
+from .control_models import SentinelCheckSurface, SentinelIncidentSurface, SentinelStatusSurface, SentinelWatchSurface
 from .control_runtime_surface import supervisor_report as supervisor_report_surface
 from .sentinel_models import SentinelCheckRecord, SentinelIncidentBundle, SentinelReport, SentinelState
 from .sentinel_runtime import run_sentinel_diagnostic
+from .sentinel_watch import run_sentinel_watch
 
 
 def _resolve_relative_path(path_token: str, *, root: Path) -> Path | None:
@@ -29,7 +30,7 @@ def _read_check_record(paths, report: SentinelReport | None) -> tuple[SentinelCh
     return SentinelCheckRecord.model_validate_json(check_path.read_text(encoding="utf-8")), check_path
 
 
-def sentinel_check(control, *, trigger: str = "manual") -> SentinelCheckSurface:
+def sentinel_check(control, *, trigger: str = "manual", now: datetime | None = None) -> SentinelCheckSurface:
     control.reload_local_config()
     supervisor = None
     supervisor_error = None
@@ -44,6 +45,7 @@ def sentinel_check(control, *, trigger: str = "manual") -> SentinelCheckSurface:
         supervisor_error=supervisor_error,
         trigger=trigger,
         autonomous_state_applied=control.loaded.config.sentinel.enabled,
+        now=now,
     )
     return SentinelCheckSurface(
         config_enabled=control.loaded.config.sentinel.enabled,
@@ -56,6 +58,13 @@ def sentinel_check(control, *, trigger: str = "manual") -> SentinelCheckSurface:
         state=state,
         report=report,
         check=check,
+    )
+
+
+def sentinel_watch(control, *, max_checks: int | None = None) -> SentinelWatchSurface:
+    return run_sentinel_watch(
+        run_check=lambda checked_at: sentinel_check(control, trigger="watch", now=checked_at),
+        max_checks=max_checks,
     )
 
 
@@ -178,4 +187,4 @@ def sentinel_incident(
     )
 
 
-__all__ = ["sentinel_check", "sentinel_incident", "sentinel_status"]
+__all__ = ["sentinel_check", "sentinel_incident", "sentinel_status", "sentinel_watch"]

@@ -191,6 +191,7 @@ from .control_models import (
     SentinelCheckSurface,
     SentinelIncidentSurface,
     SentinelStatusSurface,
+    SentinelWatchSurface,
     SelectionExplanationView,
     StatusReport,
     SupervisorAction,
@@ -309,6 +310,9 @@ from .control_sentinel_surface import (
 )
 from .control_sentinel_surface import (
     sentinel_status as sentinel_status_surface,
+)
+from .control_sentinel_surface import (
+    sentinel_watch as sentinel_watch_surface,
 )
 from .control_reports import (
     asset_inventory_for,
@@ -640,6 +644,7 @@ class EngineControl:
     sentinel_check = sentinel_check_surface
     sentinel_incident = sentinel_incident_surface
     sentinel_status = sentinel_status_surface
+    sentinel_watch = sentinel_watch_surface
     interview_list = interview_list_surface
     interview_show = interview_show_surface
     interview_create = interview_create_surface

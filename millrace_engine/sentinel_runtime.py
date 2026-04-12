@@ -73,12 +73,6 @@ def _cadence_state(
     autonomous_state_applied: bool,
 ) -> SentinelCadenceState:
     if not autonomous_state_applied:
-        if previous_state is not None:
-            return previous_state.cadence.model_copy(
-                update={
-                    "reset_on_recovery": config.sentinel.reset_cadence_on_recovery,
-                }
-            )
         return SentinelCadenceState(reset_on_recovery=config.sentinel.reset_cadence_on_recovery)
     previous_cadence = None if previous_state is None else previous_state.cadence
     schedule_started_at = (
@@ -346,6 +340,7 @@ def run_sentinel_diagnostic(
     last_incident_id = "" if previous_state is None else previous_state.last_incident_id
     last_incident_path = "" if previous_state is None else previous_state.last_incident_path
     last_recovery_request_id = queued_recovery_request_id or ("" if previous_state is None else previous_state.last_recovery_request_id)
+    checks_performed = 1 if previous_state is None else previous_state.checks_performed + 1
     check_id = _check_id_for(checked_at)
     check_path = paths.sentinel_check_records_dir / f"{check_id}.json"
     summary = SentinelSummary(
@@ -353,6 +348,7 @@ def run_sentinel_diagnostic(
         reason=reason,
         last_check_at=checked_at,
         next_check_at=cadence.next_check_at,
+        checks_performed=checks_performed,
         route_target=route_target,
         monitoring_active=monitoring is not None and monitoring.active,
         acknowledgment_required=acknowledgment.required,
@@ -377,6 +373,7 @@ def run_sentinel_diagnostic(
             if status == "healthy"
             else (None if previous_state is None else previous_state.last_healthy_at)
         ),
+        checks_performed=checks_performed,
         latest_check_id=check_id,
         latest_report_path=_relative_path(paths.sentinel_latest_report_file, root=paths.root),
         last_incident_id=last_incident_id,

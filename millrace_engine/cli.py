@@ -278,6 +278,22 @@ def _render_sentinel_check(report: Any, *, json_mode: bool) -> None:
     typer.echo("\n".join(lines))
 
 
+def _render_sentinel_watch(report: Any, *, json_mode: bool) -> None:
+    if json_mode:
+        _json_output(report.model_dump(mode="json"))
+        return
+    lines = [
+        f"Config enabled: {'yes' if report.config_enabled else 'no'}",
+        f"Autonomous state applied: {'yes' if report.autonomous_state_applied else 'no'}",
+        f"Iterations completed: {report.iterations_completed}",
+        f"Stop reason: {report.stop_reason}",
+        f"Status: {report.report.status}",
+        f"Reason: {report.report.reason}",
+        f"Latest check path: {report.latest_check_path.as_posix()}",
+    ]
+    typer.echo("\n".join(lines))
+
+
 def _render_sentinel_incident(report: Any, *, json_mode: bool) -> None:
     if json_mode:
         _json_output(report.model_dump(mode="json"))
@@ -506,6 +522,23 @@ def sentinel_status_command(
 
     _render_sentinel_status(
         _run_expected(lambda: _control(ctx).sentinel_status(), json_mode=json_mode),
+        json_mode=json_mode,
+    )
+
+
+@sentinel_app.command("watch")
+def sentinel_watch_command(
+    ctx: typer.Context,
+    max_checks: Annotated[
+        int | None,
+        typer.Option("--max-checks", min=1, help="Optional bounded loop count for tests or controlled runs."),
+    ] = None,
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Run the standalone Sentinel companion watch loop."""
+
+    _render_sentinel_watch(
+        _run_expected(lambda: _control(ctx).sentinel_watch(max_checks=max_checks), json_mode=json_mode),
         json_mode=json_mode,
     )
 

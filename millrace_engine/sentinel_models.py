@@ -152,6 +152,7 @@ class SentinelSummary(ContractModel):
     reason: str
     last_check_at: datetime | None = None
     next_check_at: datetime | None = None
+    checks_performed: int = Field(default=0, ge=0)
     route_target: SentinelRouteTarget = "none"
     monitoring_active: bool = False
     acknowledgment_required: bool = False
@@ -217,6 +218,7 @@ class SentinelState(ContractModel):
     lifecycle_status: SentinelLifecycleStatus = "idle"
     reason: str
     last_healthy_at: datetime | None = None
+    checks_performed: int = Field(default=0, ge=0)
     latest_check_id: str = ""
     latest_report_path: str = ""
     last_incident_id: str = ""
