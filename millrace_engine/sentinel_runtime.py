@@ -43,6 +43,24 @@ def _check_id_for(moment: datetime) -> str:
     return f"sentinel-{moment.strftime('%Y%m%dT%H%M%SZ')}"
 
 
+def persist_sentinel_artifacts(
+    paths: RuntimePaths,
+    *,
+    state: SentinelState,
+    summary: SentinelSummary,
+    report: SentinelReport,
+    check: SentinelCheckRecord,
+) -> None:
+    check_path = paths.sentinel_check_records_dir / f"{check.check_id}.json"
+    paths.sentinel_runtime_dir.mkdir(parents=True, exist_ok=True)
+    paths.sentinel_check_records_dir.mkdir(parents=True, exist_ok=True)
+    paths.sentinel_reports_dir.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(paths.sentinel_state_file, state.model_dump_json(indent=2) + "\n")
+    write_text_atomic(paths.sentinel_summary_file, summary.model_dump_json(indent=2) + "\n")
+    write_text_atomic(paths.sentinel_latest_report_file, report.model_dump_json(indent=2) + "\n")
+    write_text_atomic(check_path, check.model_dump_json(indent=2) + "\n")
+
+
 def _load_sentinel_state(paths: RuntimePaths) -> SentinelState | None:
     if not paths.sentinel_state_file.exists():
         return None
@@ -98,29 +116,82 @@ def _cadence_state(
 
 def _cap_state(
     config: EngineConfig,
-    previous_state: SentinelState | None,
     *,
+    checked_at: datetime,
+    previous_state: SentinelState | None,
+    monitoring: SentinelMonitoringState | None,
+    progress_state: str,
+    changed_sources: tuple[str, ...],
     autonomous_state_applied: bool,
 ) -> SentinelCapState:
+    previous_caps = None if previous_state is None else previous_state.caps
+    threshold_fields = {
+        "soft_cap_threshold": config.sentinel.caps.soft_cap_threshold,
+        "hard_cap_threshold": config.sentinel.caps.hard_cap_threshold,
+        "halt_on_hard_cap": config.sentinel.caps.halt_on_hard_cap,
+    }
+    if not autonomous_state_applied:
+        return SentinelCapState(**threshold_fields)
+    effective_progress_state = progress_state
+    if progress_state == "progressing" and set(changed_sources).issubset({"incident_queues", "recent_events"}):
+        effective_progress_state = "stale"
+    if effective_progress_state == "progressing":
+        if previous_caps is not None:
+            return previous_caps.model_copy(
+                update={
+                    **threshold_fields,
+                    "recovery_cycles_queued": 0,
+                    "soft_cap_active": False,
+                    "hard_cap_triggered": False,
+                    "acknowledgment_required": False,
+                    "last_counted_recovery_request_id": "",
+                }
+            )
+        return SentinelCapState(**threshold_fields)
     if previous_state is not None:
-        previous_caps = previous_state.caps
-        return previous_caps.model_copy(
+        caps = previous_caps.model_copy(update=threshold_fields)
+    else:
+        caps = SentinelCapState(**threshold_fields)
+    if monitoring is None or not monitoring.active:
+        return caps
+    request_id = monitoring.queued_recovery_request_id
+    if request_id and request_id != caps.last_counted_recovery_request_id:
+        caps = caps.model_copy(
             update={
-                "soft_cap_threshold": config.sentinel.caps.soft_cap_threshold,
-                "hard_cap_threshold": config.sentinel.caps.hard_cap_threshold,
-                "halt_on_hard_cap": config.sentinel.caps.halt_on_hard_cap,
+                "recovery_cycles_queued": caps.recovery_cycles_queued + 1,
+                "last_counted_recovery_request_id": request_id,
             }
         )
-    if not autonomous_state_applied:
-        return SentinelCapState(
-            soft_cap_threshold=config.sentinel.caps.soft_cap_threshold,
-            hard_cap_threshold=config.sentinel.caps.hard_cap_threshold,
-            halt_on_hard_cap=config.sentinel.caps.halt_on_hard_cap,
-        )
-    return SentinelCapState(
-        soft_cap_threshold=config.sentinel.caps.soft_cap_threshold,
-        hard_cap_threshold=config.sentinel.caps.hard_cap_threshold,
-        halt_on_hard_cap=config.sentinel.caps.halt_on_hard_cap,
+    soft_cap_active = caps.soft_cap_active
+    hard_cap_triggered = caps.hard_cap_triggered
+    soft_cap_count = caps.soft_cap_count
+    hard_cap_count = caps.hard_cap_count
+    last_soft_cap_at = caps.last_soft_cap_at
+    last_hard_cap_at = caps.last_hard_cap_at
+    last_notification_attempt_at = caps.last_notification_attempt_at
+    last_notification_status = caps.last_notification_status
+    if caps.recovery_cycles_queued >= caps.soft_cap_threshold and not soft_cap_active:
+        soft_cap_active = True
+        soft_cap_count += 1
+        last_soft_cap_at = checked_at
+    if caps.recovery_cycles_queued >= caps.hard_cap_threshold and not hard_cap_triggered:
+        hard_cap_triggered = True
+        hard_cap_count += 1
+        last_hard_cap_at = checked_at
+        last_notification_attempt_at = checked_at
+        last_notification_status = "local-record-only-notification-attempt-recorded"
+    return caps.model_copy(
+        update={
+            "soft_cap_count": soft_cap_count,
+            "hard_cap_count": hard_cap_count,
+            "soft_cap_active": soft_cap_active,
+            "hard_cap_triggered": hard_cap_triggered,
+            "acknowledgment_required": soft_cap_active or hard_cap_triggered,
+            "last_soft_cap_at": last_soft_cap_at,
+            "last_hard_cap_at": last_hard_cap_at,
+            "last_notification_attempt_at": last_notification_attempt_at,
+            "last_notification_status": last_notification_status,
+        }
     )
 
 
@@ -176,7 +247,7 @@ def _monitoring_state(
             }
         )
     effective_progress_state = progress_state
-    if progress_state == "progressing" and set(changed_sources).issubset({"incident_queues"}):
+    if progress_state == "progressing" and set(changed_sources).issubset({"incident_queues", "recent_events"}):
         effective_progress_state = "stale"
     if supervisor_error is not None:
         return SentinelMonitoringState(
@@ -255,6 +326,12 @@ def _classify_status(
         return "degraded", f"supervisor-observation-unavailable: {supervisor_error}"
     if not config.sentinel.enabled:
         return "disabled", "manual-diagnostic-only-while-sentinel-disabled"
+    if monitoring is not None and monitoring.active and monitoring.acknowledgment_required:
+        if monitoring.hard_cap_triggered:
+            if config.sentinel.caps.halt_on_hard_cap:
+                return "escalated", "hard-cap-triggered-halt-request-required-with-notification-evidence"
+            return "escalated", "hard-cap-triggered-notification-evidence-recorded"
+        return "suppressed", "soft-cap-reached-acknowledgment-required-before-rearming-auto-queue"
     if monitoring is not None:
         if monitoring.active:
             if monitoring.resolution == "stalled":
@@ -306,13 +383,6 @@ def run_sentinel_diagnostic(
         previous=previous_evidence,
         now=checked_at,
     )
-    cadence = _cadence_state(
-        config,
-        checked_at=checked_at,
-        previous_state=previous_state,
-        autonomous_state_applied=applied_autonomy,
-    )
-    caps = _cap_state(config, previous_state, autonomous_state_applied=applied_autonomy)
     acknowledgment = _acknowledgment_state(previous_state)
     monitoring = _monitoring_state(
         config=config,
@@ -325,6 +395,23 @@ def run_sentinel_diagnostic(
         latest_progress_at=progress.latest_progress_at,
         supervisor_error=supervisor_error,
     )
+    caps = _cap_state(
+        config,
+        checked_at=checked_at,
+        previous_state=previous_state,
+        monitoring=monitoring,
+        progress_state=progress.state,
+        changed_sources=progress.changed_sources,
+        autonomous_state_applied=applied_autonomy,
+    )
+    if caps.acknowledgment_required and not acknowledgment.required:
+        acknowledgment = acknowledgment.model_copy(update={"required": True})
+    cadence = _cadence_state(
+        config,
+        checked_at=checked_at,
+        previous_state=previous_state,
+        autonomous_state_applied=applied_autonomy,
+    )
     status, reason = _classify_status(
         config,
         checked_at=checked_at,
@@ -333,7 +420,14 @@ def run_sentinel_diagnostic(
         progress_state=progress.state,
         latest_progress_at=progress.latest_progress_at,
         autonomous_state_applied=applied_autonomy,
-        monitoring=monitoring,
+        monitoring=monitoring.model_copy(
+            update={
+                "acknowledgment_required": acknowledgment.required,
+                "hard_cap_triggered": caps.hard_cap_triggered,
+            }
+        )
+        if monitoring is not None
+        else None,
     )
     route_target = "none" if monitoring is None else monitoring.route_target
     queued_recovery_request_id = "" if monitoring is None else monitoring.queued_recovery_request_id
@@ -353,8 +447,12 @@ def run_sentinel_diagnostic(
         monitoring_active=monitoring is not None and monitoring.active,
         acknowledgment_required=acknowledgment.required,
         current_interval_seconds=cadence.current_interval_seconds,
+        recovery_cycles_queued=caps.recovery_cycles_queued,
+        soft_cap_active=caps.soft_cap_active,
+        hard_cap_triggered=caps.hard_cap_triggered,
         soft_cap_count=caps.soft_cap_count,
         hard_cap_count=caps.hard_cap_count,
+        last_notification_status=caps.last_notification_status,
         queued_recovery_request_id=queued_recovery_request_id,
         last_incident_id=last_incident_id,
         last_incident_path=last_incident_path,
@@ -365,7 +463,15 @@ def run_sentinel_diagnostic(
         lifecycle_status=(
             "disabled"
             if status == "disabled"
-            else ("monitoring" if monitoring is not None and monitoring.active else "idle")
+            else (
+                "escalated"
+                if caps.hard_cap_triggered
+                else (
+                    "suppressed"
+                    if caps.soft_cap_active
+                    else ("monitoring" if monitoring is not None and monitoring.active else "idle")
+                )
+            )
         ),
         reason=reason,
         last_healthy_at=(
@@ -405,19 +511,24 @@ def run_sentinel_diagnostic(
         status=status,
         reason=reason,
         route_target=route_target,
-        auto_queue_allowed=not (monitoring is not None and monitoring.suppression_active),
+        auto_queue_allowed=not (
+            (monitoring is not None and monitoring.suppression_active)
+            or acknowledgment.required
+            or caps.soft_cap_active
+            or caps.hard_cap_triggered
+        ),
         status_snapshot_hash=evidence.progress_signature,
         report_path=_relative_path(paths.sentinel_latest_report_file, root=paths.root),
         summary=summary,
     )
-    paths.sentinel_runtime_dir.mkdir(parents=True, exist_ok=True)
-    paths.sentinel_check_records_dir.mkdir(parents=True, exist_ok=True)
-    paths.sentinel_reports_dir.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(paths.sentinel_state_file, state.model_dump_json(indent=2) + "\n")
-    write_text_atomic(paths.sentinel_summary_file, summary.model_dump_json(indent=2) + "\n")
-    write_text_atomic(paths.sentinel_latest_report_file, report.model_dump_json(indent=2) + "\n")
-    write_text_atomic(check_path, check.model_dump_json(indent=2) + "\n")
+    persist_sentinel_artifacts(
+        paths,
+        state=state,
+        summary=summary,
+        report=report,
+        check=check,
+    )
     return state, report, check
 
 
-__all__ = ["run_sentinel_diagnostic"]
+__all__ = ["persist_sentinel_artifacts", "run_sentinel_diagnostic"]

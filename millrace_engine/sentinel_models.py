@@ -77,17 +77,41 @@ class SentinelCadenceState(ContractModel):
 class SentinelCapState(ContractModel):
     soft_cap_threshold: int = Field(default=2, ge=1)
     hard_cap_threshold: int = Field(default=3, ge=1)
+    recovery_cycles_queued: int = Field(default=0, ge=0)
     soft_cap_count: int = Field(default=0, ge=0)
     hard_cap_count: int = Field(default=0, ge=0)
+    soft_cap_active: bool = False
+    hard_cap_triggered: bool = False
     acknowledgment_required: bool = False
     halt_on_hard_cap: bool = False
+    last_counted_recovery_request_id: str = ""
     last_soft_cap_at: datetime | None = None
     last_hard_cap_at: datetime | None = None
+    last_notification_attempt_at: datetime | None = None
+    last_notification_status: str = ""
+    last_halt_action_at: datetime | None = None
+    last_halt_action_status: str = ""
 
-    @field_validator("last_soft_cap_at", "last_hard_cap_at", mode="before")
+    @field_validator(
+        "last_soft_cap_at",
+        "last_hard_cap_at",
+        "last_notification_attempt_at",
+        "last_halt_action_at",
+        mode="before",
+    )
     @classmethod
     def normalize_datetime_fields(cls, value: datetime | str | None) -> datetime | None:
         return _normalize_datetime_or_none(value)
+
+    @field_validator(
+        "last_counted_recovery_request_id",
+        "last_notification_status",
+        "last_halt_action_status",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
+        return _normalize_optional_text(value)
 
     @field_validator("hard_cap_threshold")
     @classmethod
@@ -125,6 +149,8 @@ class SentinelMonitoringState(ContractModel):
     last_observed_progress_at: datetime | None = None
     last_observed_status_snapshot_hash: str = ""
     resolution: SentinelMonitorResolution = "none"
+    acknowledgment_required: bool = False
+    hard_cap_triggered: bool = False
     suppression_active: bool = False
     suppression_reason: str = ""
     resolution_changed_at: datetime | None = None
@@ -157,8 +183,12 @@ class SentinelSummary(ContractModel):
     monitoring_active: bool = False
     acknowledgment_required: bool = False
     current_interval_seconds: int = Field(default=0, ge=0)
+    recovery_cycles_queued: int = Field(default=0, ge=0)
+    soft_cap_active: bool = False
+    hard_cap_triggered: bool = False
     soft_cap_count: int = Field(default=0, ge=0)
     hard_cap_count: int = Field(default=0, ge=0)
+    last_notification_status: str = ""
     queued_recovery_request_id: str = ""
     last_incident_id: str = ""
     last_incident_path: str = ""
@@ -173,7 +203,13 @@ class SentinelSummary(ContractModel):
     def normalize_datetime_fields(cls, value: datetime | str | None) -> datetime | None:
         return _normalize_datetime_or_none(value)
 
-    @field_validator("queued_recovery_request_id", "last_incident_id", "last_incident_path", mode="before")
+    @field_validator(
+        "last_notification_status",
+        "queued_recovery_request_id",
+        "last_incident_id",
+        "last_incident_path",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_text_fields(cls, value: str | Path | None) -> str:
         return _normalize_optional_text(value)

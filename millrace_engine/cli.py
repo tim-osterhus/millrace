@@ -543,6 +543,24 @@ def sentinel_watch_command(
     )
 
 
+@sentinel_app.command("acknowledge")
+def sentinel_acknowledge_command(
+    ctx: typer.Context,
+    issuer: Annotated[str, typer.Option("--issuer", help="Issuer identity to record.")],
+    reason: Annotated[str, typer.Option("--reason", help="Why the Sentinel state is being acknowledged.")],
+    json_mode: Annotated[bool, typer.Option("--json", help="Render JSON output.")] = False,
+) -> None:
+    """Explicitly acknowledge the current Sentinel soft-cap or escalation state."""
+
+    render_operation(
+        _run_expected(
+            lambda: _control(ctx).sentinel_acknowledge(issuer=issuer, reason=reason),
+            json_mode=json_mode,
+        ),
+        json_mode=json_mode,
+    )
+
+
 @sentinel_app.command("incident")
 def sentinel_incident_command(
     ctx: typer.Context,

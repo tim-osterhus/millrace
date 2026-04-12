@@ -26,8 +26,12 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
         monitoring_active=True,
         acknowledgment_required=True,
         current_interval_seconds=300,
+        recovery_cycles_queued=2,
+        soft_cap_active=True,
+        hard_cap_triggered=False,
         soft_cap_count=1,
         hard_cap_count=0,
+        last_notification_status="local-record-only-notification-attempt-recorded",
         queued_recovery_request_id="sentinel-req-001",
         last_incident_id="INC-001",
         last_incident_path="agents/ideas/incidents/incoming/incident.md",
@@ -44,11 +48,18 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
     caps = SentinelCapState(
         soft_cap_threshold=2,
         hard_cap_threshold=3,
+        recovery_cycles_queued=2,
         soft_cap_count=1,
         hard_cap_count=0,
+        soft_cap_active=True,
+        hard_cap_triggered=False,
         acknowledgment_required=True,
         halt_on_hard_cap=False,
+        last_counted_recovery_request_id="sentinel-req-001",
         last_soft_cap_at="2026-04-11T10:00:00Z",
+        last_notification_attempt_at="2026-04-11T10:00:00Z",
+        last_notification_status="local-record-only-notification-attempt-recorded",
+        last_halt_action_status="engine is not running",
     )
     monitoring = SentinelMonitoringState(
         active=True,
@@ -60,6 +71,8 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
         last_observed_progress_at="2026-04-11T09:50:00Z",
         last_observed_status_snapshot_hash="abc123",
         resolution="pending",
+        acknowledgment_required=True,
+        hard_cap_triggered=False,
         suppression_active=True,
         suppression_reason="repeat-route-suppressed-for-unresolved-monitoring-cycle",
         resolution_changed_at="2026-04-11T10:00:00Z",
@@ -114,6 +127,7 @@ def test_sentinel_models_round_trip_with_deterministic_json() -> None:
     assert SentinelReport.model_validate_json(report_json) == report
     assert json.loads(check_json)["report_path"] == "agents/reports/sentinel/latest.json"
     assert json.loads(report_json)["state_path"] == "agents/.runtime/sentinel/state.json"
+    assert json.loads(state_json)["caps"]["soft_cap_active"] is True
     assert json.loads(state_json)["monitoring"]["incident_path"] == "agents/ideas/incidents/incoming/incident.md"
     assert json.loads(state_json)["monitoring"]["suppression_active"] is True
 

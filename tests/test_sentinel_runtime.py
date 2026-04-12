@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -384,6 +385,169 @@ def test_run_sentinel_diagnostic_rebases_monitoring_to_newer_linked_recovery_cyc
     assert rebased_report.monitoring.route_target == "mechanic"
     assert rebased_check.route_target == "mechanic"
     assert rebased_check.auto_queue_allowed is False
+
+
+def test_run_sentinel_cap_soft_cap_requires_acknowledge_and_acknowledge_rearms_state(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    loaded = load_engine_config(config_path)
+    paths = build_runtime_paths(loaded.config)
+    control = EngineControl(config_path)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+
+    control.sentinel_check(now=t0)
+    for offset_seconds, request_id in ((10, "recovery-1"), (40, "recovery-2"), (70, "recovery-3")):
+        request = RecoveryRequestRecord(
+            request_id=request_id,
+            requested_at=t0 + timedelta(seconds=offset_seconds),
+            target=RecoveryRequestTarget.TROUBLESHOOT,
+            issuer="sentinel.test",
+            reason="execution stalled",
+            force_queue=True,
+            source="manual",
+            mode="direct",
+        )
+        write_recovery_request_record(paths, request)
+        control.sentinel_incident(
+            failure_signature=f"sentinel:{request_id}",
+            summary="Sentinel detected repeated unresolved execution stalls.",
+            severity="S2",
+            routing_target="troubleshoot",
+            recovery_request_id=request.request_id,
+            issuer="sentinel.test",
+        )
+        surface = control.sentinel_check(now=t0 + timedelta(seconds=offset_seconds + 10))
+        state, latest_report, check = surface.state, surface.report, surface.check
+
+    assert latest_report.status == "suppressed"
+    assert latest_report.reason == "soft-cap-reached-acknowledgment-required-before-rearming-auto-queue"
+    assert state.caps.recovery_cycles_queued == 2
+    assert state.caps.soft_cap_active is True
+    assert state.caps.hard_cap_triggered is False
+    assert state.acknowledgment.required is True
+    assert state.lifecycle_status == "suppressed"
+    assert check.auto_queue_allowed is False
+
+    ack_result = control.sentinel_acknowledge(issuer="ops.sentinel", reason="reviewed repeated recovery loop")
+    acknowledged_state = SentinelState.model_validate_json(paths.sentinel_state_file.read_text(encoding="utf-8"))
+    acknowledged_report = SentinelReport.model_validate_json(
+        paths.sentinel_latest_report_file.read_text(encoding="utf-8")
+    )
+    event_types = [
+        json.loads(line)["type"]
+        for line in paths.engine_events_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert ack_result.applied is True
+    assert acknowledged_state.acknowledgment.required is False
+    assert acknowledged_state.acknowledgment.last_acknowledged_by == "ops.sentinel"
+    assert acknowledged_state.caps.recovery_cycles_queued == 0
+    assert acknowledged_state.caps.soft_cap_active is False
+    assert acknowledged_state.caps.hard_cap_triggered is False
+    assert acknowledged_report.summary.acknowledgment_required is False
+    assert "control.sentinel.soft_cap_triggered" in event_types
+    assert "control.sentinel.acknowledged" in event_types
+
+
+def test_run_sentinel_cap_hard_cap_records_notification_and_halt_guardrail(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    control.config_set("sentinel.caps.halt_on_hard_cap", "true")
+    paths = build_runtime_paths(load_engine_config(config_path).config)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+
+    control.sentinel_check(now=t0)
+    for index in range(4):
+        requested_at = t0 + timedelta(seconds=10 + (index * 30))
+        request = RecoveryRequestRecord(
+            request_id=f"recovery-{index + 1}",
+            requested_at=requested_at,
+            target=RecoveryRequestTarget.TROUBLESHOOT,
+            issuer="sentinel.test",
+            reason="execution stalled",
+            force_queue=True,
+            source="manual",
+            mode="direct",
+        )
+        write_recovery_request_record(paths, request)
+        control.sentinel_incident(
+            failure_signature=f"sentinel:hard-cap-{index + 1}",
+            summary="Sentinel detected repeated unresolved execution stalls.",
+            severity="S2",
+            routing_target="troubleshoot",
+            recovery_request_id=request.request_id,
+            issuer="sentinel.test",
+        )
+        surface = control.sentinel_check(now=requested_at + timedelta(seconds=10))
+
+    event_types = [
+        json.loads(line)["type"]
+        for line in paths.engine_events_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert surface.report.status == "escalated"
+    assert surface.state.caps.recovery_cycles_queued == 3
+    assert surface.state.caps.hard_cap_triggered is True
+    assert surface.state.caps.last_notification_status == "local-record-only-notification-attempt-recorded"
+    assert surface.state.caps.last_halt_action_status == "engine is not running"
+    assert surface.state.lifecycle_status == "escalated"
+    assert surface.check.auto_queue_allowed is False
+    assert "control.sentinel.hard_cap_triggered" in event_types
+    assert "control.sentinel.notification_attempt_recorded" in event_types
+
+
+def test_run_sentinel_acknowledge_rejects_non_cap_degraded_state(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    loaded = load_engine_config(config_path)
+    paths = build_runtime_paths(loaded.config)
+    control = EngineControl(config_path)
+    report = supervisor_report(control)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+
+    run_sentinel_diagnostic(
+        config=loaded.config,
+        paths=paths,
+        supervisor_report=report,
+        now=t0,
+    )
+    state, latest_report, _check = run_sentinel_diagnostic(
+        config=loaded.config,
+        paths=paths,
+        supervisor_report=report,
+        now=t0 + timedelta(seconds=loaded.config.sentinel.progress_thresholds.no_progress_seconds + 1),
+    )
+
+    assert latest_report.status == "degraded"
+    assert state.acknowledgment.required is False
+    assert state.caps.soft_cap_active is False
+    assert state.caps.hard_cap_triggered is False
+
+    try:
+        control.sentinel_acknowledge(issuer="ops.sentinel", reason="manual ack")
+    except Exception as exc:  # noqa: BLE001
+        assert str(exc) == "sentinel acknowledgment requires a pending cap or escalation acknowledgment state"
+    else:
+        raise AssertionError("expected sentinel_acknowledge to reject non-cap degraded state")
+
+    persisted_state = SentinelState.model_validate_json(paths.sentinel_state_file.read_text(encoding="utf-8"))
+    persisted_report = SentinelReport.model_validate_json(paths.sentinel_latest_report_file.read_text(encoding="utf-8"))
+    event_types = [
+        json.loads(line)["type"]
+        for line in paths.engine_events_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert persisted_state.reason == latest_report.reason
+    assert persisted_report.status == "degraded"
+    assert persisted_report.reason == latest_report.reason
+    assert "control.sentinel.acknowledged" not in event_types
 
 
 def test_sentinel_watch_runs_repeated_checks_and_persists_check_count(

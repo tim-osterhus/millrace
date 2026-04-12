@@ -303,6 +303,9 @@ from .control_queue_config_surface import (
     queue_inspect as queue_inspect_surface,
 )
 from .control_sentinel_surface import (
+    sentinel_acknowledge as sentinel_acknowledge_surface,
+)
+from .control_sentinel_surface import (
     sentinel_check as sentinel_check_surface,
 )
 from .control_sentinel_surface import (
@@ -642,6 +645,7 @@ class EngineControl:
     research_report = research_report_surface
     research_history = research_history_surface
     sentinel_check = sentinel_check_surface
+    sentinel_acknowledge = sentinel_acknowledge_surface
     sentinel_incident = sentinel_incident_surface
     sentinel_status = sentinel_status_surface
     sentinel_watch = sentinel_watch_surface

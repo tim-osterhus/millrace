@@ -19,6 +19,7 @@ import millrace_engine.sentinel_watch as sentinel_watch_module
 from millrace_engine.cli import app
 from millrace_engine.config import build_runtime_paths, load_engine_config
 from millrace_engine.control import EngineControl
+from millrace_engine.control_actions import write_recovery_request_record
 from millrace_engine.control_common import ControlError
 from millrace_engine.contracts import (
     AuditGateDecision,
@@ -53,7 +54,13 @@ from millrace_engine.contracts import (
 )
 from millrace_engine.events import EventRecord, EventSource, EventType
 from millrace_engine.engine import MillraceEngine
-from millrace_engine.control_models import ActiveTaskRemediationRequest, DeferredActiveTaskClear, RuntimeState
+from millrace_engine.control_models import (
+    ActiveTaskRemediationRequest,
+    DeferredActiveTaskClear,
+    RecoveryRequestRecord,
+    RecoveryRequestTarget,
+    RuntimeState,
+)
 from millrace_engine.markdown import parse_task_cards
 from millrace_engine.planes.research import ResearchPlane
 from millrace_engine.policies.outage import OutageProbeResult, StaticOutageProbe
@@ -295,6 +302,129 @@ def test_cli_sentinel_watch_stops_after_disabled_pass_even_with_prior_enabled_ca
     assert payload["state"]["cadence"]["current_interval_seconds"] == 0
     assert payload["state"]["cadence"]["last_check_at"] is None
     assert payload["state"]["cadence"]["next_check_at"] is None
+
+
+def test_cli_sentinel_acknowledge_clears_soft_cap_requirement(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    runtime_paths = build_runtime_paths(load_engine_config(config_path).config)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+    control.sentinel_check(now=t0)
+    for offset_seconds, request_id in ((10, "recovery-1"), (40, "recovery-2"), (70, "recovery-3")):
+        recovery = RecoveryRequestRecord(
+            request_id=request_id,
+            requested_at=t0 + timedelta(seconds=offset_seconds),
+            target=RecoveryRequestTarget.TROUBLESHOOT,
+            issuer="sentinel.test",
+            reason="execution stalled",
+            force_queue=True,
+            source="manual",
+            mode="direct",
+        )
+        write_recovery_request_record(runtime_paths, recovery)
+        control.sentinel_incident(
+            failure_signature=f"sentinel:{request_id}",
+            summary="Sentinel detected repeated unresolved execution stalls.",
+            severity="S2",
+            routing_target="troubleshoot",
+            recovery_request_id=request_id,
+            issuer="sentinel.test",
+        )
+        control.sentinel_check(now=t0 + timedelta(seconds=offset_seconds + 10))
+
+    payload = invoke_cli_report_json(
+        config_path,
+        "sentinel",
+        "acknowledge",
+        "--issuer",
+        "ops.sentinel",
+        "--reason",
+        "reviewed repeated recovery loop",
+    )
+    status_payload = invoke_cli_report_json(config_path, "sentinel", "status")
+
+    assert payload["applied"] is True
+    assert payload["message"] == "sentinel acknowledged"
+    assert payload["payload"]["issuer"] == "ops.sentinel"
+    assert status_payload["state"]["acknowledgment"]["required"] is False
+    assert status_payload["state"]["caps"]["soft_cap_active"] is False
+    assert status_payload["state"]["caps"]["recovery_cycles_queued"] == 0
+
+
+def test_cli_sentinel_check_records_hard_cap_evidence_with_halt_guardrail(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    control.config_set("sentinel.caps.halt_on_hard_cap", "true")
+    runtime_paths = build_runtime_paths(load_engine_config(config_path).config)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+    control.sentinel_check(now=t0)
+    for index in range(4):
+        requested_at = t0 + timedelta(seconds=10 + (index * 30))
+        recovery = RecoveryRequestRecord(
+            request_id=f"recovery-{index + 1}",
+            requested_at=requested_at,
+            target=RecoveryRequestTarget.TROUBLESHOOT,
+            issuer="sentinel.test",
+            reason="execution stalled",
+            force_queue=True,
+            source="manual",
+            mode="direct",
+        )
+        write_recovery_request_record(runtime_paths, recovery)
+        control.sentinel_incident(
+            failure_signature=f"sentinel:hard-cap-{index + 1}",
+            summary="Sentinel detected repeated unresolved execution stalls.",
+            severity="S2",
+            routing_target="troubleshoot",
+            recovery_request_id=recovery.request_id,
+            issuer="sentinel.test",
+        )
+        payload = invoke_cli_report_json(config_path, "sentinel", "check")
+
+    assert payload["report"]["status"] == "escalated"
+    assert payload["state"]["caps"]["hard_cap_triggered"] is True
+    assert payload["state"]["caps"]["last_notification_status"] == "local-record-only-notification-attempt-recorded"
+    assert payload["state"]["caps"]["last_halt_action_status"] == "engine is not running"
+
+
+def test_cli_sentinel_acknowledge_rejects_non_cap_degraded_state(
+    tmp_path: Path,
+) -> None:
+    _, config_path = runtime_workspace(tmp_path)
+    control = EngineControl(config_path)
+    loaded = load_engine_config(config_path)
+    t0 = datetime(2026, 4, 11, 20, 0, tzinfo=timezone.utc)
+    control.sentinel_check(now=t0)
+    degraded_payload = control.sentinel_check(
+        now=t0 + timedelta(seconds=loaded.config.sentinel.progress_thresholds.no_progress_seconds + 1)
+    ).model_dump(mode="json")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "--config",
+            str(config_path),
+            "sentinel",
+            "acknowledge",
+            "--issuer",
+            "ops.sentinel",
+            "--reason",
+            "manual ack",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output) == {
+        "error": "sentinel acknowledgment requires a pending cap or escalation acknowledgment state"
+    }
+    status_payload = invoke_cli_report_json(config_path, "sentinel", "status")
+    assert status_payload["report"]["status"] == degraded_payload["report"]["status"]
+    assert status_payload["report"]["reason"] == degraded_payload["report"]["reason"]
 
 
 def test_cli_sentinel_incident_generates_parseable_direct_artifacts_and_links_report_state(tmp_path: Path) -> None:
