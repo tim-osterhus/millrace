@@ -28,6 +28,7 @@ REQUIRED_BUNDLE_PATHS = (
     "README.md",
     "docs/RUNTIME_DEEP_DIVE.md",
     "docs/runtime/README.md",
+    "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
     "ADVISOR.md",
     "SENTINEL.md",
     "SUPERVISOR.md",
@@ -92,6 +93,7 @@ RUNTIME_DOC_PATHS = (
     "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md",
     "docs/runtime/README.md",
+    "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
     "docs/TUI_DOCUMENTATION.md",
 )
 STALE_RUN06_DOC_MARKERS = (
@@ -245,7 +247,7 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
     "docs/runtime/README.md": (
         "Runtime Deep Docs Information Architecture",
         "## Boundary Catalog",
-        "loop-lifecycle-and-supervisor-authority.md",
+        "runtime-loop-lifecycle-and-supervisor-authority.md",
         "runner-model-selection-and-permission-profiles.md",
         "portal-migration-map.md",
         "## Mandatory Deep-Doc Template",
@@ -257,6 +259,20 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "## Portal Compatibility Contract",
         "`docs/RUNTIME_DEEP_DIVE.md` stays in place as the stable public and packaged entrypoint.",
         "Update manifest or parity proof surfaces whenever a new packaged runtime doc path is introduced.",
+    ),
+    "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md": (
+        "Runtime Loop Lifecycle And Supervisor Authority",
+        "This document owns the runtime boundary that decides who is allowed to start, keep, pause, resume, and stop the Millrace engine for one workspace.",
+        "## 2. Source-Of-Truth Surfaces",
+        "`millrace_engine/engine.py`",
+        "`millrace_engine/engine_runtime_loop.py`",
+        "`millrace_engine/engine_runtime.py`",
+        "Millrace is intentionally one-runtime-per-workspace.",
+        "`once` and `daemon` modes",
+        "A snapshot that says `process_running=True` but has no PID is considered degraded.",
+        "The critical operator implication is that “execution `IDLE`” is not the same thing as “the engine is stopped.”",
+        "tests/test_engine_runtime_loop.py",
+        "tests/test_engine_mailbox_processor.py",
     ),
 }
 

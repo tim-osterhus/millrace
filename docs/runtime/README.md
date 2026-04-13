@@ -13,7 +13,7 @@ Every runtime deep doc in this tree must map to one primary runtime contract bou
 | Deep doc | Boundary owner | Primary truth surfaces | Notes |
 | --- | --- | --- | --- |
 | `README.md` | Runtime docs IA and writing contract | this file, `docs/RUNTIME_DEEP_DIVE.md`, `tests/test_package_parity.py`, `tests/test_baseline_assets.py` | Batch 37 Run 01 |
-| `loop-lifecycle-and-supervisor-authority.md` | runtime lifecycle and external authority boundary | `millrace_engine/engine.py`, `millrace_engine/engine_runtime.py`, `millrace_engine/engine_runtime_loop.py`, `millrace_engine/control.py` | Batch 37 Run 02 |
+| `runtime-loop-lifecycle-and-supervisor-authority.md` | runtime lifecycle and external authority boundary | `millrace_engine/engine.py`, `millrace_engine/engine_runtime.py`, `millrace_engine/engine_runtime_loop.py`, `millrace_engine/control.py` | Batch 37 Run 02 |
 | `control-plane-and-mailbox-semantics.md` | command/control mutation boundary | `millrace_engine/cli.py`, `millrace_engine/control.py`, `millrace_engine/engine_mailbox_processor.py`, `millrace_engine/engine_mailbox_command_handlers.py`, `millrace_engine/adapters/control_mailbox.py` | Batch 37 Run 03 |
 | `state-status-and-recovery.md` | persisted runtime state and recovery boundary | `millrace_engine/status.py`, `millrace_engine/paths.py`, `millrace_engine/provenance.py`, `millrace_engine/diagnostics.py`, research/execution state helpers | Batch 37 Run 04 |
 | `stage-pipeline-and-handoffs.md` | stage execution and inter-plane handoff boundary | `millrace_engine/planes/execution.py`, `millrace_engine/planes/execution_flows/`, `millrace_engine/stages/`, handoff helpers under `millrace_engine/research/` | Batch 37 Run 05 |
@@ -89,6 +89,10 @@ The section titles may be expanded for clarity, but every deep doc must cover al
 - New deep docs belong under `docs/runtime/` and the identical packaged mirror under `millrace_engine/assets/docs/runtime/`.
 - The portal should link into this tree by boundary. The boundary docs should link back to the portal when a reader needs top-level orientation.
 - If a new topic only needs one paragraph of portal guidance and no boundary contract, keep it in the portal instead of creating a shallow deep doc.
+
+Current linked boundary docs:
+
+- `runtime-loop-lifecycle-and-supervisor-authority.md`
 
 ## Contribution Rules
 

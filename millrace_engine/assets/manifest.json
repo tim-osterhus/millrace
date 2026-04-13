@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "210077a143e6e9a3fc416f9e0c377ad1cf7e559d6120662cdbd7e981606a62b6",
-      "size": 57231,
-      "size_bytes": 57231,
+      "sha256": "fa6793e1374b29db184ee6233a37317fe6d468d8b97f2b8e2a860d04f2d0db65",
+      "size": 57545,
+      "size_bytes": 57545,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,18 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "9ca087c55e0368097919e86d6be7bcf89e0d9aec965f7e96335b326f6d5d8789",
-      "size": 8146,
-      "size_bytes": 8146,
+      "sha256": "e605f71982d3c8c9dbe55baa15d545f41495270c2eacf55795ea3002b9ff7cd8",
+      "size": 8241,
+      "size_bytes": 8241,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
+      "sha256": "799989c80e2aa4f89fc29305c054d2e6cd2def252c11d42b93f7a9392e664f59",
+      "size": 11933,
+      "size_bytes": 11933,
       "source": "runtime"
     },
     {

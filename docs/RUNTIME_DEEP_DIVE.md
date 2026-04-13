@@ -14,6 +14,8 @@ It is intentionally implementation-oriented. It describes:
 
 For the operator-facing workflow, see `../OPERATOR_GUIDE.md`. For the packaged CLI-agent prompt surface, see `../ADVISOR.md`.
 
+This file remains the stable runtime deep-dive portal path. The modular boundary docs now live under `docs/runtime/`; start with `docs/runtime/README.md` for the catalog and `docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md` for lifecycle ownership, once/daemon sequencing, and liveness authority.
+
 ## 1. What This Runtime Is
 
 The v1 runtime is a file-backed local control plane for Millrace.
