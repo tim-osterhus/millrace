@@ -98,7 +98,7 @@ millrace health --json
 millrace doctor
 ```
 
-If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.10.0`.
+If you need the exact public release instead of the latest compatible publish, install `millrace-ai==0.10.1`.
 
 The initialized workspace ships with real default model ids for the Codex runner, including `gpt-5.3-codex` and `gpt-5.2`. Those defaults are not placeholders, but they still rely on the local runner environment being usable.
 
