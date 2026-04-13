@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "e8da5eee1c3f7b2cc21fba752fb05b84df5b70a2bce602397078926941950e39",
-      "size": 58065,
-      "size_bytes": 58065,
+      "sha256": "f4b2dd25884bf0d8b0100b6a6890676d07de3536afd4d375fa472b90ce1b099d",
+      "size": 58294,
+      "size_bytes": 58294,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "ace3f219924d6da94fd09836a240a3c398dc1f65223b2682cc9586bd3b572802",
-      "size": 8581,
-      "size_bytes": 8581,
+      "sha256": "a91caf47409e2d15d9b092dd0f959342dafca1421e970145e6203145cad0298e",
+      "size": 8749,
+      "size_bytes": 8749,
       "source": "runtime"
     },
     {
@@ -1595,6 +1595,15 @@
       "sha256": "02998daca5caf5702caece9828d81034ccc27f77a1de7ee489f162f6722d361a",
       "size": 10913,
       "size_bytes": 10913,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/runner-adapters-model-selection-and-permission-profile-semantics.md",
+      "sha256": "e928e8dc759c7eb08df9eac3aed9f1a9145dd10898260944aadf0b07d402b0e8",
+      "size": 13283,
+      "size_bytes": 13283,
       "source": "runtime"
     },
     {
