@@ -31,6 +31,10 @@ Read next:
 - `OPERATOR_GUIDE.md` for the human operator workflow
 - `ADVISOR.md` for the agent-facing operator prompt
 - `docs/RUNTIME_DEEP_DIVE.md` for architecture and failure-model detail
+- `docs/runtime/README.md` for the runtime boundary catalog
+- `docs/runtime/recovery-failure-modes-timeouts-and-unwedge-playbook.md` for the supported timeout and unwedge playbook
+
+`docs/RUNTIME_DEEP_DIVE.md` is intentionally a stable portal now, not a second monolith. Use `docs/runtime/README.md` when you need the full deep-doc map, `docs/runtime/control-plane-command-surface-and-mailbox-semantics.md` for mailbox-safe daemon mutation rules, and `docs/runtime/recovery-failure-modes-timeouts-and-unwedge-playbook.md` when the question is "what is the supported recovery step?"
 
 Millrace ships real default model ids in its packaged config and model profiles. A fresh workspace starts from Codex/OpenAI defaults such as `gpt-5.3-codex` and `gpt-5.2`; they are not placeholder values. Execution still depends on local runner readiness, so treat `doctor` as the final check for `codex` availability and auth before `start --once`.
 

@@ -302,6 +302,9 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "GoalSpec-owned `goal_gap_remediation` family" in readme
     assert "goal-gap remediation-family staging" in readme
     assert "Execution `IDLE` is the execution plane's neutral state" in readme
+    assert "docs/runtime/README.md" in readme
+    assert "docs/runtime/recovery-failure-modes-timeouts-and-unwedge-playbook.md" in readme
+    assert "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md" in readme
 
     advisor = (MILLRACE_ROOT / "ADVISOR.md").read_text(encoding="utf-8")
     assert "This file is for agents acting as the operator shell" in advisor
@@ -389,24 +392,31 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "sentinel watch --json" in operator_guide
     assert "sentinel` section" in operator_guide
     assert "live.millrace.ai" in operator_guide
+    assert "docs/runtime/README.md" in operator_guide
+    assert "docs/runtime/recovery-failure-modes-timeouts-and-unwedge-playbook.md" in operator_guide
+    assert "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md" in operator_guide
 
     runtime_deep_dive = (MILLRACE_ROOT / "docs" / "RUNTIME_DEEP_DIVE.md").read_text(encoding="utf-8")
-    assert "### 5.7 Governed Compounding Operating Model" in runtime_deep_dive
-    assert "raw -> compiled -> query -> lint" in runtime_deep_dive
-    assert "`procedures/` for reusable procedure artifacts" in runtime_deep_dive
-    assert "`millrace compounding orient` derives `agents/compounding/indexes/governed_store_index.json`" in runtime_deep_dive
-    assert "`compounding.integrity` workspace check" in runtime_deep_dive
-    assert "Derived orientation surface only; governed compounding artifacts remain the source of truth." in runtime_deep_dive
-    assert "### 22.3 External Supervisor Surface" in runtime_deep_dive
-    assert "`attention_reason`, `attention_summary`, and `allowed_actions`" in runtime_deep_dive
-    assert "`sentinel` summary derived from those persisted artifacts" in runtime_deep_dive
-    assert "supervisor cleanup remove|quarantine" in runtime_deep_dive
-    assert "structured runtime policy lives in `millrace_engine/execution_prompt_contracts.py`" in runtime_deep_dive
-    assert "the markdown files remain the instruction layer" in runtime_deep_dive
-    assert "`engine_runtime.py`: shared engine runtime dependency bundle" in runtime_deep_dive
-    assert "`engine_config_coordinator.py`: config reload/apply/rollback coordinator" in runtime_deep_dive
-    assert "`engine_mailbox_processor.py`: daemon mailbox intake, dispatch, and archive coordinator" in runtime_deep_dive
-    assert "overview snapshots of runtime, Sentinel summary, config, queue, and research state" in runtime_deep_dive
+    assert "stable runtime deep-dive portal and compatibility entrypoint" in runtime_deep_dive
+    assert "docs/runtime/README.md" in runtime_deep_dive
+    assert "docs/TUI_DOCUMENTATION.md" in runtime_deep_dive
+    assert "## 1. Boundary Map" in runtime_deep_dive
+    assert "runtime-loop-lifecycle-and-supervisor-authority.md" in runtime_deep_dive
+    assert "control-plane-command-surface-and-mailbox-semantics.md" in runtime_deep_dive
+    assert "runtime-state-status-markers-and-stale-recovery-semantics.md" in runtime_deep_dive
+    assert "stage-execution-pipeline-and-plane-handoff-contracts.md" in runtime_deep_dive
+    assert "runner-adapters-model-selection-and-permission-profile-semantics.md" in runtime_deep_dive
+    assert "configuration-surfaces-apply-boundaries-and-live-reload-semantics.md" in runtime_deep_dive
+    assert "observability-reports-tui-and-audit-truth-surfaces.md" in runtime_deep_dive
+    assert "recovery-failure-modes-timeouts-and-unwedge-playbook.md" in runtime_deep_dive
+    assert "## 3. Cross-Surface Compatibility Contract" in runtime_deep_dive
+    assert "README.md` and `OPERATOR_GUIDE.md` should link here" in runtime_deep_dive
+    assert "tests/test_package_parity.py" in runtime_deep_dive
+    assert "tests/test_baseline_assets.py" in runtime_deep_dive
+    assert "## 4. Docs-Proof Commands" in runtime_deep_dive
+    assert "packaged_docs_and_operator_assets_exist" in runtime_deep_dive
+    assert "packaged_runtime_docs_reflect_current_resolver_behavior" in runtime_deep_dive
+    assert "This file should remain a portal, not a second monolith." in runtime_deep_dive
 
     readme_tui = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
     assert "persisted one-workspace Sentinel summary exported through `supervisor report --json`" in readme_tui
@@ -416,27 +426,6 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "## Sentinel Companion Monitor" in readme
     assert "sentinel acknowledge --issuer <name> --reason \"...\" --json" in readme
     assert "hosted `live.millrace.ai` dashboard" in readme
-    assert "`engine_runtime_loop.py`: daemon-loop, watcher, wakeup, and post-cycle control coordinator" in runtime_deep_dive
-    assert "`execution_flows/`: quickfix, QA, builder-success, and cycle-runner flow-family modules" in runtime_deep_dive
-    assert "`goalspec_stage_support.py` remains as a thin routing/re-export facade" in runtime_deep_dive
-    assert "`tools/repo_guardrails.py`" in runtime_deep_dive
-    assert "same-change ratchets" in runtime_deep_dive
-    assert "### 17.3A GoalSpec Staged Contract" in runtime_deep_dive
-    assert "goal_intake -> objective_profile_sync (begins with inline Contractor classification) -> completion_manifest_draft -> spec_synthesis" in runtime_deep_dive
-    assert "`agents/_completion_manifest_draft.md` is the dedicated completion-manifest draft asset" in runtime_deep_dive
-    assert "`_contractor.md` is not the completion-manifest entrypoint" in runtime_deep_dive
-    assert "`agents/skills/contractor-classification/`" in runtime_deep_dive
-    assert "semantic_profile_seed.yaml" in runtime_deep_dive
-    assert "full bounded initial-family cap" in runtime_deep_dive
-    assert "sibling-specific decomposition profiles" in runtime_deep_dive
-    assert "bounded one-spec agentic review/edit stage" in runtime_deep_dive
-    assert "deterministic structural validator" in runtime_deep_dive
-    assert "Taskmaster emits product-first per-spec shards" in runtime_deep_dive
-    assert "mixed-ready `AUTO` queues follow deterministic family precedence" in runtime_deep_dive
-    assert "bounded local Mechanic repair" in runtime_deep_dive
-    assert "GoalSpec-owned `goal_gap_remediation` family" in runtime_deep_dive
-    assert "goal-gap remediation-family staging" in runtime_deep_dive
-    assert "`thaw()` rehydrates previously frozen cards once visible backlog work reappears" in runtime_deep_dive
 
     tui_doc = (MILLRACE_ROOT / "docs" / "TUI_DOCUMENTATION.md").read_text(encoding="utf-8")
     assert "## External Supervisor Boundary" in tui_doc

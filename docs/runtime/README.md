@@ -21,7 +21,7 @@ Every runtime deep doc in this tree must map to one primary runtime contract bou
 | `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md` | config ownership and apply-boundary governance | `millrace_engine/config.py`, `millrace_engine/config_runtime.py`, `millrace_engine/engine_config_coordinator.py`, `millrace_engine/control_runtime_surface.py`, `tests/test_config.py`, `tests/test_cli.py` | Batch 37 Run 07 |
 | `observability-reports-tui-and-audit-truth-surfaces.md` | operator visibility boundary | `millrace_engine/control_models.py`, `millrace_engine/control_reports.py`, `millrace_engine/control_runtime_surface.py`, `millrace_engine/cli_rendering.py`, `millrace_engine/tui/` | Batch 37 Run 08 |
 | `recovery-failure-modes-timeouts-and-unwedge-playbook.md` | operator recovery boundary | `millrace_engine/engine_runtime_loop.py`, `millrace_engine/engine_outage_recovery.py`, `millrace_engine/control_actions.py`, `millrace_engine/sentinel_runtime.py`, recovery and sentinel tests | Batch 37 Run 09 |
-| `portal-migration-map.md` | portal compatibility and migration boundary | `docs/RUNTIME_DEEP_DIVE.md`, packaged mirror docs, doc-proof tests, operator-facing navigation surfaces | Batch 37 Run 10 |
+| `../RUNTIME_DEEP_DIVE.md` | stable portal compatibility boundary | `README.md`, `OPERATOR_GUIDE.md`, `docs/RUNTIME_DEEP_DIVE.md`, packaged mirror docs, and doc-proof tests | Batch 37 Run 10 |
 
 ## Boundary Rules
 
@@ -85,6 +85,7 @@ The section titles may be expanded for clarity, but every deep doc must cover al
 ## Portal Compatibility Contract
 
 - `docs/RUNTIME_DEEP_DIVE.md` stays in place as the stable public and packaged entrypoint.
+- `docs/runtime/README.md` is the boundary catalog; `../RUNTIME_DEEP_DIVE.md` is the concise stable portal.
 - Do not delete, rename, or hollow out `docs/RUNTIME_DEEP_DIVE.md` without an explicit portal run that updates both the public file and packaged mirror together.
 - New deep docs belong under `docs/runtime/` and the identical packaged mirror under `millrace_engine/assets/docs/runtime/`.
 - The portal should link into this tree by boundary. The boundary docs should link back to the portal when a reader needs top-level orientation.

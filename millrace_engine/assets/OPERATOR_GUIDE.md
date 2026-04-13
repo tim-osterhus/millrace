@@ -7,6 +7,8 @@ Use it with:
 - `README.md` for product overview and quick start
 - `ADVISOR.md` for the agent-facing control surface
 - `docs/RUNTIME_DEEP_DIVE.md` for implementation details
+- `docs/runtime/README.md` for the boundary catalog behind the portal
+- `docs/runtime/recovery-failure-modes-timeouts-and-unwedge-playbook.md` for timeout, degraded-state, and unwedge guidance
 
 ## Canonical Invocation
 
@@ -59,6 +61,15 @@ Use the CLI commands:
 Or launch the TUI directly with:
 
 - `python3 -m millrace_engine.tui`
+
+## Deep Runtime References
+
+Use the runtime deep docs as a map, not as a second operator guide:
+
+- `docs/RUNTIME_DEEP_DIVE.md` is the stable portal path.
+- `docs/runtime/README.md` is the boundary catalog and ownership map.
+- `docs/runtime/control-plane-command-surface-and-mailbox-semantics.md` owns mailbox-safe daemon mutation rules and explains why some controls defer or block.
+- `docs/runtime/recovery-failure-modes-timeouts-and-unwedge-playbook.md` owns `RUNNER_TIMEOUT`, `NET_WAIT`, degraded-state, and Sentinel-cap unwedge guidance.
 
 ## Governed Compounding Operating Model
 
