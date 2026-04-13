@@ -143,7 +143,7 @@ For each proposed skill that does not exist, invoke a sub-agent to create it usi
 - Guardrails that must not be violated
 - At least 2 example scenarios (one success, one failure/edge)
 
-Use the model settings from `agents/options/model_config.md` and default to `BUILDER_RUNNER` / `BUILDER_MODEL` for skill creation.
+Use the configured Builder stage runner/model from `millrace.toml` for skill creation.
 
 Codex (if `BUILDER_RUNNER=codex`):
 `codex exec --model "<BUILDER_MODEL>" --full-auto --search -o <last.md> "Open agents/prompts/skill_issue.md and follow instructions. <skill request...>"`

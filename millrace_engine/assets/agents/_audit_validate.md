@@ -17,11 +17,10 @@ This is a **research-stage** entrypoint:
 
 1) `agents/reports/audit_contract.json`
 2) `agents/audit/completion_manifest.json`
-3) `agents/options/workflow_config.md`
-4) `agents/tasks.md`
-5) `agents/tasksbacklog.md`
-6) `agents/taskspending.md`
-7) `agents/gaps.md` (if present)
+3) `agents/tasks.md`
+4) `agents/tasksbacklog.md`
+5) `agents/taskspending.md`
+6) `agents/gaps.md` (if present)
 
 ## Phase 0 - Setup
 
@@ -53,9 +52,8 @@ Status rules per check:
 - `FAIL`: command exit code non-zero, or required file missing.
 - `BLOCKED`: command could not be executed due environment/tooling constraints.
 
-Comprehensive-mode execution rule:
-- Read `AUDIT_COMPLETENESS_MODE` and `AUDIT_COMPREHENSIVE_MAX_SKIPS` from `agents/options/workflow_config.md`.
-- If mode is `comprehensive`, parse each required command check log for summary skip counts (`skips=`, `skipped:` style output) and record aggregate skip evidence in notes/output artifacts for gatekeeper validation.
+Skip-budget execution rule:
+- Parse each required command check log for summary skip counts (`skips=`, `skipped:` style output) and record aggregate skip evidence in notes/output artifacts for gatekeeper validation.
 
 ## Phase 2 - Write execution artifact JSON (overwrite)
 

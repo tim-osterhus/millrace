@@ -8,7 +8,7 @@ artifacts and explicit `PASS|FAIL|BLOCKED` outcomes.
 ## What this option changes
 
 When enabled, Millrace uses:
-- Workflow flags in `agents/options/workflow_config.md` for UI verification mode.
+- UI verification settings in `millrace.toml` for UI verification mode.
 - A canonical artifact contract under `agents/diagnostics/ui_verify/`.
 - A reusable YAML spec at `agents/ui_verification_spec.yaml`.
 - Deterministic runner scripts:
@@ -17,7 +17,7 @@ When enabled, Millrace uses:
 
 ## Modes
 
-Set in `agents/options/workflow_config.md`:
+Set in `millrace.toml`:
 
 - `UI_VERIFY_MODE=manual`
   - No automated UI verification run is required.
@@ -27,7 +27,7 @@ Set in `agents/options/workflow_config.md`:
 
 ## Required config flags
 
-All flags live in `agents/options/workflow_config.md` as `## KEY=value` lines.
+Keep these settings in the workspace `millrace.toml` runtime config.
 
 - `UI_VERIFY_MODE=manual|deterministic`
 - `UI_VERIFY_EXECUTOR=playwright`
@@ -103,7 +103,7 @@ powershell -File agents/options/ui-verify/run_playwright_ui_verify.ps1 `
 
 ## Files this option may touch
 
-- `agents/options/workflow_config.md` (flags only)
+- `millrace.toml`
 - `agents/_customize.md` (toggle + flag writes)
 - `agents/ui_verification_spec.yaml` (template/spec)
 - `agents/options/ui-verify/run_playwright_ui_verify.sh`
@@ -111,7 +111,7 @@ powershell -File agents/options/ui-verify/run_playwright_ui_verify.ps1 `
 
 ## Verification checklist
 
-- `agents/options/workflow_config.md` contains UI_VERIFY flags as `## KEY=value`.
+- `millrace.toml` contains the UI verification settings for the workspace.
 - Playwright runner scripts emit bundle artifacts in `agents/diagnostics/ui_verify/`.
 - Latest pointers are updated deterministically.
 - UI verification artifacts are archived under `agents/diagnostics/ui_verify/` when complete.

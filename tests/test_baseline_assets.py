@@ -27,6 +27,7 @@ REPO_LOCAL_MARKERS = (
 REQUIRED_BUNDLE_PATHS = (
     "README.md",
     "docs/RUNTIME_DEEP_DIVE.md",
+    "docs/runtime/README.md",
     "ADVISOR.md",
     "SENTINEL.md",
     "SUPERVISOR.md",
@@ -90,6 +91,7 @@ RUNTIME_DOC_PATHS = (
     "SUPERVISOR.md",
     "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md",
+    "docs/runtime/README.md",
     "docs/TUI_DOCUMENTATION.md",
 )
 STALE_RUN06_DOC_MARKERS = (
@@ -240,6 +242,22 @@ REQUIRED_RUNTIME_DOC_MARKERS = {
         "it is not the remote harness interface",
         "not a hosted dashboard or a multi-workspace supervision surface",
     ),
+    "docs/runtime/README.md": (
+        "Runtime Deep Docs Information Architecture",
+        "## Boundary Catalog",
+        "loop-lifecycle-and-supervisor-authority.md",
+        "runner-model-selection-and-permission-profiles.md",
+        "portal-migration-map.md",
+        "## Mandatory Deep-Doc Template",
+        "## 2. Source-Of-Truth Surfaces",
+        "## 3. Lifecycle And State Transitions",
+        "## 4. Failure Modes And Recovery",
+        "## 5. Operator And Control Surfaces",
+        "## 6. Proof Surface",
+        "## Portal Compatibility Contract",
+        "`docs/RUNTIME_DEEP_DIVE.md` stays in place as the stable public and packaged entrypoint.",
+        "Update manifest or parity proof surfaces whenever a new packaged runtime doc path is introduced.",
+    ),
 }
 
 
@@ -271,6 +289,8 @@ def test_packaged_baseline_manifest_entries_resolve_with_helper() -> None:
     assert file_entries
     assert len({entry["path"] for entry in directory_entries}) == len(directory_entries)
     assert len({entry["path"] for entry in file_entries}) == len(file_entries)
+    assert "docs" in {entry["path"] for entry in directory_entries}
+    assert "docs/runtime" in {entry["path"] for entry in directory_entries}
 
     for entry in directory_entries:
         path = PurePosixPath(entry["path"])

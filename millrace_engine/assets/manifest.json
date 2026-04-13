@@ -74,7 +74,27 @@
     {
       "category": "directory",
       "family": "options",
+      "path": "agents/options/integrate"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/permission"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/troubleshoot"
+    },
+    {
+      "category": "directory",
+      "family": "options",
       "path": "agents/options/ui-verify"
+    },
+    {
+      "category": "directory",
+      "family": "options",
+      "path": "agents/options/update"
     },
     {
       "category": "directory",
@@ -255,6 +275,11 @@
       "category": "directory",
       "family": "docs",
       "path": "docs"
+    },
+    {
+      "category": "directory",
+      "family": "docs",
+      "path": "docs/runtime"
     }
   ],
   "files": [
@@ -262,27 +287,27 @@
       "category": "doc",
       "family": "docs",
       "path": "ADVISOR.md",
-      "sha256": "f51f98a991a379562d25ee98bb59edb07bc966997f158b5722594967fbe1ac8a",
-      "size": 10145,
-      "size_bytes": 10145,
+      "sha256": "c028a6c7206dea0a38cf3bd2dcee101bd8bcb7e07e003124ca071a0847e82d62",
+      "size": 9804,
+      "size_bytes": 9804,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "OPERATOR_GUIDE.md",
-      "sha256": "095c3bab6801297ce000eab2271d5aab762eee02c08760ea0ac9d2a0c5761342",
-      "size": 19937,
-      "size_bytes": 21513,
+      "sha256": "8469e388f0e23c2b5deeada2d23f3fd297497ca67b5845365a513b17ce0f658d",
+      "size": 21514,
+      "size_bytes": 21514,
       "source": "runtime"
     },
     {
       "category": "doc",
       "family": "docs",
       "path": "README.md",
-      "sha256": "d28e894d36806952f92403a71f141b81900d0a1719a3d212bebe8150c91914f1",
-      "size": 23394,
-      "size_bytes": 25682,
+      "sha256": "4f1371f2cd837479a20c8d7dc2aeb00eaf8c45bf864efeaabf4db836f9ee3a1b",
+      "size": 25685,
+      "size_bytes": 25685,
       "source": "runtime"
     },
     {
@@ -290,7 +315,7 @@
       "family": "docs",
       "path": "SENTINEL.md",
       "sha256": "82d39bb5adc2c8ef94db58fc737ce25a4292ce3031c343a571d41a789654b1d0",
-      "size": 6964,
+      "size": 9394,
       "size_bytes": 9394,
       "source": "runtime"
     },
@@ -299,7 +324,7 @@
       "family": "docs",
       "path": "SUPERVISOR.md",
       "sha256": "3dc8a51bfe0f6cefaead38bbf5b85067fe6852410eb36079e35e5d972c1ed56d",
-      "size": 5177,
+      "size": 5930,
       "size_bytes": 5930,
       "source": "runtime"
     },
@@ -316,27 +341,27 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_audit_gatekeeper.md",
-      "sha256": "11cfe83f5df26badba717aa9825a8121d7ab9e74500463e816ce3e8c61333aae",
-      "size": 2359,
-      "size_bytes": 2359,
+      "sha256": "6bd9a6a0e583e375a1e5c461a9b37314e3d51008a957cc1f8e978b5c73cae20c",
+      "size": 2249,
+      "size_bytes": 2249,
       "source": "reference"
     },
     {
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_audit_intake.md",
-      "sha256": "52d59642d80519cb030d32a4efda92aaba65e4c7fdae9edc335f4466bbc4d8c5",
-      "size": 6008,
-      "size_bytes": 6008,
+      "sha256": "f7f2e65f676496333d911b15f32b9705d211b9f45e095b2fb6f927c0a6f585f1",
+      "size": 5865,
+      "size_bytes": 5865,
       "source": "reference"
     },
     {
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_audit_validate.md",
-      "sha256": "dccab7495cdbe1f9eb5eb0a3f62e118d6710b630cb536ff784a8532941a5d32f",
-      "size": 3855,
-      "size_bytes": 3855,
+      "sha256": "202188699dafc6fde879072e743661043233aea7c740c6aa09666ad61f1369be",
+      "size": 3670,
+      "size_bytes": 3670,
       "source": "reference"
     },
     {
@@ -470,7 +495,7 @@
       "family": "entrypoints",
       "path": "agents/_mechanic.md",
       "sha256": "2dca31305160afb8acd80b5fdcab6a7c03bc93de4b9eb8c31abf0cfc6af6cb7f",
-      "size": 3106,
+      "size": 3253,
       "size_bytes": 3253,
       "source": "reference"
     },
@@ -478,9 +503,9 @@
       "category": "research_entrypoint",
       "family": "entrypoints",
       "path": "agents/_objective_profile_sync.md",
-      "sha256": "b3e9d7e74e91df005d0269cbea4dc69e1970f0bb36750b1c136d45d14e270ee1",
-      "size": 4398,
-      "size_bytes": 4398,
+      "sha256": "e4a795c1c16d05a77a65a7e274b2bdcda9ee3afb45c17e96794dfd024b27f4e1",
+      "size": 4358,
+      "size_bytes": 4358,
       "source": "reference"
     },
     {
@@ -712,9 +737,9 @@
       "category": "option_doc",
       "family": "options",
       "path": "agents/options/ui-verify/ui_verify_option.md",
-      "sha256": "d3e8fa9541ab8b0eade684b7359d89f807c32d33a507ca14b7c71fc7393c2dd2",
-      "size": 3749,
-      "size_bytes": 3749,
+      "sha256": "c66b9ca4444220916627e1da86ada491c052f48fe6134b6a7b1b91274f9ceb10",
+      "size": 3669,
+      "size_bytes": 3669,
       "source": "reference"
     },
     {
@@ -757,9 +782,9 @@
       "category": "prompt_template",
       "family": "prompts",
       "path": "agents/prompts/decompose.md",
-      "sha256": "0eb05ffd192d31074d4f2e62aefaf5345968d58e1c58cb7c62d098b28dbde7c7",
-      "size": 6689,
-      "size_bytes": 6689,
+      "sha256": "212f73776e63476627878d88b0a42cabddaa9e293c4ef1630877a987e73c9192",
+      "size": 6645,
+      "size_bytes": 6645,
       "source": "reference"
     },
     {
@@ -1307,7 +1332,7 @@
       "family": "skills",
       "path": "agents/skills/millrace-operator-intake-control/EXAMPLES.md",
       "sha256": "26a6a1911c53f4ebdd08302a744e5739574b1f8a3d15af5a05bc598173b9418d",
-      "size": 3739,
+      "size": 3855,
       "size_bytes": 3855,
       "source": "runtime"
     },
@@ -1316,7 +1341,7 @@
       "family": "skills",
       "path": "agents/skills/millrace-operator-intake-control/SKILL.md",
       "sha256": "06b04da94f7a86c8fd0e04b90d0290494e25f6423af40f1804854913a0f84d0c",
-      "size": 7462,
+      "size": 7701,
       "size_bytes": 7701,
       "source": "runtime"
     },
@@ -1414,9 +1439,9 @@
       "category": "spec_governance",
       "family": "specs",
       "path": "agents/specs/governance/README.md",
-      "sha256": "8cdaf977115d31076f2f9884457e48259f55f1e68c9e03d9a5d4f3113f4721f2",
-      "size": 721,
-      "size_bytes": 721,
+      "sha256": "814f0df4440fe3a7a3d8c59ddab37395789f9643a21029ebe9ad7d8d82b00803",
+      "size": 723,
+      "size_bytes": 723,
       "source": "reference"
     },
     {
@@ -1513,9 +1538,9 @@
       "category": "spec_template",
       "family": "specs",
       "path": "agents/specs/templates/phase_spec_template.md",
-      "sha256": "423e118d7c436105db95f86735acf8df30b044764af873bc4fd403b00aa71d56",
-      "size": 2223,
-      "size_bytes": 2223,
+      "sha256": "14f6506b4a68e9b3d72021019330df33886aa26827c27cd20b791ed02d951ee0",
+      "size": 2217,
+      "size_bytes": 2217,
       "source": "reference"
     },
     {
@@ -1541,7 +1566,7 @@
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
       "sha256": "210077a143e6e9a3fc416f9e0c377ad1cf7e559d6120662cdbd7e981606a62b6",
-      "size": 56418,
+      "size": 57231,
       "size_bytes": 57231,
       "source": "runtime"
     },
@@ -1550,8 +1575,17 @@
       "family": "docs",
       "path": "docs/TUI_DOCUMENTATION.md",
       "sha256": "818b4925b9981b1eba450c3a352fbebeef27d3401b302d76db89e3f26c91872d",
-      "size": 24542,
+      "size": 27292,
       "size_bytes": 27292,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/README.md",
+      "sha256": "9ca087c55e0368097919e86d6be7bcf89e0d9aec965f7e96335b326f6d5d8789",
+      "size": 8146,
+      "size_bytes": 8146,
       "source": "runtime"
     },
     {

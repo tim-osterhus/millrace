@@ -30,6 +30,7 @@ PUBLIC_DOC_PARITY_PATHS = {
     "OPERATOR_GUIDE.md": "OPERATOR_GUIDE.md",
     "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
     "docs/TUI_DOCUMENTATION.md": "docs/TUI_DOCUMENTATION.md",
+    "docs/runtime/README.md": "docs/runtime/README.md",
 }
 CONTRACTOR_BUNDLE_PARITY_PATHS = {
     "agents/_contractor.md": "agents/_contractor.md",
@@ -142,6 +143,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     for relative in (
         "README.md",
         "docs/RUNTIME_DEEP_DIVE.md",
+        "docs/runtime/README.md",
         "ADVISOR.md",
         "SENTINEL.md",
         "SUPERVISOR.md",
@@ -158,18 +160,23 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "SUPERVISOR.md",
         "OPERATOR_GUIDE.md",
         "docs/RUNTIME_DEEP_DIVE.md",
+        "docs/runtime/README.md",
         "docs/TUI_DOCUMENTATION.md",
         "millrace.toml",
     ):
         assert (assets_root / relative).exists(), relative
 
     manifest = json.loads((assets_root / "manifest.json").read_text(encoding="utf-8"))
+    manifest_directories = {entry["path"] for entry in manifest["directories"]}
     manifest_paths = {entry["path"] for entry in manifest["files"]}
+    assert "docs" in manifest_directories
+    assert "docs/runtime" in manifest_directories
     assert "README.md" in manifest_paths
     assert "SENTINEL.md" in manifest_paths
     assert "SUPERVISOR.md" in manifest_paths
     assert "OPERATOR_GUIDE.md" in manifest_paths
     assert "docs/RUNTIME_DEEP_DIVE.md" in manifest_paths
+    assert "docs/runtime/README.md" in manifest_paths
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths
     assert OPERATIONS_SKILL_PATH in manifest_paths
     assert "agents/skills/millrace-operator-intake-control/EXAMPLES.md" in manifest_paths

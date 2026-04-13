@@ -18,11 +18,10 @@ This is a **research-stage** entrypoint:
 1) `agents/reports/audit_contract.json`
 2) `agents/reports/audit_execution.json`
 3) `agents/audit/completion_manifest.json`
-4) `agents/options/workflow_config.md`
-5) `agents/tasks.md`
-6) `agents/tasksbacklog.md`
-7) `agents/taskspending.md`
-8) `agents/gaps.md`
+4) `agents/tasks.md`
+5) `agents/tasksbacklog.md`
+6) `agents/taskspending.md`
+7) `agents/gaps.md`
 
 ## Decision rules
 
@@ -34,7 +33,7 @@ Output decision is `PASS` only if all are true:
 4) Every required completion command from manifest is represented in contract and has `PASS` execution status.
 5) `agents/tasks.md`, `agents/tasksbacklog.md`, and `agents/taskspending.md` each contain no real task cards (`## YYYY-MM-DD - ...`).
 6) `agents/gaps.md` has zero actionable open gap rows.
-7) If `AUDIT_COMPLETENESS_MODE=comprehensive`, required completion commands do not use sampled forms (`--fast`, `--sample`, `subset`) and aggregate observed skips are `<= AUDIT_COMPREHENSIVE_MAX_SKIPS`.
+7) Required completion commands do not use sampled forms (`--fast`, `--sample`, `subset`) and aggregate observed skips remain zero.
 
 Otherwise decision is `FAIL`.
 

@@ -49,7 +49,7 @@ Work Plan rules:
 ## Assumptions Ledger
 - Assumption and confidence (`confirmed|inferred|offline-only`)
 - Validation path or explicit accepted risk
-- Keep entries within `PHASE_ASSUMPTIONS_BUDGET` (configured in `agents/options/workflow_config.md`).
+- Keep entries within the active phase assumptions budget configured for the current workspace.
 
 ## Structured Decision Log
 | decision_id | phase_key | phase_priority | status | owner | rationale | timestamp |

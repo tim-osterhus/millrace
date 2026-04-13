@@ -22,13 +22,12 @@ This is a **research-stage** entrypoint:
 4) `agents/objective/contract.schema.json`
 5) `agents/audit/strict_contract.json`
 6) `agents/objective/family_policy.json` (if present; otherwise synthesize it)
-7) `agents/options/workflow_config.md`
-8) `agents/skills/acceptance-profile-contract/SKILL.md`
+7) `agents/skills/acceptance-profile-contract/SKILL.md`
 9) optional project-local semantic seed:
    - `agents/objective/semantic_profile_seed.json`
    - or `agents/objective/semantic_profile_seed.yaml`
    - or `agents/objective/semantic_profile_seed.yml`
-10) optional spec-family runtime state:
+9) optional spec-family runtime state:
    - `agents/.research_runtime/spec_family_state.json`
 
 ## Required outputs

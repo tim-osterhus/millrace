@@ -9,13 +9,13 @@ This prompt assumes you are operating inside an initialized Millrace workspace. 
 Operate from the current workspace root. Prefer the installed CLI as the canonical command surface:
 
 ```bash
-millrace --config millrace.toml ...
+millrace ...
 ```
 
 Module form:
 
 ```bash
-python3 -m millrace_engine --config millrace.toml ...
+python3 -m millrace_engine ...
 ```
 
 Use `OPERATOR_GUIDE.md` when you need the human workflow or troubleshooting sequence. Use `docs/RUNTIME_DEEP_DIVE.md` when you need architecture details.
@@ -24,6 +24,12 @@ Before you seed work, reorder queues, or choose a command family, load the share
 
 - `agents/skills/millrace-operator-intake-control/SKILL.md`
 - load `agents/skills/millrace-operator-intake-control/EXAMPLES.md` only when you need concrete good/bad patterns or failure-mode examples
+
+If you need to manually shape a task before submitting it, use the repo-exact task-card authoring skill as the canonical task-structure contract:
+
+- `agents/skills/task-card-authoring-repo-exact/SKILL.md`
+- load `agents/skills/task-card-authoring-repo-exact/EXAMPLES.md` only when you need concrete task-card examples
+- use it to structure the task title/body/metadata you submit through `millrace add-task ...`; do not treat it as permission to edit `agents/tasks.md` or `agents/tasksbacklog.md` directly during normal operation
 
 If you are acting as an external report-polling harness instead of the local workspace operator shell, stop and use `SUPERVISOR.md` instead of this advisor entrypoint.
 
@@ -55,38 +61,38 @@ millrace init --json /absolute/path/to/workspace
 ### Lifecycle
 
 ```bash
-millrace --config millrace.toml start --once
-millrace --config millrace.toml start --daemon
-millrace --config millrace.toml pause
-millrace --config millrace.toml resume
-millrace --config millrace.toml stop
+millrace start --once
+millrace start --daemon
+millrace pause
+millrace resume
+millrace stop
 ```
 
 ### Inspection
 
 ```bash
-millrace --config millrace.toml health --json
+millrace health --json
 millrace --config millrace.toml supervisor report --json
-millrace --config millrace.toml status --detail --json
-millrace --config millrace.toml queue inspect --json
-millrace --config millrace.toml logs --tail 50 --json
-millrace --config millrace.toml logs --follow
-millrace --config millrace.toml research --json
-millrace --config millrace.toml research history --json
-millrace --config millrace.toml run-provenance <run-id> --json
-millrace --config millrace.toml config show --json
+millrace status --detail --json
+millrace queue inspect --json
+millrace logs --tail 50 --json
+millrace logs --follow
+millrace research --json
+millrace research history --json
+millrace run-provenance <run-id> --json
+millrace config show --json
 ```
 
 ### Work Intake
 
 ```bash
-millrace --config millrace.toml add-task "Example task"
-millrace --config millrace.toml add-task "Example task" --body "# Notes"
-millrace --config millrace.toml add-task "Example task" --spec-id "<spec-id>"
-millrace --config millrace.toml add-idea /absolute/path/to/idea.md
-millrace --config millrace.toml queue reorder <task-id> <task-id> ...
-millrace --config millrace.toml queue cleanup remove <task-id> --reason "Invalid duplicate task"
-millrace --config millrace.toml queue cleanup quarantine <task-id> --reason "Obsolete task after review"
+millrace add-task "Example task"
+millrace add-task "Example task" --body "# Notes"
+millrace add-task "Example task" --spec-id "<spec-id>"
+millrace add-idea /absolute/path/to/idea.md
+millrace queue reorder <task-id> <task-id> ...
+millrace queue cleanup remove <task-id> --reason "Invalid duplicate task"
+millrace queue cleanup quarantine <task-id> --reason "Obsolete task after review"
 ```
 
 ### External Supervisor
@@ -107,18 +113,18 @@ millrace --config millrace.toml supervisor cleanup quarantine <task-id> --issuer
 ### Configuration
 
 ```bash
-millrace --config millrace.toml config show --json
-millrace --config millrace.toml config set <dotted.key> <value> --json
-millrace --config millrace.toml config reload --json
+millrace config show --json
+millrace config set <dotted.key> <value> --json
+millrace config reload --json
 ```
 
 ### Publish
 
 ```bash
-millrace --config millrace.toml publish sync --json
-millrace --config millrace.toml publish preflight --json
-millrace --config millrace.toml publish commit --no-push --json
-millrace --config millrace.toml publish commit --push --json
+millrace publish sync --json
+millrace publish preflight --json
+millrace publish commit --no-push --json
+millrace publish commit --push --json
 ```
 
 ## Runtime Rules
@@ -169,19 +175,19 @@ Do not write `agents/.runtime/commands/incoming/` or other engine-owned runtime 
 
 ### Unknown Runtime State
 
-1. Run `millrace --config millrace.toml health --json`.
-2. Run `millrace --config millrace.toml status --detail --json`.
-3. Run `millrace --config millrace.toml config show --json`.
-4. Run `millrace --config millrace.toml queue inspect --json`.
-5. Run `millrace --config millrace.toml research --json`.
-6. Run `millrace --config millrace.toml logs --tail 100 --json`.
+1. Run `millrace health --json`.
+2. Run `millrace status --detail --json`.
+3. Run `millrace config show --json`.
+4. Run `millrace queue inspect --json`.
+5. Run `millrace research --json`.
+6. Run `millrace logs --tail 100 --json`.
 7. If more evidence is needed, read `agents/.runtime/state.json` and `agents/historylog.md`.
 8. Switch to the TUI only when an interactive local shell will help you monitor or control the same state more efficiently.
 
 ### Queue Or Task Confusion
 
-1. Run `millrace --config millrace.toml queue inspect --json`.
-2. If backlog order is wrong, use `millrace --config millrace.toml queue reorder <task-id> <task-id> ...`.
+1. Run `millrace queue inspect --json`.
+2. If backlog order is wrong, use `millrace queue reorder <task-id> <task-id> ...`.
 3. If a queued task is invalid or obsolete, use `queue cleanup remove` or `queue cleanup quarantine` with an explicit `--reason`.
 4. If an external harness owns the correction, use `supervisor cleanup remove` or `supervisor cleanup quarantine` with `--issuer` instead of local cleanup commands.
 5. If the intake body is contaminated with Millrace internals, rewrite it into outcome-first wording before adding or re-adding work.

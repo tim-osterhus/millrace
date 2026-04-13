@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from millrace_engine.contracts import ControlPlane, RunnerKind, StageContext, StageType
+from millrace_engine.contracts import ControlPlane, HeadlessPermissionProfile, RunnerKind, StageContext, StageType
 from millrace_engine.diagnostics import DiagnosticsClassification, create_diagnostics_bundle
 from millrace_engine.paths import RuntimePaths
 from millrace_engine.policies import (
@@ -296,6 +296,70 @@ def test_codex_runner_default_command_uses_model_and_full_auto(tmp_path: Path) -
     )
 
 
+def test_codex_runner_applies_elevated_permission_profile(tmp_path: Path) -> None:
+    paths = make_runtime_paths(tmp_path)
+    runner = CodexRunner(paths)
+    context = StageContext.model_validate(
+        {
+            "stage": StageType.BUILDER,
+            "runner": RunnerKind.CODEX,
+            "model": "gpt-5.3-codex",
+            "prompt": "Implement the thing",
+            "working_dir": tmp_path,
+            "run_id": "codex_elevated_command",
+            "permission_profile": "elevated",
+        }
+    )
+
+    command = runner.build_command(context, tmp_path / "last.md")
+
+    assert command == (
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--model",
+        "gpt-5.3-codex",
+        "--full-auto",
+        "--sandbox",
+        "danger-full-access",
+        "-o",
+        str(tmp_path / "last.md"),
+        "Implement the thing",
+    )
+
+
+def test_codex_runner_applies_maximum_permission_profile(tmp_path: Path) -> None:
+    paths = make_runtime_paths(tmp_path)
+    runner = CodexRunner(paths)
+    context = StageContext.model_validate(
+        {
+            "stage": StageType.BUILDER,
+            "runner": RunnerKind.CODEX,
+            "model": "gpt-5.3-codex",
+            "prompt": "Implement the thing",
+            "working_dir": tmp_path,
+            "run_id": "codex_maximum_command",
+            "permission_profile": "maximum",
+        }
+    )
+
+    command = runner.build_command(context, tmp_path / "last.md")
+
+    assert command == (
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--model",
+        "gpt-5.3-codex",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-o",
+        str(tmp_path / "last.md"),
+        "Implement the thing",
+    )
+
+
 def test_codex_runner_applies_search_and_reasoning_flags(tmp_path: Path) -> None:
     paths = make_runtime_paths(tmp_path)
     runner = CodexRunner(paths)
@@ -329,6 +393,31 @@ def test_codex_runner_applies_search_and_reasoning_flags(tmp_path: Path) -> None
         str(tmp_path / "last.md"),
         "Investigate the blocker",
     )
+
+
+def test_base_runner_exports_permission_profile_env(tmp_path: Path) -> None:
+    paths = make_runtime_paths(tmp_path)
+    runner = CodexRunner(paths)
+    context = StageContext.model_validate(
+        {
+            "stage": StageType.BUILDER,
+            "runner": RunnerKind.CODEX,
+            "model": "gpt-5.3-codex",
+            "prompt": "Implement the thing",
+            "working_dir": tmp_path,
+            "permission_profile": HeadlessPermissionProfile.ELEVATED,
+        }
+    )
+
+    env = runner._base_environment(
+        context,
+        tmp_path / "run",
+        tmp_path / "stdout.log",
+        tmp_path / "stderr.log",
+        tmp_path / "last.md",
+    )
+
+    assert env["MILLRACE_PERMISSION_PROFILE"] == "elevated"
 
 
 def test_claude_runner_uses_stdout_as_rendered_last_response(tmp_path: Path) -> None:

@@ -22,11 +22,10 @@ This is a **research-stage** entrypoint:
 5) `agents/audit/strict_contract.json`
 6) `README.md`
 7) `agents/outline.md`
-8) `agents/options/workflow_config.md`
-9) `agents/tasks.md`
-10) `agents/tasksbacklog.md`
-11) `agents/specs/stable/` (deterministic listing)
-12) `agents/gaps.md` (if present)
+8) `agents/tasks.md`
+9) `agents/tasksbacklog.md`
+10) `agents/specs/stable/` (deterministic listing)
+11) `agents/gaps.md` (if present)
 
 ## Phase 0 - Preconditions
 
@@ -50,8 +49,7 @@ Construct checks from two sources:
 A) Completion-required runtime checks:
 - For each required item in `required_completion_commands` (sorted by `id`, then command text), create one required `command` check.
 - Preserve exact command text from manifest.
-- Read `AUDIT_COMPLETENESS_MODE` from `agents/options/workflow_config.md`.
-- If mode is `comprehensive`, reject sampled command forms in required completion checks (`--fast`, `--sample`, `subset`).
+- Reject sampled command forms in required completion checks (`--fast`, `--sample`, `subset`).
 
 B) Core completion checks (required):
 - task store emptiness (`tasks.md`, `tasksbacklog.md`, `taskspending.md` have no real task cards)

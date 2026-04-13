@@ -6,4 +6,4 @@ This folder stores governance state for GoalSpec quality gates and versioning.
 - `spec_quality_state.json`: per-spec quality score outcomes, threshold/failure counters, and PHASE_00 fallback emission flags.
 - `decision_log_schema.json`: required decision-log fields (`decision_id`, `phase_key`, `phase_priority`, `status`, `owner`, `rationale`, `timestamp`) and allowed phase priorities (`P0`-`P3`).
 
-These artifacts are maintained by `agents/research_loop.sh` and should remain deterministic, local-only, and schema-stable.
+These artifacts are maintained by the Python research runtime and should remain deterministic, local-only, and schema-stable.
