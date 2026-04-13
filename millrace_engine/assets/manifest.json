@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "f4b2dd25884bf0d8b0100b6a6890676d07de3536afd4d375fa472b90ce1b099d",
-      "size": 58294,
-      "size_bytes": 58294,
+      "sha256": "f4ac93a7a38bf4e874e879c6b2da4c43aac17e4cecf4c6edd973853f399e4365",
+      "size": 58493,
+      "size_bytes": 58493,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,18 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "a91caf47409e2d15d9b092dd0f959342dafca1421e970145e6203145cad0298e",
-      "size": 8749,
-      "size_bytes": 8749,
+      "sha256": "630eba6fd7b9d6aa2a0ec07d1418fd52ec113d92db2d9cda01e7372b1fb458b1",
+      "size": 8911,
+      "size_bytes": 8911,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/configuration-surfaces-apply-boundaries-and-live-reload-semantics.md",
+      "sha256": "076a5a086a475622a5cb2ce32ea908d79debc807047e8d8031ac1c6354809cb2",
+      "size": 11464,
+      "size_bytes": 11464,
       "source": "runtime"
     },
     {

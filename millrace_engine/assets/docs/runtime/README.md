@@ -18,7 +18,7 @@ Every runtime deep doc in this tree must map to one primary runtime contract bou
 | `runtime-state-status-markers-and-stale-recovery-semantics.md` | persisted runtime state and stale-state recovery boundary | `millrace_engine/status.py`, `millrace_engine/paths.py`, `millrace_engine/control_models.py`, `millrace_engine/control_reports.py`, `millrace_engine/engine_runtime.py`, `millrace_engine/control_actions.py` | Batch 37 Run 04 |
 | `stage-execution-pipeline-and-plane-handoff-contracts.md` | stage execution and inter-plane handoff boundary | `millrace_engine/planes/execution.py`, `millrace_engine/planes/execution_runtime.py`, `millrace_engine/stages/base.py`, `millrace_engine/contract_runtime.py`, `tests/test_execution_plane.py` | Batch 37 Run 05 |
 | `runner-adapters-model-selection-and-permission-profile-semantics.md` | runner adapter and stage-config-to-command boundary | `millrace_engine/config_runtime.py`, `millrace_engine/config.py`, `millrace_engine/contract_runtime.py`, `millrace_engine/stages/base.py`, `millrace_engine/runner.py`, `tests/test_runner.py`, `tests/test_config.py` | Batch 37 Run 06 |
-| `configuration-apply-boundaries-and-live-reload.md` | config ownership and apply boundary | `millrace_engine/config.py`, `millrace_engine/engine_config_coordinator.py`, `millrace_engine/materialization.py`, `millrace_engine/registry.py` | Batch 37 Run 07 |
+| `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md` | config ownership and apply-boundary governance | `millrace_engine/config.py`, `millrace_engine/config_runtime.py`, `millrace_engine/engine_config_coordinator.py`, `millrace_engine/control_runtime_surface.py`, `tests/test_config.py`, `tests/test_cli.py` | Batch 37 Run 07 |
 | `observability-reporting-and-tui-truth-surfaces.md` | operator visibility boundary | `millrace_engine/events.py`, `millrace_engine/control_reports.py`, `millrace_engine/telemetry.py`, `millrace_engine/tui/`, runtime report files under `agents/` | Batch 37 Run 08 |
 | `failure-modes-and-operator-unwedge-playbook.md` | operator recovery boundary | failure and recovery sections across engine/control/research helpers, operator docs, diagnostics surfaces | Batch 37 Run 09 |
 | `portal-migration-map.md` | portal compatibility and migration boundary | `docs/RUNTIME_DEEP_DIVE.md`, packaged mirror docs, doc-proof tests, operator-facing navigation surfaces | Batch 37 Run 10 |
@@ -97,6 +97,7 @@ Current linked boundary docs:
 - `runtime-state-status-markers-and-stale-recovery-semantics.md`
 - `stage-execution-pipeline-and-plane-handoff-contracts.md`
 - `runner-adapters-model-selection-and-permission-profile-semantics.md`
+- `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md`
 
 ## Contribution Rules
 
