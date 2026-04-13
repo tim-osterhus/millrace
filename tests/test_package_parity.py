@@ -43,6 +43,9 @@ PUBLIC_DOC_PARITY_PATHS = {
     "docs/runtime/configuration-surfaces-apply-boundaries-and-live-reload-semantics.md": (
         "docs/runtime/configuration-surfaces-apply-boundaries-and-live-reload-semantics.md"
     ),
+    "docs/runtime/observability-reports-tui-and-audit-truth-surfaces.md": (
+        "docs/runtime/observability-reports-tui-and-audit-truth-surfaces.md"
+    ),
     "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md": (
         "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md"
     ),
@@ -166,6 +169,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md",
         "docs/runtime/runner-adapters-model-selection-and-permission-profile-semantics.md",
         "docs/runtime/configuration-surfaces-apply-boundaries-and-live-reload-semantics.md",
+        "docs/runtime/observability-reports-tui-and-audit-truth-surfaces.md",
         "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md",
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
         "ADVISOR.md",
@@ -189,6 +193,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md",
         "docs/runtime/runner-adapters-model-selection-and-permission-profile-semantics.md",
         "docs/runtime/configuration-surfaces-apply-boundaries-and-live-reload-semantics.md",
+        "docs/runtime/observability-reports-tui-and-audit-truth-surfaces.md",
         "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md",
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
         "docs/TUI_DOCUMENTATION.md",
@@ -211,6 +216,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md" in manifest_paths
     assert "docs/runtime/runner-adapters-model-selection-and-permission-profile-semantics.md" in manifest_paths
     assert "docs/runtime/configuration-surfaces-apply-boundaries-and-live-reload-semantics.md" in manifest_paths
+    assert "docs/runtime/observability-reports-tui-and-audit-truth-surfaces.md" in manifest_paths
     assert "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md" in manifest_paths
     assert "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md" in manifest_paths
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths

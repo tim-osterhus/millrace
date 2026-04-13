@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "f4ac93a7a38bf4e874e879c6b2da4c43aac17e4cecf4c6edd973853f399e4365",
-      "size": 58493,
-      "size_bytes": 58493,
+      "sha256": "69ab39de699e5d7ed180691b0dfc07d3eb7dfc8838df3724840e688371cce04c",
+      "size": 58865,
+      "size_bytes": 58865,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "630eba6fd7b9d6aa2a0ec07d1418fd52ec113d92db2d9cda01e7372b1fb458b1",
-      "size": 8911,
-      "size_bytes": 8911,
+      "sha256": "d102bfc8477945be9023cd2ceb889b9caf73a95c0dc531e79e87fd136ad6d9e0",
+      "size": 8993,
+      "size_bytes": 8993,
       "source": "runtime"
     },
     {
@@ -1604,6 +1604,15 @@
       "sha256": "02998daca5caf5702caece9828d81034ccc27f77a1de7ee489f162f6722d361a",
       "size": 10913,
       "size_bytes": 10913,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/observability-reports-tui-and-audit-truth-surfaces.md",
+      "sha256": "0b456e1fc10ba4994abc6b74a28eafffa305e861858918b815c327c27ce0fb2d",
+      "size": 13630,
+      "size_bytes": 13630,
       "source": "runtime"
     },
     {

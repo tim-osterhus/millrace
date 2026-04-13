@@ -19,7 +19,7 @@ Every runtime deep doc in this tree must map to one primary runtime contract bou
 | `stage-execution-pipeline-and-plane-handoff-contracts.md` | stage execution and inter-plane handoff boundary | `millrace_engine/planes/execution.py`, `millrace_engine/planes/execution_runtime.py`, `millrace_engine/stages/base.py`, `millrace_engine/contract_runtime.py`, `tests/test_execution_plane.py` | Batch 37 Run 05 |
 | `runner-adapters-model-selection-and-permission-profile-semantics.md` | runner adapter and stage-config-to-command boundary | `millrace_engine/config_runtime.py`, `millrace_engine/config.py`, `millrace_engine/contract_runtime.py`, `millrace_engine/stages/base.py`, `millrace_engine/runner.py`, `tests/test_runner.py`, `tests/test_config.py` | Batch 37 Run 06 |
 | `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md` | config ownership and apply-boundary governance | `millrace_engine/config.py`, `millrace_engine/config_runtime.py`, `millrace_engine/engine_config_coordinator.py`, `millrace_engine/control_runtime_surface.py`, `tests/test_config.py`, `tests/test_cli.py` | Batch 37 Run 07 |
-| `observability-reporting-and-tui-truth-surfaces.md` | operator visibility boundary | `millrace_engine/events.py`, `millrace_engine/control_reports.py`, `millrace_engine/telemetry.py`, `millrace_engine/tui/`, runtime report files under `agents/` | Batch 37 Run 08 |
+| `observability-reports-tui-and-audit-truth-surfaces.md` | operator visibility boundary | `millrace_engine/control_models.py`, `millrace_engine/control_reports.py`, `millrace_engine/control_runtime_surface.py`, `millrace_engine/cli_rendering.py`, `millrace_engine/tui/` | Batch 37 Run 08 |
 | `failure-modes-and-operator-unwedge-playbook.md` | operator recovery boundary | failure and recovery sections across engine/control/research helpers, operator docs, diagnostics surfaces | Batch 37 Run 09 |
 | `portal-migration-map.md` | portal compatibility and migration boundary | `docs/RUNTIME_DEEP_DIVE.md`, packaged mirror docs, doc-proof tests, operator-facing navigation surfaces | Batch 37 Run 10 |
 
@@ -98,6 +98,7 @@ Current linked boundary docs:
 - `stage-execution-pipeline-and-plane-handoff-contracts.md`
 - `runner-adapters-model-selection-and-permission-profile-semantics.md`
 - `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md`
+- `observability-reports-tui-and-audit-truth-surfaces.md`
 
 ## Contribution Rules
 
