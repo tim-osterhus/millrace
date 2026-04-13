@@ -20,7 +20,7 @@ Every runtime deep doc in this tree must map to one primary runtime contract bou
 | `runner-adapters-model-selection-and-permission-profile-semantics.md` | runner adapter and stage-config-to-command boundary | `millrace_engine/config_runtime.py`, `millrace_engine/config.py`, `millrace_engine/contract_runtime.py`, `millrace_engine/stages/base.py`, `millrace_engine/runner.py`, `tests/test_runner.py`, `tests/test_config.py` | Batch 37 Run 06 |
 | `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md` | config ownership and apply-boundary governance | `millrace_engine/config.py`, `millrace_engine/config_runtime.py`, `millrace_engine/engine_config_coordinator.py`, `millrace_engine/control_runtime_surface.py`, `tests/test_config.py`, `tests/test_cli.py` | Batch 37 Run 07 |
 | `observability-reports-tui-and-audit-truth-surfaces.md` | operator visibility boundary | `millrace_engine/control_models.py`, `millrace_engine/control_reports.py`, `millrace_engine/control_runtime_surface.py`, `millrace_engine/cli_rendering.py`, `millrace_engine/tui/` | Batch 37 Run 08 |
-| `failure-modes-and-operator-unwedge-playbook.md` | operator recovery boundary | failure and recovery sections across engine/control/research helpers, operator docs, diagnostics surfaces | Batch 37 Run 09 |
+| `recovery-failure-modes-timeouts-and-unwedge-playbook.md` | operator recovery boundary | `millrace_engine/engine_runtime_loop.py`, `millrace_engine/engine_outage_recovery.py`, `millrace_engine/control_actions.py`, `millrace_engine/sentinel_runtime.py`, recovery and sentinel tests | Batch 37 Run 09 |
 | `portal-migration-map.md` | portal compatibility and migration boundary | `docs/RUNTIME_DEEP_DIVE.md`, packaged mirror docs, doc-proof tests, operator-facing navigation surfaces | Batch 37 Run 10 |
 
 ## Boundary Rules
@@ -99,6 +99,7 @@ Current linked boundary docs:
 - `runner-adapters-model-selection-and-permission-profile-semantics.md`
 - `configuration-surfaces-apply-boundaries-and-live-reload-semantics.md`
 - `observability-reports-tui-and-audit-truth-surfaces.md`
+- `recovery-failure-modes-timeouts-and-unwedge-playbook.md`
 
 ## Contribution Rules
 
