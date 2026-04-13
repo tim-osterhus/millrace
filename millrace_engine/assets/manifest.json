@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "fa6793e1374b29db184ee6233a37317fe6d468d8b97f2b8e2a860d04f2d0db65",
-      "size": 57545,
-      "size_bytes": 57545,
+      "sha256": "c9c87b1e778b69aa0f5b9c679f54fcc3fc04c8da269dad657d16318f965f3a05",
+      "size": 57704,
+      "size_bytes": 57704,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,18 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "e605f71982d3c8c9dbe55baa15d545f41495270c2eacf55795ea3002b9ff7cd8",
-      "size": 8241,
-      "size_bytes": 8241,
+      "sha256": "0f0d9b2ac24b0d53ed1922e54c3c1858550539e8c3717f67ae415ef53fba4bd2",
+      "size": 8306,
+      "size_bytes": 8306,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md",
+      "sha256": "02998daca5caf5702caece9828d81034ccc27f77a1de7ee489f162f6722d361a",
+      "size": 10913,
+      "size_bytes": 10913,
       "source": "runtime"
     },
     {

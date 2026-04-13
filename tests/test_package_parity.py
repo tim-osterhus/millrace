@@ -31,6 +31,9 @@ PUBLIC_DOC_PARITY_PATHS = {
     "docs/RUNTIME_DEEP_DIVE.md": "docs/RUNTIME_DEEP_DIVE.md",
     "docs/TUI_DOCUMENTATION.md": "docs/TUI_DOCUMENTATION.md",
     "docs/runtime/README.md": "docs/runtime/README.md",
+    "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md": (
+        "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md"
+    ),
     "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md": (
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md"
     ),
@@ -147,6 +150,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "README.md",
         "docs/RUNTIME_DEEP_DIVE.md",
         "docs/runtime/README.md",
+        "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md",
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
         "ADVISOR.md",
         "SENTINEL.md",
@@ -165,6 +169,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "OPERATOR_GUIDE.md",
         "docs/RUNTIME_DEEP_DIVE.md",
         "docs/runtime/README.md",
+        "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md",
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
         "docs/TUI_DOCUMENTATION.md",
         "millrace.toml",
@@ -182,6 +187,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "OPERATOR_GUIDE.md" in manifest_paths
     assert "docs/RUNTIME_DEEP_DIVE.md" in manifest_paths
     assert "docs/runtime/README.md" in manifest_paths
+    assert "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md" in manifest_paths
     assert "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md" in manifest_paths
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths
     assert OPERATIONS_SKILL_PATH in manifest_paths
