@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "c9c87b1e778b69aa0f5b9c679f54fcc3fc04c8da269dad657d16318f965f3a05",
-      "size": 57704,
-      "size_bytes": 57704,
+      "sha256": "f408e047813058a192ad0d5b2900c7613a03c52f102b9635988a17a1266591fa",
+      "size": 57897,
+      "size_bytes": 57897,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "0f0d9b2ac24b0d53ed1922e54c3c1858550539e8c3717f67ae415ef53fba4bd2",
-      "size": 8306,
-      "size_bytes": 8306,
+      "sha256": "825748b3162a433cec612f63cc0306fbf1ca8de8b70191a0dd529f6792237c6d",
+      "size": 8464,
+      "size_bytes": 8464,
       "source": "runtime"
     },
     {
@@ -1604,6 +1604,15 @@
       "sha256": "799989c80e2aa4f89fc29305c054d2e6cd2def252c11d42b93f7a9392e664f59",
       "size": 11933,
       "size_bytes": 11933,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md",
+      "sha256": "3f1f17bbaeb18110ff76df4adc8dc3a3771969ea5afc2ff98bb873152bb73241",
+      "size": 14493,
+      "size_bytes": 14493,
       "source": "runtime"
     },
     {
