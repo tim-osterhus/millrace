@@ -1565,9 +1565,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/RUNTIME_DEEP_DIVE.md",
-      "sha256": "f408e047813058a192ad0d5b2900c7613a03c52f102b9635988a17a1266591fa",
-      "size": 57897,
-      "size_bytes": 57897,
+      "sha256": "e8da5eee1c3f7b2cc21fba752fb05b84df5b70a2bce602397078926941950e39",
+      "size": 58065,
+      "size_bytes": 58065,
       "source": "runtime"
     },
     {
@@ -1583,9 +1583,9 @@
       "category": "doc",
       "family": "docs",
       "path": "docs/runtime/README.md",
-      "sha256": "825748b3162a433cec612f63cc0306fbf1ca8de8b70191a0dd529f6792237c6d",
-      "size": 8464,
-      "size_bytes": 8464,
+      "sha256": "ace3f219924d6da94fd09836a240a3c398dc1f65223b2682cc9586bd3b572802",
+      "size": 8581,
+      "size_bytes": 8581,
       "source": "runtime"
     },
     {
@@ -1613,6 +1613,15 @@
       "sha256": "3f1f17bbaeb18110ff76df4adc8dc3a3771969ea5afc2ff98bb873152bb73241",
       "size": 14493,
       "size_bytes": 14493,
+      "source": "runtime"
+    },
+    {
+      "category": "doc",
+      "family": "docs",
+      "path": "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md",
+      "sha256": "9c243518cd5a0b47bc95c224275ae7f67926fa3712e6d3229439fb1a8a0ffd4d",
+      "size": 15067,
+      "size_bytes": 15067,
       "source": "runtime"
     },
     {

@@ -34,6 +34,9 @@ PUBLIC_DOC_PARITY_PATHS = {
     "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md": (
         "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md"
     ),
+    "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md": (
+        "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md"
+    ),
     "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md": (
         "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md"
     ),
@@ -154,6 +157,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "docs/RUNTIME_DEEP_DIVE.md",
         "docs/runtime/README.md",
         "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md",
+        "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md",
         "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md",
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
         "ADVISOR.md",
@@ -174,6 +178,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
         "docs/RUNTIME_DEEP_DIVE.md",
         "docs/runtime/README.md",
         "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md",
+        "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md",
         "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md",
         "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md",
         "docs/TUI_DOCUMENTATION.md",
@@ -193,6 +198,7 @@ def test_packaged_docs_and_operator_assets_exist() -> None:
     assert "docs/RUNTIME_DEEP_DIVE.md" in manifest_paths
     assert "docs/runtime/README.md" in manifest_paths
     assert "docs/runtime/control-plane-command-surface-and-mailbox-semantics.md" in manifest_paths
+    assert "docs/runtime/stage-execution-pipeline-and-plane-handoff-contracts.md" in manifest_paths
     assert "docs/runtime/runtime-state-status-markers-and-stale-recovery-semantics.md" in manifest_paths
     assert "docs/runtime/runtime-loop-lifecycle-and-supervisor-authority.md" in manifest_paths
     assert "docs/TUI_DOCUMENTATION.md" in manifest_paths

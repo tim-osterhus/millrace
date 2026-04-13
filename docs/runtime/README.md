@@ -16,7 +16,7 @@ Every runtime deep doc in this tree must map to one primary runtime contract bou
 | `runtime-loop-lifecycle-and-supervisor-authority.md` | runtime lifecycle and external authority boundary | `millrace_engine/engine.py`, `millrace_engine/engine_runtime.py`, `millrace_engine/engine_runtime_loop.py`, `millrace_engine/control.py` | Batch 37 Run 02 |
 | `control-plane-command-surface-and-mailbox-semantics.md` | command/control mutation boundary | `millrace_engine/cli.py`, `millrace_engine/control.py`, `millrace_engine/control_actions.py`, `millrace_engine/control_runtime_surface.py`, `millrace_engine/engine_mailbox_command_handlers.py` | Batch 37 Run 03 |
 | `runtime-state-status-markers-and-stale-recovery-semantics.md` | persisted runtime state and stale-state recovery boundary | `millrace_engine/status.py`, `millrace_engine/paths.py`, `millrace_engine/control_models.py`, `millrace_engine/control_reports.py`, `millrace_engine/engine_runtime.py`, `millrace_engine/control_actions.py` | Batch 37 Run 04 |
-| `stage-pipeline-and-handoffs.md` | stage execution and inter-plane handoff boundary | `millrace_engine/planes/execution.py`, `millrace_engine/planes/execution_flows/`, `millrace_engine/stages/`, handoff helpers under `millrace_engine/research/` | Batch 37 Run 05 |
+| `stage-execution-pipeline-and-plane-handoff-contracts.md` | stage execution and inter-plane handoff boundary | `millrace_engine/planes/execution.py`, `millrace_engine/planes/execution_runtime.py`, `millrace_engine/stages/base.py`, `millrace_engine/contract_runtime.py`, `tests/test_execution_plane.py` | Batch 37 Run 05 |
 | `runner-model-selection-and-permission-profiles.md` | runner adapter and permission boundary | `millrace_engine/runner.py`, config model/profile resolution, stage prompt contracts, packaged options under `millrace_engine/assets/agents/options/` | Batch 37 Run 06 |
 | `configuration-apply-boundaries-and-live-reload.md` | config ownership and apply boundary | `millrace_engine/config.py`, `millrace_engine/engine_config_coordinator.py`, `millrace_engine/materialization.py`, `millrace_engine/registry.py` | Batch 37 Run 07 |
 | `observability-reporting-and-tui-truth-surfaces.md` | operator visibility boundary | `millrace_engine/events.py`, `millrace_engine/control_reports.py`, `millrace_engine/telemetry.py`, `millrace_engine/tui/`, runtime report files under `agents/` | Batch 37 Run 08 |
@@ -95,6 +95,7 @@ Current linked boundary docs:
 - `runtime-loop-lifecycle-and-supervisor-authority.md`
 - `control-plane-command-surface-and-mailbox-semantics.md`
 - `runtime-state-status-markers-and-stale-recovery-semantics.md`
+- `stage-execution-pipeline-and-plane-handoff-contracts.md`
 
 ## Contribution Rules
 
