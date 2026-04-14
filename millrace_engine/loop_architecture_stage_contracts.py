@@ -352,7 +352,7 @@ class RegisteredStageKindPayload(ContractModel):
     @field_validator("handler_ref", "context_schema_ref", "result_schema_ref")
     @classmethod
     def validate_refs(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "reference")
+        field_name = getattr(info, "field_name", None) or "reference"
         return _normalize_reference(value, field_label=field_name.replace("_", " "))
 
     @field_validator("running_status")

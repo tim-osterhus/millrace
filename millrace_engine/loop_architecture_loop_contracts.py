@@ -106,7 +106,8 @@ class LoopEdge(ContractModel):
     def validate_node_ids(cls, value: str | None, info: object) -> str | None:
         if value is None:
             return None
-        field_name = getattr(info, "field_name", "node id").replace("_", " ")
+        field_name = getattr(info, "field_name", None) or "node id"
+        field_name = field_name.replace("_", " ")
         return _normalize_canonical_id(value, field_label=field_name)
 
     @field_validator("terminal_state_id")
