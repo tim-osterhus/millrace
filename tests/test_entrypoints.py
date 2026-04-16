@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
 
@@ -17,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT_MAPPING_DOC = REPO_ROOT / "docs" / "runtime" / "millrace-entrypoint-mapping.md"
 ENTRYPOINT_MAPPING_ROW = re.compile(
     r"- `lab/specs/drafts/entrypoints/(?:execution|planning)/[^`]+\.md` -> "
-    r"`(?P<runtime>millrace_ai/assets/entrypoints/(?:execution|planning)/[^`]+\.md)` -> "
+    r"`(?P<runtime>(?:src/)?millrace_ai/assets/entrypoints/(?:execution|planning)/[^`]+\.md)` -> "
     r"`millrace-agents/entrypoints/(?:execution|planning)/[^`]+\.md`"
 )
 LEGACY_ENTRYPOINT_TOKENS = (
@@ -31,6 +32,15 @@ SKILLS_SECTION_HEADER = re.compile(
     re.IGNORECASE,
 )
 SKILL_LINE = re.compile(r"^-\s+`(?P<skill>[a-z0-9-]+)`")
+
+
+def test_entrypoints_module_is_assets_facade() -> None:
+    entrypoints_facade = importlib.import_module("millrace_ai.entrypoints")
+    entrypoints_module = importlib.import_module("millrace_ai.assets.entrypoints")
+
+    assert entrypoints_facade.parse_markdown_asset is entrypoints_module.parse_markdown_asset
+    assert entrypoints_facade.lint_asset_manifests is entrypoints_module.lint_asset_manifests
+    assert entrypoints_facade.LintLevel.__module__ == "millrace_ai.assets.entrypoints"
 
 
 def _write_asset(path: Path, *, frontmatter: dict[str, object], body: str) -> None:
@@ -86,7 +96,7 @@ def _extract_declared_skill_lines(body: str) -> list[tuple[str, str]]:
 
 
 def _load_shipped_skill_asset_ids() -> set[str]:
-    skills_dir = REPO_ROOT / "millrace_ai" / "assets" / "skills"
+    skills_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills"
     skill_ids: set[str] = set()
 
     for path in sorted(skills_dir.rglob("*.md")):
@@ -350,7 +360,11 @@ def _load_runtime_entrypoint_paths_from_docs() -> list[Path]:
     doc_text = ENTRYPOINT_MAPPING_DOC.read_text(encoding="utf-8")
     runtime_paths = ENTRYPOINT_MAPPING_ROW.findall(doc_text)
     assert runtime_paths, "Entrypoint mapping doc must include runtime asset paths"
-    return [REPO_ROOT / relative_path for relative_path in runtime_paths]
+    normalized_paths = [
+        relative_path if relative_path.startswith("src/") else f"src/{relative_path}"
+        for relative_path in runtime_paths
+    ]
+    return [REPO_ROOT / relative_path for relative_path in normalized_paths]
 
 
 def _expected_stage_result_sets() -> dict[str, set[str]]:
@@ -425,7 +439,7 @@ def test_draft_to_runtime_entrypoint_mapping_complete() -> None:
     runtime_paths = _load_runtime_entrypoint_paths_from_docs()
     mapped_runtime = set(runtime_paths)
 
-    runtime_root = REPO_ROOT / "millrace_ai" / "assets" / "entrypoints"
+    runtime_root = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints"
     expected_runtime = {
         runtime_root / "execution" / "builder.md",
         runtime_root / "execution" / "checker.md",
@@ -532,7 +546,7 @@ def test_runtime_entrypoint_required_result_sets() -> None:
 
 
 def test_runtime_skills_index_stub_has_minimal_shape() -> None:
-    skills_index_path = REPO_ROOT / "millrace_ai" / "assets" / "skills" / "skills_index.md"
+    skills_index_path = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills" / "skills_index.md"
     asset = parse_markdown_asset(skills_index_path)
     text = asset.body
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import shutil
 from pathlib import Path
@@ -9,6 +10,15 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import CompileDiagnostics, FrozenRunPlan
 from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
+
+
+def test_compiler_consumes_config_and_assets_package_surfaces() -> None:
+    assets_package = importlib.import_module("millrace_ai.assets")
+    compiler_module = importlib.import_module("millrace_ai.compiler")
+    config_module = importlib.import_module("millrace_ai.config")
+
+    assert compiler_module.RuntimeConfig is config_module.RuntimeConfig
+    assert compiler_module.load_builtin_mode_bundle is assets_package.load_builtin_mode_bundle
 
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:

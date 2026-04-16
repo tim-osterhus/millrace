@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from millrace_ai.assets import ModeAssetError, load_builtin_mode_bundle
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     CompileDiagnostics,
@@ -24,7 +25,6 @@ from millrace_ai.contracts import (
     StageName,
 )
 from millrace_ai.errors import ConfigurationError
-from millrace_ai.modes import ModeAssetError, load_builtin_mode_bundle
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 _DEFAULT_MODE_ID = "standard_plain"

@@ -10,6 +10,17 @@ from typing import TypeAlias
 
 from pydantic import ValidationError
 
+from millrace_ai.assets import (
+    ASSETS_ROOT,
+    BUILTIN_LOOP_PATHS,
+    BUILTIN_MODE_PATHS,
+    LintLevel,
+    ModeAssetError,
+    lint_asset_manifests,
+    load_builtin_loop_definition,
+    load_builtin_mode_definition,
+    validate_shipped_mode_same_graph,
+)
 from millrace_ai.contracts import (
     ExecutionStageName,
     IncidentDocument,
@@ -19,17 +30,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
 )
-from millrace_ai.entrypoints import LintLevel, lint_asset_manifests
 from millrace_ai.errors import WorkspaceStateError
-from millrace_ai.modes import (
-    ASSETS_ROOT,
-    BUILTIN_LOOP_PATHS,
-    BUILTIN_MODE_PATHS,
-    ModeAssetError,
-    load_builtin_loop_definition,
-    load_builtin_mode_definition,
-    validate_shipped_mode_same_graph,
-)
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,19 @@ from millrace_ai.config import (
     recompile_boundary_changes,
     summarize_config_changes,
 )
+
+
+def test_config_import_surface_moves_to_package_directory() -> None:
+    config_module = importlib.import_module("millrace_ai.config")
+    boundaries_module = importlib.import_module("millrace_ai.config.boundaries")
+    loading_module = importlib.import_module("millrace_ai.config.loading")
+    models_module = importlib.import_module("millrace_ai.config.models")
+
+    assert Path(config_module.__file__).as_posix().endswith("/config/__init__.py")
+    assert RuntimeConfig.__module__ == "millrace_ai.config.models"
+    assert load_runtime_config is loading_module.load_runtime_config
+    assert apply_boundary_for_field is boundaries_module.apply_boundary_for_field
+    assert StageConfig is models_module.StageConfig
 
 
 def test_runtime_config_schema_uses_draft_categories() -> None:

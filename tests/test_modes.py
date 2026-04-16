@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import shutil
 from pathlib import Path
@@ -26,6 +27,15 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
     return copied_root
+
+
+def test_modes_module_is_assets_facade() -> None:
+    modes_facade = importlib.import_module("millrace_ai.modes")
+    modes_module = importlib.import_module("millrace_ai.assets.modes")
+
+    assert modes_facade.load_builtin_mode_bundle is modes_module.load_builtin_mode_bundle
+    assert modes_facade.load_builtin_mode_definition is modes_module.load_builtin_mode_definition
+    assert modes_facade.ModeBundle.__module__ == "millrace_ai.assets.modes"
 
 
 def test_builtin_loops_load_and_validate() -> None:
