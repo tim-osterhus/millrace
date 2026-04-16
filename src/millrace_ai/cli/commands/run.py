@@ -1,0 +1,100 @@
+"""Runtime execution command group."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from millrace_ai.cli.formatting import _print_error, _run_once_exit_code, _value
+from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _ensure_paths, _resolve_config_path
+
+run_app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+
+@run_app.command("once")
+def run_once(
+    workspace: WorkspaceOption = Path("."),
+    mode: Annotated[str | None, typer.Option("--mode", help="Override mode id.")] = None,
+    config_path: ConfigOption = None,
+) -> None:
+    cli_api = _cli_api()
+    paths = _ensure_paths(workspace)
+    resolved_config_path = _resolve_config_path(paths, config_path)
+    try:
+        runtime_config = cli_api.load_runtime_config(resolved_config_path)
+        stage_runner = cli_api._build_stage_runner(config=runtime_config, workspace_root=paths.root)
+    except ValueError as exc:
+        raise typer.Exit(code=_print_error(str(exc))) from exc
+    engine = cli_api.RuntimeEngine(
+        paths,
+        stage_runner=stage_runner,
+        config_path=resolved_config_path,
+        mode_id=mode,
+    )
+    try:
+        snapshot = engine.startup()
+        outcome = engine.tick()
+    except Exception as exc:
+        raise typer.Exit(code=_print_error(str(exc))) from exc
+    typer.echo("run_mode: once")
+    typer.echo(f"active_mode_id: {snapshot.active_mode_id}")
+    typer.echo(f"compiled_plan_id: {snapshot.compiled_plan_id}")
+    typer.echo(f"tick_reason: {_value(outcome.router_decision.reason)}")
+    raise typer.Exit(code=_run_once_exit_code(outcome))
+
+
+@run_app.command("daemon")
+def run_daemon(
+    workspace: WorkspaceOption = Path("."),
+    mode: Annotated[str | None, typer.Option("--mode", help="Override mode id.")] = None,
+    config_path: ConfigOption = None,
+    max_ticks: Annotated[
+        int | None,
+        typer.Option("--max-ticks", min=1, help="Stop after this many ticks."),
+    ] = None,
+) -> None:
+    cli_api = _cli_api()
+    paths = _ensure_paths(workspace)
+    resolved_config_path = _resolve_config_path(paths, config_path)
+    try:
+        runtime_config = cli_api.load_runtime_config(resolved_config_path)
+        stage_runner = cli_api._build_stage_runner(config=runtime_config, workspace_root=paths.root)
+    except ValueError as exc:
+        raise typer.Exit(code=_print_error(str(exc))) from exc
+    engine = cli_api.RuntimeEngine(
+        paths,
+        stage_runner=stage_runner,
+        config_path=resolved_config_path,
+        mode_id=mode,
+    )
+    try:
+        snapshot = engine.startup()
+    except Exception as exc:
+        raise typer.Exit(code=_print_error(str(exc))) from exc
+
+    ticks = 0
+    try:
+        while True:
+            if max_ticks is not None and ticks >= max_ticks:
+                break
+            try:
+                engine.tick()
+            except Exception as exc:
+                raise typer.Exit(code=_print_error(str(exc))) from exc
+            ticks += 1
+            runtime_snapshot = engine.snapshot
+            if runtime_snapshot is not None and (
+                runtime_snapshot.stop_requested or not runtime_snapshot.process_running
+            ):
+                break
+            if max_ticks is None:
+                cli_api.time.sleep(runtime_config.runtime.idle_sleep_seconds)
+    except KeyboardInterrupt:
+        typer.echo("interrupted: true")
+
+    typer.echo("run_mode: daemon")
+    typer.echo(f"active_mode_id: {snapshot.active_mode_id}")
+    typer.echo(f"compiled_plan_id: {snapshot.compiled_plan_id}")
+    typer.echo(f"ticks: {ticks}")

@@ -1,0 +1,49 @@
+"""CLI app assembly."""
+
+from __future__ import annotations
+
+import typer
+
+from millrace_ai.cli.commands.compile import compile_app
+from millrace_ai.cli.commands.config import config_app
+from millrace_ai.cli.commands.control import (
+    clear_stale_state,
+    control_app,
+    pause,
+    reload_config,
+    resume,
+    retry_active,
+    stop,
+)
+from millrace_ai.cli.commands.doctor import doctor
+from millrace_ai.cli.commands.modes import modes_app
+from millrace_ai.cli.commands.planning import planning_app
+from millrace_ai.cli.commands.queue import add_spec, add_task, queue_add_idea, queue_app
+from millrace_ai.cli.commands.run import run_app
+from millrace_ai.cli.commands.runs import runs_app
+from millrace_ai.cli.commands.status import status_app
+
+app = typer.Typer(add_completion=False, no_args_is_help=False)
+
+app.add_typer(run_app, name="run")
+app.add_typer(queue_app, name="queue")
+app.add_typer(control_app, name="control")
+app.add_typer(status_app, name="status")
+app.add_typer(runs_app, name="runs")
+app.add_typer(planning_app, name="planning")
+app.add_typer(config_app, name="config")
+app.add_typer(modes_app, name="modes")
+app.add_typer(compile_app, name="compile")
+
+app.command("add-task")(add_task)
+app.command("add-spec")(add_spec)
+app.command("add-idea")(queue_add_idea)
+app.command("pause")(pause)
+app.command("resume")(resume)
+app.command("stop")(stop)
+app.command("retry-active")(retry_active)
+app.command("clear-stale-state")(clear_stale_state)
+app.command("reload-config")(reload_config)
+app.command("doctor")(doctor)
+
+__all__ = ["app"]

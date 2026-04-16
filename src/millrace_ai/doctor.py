@@ -19,8 +19,8 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
 )
-from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.entrypoints import LintLevel, lint_asset_manifests
+from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.modes import (
     ASSETS_ROOT,
     BUILTIN_LOOP_PATHS,

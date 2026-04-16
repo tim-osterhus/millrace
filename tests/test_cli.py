@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from datetime import datetime, timezone
@@ -35,6 +36,18 @@ NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def test_cli_import_surface_moves_to_package_directory() -> None:
+    assert Path(cli.__file__).as_posix().endswith("/cli/__init__.py")
+
+
+def test_cli_package_exposes_split_command_modules() -> None:
+    run_module = importlib.import_module("millrace_ai.cli.commands.run")
+    app_module = importlib.import_module("millrace_ai.cli.app")
+
+    assert hasattr(run_module, "run_once")
+    assert hasattr(app_module, "app")
 
 
 def _task_payload(task_id: str) -> dict[str, object]:
