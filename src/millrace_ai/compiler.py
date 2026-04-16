@@ -23,6 +23,7 @@ from millrace_ai.contracts import (
     PlanningStageName,
     StageName,
 )
+from millrace_ai.errors import ConfigurationError
 from millrace_ai.modes import ModeAssetError, load_builtin_mode_bundle
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
@@ -42,7 +43,7 @@ _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     PlanningStageName.AUDITOR: ("skills/stage/planning/auditor-core/SKILL.md",),
 }
 
-class CompilerValidationError(ValueError):
+class CompilerValidationError(ConfigurationError):
     """Raised when a mode bundle fails reduced-compiler validation rules."""
 
 

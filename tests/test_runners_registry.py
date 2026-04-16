@@ -7,10 +7,11 @@ import pytest
 
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import ExecutionStageName, Plane, WorkItemKind
+from millrace_ai.errors import MillraceError
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.base import StageRunnerAdapter
 from millrace_ai.runners.dispatcher import StageRunnerDispatcher
-from millrace_ai.runners.errors import UnknownRunnerError
+from millrace_ai.runners.errors import RunnerBinaryNotFoundError, RunnerError, UnknownRunnerError
 from millrace_ai.runners.registry import RunnerRegistry
 
 
@@ -66,6 +67,12 @@ class _Adapter(StageRunnerAdapter):
             started_at=now,
             ended_at=now,
         )
+
+
+def test_runner_errors_use_project_error_hierarchy() -> None:
+    assert issubclass(RunnerError, MillraceError)
+    assert issubclass(UnknownRunnerError, RunnerError)
+    assert issubclass(RunnerBinaryNotFoundError, RunnerError)
 
 
 def test_dispatcher_prefers_request_runner_name(tmp_path: Path) -> None:

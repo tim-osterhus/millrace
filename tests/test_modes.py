@@ -9,6 +9,7 @@ import pytest
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import Plane
+from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.modes import (
     SHIPPED_MODE_IDS,
     ModeAssetError,
@@ -21,7 +22,7 @@ from millrace_ai.paths import bootstrap_workspace
 
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:
-    assets_root = Path(__file__).resolve().parents[1] / "millrace_ai" / "assets"
+    assets_root = Path(__file__).resolve().parents[1] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
     return copied_root
@@ -47,6 +48,11 @@ def test_builtin_modes_load_and_validate() -> None:
 
 def test_shipped_modes_same_graph_rule_returns_plain_baseline_graph() -> None:
     assert validate_shipped_mode_same_graph() == ("execution.standard", "planning.standard")
+
+
+def test_mode_asset_errors_use_project_error_hierarchy() -> None:
+    assert issubclass(AssetValidationError, MillraceError)
+    assert issubclass(ModeAssetError, AssetValidationError)
 
 
 def test_unknown_mode_fails_deterministically() -> None:

@@ -4,17 +4,23 @@ import json
 import shutil
 from pathlib import Path
 
-from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.compiler import CompilerValidationError, compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import CompileDiagnostics, FrozenRunPlan
+from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:
-    assets_root = Path(__file__).resolve().parents[1] / "millrace_ai" / "assets"
+    assets_root = Path(__file__).resolve().parents[1] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
     return copied_root
+
+
+def test_compiler_validation_errors_use_project_error_hierarchy() -> None:
+    assert issubclass(ConfigurationError, MillraceError)
+    assert issubclass(CompilerValidationError, ConfigurationError)
 
 
 def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from millrace_ai.contracts import LoopConfigDefinition, ModeDefinition, Plane
+from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent / "assets"
 
@@ -25,7 +26,7 @@ BUILTIN_MODE_PATHS: dict[str, Path] = {
 SHIPPED_MODE_IDS: tuple[str, ...] = ("standard_plain",)
 
 
-class ModeAssetError(ValueError):
+class ModeAssetError(AssetValidationError):
     """Raised when built-in mode or loop assets cannot be resolved or validated."""
 
 

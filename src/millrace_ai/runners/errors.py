@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from millrace_ai.errors import MillraceError
 
-class RunnerError(RuntimeError):
+
+class RunnerError(MillraceError):
     """Base class for runner subsystem exceptions."""
 
 
