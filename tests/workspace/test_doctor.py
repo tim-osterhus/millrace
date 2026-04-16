@@ -21,7 +21,7 @@ def _bootstrap(tmp_path: Path):
 
 
 def _copy_assets(tmp_path: Path) -> Path:
-    source_assets = Path(__file__).resolve().parents[1] / "src" / "millrace_ai" / "assets"
+    source_assets = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
     destination = tmp_path / "assets"
     shutil.copytree(source_assets, destination)
     return destination
@@ -71,7 +71,7 @@ def test_doctor_flags_queue_filename_and_document_id_mismatch(tmp_path: Path) ->
         summary="mismatched filename and frontmatter id",
         target_paths=["millrace/runtime.py"],
         acceptance=["doctor flags mismatch"],
-        required_checks=["uv run pytest tests/test_doctor.py -q"],
+        required_checks=["uv run pytest tests/workspace/test_doctor.py -q"],
         references=["lab/specs/pending/2026-04-15-millrace-recheck-remediation-task-breakdown.md"],
         risk=["queue routing drift"],
         created_at=NOW,

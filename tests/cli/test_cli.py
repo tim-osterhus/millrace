@@ -65,7 +65,7 @@ def _task_payload(task_id: str) -> dict[str, object]:
         "summary": "cli task",
         "target_paths": ["src/millrace_ai/runtime.py"],
         "acceptance": ["runtime loop runs"],
-        "required_checks": ["uv run pytest tests/test_cli.py -q"],
+        "required_checks": ["uv run pytest tests/cli/test_cli.py -q"],
         "references": ["lab/specs/drafts/millrace-mvp-implementation-slice.md"],
         "risk": ["none"],
         "created_at": NOW.isoformat(),

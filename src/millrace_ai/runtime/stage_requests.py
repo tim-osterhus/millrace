@@ -18,7 +18,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.router import RouterAction, RouterDecision
-from millrace_ai.runner import RunnerRawResult, StageRunRequest
+from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.state_store import save_snapshot
 
 if TYPE_CHECKING:

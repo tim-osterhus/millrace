@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.errors import UnknownRunnerError
 from millrace_ai.runners.registry import RunnerRegistry
+from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
 
 
 class StageRunnerDispatcher:

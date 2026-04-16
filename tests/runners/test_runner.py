@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,6 +14,20 @@ from millrace_ai.runner import (
 )
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_runner_module_is_facade_over_runners_package() -> None:
+    runner_facade = importlib.import_module("millrace_ai.runner")
+    requests_module = importlib.import_module("millrace_ai.runners.requests")
+    normalization_module = importlib.import_module("millrace_ai.runners.normalization")
+
+    assert Path(runner_facade.__file__).as_posix().endswith("/runner.py")
+    assert runner_facade.StageRunRequest is requests_module.StageRunRequest
+    assert runner_facade.RunnerRawResult is requests_module.RunnerRawResult
+    assert runner_facade.normalize_stage_result is normalization_module.normalize_stage_result
+    assert runner_facade.render_stage_request_context_lines is (
+        requests_module.render_stage_request_context_lines
+    )
 
 
 def _request(tmp_path: Path, *, stage: str = "builder") -> StageRunRequest:

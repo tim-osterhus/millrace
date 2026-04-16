@@ -22,7 +22,7 @@ def test_compiler_consumes_config_and_assets_package_surfaces() -> None:
 
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:
-    assets_root = Path(__file__).resolve().parents[1] / "src" / "millrace_ai" / "assets"
+    assets_root = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
     return copied_root

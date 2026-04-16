@@ -5,7 +5,7 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _build_wheel(tmp_path: Path) -> Path:

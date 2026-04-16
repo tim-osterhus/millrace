@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from millrace_ai.runner import RunnerRawResult, StageRunRequest
+from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
 
 
 class StageRunnerAdapter(Protocol):

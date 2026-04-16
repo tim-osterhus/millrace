@@ -8,11 +8,6 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
-from millrace_ai.runner import (
-    RunnerRawResult,
-    StageRunRequest,
-    render_stage_request_context_lines,
-)
 from millrace_ai.runners.contracts import (
     completion_artifact_from_raw_result,
     invocation_artifact_from_request,
@@ -21,6 +16,11 @@ from millrace_ai.runners.contracts import (
 )
 from millrace_ai.runners.errors import RunnerBinaryNotFoundError
 from millrace_ai.runners.process import ProcessExecutionResult, run_process
+from millrace_ai.runners.requests import (
+    RunnerRawResult,
+    StageRunRequest,
+    render_stage_request_context_lines,
+)
 
 
 class CodexCliRunnerAdapter:

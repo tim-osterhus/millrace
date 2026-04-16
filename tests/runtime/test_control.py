@@ -50,7 +50,7 @@ def _task_doc(task_id: str) -> TaskDocument:
         summary="control test task",
         target_paths=["millrace/control.py"],
         acceptance=["control command mutates or defers correctly"],
-        required_checks=["uv run pytest tests/test_control.py -q"],
+        required_checks=["uv run pytest tests/runtime/test_control.py -q"],
         references=["lab/specs/drafts/millrace-runtime-module-and-cli-plan.md"],
         risk=["runtime control drift"],
         created_at=NOW,

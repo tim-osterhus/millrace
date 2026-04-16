@@ -6,8 +6,8 @@ from pathlib import Path
 
 import millrace_ai
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[4]
+RUNTIME_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[5]
 MINIMUM_FUNCTIONALITY_WORKSPACE = REPO_ROOT / "workspaces" / "minimum-functionality"
 
 

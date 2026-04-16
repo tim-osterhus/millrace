@@ -3,15 +3,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DOCS_DIR = REPO_ROOT / "docs" / "runtime"
 DOC_INDEX = RUNTIME_DOCS_DIR / "README.md"
 ENTRYPOINT_MAPPING_DOC = RUNTIME_DOCS_DIR / "millrace-entrypoint-mapping.md"
-PACKAGED_ENTRYPOINTS_DIR = REPO_ROOT / "millrace_ai" / "assets" / "entrypoints"
+PACKAGED_ENTRYPOINTS_DIR = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints"
 
 ENTRYPOINT_MAPPING_ROW = re.compile(
     r"- `(?P<draft>lab/specs/drafts/entrypoints/(?P<plane>execution|planning)/(?P<filename>[^`]+\.md))` -> "
-    r"`(?P<packaged>millrace_ai/assets/entrypoints/(?P=plane)/(?P=filename))` -> "
+    r"`(?P<packaged>(?:src/)?millrace_ai/assets/entrypoints/(?P=plane)/(?P=filename))` -> "
     r"`(?P<deployed>millrace-agents/entrypoints/(?P=plane)/(?P=filename))`"
 )
 INDEX_DOC_ROW = re.compile(r"- `(?P<path>[^`]+\.md)`:")
@@ -32,7 +32,10 @@ def test_coverage_matrix_lists_every_canonical_draft_with_mappings() -> None:
     mapping_text = _read_required_doc(ENTRYPOINT_MAPPING_DOC)
     mapping_rows = _parse_entrypoint_mapping_rows(mapping_text)
 
-    mapped_packaged_paths = {match.group("packaged") for match in mapping_rows}
+    mapped_packaged_paths = {
+        path if path.startswith("src/") else f"src/{path}"
+        for path in (match.group("packaged") for match in mapping_rows)
+    }
     packaged_paths = {
         str(path.relative_to(REPO_ROOT))
         for path in PACKAGED_ENTRYPOINTS_DIR.rglob("*.md")

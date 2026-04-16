@@ -23,7 +23,7 @@ def _task_doc(task_id: str, *, created_at: datetime) -> TaskDocument:
         summary="queue test",
         target_paths=["millrace/queue_store.py"],
         acceptance=["queue behavior is deterministic"],
-        required_checks=["uv run pytest tests/test_queue_store.py -q"],
+        required_checks=["uv run pytest tests/workspace/test_queue_store.py -q"],
         references=["lab/specs/drafts/millrace-work-item-queue-and-ownership-contract.md"],
         risk=["queue drift"],
         created_at=created_at,

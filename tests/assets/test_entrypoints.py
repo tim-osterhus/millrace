@@ -14,7 +14,7 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.entrypoints import LintLevel, lint_asset_manifests, parse_markdown_asset
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT_MAPPING_DOC = REPO_ROOT / "docs" / "runtime" / "millrace-entrypoint-mapping.md"
 ENTRYPOINT_MAPPING_ROW = re.compile(
     r"- `lab/specs/drafts/entrypoints/(?:execution|planning)/[^`]+\.md` -> "

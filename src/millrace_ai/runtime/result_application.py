@@ -24,7 +24,7 @@ from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.router import RouterAction, RouterDecision, next_execution_step, next_planning_step
-from millrace_ai.runner import StageRunRequest
+from millrace_ai.runners import StageRunRequest
 from millrace_ai.state_store import (
     load_recovery_counters,
     reset_forward_progress_counters,

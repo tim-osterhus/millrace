@@ -65,7 +65,7 @@ def _task_doc(task_id: str, *, created_at: datetime) -> TaskDocument:
         summary="runtime test task",
         target_paths=["millrace/runtime.py"],
         acceptance=["runtime stage sequence is deterministic"],
-        required_checks=["uv run pytest tests/test_runtime.py -q"],
+        required_checks=["uv run pytest tests/runtime/test_runtime.py -q"],
         references=["lab/specs/drafts/millrace-runtime-module-and-cli-plan.md"],
         risk=["runtime drift"],
         created_at=created_at,

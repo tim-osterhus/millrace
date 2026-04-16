@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from millrace_ai.runner import RunnerRawResult, StageRunRequest
+from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
 
 
 class _ArtifactModel(BaseModel):

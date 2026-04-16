@@ -31,7 +31,7 @@ from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.router import RouterDecision
-from millrace_ai.runner import RunnerRawResult, StageRunRequest, normalize_stage_result
+from millrace_ai.runners import RunnerRawResult, StageRunRequest, normalize_stage_result
 from millrace_ai.runtime_lock import (
     RuntimeOwnershipLockError,
     acquire_runtime_ownership_lock,
