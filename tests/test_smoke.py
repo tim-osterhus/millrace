@@ -13,6 +13,8 @@ MINIMUM_FUNCTIONALITY_WORKSPACE = REPO_ROOT / "workspaces" / "minimum-functional
 
 def test_import_millrace_ai_namespace() -> None:
     assert millrace_ai.__version__
+    resolved = Path(millrace_ai.__file__).resolve().as_posix()
+    assert "/src/millrace_ai/" in resolved
 
 
 def test_legacy_namespace_not_importable() -> None:

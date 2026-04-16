@@ -73,7 +73,7 @@ Task-ID: example-task-001
 Title: Add run inspection CLI
 
 Target-Paths:
-- millrace_ai/cli.py
+- src/millrace_ai/cli.py
 
 Acceptance:
 - `millrace runs ls` reports persisted run summaries.
@@ -125,8 +125,8 @@ Authoritative local verification commands:
 
 ```bash
 uv run --extra dev python -m pytest -q
-uv run --extra dev ruff check millrace_ai tests
-uv run --extra dev mypy millrace_ai
+uv run --extra dev ruff check src/millrace_ai tests
+uv run --extra dev mypy src/millrace_ai
 ```
 
 Operational source + wheel checks (minimum functionality workspace):

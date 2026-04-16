@@ -34,10 +34,11 @@ version = {attr = "millrace_ai.__version__"}
 include-package-data = false
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["millrace_ai", "millrace_ai.*"]
 
 [tool.setuptools.package-data]
-millrace_ai = ["assets/**/*.md", "assets/**/*.json"]
+millrace_ai = ["assets/**/*.md", "assets/**/*.json", "py.typed"]
 
 [tool.setuptools.exclude-package-data]
 "*" = [".DS_Store"]
