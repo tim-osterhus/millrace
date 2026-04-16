@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -8,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-import millrace_ai.mailbox as mailbox_module
+import millrace_ai.workspace.mailbox as mailbox_module
 from millrace_ai.mailbox import (
     archive_claimed_mailbox_command,
     claim_next_mailbox_command,
@@ -33,6 +34,16 @@ def _command_payload(command_id: str, command: str) -> dict[str, object]:
 
 def _workspace_paths(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def test_mailbox_module_is_workspace_facade() -> None:
+    mailbox_facade = importlib.import_module("millrace_ai.mailbox")
+    mailbox_module = importlib.import_module("millrace_ai.workspace.mailbox")
+
+    assert mailbox_facade.ClaimedMailboxCommand.__module__ == "millrace_ai.workspace.mailbox"
+    assert mailbox_facade.MailboxDrainResult.__module__ == "millrace_ai.workspace.mailbox"
+    assert mailbox_facade.write_mailbox_command is mailbox_module.write_mailbox_command
+    assert mailbox_facade.claim_next_mailbox_command is mailbox_module.claim_next_mailbox_command
 
 
 def test_write_and_read_pending_commands_round_trip(tmp_path: Path) -> None:

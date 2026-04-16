@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +41,19 @@ def _bootstrap(tmp_path: Path):
     return paths
 
 
+def test_state_store_facade_is_split_over_workspace_modules() -> None:
+    state_facade = importlib.import_module("millrace_ai.state_store")
+    state_store_module = importlib.import_module("millrace_ai.workspace.state_store")
+    state_reconciliation_module = importlib.import_module("millrace_ai.workspace.state_reconciliation")
+
+    assert state_facade.load_snapshot is state_store_module.load_snapshot
+    assert state_facade.set_execution_status is state_store_module.set_execution_status
+    assert state_facade.ReconciliationSignal.__module__ == "millrace_ai.workspace.state_reconciliation"
+    assert state_facade.collect_reconciliation_signals is (
+        state_reconciliation_module.collect_reconciliation_signals
+    )
+
+
 def test_save_snapshot_and_load_snapshot_round_trip(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
     snapshot = load_snapshot(paths).model_copy(
@@ -74,7 +88,7 @@ def test_save_snapshot_is_atomic_when_replace_fails(
     def fail_replace(_: str | Path, __: str | Path) -> None:
         raise OSError("replace failure")
 
-    monkeypatch.setattr("millrace_ai.state_store.os.replace", fail_replace)
+    monkeypatch.setattr("millrace_ai.workspace.state_store.os.replace", fail_replace)
 
     with pytest.raises(OSError, match="replace failure"):
         save_snapshot(paths, snapshot)

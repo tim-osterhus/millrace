@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import shutil
@@ -24,6 +25,20 @@ def _copy_assets(tmp_path: Path) -> Path:
     destination = tmp_path / "assets"
     shutil.copytree(source_assets, destination)
     return destination
+
+
+def test_workspace_package_exposes_support_module_facades() -> None:
+    workspace_package = importlib.import_module("millrace_ai.workspace")
+    runtime_lock_module = importlib.import_module("millrace_ai.runtime_lock")
+    work_documents_module = importlib.import_module("millrace_ai.work_documents")
+
+    assert hasattr(workspace_package, "workspace_paths")
+    assert runtime_lock_module.acquire_runtime_ownership_lock.__module__ == (
+        "millrace_ai.workspace.runtime_lock"
+    )
+    assert work_documents_module.render_work_document.__module__ == (
+        "millrace_ai.workspace.work_documents"
+    )
 
 
 def test_doctor_passes_for_bootstrapped_workspace(tmp_path: Path) -> None:

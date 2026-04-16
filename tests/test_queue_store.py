@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -90,6 +91,21 @@ def _spec_markdown(payload: dict[str, object]) -> str:
     if "created_by" in payload:
         lines.append(f"Created-By: {payload['created_by']}")
     return "\n".join(lines) + "\n"
+
+
+def test_queue_store_facade_is_split_over_workspace_modules() -> None:
+    queue_facade = importlib.import_module("millrace_ai.queue_store")
+    queue_store_module = importlib.import_module("millrace_ai.workspace.queue_store")
+    queue_selection_module = importlib.import_module("millrace_ai.workspace.queue_selection")
+    queue_reconciliation_module = importlib.import_module("millrace_ai.workspace.queue_reconciliation")
+    importlib.import_module("millrace_ai.workspace.queue_transitions")
+
+    assert queue_facade.QueueStore.__module__ == "millrace_ai.workspace.queue_store"
+    assert queue_facade.QueueStore is queue_store_module.QueueStore
+    assert queue_facade.QueueClaim.__module__ == "millrace_ai.workspace.queue_selection"
+    assert queue_facade.StaleActiveState.__module__ == "millrace_ai.workspace.queue_reconciliation"
+    assert hasattr(queue_selection_module, "claim_next_execution_task")
+    assert hasattr(queue_reconciliation_module, "detect_execution_stale_state")
 
 
 def test_work_documents_round_trip_for_task_spec_and_incident() -> None:

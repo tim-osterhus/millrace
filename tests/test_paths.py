@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -41,6 +42,16 @@ def _expected_directories(root: Path) -> list[Path]:
         runtime_root / "entrypoints",
         runtime_root / "skills",
     ]
+
+
+def test_paths_module_is_workspace_facade() -> None:
+    paths_module = importlib.import_module("millrace_ai.paths")
+    workspace_paths_module = importlib.import_module("millrace_ai.workspace.paths")
+
+    assert Path(paths_module.__file__).as_posix().endswith("/paths.py")
+    assert paths_module.WorkspacePaths.__module__ == "millrace_ai.workspace.paths"
+    assert paths_module.workspace_paths is workspace_paths_module.workspace_paths
+    assert paths_module.bootstrap_workspace is workspace_paths_module.bootstrap_workspace
 
 
 def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:

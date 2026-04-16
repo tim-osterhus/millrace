@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,15 @@ NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 
 def _bootstrap(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def test_events_module_is_workspace_facade() -> None:
+    events_facade = importlib.import_module("millrace_ai.events")
+    events_module = importlib.import_module("millrace_ai.workspace.events")
+
+    assert events_facade.RuntimeEventRecord.__module__ == "millrace_ai.workspace.events"
+    assert events_facade.write_runtime_event is events_module.write_runtime_event
+    assert events_facade.read_runtime_events is events_module.read_runtime_events
 
 
 def test_runtime_event_round_trip(tmp_path: Path) -> None:

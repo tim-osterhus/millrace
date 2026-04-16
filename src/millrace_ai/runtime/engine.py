@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,43 +11,26 @@ from uuid import uuid4
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig, fingerprint_runtime_config, load_runtime_config
 from millrace_ai.contracts import (
-    ExecutionStageName,
-    ExecutionTerminalResult,
     FrozenRunPlan,
     FrozenStagePlan,
-    IncidentDecision,
-    IncidentDocument,
-    IncidentSeverity,
-    MailboxAddIdeaPayload,
-    MailboxAddSpecPayload,
-    MailboxAddTaskPayload,
     MailboxCommandEnvelope,
     Plane,
-    PlanningStageName,
-    RecoveryCounterEntry,
     RecoveryCounters,
-    ReloadOutcome,
-    ResultClass,
     RuntimeMode,
     RuntimeSnapshot,
-    SpecDocument,
     StageName,
     StageResultEnvelope,
     WatcherMode,
     WorkItemKind,
 )
-from . import activation, mailbox_intake, reconciliation, result_application, stage_requests, watcher_intake
 from millrace_ai.errors import (
-    ControlRoutingError,
     QueueStateError,
     RuntimeLifecycleError,
-    WorkspaceStateError,
 )
 from millrace_ai.events import write_runtime_event
-from millrace_ai.mailbox import drain_incoming_mailbox_commands
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueClaim, QueueStore
-from millrace_ai.router import RouterAction, RouterDecision, next_execution_step, next_planning_step
+from millrace_ai.router import RouterDecision
 from millrace_ai.runner import RunnerRawResult, StageRunRequest, normalize_stage_result
 from millrace_ai.runtime_lock import (
     RuntimeOwnershipLockError,
@@ -57,7 +39,6 @@ from millrace_ai.runtime_lock import (
 )
 from millrace_ai.state_store import (
     ReconciliationSignal,
-    collect_reconciliation_signals,
     load_recovery_counters,
     load_snapshot,
     reset_forward_progress_counters,
@@ -66,7 +47,9 @@ from millrace_ai.state_store import (
     set_execution_status,
     set_planning_status,
 )
-from millrace_ai.watchers import WatcherSession, WatchEvent, build_watcher_session
+from millrace_ai.watchers import WatcherSession, WatchEvent
+
+from . import activation, mailbox_intake, reconciliation, result_application, stage_requests, watcher_intake
 
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
 _STATUS_IDLE = "### IDLE"
