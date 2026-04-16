@@ -2,8 +2,15 @@
 
 ## Scope
 
-Millrace is a filesystem-backed runtime implemented in `millrace_ai`.
+Millrace is a filesystem-backed runtime implemented under `src/millrace_ai/` and imported as `millrace_ai`.
 Each workspace is bootstrapped under `<workspace>/millrace-agents/` and owns its own state, queues, lock file, and logs.
+
+## Source Tree
+
+- importable package code lives under `src/millrace_ai/`
+- runtime-facing domains are split across `assets/`, `cli/`, `config/`, `runners/`, `runtime/`, and `workspace/`
+- tests mirror those ownership boundaries under `tests/assets/`, `tests/cli/`, `tests/config/`, `tests/runners/`, `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
+- `docs/source-package-map.md` records the old-to-new module mapping and the root facades intentionally preserved for compatibility
 
 ## Workspace Ownership Model
 
@@ -40,30 +47,30 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 
 ## Module Topology
 
-- `millrace_ai/paths.py`: workspace contract + bootstrap (`millrace-agents` root + default `millrace.toml`).
-- `millrace_ai/work_documents.py`: headed markdown parsing/serialization for task/spec/incident documents.
-- `millrace_ai/queue_store.py`: queue claim/transition/requeue for markdown documents.
-- `millrace_ai/state_store.py`: snapshot/status/counter persistence and reconciliation signals.
-- `millrace_ai/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
-- `millrace_ai/compiler.py`: mode+loop compile into frozen plan + diagnostics.
-- `millrace_ai/runners/*`: stage runner adapter registry/dispatcher and Codex adapter.
-- `millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
-- `millrace_ai/runtime/engine.py`: orchestration facade for startup, tick ordering, lock lifecycle, and runtime-owned control resets.
-- `millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
-- `millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
-- `millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
-- `millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
-- `millrace_ai/runtime/result_application.py`: router decisions, counter updates, stage-result persistence, and handoff/blocking side effects.
-- `millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
-- `millrace_ai/runtime/inspection.py`: persisted run summary inspection and artifact selection helpers.
-- `millrace_ai/run_inspection.py`: thin compatibility layer that re-exports the runtime inspection surface.
-- `millrace_ai/control.py`: thin public facade that preserves the stable operator control import surface.
-- `millrace_ai/runtime/control.py`: public runtime control abstraction that coordinates routing vs direct mutation ownership.
-- `millrace_ai/runtime/control_mailbox.py`: mailbox-safe daemon routing, command envelope creation, and control enqueue failure boundaries.
-- `millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, requeue/reset helpers, and stale-state clearing behavior.
-- `millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
-- `millrace_ai/doctor.py`: workspace integrity + lock health checks.
-- `millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, formatting, and command groups.
+- `src/millrace_ai/workspace/paths.py`: workspace contract + bootstrap (`millrace-agents` root + default `millrace.toml`).
+- `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/spec/incident documents.
+- `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
+- `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
+- `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
+- `src/millrace_ai/compiler.py`: mode+loop compile into frozen plan + diagnostics.
+- `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex adapter.
+- `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
+- `src/millrace_ai/runtime/engine.py`: orchestration facade for startup, tick ordering, lock lifecycle, and runtime-owned control resets.
+- `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
+- `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
+- `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
+- `src/millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
+- `src/millrace_ai/runtime/result_application.py`: router decisions, counter updates, stage-result persistence, and handoff/blocking side effects.
+- `src/millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
+- `src/millrace_ai/runtime/inspection.py`: persisted run summary inspection and artifact selection helpers.
+- `src/millrace_ai/run_inspection.py`: thin compatibility layer that re-exports the runtime inspection surface.
+- `src/millrace_ai/control.py`: thin public facade that preserves the stable operator control import surface.
+- `src/millrace_ai/runtime/control.py`: public runtime control abstraction that coordinates routing vs direct mutation ownership.
+- `src/millrace_ai/runtime/control_mailbox.py`: mailbox-safe daemon routing, command envelope creation, and control enqueue failure boundaries.
+- `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, requeue/reset helpers, and stale-state clearing behavior.
+- `src/millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
+- `src/millrace_ai/doctor.py`: workspace integrity + lock health checks.
+- `src/millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, formatting, and command groups.
 
 ## Stage Runner Stack
 

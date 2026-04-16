@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes Phase 1 runner execution architecture in `millrace_ai`.
+This document describes the runner execution architecture implemented under `src/millrace_ai/runners/`.
 The runtime contract stays:
 
 - input: `StageRunRequest`
@@ -10,18 +10,24 @@ The runtime contract stays:
 
 ## Components
 
-- `millrace_ai/runners/base.py`
+- `src/millrace_ai/runners/requests.py`
+  - `StageRunRequest`, `RunnerRawResult`, and prompt-context rendering
+- `src/millrace_ai/runners/normalization.py`
+  - terminal extraction, failure mapping, and `StageResultEnvelope` normalization
+- `src/millrace_ai/runners/base.py`
   - adapter protocol (`name`, `run(request)`)
-- `millrace_ai/runners/registry.py`
+- `src/millrace_ai/runners/registry.py`
   - mapping from runner name to adapter
-- `millrace_ai/runners/dispatcher.py`
+- `src/millrace_ai/runners/dispatcher.py`
   - runtime-facing callable resolver
-- `millrace_ai/runners/contracts.py`
+- `src/millrace_ai/runners/contracts.py`
   - invocation/completion artifact schemas
-- `millrace_ai/runners/process.py`
+- `src/millrace_ai/runners/process.py`
   - subprocess helper with timeout/error mapping
-- `millrace_ai/runners/adapters/codex_cli.py`
+- `src/millrace_ai/runners/adapters/codex_cli.py`
   - built-in Codex CLI adapter
+- `src/millrace_ai/runner.py`
+  - thin compatibility facade that preserves the legacy root import path
 
 ## Resolution Order
 

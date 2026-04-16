@@ -4,6 +4,14 @@ Millrace is a thin-core autonomous runtime packaged as `millrace_ai`.
 
 The runtime bootstraps all operational files under `<workspace>/millrace-agents/` and keeps canonical source code in the package itself.
 
+## Source Layout
+
+- importable code lives under `src/millrace_ai/`
+- tests mirror package ownership under `tests/assets/`, `tests/cli/`, `tests/config/`, `tests/runners/`, `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
+- preserved compatibility facades remain at the package root for legacy imports such as `millrace_ai.control`, `millrace_ai.run_inspection`, `millrace_ai.runner`, `millrace_ai.entrypoints`, and workspace support modules
+
+Use `docs/source-package-map.md` for the old-to-new module map and the intentionally preserved facade list.
+
 ## Quick Start
 
 ```bash
@@ -73,7 +81,7 @@ Task-ID: example-task-001
 Title: Add run inspection CLI
 
 Target-Paths:
-- src/millrace_ai/cli.py
+- src/millrace_ai/cli/commands/runs.py
 
 Acceptance:
 - `millrace runs ls` reports persisted run summaries.
@@ -118,6 +126,7 @@ Permission levels map to Codex CLI flags:
 - `docs/runtime/millrace-cli-reference.md`
 - `docs/runtime/millrace-entrypoint-mapping.md`
 - `docs/runtime/millrace-runner-architecture.md`
+- `docs/source-package-map.md`
 
 ## Verification
 
@@ -125,28 +134,30 @@ Authoritative local verification commands:
 
 ```bash
 uv run --extra dev python -m pytest -q
-uv run --extra dev ruff check src/millrace_ai tests
-uv run --extra dev mypy src/millrace_ai
+uv run --with ruff ruff check src/millrace_ai tests
+uv run --with mypy mypy src/millrace_ai
 ```
 
 Operational source + wheel checks (minimum functionality workspace):
 
 ```bash
-rm -rf /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality/millrace-agents
+WORKSPACE=/absolute/path/to/minimum-functionality-workspace
 
-uv run --extra dev python -m millrace_ai compile validate --workspace /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality
-uv run --extra dev python -m millrace_ai run once --workspace /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality
-uv run --extra dev python -m millrace_ai status --workspace /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality
+rm -rf "$WORKSPACE/millrace-agents"
 
-rm -rf /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality/millrace-agents
+uv run --extra dev python -m millrace_ai compile validate --workspace "$WORKSPACE"
+uv run --extra dev python -m millrace_ai run once --workspace "$WORKSPACE"
+uv run --extra dev python -m millrace_ai status --workspace "$WORKSPACE"
+
+rm -rf "$WORKSPACE/millrace-agents"
 
 uv build --wheel
 python3 -m venv /tmp/millrace-wheel-test
 source /tmp/millrace-wheel-test/bin/activate
 pip install dist/*.whl
-millrace compile validate --workspace /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality
-millrace run once --workspace /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality
-millrace status --workspace /Users/timinator/Desktop/Millrace-Dev/workspaces/minimum-functionality
+millrace compile validate --workspace "$WORKSPACE"
+millrace run once --workspace "$WORKSPACE"
+millrace status --workspace "$WORKSPACE"
 ```
 
-For clean proof runs, refresh only `workspaces/minimum-functionality/millrace-agents/` in place. Do not mutate operator-authored files elsewhere in `workspaces/minimum-functionality/`.
+For clean proof runs, refresh only `"$WORKSPACE/millrace-agents/"` in place. Do not mutate operator-authored files elsewhere in the workspace root.

@@ -6,20 +6,20 @@ This document maps canonical draft entrypoints to packaged runtime assets and de
 
 ### Execution Plane
 
-- `lab/specs/drafts/entrypoints/execution/builder.md` -> `millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
-- `lab/specs/drafts/entrypoints/execution/checker.md` -> `millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
-- `lab/specs/drafts/entrypoints/execution/fixer.md` -> `millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
-- `lab/specs/drafts/entrypoints/execution/doublechecker.md` -> `millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`
-- `lab/specs/drafts/entrypoints/execution/updater.md` -> `millrace_ai/assets/entrypoints/execution/updater.md` -> `millrace-agents/entrypoints/execution/updater.md`
-- `lab/specs/drafts/entrypoints/execution/troubleshooter.md` -> `millrace_ai/assets/entrypoints/execution/troubleshooter.md` -> `millrace-agents/entrypoints/execution/troubleshooter.md`
-- `lab/specs/drafts/entrypoints/execution/consultant.md` -> `millrace_ai/assets/entrypoints/execution/consultant.md` -> `millrace-agents/entrypoints/execution/consultant.md`
+- `lab/specs/drafts/entrypoints/execution/builder.md` -> `src/millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
+- `lab/specs/drafts/entrypoints/execution/checker.md` -> `src/millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
+- `lab/specs/drafts/entrypoints/execution/fixer.md` -> `src/millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
+- `lab/specs/drafts/entrypoints/execution/doublechecker.md` -> `src/millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`
+- `lab/specs/drafts/entrypoints/execution/updater.md` -> `src/millrace_ai/assets/entrypoints/execution/updater.md` -> `millrace-agents/entrypoints/execution/updater.md`
+- `lab/specs/drafts/entrypoints/execution/troubleshooter.md` -> `src/millrace_ai/assets/entrypoints/execution/troubleshooter.md` -> `millrace-agents/entrypoints/execution/troubleshooter.md`
+- `lab/specs/drafts/entrypoints/execution/consultant.md` -> `src/millrace_ai/assets/entrypoints/execution/consultant.md` -> `millrace-agents/entrypoints/execution/consultant.md`
 
 ### Planning Plane
 
-- `lab/specs/drafts/entrypoints/planning/planner.md` -> `millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
-- `lab/specs/drafts/entrypoints/planning/manager.md` -> `millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
-- `lab/specs/drafts/entrypoints/planning/mechanic.md` -> `millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
-- `lab/specs/drafts/entrypoints/planning/auditor.md` -> `millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
+- `lab/specs/drafts/entrypoints/planning/planner.md` -> `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
+- `lab/specs/drafts/entrypoints/planning/manager.md` -> `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
+- `lab/specs/drafts/entrypoints/planning/mechanic.md` -> `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
+- `lab/specs/drafts/entrypoints/planning/auditor.md` -> `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
 
 ## Entrypoint Contract Expectations
 

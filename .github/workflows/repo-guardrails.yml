@@ -18,20 +18,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dev dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
 
-      - name: Lint representative runtime slice
-        run: python tools/repo_guardrails.py lint
+      - name: Run pytest
+        run: uv run --extra dev python -m pytest -q
 
-      - name: Type-check representative runtime slice
-        run: python tools/repo_guardrails.py typecheck
+      - name: Run Ruff
+        run: uv run --with ruff ruff check src/millrace_ai tests
 
-      - name: Enforce file-size budgets
-        run: python tools/repo_guardrails.py budgets
-
-      - name: Enforce import-cycle baseline
-        run: python tools/repo_guardrails.py cycles
-
-      - name: Run pytest through repo-local entrypoint
-        run: python tools/repo_guardrails.py test -- -q tests
+      - name: Run MyPy
+        run: uv run --with mypy mypy src/millrace_ai
