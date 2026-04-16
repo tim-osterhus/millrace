@@ -50,6 +50,14 @@ def test_cli_package_exposes_split_command_modules() -> None:
     assert hasattr(app_module, "app")
 
 
+def test_cli_package_consumes_public_runtime_control_facade() -> None:
+    control_module = importlib.import_module("millrace_ai.control")
+
+    assert cli.RuntimeControl is control_module.RuntimeControl
+    assert cli.ControlActionResult is control_module.ControlActionResult
+    assert cli.RuntimeControl.__module__ == "millrace_ai.runtime.control"
+
+
 def _task_payload(task_id: str) -> dict[str, object]:
     return {
         "task_id": task_id,

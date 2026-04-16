@@ -1,0 +1,324 @@
+"""Direct control mutations that operate on offline workspace state."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import datetime
+from typing import Generic, TypeVar
+
+from millrace_ai.contracts import (
+    MailboxAddIdeaPayload,
+    MailboxCommand,
+    Plane,
+    RecoveryCounters,
+    RuntimeSnapshot,
+    SpecDocument,
+    TaskDocument,
+    WorkItemKind,
+)
+from millrace_ai.errors import QueueStateError, WorkspaceStateError
+from millrace_ai.paths import WorkspacePaths
+from millrace_ai.queue_store import QueueStore
+from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
+from millrace_ai.runtime_lock import clear_stale_runtime_ownership_lock
+from millrace_ai.state_store import (
+    load_recovery_counters,
+    load_snapshot,
+    reset_forward_progress_counters,
+    save_recovery_counters,
+    save_snapshot,
+    set_execution_status,
+    set_planning_status,
+)
+
+ResultT = TypeVar("ResultT")
+_STATUS_IDLE = "### IDLE"
+
+
+class DirectControlMutations(Generic[ResultT]):
+    """Apply direct control mutations when no active daemon owns the workspace."""
+
+    def __init__(
+        self,
+        paths: WorkspacePaths,
+        *,
+        result_factory: ControlActionResultFactory[ResultT],
+        now: Callable[[], datetime],
+    ) -> None:
+        self.paths = paths
+        self._result_factory = result_factory
+        self._now = now
+
+    def add_task(self, snapshot: RuntimeSnapshot, *, document: TaskDocument) -> ResultT:
+        destination = QueueStore(self.paths).enqueue_task(document)
+        save_snapshot(
+            self.paths,
+            snapshot.model_copy(
+                update={
+                    "queue_depth_execution": self._execution_queue_depth(),
+                    "updated_at": self._now(),
+                }
+            ),
+        )
+        return self._result_factory(
+            action=MailboxCommand.ADD_TASK,
+            mode="direct",
+            applied=True,
+            detail="task queued directly",
+            artifact_path=destination,
+        )
+
+    def add_spec(self, snapshot: RuntimeSnapshot, *, document: SpecDocument) -> ResultT:
+        destination = QueueStore(self.paths).enqueue_spec(document)
+        save_snapshot(
+            self.paths,
+            snapshot.model_copy(
+                update={
+                    "queue_depth_planning": self._planning_queue_depth(),
+                    "updated_at": self._now(),
+                }
+            ),
+        )
+        return self._result_factory(
+            action=MailboxCommand.ADD_SPEC,
+            mode="direct",
+            applied=True,
+            detail="spec queued directly",
+            artifact_path=destination,
+        )
+
+    def add_idea(self, snapshot: RuntimeSnapshot, *, payload: MailboxAddIdeaPayload) -> ResultT:
+        destination_dir = self.paths.root / "ideas" / "inbox"
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination = destination_dir / payload.source_name
+        if destination.exists():
+            raise WorkspaceStateError(f"idea document already exists: {destination}")
+        destination.write_text(payload.markdown, encoding="utf-8")
+        save_snapshot(
+            self.paths,
+            snapshot.model_copy(
+                update={
+                    "queue_depth_planning": self._planning_queue_depth(),
+                    "updated_at": self._now(),
+                }
+            ),
+        )
+        return self._result_factory(
+            action=MailboxCommand.ADD_IDEA,
+            mode="direct",
+            applied=True,
+            detail="idea staged directly",
+            artifact_path=destination,
+        )
+
+    def pause(self, snapshot: RuntimeSnapshot) -> ResultT:
+        changed = not snapshot.paused
+        updated = snapshot.model_copy(update={"paused": True, "updated_at": self._now()})
+        save_snapshot(self.paths, updated)
+        return self._result_factory(
+            action=MailboxCommand.PAUSE,
+            mode="direct",
+            applied=changed,
+            detail="runtime paused directly",
+        )
+
+    def resume(self, snapshot: RuntimeSnapshot) -> ResultT:
+        changed = snapshot.paused
+        updated = snapshot.model_copy(update={"paused": False, "updated_at": self._now()})
+        save_snapshot(self.paths, updated)
+        return self._result_factory(
+            action=MailboxCommand.RESUME,
+            mode="direct",
+            applied=changed,
+            detail="runtime resumed directly",
+        )
+
+    def stop(self, snapshot: RuntimeSnapshot) -> ResultT:
+        changed = snapshot.process_running or not snapshot.stop_requested
+        updated = snapshot.model_copy(
+            update={
+                "process_running": False,
+                "stop_requested": True,
+                "updated_at": self._now(),
+            }
+        )
+        save_snapshot(self.paths, updated)
+        return self._result_factory(
+            action=MailboxCommand.STOP,
+            mode="direct",
+            applied=changed,
+            detail="runtime stop requested directly",
+        )
+
+    def retry_active(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        reason: str,
+        scope: Plane | None,
+    ) -> ResultT:
+        if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+            return self._result_factory(
+                action=MailboxCommand.RETRY_ACTIVE,
+                mode="direct",
+                applied=False,
+                detail="no active work item to retry",
+            )
+        if scope is not None and snapshot.active_plane is not scope:
+            active_plane = snapshot.active_plane.value if snapshot.active_plane is not None else "none"
+            return self._result_factory(
+                action=MailboxCommand.RETRY_ACTIVE,
+                mode="direct",
+                applied=False,
+                detail=(
+                    f"{scope.value} retry requires matching active plane; "
+                    f"current active plane is {active_plane}"
+                ),
+            )
+
+        queue = QueueStore(self.paths)
+        work_item_kind = snapshot.active_work_item_kind
+        work_item_id = snapshot.active_work_item_id
+
+        try:
+            self._requeue_active_item(
+                queue,
+                work_item_kind=work_item_kind,
+                work_item_id=work_item_id,
+                reason=reason,
+            )
+        except QueueStateError as exc:
+            return self._result_factory(
+                action=MailboxCommand.RETRY_ACTIVE,
+                mode="direct",
+                applied=False,
+                detail=str(exc),
+            )
+
+        self._reset_runtime_to_idle(clear_stop_requested=False, clear_paused=False)
+        reset_forward_progress_counters(
+            self.paths,
+            work_item_kind=work_item_kind,
+            work_item_id=work_item_id,
+        )
+        return self._result_factory(
+            action=MailboxCommand.RETRY_ACTIVE,
+            mode="direct",
+            applied=True,
+            detail=f"active {work_item_kind.value} {work_item_id} requeued",
+        )
+
+    def clear_stale(self, snapshot: RuntimeSnapshot, *, reason: str) -> ResultT:
+        queue = QueueStore(self.paths)
+        requeued_count = self._requeue_all_active_items(queue, reason=reason)
+        had_counters = bool(load_recovery_counters(self.paths).entries)
+        lock_clear_result = clear_stale_runtime_ownership_lock(self.paths)
+
+        self._reset_runtime_to_idle(clear_stop_requested=True, clear_paused=True)
+        save_recovery_counters(self.paths, RecoveryCounters())
+
+        applied = (
+            requeued_count > 0
+            or had_counters
+            or snapshot.active_stage is not None
+            or snapshot.paused
+            or snapshot.stop_requested
+            or lock_clear_result.cleared
+        )
+        return self._result_factory(
+            action=MailboxCommand.CLEAR_STALE_STATE,
+            mode="direct",
+            applied=applied,
+            detail=(
+                f"cleared stale runtime state; requeued={requeued_count}; "
+                f"runtime_ownership_lock={lock_clear_result.reason}"
+            ),
+        )
+
+    def reload_config(self, snapshot: RuntimeSnapshot) -> ResultT:
+        del snapshot
+        return self._result_factory(
+            action=MailboxCommand.RELOAD_CONFIG,
+            mode="direct",
+            applied=False,
+            detail="no daemon running; reload request not enqueued",
+        )
+
+    def _requeue_all_active_items(self, queue: QueueStore, *, reason: str) -> int:
+        requeued_count = 0
+        for path in sorted(self.paths.tasks_active_dir.glob("*.md")):
+            try:
+                queue.requeue_task(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
+        for path in sorted(self.paths.specs_active_dir.glob("*.md")):
+            try:
+                queue.requeue_spec(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
+        for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
+            try:
+                queue.requeue_incident(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
+        return requeued_count
+
+    def _requeue_active_item(
+        self,
+        queue: QueueStore,
+        *,
+        work_item_kind: WorkItemKind,
+        work_item_id: str,
+        reason: str,
+    ) -> None:
+        if work_item_kind is WorkItemKind.TASK:
+            queue.requeue_task(work_item_id, reason=reason)
+            return
+        if work_item_kind is WorkItemKind.SPEC:
+            queue.requeue_spec(work_item_id, reason=reason)
+            return
+        queue.requeue_incident(work_item_id, reason=reason)
+
+    def _reset_runtime_to_idle(self, *, clear_stop_requested: bool, clear_paused: bool) -> None:
+        snapshot = load_snapshot(self.paths)
+        update: dict[str, object] = {
+            "process_running": False,
+            "active_plane": None,
+            "active_stage": None,
+            "active_run_id": None,
+            "active_work_item_kind": None,
+            "active_work_item_id": None,
+            "active_since": None,
+            "current_failure_class": None,
+            "troubleshoot_attempt_count": 0,
+            "mechanic_attempt_count": 0,
+            "fix_cycle_count": 0,
+            "consultant_invocations": 0,
+            "execution_status_marker": _STATUS_IDLE,
+            "planning_status_marker": _STATUS_IDLE,
+            "queue_depth_execution": self._execution_queue_depth(),
+            "queue_depth_planning": self._planning_queue_depth(),
+            "updated_at": self._now(),
+        }
+        if clear_paused:
+            update["paused"] = False
+        if clear_stop_requested:
+            update["stop_requested"] = False
+
+        save_snapshot(self.paths, snapshot.model_copy(update=update))
+        set_execution_status(self.paths, _STATUS_IDLE)
+        set_planning_status(self.paths, _STATUS_IDLE)
+
+    def _execution_queue_depth(self) -> int:
+        return len(tuple(self.paths.tasks_queue_dir.glob("*.md")))
+
+    def _planning_queue_depth(self) -> int:
+        specs = len(tuple(self.paths.specs_queue_dir.glob("*.md")))
+        incidents = len(tuple(self.paths.incidents_incoming_dir.glob("*.md")))
+        return specs + incidents
+
+
+__all__ = ["DirectControlMutations"]

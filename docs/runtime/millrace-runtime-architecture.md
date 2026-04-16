@@ -57,7 +57,10 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
 - `millrace_ai/runtime/inspection.py`: persisted run summary inspection and artifact selection helpers.
 - `millrace_ai/run_inspection.py`: thin compatibility layer that re-exports the runtime inspection surface.
-- `millrace_ai/control.py`: operator mutation routing (direct vs mailbox-safe when daemon-owned).
+- `millrace_ai/control.py`: thin public facade that preserves the stable operator control import surface.
+- `millrace_ai/runtime/control.py`: public runtime control abstraction that coordinates routing vs direct mutation ownership.
+- `millrace_ai/runtime/control_mailbox.py`: mailbox-safe daemon routing, command envelope creation, and control enqueue failure boundaries.
+- `millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, requeue/reset helpers, and stale-state clearing behavior.
 - `millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
 - `millrace_ai/doctor.py`: workspace integrity + lock health checks.
 - `millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, formatting, and command groups.

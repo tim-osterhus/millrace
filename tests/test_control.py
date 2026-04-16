@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -144,6 +145,18 @@ def _save_active_spec_snapshot(
 
 def _pending_command_set(paths) -> set[MailboxCommand]:
     return {envelope.command for envelope in read_pending_mailbox_commands(paths)}
+
+
+def test_control_import_surface_is_a_runtime_facade() -> None:
+    control_module = importlib.import_module("millrace_ai.control")
+    mailbox_module = importlib.import_module("millrace_ai.runtime.control_mailbox")
+    mutations_module = importlib.import_module("millrace_ai.runtime.control_mutations")
+
+    assert Path(control_module.__file__).as_posix().endswith("/control.py")
+    assert control_module.RuntimeControl.__module__ == "millrace_ai.runtime.control"
+    assert control_module.ControlActionResult.__module__ == "millrace_ai.runtime.control"
+    assert hasattr(mailbox_module, "MailboxControlRouter")
+    assert hasattr(mutations_module, "DirectControlMutations")
 
 
 def test_pause_resume_stop_are_direct_when_daemon_is_not_running(tmp_path: Path) -> None:
