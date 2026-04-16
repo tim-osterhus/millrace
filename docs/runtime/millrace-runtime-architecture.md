@@ -47,12 +47,20 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `millrace_ai/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
 - `millrace_ai/compiler.py`: mode+loop compile into frozen plan + diagnostics.
 - `millrace_ai/runners/*`: stage runner adapter registry/dispatcher and Codex adapter.
-- `millrace_ai/run_inspection.py`: persisted run summary inspection and artifact selection helpers.
-- `millrace_ai/runtime.py`: startup, mailbox intake, per-tick execution, reconciliation, persistence.
+- `millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
+- `millrace_ai/runtime/engine.py`: orchestration facade for startup, tick ordering, lock lifecycle, and runtime-owned control resets.
+- `millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
+- `millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
+- `millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
+- `millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
+- `millrace_ai/runtime/result_application.py`: router decisions, counter updates, stage-result persistence, and handoff/blocking side effects.
+- `millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
+- `millrace_ai/runtime/inspection.py`: persisted run summary inspection and artifact selection helpers.
+- `millrace_ai/run_inspection.py`: thin compatibility layer that re-exports the runtime inspection surface.
 - `millrace_ai/control.py`: operator mutation routing (direct vs mailbox-safe when daemon-owned).
 - `millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
 - `millrace_ai/doctor.py`: workspace integrity + lock health checks.
-- `millrace_ai/cli.py`: namespaced operator surface.
+- `millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, formatting, and command groups.
 
 ## Stage Runner Stack
 

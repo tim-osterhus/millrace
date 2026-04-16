@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,12 @@ NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def test_runtime_import_surface_moves_to_package_directory() -> None:
+    runtime_module = importlib.import_module("millrace_ai.runtime")
+
+    assert Path(runtime_module.__file__).as_posix().endswith("/runtime/__init__.py")
 
 
 def _task_doc(task_id: str, *, created_at: datetime) -> TaskDocument:

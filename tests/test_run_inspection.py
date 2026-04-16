@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from millrace_ai.contracts import StageResultEnvelope
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
-from millrace_ai.run_inspection import inspect_run, list_runs
+from millrace_ai.run_inspection import inspect_run, inspect_run_id, list_runs
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_runtime_package_exposes_inspection_module() -> None:
+    inspection_module = importlib.import_module("millrace_ai.runtime.inspection")
+
+    assert inspection_module.inspect_run is inspect_run
+    assert inspection_module.inspect_run_id is inspect_run_id
 
 
 def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path) -> None:

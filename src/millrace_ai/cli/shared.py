@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -131,7 +131,9 @@ def _validate_configured_stage_runners(*, config: RuntimeConfig, registry: Runne
         raise ValueError(f"Unknown configured stage runner(s): {names}")
 
 
-def _cli_api():
+def _cli_api() -> Any:
+    # Commands resolve dependencies through the package surface so tests can
+    # monkeypatch `millrace_ai.cli` without reaching into every command module.
     import millrace_ai.cli as cli_api
 
     return cli_api
