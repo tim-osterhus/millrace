@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "kind": "loop_config",
+  "loop_id": "execution.standard",
+  "plane": "execution",
+  "stages": [
+    "builder",
+    "checker",
+    "fixer",
+    "doublechecker",
+    "updater",
+    "troubleshooter",
+    "consultant"
+  ],
+  "entry_stage": "builder",
+  "edges": [
+    {
+      "source_stage": "builder",
+      "on_terminal_result": "BUILDER_COMPLETE",
+      "target_stage": "checker"
+    },
+    {
+      "source_stage": "builder",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "troubleshooter"
+    },
+    {
+      "source_stage": "checker",
+      "on_terminal_result": "CHECKER_PASS",
+      "target_stage": "updater"
+    },
+    {
+      "source_stage": "checker",
+      "on_terminal_result": "FIX_NEEDED",
+      "target_stage": "fixer"
+    },
+    {
+      "source_stage": "checker",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "troubleshooter"
+    },
+    {
+      "source_stage": "fixer",
+      "on_terminal_result": "FIXER_COMPLETE",
+      "target_stage": "doublechecker"
+    },
+    {
+      "source_stage": "fixer",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "troubleshooter"
+    },
+    {
+      "source_stage": "doublechecker",
+      "on_terminal_result": "DOUBLECHECK_PASS",
+      "target_stage": "updater"
+    },
+    {
+      "source_stage": "doublechecker",
+      "on_terminal_result": "FIX_NEEDED",
+      "target_stage": "fixer"
+    },
+    {
+      "source_stage": "doublechecker",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "troubleshooter"
+    },
+    {
+      "source_stage": "updater",
+      "on_terminal_result": "UPDATE_COMPLETE",
+      "terminal_result": "UPDATE_COMPLETE",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "updater",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "troubleshooter"
+    },
+    {
+      "source_stage": "troubleshooter",
+      "on_terminal_result": "TROUBLESHOOT_COMPLETE",
+      "target_stage": "checker"
+    },
+    {
+      "source_stage": "troubleshooter",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "consultant"
+    },
+    {
+      "source_stage": "consultant",
+      "on_terminal_result": "CONSULT_COMPLETE",
+      "target_stage": "troubleshooter"
+    },
+    {
+      "source_stage": "consultant",
+      "on_terminal_result": "NEEDS_PLANNING",
+      "terminal_result": "NEEDS_PLANNING",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "consultant",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
+    }
+  ],
+  "terminal_results": [
+    "UPDATE_COMPLETE",
+    "NEEDS_PLANNING",
+    "BLOCKED"
+  ]
+}

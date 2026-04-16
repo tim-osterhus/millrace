@@ -1,8 +1,0 @@
-{
-  "failure_limit": 2,
-  "phase_assumptions_budget": 8,
-  "schema_version": "1.0",
-  "specs": {},
-  "threshold": 0.75,
-  "updated_at": null
-}

@@ -1,0 +1,97 @@
+# Millrace Runner Architecture
+
+## Scope
+
+This document describes Phase 1 runner execution architecture in `millrace_ai`.
+The runtime contract stays:
+
+- input: `StageRunRequest`
+- output: `RunnerRawResult`
+
+## Components
+
+- `millrace_ai/runners/base.py`
+  - adapter protocol (`name`, `run(request)`)
+- `millrace_ai/runners/registry.py`
+  - mapping from runner name to adapter
+- `millrace_ai/runners/dispatcher.py`
+  - runtime-facing callable resolver
+- `millrace_ai/runners/contracts.py`
+  - invocation/completion artifact schemas
+- `millrace_ai/runners/process.py`
+  - subprocess helper with timeout/error mapping
+- `millrace_ai/runners/adapters/codex_cli.py`
+  - built-in Codex CLI adapter
+
+## Resolution Order
+
+Runner name for a stage execution resolves in this order:
+
+1. `StageRunRequest.runner_name`
+2. `RuntimeConfig.runners.default_runner`
+3. literal fallback `"codex_cli"`
+
+Unknown names fail fast via `UnknownRunnerError`.
+
+## Artifacts
+
+Each stage run writes adapter artifacts into `run_dir`:
+
+- `runner_prompt.<request_id>.md`
+- `runner_invocation.<request_id>.json`
+- `runner_stdout.<request_id>.txt`
+- `runner_stderr.<request_id>.txt`
+- `runner_completion.<request_id>.json`
+
+This keeps execution diagnosable and preserves contracts for Phase 2 external shim migration.
+
+## Codex Adapter Behavior
+
+Codex adapter:
+
+- builds a deterministic stage prompt from `StageRunRequest`
+- shells out to configured Codex command/args
+- captures stdout/stderr
+- maps subprocess outcomes to `RunnerRawResult.exit_kind`:
+  - `completed`
+  - `timeout`
+  - `runner_error`
+
+Default config fields:
+
+```toml
+[runners]
+default_runner = "codex_cli"
+
+[runners.codex]
+command = "codex"
+args = ["exec"]
+profile = "default"
+permission_default = "basic"
+# permission_by_stage = { planner = "basic", builder = "elevated" }
+# permission_by_model = { "gpt-5.4" = "maximum" }
+skip_git_repo_check = true
+extra_config = []
+```
+
+Permission precedence:
+
+1. stage override (`permission_by_stage`)
+2. model override (`permission_by_model`)
+3. `permission_default`
+
+Codex permission mappings:
+
+- `basic`: `--full-auto`
+- `elevated`: `-c approval_policy="never" --sandbox danger-full-access`
+- `maximum`: `--dangerously-bypass-approvals-and-sandbox`
+
+## Phase 2 Compatibility
+
+Phase 2 external shim adapter should preserve:
+
+- the dispatcher registry seam
+- invocation/completion artifact schema compatibility
+- `StageRunRequest -> RunnerRawResult` runtime normalization boundary
+
+This ensures swapping Codex in-process adapter for external Codex/Pi shim does not require runtime orchestration rewrites.

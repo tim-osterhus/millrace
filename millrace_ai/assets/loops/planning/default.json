@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "kind": "loop_config",
+  "loop_id": "planning.standard",
+  "plane": "planning",
+  "stages": [
+    "planner",
+    "manager",
+    "mechanic",
+    "auditor"
+  ],
+  "entry_stage": "planner",
+  "edges": [
+    {
+      "source_stage": "planner",
+      "on_terminal_result": "PLANNER_COMPLETE",
+      "target_stage": "manager"
+    },
+    {
+      "source_stage": "planner",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "mechanic"
+    },
+    {
+      "source_stage": "manager",
+      "on_terminal_result": "MANAGER_COMPLETE",
+      "terminal_result": "MANAGER_COMPLETE",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "manager",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "mechanic"
+    },
+    {
+      "source_stage": "mechanic",
+      "on_terminal_result": "MECHANIC_COMPLETE",
+      "target_stage": "planner"
+    },
+    {
+      "source_stage": "mechanic",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "auditor",
+      "on_terminal_result": "AUDITOR_COMPLETE",
+      "target_stage": "planner"
+    },
+    {
+      "source_stage": "auditor",
+      "on_terminal_result": "BLOCKED",
+      "target_stage": "mechanic"
+    }
+  ],
+  "terminal_results": [
+    "MANAGER_COMPLETE",
+    "BLOCKED"
+  ]
+}

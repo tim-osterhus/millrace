@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "millrace-ai"
 dynamic = ["version"]
-description = "Python runtime engine for the Millrace v1 control plane"
+description = "Millrace runtime rewrite baseline package"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-millrace = "millrace_engine.cli:main"
+millrace = "millrace_ai.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -28,39 +28,25 @@ dev = [
 ]
 
 [tool.setuptools.dynamic]
-version = {attr = "millrace_engine.__version__"}
+version = {attr = "millrace_ai.__version__"}
+
+[tool.setuptools]
+include-package-data = false
 
 [tool.setuptools.packages.find]
-include = ["millrace_engine*"]
-exclude = ["millrace_engine.legacy*"]
+include = ["millrace_ai", "millrace_ai.*"]
 
 [tool.setuptools.package-data]
-"millrace_engine.assets" = [
-  "manifest.json",
-  "*.md",
-  "docs/**/*.md",
-  "*.toml",
-  "agents/*.log",
-  "agents/**/*.log",
-  "agents/**/*.json",
-  "agents/**/*.md",
-  "agents/**/*.ps1",
-  "agents/**/*.py",
-  "agents/**/*.sh",
-  "agents/**/*.yaml",
-  "agents/**/*.yml",
-  "registry/**/*.json",
-  "registry/**/*.md",
-]
-"millrace_engine.tui" = [
-  "styles/*.tcss",
-]
+millrace_ai = ["assets/**/*.md", "assets/**/*.json"]
+
+[tool.setuptools.exclude-package-data]
+"*" = [".DS_Store"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 100
+line-length = 130
 target-version = "py311"
 extend-exclude = ["build"]
 

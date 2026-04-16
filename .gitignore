@@ -18,4 +18,18 @@ dist/
 
 # Package-first public repo: local dogfood/runtime workspaces should stay untracked.
 /agents/
+/millrace-agents/
 /millrace.toml
+/outline.md
+/historylog.md
+/state/
+/runs/
+/tasks/
+/specs/
+/incidents/
+/loops/
+/modes/
+/logs/
+/entrypoints/
+/skills/
+/roles/

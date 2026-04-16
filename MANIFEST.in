@@ -1,0 +1,2 @@
+recursive-include millrace_ai/assets *.md *.json
+global-exclude .DS_Store

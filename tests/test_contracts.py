@@ -1,162 +1,333 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
-import millrace_engine.contracts as contracts
-import millrace_engine.contract_documents as contract_documents
-import millrace_engine.contract_runtime as contract_runtime
-import millrace_engine.loop_architecture as loop_architecture
-import millrace_engine.loop_architecture_catalog as loop_architecture_catalog
-import millrace_engine.loop_architecture_common as loop_architecture_common
-import millrace_engine.loop_architecture_loop_contracts as loop_architecture_loop_contracts
-import millrace_engine.loop_architecture_profile_contracts as loop_architecture_profile_contracts
-import millrace_engine.loop_architecture_stage_contracts as loop_architecture_stage_contracts
+import pytest
+from pydantic import ValidationError
 
-from millrace_engine.contracts import (
-    ContractSurface,
-    ExecutionStatus,
-    ResearchStatus,
-    RunnerKind,
-    RunnerResult,
-    StageResult,
-    StageType,
-    TaskCard,
+from millrace_ai.contracts import (
+    CompileDiagnostics,
+    ExecutionStageName,
+    FrozenRunPlan,
+    FrozenStagePlan,
+    IncidentDocument,
+    LoopConfigDefinition,
+    MailboxCommandEnvelope,
+    ModeDefinition,
+    Plane,
+    RecoveryCounters,
+    RuntimeSnapshot,
+    SpecDocument,
+    StageResultEnvelope,
+    TaskDocument,
 )
 
-
-TASK_CARD_MARKDOWN = """## 2026-03-17 - Canonicalize contract surface
-- **Goal:** Keep the public model explicit.
-**Spec-ID:** SPEC-CONTRACT-001
-**Gates:** INTEGRATION
-**Integration:** skip
-**Dependencies:**
-  - upstream-task
-**Blocks:**
-  - downstream-task
-**Provides:**
-  - public-contract
-"""
+NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 
 
-def test_task_card_canonical_contract_includes_v1_fields_and_richer_markdown_fields() -> None:
-    source_file = Path("agents/tasksbacklog.md")
-    card = TaskCard.from_markdown(TASK_CARD_MARKDOWN, source_file=source_file)
-
-    assert card.title == "Canonicalize contract surface"
-    assert card.spec_id == "SPEC-CONTRACT-001"
-    assert card.gates == ("INTEGRATION",)
-    assert card.integration_preference == "skip"
-    assert card.depends_on == ("upstream-task",)
-    assert card.blocks == ("downstream-task",)
-    assert card.provides == ("public-contract",)
-    assert card.metadata == {}
-    assert card.source_file == source_file
-    assert card.raw_markdown == TASK_CARD_MARKDOWN.rstrip("\n")
-    assert card.body.startswith("- **Goal:**")
-
-
-def test_stage_result_populates_public_fields_from_runner_result() -> None:
-    run_dir = Path("/tmp/millrace-run")
-    stdout_path = run_dir / "builder.stdout.log"
-    stderr_path = run_dir / "builder.stderr.log"
-    last_response_path = run_dir / "builder.last.md"
-    runner_notes_path = run_dir / "runner_notes.md"
-    started_at = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
-    completed_at = datetime(2026, 3, 17, 12, 0, 5, tzinfo=timezone.utc)
-
-    runner_result = RunnerResult.model_validate(
-        {
-            "stage": StageType.BUILDER,
-            "runner": RunnerKind.SUBPROCESS,
-            "model": "fixture-model",
-            "command": ("python", "-m", "builder"),
-            "exit_code": 0,
-            "duration_seconds": 5.0,
-            "stdout": "builder ok\n",
-            "stderr": "",
-            "detected_marker": "BUILDER_COMPLETE",
-            "raw_marker_line": "### BUILDER_COMPLETE",
-            "stdout_path": stdout_path,
-            "stderr_path": stderr_path,
-            "last_response_path": last_response_path,
-            "runner_notes_path": runner_notes_path,
-            "run_dir": run_dir,
-            "started_at": started_at,
-            "completed_at": completed_at,
-        }
+def test_task_document_valid_minimal_payload() -> None:
+    doc = TaskDocument(
+        task_id="task-001",
+        title="Implement contracts",
+        target_paths=["millrace/contracts.py"],
+        acceptance=["contracts validate"],
+        required_checks=["pytest tests/test_contracts.py -q"],
+        references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
+        risk=["schema drift"],
+        created_at=NOW,
+        created_by="tester",
     )
 
-    result = StageResult.model_validate(
-        {
-            "stage": StageType.BUILDER,
-            "status": "BUILDER_COMPLETE",
-            "runner_result": runner_result,
-        }
+    assert doc.kind == "task"
+    assert doc.schema_version == "1.0"
+
+
+def test_task_document_rejects_empty_required_collections() -> None:
+    with pytest.raises(ValidationError):
+        TaskDocument(
+            task_id="task-001",
+            title="Implement contracts",
+            target_paths=[],
+            acceptance=["contracts validate"],
+            required_checks=["pytest tests/test_contracts.py -q"],
+            references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
+            risk=["schema drift"],
+            created_at=NOW,
+            created_by="tester",
+        )
+
+
+def test_spec_document_valid_minimal_payload() -> None:
+    doc = SpecDocument(
+        spec_id="spec-001",
+        title="Contracts spec",
+        summary="Define canonical runtime contracts",
+        source_type="manual",
+        goals=["define typed models"],
+        constraints=["keep scope small"],
+        acceptance=["tests pass"],
+        references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
+        created_at=NOW,
+        created_by="tester",
     )
 
-    assert result.exit_code == 0
-    assert result.stdout == "builder ok\n"
-    assert result.stderr == ""
-    assert result.duration_seconds == 5.0
-    assert result.runner_used == "subprocess"
-    assert result.model_used == "fixture-model"
-    assert result.artifacts == (
-        stdout_path,
-        stderr_path,
-        last_response_path,
-        runner_notes_path,
+    assert doc.kind == "spec"
+
+
+def test_spec_document_rejects_empty_required_collections() -> None:
+    with pytest.raises(ValidationError):
+        SpecDocument(
+            spec_id="spec-001",
+            title="Contracts spec",
+            summary="Define canonical runtime contracts",
+            source_type="manual",
+            goals=["define typed models"],
+            constraints=[],
+            acceptance=["tests pass"],
+            references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
+            created_at=NOW,
+            created_by="tester",
+        )
+
+
+def test_incident_document_rejects_stage_plane_mismatch() -> None:
+    with pytest.raises(ValidationError):
+        IncidentDocument(
+            incident_id="inc-001",
+            title="Mismatch incident",
+            summary="stage and plane disagree",
+            source_stage="builder",
+            source_plane="planning",
+            failure_class="illegal_state",
+            trigger_reason="bad routing",
+            consultant_decision="blocked",
+            opened_at=NOW,
+            opened_by="tester",
+        )
+
+
+def test_stage_result_envelope_valid_payload() -> None:
+    env = StageResultEnvelope(
+        run_id="run-001",
+        plane="execution",
+        stage="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class="success",
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
     )
-    assert result.metadata["command"] == ["python", "-m", "builder"]
-    assert result.metadata["detected_marker"] == "BUILDER_COMPLETE"
-    assert result.metadata["run_dir"] == run_dir
+
+    assert env.kind == "stage_result"
+    assert env.retryable is False
 
 
-def test_contract_surfaces_mark_forward_compatible_vocabulary_explicitly() -> None:
-    assert StageType.BUILDER.surface is ContractSurface.PUBLIC_V1
-    assert StageType.GOAL_INTAKE.surface is ContractSurface.FORWARD_COMPATIBLE
-    assert StageType.SPEC_INTERVIEW.surface is ContractSurface.FORWARD_COMPATIBLE
-
-    assert ExecutionStatus.UPDATE_RUNNING.surface is ContractSurface.PUBLIC_V1
-    assert ExecutionStatus.LARGE_PLAN_COMPLETE.surface is ContractSurface.FORWARD_COMPATIBLE
-
-    assert ResearchStatus.GOALSPEC_RUNNING.surface is ContractSurface.PUBLIC_V1
-    assert ResearchStatus.COMPLETION_MANIFEST_RUNNING.surface is ContractSurface.FORWARD_COMPATIBLE
-    assert ResearchStatus.SPEC_INTERVIEW_RUNNING.surface is ContractSurface.FORWARD_COMPATIBLE
-
-
-def test_contracts_re_export_loop_architecture_surface() -> None:
-    assert contracts.ControlPlane is loop_architecture.ControlPlane
-    assert contracts.RegistryTier is loop_architecture.RegistryTier
-    assert contracts.RegisteredStageKindDefinition is loop_architecture.RegisteredStageKindDefinition
-    assert contracts.LoopConfigDefinition is loop_architecture.LoopConfigDefinition
-    assert contracts.StructuredStageResult is loop_architecture.StructuredStageResult
+def test_stage_result_envelope_rejects_illegal_terminal_result_for_stage() -> None:
+    with pytest.raises(ValidationError):
+        StageResultEnvelope(
+            run_id="run-001",
+            plane="execution",
+            stage="builder",
+            work_item_kind="task",
+            work_item_id="task-001",
+            terminal_result="PLANNER_COMPLETE",
+            result_class="success",
+            summary_status_marker="### PLANNER_COMPLETE",
+            success=True,
+            started_at=NOW,
+            completed_at=NOW,
+        )
 
 
-def test_contracts_re_export_document_contract_family() -> None:
-    assert contracts.TaskCard is contract_documents.TaskCard
-    assert contracts.AuditContract is contract_documents.AuditContract
-    assert contracts.CompletionManifest is contract_documents.CompletionManifest
-    assert contracts.ObjectiveContract is contract_documents.ObjectiveContract
-    assert contracts.AuditGateDecision is contract_documents.AuditGateDecision
-    assert contracts.CompletionDecision is contract_documents.CompletionDecision
-    assert contracts.BlockerEntry is contract_documents.BlockerEntry
-    assert contracts.StageResult is contract_documents.StageResult
+def test_stage_result_envelope_rejects_inconsistent_semantics() -> None:
+    with pytest.raises(ValidationError):
+        StageResultEnvelope(
+            run_id="run-001",
+            plane="execution",
+            stage="builder",
+            work_item_kind="task",
+            work_item_id="task-001",
+            terminal_result="BUILDER_COMPLETE",
+            result_class="blocked",
+            summary_status_marker="### BUILDER_COMPLETE",
+            success=True,
+            duration_seconds=-1.0,
+            started_at=NOW,
+            completed_at=NOW,
+        )
 
 
-def test_contracts_re_export_runtime_contract_family() -> None:
-    assert contracts.StageContext is contract_runtime.StageContext
-    assert contracts.RunnerResult is contract_runtime.RunnerResult
-    assert contracts.ExecutionResearchHandoff is contract_runtime.ExecutionResearchHandoff
-    assert contracts.ResearchRecoveryLatch is contract_runtime.ResearchRecoveryLatch
+def test_runtime_snapshot_rejects_active_stage_from_wrong_plane() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSnapshot(
+            runtime_mode="daemon",
+            process_running=True,
+            paused=False,
+            active_mode_id="standard_plain",
+            execution_loop_id="execution.standard",
+            planning_loop_id="planning.standard",
+            compiled_plan_id="plan-001",
+            compiled_plan_path="state/compiled_plan.json",
+            active_plane="execution",
+            active_stage="planner",
+            execution_status_marker="### IDLE",
+            planning_status_marker="### IDLE",
+            config_version="cfg-001",
+            watcher_mode="watch",
+            updated_at=NOW,
+        )
 
 
-def test_loop_architecture_re_exports_split_contract_families() -> None:
-    assert loop_architecture.ControlPlane is loop_architecture_common.ControlPlane
-    assert (
-        loop_architecture.RegisteredStageKindDefinition
-        is loop_architecture_stage_contracts.RegisteredStageKindDefinition
+def test_runtime_snapshot_rejects_active_work_item_without_stage() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSnapshot(
+            runtime_mode="daemon",
+            process_running=True,
+            paused=False,
+            active_mode_id="standard_plain",
+            execution_loop_id="execution.standard",
+            planning_loop_id="planning.standard",
+            compiled_plan_id="plan-001",
+            compiled_plan_path="state/compiled_plan.json",
+            active_run_id="run-001",
+            active_work_item_kind="task",
+            active_work_item_id="task-001",
+            execution_status_marker="### IDLE",
+            planning_status_marker="### IDLE",
+            config_version="cfg-001",
+            watcher_mode="watch",
+            updated_at=NOW,
+        )
+
+
+def test_recovery_counters_valid_payload() -> None:
+    counters = RecoveryCounters(
+        entries=[
+            {
+                "failure_class": "missing_terminal_result",
+                "work_item_id": "task-001",
+                "work_item_kind": "task",
+                "last_updated_at": NOW,
+            }
+        ]
     )
-    assert loop_architecture.LoopConfigDefinition is loop_architecture_loop_contracts.LoopConfigDefinition
-    assert loop_architecture.ModeDefinition is loop_architecture_profile_contracts.ModeDefinition
-    assert loop_architecture.LoopArchitectureCatalog is loop_architecture_catalog.LoopArchitectureCatalog
+
+    assert counters.kind == "recovery_counters"
+
+
+def test_recovery_counters_reject_negative_counts() -> None:
+    with pytest.raises(ValidationError):
+        RecoveryCounters(
+            entries=[
+                {
+                    "failure_class": "missing_terminal_result",
+                    "work_item_id": "task-001",
+                    "work_item_kind": "task",
+                    "troubleshoot_attempt_count": -1,
+                    "last_updated_at": NOW,
+                }
+            ]
+        )
+
+
+def test_mailbox_command_envelope_rejects_unknown_command() -> None:
+    with pytest.raises(ValidationError):
+        MailboxCommandEnvelope(
+            command_id="cmd-001",
+            command="nuke",
+            issued_at=NOW,
+            issuer="operator",
+        )
+
+
+def test_mailbox_command_envelope_rejects_dead_start_command() -> None:
+    with pytest.raises(ValidationError):
+        MailboxCommandEnvelope(
+            command_id="cmd-002",
+            command="start",
+            issued_at=NOW,
+            issuer="operator",
+        )
+
+
+def test_loop_config_definition_rejects_edge_with_unknown_target_stage() -> None:
+    with pytest.raises(ValidationError):
+        LoopConfigDefinition(
+            loop_id="execution.standard",
+            plane="execution",
+            stages=["builder", "checker"],
+            entry_stage="builder",
+            edges=[
+                {
+                    "source_stage": "builder",
+                    "on_terminal_result": "BUILDER_COMPLETE",
+                    "target_stage": "planner",
+                }
+            ],
+            terminal_results=["CHECKER_PASS"],
+        )
+
+
+def test_mode_definition_rejects_unknown_stage_key() -> None:
+    with pytest.raises(ValidationError):
+        ModeDefinition(
+            mode_id="standard_plain",
+            execution_loop_id="execution.standard",
+            planning_loop_id="planning.standard",
+            stage_entrypoint_overrides={"not_a_stage": "assets/foo.md"},
+        )
+
+
+def test_mode_definition_and_frozen_stage_plan_are_skill_only() -> None:
+    mode = ModeDefinition(
+        mode_id="standard_plain",
+        execution_loop_id="execution.standard",
+        planning_loop_id="planning.standard",
+        stage_skill_additions={"builder": ("skills/execution/builder.md",)},
+    )
+    stage_plan = FrozenStagePlan(
+        stage=ExecutionStageName.BUILDER,
+        plane=Plane.EXECUTION,
+        entrypoint_path="entrypoints/execution/builder.md",
+        required_skills=("skills/README.md",),
+        attached_skill_additions=("skills/execution/builder.md",),
+    )
+
+    assert "stage_role_overlays" not in mode.model_dump(mode="json")
+    assert "role_overlays" not in stage_plan.model_dump(mode="json")
+
+
+def test_frozen_run_plan_rejects_duplicate_stage_entries() -> None:
+    with pytest.raises(ValidationError):
+        FrozenRunPlan(
+            compiled_plan_id="plan-001",
+            mode_id="standard_plain",
+            execution_loop_id="execution.standard",
+            planning_loop_id="planning.standard",
+            stage_plans=[
+                {
+                    "stage": "builder",
+                    "plane": "execution",
+                    "entrypoint_path": "assets/entrypoints/execution/builder.md",
+                },
+                {
+                    "stage": "builder",
+                    "plane": "execution",
+                    "entrypoint_path": "assets/entrypoints/execution/builder-v2.md",
+                },
+            ],
+            compiled_at=NOW,
+        )
+
+
+def test_compile_diagnostics_requires_errors_on_failure() -> None:
+    with pytest.raises(ValidationError):
+        CompileDiagnostics(
+            ok=False,
+            mode_id="standard_plain",
+            errors=[],
+            emitted_at=NOW,
+        )
