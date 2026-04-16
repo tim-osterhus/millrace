@@ -37,6 +37,12 @@ from millrace_ai.contracts import (
     WatcherMode,
     WorkItemKind,
 )
+from millrace_ai.errors import (
+    ControlRoutingError,
+    QueueStateError,
+    RuntimeLifecycleError,
+    WorkspaceStateError,
+)
 from millrace_ai.events import write_runtime_event
 from millrace_ai.mailbox import drain_incoming_mailbox_commands
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
@@ -138,7 +144,7 @@ class RuntimeEngine:
             compiled_plan = compile_outcome.active_plan
             if compiled_plan is None:
                 errors = ", ".join(compile_outcome.diagnostics.errors) or "compile failed"
-                raise RuntimeError(errors)
+                raise RuntimeLifecycleError(errors)
 
             self.compiled_plan = compiled_plan
 
@@ -413,7 +419,7 @@ class RuntimeEngine:
 
         try:
             QueueStore(self.paths).enqueue_spec(spec_doc)
-        except (OSError, ValueError):
+        except (OSError, QueueStateError):
             return
 
         write_runtime_event(
@@ -546,7 +552,7 @@ class RuntimeEngine:
         if command == "add_idea":
             self._enqueue_idea_from_mailbox(envelope)
             return
-        raise ValueError(f"Unsupported mailbox command: {command}")
+        raise ControlRoutingError(f"Unsupported mailbox command: {command}")
 
     def _reload_config_from_mailbox(self) -> None:
         assert self.snapshot is not None
@@ -671,7 +677,7 @@ class RuntimeEngine:
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / payload.source_name
         if destination.exists():
-            raise ValueError(f"idea document already exists: {destination}")
+            raise WorkspaceStateError(f"idea document already exists: {destination}")
         destination.write_text(payload.markdown, encoding="utf-8")
         self._refresh_runtime_queue_depths()
         save_snapshot(self.paths, self.snapshot)
@@ -1022,7 +1028,7 @@ class RuntimeEngine:
     ) -> None:
         try:
             self._mark_active_work_item_blocked(stage_result)
-        except ValueError as exc:
+        except QueueStateError as exc:
             write_runtime_event(
                 self.paths,
                 event_type="runtime_blocked_mark_failed",
@@ -1259,7 +1265,7 @@ class RuntimeEngine:
                 work_item_id=work_item_id,
                 reason=reason,
             )
-        except ValueError:
+        except QueueStateError:
             return
 
         self._reset_runtime_to_idle(clear_stop_requested=False, clear_paused=False)
@@ -1275,19 +1281,19 @@ class RuntimeEngine:
         for path in sorted(self.paths.tasks_active_dir.glob("*.md")):
             try:
                 queue.requeue_task(path.stem, reason=reason)
-            except ValueError:
+            except QueueStateError:
                 continue
             requeued_count += 1
         for path in sorted(self.paths.specs_active_dir.glob("*.md")):
             try:
                 queue.requeue_spec(path.stem, reason=reason)
-            except ValueError:
+            except QueueStateError:
                 continue
             requeued_count += 1
         for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
             try:
                 queue.requeue_incident(path.stem, reason=reason)
-            except ValueError:
+            except QueueStateError:
                 continue
             requeued_count += 1
         return requeued_count
@@ -1351,11 +1357,11 @@ class RuntimeEngine:
         if value is None:
             return None
         if not isinstance(value, str):
-            raise ValueError("retry_active scope must be a string")
+            raise ControlRoutingError("retry_active scope must be a string")
         try:
             return Plane(value)
         except ValueError as exc:
-            raise ValueError(f"Unsupported retry_active scope: {value}") from exc
+            raise ControlRoutingError(f"Unsupported retry_active scope: {value}") from exc
 
     def _execution_queue_depth(self) -> int:
         return len(list(self.paths.tasks_queue_dir.glob("*.md")))
@@ -1404,7 +1410,7 @@ class RuntimeEngine:
                 event_type="runtime_daemon_lock_denied",
                 data={"reason": str(exc)},
             )
-            raise RuntimeError(str(exc)) from exc
+            raise RuntimeLifecycleError(str(exc)) from exc
 
         self._daemon_lock_session_id = session_id
         write_runtime_event(

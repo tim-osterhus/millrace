@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.errors import QueueStateError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import parse_work_document, render_work_document
@@ -218,15 +219,26 @@ def test_duplicate_id_is_rejected_across_all_known_task_states(tmp_path: Path) -
     store = QueueStore(paths)
 
     store.enqueue_task(_task_doc("task-001", created_at=NOW))
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(QueueStateError, match="already exists"):
         store.enqueue_task(_task_doc("task-001", created_at=NOW + timedelta(seconds=1)))
 
     claim = store.claim_next_execution_task()
     assert claim is not None
     store.mark_task_done("task-001")
 
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(QueueStateError, match="already exists"):
         store.enqueue_task(_task_doc("task-001", created_at=NOW + timedelta(seconds=2)))
+
+
+def test_detect_planning_stale_state_rejects_partial_snapshot_identity(tmp_path: Path) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+
+    with pytest.raises(QueueStateError, match="must be set together"):
+        store.detect_planning_stale_state(
+            snapshot_active_kind=WorkItemKind.SPEC,
+            snapshot_active_item_id=None,
+        )
 
 
 def test_detect_execution_stale_state_conditions(tmp_path: Path) -> None:

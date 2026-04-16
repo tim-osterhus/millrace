@@ -15,6 +15,7 @@ from millrace_ai.contracts import (
     RuntimeSnapshot,
     WorkItemKind,
 )
+from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.state_store import (
     ReconciliationSignal,
@@ -91,6 +92,14 @@ def test_load_snapshot_validates_payload_on_read(tmp_path: Path) -> None:
         load_snapshot(paths)
 
 
+def test_load_snapshot_rejects_non_object_payload_with_typed_workspace_error(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    paths.runtime_snapshot_file.write_text('["not-an-object"]\n', encoding="utf-8")
+
+    with pytest.raises(WorkspaceStateError, match="Expected object payload"):
+        load_snapshot(paths)
+
+
 def test_recovery_counter_helpers_persist_and_reset_forward_progress(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
 
@@ -154,17 +163,17 @@ def test_set_execution_status_enforces_terminal_only_marker_rules(tmp_path: Path
     assert load_execution_status(paths) == "### CHECKER_PASS"
     assert paths.execution_status_file.read_text(encoding="utf-8") == "### CHECKER_PASS\n"
 
-    with pytest.raises(ValueError, match="single line"):
+    with pytest.raises(WorkspaceStateError, match="single line"):
         set_execution_status(paths, "### CHECKER_PASS\n### FIX_NEEDED")
 
-    with pytest.raises(ValueError, match="Unknown execution status marker"):
+    with pytest.raises(WorkspaceStateError, match="Unknown execution status marker"):
         set_execution_status(paths, "### RUNNING")
 
 
 def test_set_planning_status_rejects_execution_marker(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
 
-    with pytest.raises(ValueError, match="Unknown planning status marker"):
+    with pytest.raises(WorkspaceStateError, match="Unknown planning status marker"):
         set_planning_status(paths, "### CHECKER_PASS")
 
 

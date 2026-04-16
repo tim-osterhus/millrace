@@ -20,7 +20,7 @@ def _bootstrap(tmp_path: Path):
 
 
 def _copy_assets(tmp_path: Path) -> Path:
-    source_assets = Path(__file__).resolve().parents[1] / "millrace_ai" / "assets"
+    source_assets = Path(__file__).resolve().parents[1] / "src" / "millrace_ai" / "assets"
     destination = tmp_path / "assets"
     shutil.copytree(source_assets, destination)
     return destination

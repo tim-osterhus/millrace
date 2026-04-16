@@ -11,6 +11,7 @@ from typing import TypeVar
 from pydantic import ValidationError
 
 from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.errors import QueueStateError
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.work_documents import parse_work_document_as, render_work_document
 
@@ -62,7 +63,7 @@ class QueueStore:
     def claim_next_execution_task(self) -> QueueClaim | None:
         active = self._list_markdown_files(self.paths.tasks_active_dir)
         if len(active) > 1:
-            raise ValueError("Multiple active execution tasks found")
+            raise QueueStateError("Multiple active execution tasks found")
         if active:
             return None
 
@@ -84,7 +85,7 @@ class QueueStore:
         active_specs = self._list_markdown_files(self.paths.specs_active_dir)
         active_incidents = self._list_markdown_files(self.paths.incidents_active_dir)
         if len(active_specs) + len(active_incidents) > 1:
-            raise ValueError("Multiple active planning items found")
+            raise QueueStateError("Multiple active planning items found")
         if active_specs or active_incidents:
             return None
 
@@ -183,10 +184,10 @@ class QueueStore:
         has_kind = snapshot_active_kind is not None
         has_item = snapshot_active_item_id is not None
         if has_kind != has_item:
-            raise ValueError("snapshot_active_kind and snapshot_active_item_id must be set together")
+            raise QueueStateError("snapshot_active_kind and snapshot_active_item_id must be set together")
 
         if snapshot_active_kind not in {None, WorkItemKind.SPEC, WorkItemKind.INCIDENT}:
-            raise ValueError("Planning stale-state checks only support spec and incident kinds")
+            raise QueueStateError("Planning stale-state checks only support spec and incident kinds")
 
         active_specs = [(WorkItemKind.SPEC, item_id) for item_id in self._ids_in_directory(self.paths.specs_active_dir)]
         active_incidents = [
@@ -254,11 +255,11 @@ class QueueStore:
     ) -> Path:
         source = source_dir / f"{item_id}.md"
         if not source.exists():
-            raise ValueError(f"{kind.value} {item_id} is not active")
+            raise QueueStateError(f"{kind.value} {item_id} is not active")
 
         destination = destination_dir / source.name
         if destination.exists():
-            raise ValueError(f"{kind.value} {item_id} already exists at destination")
+            raise QueueStateError(f"{kind.value} {item_id} already exists at destination")
 
         source.replace(destination)
         return destination
@@ -272,7 +273,7 @@ class QueueStore:
     ) -> None:
         cleaned_reason = reason.strip()
         if not cleaned_reason:
-            raise ValueError("requeue reason is required")
+            raise QueueStateError("requeue reason is required")
 
         log_path = destination_dir / f"{item_id}.requeue.jsonl"
         payload = {
@@ -329,7 +330,7 @@ class QueueStore:
         filename = f"{work_item_id}.md"
         for directory in directories:
             if (directory / filename).exists():
-                raise ValueError(f"{kind.value} {work_item_id} already exists")
+                raise QueueStateError(f"{kind.value} {work_item_id} already exists")
 
     def _select_oldest_task(self, directory: Path) -> tuple[str, Path] | None:
         return self._select_oldest_document(

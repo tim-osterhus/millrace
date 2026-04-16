@@ -24,6 +24,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.control import RuntimeControl
+from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError
 from millrace_ai.events import read_runtime_events
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -31,7 +32,7 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.router import RouterAction
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
-from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
+from millrace_ai.runtime_lock import RuntimeOwnershipLockError, acquire_runtime_ownership_lock
 from millrace_ai.state_store import (
     load_execution_status,
     load_planning_status,
@@ -330,6 +331,26 @@ def test_runtime_planning_retry_scope_skips_execution_active_work(tmp_path: Path
     snapshot = load_snapshot(paths)
     assert snapshot.active_work_item_id == "task-001"
     assert (paths.tasks_active_dir / "task-001.md").is_file()
+
+
+def test_runtime_mailbox_retry_scope_rejects_invalid_scope_payloads() -> None:
+    with pytest.raises(ControlRoutingError, match="retry_active scope must be a string"):
+        RuntimeEngine._mailbox_retry_scope(
+            MailboxCommandEnvelope.model_validate(
+                _mailbox_command("cmd-invalid-scope-type", "retry_active", payload={"scope": 123})
+            )
+        )
+
+    with pytest.raises(ControlRoutingError, match="Unsupported retry_active scope: unsupported"):
+        RuntimeEngine._mailbox_retry_scope(
+            MailboxCommandEnvelope.model_validate(
+                _mailbox_command(
+                    "cmd-invalid-scope-value",
+                    "retry_active",
+                    payload={"scope": "unsupported"},
+                )
+            )
+        )
 
 
 def test_runtime_routes_malformed_stage_exit_into_recovery(tmp_path: Path) -> None:
@@ -1302,6 +1323,18 @@ def test_runtime_mailbox_rejects_unsafe_add_payloads(tmp_path: Path) -> None:
     assert len(failed_archives) >= 2
 
 
+def test_runtime_startup_compile_failure_raises_typed_runtime_error(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="missing_mode")
+
+    with pytest.raises(RuntimeLifecycleError, match="missing_mode"):
+        engine.startup()
+
+
 def test_runtime_startup_rejects_second_daemon_for_same_workspace(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
 
@@ -1317,8 +1350,10 @@ def test_runtime_startup_rejects_second_daemon_for_same_workspace(tmp_path: Path
 
     first.startup()
 
-    with pytest.raises(RuntimeError, match="workspace daemon ownership lock"):
+    with pytest.raises(RuntimeLifecycleError, match="workspace daemon ownership lock") as excinfo:
         second.startup()
+
+    assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
 
 
 def test_runtime_startup_lock_contention_does_not_rewrite_compile_artifacts(tmp_path: Path) -> None:
@@ -1340,8 +1375,10 @@ def test_runtime_startup_lock_contention_does_not_rewrite_compile_artifacts(tmp_
     compiled_before = compiled_plan_path.read_bytes()
     diagnostics_before = diagnostics_path.read_bytes()
 
-    with pytest.raises(RuntimeError, match="workspace daemon ownership lock"):
+    with pytest.raises(RuntimeLifecycleError, match="workspace daemon ownership lock") as excinfo:
         contender.startup()
+
+    assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
 
     assert compiled_plan_path.read_bytes() == compiled_before
     assert diagnostics_path.read_bytes() == diagnostics_before

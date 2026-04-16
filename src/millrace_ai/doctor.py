@@ -19,6 +19,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
 )
+from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.entrypoints import LintLevel, lint_asset_manifests
 from millrace_ai.modes import (
     ASSETS_ROOT,
@@ -162,7 +163,7 @@ def _validate_workspace_layout(paths: WorkspacePaths, errors: list[DoctorIssue])
 def _validate_execution_status(paths: WorkspacePaths, errors: list[DoctorIssue]) -> str | None:
     try:
         return load_execution_status(paths)
-    except (OSError, ValueError) as exc:
+    except (OSError, WorkspaceStateError) as exc:
         errors.append(
             DoctorIssue(
                 code="execution_status_invalid",
@@ -176,7 +177,7 @@ def _validate_execution_status(paths: WorkspacePaths, errors: list[DoctorIssue])
 def _validate_planning_status(paths: WorkspacePaths, errors: list[DoctorIssue]) -> str | None:
     try:
         return load_planning_status(paths)
-    except (OSError, ValueError) as exc:
+    except (OSError, WorkspaceStateError) as exc:
         errors.append(
             DoctorIssue(
                 code="planning_status_invalid",
@@ -190,7 +191,7 @@ def _validate_planning_status(paths: WorkspacePaths, errors: list[DoctorIssue]) 
 def _validate_snapshot(paths: WorkspacePaths, errors: list[DoctorIssue]) -> RuntimeSnapshot | None:
     try:
         return load_snapshot(paths)
-    except (OSError, ValueError, ValidationError, json.JSONDecodeError) as exc:
+    except (OSError, WorkspaceStateError, ValidationError, json.JSONDecodeError) as exc:
         errors.append(
             DoctorIssue(
                 code="snapshot_invalid",
@@ -207,7 +208,7 @@ def _validate_recovery_counters(
 ) -> RecoveryCounters | None:
     try:
         return load_recovery_counters(paths)
-    except (OSError, ValueError, ValidationError, json.JSONDecodeError) as exc:
+    except (OSError, WorkspaceStateError, ValidationError, json.JSONDecodeError) as exc:
         errors.append(
             DoctorIssue(
                 code="recovery_counters_invalid",
@@ -297,10 +298,10 @@ def _validate_queue_parseability(paths: WorkspacePaths, errors: list[DoctorIssue
                 document = _read_queue_document(path=path, model=model)
                 document_id = _work_document_id(document)
                 if path.stem != document_id:
-                    raise ValueError(
+                    raise WorkspaceStateError(
                         f"filename stem does not match {document.kind}_id: expected {document_id}, found {path.stem}"
                     )
-            except (OSError, ValueError, ValidationError) as exc:
+            except (OSError, WorkspaceStateError, ValidationError) as exc:
                 errors.append(
                     DoctorIssue(
                         code="queue_artifact_invalid",

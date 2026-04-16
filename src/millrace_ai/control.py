@@ -23,6 +23,7 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.errors import QueueStateError, WorkspaceStateError
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
@@ -253,7 +254,7 @@ class RuntimeControl:
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = destination_dir / payload.source_name
         if destination.exists():
-            raise ValueError(f"idea document already exists: {destination}")
+            raise WorkspaceStateError(f"idea document already exists: {destination}")
         destination.write_text(payload.markdown, encoding="utf-8")
         save_snapshot(
             self.paths,
@@ -340,7 +341,7 @@ class RuntimeControl:
 
         try:
             self._requeue_active_item(queue, work_item_kind=work_item_kind, work_item_id=work_item_id, reason=reason)
-        except ValueError as exc:
+        except QueueStateError as exc:
             return ControlActionResult(
                 action=MailboxCommand.RETRY_ACTIVE,
                 mode="direct",
@@ -408,19 +409,19 @@ class RuntimeControl:
         for path in sorted(self.paths.tasks_active_dir.glob("*.md")):
             try:
                 queue.requeue_task(path.stem, reason=reason)
-            except ValueError:
+            except QueueStateError:
                 continue
             requeued_count += 1
         for path in sorted(self.paths.specs_active_dir.glob("*.md")):
             try:
                 queue.requeue_spec(path.stem, reason=reason)
-            except ValueError:
+            except QueueStateError:
                 continue
             requeued_count += 1
         for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
             try:
                 queue.requeue_incident(path.stem, reason=reason)
-            except ValueError:
+            except QueueStateError:
                 continue
             requeued_count += 1
         return requeued_count

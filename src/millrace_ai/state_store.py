@@ -21,6 +21,7 @@ from millrace_ai.contracts import (
     StageName,
     WorkItemKind,
 )
+from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 _IDLE_MARKER = "### IDLE"
@@ -190,7 +191,7 @@ def _atomic_write_text(path: Path, payload: str) -> None:
 def _load_json(path: Path) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError(f"Expected object payload in {path}")
+        raise WorkspaceStateError(f"Expected object payload in {path}")
     return payload
 
 
@@ -201,17 +202,17 @@ def _save_model(path: Path, model: RuntimeSnapshot | RecoveryCounters) -> None:
 def _normalize_marker(marker: str, *, label: str) -> str:
     normalized = marker.strip()
     if not normalized:
-        raise ValueError(f"{label} marker cannot be empty")
+        raise WorkspaceStateError(f"{label} marker cannot be empty")
     lines = normalized.splitlines()
     if len(lines) != 1:
-        raise ValueError(f"{label} marker must be a single line")
+        raise WorkspaceStateError(f"{label} marker must be a single line")
     return lines[0]
 
 
 def _validate_marker(marker: str, allowed: frozenset[str], *, label: str) -> str:
     normalized = _normalize_marker(marker, label=label)
     if normalized not in allowed:
-        raise ValueError(f"Unknown {label} marker: {normalized}")
+        raise WorkspaceStateError(f"Unknown {label} marker: {normalized}")
     return normalized
 
 
@@ -488,7 +489,7 @@ def collect_reconciliation_signals(
 def _normalize_marker_or_invalid(marker: str, *, label: str) -> str:
     try:
         return _normalize_marker(marker, label=label)
-    except ValueError:
+    except WorkspaceStateError:
         return _INVALID_MARKER
 
 

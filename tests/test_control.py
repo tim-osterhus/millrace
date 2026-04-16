@@ -20,6 +20,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.control import RuntimeControl
+from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
@@ -492,3 +493,13 @@ def test_add_idea_rejects_unsafe_source_name(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="source_name"):
         control.add_idea_markdown(source_name="../escape.md", markdown="# Escape\n")
+
+
+def test_add_idea_direct_rejects_duplicate_workspace_artifact(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    control = RuntimeControl(paths)
+
+    control.add_idea_markdown(source_name="idea-duplicate.md", markdown="# Idea\n")
+
+    with pytest.raises(WorkspaceStateError, match="idea document already exists"):
+        control.add_idea_markdown(source_name="idea-duplicate.md", markdown="# Idea duplicate\n")
