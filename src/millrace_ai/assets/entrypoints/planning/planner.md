@@ -51,57 +51,76 @@ When refinement is needed for an active spec, prefer editing `active_work_item_p
 
 Only emit additional spec artifacts in `millrace-agents/specs/queue/` when true fan-out is required (multiple independent downstream specs are genuinely needed).
 
-### Strict Work Document Contract (must follow exactly when emitting a new spec artifact)
+### Strict Work Document Contract (must follow exactly for spec edits or new spec files)
 
-Every emitted spec file must be a valid `SpecDocument` markdown artifact:
+This framework parses human-facing markdown work docs, not JSON frontmatter.
 
-1. File name must be `millrace-agents/specs/queue/<spec_id>.md` (stem must equal `spec_id`).
-2. File must start with `---`, contain JSON frontmatter only, then a closing `---`.
-3. Frontmatter must include all required `SpecDocument` fields:
-   - `schema_version` = `"1.0"`
-   - `kind` = `"spec"`
-   - `spec_id`, `title`, `summary`
-   - `source_type` in: `"idea" | "incident" | "manual" | "derived_spec"`
-   - `goals`, `non_goals`, `constraints`, `acceptance`, `references` (non-empty arrays)
-   - `required_skills`, `target_paths`, `assumptions`, `risks`, `scope`, `decomposition_hints`, `entrypoints`
-   - `created_at` (ISO-8601 UTC timestamp string), `created_by` (`"planner"`), `updated_at`
-4. Source mapping rules:
-   - If the active planning item is a spec, emitted child specs must use `source_type: "derived_spec"` and set `source_id` to the active `spec_id`.
-   - If the active planning item is an incident, use `source_type: "incident"` and set `source_id` to the active `incident_id`.
-5. Do not use `source_type: "planner"` or any non-contract value.
+Required format:
+1. The file must start with an H1 title line: `# <Title>`.
+2. The H1 text must exactly match the `Title:` field value.
+3. Use labeled fields and list blocks (not JSON), for example:
+   - scalar: `Spec-ID: idea-seed-idea`
+   - list:
+     `Goals:`
+     `- first goal`
+4. Use canonical labels exactly:
+   - scalars: `Spec-ID`, `Title`, `Summary`, `Source-Type`, `Source-ID`, `Parent-Spec-ID`, `Created-At`, `Created-By`, `Updated-At`
+   - lists: `Goals`, `Non-Goals`, `Scope`, `Constraints`, `Assumptions`, `Risks`, `Target-Paths`, `Entrypoints`, `Required-Skills`, `Decomposition-Hints`, `Acceptance`, `References`
+5. Source mapping rules:
+   - If the active planning item is a spec, emitted child specs should use `Source-Type: derived_spec` and set `Source-ID` to the active spec id.
+   - If the active planning item is an incident, use `Source-Type: incident` and set `Source-ID` to the active incident id.
+6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
 
-Template (adapt values, keep schema-valid JSON):
+Template (adapt values):
 
 ```md
----
-{
-  "schema_version": "1.0",
-  "kind": "spec",
-  "spec_id": "example-spec-id",
-  "title": "Example Title",
-  "summary": "One-paragraph summary.",
-  "source_type": "derived_spec",
-  "source_id": "active-spec-id",
-  "parent_spec_id": "active-spec-id",
-  "goals": ["..."],
-  "non_goals": ["..."],
-  "constraints": ["..."],
-  "acceptance": ["..."],
-  "required_skills": [],
-  "target_paths": ["path/one"],
-  "references": ["millrace-agents/specs/active/active-spec-id.md"],
-  "assumptions": ["..."],
-  "risks": ["..."],
-  "scope": ["..."],
-  "decomposition_hints": ["..."],
-  "entrypoints": [],
-  "created_at": "2026-04-16T14:00:00Z",
-  "created_by": "planner",
-  "updated_at": null
-}
----
+# Example Title
 
-# Spec
+Spec-ID: example-spec-id
+Title: Example Title
+Summary: One-paragraph summary.
+Source-Type: derived_spec
+Source-ID: active-spec-id
+Parent-Spec-ID: active-spec-id
+Created-At: 2026-04-16T14:00:00Z
+Created-By: planner
+Updated-At: 2026-04-16T14:00:00Z
+
+Goals:
+- ...
+
+Non-Goals:
+- ...
+
+Scope:
+- ...
+
+Constraints:
+- ...
+
+Assumptions:
+- ...
+
+Risks:
+- ...
+
+Target-Paths:
+- path/one
+
+Entrypoints:
+- planner
+
+Required-Skills:
+- planner-core
+
+Decomposition-Hints:
+- ...
+
+Acceptance:
+- ...
+
+References:
+- millrace-agents/specs/active/active-spec-id.md
 ```
 
 Preferred paths:

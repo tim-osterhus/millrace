@@ -40,51 +40,60 @@ Required deliverables:
 
 ### Strict Work Document Contract (must follow exactly)
 
-Every emitted task file must be a valid `TaskDocument` markdown artifact:
+This framework parses human-facing markdown work docs, not JSON frontmatter.
 
-1. File name must be `millrace-agents/tasks/queue/<task_id>.md` (stem must equal `task_id`).
-2. File must start with `---`, contain JSON frontmatter only, then a closing `---`.
-3. Frontmatter must include all required `TaskDocument` fields:
-   - `schema_version` = `"1.0"`
-   - `kind` = `"task"`
-   - `task_id`, `title`
-   - `summary` (empty string allowed)
-   - `target_paths`, `acceptance`, `required_checks`, `references`, `risk` (all non-empty arrays)
-   - `depends_on`, `blocks`, `tags` (arrays; empty allowed)
-   - `spec_id` (when decomposing from a spec, set this to the active/decomposed spec id)
-   - `parent_task_id`, `incident_id`, `status_hint` (nullable when unused)
-   - `created_at` (ISO-8601 UTC timestamp string), `created_by` (`"manager"`), `updated_at`
-4. Do not emit task cards without JSON frontmatter.
+Required format:
+1. File name must be `millrace-agents/tasks/queue/<task_id>.md` (stem must equal `Task-ID` value).
+2. The file must start with an H1 title line: `# <Title>`.
+3. The H1 text must exactly match the `Title:` field value.
+4. Use labeled fields and list blocks (not JSON), for example:
+   - scalar: `Task-ID: example-task-id`
+   - list:
+     `Target-Paths:`
+     `- e2e/pipeline/result.md`
+5. Use canonical labels exactly:
+   - scalars: `Task-ID`, `Title`, `Summary`, `Spec-ID`, `Parent-Task-ID`, `Incident-ID`, `Status-Hint`, `Created-At`, `Created-By`, `Updated-At`
+   - lists: `Depends-On`, `Blocks`, `Tags`, `Target-Paths`, `Acceptance`, `Required-Checks`, `References`, `Risk`
+6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
+7. `Status-Hint` must be one of exactly: `queued`, `active`, `blocked`, `done` (use `queued` for newly emitted manager tasks). Do **not** use `queue`.
 
-Template (adapt values, keep schema-valid JSON):
+Template (adapt values):
 
 ```md
----
-{
-  "schema_version": "1.0",
-  "kind": "task",
-  "task_id": "example-task-id",
-  "title": "Example Task Title",
-  "summary": "Short execution summary.",
-  "spec_id": "active-spec-id",
-  "parent_task_id": null,
-  "incident_id": null,
-  "target_paths": ["e2e/pipeline/result.md"],
-  "acceptance": ["..."],
-  "required_checks": ["..."],
-  "references": ["millrace-agents/specs/active/active-spec-id.md"],
-  "risk": ["..."],
-  "depends_on": [],
-  "blocks": [],
-  "tags": [],
-  "status_hint": null,
-  "created_at": "2026-04-16T14:03:00Z",
-  "created_by": "manager",
-  "updated_at": null
-}
----
+# Example Task Title
 
-# Task
+Task-ID: example-task-id
+Title: Example Task Title
+Summary: Short execution summary.
+Spec-ID: active-spec-id
+Status-Hint: queued
+Created-At: 2026-04-16T14:03:00Z
+Created-By: manager
+Updated-At: 2026-04-16T14:03:00Z
+
+Depends-On:
+- prerequisite-task
+
+Blocks:
+- follow-up-task
+
+Tags:
+- seed-pipeline
+
+Target-Paths:
+- e2e/pipeline/result.md
+
+Acceptance:
+- ...
+
+Required-Checks:
+- ...
+
+References:
+- millrace-agents/specs/active/active-spec-id.md
+
+Risk:
+- ...
 ```
 
 Preferred paths:
