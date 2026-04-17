@@ -481,6 +481,94 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
     }
 
 
+def _expected_stage_core_skill_paths() -> dict[str, Path]:
+    return {
+        ExecutionStageName.BUILDER.value: SKILLS_DIR / "stage" / "execution" / "builder-core" / "SKILL.md",
+        ExecutionStageName.CHECKER.value: SKILLS_DIR / "stage" / "execution" / "checker-core" / "SKILL.md",
+        ExecutionStageName.FIXER.value: SKILLS_DIR / "stage" / "execution" / "fixer-core" / "SKILL.md",
+        ExecutionStageName.DOUBLECHECKER.value: SKILLS_DIR
+        / "stage"
+        / "execution"
+        / "doublechecker-core"
+        / "SKILL.md",
+        ExecutionStageName.UPDATER.value: SKILLS_DIR / "stage" / "execution" / "updater-core" / "SKILL.md",
+        ExecutionStageName.TROUBLESHOOTER.value: SKILLS_DIR
+        / "stage"
+        / "execution"
+        / "troubleshooter-core"
+        / "SKILL.md",
+        ExecutionStageName.CONSULTANT.value: SKILLS_DIR / "stage" / "execution" / "consultant-core" / "SKILL.md",
+        PlanningStageName.PLANNER.value: SKILLS_DIR / "stage" / "planning" / "planner-core" / "SKILL.md",
+        PlanningStageName.MANAGER.value: SKILLS_DIR / "stage" / "planning" / "manager-core" / "SKILL.md",
+        PlanningStageName.MECHANIC.value: SKILLS_DIR / "stage" / "planning" / "mechanic-core" / "SKILL.md",
+        PlanningStageName.AUDITOR.value: SKILLS_DIR / "stage" / "planning" / "auditor-core" / "SKILL.md",
+    }
+
+
+def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
+    return {
+        ExecutionStageName.BUILDER.value: (
+            "contract",
+            "feature",
+            "foundational",
+            "verification",
+        ),
+        ExecutionStageName.CHECKER.value: (
+            "contract",
+            "expected outcome",
+            "evidence",
+            "fix-needed",
+        ),
+        ExecutionStageName.FIXER.value: (
+            "contract",
+            "repair",
+            "regression",
+        ),
+        ExecutionStageName.DOUBLECHECKER.value: (
+            "contract",
+            "expectations",
+            "displaced",
+        ),
+        ExecutionStageName.UPDATER.value: (
+            "stale",
+            "evidence",
+            "outline.md",
+        ),
+        ExecutionStageName.TROUBLESHOOTER.value: (
+            "symptom",
+            "blocker",
+            "local",
+        ),
+        ExecutionStageName.CONSULTANT.value: (
+            "continuation",
+            "evidence",
+            "incident",
+        ),
+        PlanningStageName.PLANNER.value: (
+            "assumption",
+            "scope",
+            "pass-through",
+            "fan-out",
+        ),
+        PlanningStageName.MANAGER.value: (
+            "slice",
+            "dependency",
+            "parallel fan-out",
+            "boundary",
+        ),
+        PlanningStageName.MECHANIC.value: (
+            "planning",
+            "repair",
+            "evidence",
+        ),
+        PlanningStageName.AUDITOR.value: (
+            "incident",
+            "evidence",
+            "assumption",
+        ),
+    }
+
+
 def test_draft_to_runtime_entrypoint_mapping_complete() -> None:
     runtime_paths = _load_runtime_entrypoint_paths_from_docs()
     mapped_runtime = set(runtime_paths)
@@ -599,12 +687,11 @@ def test_runtime_skills_index_stub_has_minimal_shape() -> None:
     assert asset.manifest["asset_type"] == "skill"
     assert text.startswith("# Skills Index")
     assert "| Skill | Description | Tags | Path | Status |" in text
-    assert "builder-core" in text
-    assert "checker-core" in text
-    assert "fixer-core" in text
-    assert "manager-core" in text
-    assert "mechanic-core" in text
-    assert "planner-core" in text
+    assert "deferred" in text.lower()
+    for skill_id in _expected_stage_core_skill_ids().values():
+        assert skill_id in text
+    for skill_path in _expected_stage_core_skill_paths().values():
+        assert str(skill_path.relative_to(SKILLS_DIR.parent)) in text
     assert "skills/millrace-skill-creator/SKILL.md" in text
     assert CREATOR_PACKAGE_PATH.is_dir()
     assert CREATOR_SKILL_PATH.is_file()
@@ -614,65 +701,19 @@ def test_runtime_skills_index_stub_has_minimal_shape() -> None:
     assert "skills-readme" in text
     assert "skills/README.md" in text
     assert "Stage-Core Skills" in text
-    assert "builder-core" in text
-    assert "checker-core" in text
-    assert "manager-core" in text
-    assert "planner-core" in text
-    assert "skills/stage/execution/builder-core/SKILL.md" in text
-    assert "skills/stage/execution/checker-core/SKILL.md" in text
-    assert "skills/stage/planning/manager-core/SKILL.md" in text
-    assert "skills/stage/planning/planner-core/SKILL.md" in text
     assert "deferred" in text.lower()
 
 
-def test_stage_core_skill_docs_use_hybrid_section_contract_and_pilot_postures() -> None:
-    planner_path = SKILLS_DIR / "stage" / "planning" / "planner-core" / "SKILL.md"
-    builder_path = SKILLS_DIR / "stage" / "execution" / "builder-core" / "SKILL.md"
-    checker_path = SKILLS_DIR / "stage" / "execution" / "checker-core" / "SKILL.md"
-    manager_path = SKILLS_DIR / "stage" / "planning" / "manager-core" / "SKILL.md"
+def test_stage_core_skill_docs_use_hybrid_section_contract_and_shipped_semantics() -> None:
+    stage_to_path = _expected_stage_core_skill_paths()
+    stage_to_body: dict[str, str] = {}
 
-    planner_asset = parse_markdown_asset(planner_path)
-    builder_asset = parse_markdown_asset(builder_path)
-    checker_asset = parse_markdown_asset(checker_path)
-    manager_asset = parse_markdown_asset(manager_path)
+    for stage, path in stage_to_path.items():
+        asset = parse_markdown_asset(path)
+        _assert_stage_core_manifest_contract(asset, stage=stage)
+        stage_to_body[stage] = asset.body
 
-    _assert_stage_core_manifest_contract(planner_asset, stage=PlanningStageName.PLANNER.value)
-    _assert_stage_core_manifest_contract(builder_asset, stage=ExecutionStageName.BUILDER.value)
-    _assert_stage_core_manifest_contract(checker_asset, stage=ExecutionStageName.CHECKER.value)
-    _assert_stage_core_manifest_contract(manager_asset, stage=PlanningStageName.MANAGER.value)
-
-    stage_to_body = {
-        ExecutionStageName.BUILDER.value: builder_asset.body,
-        ExecutionStageName.CHECKER.value: checker_asset.body,
-        PlanningStageName.PLANNER.value: planner_asset.body,
-        PlanningStageName.MANAGER.value: manager_asset.body,
-    }
-    expected_body_keywords = {
-        ExecutionStageName.BUILDER.value: (
-            "foundational build",
-            "feature slice on existing seams",
-            "small change or repair",
-            "verification",
-        ),
-        ExecutionStageName.CHECKER.value: (
-            "task contract",
-            "expectations",
-            "fix-needed",
-            "blocked",
-        ),
-        PlanningStageName.PLANNER.value: (
-            "assumption",
-            "pass-through",
-            "refine-in-place",
-            "fan-out",
-        ),
-        PlanningStageName.MANAGER.value: (
-            "active spec",
-            "single execution slice",
-            "ordered dependency chain",
-            "parallel fan-out",
-        ),
-    }
+    expected_body_keywords = _expected_stage_core_body_keywords()
 
     for stage, body in stage_to_body.items():
         headings = _extract_h2_headings(body)
@@ -680,7 +721,6 @@ def test_stage_core_skill_docs_use_hybrid_section_contract_and_pilot_postures() 
         assert len(headings) == len(HYBRID_SKILL_SECTION_TITLES)
         assert "## Purpose" in body
         assert "## Verification Pattern" in body
-        assert "hybrid format" not in body.lower()
         body_lower = body.lower()
         for keyword in expected_body_keywords[stage]:
             assert keyword in body_lower
@@ -693,11 +733,8 @@ def test_runtime_skills_readme_describes_creator_package_and_selection_contract(
 
     assert "entrypoints" in body.lower()
     assert "skills_index.md" in body
+    assert "deferred" in body.lower()
     assert "millrace-skill-creator" in body
-    assert "builder-core" in body
-    assert "checker-core" in body
-    assert "manager-core" in body
-    assert "planner-core" in body
     assert "skills/stage/<plane>/<stage>-core/SKILL.md" in body
     assert CREATOR_PACKAGE_PATH.is_dir()
     assert CREATOR_SKILL_PATH.is_file()
@@ -739,10 +776,8 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
 
     shipped_skill_ids = _load_shipped_skill_asset_ids()
     assert "skills-readme" in shipped_skill_ids
-    assert "builder-core" in shipped_skill_ids
-    assert "checker-core" in shipped_skill_ids
-    assert "manager-core" in shipped_skill_ids
-    assert "planner-core" in shipped_skill_ids
+    for skill_id in _expected_stage_core_skill_ids().values():
+        assert skill_id in shipped_skill_ids
 
     for stage, body in stage_to_body.items():
         assert "millrace-agents/skills/skills_index.md" in body

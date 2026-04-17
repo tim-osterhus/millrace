@@ -31,9 +31,8 @@ forbidden_claims:
 
 This is the runtime-shipped skills index for stage entrypoints.
 Entrypoints select skills from this index; they do not infer runtime behavior from arbitrary skill metadata.
-The current bespoke hybrid pilot set is `builder-core`, `checker-core`, `manager-core`, and `planner-core`.
-Those four use thin manifest frontmatter for identity and structured markdown bodies for the actual guidance.
-Other stage-core skills remain metadata-light until migrated into the same hybrid contract.
+Shipped stage-core skills use the hybrid contract with thin manifest frontmatter for identity and structured markdown bodies for the actual guidance.
+Deferred skill assets remain metadata-light until they are shipped into the same hybrid contract.
 
 Usage contract:
 - open this index before selecting discretionary skills
