@@ -20,6 +20,7 @@ from millrace_ai.errors import QueueStateError, WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
+from millrace_ai.runtime.snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 from millrace_ai.runtime_lock import clear_stale_runtime_ownership_lock
 from millrace_ai.state_store import (
     load_recovery_counters,
@@ -29,7 +30,6 @@ from millrace_ai.state_store import (
     set_execution_status,
     set_planning_status,
 )
-from millrace_ai.runtime.snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
 ResultT = TypeVar("ResultT")
 
