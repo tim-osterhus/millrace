@@ -29,8 +29,10 @@ Use only supported CLI commands:
 - `run daemon --max-ticks N`
 - `status`
 - `queue ls`
-- `add-task <task.json>`
-- `add-spec <spec.json>`
+- `runs ls`
+- `queue add-task <task.md|task.json>`
+- `queue add-spec <spec.md|spec.json>`
+- `queue add-idea <idea.md>`
 - `pause`
 - `resume`
 - `stop`
@@ -42,7 +44,7 @@ Use only supported CLI commands:
 
 - Do not edit runtime-owned files directly under `millrace-agents/state` or queue folders.
 - Use command outputs as the authority for current runtime state.
-- Write intake files (`task.json` / `spec.json`) explicitly, then enqueue through CLI.
+- Write intake files as canonical markdown work docs where possible, then enqueue through CLI.
 - Keep intake outcome-focused; do not embed stage-routing instructions in intake content.
 
 ## Quick Diagnostic Sequence
@@ -55,6 +57,6 @@ Use only supported CLI commands:
 
 ## References
 
-- `docs/OPERATOR_GUIDE.md`
-- `docs/RUNTIME_DEEP_DIVE.md`
+- `docs/skills/millrace-ops-agent-manual.md`
 - `docs/runtime/README.md`
+- `docs/runtime/millrace-cli-reference.md`
