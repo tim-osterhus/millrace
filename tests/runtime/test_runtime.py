@@ -854,6 +854,73 @@ def test_runtime_tick_enforces_pause_and_stop_commands(tmp_path: Path) -> None:
     assert calls["count"] == 0
     snapshot = load_snapshot(paths)
     assert snapshot.process_running is False
+    assert snapshot.stop_requested is False
+    assert snapshot.paused is False
+
+
+def test_runtime_tick_stop_normalizes_active_snapshot_to_stopped_idle_invariant(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    claimed = queue.claim_next_execution_task()
+    assert claimed is not None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    active_snapshot = RuntimeSnapshot.model_validate(
+        {
+            **load_snapshot(paths).model_dump(mode="python"),
+            "process_running": True,
+            "paused": True,
+            "stop_requested": False,
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.BUILDER,
+            "active_run_id": "run-stop-active",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-001",
+            "active_since": NOW,
+            "current_failure_class": "runner_transport_failure",
+            "troubleshoot_attempt_count": 2,
+            "mechanic_attempt_count": 1,
+            "fix_cycle_count": 1,
+            "consultant_invocations": 1,
+            "execution_status_marker": "### BLOCKED",
+            "planning_status_marker": "### MANAGER_COMPLETE",
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, active_snapshot)
+    engine.snapshot = active_snapshot
+    set_execution_status(paths, "### BLOCKED")
+    set_planning_status(paths, "### MANAGER_COMPLETE")
+
+    write_mailbox_command(paths, _mailbox_command("cmd-stop-active", "stop"))
+    outcome = engine.tick()
+
+    assert outcome.router_decision.reason == "stop_requested"
+    snapshot = load_snapshot(paths)
+    assert snapshot.process_running is False
+    assert snapshot.paused is False
+    assert snapshot.stop_requested is False
+    assert snapshot.active_plane is None
+    assert snapshot.active_stage is None
+    assert snapshot.active_run_id is None
+    assert snapshot.active_work_item_kind is None
+    assert snapshot.active_work_item_id is None
+    assert snapshot.active_since is None
+    assert snapshot.current_failure_class is None
+    assert snapshot.troubleshoot_attempt_count == 0
+    assert snapshot.mechanic_attempt_count == 0
+    assert snapshot.fix_cycle_count == 0
+    assert snapshot.consultant_invocations == 0
+    assert snapshot.execution_status_marker == "### IDLE"
+    assert snapshot.planning_status_marker == "### IDLE"
+    assert load_execution_status(paths) == "### IDLE"
+    assert load_planning_status(paths) == "### IDLE"
 
 
 def test_runtime_tick_applies_mailbox_pause_before_reconciliation(tmp_path: Path) -> None:

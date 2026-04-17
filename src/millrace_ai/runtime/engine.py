@@ -49,9 +49,9 @@ from millrace_ai.state_store import (
 from millrace_ai.watchers import WatcherSession, WatchEvent
 
 from . import activation, mailbox_intake, reconciliation, result_application, stage_requests, watcher_intake
+from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
-_STATUS_IDLE = "### IDLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,13 +189,11 @@ class RuntimeEngine:
         self._refresh_runtime_queue_depths()
 
         if self.snapshot.stop_requested:
-            self.snapshot = self.snapshot.model_copy(
-                update={
-                    "process_running": False,
-                    "updated_at": self._now(),
-                }
+            self._reset_runtime_to_idle(
+                process_running=False,
+                clear_stop_requested=True,
+                clear_paused=True,
             )
-            save_snapshot(self.paths, self.snapshot)
             self._close_watcher_session()
             self._release_daemon_ownership_lock(force=False)
             write_runtime_event(self.paths, event_type="runtime_tick_stopped")
@@ -493,7 +491,11 @@ class RuntimeEngine:
     def _clear_stale_state(self, *, reason: str = "runtime stale-state clear") -> None:
         queue = QueueStore(self.paths)
         self._requeue_all_active_items(queue, reason=reason)
-        self._reset_runtime_to_idle(clear_stop_requested=True, clear_paused=True)
+        self._reset_runtime_to_idle(
+            process_running=True,
+            clear_stop_requested=True,
+            clear_paused=True,
+        )
         save_recovery_counters(self.paths, RecoveryCounters())
         self.counters = load_recovery_counters(self.paths)
 
@@ -531,7 +533,11 @@ class RuntimeEngine:
         except QueueStateError:
             return
 
-        self._reset_runtime_to_idle(clear_stop_requested=False, clear_paused=False)
+        self._reset_runtime_to_idle(
+            process_running=True,
+            clear_stop_requested=False,
+            clear_paused=False,
+        )
         reset_forward_progress_counters(
             self.paths,
             work_item_kind=work_item_kind,
@@ -577,35 +583,26 @@ class RuntimeEngine:
             return
         queue.requeue_incident(work_item_id, reason=reason)
 
-    def _reset_runtime_to_idle(self, *, clear_stop_requested: bool, clear_paused: bool) -> None:
+    def _reset_runtime_to_idle(
+        self,
+        *,
+        process_running: bool,
+        clear_stop_requested: bool,
+        clear_paused: bool,
+    ) -> None:
         assert self.snapshot is not None
-        update: dict[str, object] = {
-            "process_running": True,
-            "active_plane": None,
-            "active_stage": None,
-            "active_run_id": None,
-            "active_work_item_kind": None,
-            "active_work_item_id": None,
-            "active_since": None,
-            "current_failure_class": None,
-            "troubleshoot_attempt_count": 0,
-            "mechanic_attempt_count": 0,
-            "fix_cycle_count": 0,
-            "consultant_invocations": 0,
-            "execution_status_marker": _STATUS_IDLE,
-            "planning_status_marker": _STATUS_IDLE,
-            "queue_depth_execution": self._execution_queue_depth(),
-            "queue_depth_planning": self._planning_queue_depth(),
-            "updated_at": self._now(),
-        }
-        if clear_paused:
-            update["paused"] = False
-        if clear_stop_requested:
-            update["stop_requested"] = False
+        update = idle_snapshot_update(
+            now=self._now(),
+            process_running=process_running,
+            queue_depth_execution=self._execution_queue_depth(),
+            queue_depth_planning=self._planning_queue_depth(),
+            clear_stop_requested=clear_stop_requested,
+            clear_paused=clear_paused,
+        )
         self.snapshot = self.snapshot.model_copy(update=update)
         save_snapshot(self.paths, self.snapshot)
-        set_execution_status(self.paths, _STATUS_IDLE)
-        set_planning_status(self.paths, _STATUS_IDLE)
+        set_execution_status(self.paths, IDLE_STATUS_MARKER)
+        set_planning_status(self.paths, IDLE_STATUS_MARKER)
 
     @staticmethod
     def _mailbox_reason(envelope: MailboxCommandEnvelope, *, default: str) -> str:

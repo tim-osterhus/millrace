@@ -23,16 +23,15 @@ from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
 from millrace_ai.runtime_lock import clear_stale_runtime_ownership_lock
 from millrace_ai.state_store import (
     load_recovery_counters,
-    load_snapshot,
     reset_forward_progress_counters,
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
     set_planning_status,
 )
+from millrace_ai.runtime.snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
 ResultT = TypeVar("ResultT")
-_STATUS_IDLE = "### IDLE"
 
 
 class DirectControlMutations(Generic[ResultT]):
@@ -135,19 +134,17 @@ class DirectControlMutations(Generic[ResultT]):
 
     def stop(self, snapshot: RuntimeSnapshot) -> ResultT:
         changed = snapshot.process_running or not snapshot.stop_requested
-        updated = snapshot.model_copy(
-            update={
-                "process_running": False,
-                "stop_requested": True,
-                "updated_at": self._now(),
-            }
+        self._reset_runtime_to_idle(
+            snapshot,
+            process_running=False,
+            clear_stop_requested=True,
+            clear_paused=True,
         )
-        save_snapshot(self.paths, updated)
         return self._result_factory(
             action=MailboxCommand.STOP,
             mode="direct",
             applied=changed,
-            detail="runtime stop requested directly",
+            detail="runtime stopped directly",
         )
 
     def retry_active(
@@ -195,7 +192,12 @@ class DirectControlMutations(Generic[ResultT]):
                 detail=str(exc),
             )
 
-        self._reset_runtime_to_idle(clear_stop_requested=False, clear_paused=False)
+        self._reset_runtime_to_idle(
+            snapshot,
+            process_running=False,
+            clear_stop_requested=False,
+            clear_paused=False,
+        )
         reset_forward_progress_counters(
             self.paths,
             work_item_kind=work_item_kind,
@@ -214,7 +216,12 @@ class DirectControlMutations(Generic[ResultT]):
         had_counters = bool(load_recovery_counters(self.paths).entries)
         lock_clear_result = clear_stale_runtime_ownership_lock(self.paths)
 
-        self._reset_runtime_to_idle(clear_stop_requested=True, clear_paused=True)
+        self._reset_runtime_to_idle(
+            snapshot,
+            process_running=False,
+            clear_stop_requested=True,
+            clear_paused=True,
+        )
         save_recovery_counters(self.paths, RecoveryCounters())
 
         applied = (
@@ -282,35 +289,28 @@ class DirectControlMutations(Generic[ResultT]):
             return
         queue.requeue_incident(work_item_id, reason=reason)
 
-    def _reset_runtime_to_idle(self, *, clear_stop_requested: bool, clear_paused: bool) -> None:
-        snapshot = load_snapshot(self.paths)
-        update: dict[str, object] = {
-            "process_running": False,
-            "active_plane": None,
-            "active_stage": None,
-            "active_run_id": None,
-            "active_work_item_kind": None,
-            "active_work_item_id": None,
-            "active_since": None,
-            "current_failure_class": None,
-            "troubleshoot_attempt_count": 0,
-            "mechanic_attempt_count": 0,
-            "fix_cycle_count": 0,
-            "consultant_invocations": 0,
-            "execution_status_marker": _STATUS_IDLE,
-            "planning_status_marker": _STATUS_IDLE,
-            "queue_depth_execution": self._execution_queue_depth(),
-            "queue_depth_planning": self._planning_queue_depth(),
-            "updated_at": self._now(),
-        }
-        if clear_paused:
-            update["paused"] = False
-        if clear_stop_requested:
-            update["stop_requested"] = False
+    def _reset_runtime_to_idle(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        process_running: bool,
+        clear_stop_requested: bool,
+        clear_paused: bool,
+    ) -> None:
+        updated = snapshot.model_copy(
+            update=idle_snapshot_update(
+                now=self._now(),
+                process_running=process_running,
+                queue_depth_execution=self._execution_queue_depth(),
+                queue_depth_planning=self._planning_queue_depth(),
+                clear_stop_requested=clear_stop_requested,
+                clear_paused=clear_paused,
+            )
+        )
 
-        save_snapshot(self.paths, snapshot.model_copy(update=update))
-        set_execution_status(self.paths, _STATUS_IDLE)
-        set_planning_status(self.paths, _STATUS_IDLE)
+        save_snapshot(self.paths, updated)
+        set_execution_status(self.paths, IDLE_STATUS_MARKER)
+        set_planning_status(self.paths, IDLE_STATUS_MARKER)
 
     def _execution_queue_depth(self) -> int:
         return len(tuple(self.paths.tasks_queue_dir.glob("*.md")))

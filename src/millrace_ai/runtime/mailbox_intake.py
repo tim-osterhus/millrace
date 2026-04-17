@@ -44,7 +44,7 @@ def handle_mailbox_command(
         return
     if command == "stop":
         engine.snapshot = engine.snapshot.model_copy(
-            update={"stop_requested": True, "process_running": False, "updated_at": engine._now()}
+            update={"stop_requested": True, "updated_at": engine._now()}
         )
         save_snapshot(engine.paths, engine.snapshot)
         return

@@ -179,8 +179,57 @@ def test_pause_resume_stop_are_direct_when_daemon_is_not_running(tmp_path: Path)
     stopped_snapshot = load_snapshot(paths)
     assert stop_result.mode == "direct"
     assert stop_result.applied is True
-    assert stopped_snapshot.stop_requested is True
+    assert stopped_snapshot.stop_requested is False
     assert stopped_snapshot.process_running is False
+
+
+def test_stop_directly_normalizes_active_snapshot_to_stopped_idle_invariant(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    _activate_task(paths, "task-001")
+    _save_active_task_snapshot(paths, task_id="task-001", daemon_running=False)
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        snapshot.model_copy(
+            update={
+                "paused": True,
+                "current_failure_class": "runner_transport_failure",
+                "troubleshoot_attempt_count": 2,
+                "mechanic_attempt_count": 1,
+                "fix_cycle_count": 1,
+                "consultant_invocations": 1,
+                "execution_status_marker": "### BLOCKED",
+                "planning_status_marker": "### MANAGER_COMPLETE",
+                "updated_at": NOW,
+            }
+        ),
+    )
+    set_execution_status(paths, "### BLOCKED")
+    control = RuntimeControl(paths)
+
+    stop_result = control.stop_runtime()
+
+    assert stop_result.mode == "direct"
+    assert stop_result.applied is True
+    stopped_snapshot = load_snapshot(paths)
+    assert stopped_snapshot.process_running is False
+    assert stopped_snapshot.paused is False
+    assert stopped_snapshot.stop_requested is False
+    assert stopped_snapshot.active_plane is None
+    assert stopped_snapshot.active_stage is None
+    assert stopped_snapshot.active_run_id is None
+    assert stopped_snapshot.active_work_item_kind is None
+    assert stopped_snapshot.active_work_item_id is None
+    assert stopped_snapshot.active_since is None
+    assert stopped_snapshot.current_failure_class is None
+    assert stopped_snapshot.troubleshoot_attempt_count == 0
+    assert stopped_snapshot.mechanic_attempt_count == 0
+    assert stopped_snapshot.fix_cycle_count == 0
+    assert stopped_snapshot.consultant_invocations == 0
+    assert stopped_snapshot.execution_status_marker == "### IDLE"
+    assert stopped_snapshot.planning_status_marker == "### IDLE"
+    assert load_execution_status(paths) == "### IDLE"
+    assert load_planning_status(paths) == "### IDLE"
 
 
 def test_pause_resume_stop_use_mailbox_when_daemon_is_running(tmp_path: Path) -> None:
