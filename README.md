@@ -1,112 +1,130 @@
 # Millrace
 
-Millrace is a thin-core autonomous runtime packaged as `millrace_ai`.
+> A governed runtime for long-running agent work that needs durable state,
+> staged execution, and recovery-aware operation.
 
-The runtime bootstraps all operational files under `<workspace>/millrace-agents/` and keeps canonical source code in the package itself.
+[![PyPI](https://img.shields.io/pypi/v/millrace-ai.svg)](https://pypi.org/project/millrace-ai/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/pypi/l/millrace-ai.svg)](LICENSE)
 
-## Source Layout
+Millrace is not a replacement for Codex, Claude Code, Aider, or similar raw
+agent harnesses. It is the runtime layer you put around them when the work is
+too long-running, stateful, or recovery-sensitive to trust to a single session.
 
-- importable code lives under `src/millrace_ai/`
-- tests mirror package ownership under `tests/assets/`, `tests/cli/`, `tests/config/`, `tests/runners/`, `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
-- preserved compatibility facades remain at the package root for legacy imports such as `millrace_ai.control`, `millrace_ai.run_inspection`, `millrace_ai.runner`, `millrace_ai.entrypoints`, and workspace support modules
+Millrace is designed to be operated by a dedicated ops agent. The raw harness
+still does the local stage work. Millrace owns the queue, compiled plan, stage
+progression, runtime state, and persisted audit trail around that work.
 
-Use `docs/source-package-map.md` for the old-to-new module map and the intentionally preserved facade list.
+## Why Millrace Exists
 
-## Quick Start
+Raw harnesses are excellent at bounded sessions:
+
+- implement a feature
+- fix a bug
+- review a diff
+- work a short plan in one sitting
+
+Millrace starts where that model stops being enough.
+
+Use it when the job needs to:
+
+- survive pauses, crashes, or context loss
+- move through explicit execution or planning stages
+- preserve durable queue and runtime state on disk
+- route failures into recovery work instead of just exiting
+- leave behind persisted run artifacts that an operator can inspect later
+
+## How Millrace Fits With Raw Harnesses
+
+Think of the split this way:
+
+- the raw harness reasons, edits code, and emits a stage result
+- Millrace compiles the active mode and loops into a frozen plan
+- Millrace decides which stage runs next, which work item is active, and what
+  to persist after each handoff
+- the ops agent chooses when work enters the runtime and how the workspace is
+  configured
+
+Millrace should be used in conjunction with raw harnesses, not instead of them.
+If a direct Codex or Claude Code session is enough, use the direct session.
+
+## When To Use Millrace
+
+Use Millrace when:
+
+- the work will outlast a single agent session
+- you want explicit stage gates instead of "the agent said it is done"
+- recovery and resumability matter
+- you need run history, diagnostics, and durable state under
+  `<workspace>/millrace-agents/`
+- a dedicated ops agent is available to operate the runtime intentionally
+
+Do not use Millrace when:
+
+- the task is small and bounded
+- the work is exploratory and governance adds more overhead than value
+- single-session throughput matters more than persistence and recovery
+- no ops agent is available to manage intake, configuration, and runtime state
+
+## 60-Second Proof
+
+Install:
 
 ```bash
-WORKSPACE=/absolute/path/to/workspace
-
-uv run --extra dev python -m millrace_ai compile validate --workspace "$WORKSPACE"
-uv run --extra dev python -m millrace_ai run once --workspace "$WORKSPACE"
-uv run --extra dev python -m millrace_ai status --workspace "$WORKSPACE"
+pip install millrace-ai
 ```
 
-Equivalent installed CLI:
+Then point Millrace at a workspace:
 
 ```bash
+export WORKSPACE=/absolute/path/to/your/workspace
+
 millrace compile validate --workspace "$WORKSPACE"
 millrace run once --workspace "$WORKSPACE"
 millrace status --workspace "$WORKSPACE"
 ```
 
-## Operator Surface
+That flow proves three important things quickly:
 
-Use the shortest truthful forms for routine operation:
+- Millrace can bootstrap its workspace contract under `millrace-agents/`
+- the selected mode and loops compile into a frozen plan
+- the runtime can execute one deterministic tick and report persisted status
 
-- `millrace run once`
-- `millrace status`
-- `millrace runs ls`
-- `millrace queue add-task <path-to-task.md|path-to-task.json>`
-- `millrace pause`, `millrace resume`, `millrace stop`
+## What Millrace Governs
 
-`millrace status show` remains available as the explicit subcommand form, but the canonical operator example is `millrace status`.
+Millrace is a real runtime, not a thin wrapper script. The current shipped core
+includes:
 
-Use `docs/OPERATOR_GUIDE.md` for the current operator workflow and `docs/runtime/millrace-cli-reference.md` for the full command inventory, grouped forms, and alias details.
+- a compile step that freezes mode and loop assets into a persisted run plan
+- separate execution and planning loops
+- typed stage terminals rather than prose-only handoff semantics
+- file-backed runtime state and queue artifacts under `millrace-agents/`
+- persisted run artifacts for inspection and troubleshooting
+- runner dispatch that invokes a raw harness through a defined adapter contract
 
-## Work Artifacts
+The runtime is packaged as `millrace_ai`. Source lives under `src/millrace_ai/`
+and the tests mirror those domains under `tests/`.
 
-Canonical queue artifacts are lightweight headed markdown work documents (`.md`) under:
+## Docs And Skills
 
-- `millrace-agents/tasks/{queue,active,done,blocked}/`
-- `millrace-agents/specs/{queue,active,done,blocked}/`
-- `millrace-agents/incidents/{incoming,active,resolved,blocked}/`
+If you are an agent reading this README, load
+`docs/skills/millrace-ops-agent-manual.md` first before operating Millrace.
 
-Task/spec/incident files use a human-facing shape with an H1 title plus plain field headings such as:
+Primary docs:
 
-```md
-# Add run inspection CLI
-
-Task-ID: example-task-001
-Title: Add run inspection CLI
-
-Target-Paths:
-- src/millrace_ai/cli/commands/runs.py
-
-Acceptance:
-- `millrace runs ls` reports persisted run summaries.
-```
-
-JSON remains runtime-internal for snapshot, diagnostics, mailbox archives, and event/log surfaces.
-
-## Stage Runner Resolution
-
-Runtime stage execution now routes through a configurable runner dispatcher.
-
-Resolution order per stage request:
-
-1. `request.runner_name` (compiled from mode/stage bindings)
-2. `runners.default_runner` from runtime config
-3. fallback literal `codex_cli`
-
-Default adapter is Codex CLI. Add runner settings in `<workspace>/millrace-agents/millrace.toml`:
-
-```toml
-[runners]
-default_runner = "codex_cli"
-
-[runners.codex]
-command = "codex"
-args = ["exec"]
-permission_default = "basic"
-# permission_by_stage = { builder = "elevated" }
-# permission_by_model = { "gpt-5.4" = "maximum" }
-skip_git_repo_check = true
-```
-
-Permission levels map to Codex CLI flags:
-
-- `basic`: `--full-auto`
-- `elevated`: `-c approval_policy="never" --sandbox danger-full-access`
-- `maximum`: `--dangerously-bypass-approvals-and-sandbox`
-
-## Runtime Docs
-
-- `docs/runtime/millrace-runtime-architecture.md`
+- `docs/skills/millrace-ops-agent-manual.md`
+- `docs/runtime/README.md`
 - `docs/runtime/millrace-cli-reference.md`
-- `docs/runtime/millrace-entrypoint-mapping.md`
+- `docs/runtime/millrace-compiler-and-frozen-plans.md`
+- `docs/runtime/millrace-modes-and-loops.md`
+- `docs/runtime/millrace-loop-authoring.md`
 - `docs/runtime/millrace-runner-architecture.md`
+- `docs/runtime/millrace-runtime-error-codes.md`
 - `docs/source-package-map.md`
+
+Use the CLI reference for the full command inventory. Use the compiler and loop
+docs when you need to understand or extend the runtime contract rather than just
+operate it.
 
 ## Verification
 
@@ -118,26 +136,13 @@ uv run --with ruff ruff check src/millrace_ai tests
 uv run --with mypy mypy src/millrace_ai
 ```
 
-Operational source + wheel checks (minimum functionality workspace):
+## Status
 
-```bash
-WORKSPACE=/absolute/path/to/minimum-functionality-workspace
+Millrace is close to the `v1.0.0` baseline, but it is still stabilizing its
+public documentation and some surrounding release surfaces. If you depend on a
+specific behavior, pin to a patch version instead of assuming the latest build
+is identical.
 
-rm -rf "$WORKSPACE/millrace-agents"
+## License
 
-uv run --extra dev python -m millrace_ai compile validate --workspace "$WORKSPACE"
-uv run --extra dev python -m millrace_ai run once --workspace "$WORKSPACE"
-uv run --extra dev python -m millrace_ai status --workspace "$WORKSPACE"
-
-rm -rf "$WORKSPACE/millrace-agents"
-
-uv build --wheel
-python3 -m venv /tmp/millrace-wheel-test
-source /tmp/millrace-wheel-test/bin/activate
-pip install dist/*.whl
-millrace compile validate --workspace "$WORKSPACE"
-millrace run once --workspace "$WORKSPACE"
-millrace status --workspace "$WORKSPACE"
-```
-
-For clean proof runs, refresh only `"$WORKSPACE/millrace-agents/"` in place. Do not mutate operator-authored files elsewhere in the workspace root.
+See `LICENSE`.
