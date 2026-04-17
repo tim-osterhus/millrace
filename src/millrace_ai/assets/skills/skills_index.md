@@ -30,6 +30,10 @@ forbidden_claims:
 # Skills Index
 
 This is the runtime-shipped skills index for stage entrypoints.
+Entrypoints select skills from this index; they do not infer runtime behavior from arbitrary skill metadata.
+The current bespoke hybrid pilot set is `builder-core`, `checker-core`, `manager-core`, and `planner-core`.
+Those four use thin manifest frontmatter for identity and structured markdown bodies for the actual guidance.
+Other stage-core skills remain metadata-light until migrated into the same hybrid contract.
 
 Usage contract:
 - open this index before selecting discretionary skills
@@ -57,6 +61,7 @@ Usage contract:
 
 | Skill | Description | Tags | Path | Status |
 | --- | --- | --- | --- | --- |
+| `millrace-skill-creator` | Shipped package for authoring new skill assets in the same hybrid format used by runtime skills. | `documentation`, `authoring` | `skills/millrace-skill-creator/SKILL.md` | shipped |
 | `skills-readme` | Runtime skill-pack rules and constraints. | `documentation`, `runtime` | `skills/README.md` | shipped |
 | `small-diff-discipline` | Keep implementation changes narrow and auditable. | `implementation`, `scope` | `deferred/small-diff-discipline.md` | deferred (not shipped) |
 | `historylog-entry-high-signal` | Write concise, evidence-first history entries. | `reporting`, `evidence` | `deferred/historylog-entry-high-signal.md` | deferred (not shipped) |

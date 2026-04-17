@@ -1,0 +1,43 @@
+{
+  "cases": [
+    {
+      "case_id": "pilot-shape",
+      "description": "The helper scripts are deterministic CLI entry points and the references are local docs.",
+      "required_paths": [
+        "SKILL.md",
+        "references/hybrid-format.md",
+        "references/donor-synthesis.md",
+        "scripts/_shared.py",
+        "scripts/scaffold_skill.py",
+        "scripts/lint_skill.py",
+        "scripts/evaluate_skill.py",
+        "evals/creator_smoke_cases.json",
+        "evals/pilot_shape_cases.json"
+      ],
+      "file_contains": {
+        "scripts/scaffold_skill.py": [
+          "argparse",
+          "main(",
+          "if __name__ == \"__main__\""
+        ],
+        "scripts/lint_skill.py": [
+          "argparse",
+          "main(",
+          "if __name__ == \"__main__\""
+        ],
+        "scripts/evaluate_skill.py": [
+          "argparse",
+          "main(",
+          "if __name__ == \"__main__\""
+        ],
+        "references/hybrid-format.md": [
+          "portable",
+          "millrace-opinionated"
+        ],
+        "references/donor-synthesis.md": [
+          "donor synthesis"
+        ]
+      }
+    }
+  ]
+}

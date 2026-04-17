@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.assets.entrypoints import ParsedMarkdownAsset
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
@@ -32,6 +33,29 @@ SKILLS_SECTION_HEADER = re.compile(
     re.IGNORECASE,
 )
 SKILL_LINE = re.compile(r"^-\s+`(?P<skill>[a-z0-9-]+)`")
+HYBRID_SKILL_SECTION_TITLES = [
+    "Purpose",
+    "Quick Start",
+    "Operating Constraints",
+    "Inputs This Skill Expects",
+    "Output Contract",
+    "Procedure",
+    "Pitfalls And Gotchas",
+    "Progressive Disclosure",
+    "Verification Pattern",
+]
+SKILLS_DIR = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills"
+CREATOR_PACKAGE_PATH = SKILLS_DIR / "millrace-skill-creator"
+CREATOR_SKILL_PATH = CREATOR_PACKAGE_PATH / "SKILL.md"
+STAGE_CORE_FORBIDDEN_CLAIMS = {
+    "queue_selection",
+    "routing",
+    "retry_thresholds",
+    "escalation_policy",
+    "status_persistence",
+    "terminal_results",
+    "required_artifacts",
+}
 
 
 def test_entrypoints_module_is_assets_facade() -> None:
@@ -95,14 +119,36 @@ def _extract_declared_skill_lines(body: str) -> list[tuple[str, str]]:
     return declared
 
 
+def _extract_h2_headings(body: str) -> list[str]:
+    return [
+        match.group(1).strip()
+        for match in re.finditer(r"^##\s+(.+?)\s*$", body, flags=re.MULTILINE)
+    ]
+
+
+def _assert_stage_core_manifest_contract(asset: ParsedMarkdownAsset, *, stage: str) -> None:
+    manifest = asset.manifest
+    forbidden_claims = manifest["forbidden_claims"]
+
+    assert manifest["asset_type"] == "skill"
+    assert manifest["asset_id"] == f"{stage}-core"
+    assert manifest["advisory_only"] is True
+    assert manifest["capability_type"] == "stage_core"
+    assert manifest["recommended_for_stages"] == [stage]
+    assert isinstance(forbidden_claims, list)
+    assert set(forbidden_claims) == STAGE_CORE_FORBIDDEN_CLAIMS
+
+
 def _load_shipped_skill_asset_ids() -> set[str]:
-    skills_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills"
     skill_ids: set[str] = set()
 
-    for path in sorted(skills_dir.rglob("*.md")):
+    for path in sorted(SKILLS_DIR.rglob("*.md")):
         if path.name == "skills_index.md":
             continue
-        asset = parse_markdown_asset(path)
+        try:
+            asset = parse_markdown_asset(path)
+        except ValueError:
+            continue
         if asset.manifest.get("asset_type") != "skill":
             continue
         asset_id = asset.manifest.get("asset_id")
@@ -546,19 +592,118 @@ def test_runtime_entrypoint_required_result_sets() -> None:
 
 
 def test_runtime_skills_index_stub_has_minimal_shape() -> None:
-    skills_index_path = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills" / "skills_index.md"
+    skills_index_path = SKILLS_DIR / "skills_index.md"
     asset = parse_markdown_asset(skills_index_path)
     text = asset.body
 
     assert asset.manifest["asset_type"] == "skill"
     assert text.startswith("# Skills Index")
     assert "| Skill | Description | Tags | Path | Status |" in text
+    assert "builder-core" in text
+    assert "checker-core" in text
+    assert "fixer-core" in text
+    assert "manager-core" in text
+    assert "mechanic-core" in text
+    assert "planner-core" in text
+    assert "skills/millrace-skill-creator/SKILL.md" in text
+    assert CREATOR_PACKAGE_PATH.is_dir()
+    assert CREATOR_SKILL_PATH.is_file()
+    creator_asset = parse_markdown_asset(CREATOR_SKILL_PATH)
+    assert creator_asset.manifest["asset_type"] == "skill"
+    assert creator_asset.manifest["asset_id"] == "millrace-skill-creator"
     assert "skills-readme" in text
     assert "skills/README.md" in text
     assert "Stage-Core Skills" in text
     assert "builder-core" in text
+    assert "checker-core" in text
+    assert "manager-core" in text
+    assert "planner-core" in text
     assert "skills/stage/execution/builder-core/SKILL.md" in text
+    assert "skills/stage/execution/checker-core/SKILL.md" in text
+    assert "skills/stage/planning/manager-core/SKILL.md" in text
+    assert "skills/stage/planning/planner-core/SKILL.md" in text
     assert "deferred" in text.lower()
+
+
+def test_stage_core_skill_docs_use_hybrid_section_contract_and_pilot_postures() -> None:
+    planner_path = SKILLS_DIR / "stage" / "planning" / "planner-core" / "SKILL.md"
+    builder_path = SKILLS_DIR / "stage" / "execution" / "builder-core" / "SKILL.md"
+    checker_path = SKILLS_DIR / "stage" / "execution" / "checker-core" / "SKILL.md"
+    manager_path = SKILLS_DIR / "stage" / "planning" / "manager-core" / "SKILL.md"
+
+    planner_asset = parse_markdown_asset(planner_path)
+    builder_asset = parse_markdown_asset(builder_path)
+    checker_asset = parse_markdown_asset(checker_path)
+    manager_asset = parse_markdown_asset(manager_path)
+
+    _assert_stage_core_manifest_contract(planner_asset, stage=PlanningStageName.PLANNER.value)
+    _assert_stage_core_manifest_contract(builder_asset, stage=ExecutionStageName.BUILDER.value)
+    _assert_stage_core_manifest_contract(checker_asset, stage=ExecutionStageName.CHECKER.value)
+    _assert_stage_core_manifest_contract(manager_asset, stage=PlanningStageName.MANAGER.value)
+
+    stage_to_body = {
+        ExecutionStageName.BUILDER.value: builder_asset.body,
+        ExecutionStageName.CHECKER.value: checker_asset.body,
+        PlanningStageName.PLANNER.value: planner_asset.body,
+        PlanningStageName.MANAGER.value: manager_asset.body,
+    }
+    expected_body_keywords = {
+        ExecutionStageName.BUILDER.value: (
+            "foundational build",
+            "feature slice on existing seams",
+            "small change or repair",
+            "verification",
+        ),
+        ExecutionStageName.CHECKER.value: (
+            "task contract",
+            "expectations",
+            "fix-needed",
+            "blocked",
+        ),
+        PlanningStageName.PLANNER.value: (
+            "assumption",
+            "pass-through",
+            "refine-in-place",
+            "fan-out",
+        ),
+        PlanningStageName.MANAGER.value: (
+            "active spec",
+            "single execution slice",
+            "ordered dependency chain",
+            "parallel fan-out",
+        ),
+    }
+
+    for stage, body in stage_to_body.items():
+        headings = _extract_h2_headings(body)
+        assert set(headings) == set(HYBRID_SKILL_SECTION_TITLES)
+        assert len(headings) == len(HYBRID_SKILL_SECTION_TITLES)
+        assert "## Purpose" in body
+        assert "## Verification Pattern" in body
+        assert "hybrid format" not in body.lower()
+        body_lower = body.lower()
+        for keyword in expected_body_keywords[stage]:
+            assert keyword in body_lower
+
+
+def test_runtime_skills_readme_describes_creator_package_and_selection_contract() -> None:
+    skills_readme_path = SKILLS_DIR / "README.md"
+    asset = parse_markdown_asset(skills_readme_path)
+    body = asset.body
+
+    assert "entrypoints" in body.lower()
+    assert "skills_index.md" in body
+    assert "millrace-skill-creator" in body
+    assert "builder-core" in body
+    assert "checker-core" in body
+    assert "manager-core" in body
+    assert "planner-core" in body
+    assert "skills/stage/<plane>/<stage>-core/SKILL.md" in body
+    assert CREATOR_PACKAGE_PATH.is_dir()
+    assert CREATOR_SKILL_PATH.is_file()
+    creator_asset = parse_markdown_asset(CREATOR_SKILL_PATH)
+    assert creator_asset.manifest["asset_id"] == "millrace-skill-creator"
+    assert creator_asset.manifest["asset_type"] == "skill"
 
 
 def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
@@ -595,6 +740,8 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     shipped_skill_ids = _load_shipped_skill_asset_ids()
     assert "skills-readme" in shipped_skill_ids
     assert "builder-core" in shipped_skill_ids
+    assert "checker-core" in shipped_skill_ids
+    assert "manager-core" in shipped_skill_ids
     assert "planner-core" in shipped_skill_ids
 
     for stage, body in stage_to_body.items():

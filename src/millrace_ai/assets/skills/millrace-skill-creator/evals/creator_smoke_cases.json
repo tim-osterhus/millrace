@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "case_id": "creator-smoke",
+      "description": "The package ships the required files and opinionated skill contract.",
+      "required_paths": [
+        "SKILL.md",
+        "references/hybrid-format.md",
+        "references/donor-synthesis.md",
+        "scripts/_shared.py",
+        "scripts/scaffold_skill.py",
+        "scripts/lint_skill.py",
+        "scripts/evaluate_skill.py",
+        "evals/creator_smoke_cases.json",
+        "evals/pilot_shape_cases.json"
+      ],
+      "required_skill_sections": [
+        "Purpose",
+        "Quick Start",
+        "Operating Constraints",
+        "Inputs This Skill Expects",
+        "Output Contract",
+        "Procedure",
+        "Pitfalls And Gotchas",
+        "Progressive Disclosure",
+        "Verification Pattern"
+      ],
+      "skill_manifest": {
+        "asset_type": "skill",
+        "asset_id": "millrace-skill-creator",
+        "advisory_only": true,
+        "capability_type": "documentation"
+      },
+      "file_contains": {
+        "SKILL.md": [
+          "portable",
+          "millrace-opinionated",
+          "no network",
+          "no model"
+        ]
+      }
+    }
+  ]
+}

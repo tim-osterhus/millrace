@@ -37,8 +37,12 @@ Rules:
 - Skills should be reusable across stages.
 
 Runtime shipping notes:
+- Runtime selection is still driven by entrypoints and `skills_index.md`, not by arbitrary skill metadata.
 - `skills_index.md` is the canonical runtime index consumed by entrypoints.
 - `README.md` remains the shared runtime baseline skill asset (`skills-readme`).
+- The shipped `millrace-skill-creator` package is the runtime-facing authoring surface for new skill assets.
+- The current bespoke hybrid pilot set is `builder-core`, `checker-core`, `manager-core`, and `planner-core`; those four use a hybrid format with thin manifest frontmatter for identity and structured markdown sections in the body for the actual guidance.
+- Other stage-core skills remain metadata-light until migrated into the same hybrid contract.
 - Stage-core skills live under `skills/stage/<plane>/<stage>-core/SKILL.md`.
 - Each stage-core skill should stay narrow: posture, heuristics, traps, evidence discipline, and optional-skill triggers only.
 - Additional optional skill references in entrypoints should be marked as deferred until shipped.

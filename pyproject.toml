@@ -36,7 +36,7 @@ where = ["src"]
 include = ["millrace_ai", "millrace_ai.*"]
 
 [tool.setuptools.package-data]
-millrace_ai = ["assets/**/*.md", "assets/**/*.json", "py.typed"]
+millrace_ai = ["assets/**/*.md", "assets/**/*.json", "assets/**/*.py", "py.typed"]
 
 [tool.setuptools.exclude-package-data]
 "*" = [".DS_Store"]
