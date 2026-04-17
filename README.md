@@ -5,7 +5,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/millrace-ai.svg)](https://pypi.org/project/millrace-ai/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/pypi/l/millrace-ai.svg)](LICENSE)
+[![License](https://img.shields.io/github/license/tim-osterhus/millrace.svg)](LICENSE)
 
 Millrace is not a replacement for Codex, Claude Code, Aider, or similar raw
 agent harnesses. It is the runtime layer you put around them when the work is

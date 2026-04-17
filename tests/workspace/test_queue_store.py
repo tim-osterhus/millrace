@@ -4,14 +4,23 @@ import importlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, Mapping
 
 import pytest
 
-from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import (
+    ExecutionStageName,
+    IncidentDecision,
+    IncidentDocument,
+    Plane,
+    SpecDocument,
+    TaskDocument,
+    WorkItemKind,
+)
 from millrace_ai.errors import QueueStateError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.work_documents import parse_work_document, render_work_document
+from millrace_ai.work_documents import parse_work_document, parse_work_document_as, render_work_document
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 
@@ -21,11 +30,11 @@ def _task_doc(task_id: str, *, created_at: datetime) -> TaskDocument:
         task_id=task_id,
         title=f"Task {task_id}",
         summary="queue test",
-        target_paths=["millrace/queue_store.py"],
-        acceptance=["queue behavior is deterministic"],
-        required_checks=["uv run pytest tests/workspace/test_queue_store.py -q"],
-        references=["lab/specs/drafts/millrace-work-item-queue-and-ownership-contract.md"],
-        risk=["queue drift"],
+        target_paths=("millrace/queue_store.py",),
+        acceptance=("queue behavior is deterministic",),
+        required_checks=("uv run pytest tests/workspace/test_queue_store.py -q",),
+        references=("lab/specs/drafts/millrace-work-item-queue-and-ownership-contract.md",),
+        risk=("queue drift",),
         created_at=created_at,
         created_by="tests",
     )
@@ -37,10 +46,10 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
         title=f"Spec {spec_id}",
         summary="planning input",
         source_type="manual",
-        goals=["define implementation plan"],
-        constraints=["stay deterministic"],
-        acceptance=["planning queue works"],
-        references=["lab/specs/drafts/millrace-work-item-queue-and-ownership-contract.md"],
+        goals=("define implementation plan",),
+        constraints=("stay deterministic",),
+        acceptance=("planning queue works",),
+        references=("lab/specs/drafts/millrace-work-item-queue-and-ownership-contract.md",),
         created_at=created_at,
         created_by="tests",
     )
@@ -51,11 +60,11 @@ def _incident_doc(incident_id: str, *, opened_at: datetime) -> IncidentDocument:
         incident_id=incident_id,
         title=f"Incident {incident_id}",
         summary="execution recovery",
-        source_stage="consultant",
-        source_plane="execution",
+        source_stage=ExecutionStageName.CONSULTANT,
+        source_plane=Plane.EXECUTION,
         failure_class="malformed_output",
         trigger_reason="bad terminal marker",
-        consultant_decision="needs_planning",
+        consultant_decision=IncidentDecision.NEEDS_PLANNING,
         opened_at=opened_at,
         opened_by="tests",
     )
@@ -67,7 +76,7 @@ def _read_json_lines(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def _task_markdown(payload: dict[str, object]) -> str:
+def _task_markdown(payload: Mapping[str, object]) -> str:
     lines = [
         "# Invalid task",
         f"Task-ID: {payload.get('task_id', 'task-invalid')}",
@@ -80,7 +89,32 @@ def _task_markdown(payload: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _spec_markdown(payload: dict[str, object]) -> str:
+def _task_markdown_with_blank_optional_scalars() -> str:
+    return (
+        "# Queue task\n\n"
+        "Task-ID: queue-task\n"
+        "Title: Queue task\n"
+        "Summary: queue test\n"
+        "Spec-ID: spec-001\n"
+        "Parent-Task-ID:\n\n"
+        "Incident-ID:\n\n"
+        "Status-Hint: queued\n"
+        f"Created-At: {NOW.isoformat()}\n"
+        "Created-By: manager\n\n"
+        "Target-Paths:\n"
+        "- millrace/queue_store.py\n\n"
+        "Acceptance:\n"
+        "- queue claim succeeds\n\n"
+        "Required-Checks:\n"
+        "- uv run --extra dev python -m pytest tests/workspace/test_queue_store.py -q\n\n"
+        "References:\n"
+        "- millrace-issue-1.md\n\n"
+        "Risk:\n"
+        "- queue intake regression\n"
+    )
+
+
+def _spec_markdown(payload: Mapping[str, object]) -> str:
     lines = [
         "# Invalid spec",
         f"Spec-ID: {payload.get('spec_id', 'spec-invalid')}",
@@ -121,6 +155,19 @@ def test_work_documents_round_trip_for_task_spec_and_incident() -> None:
         assert "---" not in raw
         parsed = parse_work_document(raw, path=Path(f"{document.kind}.md"))
         assert parsed == document
+
+
+def test_parse_work_document_as_treats_blank_optional_scalar_fields_as_omitted() -> None:
+    document = parse_work_document_as(
+        _task_markdown_with_blank_optional_scalars(),
+        model=TaskDocument,
+        path=Path("queue-task.md"),
+    )
+
+    assert document.task_id == "queue-task"
+    assert document.spec_id == "spec-001"
+    assert document.parent_task_id is None
+    assert document.incident_id is None
 
 
 def test_task_lifecycle_claim_done_blocked_is_deterministic(tmp_path: Path) -> None:
@@ -372,6 +419,24 @@ def test_claim_next_execution_task_skips_schema_invalid_task_and_claims_valid_wo
     assert (paths.tasks_queue_dir / "task-invalid.md.invalid").is_file()
 
 
+def test_claim_next_execution_task_accepts_blank_optional_scalar_fields(tmp_path: Path) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+
+    (paths.tasks_queue_dir / "queue-task.md").write_text(
+        _task_markdown_with_blank_optional_scalars(),
+        encoding="utf-8",
+    )
+
+    claim = store.claim_next_execution_task()
+    assert claim is not None
+    assert claim.work_item_kind is WorkItemKind.TASK
+    assert claim.work_item_id == "queue-task"
+    assert (paths.tasks_active_dir / "queue-task.md").is_file()
+    assert not (paths.tasks_queue_dir / "queue-task.md.invalid").exists()
+    assert _read_json_lines(paths.tasks_queue_dir / "invalid-artifacts.jsonl") == []
+
+
 def test_claim_next_execution_task_quarantines_filename_and_frontmatter_id_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -471,7 +536,7 @@ def test_claim_next_execution_task_retries_when_candidate_disappears(
     original_replace = Path.replace
     attempts = {"count": 0}
 
-    def flaky_replace(self: Path, target: Path):
+    def flaky_replace(self: Path, target: Path) -> Path:
         if self.name == "task-001.md" and attempts["count"] == 0:
             attempts["count"] += 1
             raise FileNotFoundError("simulated race")
@@ -494,7 +559,7 @@ def test_claim_next_planning_item_retries_when_candidate_disappears(
     original_replace = Path.replace
     attempts = {"count": 0}
 
-    def flaky_replace(self: Path, target: Path):
+    def flaky_replace(self: Path, target: Path) -> Path:
         if self.name == "inc-001.md" and attempts["count"] == 0:
             attempts["count"] += 1
             raise FileNotFoundError("simulated race")
@@ -519,7 +584,7 @@ def test_claim_next_execution_task_handles_file_missing_during_candidate_scan(
     original_read_text = Path.read_text
     seen = {"raised": False}
 
-    def flaky_read_text(self: Path, *args, **kwargs):
+    def flaky_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.name == "task-001.md" and not seen["raised"]:
             seen["raised"] = True
             raise FileNotFoundError("simulated race during scan")

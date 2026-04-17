@@ -123,6 +123,16 @@ _FIELD_NAME_BY_LABEL: dict[str, str] = {
     for schema in _SCHEMA_BY_MODEL.values()
     for label, field_name in schema.scalar_fields + schema.list_fields
 }
+_FIELD_KIND_BY_LABEL: dict[str, str] = {}
+for _schema in _SCHEMA_BY_MODEL.values():
+    for _label, _field_name in _schema.scalar_fields:
+        _existing = _FIELD_KIND_BY_LABEL.setdefault(_label, "scalar")
+        if _existing != "scalar":
+            raise RuntimeError(f"field label kind mismatch for {_label}")
+    for _label, _field_name in _schema.list_fields:
+        _existing = _FIELD_KIND_BY_LABEL.setdefault(_label, "list")
+        if _existing != "list":
+            raise RuntimeError(f"field label kind mismatch for {_label}")
 
 
 def parse_work_document(raw: str, *, path: Path | None = None) -> WorkDocument:
@@ -230,6 +240,7 @@ def _parse_markdown_fields(raw: str, *, path: Path | None) -> tuple[str, dict[st
 
         label = field_match.group("label")
         field_name = _FIELD_NAME_BY_LABEL.get(label)
+        field_kind = _FIELD_KIND_BY_LABEL.get(label)
         inline_value = (field_match.group("value") or "").strip()
         if field_name is None:
             index = _skip_unknown_field_block(lines, index)
@@ -239,6 +250,9 @@ def _parse_markdown_fields(raw: str, *, path: Path | None) -> tuple[str, dict[st
 
         if inline_value:
             payload[field_name] = inline_value
+            continue
+        if field_kind == "scalar":
+            index = _skip_blank_scalar_block(lines, index, label=label, source_name=source_name)
             continue
 
         items: list[str] = []
@@ -259,6 +273,20 @@ def _parse_markdown_fields(raw: str, *, path: Path | None) -> tuple[str, dict[st
         payload[field_name] = items
 
     return heading_title, payload
+
+
+def _skip_blank_scalar_block(lines: list[str], index: int, *, label: str, source_name: str) -> int:
+    while index < len(lines):
+        candidate = lines[index].strip()
+        if not candidate:
+            index += 1
+            continue
+        if _FIELD_PATTERN.match(candidate):
+            break
+        if _LIST_ITEM_PATTERN.match(candidate):
+            raise ValueError(f"work document {source_name} has list item under scalar field `{label}`")
+        break
+    return index
 
 
 def _skip_unknown_field_block(lines: list[str], index: int) -> int:

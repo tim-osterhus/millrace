@@ -32,6 +32,12 @@ def _build_wheel(tmp_path: Path) -> Path:
     return wheels[0]
 
 
+def _read_wheel_metadata(wheel_path: Path) -> str:
+    with zipfile.ZipFile(wheel_path) as wheel:
+        metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
+        return wheel.read(metadata_name).decode("utf-8")
+
+
 def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
     wheel_path = _build_wheel(tmp_path)
 
@@ -67,3 +73,17 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
     assert "millrace_ai/py.typed" in wheel_names
     assert all(not name.startswith("millrace_ai/assets/roles/") for name in entries)
     assert all(not name.endswith(".DS_Store") for name in wheel_names)
+
+
+def test_wheel_metadata_declares_agpl_license(tmp_path: Path) -> None:
+    wheel_path = _build_wheel(tmp_path)
+    metadata = _read_wheel_metadata(wheel_path)
+
+    assert "License-Expression: AGPL-3.0-only" in metadata
+
+
+def test_readme_uses_repo_license_badge_instead_of_pypi_license_badge() -> None:
+    readme = (RUNTIME_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "https://img.shields.io/pypi/l/" not in readme
+    assert "https://img.shields.io/github/license/tim-osterhus/millrace" in readme
