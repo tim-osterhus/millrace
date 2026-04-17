@@ -143,6 +143,10 @@ public documentation and some surrounding release surfaces. If you depend on a
 specific behavior, pin to a patch version instead of assuming the latest build
 is identical.
 
+The formal `CHANGELOG.md` is staged for the `v1.0.0` cut; until then, the
+changelog format is being prepared outside the package repo so the eventual move
+is mechanical rather than improvised.
+
 ## License
 
 See `LICENSE`.
