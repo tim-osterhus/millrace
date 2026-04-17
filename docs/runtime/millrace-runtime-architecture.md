@@ -5,6 +5,10 @@
 Millrace is a filesystem-backed runtime implemented under `src/millrace_ai/` and imported as `millrace_ai`.
 Each workspace is bootstrapped under `<workspace>/millrace-agents/` and owns its own state, queues, lock file, and logs.
 
+Use `docs/runtime/millrace-compiler-and-frozen-plans.md` for compile semantics
+and persisted frozen-plan behavior. Use `docs/runtime/millrace-modes-and-loops.md`
+for the shipped mode and loop topology the compiler resolves.
+
 ## Source Tree
 
 - importable package code lives under `src/millrace_ai/`
@@ -106,6 +110,13 @@ Idle:
 
 - If no claimable work exists, runtime emits `no_work` tick reason and keeps the daemon loop alive unless stop requested.
 
+Compile notes:
+
+- startup compiles the active mode and loop graph into `compiled_plan.json`
+- compile diagnostics persist separately in `compile_diagnostics.json`
+- failed compile attempts keep the last known-good frozen plan intact when one
+  exists
+
 ## Run Artifact Model
 
 Each run persists under `millrace-agents/runs/<run-id>/`.
@@ -126,3 +137,6 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and one required stage-core skill per stage.
 - Entrypoint advisory sections use `Required Stage-Core Skill` and `Optional Secondary Skills` as the only runtime-shipped advisory pattern.
 - Compile output surfaces stage `required_skills` and `attached_skill_additions` for operator inspection (`millrace compile show`).
+
+For maintainer authoring rules around loops, stage maps, and advisory-vs-runtime
+ownership, use `docs/runtime/millrace-loop-authoring.md`.

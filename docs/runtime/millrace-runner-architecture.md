@@ -8,6 +8,11 @@ The runtime contract stays:
 - input: `StageRunRequest`
 - output: `RunnerRawResult`
 
+Use `docs/runtime/millrace-compiler-and-frozen-plans.md` and
+`docs/runtime/millrace-modes-and-loops.md` for the compile-time surfaces that
+freeze `runner_name`, `model_name`, and other stage-plan fields before runner
+dispatch happens.
+
 ## Components
 
 - `src/millrace_ai/runners/requests.py`
@@ -38,6 +43,11 @@ Runner name for a stage execution resolves in this order:
 3. literal fallback `"codex_cli"`
 
 Unknown names fail fast via `UnknownRunnerError`.
+
+In practice, that means there are two distinct moments:
+
+1. compile decides what runner name is attached to a frozen stage-plan
+2. dispatch decides which adapter to execute from the resolved request
 
 ## Artifacts
 
