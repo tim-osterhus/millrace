@@ -16,7 +16,6 @@ from millrace_ai.contracts import (
     MailboxCommandEnvelope,
     Plane,
     RecoveryCounters,
-    RuntimeMode,
     RuntimeSnapshot,
     StageName,
     StageResultEnvelope,
@@ -99,13 +98,16 @@ class RuntimeEngine:
         self._watcher_session: WatcherSession | None = None
 
     def __del__(self) -> None:  # pragma: no cover - GC timing is non-deterministic
-        self._close_watcher_session()
-        if getattr(self, "_daemon_lock_session_id", None) is None:
-            return
         try:
-            self._release_daemon_ownership_lock(force=False)
+            self.close()
         except Exception:
             return
+
+    def close(self) -> None:
+        """Release any runtime-owned resources held by this engine session."""
+
+        self._close_watcher_session()
+        self._release_daemon_ownership_lock(force=False)
 
     def startup(self) -> RuntimeSnapshot:
         """Load config, compile the active mode, and reconcile stale runtime state."""
@@ -633,7 +635,7 @@ class RuntimeEngine:
         )
 
     def _requires_daemon_ownership_lock(self) -> bool:
-        return self.config is not None and self.config.runtime.run_style is RuntimeMode.DAEMON
+        return self.config is not None
 
     def _acquire_daemon_ownership_lock(self) -> bool:
         if self._daemon_lock_session_id is not None:

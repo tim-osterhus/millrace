@@ -1,4 +1,4 @@
-"""Workspace-scoped daemon ownership lock helpers."""
+"""Workspace-scoped runtime ownership lock helpers."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def acquire_runtime_ownership_lock(
     owner_session_id: str | None = None,
     acquired_at: datetime | None = None,
 ) -> RuntimeOwnershipRecord:
-    """Acquire exclusive daemon ownership for one workspace."""
+    """Acquire exclusive runtime ownership for one workspace."""
 
     paths = _resolve_paths(target)
     lock_path = paths.runtime_lock_file
@@ -96,7 +96,7 @@ def release_runtime_ownership_lock(
     owner_session_id: str | None = None,
     force: bool = False,
 ) -> bool:
-    """Release workspace daemon ownership if caller owns it or force is enabled."""
+    """Release workspace runtime ownership if caller owns it or force is enabled."""
 
     paths = _resolve_paths(target)
     lock_path = paths.runtime_lock_file
@@ -182,7 +182,7 @@ def inspect_runtime_ownership_lock(target: WorkspacePaths | Path | str) -> Runti
             lock_path=lock_path,
             record=record,
             detail=(
-                "workspace daemon ownership lock is active: "
+                "workspace runtime ownership lock is active: "
                 f"pid={record.owner_pid} host={record.owner_hostname} "
                 f"session={record.owner_session_id}"
             ),
@@ -193,7 +193,7 @@ def inspect_runtime_ownership_lock(target: WorkspacePaths | Path | str) -> Runti
         lock_path=lock_path,
         record=record,
         detail=(
-            "workspace daemon ownership lock is stale: "
+            "workspace runtime ownership lock is stale: "
             f"pid={record.owner_pid} is not running "
             f"(session={record.owner_session_id})"
         ),
@@ -259,20 +259,20 @@ def _ownership_error_message(status: RuntimeOwnershipLockStatus) -> str:
     if status.state == "stale":
         return (
             f"{status.detail}; run clear-stale-state to remove stale ownership "
-            "before starting daemon again"
+            "before starting runtime again"
         )
     if status.state == "invalid":
         return (
             f"{status.detail}; run clear-stale-state to repair ownership lock "
-            "before starting daemon again"
+            "before starting runtime again"
         )
     if status.state == "active" and status.record is not None:
         return (
-            "workspace daemon ownership lock is already held by "
+            "workspace runtime ownership lock is already held by "
             f"pid={status.record.owner_pid} host={status.record.owner_hostname} "
             f"session={status.record.owner_session_id}"
         )
-    return "workspace daemon ownership lock is already held"
+    return "workspace runtime ownership lock is already held"
 
 
 def _pid_is_running(pid: int) -> bool:

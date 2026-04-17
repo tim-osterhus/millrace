@@ -33,7 +33,12 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.router import RouterAction
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
-from millrace_ai.runtime_lock import RuntimeOwnershipLockError, acquire_runtime_ownership_lock
+from millrace_ai.runtime_lock import (
+    RuntimeOwnershipLockError,
+    acquire_runtime_ownership_lock,
+    inspect_runtime_ownership_lock,
+    release_runtime_ownership_lock,
+)
 from millrace_ai.state_store import (
     load_execution_status,
     load_planning_status,
@@ -1357,7 +1362,7 @@ def test_runtime_startup_rejects_second_daemon_for_same_workspace(tmp_path: Path
 
     first.startup()
 
-    with pytest.raises(RuntimeLifecycleError, match="workspace daemon ownership lock") as excinfo:
+    with pytest.raises(RuntimeLifecycleError, match="workspace runtime ownership lock") as excinfo:
         second.startup()
 
     assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
@@ -1382,7 +1387,7 @@ def test_runtime_startup_lock_contention_does_not_rewrite_compile_artifacts(tmp_
     compiled_before = compiled_plan_path.read_bytes()
     diagnostics_before = diagnostics_path.read_bytes()
 
-    with pytest.raises(RuntimeLifecycleError, match="workspace daemon ownership lock") as excinfo:
+    with pytest.raises(RuntimeLifecycleError, match="workspace runtime ownership lock") as excinfo:
         contender.startup()
 
     assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
@@ -1411,6 +1416,90 @@ def test_runtime_startup_allows_independent_daemon_ownership_per_workspace(tmp_p
     assert workspace_b.runtime_lock_file.is_file()
 
 
+def test_runtime_once_startup_acquires_lock_and_close_releases_it(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+    assert paths.runtime_lock_file.is_file()
+
+    engine.close()
+    assert paths.runtime_lock_file.exists() is False
+
+
+def test_runtime_startup_rejects_run_once_when_workspace_lock_is_already_held(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="external-owner",
+    )
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+
+    with pytest.raises(RuntimeLifecycleError, match="workspace runtime ownership lock") as excinfo:
+        engine.startup()
+
+    assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
+
+
+def test_runtime_run_once_lock_contention_does_not_rewrite_compile_artifacts(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+    engine.close()
+
+    compiled_plan_path = paths.state_dir / "compiled_plan.json"
+    diagnostics_path = paths.state_dir / "compile_diagnostics.json"
+    snapshot_path = paths.state_dir / "runtime_snapshot.json"
+    compiled_before = compiled_plan_path.read_bytes()
+    diagnostics_before = diagnostics_path.read_bytes()
+    snapshot_before = snapshot_path.read_bytes()
+
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="external-owner",
+    )
+
+    contender = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    with pytest.raises(RuntimeLifecycleError, match="workspace runtime ownership lock") as excinfo:
+        contender.startup()
+
+    assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
+    assert compiled_plan_path.read_bytes() == compiled_before
+    assert diagnostics_path.read_bytes() == diagnostics_before
+    assert snapshot_path.read_bytes() == snapshot_before
+
+
 def test_runtime_tick_stop_releases_daemon_ownership_lock(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
 
@@ -1434,17 +1523,23 @@ def test_runtime_tick_stop_without_owned_lock_does_not_release_external_lock(
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
     config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
-    acquire_runtime_ownership_lock(
-        paths,
-        owner_pid=os.getpid(),
-        owner_session_id="external-owner",
-    )
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
         raise AssertionError("stage_runner should not be called")
 
     engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
     engine.startup()
+    status = inspect_runtime_ownership_lock(paths)
+    assert status.record is not None
+    assert release_runtime_ownership_lock(
+        paths,
+        owner_session_id=status.record.owner_session_id,
+    )
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="external-owner-replaced",
+    )
 
     write_mailbox_command(paths, _mailbox_command("cmd-stop", "stop"))
     outcome = engine.tick()
@@ -1453,7 +1548,7 @@ def test_runtime_tick_stop_without_owned_lock_does_not_release_external_lock(
     assert paths.runtime_lock_file.is_file()
 
 
-def test_runtime_mailbox_reload_config_releases_lock_when_switching_to_once(tmp_path: Path) -> None:
+def test_runtime_mailbox_reload_config_retains_lock_when_switching_to_once(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
     config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
@@ -1469,12 +1564,12 @@ def test_runtime_mailbox_reload_config_releases_lock_when_switching_to_once(tmp_
     write_mailbox_command(paths, _mailbox_command("cmd-reload-once", "reload_config"))
     engine._drain_mailbox()
 
-    assert paths.runtime_lock_file.exists() is False
+    assert paths.runtime_lock_file.is_file()
     snapshot = load_snapshot(paths)
     assert snapshot.runtime_mode is RuntimeMode.ONCE
 
 
-def test_runtime_mailbox_reload_config_acquires_lock_when_switching_to_daemon(tmp_path: Path) -> None:
+def test_runtime_mailbox_reload_config_retains_lock_when_switching_to_daemon(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
     config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
@@ -1484,7 +1579,7 @@ def test_runtime_mailbox_reload_config_acquires_lock_when_switching_to_daemon(tm
 
     engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
     engine.startup()
-    assert paths.runtime_lock_file.exists() is False
+    assert paths.runtime_lock_file.is_file()
 
     config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
     write_mailbox_command(paths, _mailbox_command("cmd-reload-daemon", "reload_config"))

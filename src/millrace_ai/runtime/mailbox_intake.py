@@ -13,7 +13,6 @@ from millrace_ai.contracts import (
     MailboxCommandEnvelope,
     Plane,
     ReloadOutcome,
-    RuntimeMode,
 )
 from millrace_ai.errors import ControlRoutingError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
@@ -75,7 +74,6 @@ def handle_mailbox_command(
 
 def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
     assert engine.snapshot is not None
-    previous_run_style = engine.config.runtime.run_style if engine.config is not None else engine.snapshot.runtime_mode
     reloaded_config = load_runtime_config(engine.config_path)
     compile_outcome = compile_and_persist_workspace_plan(
         engine.paths,
@@ -124,12 +122,6 @@ def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
             },
         )
         return
-
-    if previous_run_style is not reloaded_config.runtime.run_style:
-        if reloaded_config.runtime.run_style is RuntimeMode.DAEMON:
-            engine._acquire_daemon_ownership_lock()
-        else:
-            engine._release_daemon_ownership_lock(force=False)
 
     engine.config = reloaded_config
     engine._rebuild_watcher_session()

@@ -137,7 +137,7 @@ def _inspected_run_summary(
 
 def test_run_once_invokes_runtime_engine_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
-    calls: dict[str, object] = {"startup": 0, "tick": 0, "mode": None, "stage_runner": None}
+    calls: dict[str, object] = {"startup": 0, "tick": 0, "close": 0, "mode": None, "stage_runner": None}
     sentinel_runner = object()
 
     class FakeRuntimeEngine:
@@ -171,6 +171,9 @@ def test_run_once_invokes_runtime_engine_once(monkeypatch: pytest.MonkeyPatch, t
                 ),
             )
 
+        def close(self):
+            calls["close"] = int(calls["close"]) + 1
+
     monkeypatch.setattr(cli, "RuntimeEngine", FakeRuntimeEngine)
     monkeypatch.setattr(cli, "_build_stage_runner", lambda **kwargs: sentinel_runner)
 
@@ -181,7 +184,13 @@ def test_run_once_invokes_runtime_engine_once(monkeypatch: pytest.MonkeyPatch, t
     )
 
     assert result.exit_code == 0
-    assert calls == {"startup": 1, "tick": 1, "mode": "standard_plain", "stage_runner": sentinel_runner}
+    assert calls == {
+        "startup": 1,
+        "tick": 1,
+        "close": 1,
+        "mode": "standard_plain",
+        "stage_runner": sentinel_runner,
+    }
     assert "run_mode: once" in result.output
 
 
@@ -295,7 +304,28 @@ def test_run_daemon_fails_fast_when_workspace_daemon_lock_is_held(tmp_path: Path
 
     assert result.exit_code == 1
     assert "error:" in result.output
-    assert "workspace daemon ownership lock" in result.output
+    assert "workspace runtime ownership lock" in result.output
+
+
+def test_run_once_fails_fast_when_workspace_lock_is_held(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="cli-lock-holder",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        ["run", "once", "--workspace", str(paths.root)],
+    )
+
+    assert result.exit_code == 1
+    assert "error:" in result.output
+    assert "workspace runtime ownership lock" in result.output
 
 
 def test_run_once_returns_nonzero_on_runner_transport_failure(
@@ -331,6 +361,9 @@ def test_run_once_returns_nonzero_on_runner_transport_failure(
                     result_class=ResultClass.RECOVERABLE_FAILURE,
                 ),
             )
+
+        def close(self):
+            return None
 
     monkeypatch.setattr(cli, "RuntimeEngine", FakeRuntimeEngine)
     monkeypatch.setattr(cli, "_build_stage_runner", lambda **kwargs: sentinel_runner)
@@ -1246,6 +1279,9 @@ def test_run_once_defaults_config_to_workspace_toml(
                     result_class=ResultClass.SUCCESS,
                 ),
             )
+
+        def close(self):
+            return None
 
     monkeypatch.setattr(cli, "RuntimeEngine", FakeRuntimeEngine)
 

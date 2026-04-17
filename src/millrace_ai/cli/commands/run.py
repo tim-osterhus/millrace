@@ -38,6 +38,8 @@ def run_once(
         outcome = engine.tick()
     except Exception as exc:
         raise typer.Exit(code=_print_error(str(exc))) from exc
+    finally:
+        engine.close()
     typer.echo("run_mode: once")
     typer.echo(f"active_mode_id: {snapshot.active_mode_id}")
     typer.echo(f"compiled_plan_id: {snapshot.compiled_plan_id}")
