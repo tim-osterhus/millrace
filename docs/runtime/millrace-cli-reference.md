@@ -53,10 +53,15 @@ Options:
 
 ## Status Commands
 
-### `millrace status show`
+Canonical operator form: `millrace status`  
+Explicit subcommand form: `millrace status show`
+
+### `millrace status`
 
 Prints runtime snapshot and queue depth for one workspace.
 When a failure class is active, status also shows the current failure class plus non-zero retry counters.
+
+`millrace status show` is an explicit alias for the same output.
 
 ### `millrace status watch`
 

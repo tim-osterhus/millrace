@@ -23,6 +23,8 @@ Run from an installed environment (CLI form):
 millrace <command>
 ```
 
+For routine status inspection, prefer `millrace status`. The explicit `millrace status show` form is equivalent, but it is mainly useful in the detailed CLI reference when spelling out the subcommand tree.
+
 Primary commands:
 
 - `run once`

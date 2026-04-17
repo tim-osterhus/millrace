@@ -30,39 +30,19 @@ millrace run once --workspace "$WORKSPACE"
 millrace status --workspace "$WORKSPACE"
 ```
 
-## Core Commands
+## Operator Surface
+
+Use the shortest truthful forms for routine operation:
 
 - `millrace run once`
-- `millrace run daemon --max-ticks N`
-- `millrace status show`
-- `millrace status watch --workspace <PATH> [--workspace <PATH> ...]`
+- `millrace status`
 - `millrace runs ls`
-- `millrace runs show <RUN_ID>`
-- `millrace runs tail <RUN_ID>`
-- `millrace queue ls`
-- `millrace queue show <WORK_ITEM_ID>`
 - `millrace queue add-task <path-to-task.md|path-to-task.json>`
-- `millrace queue add-spec <path-to-spec.md|path-to-spec.json>`
-- `millrace queue add-idea <path-to-idea.md>`
-- `millrace planning retry-active [--reason "..."]`
-- `millrace config show`
-- `millrace config validate [--mode MODE_ID]`
-- `millrace config reload`
-- `millrace control retry-active [--reason "..."]`
-- `millrace control pause`
-- `millrace control resume`
-- `millrace control stop`
-- `millrace control clear-stale-state`
-- `millrace control reload-config`
-- `millrace doctor`
-- `millrace modes list`
-- `millrace modes show --mode MODE_ID`
-- `millrace compile validate [--mode MODE_ID]`
-- `millrace compile show [--mode MODE_ID]`
+- `millrace pause`, `millrace resume`, `millrace stop`
 
-Compatibility aliases for common operator flows remain available at top level:
-`millrace add-task`, `millrace add-spec`, `millrace pause`, `millrace resume`, `millrace stop`,
-`millrace retry-active`, `millrace clear-stale-state`, and `millrace reload-config`.
+`millrace status show` remains available as the explicit subcommand form, but the canonical operator example is `millrace status`.
+
+Use `docs/OPERATOR_GUIDE.md` for the current operator workflow and `docs/runtime/millrace-cli-reference.md` for the full command inventory, grouped forms, and alias details.
 
 ## Work Artifacts
 
