@@ -82,12 +82,14 @@ Do not stop merely because:
 
 - the current planning failure evidence assigned by the runtime
 - request-provided `runtime_snapshot_path`
+- request-provided `runtime_error_code` and `runtime_error_report_path` when this repair was spawned by a runtime-owned exception
 - the current planning run directory or latest relevant diagnostics
 - the relevant planning artifacts implicated by the failure
 
 ## Useful Context If Helpful
 
 - request-provided `summary_status_path`
+- request-provided `runtime_error_catalog_path` when `runtime_error_code` needs interpretation
 - `millrace-agents/historylog.md`
 - `README.md` when present at repo root
 - incident queues when incident handoff is implicated
@@ -119,6 +121,7 @@ Do not stop merely because:
 - Let `mechanic-core` guide the classification and repair before broader cleanup.
 - Pull optional secondary skills only when they materially improve the planning repair.
 - Use current-run evidence first when available.
+- If `runtime_error_code` is present, read `runtime_error_report_path` first and consult `runtime_error_catalog_path` only as needed.
 - Classify the planning-side failure before changing anything.
 - Apply the narrowest repair that restores trustworthy forward progress.
 - Verify only as much as needed to support the recovery claim.

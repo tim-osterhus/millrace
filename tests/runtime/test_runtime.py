@@ -57,6 +57,13 @@ def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
 
 
+def _write_runtime_error_catalog(root: Path) -> Path:
+    catalog_path = root / "docs" / "runtime" / "millrace-runtime-error-codes.md"
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text("# Runtime Error Codes\n", encoding="utf-8")
+    return catalog_path
+
+
 def test_runtime_import_surface_moves_to_package_directory() -> None:
     runtime_module = importlib.import_module("millrace_ai.runtime")
 
@@ -392,6 +399,144 @@ def test_runtime_routes_malformed_stage_exit_into_recovery(tmp_path: Path) -> No
     assert snapshot.active_stage == ExecutionStageName.TROUBLESHOOTER
     assert snapshot.current_failure_class == "missing_terminal_result"
     assert load_execution_status(paths) == "### BLOCKED"
+
+
+def test_runtime_routes_post_stage_planning_completion_conflict_into_mechanic(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-001", created_at=NOW))
+    catalog_path = _write_runtime_error_catalog(paths.root)
+
+    captured_mechanic_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_mechanic_request
+        if request.stage is PlanningStageName.PLANNER:
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.PLANNER_COMPLETE.value,
+                now=NOW,
+            )
+        if request.stage is PlanningStageName.MANAGER:
+            queue.mark_spec_done("spec-001")
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.MANAGER_COMPLETE.value,
+                now=NOW,
+            )
+        captured_mechanic_request = request
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.MECHANIC_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    first = engine.tick()
+    second = engine.tick()
+
+    assert first.stage is PlanningStageName.PLANNER
+    assert second.stage is PlanningStageName.MANAGER
+    assert second.router_decision.next_stage is PlanningStageName.MECHANIC
+
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is PlanningStageName.MECHANIC
+    assert snapshot.current_failure_class == "planning_work_item_completion_conflict"
+    assert load_planning_status(paths) == "### BLOCKED"
+    assert (paths.specs_done_dir / "spec-001.md").is_file()
+    assert not (paths.specs_active_dir / "spec-001.md").exists()
+
+    third = engine.tick()
+
+    assert third.stage is PlanningStageName.MECHANIC
+    assert captured_mechanic_request is not None
+    assert captured_mechanic_request.runtime_error_code == "planning_work_item_completion_conflict"
+    assert captured_mechanic_request.runtime_error_catalog_path == str(catalog_path)
+    assert captured_mechanic_request.runtime_error_report_path is not None
+
+    report_path = Path(captured_mechanic_request.runtime_error_report_path)
+    assert report_path.is_file()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "planning_work_item_completion_conflict" in report_text
+    assert "QueueStateError" in report_text
+    assert "spec spec-001 is not active" in report_text
+
+
+def test_runtime_routes_post_stage_execution_completion_conflict_into_troubleshooter(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    catalog_path = _write_runtime_error_catalog(paths.root)
+
+    captured_troubleshooter_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_troubleshooter_request
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+                now=NOW,
+            )
+        if request.stage is ExecutionStageName.CHECKER:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.CHECKER_PASS.value,
+                now=NOW,
+            )
+        if request.stage is ExecutionStageName.UPDATER:
+            queue.mark_task_done("task-001")
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.UPDATE_COMPLETE.value,
+                now=NOW,
+            )
+        captured_troubleshooter_request = request
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    first = engine.tick()
+    second = engine.tick()
+    third = engine.tick()
+
+    assert first.stage is ExecutionStageName.BUILDER
+    assert second.stage is ExecutionStageName.CHECKER
+    assert third.stage is ExecutionStageName.UPDATER
+    assert third.router_decision.next_stage is ExecutionStageName.TROUBLESHOOTER
+
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
+    assert snapshot.current_failure_class == "execution_work_item_completion_conflict"
+    assert load_execution_status(paths) == "### BLOCKED"
+    assert (paths.tasks_done_dir / "task-001.md").is_file()
+    assert not (paths.tasks_active_dir / "task-001.md").exists()
+
+    fourth = engine.tick()
+
+    assert fourth.stage is ExecutionStageName.TROUBLESHOOTER
+    assert captured_troubleshooter_request is not None
+    assert captured_troubleshooter_request.runtime_error_code == "execution_work_item_completion_conflict"
+    assert captured_troubleshooter_request.runtime_error_catalog_path == str(catalog_path)
+    assert captured_troubleshooter_request.runtime_error_report_path is not None
+
+    report_path = Path(captured_troubleshooter_request.runtime_error_report_path)
+    assert report_path.is_file()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "execution_work_item_completion_conflict" in report_text
+    assert "QueueStateError" in report_text
+    assert "task task-001 is not active" in report_text
 
 
 def test_runtime_blocked_planning_item_is_moved_to_blocked_without_snapshot_crash(

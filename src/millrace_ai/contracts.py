@@ -109,6 +109,13 @@ class ReloadOutcome(str, Enum):
     FAILED_RETAINED_PREVIOUS_PLAN = "failed_retained_previous_plan"
 
 
+class RuntimeErrorCode(str, Enum):
+    PLANNING_WORK_ITEM_COMPLETION_CONFLICT = "planning_work_item_completion_conflict"
+    EXECUTION_WORK_ITEM_COMPLETION_CONFLICT = "execution_work_item_completion_conflict"
+    PLANNING_POST_STAGE_APPLY_FAILED = "planning_post_stage_apply_failed"
+    EXECUTION_POST_STAGE_APPLY_FAILED = "execution_post_stage_apply_failed"
+
+
 class MailboxCommand(str, Enum):
     STOP = "stop"
     PAUSE = "pause"
@@ -651,6 +658,36 @@ class RuntimeSnapshot(ContractModel):
         return self
 
 
+class RuntimeErrorContext(ContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["runtime_error_context"] = "runtime_error_context"
+
+    error_code: RuntimeErrorCode
+    plane: Plane
+    failed_stage: StageName
+    repair_stage: StageName
+    work_item_kind: WorkItemKind
+    work_item_id: str
+    run_id: str
+
+    router_action: str | None = None
+    terminal_result: TerminalResult | None = None
+    stage_result_path: str | None = None
+    report_path: str
+
+    exception_type: str
+    exception_message: str
+    captured_at: datetime
+
+    @model_validator(mode="after")
+    def validate_stage_alignment(self) -> "RuntimeErrorContext":
+        if _STAGE_TO_PLANE[self.failed_stage.value] != self.plane:
+            raise ValueError("failed_stage must belong to plane")
+        if _STAGE_TO_PLANE[self.repair_stage.value] != self.plane:
+            raise ValueError("repair_stage must belong to plane")
+        return self
+
+
 class MailboxCommandEnvelope(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["mailbox_command"] = "mailbox_command"
@@ -748,6 +785,8 @@ __all__ = [
     "ResultClass",
     "ReloadOutcome",
     "RuntimeMode",
+    "RuntimeErrorCode",
+    "RuntimeErrorContext",
     "RuntimeSnapshot",
     "SpecDocument",
     "StageName",

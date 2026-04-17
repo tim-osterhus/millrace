@@ -83,12 +83,14 @@ Do not stop merely because:
 
 - the current failure evidence assigned by the runtime
 - request-provided `runtime_snapshot_path`
+- request-provided `runtime_error_code` and `runtime_error_report_path` when this repair was spawned by a runtime-owned exception
 - the active task when present
 - the current run directory or latest relevant diagnostics
 
 ## Useful Context If Helpful
 
 - request-provided `summary_status_path`
+- request-provided `runtime_error_catalog_path` when `runtime_error_code` needs interpretation
 - `millrace-agents/historylog.md`
 - `README.md` when present at repo root
 - recent checker or fixer artifacts when they explain the blocker pattern
@@ -119,6 +121,7 @@ Do not stop merely because:
 - Let `troubleshooter-core` guide diagnosis before repair.
 - Pull optional secondary skills only when they materially improve the diagnosis or verification.
 - Use the current run evidence first when available.
+- If `runtime_error_code` is present, read `runtime_error_report_path` first and consult `runtime_error_catalog_path` only as needed.
 - Classify the blocker before fixing it.
 - Apply the smallest safe repair that restores forward progress.
 - Verify only as much as needed to support the recovery claim.

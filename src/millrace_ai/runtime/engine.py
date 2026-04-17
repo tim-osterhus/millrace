@@ -49,6 +49,7 @@ from millrace_ai.state_store import (
 from millrace_ai.watchers import WatcherSession, WatchEvent
 
 from . import activation, mailbox_intake, reconciliation, result_application, stage_requests, watcher_intake
+from .error_recovery import schedule_post_stage_exception_recovery
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
@@ -254,10 +255,32 @@ class RuntimeEngine:
             raw_result = self._runner_failure_result(request, failure_class="runner_error", error=str(exc))
 
         stage_result = normalize_stage_result(request, raw_result)
-        stage_result_path = self._write_stage_result(request, stage_result)
-        router_decision = self._route_stage_result(stage_result)
-        self._write_plane_status(stage_result)
-        self._apply_router_decision(router_decision, stage_result)
+        stage_result_path: Path | None = None
+        router_decision: RouterDecision | None = None
+        try:
+            stage_result_path = self._write_stage_result(request, stage_result)
+            router_decision = self._route_stage_result(stage_result)
+            self._write_plane_status(stage_result)
+            self._apply_router_decision(router_decision, stage_result)
+        except Exception as exc:
+            recovery_decision = schedule_post_stage_exception_recovery(
+                self,
+                stage_result=stage_result,
+                error=exc,
+                router_decision=router_decision,
+                stage_result_path=stage_result_path,
+            )
+            return RuntimeTickOutcome(
+                stage=stage_result.stage,
+                stage_result=stage_result,
+                stage_result_path=stage_result_path
+                or (self.paths.logs_dir / f"{request.request_id}.stage_result.unavailable.json"),
+                router_decision=recovery_decision,
+                snapshot=self.snapshot,
+            )
+
+        assert stage_result_path is not None
+        assert router_decision is not None
         self.snapshot = self.snapshot.model_copy(
             update={
                 "last_terminal_result": stage_result.terminal_result,

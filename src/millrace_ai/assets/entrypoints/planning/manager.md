@@ -16,7 +16,6 @@ Allowed:
 - decompose the assigned spec into ordered tasks
 - insert those tasks into the execution queue or task intake surface the runtime designates
 - write a manager summary and decomposition evidence
-- mark the source spec as processed when that is part of the stage contract
 
 Not allowed:
 - implement product work directly
@@ -27,6 +26,7 @@ Not allowed:
 
 Runtime-owned, not stage-owned:
 - selecting the active spec
+- source-spec disposition after manager output
 - deciding which planning item runs next
 - execution-stage ordering after task insertion
 - canonical status persistence
@@ -36,7 +36,6 @@ Runtime-owned, not stage-owned:
 Required deliverables:
 - an ordered set of execution-ready task artifacts
 - a manager summary that names the source spec, emitted tasks, and the main decomposition rationale
-- processed-spec disposition update when applicable
 
 ### Strict Work Document Contract (must follow exactly)
 
@@ -117,7 +116,7 @@ The runtime persists the emitted result to the canonical planning status surface
 After emitting a legal terminal result:
 - stop immediately
 - do not implement the tasks
-- do not mutate unrelated queue or runtime state
+- do not mutate source-spec disposition or unrelated queue/runtime state
 
 ## Escalation Boundary
 

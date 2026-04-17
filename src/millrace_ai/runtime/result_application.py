@@ -37,6 +37,8 @@ from millrace_ai.state_store import (
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
+from .error_recovery import clear_runtime_error_context
+
 
 def route_stage_result(engine: RuntimeEngine, stage_result: StageResultEnvelope) -> RouterDecision:
     assert engine.snapshot is not None
@@ -62,6 +64,9 @@ def route_stage_result(engine: RuntimeEngine, stage_result: StageResultEnvelope)
 def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage_result: StageResultEnvelope) -> None:
     assert engine.snapshot is not None
     assert engine.counters is not None
+
+    if stage_result.stage in {ExecutionStageName.TROUBLESHOOTER, PlanningStageName.MECHANIC}:
+        clear_runtime_error_context(engine.paths)
 
     if decision.action is RouterAction.RUN_STAGE:
         next_stage = decision.next_stage

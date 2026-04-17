@@ -66,6 +66,9 @@ class StageRunRequest(BaseModel):
     runtime_snapshot_path: str
     recovery_counters_path: str
     preferred_troubleshoot_report_path: str | None = None
+    runtime_error_code: str | None = None
+    runtime_error_report_path: str | None = None
+    runtime_error_catalog_path: str | None = None
 
     runner_name: str | None = None
     model_name: str | None = None
@@ -120,6 +123,9 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
                 "Preferred Troubleshoot Report Path: "
                 f"{request.preferred_troubleshoot_report_path or 'none'}"
             ),
+            f"Runtime Error Code: {request.runtime_error_code or 'none'}",
+            f"Runtime Error Report Path: {request.runtime_error_report_path or 'none'}",
+            f"Runtime Error Catalog Path: {request.runtime_error_catalog_path or 'none'}",
             f"Runner Name: {request.runner_name or 'none'}",
             f"Model Name: {request.model_name or 'none'}",
             f"Timeout Seconds: {request.timeout_seconds}",

@@ -324,6 +324,30 @@ def test_render_stage_request_context_lines_includes_preferred_troubleshoot_repo
     assert str(tmp_path / "troubleshoot_report.md") in context
 
 
+def test_render_stage_request_context_lines_includes_runtime_error_context_when_present(
+    tmp_path: Path,
+) -> None:
+    request = StageRunRequest(
+        **(
+            _request(tmp_path).model_dump(mode="python")
+            | {
+                "runtime_error_code": "planning_work_item_completion_conflict",
+                "runtime_error_report_path": str(tmp_path / "runtime_error_report.md"),
+                "runtime_error_catalog_path": str(
+                    tmp_path / "docs" / "runtime" / "millrace-runtime-error-codes.md"
+                ),
+            }
+        )
+    )
+
+    context = "\n".join(render_stage_request_context_lines(request))
+
+    assert "Runtime Error Code: planning_work_item_completion_conflict" in context
+    assert "Runtime Error Report Path:" in context
+    assert str(tmp_path / "runtime_error_report.md") in context
+    assert "Runtime Error Catalog Path:" in context
+
+
 def test_render_stage_request_context_lines_handles_optional_fields_absent(
     tmp_path: Path,
 ) -> None:
@@ -346,6 +370,9 @@ def test_render_stage_request_context_lines_handles_optional_fields_absent(
     assert "Active Work Item Path: none" in context
     assert "Required Skill Paths: none" in context
     assert "Attached Skill Paths: none" in context
+    assert "Runtime Error Code: none" in context
+    assert "Runtime Error Report Path: none" in context
+    assert "Runtime Error Catalog Path: none" in context
     assert "Runner Name: none" in context
     assert "Model Name: none" in context
 
@@ -381,6 +408,9 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "runtime_snapshot_path": "Runtime Snapshot Path:",
         "recovery_counters_path": "Recovery Counters Path:",
         "preferred_troubleshoot_report_path": "Preferred Troubleshoot Report Path:",
+        "runtime_error_code": "Runtime Error Code:",
+        "runtime_error_report_path": "Runtime Error Report Path:",
+        "runtime_error_catalog_path": "Runtime Error Catalog Path:",
         "runner_name": "Runner Name:",
         "model_name": "Model Name:",
         "timeout_seconds": "Timeout Seconds:",

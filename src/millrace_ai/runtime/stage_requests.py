@@ -24,6 +24,8 @@ from millrace_ai.state_store import save_snapshot
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine, RuntimeTickOutcome
 
+from .error_recovery import build_runtime_error_request_fields
+
 _STATUS_IDLE = "### IDLE"
 
 
@@ -64,6 +66,7 @@ def build_stage_run_request(engine: RuntimeEngine, stage_plan: FrozenStagePlan) 
         runtime_snapshot_path=str(engine.paths.runtime_snapshot_file),
         recovery_counters_path=str(engine.paths.recovery_counters_file),
         preferred_troubleshoot_report_path=str(run_dir / "troubleshoot_report.md"),
+        **build_runtime_error_request_fields(engine),
         runner_name=stage_plan.runner_name,
         model_name=stage_plan.model_name,
         timeout_seconds=stage_plan.timeout_seconds,

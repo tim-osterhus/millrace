@@ -617,6 +617,36 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
             )
 
 
+def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> None:
+    manager_body = (
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "manager.md"
+    ).read_text(encoding="utf-8")
+    mechanic_body = (
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "mechanic.md"
+    ).read_text(encoding="utf-8")
+    troubleshooter_body = (
+        REPO_ROOT
+        / "src"
+        / "millrace_ai"
+        / "assets"
+        / "entrypoints"
+        / "execution"
+        / "troubleshooter.md"
+    ).read_text(encoding="utf-8")
+    runtime_error_doc = REPO_ROOT / "docs" / "runtime" / "millrace-runtime-error-codes.md"
+
+    assert runtime_error_doc.is_file()
+
+    assert "mark the source spec as processed" not in manager_body
+    assert "processed-spec disposition update when applicable" not in manager_body
+    assert "source-spec disposition" in manager_body
+
+    for body in (mechanic_body, troubleshooter_body):
+        assert "runtime_error_code" in body
+        assert "runtime_error_report_path" in body
+        assert "runtime_error_catalog_path" in body
+
+
 def test_runtime_docs_describe_skill_only_advisory_model() -> None:
     docs = "\n".join(
         [
