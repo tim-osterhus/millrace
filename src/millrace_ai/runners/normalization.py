@@ -172,13 +172,18 @@ def normalize_stage_result(
         retryable=False,
         exit_code=raw_result.exit_code or 0,
         duration_seconds=(raw_result.ended_at - raw_result.started_at).total_seconds(),
-        artifact_paths=_merge_artifact_paths(extraction.artifact_paths, report_artifact),
+        artifact_paths=_merge_artifact_paths(
+            extraction.artifact_paths,
+            report_artifact,
+            raw_result.event_log_path,
+        ),
         report_artifact=report_artifact,
         detected_marker=extraction.detected_marker,
         stdout_path=raw_result.stdout_path,
         stderr_path=raw_result.stderr_path,
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
+        token_usage=raw_result.token_usage,
         notes=extraction.notes,
         metadata={
             "request_id": request.request_id,
@@ -469,13 +474,18 @@ def _failure_envelope(
         retryable=True,
         exit_code=raw_result.exit_code or 1,
         duration_seconds=(raw_result.ended_at - raw_result.started_at).total_seconds(),
-        artifact_paths=_merge_artifact_paths(artifact_paths, report_artifact),
+        artifact_paths=_merge_artifact_paths(
+            artifact_paths,
+            report_artifact,
+            raw_result.event_log_path,
+        ),
         report_artifact=report_artifact,
         detected_marker=detected_marker,
         stdout_path=raw_result.stdout_path,
         stderr_path=raw_result.stderr_path,
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
+        token_usage=raw_result.token_usage,
         notes=notes,
         metadata={
             "request_id": request.request_id,
@@ -544,11 +554,12 @@ def _resolved_report_artifact(request: StageRunRequest) -> str | None:
 
 def _merge_artifact_paths(
     artifact_paths: tuple[str, ...],
-    report_artifact: str | None,
+    *additional_artifacts: str | None,
 ) -> tuple[str, ...]:
     merged = list(artifact_paths)
-    if report_artifact and report_artifact not in merged:
-        merged.append(report_artifact)
+    for artifact in additional_artifacts:
+        if artifact and artifact not in merged:
+            merged.append(artifact)
     return tuple(merged)
 
 

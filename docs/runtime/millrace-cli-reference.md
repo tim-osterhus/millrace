@@ -83,7 +83,7 @@ Lists persisted run summaries from `millrace-agents/runs/`.
 
 ### `millrace runs show <RUN_ID>`
 
-Prints one run summary, including work item identity, failure class, stage results, stdout/stderr paths, and troubleshoot report path when present.
+Prints one run summary, including work item identity, failure class, run-level elapsed time, aggregated token usage, per-stage elapsed time, stdout/stderr paths, and troubleshoot report path when present.
 
 ### `millrace runs tail <RUN_ID>`
 

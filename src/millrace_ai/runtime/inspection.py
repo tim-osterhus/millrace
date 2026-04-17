@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Iterable, Literal
 
 from pydantic import ValidationError
 
-from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
+from millrace_ai.contracts import StageResultEnvelope, TokenUsage, WorkItemKind
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
@@ -32,6 +33,8 @@ class InspectedStageResult:
     model_name: str | None
     started_at: str
     completed_at: str
+    duration_seconds: float = 0.0
+    token_usage: TokenUsage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,10 @@ class InspectedRunSummary:
     primary_stderr_path: str | None
     stage_results: tuple[InspectedStageResult, ...]
     notes: tuple[str, ...]
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+    token_usage: TokenUsage | None = None
 
 
 def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
@@ -133,6 +140,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 model_name=stage_result.model_name,
                 started_at=stage_result.started_at.isoformat(),
                 completed_at=stage_result.completed_at.isoformat(),
+                duration_seconds=stage_result.duration_seconds,
+                token_usage=stage_result.token_usage,
             )
         )
 
@@ -144,6 +153,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         notes.append("no stage result artifacts found")
 
     latest_stage_result = inspected_stage_results[-1] if inspected_stage_results else None
+    first_stage_result = inspected_stage_results[0] if inspected_stage_results else None
     return InspectedRunSummary(
         run_id=resolved_run_dir.name,
         run_dir=str(resolved_run_dir),
@@ -158,6 +168,10 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         primary_stderr_path=latest_stage_result.stderr_path if latest_stage_result else None,
         stage_results=tuple(inspected_stage_results),
         notes=tuple(notes),
+        started_at=first_stage_result.started_at if first_stage_result else None,
+        completed_at=latest_stage_result.completed_at if latest_stage_result else None,
+        duration_seconds=_run_duration_seconds(first_stage_result, latest_stage_result),
+        token_usage=_aggregate_token_usage(stage_result.token_usage for stage_result in inspected_stage_results),
     )
 
 
@@ -196,6 +210,49 @@ def select_primary_run_artifact(summary: InspectedRunSummary) -> str | None:
 def _failure_class_from_stage_result(stage_result: StageResultEnvelope) -> str | None:
     value = stage_result.metadata.get("failure_class")
     return value if isinstance(value, str) else None
+
+
+def _aggregate_token_usage(usages: Iterable[TokenUsage | None]) -> TokenUsage | None:
+    input_tokens = 0
+    cached_input_tokens = 0
+    output_tokens = 0
+    thinking_tokens = 0
+    total_tokens = 0
+    found = False
+    for usage in usages:
+        if usage is None:
+            continue
+        found = True
+        input_tokens += usage.input_tokens
+        cached_input_tokens += usage.cached_input_tokens
+        output_tokens += usage.output_tokens
+        thinking_tokens += usage.thinking_tokens
+        total_tokens += usage.total_tokens
+    if not found:
+        return None
+    return TokenUsage(
+        input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
+        output_tokens=output_tokens,
+        thinking_tokens=thinking_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def _run_duration_seconds(
+    first_stage_result: InspectedStageResult | None,
+    latest_stage_result: InspectedStageResult | None,
+) -> float | None:
+    if first_stage_result is None or latest_stage_result is None:
+        return None
+    return (
+        _parse_iso_datetime(latest_stage_result.completed_at)
+        - _parse_iso_datetime(first_stage_result.started_at)
+    ).total_seconds()
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
 
 
 def _normalize_optional_run_relative_path(run_dir: Path, path_value: str | None) -> str | None:

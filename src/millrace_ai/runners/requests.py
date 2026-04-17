@@ -13,6 +13,7 @@ from millrace_ai.contracts import (
     Plane,
     PlanningStageName,
     StageName,
+    TokenUsage,
     WorkItemKind,
 )
 
@@ -151,6 +152,8 @@ class RunnerRawResult(BaseModel):
     stdout_path: str | None = None
     stderr_path: str | None = None
     terminal_result_path: str | None = None
+    event_log_path: str | None = None
+    token_usage: TokenUsage | None = None
 
     started_at: datetime
     ended_at: datetime

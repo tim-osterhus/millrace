@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
-from millrace_ai.contracts import ExecutionStageName, Plane, WorkItemKind
+from millrace_ai.contracts import ExecutionStageName, Plane, TokenUsage, WorkItemKind
 from millrace_ai.runner import StageRunRequest
 from millrace_ai.runners.adapters.codex_cli import CodexCliRunnerAdapter
 from millrace_ai.runners.errors import RunnerBinaryNotFoundError
@@ -48,12 +48,34 @@ def _request(
     )
 
 
+def _command_option_value(command: tuple[str, ...], flag: str) -> str:
+    index = command.index(flag)
+    return command[index + 1]
+
+
 def test_codex_adapter_writes_invocation_and_completion_artifacts(tmp_path: Path) -> None:
     request = _request(tmp_path)
 
     def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
-        del command, cwd, env, timeout_seconds
-        Path(stdout_path).write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+        del cwd, env, timeout_seconds
+        Path(stdout_path).write_text(
+            "\n".join(
+                (
+                    '{"type":"thread.started","thread_id":"thread-001"}',
+                    (
+                        '{"type":"event_msg","payload":{"type":"token_count","info":'
+                        '{"total_token_usage":{"input_tokens":120,"cached_input_tokens":40,'
+                        '"output_tokens":12,"reasoning_output_tokens":5,"total_tokens":132}}}}'
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        Path(_command_option_value(command, "--output-last-message")).write_text(
+            "### BUILDER_COMPLETE\n",
+            encoding="utf-8",
+        )
         Path(stderr_path).write_text("", encoding="utf-8")
         now = datetime.now(timezone.utc)
         return ProcessExecutionResult(
@@ -74,18 +96,38 @@ def test_codex_adapter_writes_invocation_and_completion_artifacts(tmp_path: Path
     assert result.exit_kind == "completed"
     assert result.stdout_path is not None
     assert Path(result.stdout_path).is_file()
+    assert result.event_log_path is not None
+    assert Path(result.event_log_path).is_file()
+    assert result.token_usage == TokenUsage(
+        input_tokens=120,
+        cached_input_tokens=40,
+        output_tokens=12,
+        thinking_tokens=5,
+        total_tokens=132,
+    )
+    assert Path(result.stdout_path).read_text(encoding="utf-8") == "### BUILDER_COMPLETE\n"
 
     run_dir = Path(request.run_dir)
     invocation_path = run_dir / "runner_invocation.req-001.json"
     completion_path = run_dir / "runner_completion.req-001.json"
+    event_log_path = run_dir / "runner_events.req-001.jsonl"
     assert invocation_path.is_file()
     assert completion_path.is_file()
+    assert event_log_path.is_file()
 
     invocation_payload = json.loads(invocation_path.read_text(encoding="utf-8"))
     completion_payload = json.loads(completion_path.read_text(encoding="utf-8"))
     assert invocation_payload["runner_name"] == "codex_cli"
     assert completion_payload["runner_name"] == "codex_cli"
     assert completion_payload["exit_kind"] == "completed"
+    assert completion_payload["event_log_path"] == str(event_log_path)
+    assert completion_payload["token_usage"] == {
+        "input_tokens": 120,
+        "cached_input_tokens": 40,
+        "output_tokens": 12,
+        "thinking_tokens": 5,
+        "total_tokens": 132,
+    }
 
 
 def test_codex_adapter_resolves_permission_precedence_and_command_mapping(
@@ -163,6 +205,7 @@ def test_codex_adapter_resolves_permission_precedence_and_command_mapping(
     checker_command = commands["checker-req"]
     updater_command = commands["updater-req"]
 
+    assert "--json" in builder_command
     assert "--dangerously-bypass-approvals-and-sandbox" in builder_command
     assert "--full-auto" not in builder_command
     assert 'approval_policy="never"' not in builder_command

@@ -125,6 +125,7 @@ Run directories hold:
 
 - run-scoped compile artifacts
 - `stage_results/*.json`
+- runner invocation/completion artifacts plus per-request Codex event logs where present
 - runner stdout/stderr artifacts where present
 - troubleshoot reports when `Troubleshooter` emits one
 

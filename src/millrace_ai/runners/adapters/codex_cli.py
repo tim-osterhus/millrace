@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
+from millrace_ai.contracts import TokenUsage
 from millrace_ai.runners.contracts import (
     completion_artifact_from_raw_result,
     invocation_artifact_from_request,
@@ -49,6 +51,7 @@ class CodexCliRunnerAdapter:
         prompt_path = run_dir / f"runner_prompt.{request.request_id}.md"
         stdout_path = run_dir / f"runner_stdout.{request.request_id}.txt"
         stderr_path = run_dir / f"runner_stderr.{request.request_id}.txt"
+        event_log_path = run_dir / f"runner_events.{request.request_id}.jsonl"
         output_last_message_path = run_dir / f"runner_last_message.{request.request_id}.txt"
         invocation_path = run_dir / f"runner_invocation.{request.request_id}.json"
         completion_path = run_dir / f"runner_completion.{request.request_id}.json"
@@ -97,6 +100,8 @@ class CodexCliRunnerAdapter:
                 stdout_path=str(stdout_path),
                 stderr_path=str(stderr_path),
                 terminal_result_path=None,
+                event_log_path=None,
+                token_usage=None,
                 started_at=now,
                 ended_at=datetime.now(timezone.utc),
             )
@@ -128,6 +133,14 @@ class CodexCliRunnerAdapter:
         elif process_result.exit_code != 0:
             exit_kind = "runner_error"
 
+        persisted_event_log_path = _persist_event_log(stdout_path, event_log_path)
+        token_usage = _extract_token_usage(persisted_event_log_path)
+        materialized_stdout_path = _materialize_stdout_artifact(
+            stdout_path=stdout_path,
+            output_last_message_path=output_last_message_path,
+            event_log_path=persisted_event_log_path,
+        )
+
         result = RunnerRawResult(
             request_id=request.request_id,
             run_id=request.run_id,
@@ -136,9 +149,13 @@ class CodexCliRunnerAdapter:
             model_name=request.model_name,
             exit_kind=exit_kind,
             exit_code=process_result.exit_code,
-            stdout_path=str(stdout_path),
+            stdout_path=str(materialized_stdout_path) if materialized_stdout_path else None,
             stderr_path=str(stderr_path),
             terminal_result_path=None,
+            event_log_path=(
+                str(persisted_event_log_path) if persisted_event_log_path is not None else None
+            ),
+            token_usage=token_usage,
             started_at=process_result.started_at,
             ended_at=process_result.ended_at,
         )
@@ -193,6 +210,7 @@ class CodexCliRunnerAdapter:
             command.extend(["-c", item])
 
         command.extend(["--cd", str(self.workspace_root)])
+        command.append("--json")
         command.extend(["--output-last-message", str(output_last_message_path)])
         command.append(prompt)
         return tuple(command)
@@ -232,6 +250,130 @@ class CodexCliRunnerAdapter:
                 "Do not print multiple terminal markers.",
             )
         )
+
+
+def _persist_event_log(stdout_path: Path, event_log_path: Path) -> Path | None:
+    if not stdout_path.exists():
+        return None
+    event_log_path.write_bytes(stdout_path.read_bytes())
+    stdout_path.unlink()
+    return event_log_path
+
+
+def _materialize_stdout_artifact(
+    *,
+    stdout_path: Path,
+    output_last_message_path: Path,
+    event_log_path: Path | None,
+) -> Path | None:
+    if output_last_message_path.exists():
+        stdout_path.write_text(output_last_message_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return stdout_path
+    if event_log_path is not None and event_log_path.exists():
+        stdout_path.write_text(event_log_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return stdout_path
+    return None
+
+
+def _extract_token_usage(event_log_path: Path | None) -> TokenUsage | None:
+    if event_log_path is None or not event_log_path.exists():
+        return None
+
+    best: TokenUsage | None = None
+    try:
+        lines = event_log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    for line in lines:
+        candidate = _token_usage_from_line(line)
+        if candidate is None:
+            continue
+        if best is None or candidate.total_tokens >= best.total_tokens:
+            best = candidate
+    return best
+
+
+def _token_usage_from_line(line: str) -> TokenUsage | None:
+    stripped = line.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return _token_usage_from_payload(payload)
+
+
+def _token_usage_from_payload(payload: object) -> TokenUsage | None:
+    if not isinstance(payload, dict):
+        return None
+
+    payload_type = payload.get("type")
+    nested_payload = payload.get("payload")
+    if payload_type == "event_msg" and isinstance(nested_payload, dict):
+        return _token_usage_from_payload(nested_payload)
+
+    if payload_type != "token_count":
+        return None
+
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None
+
+    usage_payload = info.get("total_token_usage")
+    if not isinstance(usage_payload, dict):
+        usage_payload = info.get("last_token_usage")
+    if not isinstance(usage_payload, dict):
+        return None
+    return _token_usage_from_dict(usage_payload)
+
+
+def _token_usage_from_dict(payload: dict[str, object]) -> TokenUsage | None:
+    input_tokens = _int_from_payload(payload, "input_tokens")
+    output_tokens = _int_from_payload(payload, "output_tokens")
+    if input_tokens is None or output_tokens is None:
+        return None
+
+    cached_input_tokens = _int_from_payload(payload, "cached_input_tokens", default=0) or 0
+    thinking_tokens = (
+        _int_from_payload(
+            payload,
+            "reasoning_output_tokens",
+            "thinking_tokens",
+            "reasoning_tokens",
+            default=0,
+        )
+        or 0
+    )
+    total_tokens = _int_from_payload(payload, "total_tokens", default=input_tokens + output_tokens)
+    if total_tokens is None:
+        total_tokens = input_tokens + output_tokens
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
+        output_tokens=output_tokens,
+        thinking_tokens=thinking_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def _int_from_payload(
+    payload: dict[str, object],
+    *keys: str,
+    default: int | None = None,
+) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return default
+    return default
 
 
 __all__ = ["CodexCliRunnerAdapter"]

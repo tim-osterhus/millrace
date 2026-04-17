@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from millrace_ai.contracts import TokenUsage
 from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
 
 
@@ -42,6 +43,8 @@ class RunnerCompletionArtifact(_ArtifactModel):
     stdout_path: str | None = None
     stderr_path: str | None = None
     terminal_result_path: str | None = None
+    event_log_path: str | None = None
+    token_usage: TokenUsage | None = None
     started_at: datetime
     ended_at: datetime
     failure_class: str | None = None
@@ -98,6 +101,8 @@ def completion_artifact_from_raw_result(
         stdout_path=raw_result.stdout_path,
         stderr_path=raw_result.stderr_path,
         terminal_result_path=raw_result.terminal_result_path,
+        event_log_path=raw_result.event_log_path,
+        token_usage=raw_result.token_usage,
         started_at=raw_result.started_at,
         ended_at=raw_result.ended_at,
         failure_class=failure_class,

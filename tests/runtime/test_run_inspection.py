@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from millrace_ai.contracts import StageResultEnvelope
+from millrace_ai.contracts import StageResultEnvelope, TokenUsage
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.run_inspection import inspect_run, inspect_run_id, list_runs
 
@@ -57,6 +57,84 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
     assert summary.stage_results[0].terminal_result == "CHECKER_PASS"
     assert summary.primary_stdout_path == "runner_stdout.txt"
     assert summary.troubleshoot_report_path == "troubleshoot_report.md"
+
+
+def test_inspect_run_aggregates_duration_and_token_usage(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-usage"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_one = StageResultEnvelope(
+        run_id="run-usage",
+        plane="execution",
+        stage="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class="success",
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        duration_seconds=3.0,
+        token_usage=TokenUsage(
+            input_tokens=100,
+            cached_input_tokens=20,
+            output_tokens=10,
+            thinking_tokens=4,
+            total_tokens=110,
+        ),
+        started_at=NOW,
+        completed_at=datetime(2026, 4, 15, 12, 0, 3, tzinfo=timezone.utc),
+    )
+    stage_two = StageResultEnvelope(
+        run_id="run-usage",
+        plane="execution",
+        stage="checker",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="CHECKER_PASS",
+        result_class="success",
+        summary_status_marker="### CHECKER_PASS",
+        success=True,
+        duration_seconds=5.0,
+        token_usage=TokenUsage(
+            input_tokens=40,
+            cached_input_tokens=10,
+            output_tokens=6,
+            thinking_tokens=2,
+            total_tokens=46,
+        ),
+        started_at=datetime(2026, 4, 15, 12, 0, 3, tzinfo=timezone.utc),
+        completed_at=datetime(2026, 4, 15, 12, 0, 8, tzinfo=timezone.utc),
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_one.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (stage_results_dir / "request-002.json").write_text(
+        stage_two.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.started_at == NOW.isoformat()
+    assert summary.completed_at == datetime(2026, 4, 15, 12, 0, 8, tzinfo=timezone.utc).isoformat()
+    assert summary.duration_seconds == 8.0
+    assert summary.token_usage == TokenUsage(
+        input_tokens=140,
+        cached_input_tokens=30,
+        output_tokens=16,
+        thinking_tokens=6,
+        total_tokens=156,
+    )
+    assert summary.stage_results[0].duration_seconds == 3.0
+    assert summary.stage_results[1].token_usage == TokenUsage(
+        input_tokens=40,
+        cached_input_tokens=10,
+        output_tokens=6,
+        thinking_tokens=2,
+        total_tokens=46,
+    )
 
 
 def test_inspect_run_marks_incomplete_when_stage_results_are_missing(tmp_path: Path) -> None:

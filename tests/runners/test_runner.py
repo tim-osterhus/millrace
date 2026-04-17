@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from millrace_ai.contracts import ResultClass
+from millrace_ai.contracts import ResultClass, TokenUsage
 from millrace_ai.runner import (
     RunnerRawResult,
     StageRunRequest,
@@ -74,6 +74,8 @@ def _raw(
     stderr_path: Path | None = None,
     terminal_result_path: Path | None = None,
     exit_code: int | None = 0,
+    event_log_path: Path | None = None,
+    token_usage: TokenUsage | None = None,
 ) -> RunnerRawResult:
     return RunnerRawResult(
         request_id=request.request_id,
@@ -86,6 +88,8 @@ def _raw(
         stdout_path=str(stdout_path) if stdout_path else None,
         stderr_path=str(stderr_path) if stderr_path else None,
         terminal_result_path=str(terminal_result_path) if terminal_result_path else None,
+        event_log_path=str(event_log_path) if event_log_path else None,
+        token_usage=token_usage,
         started_at=NOW,
         ended_at=NOW + timedelta(seconds=3),
     )
@@ -464,3 +468,31 @@ def test_normalize_surfaces_preferred_troubleshoot_report_artifact_when_present(
 
     assert envelope.report_artifact == str(report_path)
     assert str(report_path) in envelope.artifact_paths
+
+
+def test_normalize_preserves_token_usage_and_event_log_artifacts(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="checker")
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("### CHECKER_PASS\n", encoding="utf-8")
+    event_log_path = tmp_path / "runner_events.req-001.jsonl"
+    event_log_path.write_text('{"type":"event_msg"}\n', encoding="utf-8")
+    token_usage = TokenUsage(
+        input_tokens=80,
+        cached_input_tokens=12,
+        output_tokens=9,
+        thinking_tokens=4,
+        total_tokens=89,
+    )
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(
+            request,
+            stdout_path=stdout_path,
+            event_log_path=event_log_path,
+            token_usage=token_usage,
+        ),
+    )
+
+    assert envelope.token_usage == token_usage
+    assert str(event_log_path) in envelope.artifact_paths

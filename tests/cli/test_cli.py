@@ -23,6 +23,7 @@ from millrace_ai.contracts import (
     ReloadOutcome,
     ResultClass,
     RuntimeMode,
+    TokenUsage,
 )
 from millrace_ai.control import ControlActionResult
 from millrace_ai.mailbox import read_pending_mailbox_commands
@@ -119,6 +120,14 @@ def _inspected_run_summary(
         model_name="gpt-5.4",
         started_at=NOW.isoformat(),
         completed_at=NOW.isoformat(),
+        duration_seconds=3.0,
+        token_usage=TokenUsage(
+            input_tokens=100,
+            cached_input_tokens=30,
+            output_tokens=12,
+            thinking_tokens=5,
+            total_tokens=112,
+        ),
     )
     return InspectedRunSummary(
         run_id=run_id,
@@ -132,6 +141,16 @@ def _inspected_run_summary(
         primary_stderr_path="runner_stderr.txt",
         stage_results=(stage_result,),
         notes=(),
+        started_at=NOW.isoformat(),
+        completed_at=NOW.isoformat(),
+        duration_seconds=3.0,
+        token_usage=TokenUsage(
+            input_tokens=100,
+            cached_input_tokens=30,
+            output_tokens=12,
+            thinking_tokens=5,
+            total_tokens=112,
+        ),
     )
 
 
@@ -491,6 +510,11 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     assert "terminal_result: CHECKER_PASS" in result.output
     assert "runner_name: codex-cli" in result.output
     assert "model_name: gpt-5.4" in result.output
+    assert "duration_seconds: 3.0" in result.output
+    assert "input_tokens: 100" in result.output
+    assert "cached_input_tokens: 30" in result.output
+    assert "output_tokens: 12" in result.output
+    assert "thinking_tokens: 5" in result.output
     assert "report_artifact: troubleshoot_report.md" in result.output
 
 
