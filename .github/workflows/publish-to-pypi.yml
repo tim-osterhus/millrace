@@ -36,18 +36,57 @@ jobs:
           .publish-smoke/bin/python -m pip install --upgrade pip
           .publish-smoke/bin/python -m pip install dist/*.whl
           workspace="$RUNNER_TEMP/millrace-minimum-functionality"
+          task_json="$RUNNER_TEMP/smoke-task-001.json"
+          runner_python="$PWD/.publish-smoke/bin/python"
+          shim_path="$PWD/tests/integration/codex_smoke_shim.py"
           rm -rf "$workspace"
           mkdir -p "$workspace"
+          cat > "$task_json" <<'JSON'
+          {
+            "task_id": "smoke-task-001",
+            "title": "Smoke Task 001",
+            "summary": "Deterministic queued-work smoke task",
+            "target_paths": ["README.md"],
+            "acceptance": ["One builder stage executes through the shipped CLI"],
+            "required_checks": ["uv run --extra dev python -m pytest tests/integration/test_smoke.py -q"],
+            "references": ["tests/integration/test_smoke.py"],
+            "risk": ["none"],
+            "created_at": "2026-04-15T12:00:00Z",
+            "created_by": "tests"
+          }
+          JSON
 
           .publish-smoke/bin/millrace compile validate --workspace "$workspace" > "$RUNNER_TEMP/millrace-compile.txt"
-          .publish-smoke/bin/millrace run once --workspace "$workspace" > "$RUNNER_TEMP/millrace-run-once.txt"
+          .publish-smoke/bin/millrace run once --workspace "$workspace" > "$RUNNER_TEMP/millrace-run-once-no-work.txt"
           .publish-smoke/bin/millrace status --workspace "$workspace" > "$RUNNER_TEMP/millrace-status.txt"
+          cat >> "$workspace/millrace-agents/millrace.toml" <<EOF
+
+          [runners.codex]
+          command = "$runner_python"
+          args = ["$shim_path"]
+          EOF
+          .publish-smoke/bin/millrace queue add-task "$task_json" --workspace "$workspace" > "$RUNNER_TEMP/millrace-queue-add-task.txt"
+          .publish-smoke/bin/millrace run once --workspace "$workspace" > "$RUNNER_TEMP/millrace-run-once-task.txt"
+          .publish-smoke/bin/millrace runs ls --workspace "$workspace" > "$RUNNER_TEMP/millrace-runs-ls.txt"
+          run_id="$(awk -F': ' '/^run_id: / { print $2; exit }' "$RUNNER_TEMP/millrace-runs-ls.txt")"
+          test -n "$run_id"
+          .publish-smoke/bin/millrace runs show "$run_id" --workspace "$workspace" > "$RUNNER_TEMP/millrace-runs-show.txt"
 
           test -f "$workspace/millrace-agents/millrace.toml"
           test -f "$workspace/millrace-agents/state/compiled_plan.json"
           grep -q '^ok: true$' "$RUNNER_TEMP/millrace-compile.txt"
-          grep -q '^tick_reason: no_work$' "$RUNNER_TEMP/millrace-run-once.txt"
+          grep -q '^tick_reason: no_work$' "$RUNNER_TEMP/millrace-run-once-no-work.txt"
           grep -q '^compiled_plan_id: ' "$RUNNER_TEMP/millrace-status.txt"
+          grep -q '^enqueued_task: ' "$RUNNER_TEMP/millrace-queue-add-task.txt"
+          grep -q '^tick_reason: ' "$RUNNER_TEMP/millrace-run-once-task.txt"
+          if grep -q '^tick_reason: no_work$' "$RUNNER_TEMP/millrace-run-once-task.txt"; then
+            exit 1
+          fi
+          grep -q '^work_item_id: smoke-task-001$' "$RUNNER_TEMP/millrace-runs-ls.txt"
+          grep -q '^work_item_id: smoke-task-001$' "$RUNNER_TEMP/millrace-runs-show.txt"
+          grep -q '^stage: builder$' "$RUNNER_TEMP/millrace-runs-show.txt"
+          grep -q '^terminal_result: BUILDER_COMPLETE$' "$RUNNER_TEMP/millrace-runs-show.txt"
+          grep -q '^runner_name: codex_cli$' "$RUNNER_TEMP/millrace-runs-show.txt"
 
       - name: Upload built distributions
         uses: actions/upload-artifact@v4
