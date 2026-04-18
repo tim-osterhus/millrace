@@ -43,6 +43,10 @@ def test_runtime_config_schema_uses_draft_categories() -> None:
     }
 
 
+def test_stage_config_uses_one_hour_default_timeout() -> None:
+    assert StageConfig().timeout_seconds == 3600
+
+
 def test_runtime_config_rejects_unknown_stage_name() -> None:
     with pytest.raises(ValidationError, match="unknown stage"):
         RuntimeConfig(stages={"unknown_stage": StageConfig()})

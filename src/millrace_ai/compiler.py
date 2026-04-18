@@ -28,7 +28,7 @@ from millrace_ai.errors import ConfigurationError
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 _DEFAULT_MODE_ID = "standard_plain"
-_DEFAULT_STAGE_TIMEOUT_SECONDS = 300
+_DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
 _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     ExecutionStageName.BUILDER: ("skills/stage/execution/builder-core/SKILL.md",),
     ExecutionStageName.CHECKER: ("skills/stage/execution/checker-core/SKILL.md",),

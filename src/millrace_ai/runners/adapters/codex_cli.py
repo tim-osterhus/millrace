@@ -83,7 +83,7 @@ class CodexCliRunnerAdapter:
                 command=command,
                 cwd=self.workspace_root,
                 env=env,
-                timeout_seconds=request.timeout_seconds or 300,
+                timeout_seconds=request.timeout_seconds or 3600,
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
             )

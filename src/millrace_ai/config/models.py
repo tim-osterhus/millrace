@@ -81,7 +81,7 @@ class WatchersSection(ConfigModel):
 class StageConfig(ConfigModel):
     runner: str | None = None
     model: str | None = None
-    timeout_seconds: int = Field(default=300, gt=0)
+    timeout_seconds: int = Field(default=3600, gt=0)
 
 
 class RuntimeConfig(ConfigModel):

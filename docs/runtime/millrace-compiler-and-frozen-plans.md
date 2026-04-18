@@ -115,7 +115,7 @@ Runner and model resolution work like this:
 Timeout resolution works like this:
 
 - stage config timeout wins when present
-- otherwise the compile default is `300` seconds
+- otherwise the compile default is `3600` seconds
 
 ## `compiled_plan_id`
 

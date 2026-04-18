@@ -130,6 +130,37 @@ def test_codex_adapter_writes_invocation_and_completion_artifacts(tmp_path: Path
     }
 
 
+def test_codex_adapter_uses_one_hour_fallback_timeout_when_request_timeout_missing(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path).model_copy(update={"timeout_seconds": 0})
+    observed_timeout_seconds: list[int] = []
+
+    def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
+        del command, cwd, env
+        observed_timeout_seconds.append(timeout_seconds)
+        Path(stdout_path).write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+        Path(stderr_path).write_text("", encoding="utf-8")
+        now = datetime.now(timezone.utc)
+        return ProcessExecutionResult(
+            exit_code=0,
+            timed_out=False,
+            started_at=now,
+            ended_at=now,
+            error=None,
+        )
+
+    adapter = CodexCliRunnerAdapter(
+        config=RuntimeConfig(),
+        workspace_root=tmp_path,
+        process_executor=fake_execute,
+    )
+
+    adapter.run(request)
+
+    assert observed_timeout_seconds == [3600]
+
+
 def test_codex_adapter_resolves_permission_precedence_and_command_mapping(
     tmp_path: Path,
 ) -> None:

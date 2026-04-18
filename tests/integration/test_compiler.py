@@ -91,6 +91,23 @@ def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
     assert required_by_stage["auditor"] == ("skills/stage/planning/auditor-core/SKILL.md",)
 
 
+def test_compile_uses_one_hour_default_stage_timeout_when_stage_config_omits_it(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert {stage_plan.timeout_seconds for stage_plan in outcome.active_plan.stage_plans} == {3600}
+
+
 def test_compile_surfaces_stage_skill_attachments_without_role_overlays(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
