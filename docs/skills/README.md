@@ -20,9 +20,9 @@ typed contracts.
 
 Current public agent docs:
 
-- `millrace-ops-agent-manual.md`: when to use Millrace, when not to use it, and
+- `millrace-ops-agent-manual/SKILL.md`: when to use Millrace, when not to use it, and
   how a dedicated ops agent should deploy, configure, and operate it
-- `millrace-loop-authoring.md`: how to reason about loops, stages, modes, and
+- `millrace-loop-authoring/SKILL.md`: how to reason about loops, stages, modes, and
   compiler-valid authoring when extending Millrace
 
 If you are an external agent approaching this repo for the first time, start
