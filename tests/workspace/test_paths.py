@@ -4,7 +4,7 @@ import importlib
 import json
 from pathlib import Path
 
-from millrace_ai.config import load_runtime_config
+from millrace_ai.config import CodexPermissionLevel, load_runtime_config
 from millrace_ai.contracts import RecoveryCounters, RuntimeSnapshot
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
@@ -125,6 +125,10 @@ def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None
     config = load_runtime_config(paths.runtime_root / "millrace.toml")
     assert config.runtime.default_mode == "standard_plain"
     assert config.runtime.run_style == "daemon"
+    assert config.runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
+    config_text = paths.runtime_root.joinpath("millrace.toml").read_text(encoding="utf-8")
+    assert "[runners.codex]" in config_text
+    assert 'permission_default = "maximum"' in config_text
 
 
 def test_bootstrap_is_idempotent_and_preserves_existing_files(tmp_path: Path) -> None:
@@ -143,3 +147,32 @@ def test_bootstrap_is_idempotent_and_preserves_existing_files(tmp_path: Path) ->
     assert paths.planning_status_file.read_text(encoding="utf-8") == "### PLANNER_COMPLETE\n"
     assert paths.outline_file.read_text(encoding="utf-8") == "# Existing Outline\n"
     assert paths.runtime_snapshot_file.read_text(encoding="utf-8") == '{"custom": true}\n'
+
+
+def test_bootstrap_preserves_existing_runtime_config_customizations(tmp_path: Path) -> None:
+    paths = workspace_paths(tmp_path / "workspace")
+    bootstrap_workspace(paths)
+
+    custom_config = "\n".join(
+        [
+            "[runtime]",
+            'default_mode = "standard_plain"',
+            'run_style = "daemon"',
+            "",
+            "[runners.codex]",
+            'permission_default = "basic"',
+            'permission_by_stage = { builder = "elevated" }',
+            'permission_by_model = { "gpt-5" = "maximum" }',
+            "",
+        ]
+    )
+    paths.runtime_root.joinpath("millrace.toml").write_text(custom_config, encoding="utf-8")
+
+    bootstrap_workspace(paths)
+
+    assert paths.runtime_root.joinpath("millrace.toml").read_text(encoding="utf-8") == custom_config
+
+    config = load_runtime_config(paths.runtime_root / "millrace.toml")
+    assert config.runners.codex.permission_default is CodexPermissionLevel.BASIC
+    assert config.runners.codex.permission_by_stage["builder"] is CodexPermissionLevel.ELEVATED
+    assert config.runners.codex.permission_by_model["gpt-5"] is CodexPermissionLevel.MAXIMUM

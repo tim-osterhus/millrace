@@ -150,6 +150,36 @@ As the ops agent:
 - avoid direct edits to runtime-owned state or queue folders except where the
   documented CLI import surfaces intentionally accept queue input
 
+### Codex Permission Baseline
+
+Millrace intentionally defaults Codex execution to maximum permissions.
+
+That is the shipped baseline because Millrace is for long-running autonomous
+work. A more restrictive baseline makes stage execution less reliable and
+creates avoidable operator friction without actually simplifying the runtime's
+governance seams.
+
+Permission resolution order is:
+
+1. `runners.codex.permission_by_stage`
+2. `runners.codex.permission_by_model`
+3. `runners.codex.permission_default`
+
+That means:
+
+- use `permission_by_stage` when one stage needs a different posture than the
+  rest of the runtime
+- use `permission_by_model` when one model family needs a different posture
+- use `permission_default` as the workspace-wide fallback
+
+For new workspaces, bootstrap writes `permission_default = "maximum"` into the
+generated `millrace.toml`.
+
+For existing workspaces, Millrace preserves the current `millrace.toml` on
+bootstrap/update. If an operator has already customized `permission_default`,
+`permission_by_stage`, or `permission_by_model`, those choices are not
+overwritten by deploying a newer Millrace version.
+
 For deeper details, use:
 
 - `docs/runtime/millrace-runtime-architecture.md`

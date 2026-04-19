@@ -37,7 +37,7 @@ class CodexRunnerSection(ConfigModel):
     command: str = "codex"
     args: tuple[str, ...] = ("exec",)
     profile: str | None = None
-    permission_default: CodexPermissionLevel = CodexPermissionLevel.BASIC
+    permission_default: CodexPermissionLevel = CodexPermissionLevel.MAXIMUM
     permission_by_stage: dict[str, CodexPermissionLevel] = Field(default_factory=dict)
     permission_by_model: dict[str, CodexPermissionLevel] = Field(default_factory=dict)
     skip_git_repo_check: bool = True

@@ -47,6 +47,10 @@ def test_stage_config_uses_one_hour_default_timeout() -> None:
     assert StageConfig().timeout_seconds == 3600
 
 
+def test_runtime_config_defaults_codex_permissions_to_maximum() -> None:
+    assert RuntimeConfig().runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
+
+
 def test_runtime_config_rejects_unknown_stage_name() -> None:
     with pytest.raises(ValidationError, match="unknown stage"):
         RuntimeConfig(stages={"unknown_stage": StageConfig()})

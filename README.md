@@ -108,11 +108,11 @@ and the tests mirror those domains under `tests/`.
 ## Docs And Skills
 
 If you are an agent reading this README, load
-`docs/skills/millrace-ops-agent-manual.md` first before operating Millrace.
+`docs/skills/millrace-ops-agent-manual/SKILL.md` first before operating Millrace.
 
 Primary docs:
 
-- `docs/skills/millrace-ops-agent-manual.md`
+- `docs/skills/millrace-ops-agent-manual/SKILL.md`
 - `docs/runtime/README.md`
 - `docs/runtime/millrace-cli-reference.md`
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
@@ -125,6 +125,24 @@ Primary docs:
 Use the CLI reference for the full command inventory. Use the compiler and loop
 docs when you need to understand or extend the runtime contract rather than just
 operate it.
+
+## Default Permission Posture
+
+Millrace intentionally ships with maximum Codex permissions as the default
+workspace posture.
+
+The default resolution order is:
+
+1. `runners.codex.permission_by_stage`
+2. `runners.codex.permission_by_model`
+3. `runners.codex.permission_default`
+
+New workspaces are bootstrapped with `permission_default = "maximum"` explicitly
+written into `millrace-agents/millrace.toml`.
+
+Existing workspace configs are preserved on bootstrap/update. If an operator has
+already customized Codex permission settings, Millrace does not overwrite those
+choices when a newer runtime version is deployed.
 
 ## Verification
 

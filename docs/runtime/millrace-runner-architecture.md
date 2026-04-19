@@ -83,18 +83,32 @@ default_runner = "codex_cli"
 command = "codex"
 args = ["exec"]
 profile = "default"
-permission_default = "basic"
-# permission_by_stage = { planner = "basic", builder = "elevated" }
+permission_default = "maximum"
+# permission_by_stage = { planner = "elevated", builder = "maximum" }
 # permission_by_model = { "gpt-5.4" = "maximum" }
 skip_git_repo_check = true
 extra_config = []
 ```
+
+Millrace intentionally ships with maximum Codex permissions as the default
+operator posture. The framework is meant for long-running autonomous execution,
+and forcing the baseline into a more restrictive permission mode makes the
+runtime less reliable without adding meaningful governance. Operators can still
+reduce permissions deliberately through `permission_default`,
+`permission_by_stage`, or `permission_by_model`.
 
 Permission precedence:
 
 1. stage override (`permission_by_stage`)
 2. model override (`permission_by_model`)
 3. `permission_default`
+
+Bootstrap/update behavior:
+
+- new workspaces get an explicit `permission_default = "maximum"` in the
+  generated `millrace.toml`
+- existing workspace configs are preserved; bootstrap does not overwrite a
+  customized `millrace.toml`
 
 Codex permission mappings:
 

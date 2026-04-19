@@ -161,6 +161,38 @@ def test_codex_adapter_uses_one_hour_fallback_timeout_when_request_timeout_missi
     assert observed_timeout_seconds == [3600]
 
 
+def test_codex_adapter_uses_maximum_permissions_by_default(tmp_path: Path) -> None:
+    seen_command: dict[str, tuple[str, ...]] = {}
+
+    def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
+        del cwd, env, timeout_seconds
+        seen_command["value"] = tuple(command)
+        Path(stdout_path).write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+        Path(stderr_path).write_text("", encoding="utf-8")
+        now = datetime.now(timezone.utc)
+        return ProcessExecutionResult(
+            exit_code=0,
+            timed_out=False,
+            started_at=now,
+            ended_at=now,
+            error=None,
+        )
+
+    adapter = CodexCliRunnerAdapter(
+        config=RuntimeConfig(),
+        workspace_root=tmp_path,
+        process_executor=fake_execute,
+    )
+    adapter.run(_request(tmp_path))
+
+    command = seen_command["value"]
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "--full-auto" not in command
+    assert 'approval_policy="never"' not in command
+    assert "--sandbox" not in command
+    assert "danger-full-access" not in command
+
+
 def test_codex_adapter_resolves_permission_precedence_and_command_mapping(
     tmp_path: Path,
 ) -> None:

@@ -57,6 +57,6 @@ Use only supported CLI commands:
 
 ## References
 
-- `docs/skills/millrace-ops-agent-manual.md`
+- `docs/skills/millrace-ops-agent-manual/SKILL.md`
 - `docs/runtime/README.md`
 - `docs/runtime/millrace-cli-reference.md`

@@ -26,4 +26,4 @@ Current public agent docs:
   compiler-valid authoring when extending Millrace
 
 If you are an external agent approaching this repo for the first time, start
-with `millrace-ops-agent-manual.md`.
+with `millrace-ops-agent-manual/SKILL.md`.

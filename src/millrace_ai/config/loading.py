@@ -40,6 +40,9 @@ def render_bootstrap_runtime_config() -> str:
             'default_mode = "standard_plain"',
             'run_style = "daemon"',
             "",
+            "[runners.codex]",
+            'permission_default = "maximum"',
+            "",
         ]
     )
 
