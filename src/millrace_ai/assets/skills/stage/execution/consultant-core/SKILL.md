@@ -35,6 +35,7 @@ Decide whether trustworthy local continuation still exists. Preserve evidence be
 
 - Keep the decision evidence-driven and honest.
 - Do not assume local continuation is preferable if the evidence says otherwise.
+- Treat a continuation as credible only when it changes the decision basis: new evidence, a narrower bounded intervention, or a materially different recovery path.
 - Do not improvise broad implementation or decomposition work.
 - Preserve logs, reports, and prior conclusions before changing the decision frame.
 - Make the next action explicit enough for the next stage to act without guesswork.
@@ -58,14 +59,15 @@ Decide whether trustworthy local continuation still exists. Preserve evidence be
 
 1. Preserve evidence before deciding whether to continue locally.
 2. Assess the failure pattern against the latest trustworthy artifacts.
-3. Decide whether a local continuation is still credible.
-4. If yes, describe the continuation with explicit scope and limits.
+3. Decide whether a local continuation is still credible or merely a restatement of the failing path.
+4. If yes, describe the continuation with explicit scope, limits, and what materially changed the decision basis.
 5. If no, create an escalation path that is concrete enough for planning intake.
 6. If the evidence is too weak to decide honestly, block instead of guessing.
 
 ## Pitfalls And Gotchas
 
 - Keeping execution local at all costs.
+- Recommending a continuation path that is materially the same as the one that already failed.
 - Escalating without enough preserved evidence.
 - Writing a vague next step that still leaves the next stage guessing.
 - Re-deciding without first anchoring the current evidence chain.
@@ -76,4 +78,4 @@ Start from the failure pattern and the most recent trustworthy artifacts. Expand
 
 ## Verification Pattern
 
-Check that the decision is supported by preserved evidence and that the next action is actionable. A local continuation should be explicitly bounded; an escalation should be incident-ready and concrete.
+Check that the decision is supported by preserved evidence and that the next action is actionable. A local continuation should be explicitly bounded and materially different from the failed path it replaces; an escalation should be incident-ready and concrete.

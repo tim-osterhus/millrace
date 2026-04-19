@@ -36,6 +36,7 @@ Normalize one execution-recovery incident into a clean planning input while pres
 - Preserve evidence linkage and source identity.
 - Normalize and enrich the record, but do not decompose the work.
 - Do not solve the incident or rewrite history into a different story.
+- Do not upgrade hypotheses into facts unless the evidence already supports them.
 - State unresolved assumptions explicitly instead of burying them in prose.
 - Keep the intake scoped to the assigned incident only.
 
@@ -58,7 +59,7 @@ Normalize one execution-recovery incident into a clean planning input while pres
 1. Read the assigned incident and confirm it is the only incident in scope.
 2. Inspect the referenced evidence and verify the links are coherent.
 3. Normalize the incident structure so symptoms, evidence, and context line up cleanly.
-4. Enrich the record with explicit assumptions, gaps, and any remaining uncertainty.
+4. Enrich the record with explicit assumptions, gaps, and any remaining uncertainty without promoting suspected causes into facts.
 5. Preserve original evidence references while avoiding decomposition or root-cause solving.
 6. Verify that the incident still reads as one incident and not a hidden task breakdown.
 7. Stop once the intake is clean enough for the next planning step.
@@ -68,6 +69,7 @@ Normalize one execution-recovery incident into a clean planning input while pres
 - Pulling the incident apart into tasks or subproblems.
 - Dropping evidence links while rewriting the narrative.
 - Hiding unresolved assumptions inside confident-sounding prose.
+- Turning a suspected root cause into a normalized fact without evidence.
 - Expanding scope beyond the assigned incident.
 - Solving the incident instead of preparing it for planning.
 

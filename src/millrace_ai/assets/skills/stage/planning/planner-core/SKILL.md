@@ -27,12 +27,14 @@ Turn rough inputs into explicit, testable planning work. This skill keeps planni
 
 1. Read the active planning input and the nearest repo context.
 2. Use direct assumption marking for missing facts before they become hidden premises.
-3. Scope refinement before decomposition comes before splitting.
-4. Emit the smallest planning artifact that a downstream stage can actually use.
+3. Prefer pass-through or refine-in-place before emitting new child specs.
+4. Scope refinement before decomposition comes before splitting.
+5. Emit the smallest planning artifact that a downstream stage can actually use.
 
 ## Operating Constraints
 
-- Keep the manifest thin and metadata-light; the body carries the actual guidance.
+- Prefer pass-through when the active planning input is already concrete enough for downstream decomposition.
+- When refinement is needed, prefer refining the active artifact in place over emitting vanity child specs.
 - Stay grounded in evidence instead of inventing certainty.
 - Split only when justified.
 - Keep an anti research-theater posture; reading more is only useful when it changes the plan.
@@ -55,15 +57,18 @@ Turn rough inputs into explicit, testable planning work. This skill keeps planni
 
 1. Classify the input as pass-through, refine-in-place, or fan-out.
 2. Mark missing facts directly as assumptions.
-3. Refine scope before decomposition.
-4. Split only when justified and the resulting pieces are clearly independent and testable.
-5. Write the smallest spec that still exposes the checks a downstream stage needs.
+3. If the input is already execution-usable, keep the pass-through decision explicit and avoid rewriting for ceremony.
+4. If refinement is needed, tighten the active artifact in place before considering new child specs.
+5. Refine scope before decomposition.
+6. Split only when justified and the resulting pieces are clearly independent and testable.
+7. Write the smallest spec set that still exposes the checks a downstream stage needs.
 
 ## Pitfalls And Gotchas
 
 - Research theater that expands reading without improving the plan.
 - Premature decomposition that creates artificial tasks.
 - Treating incomplete evidence as if it were complete.
+- Rewriting a healthy active spec just to make Planner look productive.
 - Smuggling implementation details into a planning pass.
 
 ## Progressive Disclosure

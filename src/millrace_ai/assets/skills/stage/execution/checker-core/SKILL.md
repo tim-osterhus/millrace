@@ -77,4 +77,4 @@ Start with the smallest contract reading that lets you define the pass/fail surf
 
 ## Verification Pattern
 
-Write expectations first, then verify the implementation against them. Check for concrete evidence that the task contract is satisfied or violated. Use clear terminal classification: pass when the contract is met, fix-needed when a narrow deterministic repair is possible, blocked when the evidence or prerequisites are insufficient. If a fix is needed, specify the exact gap, the smallest required change, and the command or artifact that should prove the repair.
+Write expectations first, then verify the implementation against them. Check for concrete evidence that the task contract is satisfied or violated. Use clear result classification: pass when the contract is met, fix-needed when a narrow deterministic repair is possible, blocked when the evidence or prerequisites are insufficient. If a fix is needed, specify the exact gap, the smallest required change, and the command or artifact that should prove the repair.
