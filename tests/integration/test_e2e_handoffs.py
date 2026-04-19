@@ -240,6 +240,49 @@ def test_e2e_recovery_malformed_result_routes_to_consultant(tmp_path: Path) -> N
     assert entry.consultant_invocations == 1
 
 
+def test_e2e_recovery_illegal_terminal_result_routes_to_consultant(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-illegal-token-001", created_at=NOW))
+
+    calls = {"troubleshooter": 0}
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(request, terminal="TOKEN", now=NOW)
+        if request.stage is ExecutionStageName.TROUBLESHOOTER:
+            calls["troubleshooter"] += 1
+            return _runner_result(request, terminal=ExecutionTerminalResult.BLOCKED.value, now=NOW)
+        return _runner_result(request, terminal=ExecutionTerminalResult.CONSULT_COMPLETE.value, now=NOW)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    first = engine.tick()
+    second = engine.tick()
+    third = engine.tick()
+
+    assert first.stage is ExecutionStageName.BUILDER
+    assert first.stage_result.metadata["failure_class"] == "illegal_terminal_result"
+    assert first.stage_result.detected_marker == "### TOKEN"
+    assert second.stage is ExecutionStageName.TROUBLESHOOTER
+    assert third.stage is ExecutionStageName.TROUBLESHOOTER
+    assert calls["troubleshooter"] == 2
+    assert third.router_decision.next_stage is ExecutionStageName.CONSULTANT
+
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is ExecutionStageName.CONSULTANT
+    assert snapshot.current_failure_class == "illegal_terminal_result"
+
+    counters = load_recovery_counters(paths)
+    entry = counters.entries[0]
+    assert entry.failure_class == "illegal_terminal_result"
+    assert entry.work_item_kind is WorkItemKind.TASK
+    assert entry.work_item_id == "task-illegal-token-001"
+    assert entry.troubleshoot_attempt_count == 2
+    assert entry.consultant_invocations == 1
+
+
 def test_e2e_needs_planning_incident_intake_reenters_execution(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)

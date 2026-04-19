@@ -19,6 +19,10 @@ runtime behavior, command, compiler, or authoring details.
 - `millrace-runtime-error-codes.md`: runtime-owned post-stage failure codes consumed by repair-oriented stages.
 - `../source-package-map.md`: old-to-new module mapping and intentionally preserved compatibility facades for maintainers.
 
+## In-Repo Harnesses
+
+- `scripts/e2e/true_e2e_efficacy.py`: canonical source-tree efficacy harness that preserves intermediate `BLOCKED` telemetry and waits for an Arbiter terminal outcome.
+
 ## Suggested Reading Order
 
 - Start with `millrace-runtime-architecture.md` if you need the overall runtime model.

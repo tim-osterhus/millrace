@@ -466,6 +466,9 @@ def test_codex_adapter_prompt_includes_stage_request_context_fields(tmp_path: Pa
     assert "- millrace-agents/skills/requesting-code-review/SKILL.md" in prompt
     assert "Attached Skill Paths:" in prompt
     assert "- millrace-agents/skills/test-driven-development/SKILL.md" in prompt
+    assert "### TOKEN" not in prompt
+    assert "legal terminal marker defined by the opened entrypoint contract" in prompt
+    assert "Do not invent or rename terminal markers." in prompt
 
 
 def test_codex_adapter_prompt_uses_none_for_absent_optional_context(tmp_path: Path) -> None:

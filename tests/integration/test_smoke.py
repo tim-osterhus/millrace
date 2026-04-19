@@ -204,6 +204,12 @@ def _exercise_minimum_functionality_workspace(
     assert "terminal_result: BUILDER_COMPLETE" in runs_show.stdout
     assert "runner_name: codex_cli" in runs_show.stdout
 
+    prompt_paths = sorted((workspace / "millrace-agents" / "runs").glob("**/runner_prompt.*.md"))
+    assert prompt_paths
+    for prompt_path in prompt_paths:
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        assert "### TOKEN" not in prompt_text
+
 
 def test_source_cli_verifies_root_minimum_functionality_workspace() -> None:
     runtime_subtree = MINIMUM_FUNCTIONALITY_WORKSPACE / "millrace-agents"

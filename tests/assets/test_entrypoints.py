@@ -846,6 +846,34 @@ def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> 
         assert "runtime_error_catalog_path" in body
 
 
+def test_troubleshooter_assets_treat_runtime_prompt_contract_mismatches_as_locally_repairable() -> None:
+    troubleshooter_body = (
+        REPO_ROOT
+        / "src"
+        / "millrace_ai"
+        / "assets"
+        / "entrypoints"
+        / "execution"
+        / "troubleshooter.md"
+    ).read_text(encoding="utf-8")
+    troubleshooter_skill = (
+        REPO_ROOT
+        / "src"
+        / "millrace_ai"
+        / "assets"
+        / "skills"
+        / "stage"
+        / "execution"
+        / "troubleshooter-core"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "runtime prompt or contract mismatch" in troubleshooter_body
+    assert "patch the local source of the defect and retry" in troubleshooter_body
+    assert "prompt-contract mismatches" in troubleshooter_skill
+    assert "locally repairable" in troubleshooter_skill
+
+
 def test_runtime_docs_describe_skill_only_advisory_model() -> None:
     docs = "\n".join(
         [

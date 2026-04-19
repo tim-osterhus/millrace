@@ -15,6 +15,7 @@ Allowed:
 - inspect run evidence, diagnostics, runtime state, and the active task when relevant
 - repair small local issues that block execution or the runtime itself
 - repair stale or malformed local state when that is the real blocker
+- repair a narrow runtime prompt or contract mismatch when grounded evidence shows the blocker comes from a local source defect
 - write dedicated troubleshoot evidence
 
 Not allowed:
@@ -78,6 +79,7 @@ Do not stop merely because:
 - the first hypothesis was wrong
 - diagnosis requires reading multiple artifacts or logs
 - the blocker is unusual but still appears locally repairable
+- the blocker is a runtime prompt or contract mismatch that can be fixed by patching the local source of the defect and retrying
 
 ## Minimum Required Context
 
@@ -123,6 +125,8 @@ Do not stop merely because:
 - Use the current run evidence first when available.
 - If `runtime_error_code` is present, read `runtime_error_report_path` first and consult `runtime_error_catalog_path` only as needed.
 - Classify the blocker before fixing it.
+- Treat deterministic runtime prompt or contract mismatch defects as locally repairable when the evidence points at a narrow source patch.
+- When that diagnosis holds, patch the local source of the defect and retry rather than preserving a known-fixable failure.
 - Apply the smallest safe repair that restores forward progress.
 - Verify only as much as needed to support the recovery claim.
 - If local recovery is not trustworthy, preserve the evidence cleanly for the next seam instead of forcing a pass.

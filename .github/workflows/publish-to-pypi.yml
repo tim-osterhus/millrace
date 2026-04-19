@@ -85,6 +85,9 @@ jobs:
           grep -q '^stage: builder$' "$RUNNER_TEMP/millrace-runs-show.txt"
           grep -q '^terminal_result: BUILDER_COMPLETE$' "$RUNNER_TEMP/millrace-runs-show.txt"
           grep -q '^runner_name: codex_cli$' "$RUNNER_TEMP/millrace-runs-show.txt"
+          if grep -R -n '### TOKEN' "$workspace/millrace-agents/runs"; then
+            exit 1
+          fi
 
       - name: Upload built distributions
         uses: actions/upload-artifact@v7
