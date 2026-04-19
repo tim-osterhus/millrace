@@ -6,7 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from millrace_ai.contracts import (
+    ClosureTargetState,
     CompileDiagnostics,
+    CompletionBehaviorDefinition,
     ExecutionStageName,
     FrozenRunPlan,
     FrozenStagePlan,
@@ -15,6 +17,8 @@ from millrace_ai.contracts import (
     MailboxCommandEnvelope,
     ModeDefinition,
     Plane,
+    PlanningStageName,
+    PlanningTerminalResult,
     RecoveryCounters,
     RuntimeSnapshot,
     SpecDocument,
@@ -72,6 +76,55 @@ def test_spec_document_valid_minimal_payload() -> None:
     )
 
     assert doc.kind == "spec"
+
+
+def test_work_documents_accept_root_lineage_fields() -> None:
+    task = TaskDocument(
+        task_id="task-001",
+        title="Implement contracts",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
+        target_paths=["millrace/contracts.py"],
+        acceptance=["contracts validate"],
+        required_checks=["pytest tests/runtime/test_contracts.py -q"],
+        references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
+        risk=["schema drift"],
+        created_at=NOW,
+        created_by="tester",
+    )
+    spec = SpecDocument(
+        spec_id="spec-root-001",
+        title="Contracts spec",
+        summary="Define canonical runtime contracts",
+        source_type="manual",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
+        goals=["define typed models"],
+        constraints=["keep scope small"],
+        acceptance=["tests pass"],
+        references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
+        created_at=NOW,
+        created_by="tester",
+    )
+    incident = IncidentDocument(
+        incident_id="inc-001",
+        title="Parity gap",
+        summary="Closure needs remediation",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
+        source_stage="auditor",
+        source_plane="planning",
+        failure_class="arbiter_parity_gap",
+        trigger_reason="parity gap found",
+        consultant_decision="needs_planning",
+        opened_at=NOW,
+        opened_by="tester",
+    )
+
+    assert task.root_idea_id == "idea-001"
+    assert task.root_spec_id == "spec-root-001"
+    assert spec.root_spec_id == "spec-root-001"
+    assert incident.root_spec_id == "spec-root-001"
 
 
 def test_spec_document_rejects_empty_required_collections() -> None:
@@ -271,6 +324,58 @@ def test_loop_config_definition_rejects_edge_with_unknown_target_stage() -> None
         )
 
 
+def test_loop_config_definition_accepts_typed_completion_behavior_for_arbiter() -> None:
+    loop = LoopConfigDefinition(
+        loop_id="planning.standard",
+        plane="planning",
+        stages=["planner", "manager", "mechanic", "auditor", "arbiter"],
+        entry_stage="planner",
+        edges=[
+            {
+                "source_stage": "planner",
+                "on_terminal_result": "PLANNER_COMPLETE",
+                "target_stage": "manager",
+            },
+            {
+                "source_stage": "manager",
+                "on_terminal_result": "MANAGER_COMPLETE",
+                "terminal_result": "MANAGER_COMPLETE",
+                "edge_kind": "terminal",
+            },
+            {
+                "source_stage": "arbiter",
+                "on_terminal_result": "ARBITER_COMPLETE",
+                "terminal_result": "ARBITER_COMPLETE",
+                "edge_kind": "terminal",
+            },
+            {
+                "source_stage": "arbiter",
+                "on_terminal_result": "REMEDIATION_NEEDED",
+                "terminal_result": "REMEDIATION_NEEDED",
+                "edge_kind": "terminal",
+            },
+        ],
+        terminal_results=["MANAGER_COMPLETE", "ARBITER_COMPLETE", "REMEDIATION_NEEDED", "BLOCKED"],
+        completion_behavior={
+            "trigger": "backlog_drained",
+            "readiness_rule": "no_open_lineage_work",
+            "stage": "arbiter",
+            "request_kind": "closure_target",
+            "target_selector": "active_closure_target",
+            "rubric_policy": "reuse_or_create",
+            "blocked_work_policy": "suppress",
+            "skip_if_already_closed": True,
+            "on_pass_terminal_result": "ARBITER_COMPLETE",
+            "on_gap_terminal_result": "REMEDIATION_NEEDED",
+            "create_incident_on_gap": True,
+        },
+    )
+
+    assert isinstance(loop.completion_behavior, CompletionBehaviorDefinition)
+    assert loop.completion_behavior.stage is PlanningStageName.ARBITER
+    assert loop.completion_behavior.on_gap_terminal_result is PlanningTerminalResult.REMEDIATION_NEEDED
+
+
 def test_mode_definition_rejects_unknown_stage_key() -> None:
     with pytest.raises(ValidationError):
         ModeDefinition(
@@ -321,6 +426,83 @@ def test_frozen_run_plan_rejects_duplicate_stage_entries() -> None:
             ],
             compiled_at=NOW,
         )
+
+
+def test_frozen_run_plan_accepts_typed_completion_behavior() -> None:
+    plan = FrozenRunPlan(
+        compiled_plan_id="plan-001",
+        mode_id="standard_plain",
+        execution_loop_id="execution.standard",
+        planning_loop_id="planning.standard",
+        stage_plans=[
+            {
+                "stage": "builder",
+                "plane": "execution",
+                "entrypoint_path": "entrypoints/execution/builder.md",
+            },
+            {
+                "stage": "arbiter",
+                "plane": "planning",
+                "entrypoint_path": "entrypoints/planning/arbiter.md",
+            },
+        ],
+        completion_behavior={
+            "trigger": "backlog_drained",
+            "readiness_rule": "no_open_lineage_work",
+            "stage": "arbiter",
+            "request_kind": "closure_target",
+            "target_selector": "active_closure_target",
+            "rubric_policy": "reuse_or_create",
+            "blocked_work_policy": "suppress",
+            "skip_if_already_closed": True,
+            "on_pass_terminal_result": "ARBITER_COMPLETE",
+            "on_gap_terminal_result": "REMEDIATION_NEEDED",
+            "create_incident_on_gap": True,
+        },
+        compiled_at=NOW,
+    )
+
+    assert isinstance(plan.completion_behavior, CompletionBehaviorDefinition)
+    assert plan.completion_behavior.stage is PlanningStageName.ARBITER
+
+
+def test_stage_result_envelope_accepts_arbiter_remediation_needed() -> None:
+    env = StageResultEnvelope(
+        run_id="run-001",
+        plane="planning",
+        stage="arbiter",
+        work_item_kind="spec",
+        work_item_id="spec-root-001",
+        terminal_result="REMEDIATION_NEEDED",
+        result_class="followup_needed",
+        summary_status_marker="### REMEDIATION_NEEDED",
+        success=False,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    assert env.stage is PlanningStageName.ARBITER
+    assert env.terminal_result is PlanningTerminalResult.REMEDIATION_NEEDED
+
+
+def test_closure_target_state_valid_payload() -> None:
+    target = ClosureTargetState(
+        root_spec_id="spec-root-001",
+        root_idea_id="idea-001",
+        root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+        root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+        rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+        latest_verdict_path="millrace-agents/arbiter/verdicts/spec-root-001.json",
+        latest_report_path="millrace-agents/arbiter/reports/run-001.md",
+        closure_open=True,
+        closure_blocked_by_lineage_work=False,
+        blocking_work_ids=[],
+        opened_at=NOW,
+        last_arbiter_run_id="run-001",
+    )
+
+    assert target.root_spec_id == "spec-root-001"
+    assert target.last_arbiter_run_id == "run-001"
 
 
 def test_compile_diagnostics_requires_errors_on_failure() -> None:

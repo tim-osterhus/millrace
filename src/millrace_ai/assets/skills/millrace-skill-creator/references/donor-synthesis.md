@@ -1,3 +1,14 @@
+---
+asset_type: skill
+asset_id: donor-synthesis-reference
+version: 1
+description: Reference notes on donor-synthesis posture for skill package authoring.
+advisory_only: true
+capability_type: documentation
+forbidden_claims:
+  - queue_selection
+---
+
 # Donor Synthesis
 
 Use donor synthesis to assemble a new skill from proven source material.

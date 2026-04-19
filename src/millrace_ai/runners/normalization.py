@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from millrace_ai.contracts import (
     ExecutionStageName,
@@ -18,6 +18,7 @@ from millrace_ai.contracts import (
     StageName,
     StageResultEnvelope,
     TerminalResult,
+    WorkItemKind,
 )
 
 from .requests import (
@@ -76,6 +77,11 @@ _STAGE_LEGAL_TERMINALS: dict[str, set[str]] = {
         PlanningTerminalResult.AUDITOR_COMPLETE.value,
         PlanningTerminalResult.BLOCKED.value,
     },
+    PlanningStageName.ARBITER.value: {
+        PlanningTerminalResult.ARBITER_COMPLETE.value,
+        PlanningTerminalResult.REMEDIATION_NEEDED.value,
+        PlanningTerminalResult.BLOCKED.value,
+    },
 }
 
 _RESULT_CLASS_BY_TERMINAL: dict[str, ResultClass] = {
@@ -92,6 +98,8 @@ _RESULT_CLASS_BY_TERMINAL: dict[str, ResultClass] = {
     PlanningTerminalResult.MANAGER_COMPLETE.value: ResultClass.SUCCESS,
     PlanningTerminalResult.MECHANIC_COMPLETE.value: ResultClass.SUCCESS,
     PlanningTerminalResult.AUDITOR_COMPLETE.value: ResultClass.SUCCESS,
+    PlanningTerminalResult.ARBITER_COMPLETE.value: ResultClass.SUCCESS,
+    PlanningTerminalResult.REMEDIATION_NEEDED.value: ResultClass.FOLLOWUP_NEEDED,
 }
 
 _TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
@@ -112,10 +120,7 @@ def normalize_stage_result(
 ) -> StageResultEnvelope:
     """Normalize one runner output into a deterministic stage result envelope."""
 
-    if request.active_work_item_kind is None or request.active_work_item_id is None:
-        raise ValueError(
-            "active_work_item_kind and active_work_item_id are required to normalize stage results"
-        )
+    work_item_kind, work_item_id = _request_result_identity(request)
 
     identity_notes = _identity_mismatch_notes(request, raw_result)
     if identity_notes:
@@ -163,8 +168,8 @@ def normalize_stage_result(
         run_id=request.run_id,
         plane=request.plane,
         stage=request.stage,
-        work_item_kind=request.active_work_item_kind,
-        work_item_id=request.active_work_item_id,
+        work_item_kind=work_item_kind,
+        work_item_id=work_item_id,
         terminal_result=terminal_result,
         result_class=result_class,
         summary_status_marker=f"### {terminal_result.value}",
@@ -186,7 +191,7 @@ def normalize_stage_result(
         token_usage=raw_result.token_usage,
         notes=extraction.notes,
         metadata={
-            "request_id": request.request_id,
+            **_request_metadata(request),
             "normalization_source": (
                 "structured_result_file"
                 if raw_result.terminal_result_path
@@ -455,18 +460,15 @@ def _failure_envelope(
     artifact_paths: tuple[str, ...] = (),
 ) -> StageResultEnvelope:
     blocked_terminal = _blocked_terminal_for_plane(request.plane)
-    if request.active_work_item_kind is None or request.active_work_item_id is None:
-        raise ValueError(
-            "active_work_item_kind and active_work_item_id are required for failure normalization"
-        )
+    work_item_kind, work_item_id = _request_result_identity(request)
     report_artifact = _resolved_report_artifact(request)
 
     return StageResultEnvelope(
         run_id=request.run_id,
         plane=request.plane,
         stage=request.stage,
-        work_item_kind=request.active_work_item_kind,
-        work_item_id=request.active_work_item_id,
+        work_item_kind=work_item_kind,
+        work_item_id=work_item_id,
         terminal_result=blocked_terminal,
         result_class=ResultClass.RECOVERABLE_FAILURE,
         summary_status_marker="### BLOCKED",
@@ -488,7 +490,7 @@ def _failure_envelope(
         token_usage=raw_result.token_usage,
         notes=notes,
         metadata={
-            "request_id": request.request_id,
+            **_request_metadata(request),
             "normalization_source": "failure",
             "failure_class": failure_class,
             "valid_terminal_result": False,
@@ -544,12 +546,25 @@ def _blocked_terminal_for_plane(plane: Plane) -> TerminalResult:
 
 
 def _resolved_report_artifact(request: StageRunRequest) -> str | None:
-    candidate = request.preferred_troubleshoot_report_path
-    if not candidate:
-        return None
-    if not _artifact_exists(request.run_dir, candidate):
-        return None
-    return candidate
+    for candidate in (request.preferred_report_path, request.preferred_troubleshoot_report_path):
+        if not candidate:
+            continue
+        if _artifact_exists(request.run_dir, candidate):
+            return candidate
+    return None
+
+
+def _request_result_identity(request: StageRunRequest) -> tuple[WorkItemKind, str]:
+    if request.request_kind == "closure_target":
+        if request.closure_target_root_spec_id is None:
+            raise ValueError("closure_target_root_spec_id is required for closure_target requests")
+        return (WorkItemKind.SPEC, request.closure_target_root_spec_id)
+
+    if request.active_work_item_kind is None or request.active_work_item_id is None:
+        raise ValueError(
+            "active_work_item_kind and active_work_item_id are required to normalize stage results"
+        )
+    return (request.active_work_item_kind, request.active_work_item_id)
 
 
 def _merge_artifact_paths(
@@ -580,6 +595,18 @@ def _artifact_exists(run_dir: str, candidate_path: str) -> bool:
         return False
 
     return resolved_candidate.exists()
+
+
+def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
+    return {
+        "request_id": request.request_id,
+        "request_kind": request.request_kind,
+        "closure_target_root_spec_id": request.closure_target_root_spec_id,
+        "closure_target_root_idea_id": request.closure_target_root_idea_id,
+        "preferred_rubric_path": request.preferred_rubric_path,
+        "preferred_verdict_path": request.preferred_verdict_path,
+        "preferred_report_path": request.preferred_report_path,
+    }
 
 
 __all__ = ["normalize_stage_result"]

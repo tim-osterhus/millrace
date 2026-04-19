@@ -24,6 +24,7 @@ RunnerExitKind = Literal[
     "provider_error",
     "interrupted",
 ]
+RequestKind = Literal["active_work_item", "closure_target"]
 
 _STAGE_TO_PLANE: dict[str, Plane] = {
     ExecutionStageName.BUILDER.value: Plane.EXECUTION,
@@ -37,6 +38,7 @@ _STAGE_TO_PLANE: dict[str, Plane] = {
     PlanningStageName.MANAGER.value: Plane.PLANNING,
     PlanningStageName.MECHANIC.value: Plane.PLANNING,
     PlanningStageName.AUDITOR.value: Plane.PLANNING,
+    PlanningStageName.ARBITER.value: Plane.PLANNING,
 }
 
 
@@ -49,6 +51,7 @@ class StageRunRequest(BaseModel):
     run_id: str
     plane: Plane
     stage: StageName
+    request_kind: RequestKind = "active_work_item"
 
     mode_id: str
     compiled_plan_id: str
@@ -61,6 +64,14 @@ class StageRunRequest(BaseModel):
     active_work_item_kind: WorkItemKind | None = None
     active_work_item_id: str | None = None
     active_work_item_path: str | None = None
+    closure_target_path: str | None = None
+    closure_target_root_spec_id: str | None = None
+    closure_target_root_idea_id: str | None = None
+    canonical_root_spec_path: str | None = None
+    canonical_seed_idea_path: str | None = None
+    preferred_rubric_path: str | None = None
+    preferred_verdict_path: str | None = None
+    preferred_report_path: str | None = None
 
     run_dir: str
     summary_status_path: str
@@ -87,6 +98,29 @@ class StageRunRequest(BaseModel):
                 "active_work_item_kind and active_work_item_id must be set together"
             )
 
+        closure_fields = (
+            self.closure_target_path,
+            self.closure_target_root_spec_id,
+            self.closure_target_root_idea_id,
+            self.canonical_root_spec_path,
+            self.canonical_seed_idea_path,
+            self.preferred_rubric_path,
+            self.preferred_verdict_path,
+            self.preferred_report_path,
+        )
+        if self.request_kind == "active_work_item":
+            if any(field is not None for field in closure_fields):
+                raise ValueError(
+                    "active_work_item requests cannot declare closure target fields"
+                )
+        else:
+            if has_kind or self.active_work_item_path is not None:
+                raise ValueError(
+                    "closure_target requests cannot declare active work item fields"
+                )
+            if any(field is None for field in closure_fields):
+                raise ValueError("closure_target requests require closure target fields")
+
         if self.timeout_seconds < 0:
             raise ValueError("timeout_seconds must be >= 0")
 
@@ -103,6 +137,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
         f"Compiled Plan ID: {request.compiled_plan_id}",
         f"Stage: {request.stage.value}",
         f"Plane: {request.plane.value}",
+        f"Request Kind: {request.request_kind}",
         f"Entrypoint Path: {request.entrypoint_path}",
         f"Entrypoint Contract ID: {request.entrypoint_contract_id or 'none'}",
         (
@@ -111,6 +146,14 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
             f"{request.active_work_item_id or 'none'}"
         ),
         f"Active Work Item Path: {request.active_work_item_path or 'none'}",
+        f"Closure Target Path: {request.closure_target_path or 'none'}",
+        f"Closure Target Root Spec ID: {request.closure_target_root_spec_id or 'none'}",
+        f"Closure Target Root Idea ID: {request.closure_target_root_idea_id or 'none'}",
+        f"Canonical Root Spec Path: {request.canonical_root_spec_path or 'none'}",
+        f"Canonical Seed Idea Path: {request.canonical_seed_idea_path or 'none'}",
+        f"Preferred Rubric Path: {request.preferred_rubric_path or 'none'}",
+        f"Preferred Verdict Path: {request.preferred_verdict_path or 'none'}",
+        f"Preferred Report Path: {request.preferred_report_path or 'none'}",
     ]
     lines.extend(_render_path_list("Required Skill Paths", request.required_skill_paths))
     lines.extend(_render_path_list("Attached Skill Paths", request.attached_skill_paths))
@@ -192,6 +235,7 @@ def _render_path_list(label: str, paths: tuple[str, ...]) -> tuple[str, ...]:
 
 
 __all__ = [
+    "RequestKind",
     "RunnerExitKind",
     "RunnerRawResult",
     "StageRunRequest",

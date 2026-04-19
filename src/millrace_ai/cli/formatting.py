@@ -15,6 +15,7 @@ from millrace_ai.paths import WorkspacePaths
 from millrace_ai.run_inspection import InspectedRunSummary
 from millrace_ai.runtime import RuntimeTickOutcome
 from millrace_ai.state_store import load_snapshot
+from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 
 
 def _run_once_exit_code(outcome: RuntimeTickOutcome) -> int:
@@ -78,6 +79,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"execution_status_marker: {snapshot.execution_status_marker}",
         f"planning_status_marker: {snapshot.planning_status_marker}",
     ]
+    lines.extend(_render_closure_target_status_lines(paths))
     if snapshot.current_failure_class:
         lines.append(f"current_failure_class: {snapshot.current_failure_class}")
         for label, count in (
@@ -114,6 +116,8 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
     lines = [
         f"run_id: {summary.run_id}",
         f"status: {summary.status}",
+        f"request_kind: {_value(summary.request_kind)}",
+        f"closure_target_root_spec_id: {_value(summary.closure_target_root_spec_id)}",
         f"work_item_kind: {_value(summary.work_item_kind)}",
         f"work_item_id: {_value(summary.work_item_id)}",
         f"failure_class: {_value(summary.failure_class)}",
@@ -133,6 +137,8 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
             (
                 f"stage_result_path: {stage_result.stage_result_path}",
                 f"stage: {stage_result.stage}",
+                f"request_kind: {_value(stage_result.request_kind)}",
+                f"closure_target_root_spec_id: {_value(stage_result.closure_target_root_spec_id)}",
                 f"terminal_result: {stage_result.terminal_result}",
                 f"result_class: {stage_result.result_class}",
                 f"runner_name: {_value(stage_result.runner_name)}",
@@ -168,6 +174,38 @@ def _resolve_run_artifact_path(run_dir: str, candidate: str) -> Path:
     if path.is_absolute():
         return path
     return Path(run_dir) / path
+
+
+def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
+    open_targets = list_open_closure_target_states(paths)
+    if len(open_targets) > 1:
+        return (
+            "closure_target_root_spec_id: invalid_multiple_open_targets",
+            "closure_target_open: invalid",
+            "closure_target_blocked_by_lineage_work: invalid",
+            "closure_target_latest_verdict_path: none",
+            "closure_target_latest_report_path: none",
+        )
+    if not open_targets:
+        return (
+            "closure_target_root_spec_id: none",
+            "closure_target_open: none",
+            "closure_target_blocked_by_lineage_work: none",
+            "closure_target_latest_verdict_path: none",
+            "closure_target_latest_report_path: none",
+        )
+
+    target = open_targets[0]
+    return (
+        f"closure_target_root_spec_id: {target.root_spec_id}",
+        f"closure_target_open: {'true' if target.closure_open else 'false'}",
+        (
+            "closure_target_blocked_by_lineage_work: "
+            f"{'true' if target.closure_blocked_by_lineage_work else 'false'}"
+        ),
+        f"closure_target_latest_verdict_path: {_value(target.latest_verdict_path)}",
+        f"closure_target_latest_report_path: {_value(target.latest_report_path)}",
+    )
 
 
 def _render_config_show_lines(paths: WorkspacePaths, config: RuntimeConfig) -> tuple[str, ...]:

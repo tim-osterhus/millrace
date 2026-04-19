@@ -20,6 +20,7 @@ This document maps canonical draft entrypoints to packaged runtime assets and de
 - `lab/specs/drafts/entrypoints/planning/manager.md` -> `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
 - `lab/specs/drafts/entrypoints/planning/mechanic.md` -> `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
 - `lab/specs/drafts/entrypoints/planning/auditor.md` -> `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
+- `lab/specs/drafts/entrypoints/planning/arbiter.md` -> `src/millrace_ai/assets/entrypoints/planning/arbiter.md` -> `millrace-agents/entrypoints/planning/arbiter.md`
 
 ## Entrypoint Contract Expectations
 
@@ -30,6 +31,8 @@ This document maps canonical draft entrypoints to packaged runtime assets and de
   - `active_work_item_path`: `millrace-agents/tasks/active/<TASK_ID>.md`
   - `active_work_item_path`: `millrace-agents/specs/active/<SPEC_ID>.md`
   - `active_work_item_path`: `millrace-agents/incidents/active/<INCIDENT_ID>.md`
+- Closure-target-driven audits read request-provided closure state such as:
+  - `closure_target_path`: `millrace-agents/arbiter/targets/<ROOT_SPEC_ID>.json`
 - Planning outputs that should be re-ingested target markdown queue surfaces:
   - `millrace-agents/specs/queue/<SPEC_ID>.md`
   - `millrace-agents/incidents/incoming/<INCIDENT_ID>.md`

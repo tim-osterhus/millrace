@@ -20,6 +20,8 @@ RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
 class InspectedStageResult:
     stage_result_path: str
     stage: str
+    request_kind: str | None
+    closure_target_root_spec_id: str | None
     terminal_result: str
     result_class: str
     work_item_kind: WorkItemKind
@@ -42,6 +44,8 @@ class InspectedRunSummary:
     run_id: str
     run_dir: str
     status: RunInspectionStatus
+    request_kind: str | None
+    closure_target_root_spec_id: str | None
     work_item_kind: WorkItemKind | None
     work_item_id: str | None
     failure_class: str | None
@@ -70,6 +74,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             run_id=resolved_run_dir.name,
             run_dir=str(resolved_run_dir),
             status="incomplete",
+            request_kind=None,
+            closure_target_root_spec_id=None,
             work_item_kind=None,
             work_item_id=None,
             failure_class=None,
@@ -88,6 +94,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             run_id=resolved_run_dir.name,
             run_dir=str(resolved_run_dir),
             status="incomplete",
+            request_kind=None,
+            closure_target_root_spec_id=None,
             work_item_kind=None,
             work_item_id=None,
             failure_class=None,
@@ -117,6 +125,11 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             InspectedStageResult(
                 stage_result_path=_normalize_run_relative_path(resolved_run_dir, stage_result_path),
                 stage=stage_result.stage.value,
+                request_kind=_string_metadata(stage_result, "request_kind"),
+                closure_target_root_spec_id=_string_metadata(
+                    stage_result,
+                    "closure_target_root_spec_id",
+                ),
                 terminal_result=stage_result.terminal_result.value,
                 result_class=stage_result.result_class.value,
                 work_item_kind=stage_result.work_item_kind,
@@ -158,6 +171,10 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         run_id=resolved_run_dir.name,
         run_dir=str(resolved_run_dir),
         status=status,
+        request_kind=latest_stage_result.request_kind if latest_stage_result else None,
+        closure_target_root_spec_id=(
+            latest_stage_result.closure_target_root_spec_id if latest_stage_result else None
+        ),
         work_item_kind=latest_stage_result.work_item_kind if latest_stage_result else None,
         work_item_id=latest_stage_result.work_item_id if latest_stage_result else None,
         failure_class=latest_stage_result.failure_class if latest_stage_result else None,
@@ -209,6 +226,11 @@ def select_primary_run_artifact(summary: InspectedRunSummary) -> str | None:
 
 def _failure_class_from_stage_result(stage_result: StageResultEnvelope) -> str | None:
     value = stage_result.metadata.get("failure_class")
+    return value if isinstance(value, str) else None
+
+
+def _string_metadata(stage_result: StageResultEnvelope, key: str) -> str | None:
+    value = stage_result.metadata.get(key)
     return value if isinstance(value, str) else None
 
 

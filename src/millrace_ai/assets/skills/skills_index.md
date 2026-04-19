@@ -17,6 +17,7 @@ recommended_for_stages:
   - manager
   - mechanic
   - auditor
+  - arbiter
 forbidden_claims:
   - queue_selection
   - routing
@@ -55,6 +56,7 @@ Usage contract:
 | `manager-core` | Manager decomposition posture, ordering, and task-verifiability habits. | `planning`, `stage-core` | `skills/stage/planning/manager-core/SKILL.md` | shipped |
 | `mechanic-core` | Mechanic repair posture for planning-side inconsistencies. | `planning`, `stage-core` | `skills/stage/planning/mechanic-core/SKILL.md` | shipped |
 | `auditor-core` | Auditor intake posture, evidence linkage, and incident normalization habits. | `planning`, `stage-core` | `skills/stage/planning/auditor-core/SKILL.md` | shipped |
+| `arbiter-core` | Arbiter rubric discipline, parity judgment, and remediation handoff posture. | `planning`, `stage-core` | `skills/stage/planning/arbiter-core/SKILL.md` | shipped |
 
 ## Shared And Deferred Skills
 

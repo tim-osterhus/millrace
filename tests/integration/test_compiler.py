@@ -61,7 +61,10 @@ def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) ->
     assert persisted_plan.mode_id == "standard_plain"
     assert persisted_plan.execution_loop_id == "execution.standard"
     assert persisted_plan.planning_loop_id == "planning.standard"
-    assert len(persisted_plan.stage_plans) == 11
+    assert len(persisted_plan.stage_plans) == 12
+    assert persisted_plan.completion_behavior is not None
+    assert persisted_plan.completion_behavior.stage.value == "arbiter"
+    assert any(ref.startswith("completion_behavior:") for ref in persisted_plan.source_refs)
     assert persisted_diagnostics.ok is True
     assert persisted_diagnostics.mode_id == "standard_plain"
 
@@ -84,11 +87,43 @@ def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
         for stage_plan in outcome.active_plan.stage_plans
     }
 
-    assert len(required_by_stage) == 11
+    assert len(required_by_stage) == 12
     assert required_by_stage["builder"] == ("skills/stage/execution/builder-core/SKILL.md",)
     assert required_by_stage["checker"] == ("skills/stage/execution/checker-core/SKILL.md",)
     assert required_by_stage["planner"] == ("skills/stage/planning/planner-core/SKILL.md",)
     assert required_by_stage["auditor"] == ("skills/stage/planning/auditor-core/SKILL.md",)
+    assert required_by_stage["arbiter"] == ("skills/stage/planning/arbiter-core/SKILL.md",)
+
+
+def test_compile_plan_identity_changes_when_completion_behavior_changes(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    baseline = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+
+    assert baseline.diagnostics.ok is True
+    assert baseline.active_plan is not None
+
+    assets_root = _copy_builtin_assets(tmp_path / "mutated")
+    planning_loop_path = assets_root / "loops" / "planning" / "default.json"
+    payload = json.loads(planning_loop_path.read_text(encoding="utf-8"))
+    payload["completion_behavior"]["skip_if_already_closed"] = False
+    planning_loop_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    mutated = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+
+    assert mutated.diagnostics.ok is True
+    assert mutated.active_plan is not None
+    assert mutated.active_plan.compiled_plan_id != baseline.active_plan.compiled_plan_id
 
 
 def test_compile_uses_one_hour_default_stage_timeout_when_stage_config_omits_it(

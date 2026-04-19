@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.contracts import (
+    ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
     MailboxCommandEnvelope,
@@ -49,6 +50,7 @@ from millrace_ai.state_store import (
     set_execution_status,
     set_planning_status,
 )
+from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -313,6 +315,46 @@ def test_runtime_stage_request_entrypoint_path_exists_after_startup(tmp_path: Pa
     assert Path(captured_request.entrypoint_path).is_file()
     assert captured_request.active_work_item_path is not None
     assert captured_request.active_work_item_path.endswith(".md")
+
+
+def test_runtime_can_build_closure_target_request_without_active_work_item(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.ARBITER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    assert engine.snapshot is not None
+
+    target = ClosureTargetState(
+        root_spec_id="spec-root-001",
+        root_idea_id="idea-001",
+        root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+        root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+        rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+        latest_verdict_path="millrace-agents/arbiter/verdicts/spec-root-001.json",
+        latest_report_path="millrace-agents/arbiter/reports/run-001.md",
+        closure_open=True,
+        closure_blocked_by_lineage_work=False,
+        blocking_work_ids=(),
+        opened_at=NOW,
+    )
+    save_closure_target_state(paths, target)
+
+    arbiter_plan = engine._stage_plan_for(Plane.PLANNING, PlanningStageName.ARBITER)
+    request = engine._build_closure_target_stage_run_request(arbiter_plan, target)
+
+    assert request.request_kind == "closure_target"
+    assert request.active_work_item_kind is None
+    assert request.active_work_item_id is None
+    assert request.active_work_item_path is None
+    assert request.closure_target_root_spec_id == "spec-root-001"
+    assert request.canonical_root_spec_path.endswith("spec-root-001.md")
 
 
 def test_runtime_planning_retry_scope_skips_execution_active_work(tmp_path: Path) -> None:
@@ -1267,6 +1309,149 @@ def test_runtime_tick_with_no_work_reports_non_blocked_idle_result(tmp_path: Pat
     assert outcome.router_decision.reason == "no_work"
     assert outcome.stage_result.result_class is ResultClass.SUCCESS
     assert outcome.stage_result.terminal_result is ExecutionTerminalResult.UPDATE_COMPLETE
+
+
+def test_runtime_tick_with_no_work_suppresses_completion_when_lineage_work_remains(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(
+        _task_doc("task-001", created_at=NOW).model_copy(
+            update={"root_idea_id": "idea-001", "root_spec_id": "spec-root-001"}
+        )
+    )
+    claimed = queue.claim_next_execution_task()
+    assert claimed is not None
+    queue.mark_task_blocked("task-001")
+
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called while completion is suppressed")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+
+    assert outcome.router_decision.reason == "no_work"
+    assert target.closure_blocked_by_lineage_work is True
+    assert target.blocking_work_ids == ("task-001",)
+
+
+def test_runtime_tick_closes_closure_target_on_arbiter_complete(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"pass"}\n', encoding="utf-8")
+        report_path = Path(request.preferred_report_path)
+        report_path.write_text("# Arbiter Report\n\nParity holds.\n", encoding="utf-8")
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.ARBITER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+    report_copy = paths.arbiter_reports_dir / f"{outcome.stage_result.run_id}.md"
+
+    assert outcome.stage is PlanningStageName.ARBITER
+    assert outcome.router_decision.reason == "arbiter_complete"
+    assert target.closure_open is False
+    assert target.closed_at is not None
+    assert target.last_arbiter_run_id == outcome.stage_result.run_id
+    assert target.latest_verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
+    assert target.latest_report_path == f"millrace-agents/arbiter/reports/{outcome.stage_result.run_id}.md"
+    assert report_copy.is_file()
+
+
+def test_runtime_tick_enqueues_remediation_incident_for_arbiter_gap(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"gap"}\n', encoding="utf-8")
+        report_path = Path(request.preferred_report_path)
+        report_path.write_text("# Arbiter Report\n\nParity gaps remain.\n", encoding="utf-8")
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.REMEDIATION_NEEDED.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+    incident_paths = tuple(paths.incidents_incoming_dir.glob("*.md"))
+
+    assert outcome.stage is PlanningStageName.ARBITER
+    assert outcome.router_decision.reason == "arbiter_remediation_needed"
+    assert target.closure_open is True
+    assert target.closed_at is None
+    assert target.last_arbiter_run_id == outcome.stage_result.run_id
+    assert len(incident_paths) == 1
+    incident_text = incident_paths[0].read_text(encoding="utf-8")
+    assert "Root-Spec-ID: spec-root-001" in incident_text
+    assert "Root-Idea-ID: idea-001" in incident_text
+    assert "Source-Stage: arbiter" in incident_text
 
 
 def test_runtime_mailbox_retry_active_requeues_active_item_and_resets_counters(tmp_path: Path) -> None:

@@ -47,6 +47,15 @@ class WorkspacePaths:
     incidents_resolved_dir: Path
     incidents_blocked_dir: Path
 
+    arbiter_dir: Path
+    arbiter_contracts_dir: Path
+    arbiter_idea_contracts_dir: Path
+    arbiter_root_spec_contracts_dir: Path
+    arbiter_targets_dir: Path
+    arbiter_rubrics_dir: Path
+    arbiter_verdicts_dir: Path
+    arbiter_reports_dir: Path
+
     loops_dir: Path
     execution_loops_dir: Path
     planning_loops_dir: Path
@@ -91,6 +100,14 @@ class WorkspacePaths:
             self.incidents_active_dir,
             self.incidents_resolved_dir,
             self.incidents_blocked_dir,
+            self.arbiter_dir,
+            self.arbiter_contracts_dir,
+            self.arbiter_idea_contracts_dir,
+            self.arbiter_root_spec_contracts_dir,
+            self.arbiter_targets_dir,
+            self.arbiter_rubrics_dir,
+            self.arbiter_verdicts_dir,
+            self.arbiter_reports_dir,
             self.loops_dir,
             self.execution_loops_dir,
             self.planning_loops_dir,
@@ -111,6 +128,8 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
     tasks_dir = runtime_root / "tasks"
     specs_dir = runtime_root / "specs"
     incidents_dir = runtime_root / "incidents"
+    arbiter_dir = runtime_root / "arbiter"
+    arbiter_contracts_dir = arbiter_dir / "contracts"
     loops_dir = runtime_root / "loops"
 
     return WorkspacePaths(
@@ -137,6 +156,14 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         incidents_active_dir=incidents_dir / "active",
         incidents_resolved_dir=incidents_dir / "resolved",
         incidents_blocked_dir=incidents_dir / "blocked",
+        arbiter_dir=arbiter_dir,
+        arbiter_contracts_dir=arbiter_contracts_dir,
+        arbiter_idea_contracts_dir=arbiter_contracts_dir / "ideas",
+        arbiter_root_spec_contracts_dir=arbiter_contracts_dir / "root-specs",
+        arbiter_targets_dir=arbiter_dir / "targets",
+        arbiter_rubrics_dir=arbiter_dir / "rubrics",
+        arbiter_verdicts_dir=arbiter_dir / "verdicts",
+        arbiter_reports_dir=arbiter_dir / "reports",
         loops_dir=loops_dir,
         execution_loops_dir=loops_dir / "execution",
         planning_loops_dir=loops_dir / "planning",

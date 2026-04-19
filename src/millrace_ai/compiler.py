@@ -41,6 +41,7 @@ _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     PlanningStageName.MANAGER: ("skills/stage/planning/manager-core/SKILL.md",),
     PlanningStageName.MECHANIC: ("skills/stage/planning/mechanic-core/SKILL.md",),
     PlanningStageName.AUDITOR: ("skills/stage/planning/auditor-core/SKILL.md",),
+    PlanningStageName.ARBITER: ("skills/stage/planning/arbiter-core/SKILL.md",),
 }
 
 class CompilerValidationError(ConfigurationError):
@@ -138,16 +139,19 @@ def _compile_frozen_run_plan(
             execution_loop_id=bundle.execution_loop.loop_id,
             planning_loop_id=bundle.planning_loop.loop_id,
             stage_plans=stage_plans,
+            completion_behavior=bundle.planning_loop.completion_behavior,
         ),
         mode_id=bundle.mode.mode_id,
         execution_loop_id=bundle.execution_loop.loop_id,
         planning_loop_id=bundle.planning_loop.loop_id,
         stage_plans=stage_plans,
+        completion_behavior=bundle.planning_loop.completion_behavior,
         compiled_at=compile_time,
-        source_refs=(
-            f"mode:{bundle.mode.mode_id}",
-            f"loop:{bundle.execution_loop.loop_id}",
-            f"loop:{bundle.planning_loop.loop_id}",
+        source_refs=_build_source_refs(
+            bundle.mode,
+            bundle.execution_loop.loop_id,
+            bundle.planning_loop.loop_id,
+            bundle.planning_loop.completion_behavior,
         ),
     )
 
@@ -263,16 +267,43 @@ def _build_compiled_plan_id(
     execution_loop_id: str,
     planning_loop_id: str,
     stage_plans: tuple[FrozenStagePlan, ...],
+    completion_behavior: object | None,
 ) -> str:
+    serialized_completion_behavior = (
+        completion_behavior.model_dump(mode="json")
+        if hasattr(completion_behavior, "model_dump")
+        else completion_behavior
+    )
     payload = {
         "mode_id": mode.mode_id,
         "execution_loop_id": execution_loop_id,
         "planning_loop_id": planning_loop_id,
         "stage_plans": [stage_plan.model_dump(mode="json") for stage_plan in stage_plans],
+        "completion_behavior": serialized_completion_behavior,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
     return f"plan-{mode.mode_id}-{digest}"
+
+
+def _build_source_refs(
+    mode: ModeDefinition,
+    execution_loop_id: str,
+    planning_loop_id: str,
+    completion_behavior: object | None,
+) -> tuple[str, ...]:
+    refs = [
+        f"mode:{mode.mode_id}",
+        f"loop:{execution_loop_id}",
+        f"loop:{planning_loop_id}",
+    ]
+    if completion_behavior is not None:
+        if hasattr(completion_behavior, "stage"):
+            stage_value = completion_behavior.stage.value
+        else:
+            stage_value = "unknown"
+        refs.append(f"completion_behavior:{planning_loop_id}:{stage_value}")
+    return tuple(refs)
 
 
 def _resolve_mode_id(requested_mode_id: str | None, config: RuntimeConfig) -> str:

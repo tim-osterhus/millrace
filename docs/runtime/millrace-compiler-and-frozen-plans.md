@@ -19,6 +19,7 @@ against one concrete structure for the current workspace state:
 - selected execution loop id
 - selected planning loop id
 - one frozen stage-plan entry per stage in those loops
+- one frozen `completion_behavior` policy when the selected loops declare one
 - one deterministic `compiled_plan_id`
 
 That compile step is what lets later runtime state, run artifacts, and operator
@@ -67,6 +68,7 @@ The compiler freezes one `FrozenRunPlan` with these core fields:
 - `execution_loop_id`
 - `planning_loop_id`
 - `stage_plans`
+- `completion_behavior`
 - `compiled_at`
 - `source_refs`
 
@@ -85,6 +87,11 @@ later:
 
 The stage-plan freeze is where the compiler resolves the final per-stage
 execution contract from loop, mode, and config inputs.
+
+`completion_behavior` is where the compiler freezes backlog-drain semantics that
+materially affect runtime control flow. In the shipped baseline, the planning
+loop for `standard_plain` freezes a closure-target policy that dispatches the
+`arbiter` stage when a root lineage drains cleanly.
 
 ## Stage-Plan Freezing Rules
 
@@ -124,6 +131,7 @@ The compiler builds `compiled_plan_id` deterministically from:
 - `mode_id`
 - `execution_loop_id`
 - `planning_loop_id`
+- the serialized `completion_behavior`
 - the serialized `stage_plans`
 
 The current shape is:
@@ -202,6 +210,7 @@ Today that includes:
 - `compiled_plan_id`
 - `execution_loop_id`
 - `planning_loop_id`
+- frozen `completion_behavior` fields such as `stage`, `request_kind`, and completion terminals
 - each stage as `<plane>.<stage>`
 - `entrypoint_path`
 - `required_skills`
@@ -227,6 +236,7 @@ For operators, the compile step is the authoritative way to answer:
 
 - which mode is active
 - which loops are active
+- whether backlog drain dispatches a completion stage and which one
 - which entrypoints the runtime will use
 - which stage-core skills and attached skills are present
 - whether a config or asset change actually produced a new frozen plan

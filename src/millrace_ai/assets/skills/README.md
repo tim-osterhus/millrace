@@ -17,6 +17,7 @@ recommended_for_stages:
   - manager
   - mechanic
   - auditor
+  - arbiter
 forbidden_claims:
   - queue_selection
   - routing
@@ -46,3 +47,4 @@ Runtime shipping notes:
 - Stage-core skills live under `skills/stage/<plane>/<stage>-core/SKILL.md`.
 - Each stage-core skill should stay narrow: posture, heuristics, traps, evidence discipline, and optional-skill triggers only.
 - Additional optional skill references in entrypoints should be marked as deferred until shipped.
+- Arbiter stage-core guidance should stay focused on rubric discipline, parity judgment, and remediation handoff posture rather than runtime authority.

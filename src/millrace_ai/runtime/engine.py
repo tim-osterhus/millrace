@@ -11,6 +11,7 @@ from uuid import uuid4
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig, fingerprint_runtime_config, load_runtime_config
 from millrace_ai.contracts import (
+    ClosureTargetState,
     FrozenRunPlan,
     FrozenStagePlan,
     MailboxCommandEnvelope,
@@ -25,6 +26,7 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import (
     QueueStateError,
     RuntimeLifecycleError,
+    WorkspaceStateError,
 )
 from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
@@ -48,7 +50,15 @@ from millrace_ai.state_store import (
 )
 from millrace_ai.watchers import WatcherSession, WatchEvent
 
-from . import activation, mailbox_intake, reconciliation, result_application, stage_requests, watcher_intake
+from . import (
+    activation,
+    completion_behavior,
+    mailbox_intake,
+    reconciliation,
+    result_application,
+    stage_requests,
+    watcher_intake,
+)
 from .error_recovery import schedule_post_stage_exception_recovery
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
@@ -211,6 +221,9 @@ class RuntimeEngine:
         if self.snapshot.active_stage is None:
             self._claim_next_work_item()
 
+        if self.snapshot.active_stage is None:
+            self._maybe_activate_completion_stage()
+
         if (
             self.snapshot.active_stage is not None
             and self.snapshot.active_plane is not None
@@ -218,6 +231,7 @@ class RuntimeEngine:
                 self.snapshot.active_work_item_kind is None
                 or self.snapshot.active_work_item_id is None
             )
+            and not self._is_completion_stage_active()
         ):
             write_runtime_event(
                 self.paths,
@@ -234,7 +248,13 @@ class RuntimeEngine:
             return self._idle_tick_outcome(reason="no_work")
 
         stage_plan = self._stage_plan_for(self.snapshot.active_plane, self.snapshot.active_stage)
-        request = self._build_stage_run_request(stage_plan)
+        if self._is_completion_stage_active():
+            closure_target = self._active_closure_target()
+            if closure_target is None:
+                raise WorkspaceStateError("completion stage is active without an open closure target")
+            request = self._build_closure_target_stage_run_request(stage_plan, closure_target)
+        else:
+            request = self._build_stage_run_request(stage_plan)
         write_runtime_event(
             self.paths,
             event_type="stage_started",
@@ -395,6 +415,24 @@ class RuntimeEngine:
     def _claim_next_work_item(self) -> None:
         activation.claim_next_work_item(self)
 
+    def _maybe_activate_completion_stage(self) -> ClosureTargetState | None:
+        return completion_behavior.maybe_activate_completion_stage(self)
+
+    def _active_closure_target(self) -> ClosureTargetState | None:
+        return completion_behavior.active_closure_target(self)
+
+    def _is_completion_stage_active(self) -> bool:
+        assert self.snapshot is not None
+        assert self.compiled_plan is not None
+        completion = self.compiled_plan.completion_behavior
+        if completion is None:
+            return False
+        if self.snapshot.active_plane is None or self.snapshot.active_stage is None:
+            return False
+        if self.snapshot.active_stage != completion.stage:
+            return False
+        return self.snapshot.active_work_item_kind is None and self.snapshot.active_work_item_id is None
+
     def _activate_claim(self, claim: QueueClaim) -> None:
         activation.activate_claim(self, claim)
 
@@ -491,6 +529,13 @@ class RuntimeEngine:
 
     def _build_stage_run_request(self, stage_plan: FrozenStagePlan) -> StageRunRequest:
         return stage_requests.build_stage_run_request(self, stage_plan)
+
+    def _build_closure_target_stage_run_request(
+        self,
+        stage_plan: FrozenStagePlan,
+        target_state: ClosureTargetState,
+    ) -> StageRunRequest:
+        return stage_requests.build_closure_target_stage_run_request(self, stage_plan, target_state)
 
     def _stage_plan_for(self, plane: Plane, stage: StageName) -> FrozenStagePlan:
         return stage_requests.stage_plan_for(self, plane, stage)

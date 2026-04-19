@@ -12,6 +12,7 @@ from millrace_ai.contracts import (
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
+    SpecDocument,
     TaskDocument,
     WorkItemKind,
 )
@@ -20,6 +21,7 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.state_store import load_recovery_counters, load_snapshot
+from millrace_ai.workspace.arbiter_state import load_closure_target_state
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -28,17 +30,44 @@ def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
 
 
-def _task_doc(task_id: str, *, created_at: datetime, incident_id: str | None = None) -> TaskDocument:
+def _task_doc(
+    task_id: str,
+    *,
+    created_at: datetime,
+    incident_id: str | None = None,
+    root_spec_id: str | None = None,
+    root_idea_id: str | None = None,
+) -> TaskDocument:
     return TaskDocument(
         task_id=task_id,
         title=f"Task {task_id}",
         summary="e2e handoff proof task",
         incident_id=incident_id,
+        root_spec_id=root_spec_id,
+        root_idea_id=root_idea_id,
         target_paths=["millrace/runtime.py"],
         acceptance=["runtime transition proof passes"],
         required_checks=["uv run pytest tests/integration/test_e2e_handoffs.py -q"],
         references=["lab/specs/drafts/millrace-mvp-implementation-slice.md"],
         risk=["transition drift"],
+        created_at=created_at,
+        created_by="tests",
+    )
+
+
+def _root_spec_doc(spec_id: str, *, root_idea_id: str, created_at: datetime) -> SpecDocument:
+    return SpecDocument(
+        spec_id=spec_id,
+        title=f"Root Spec {spec_id}",
+        summary="root lineage for completion-behavior integration coverage",
+        source_type="idea",
+        source_id=root_idea_id,
+        root_spec_id=spec_id,
+        root_idea_id=root_idea_id,
+        goals=("prove arbiter triggers after backlog drain",),
+        constraints=("keep the test deterministic",),
+        acceptance=("runtime reaches arbiter after the lineage drains",),
+        references=(f"ideas/inbox/{root_idea_id}.md",),
         created_at=created_at,
         created_by="tests",
     )
@@ -91,6 +120,12 @@ def _runner_result(
         started_at=now,
         ended_at=now + timedelta(seconds=1),
     )
+
+
+def _write_idea_doc(paths, idea_id: str) -> None:
+    idea_path = paths.root / "ideas" / "inbox" / f"{idea_id}.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text(f"# {idea_id}\n\nSeed contract for {idea_id}.\n", encoding="utf-8")
 
 
 def test_e2e_direct_task_handoff_happy_path(tmp_path: Path) -> None:
@@ -265,3 +300,122 @@ def test_e2e_needs_planning_incident_intake_reenters_execution(tmp_path: Path) -
     ]
     assert (paths.incidents_resolved_dir / "incident-001.md").is_file()
     assert (paths.tasks_done_dir / "task-remediate-001.md").is_file()
+
+
+def test_e2e_lineage_drain_triggers_arbiter_complete(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    _write_idea_doc(paths, "idea-root-001")
+    queue.enqueue_spec(_root_spec_doc("spec-root-001", root_idea_id="idea-root-001", created_at=NOW))
+
+    stage_order: list[str] = []
+    task_created = {"done": False}
+    captured_arbiter_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_arbiter_request
+        stage_order.append(request.stage.value)
+        if request.stage is PlanningStageName.PLANNER:
+            return _runner_result(request, terminal=PlanningTerminalResult.PLANNER_COMPLETE.value, now=NOW)
+        if request.stage is PlanningStageName.MANAGER:
+            if not task_created["done"]:
+                queue.enqueue_task(
+                    _task_doc(
+                        "task-root-001",
+                        created_at=NOW + timedelta(minutes=1),
+                        root_spec_id="spec-root-001",
+                        root_idea_id="idea-root-001",
+                    )
+                )
+                task_created["done"] = True
+            return _runner_result(request, terminal=PlanningTerminalResult.MANAGER_COMPLETE.value, now=NOW)
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value, now=NOW)
+        if request.stage is ExecutionStageName.CHECKER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.CHECKER_PASS.value, now=NOW)
+        if request.stage is ExecutionStageName.UPDATER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.UPDATE_COMPLETE.value, now=NOW)
+
+        captured_arbiter_request = request
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"pass"}\n', encoding="utf-8")
+        report_path = Path(request.preferred_report_path)
+        report_path.write_text("# Arbiter Report\n\nParity holds.\n", encoding="utf-8")
+        return _runner_result(request, terminal=PlanningTerminalResult.ARBITER_COMPLETE.value, now=NOW)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcomes = [engine.tick() for _ in range(6)]
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+
+    assert [outcome.stage for outcome in outcomes] == [
+        PlanningStageName.PLANNER,
+        PlanningStageName.MANAGER,
+        ExecutionStageName.BUILDER,
+        ExecutionStageName.CHECKER,
+        ExecutionStageName.UPDATER,
+        PlanningStageName.ARBITER,
+    ]
+    assert stage_order == ["planner", "manager", "builder", "checker", "updater", "arbiter"]
+    assert captured_arbiter_request is not None
+    assert captured_arbiter_request.request_kind == "closure_target"
+    assert target.closure_open is False
+    assert target.closed_at is not None
+    assert (paths.specs_done_dir / "spec-root-001.md").is_file()
+    assert (paths.tasks_done_dir / "task-root-001.md").is_file()
+
+
+def test_e2e_lineage_drain_triggers_arbiter_remediation_gap(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    _write_idea_doc(paths, "idea-root-gap")
+    queue.enqueue_spec(_root_spec_doc("spec-root-gap", root_idea_id="idea-root-gap", created_at=NOW))
+
+    stage_order: list[str] = []
+    task_created = {"done": False}
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        stage_order.append(request.stage.value)
+        if request.stage is PlanningStageName.PLANNER:
+            return _runner_result(request, terminal=PlanningTerminalResult.PLANNER_COMPLETE.value, now=NOW)
+        if request.stage is PlanningStageName.MANAGER:
+            if not task_created["done"]:
+                queue.enqueue_task(
+                    _task_doc(
+                        "task-root-gap",
+                        created_at=NOW + timedelta(minutes=1),
+                        root_spec_id="spec-root-gap",
+                        root_idea_id="idea-root-gap",
+                    )
+                )
+                task_created["done"] = True
+            return _runner_result(request, terminal=PlanningTerminalResult.MANAGER_COMPLETE.value, now=NOW)
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value, now=NOW)
+        if request.stage is ExecutionStageName.CHECKER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.CHECKER_PASS.value, now=NOW)
+        if request.stage is ExecutionStageName.UPDATER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.UPDATE_COMPLETE.value, now=NOW)
+
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"gap"}\n', encoding="utf-8")
+        report_path = Path(request.preferred_report_path)
+        report_path.write_text("# Arbiter Report\n\nParity gaps remain.\n", encoding="utf-8")
+        return _runner_result(request, terminal=PlanningTerminalResult.REMEDIATION_NEEDED.value, now=NOW)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcomes = [engine.tick() for _ in range(6)]
+    target = load_closure_target_state(paths, root_spec_id="spec-root-gap")
+    incident_paths = tuple(paths.incidents_incoming_dir.glob("*.md"))
+
+    assert outcomes[-1].stage is PlanningStageName.ARBITER
+    assert stage_order == ["planner", "manager", "builder", "checker", "updater", "arbiter"]
+    assert target.closure_open is True
+    assert target.closed_at is None
+    assert len(incident_paths) == 1
+    assert "Source-Stage: arbiter" in incident_paths[0].read_text(encoding="utf-8")

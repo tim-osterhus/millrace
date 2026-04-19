@@ -12,6 +12,10 @@ from millrace_ai.runner import (
     normalize_stage_result,
     render_stage_request_context_lines,
 )
+from millrace_ai.runners.contracts import (
+    completion_artifact_from_raw_result,
+    invocation_artifact_from_request,
+)
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -30,7 +34,12 @@ def test_runner_module_is_facade_over_runners_package() -> None:
     )
 
 
-def _request(tmp_path: Path, *, stage: str = "builder") -> StageRunRequest:
+def _request(
+    tmp_path: Path,
+    *,
+    stage: str = "builder",
+    request_kind: str = "active_work_item",
+) -> StageRunRequest:
     stage_to_plane = {
         "builder": "execution",
         "checker": "execution",
@@ -43,19 +52,18 @@ def _request(tmp_path: Path, *, stage: str = "builder") -> StageRunRequest:
         "manager": "planning",
         "mechanic": "planning",
         "auditor": "planning",
+        "arbiter": "planning",
     }
 
-    return StageRunRequest(
+    payload = dict(
         request_id="req-001",
         run_id="run-001",
         plane=stage_to_plane[stage],
         stage=stage,
+        request_kind=request_kind,
         mode_id="standard_plain",
         compiled_plan_id="plan-001",
         entrypoint_path=f"assets/entrypoints/{stage}.md",
-        active_work_item_kind="task",
-        active_work_item_id="task-001",
-        active_work_item_path="lab/tasks/queue/task-001.md",
         run_dir=str(tmp_path),
         summary_status_path=str(tmp_path / "state" / "execution_status.md"),
         runtime_snapshot_path=str(tmp_path / "state" / "runtime_snapshot.json"),
@@ -64,6 +72,24 @@ def _request(tmp_path: Path, *, stage: str = "builder") -> StageRunRequest:
         model_name="unit-model",
         timeout_seconds=45,
     )
+    if request_kind == "active_work_item":
+        payload.update(
+            active_work_item_kind="task",
+            active_work_item_id="task-001",
+            active_work_item_path="lab/tasks/queue/task-001.md",
+        )
+    else:
+        payload.update(
+            closure_target_path="millrace-agents/arbiter/targets/spec-root-001.json",
+            closure_target_root_spec_id="spec-root-001",
+            closure_target_root_idea_id="idea-001",
+            canonical_root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            canonical_seed_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            preferred_rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            preferred_verdict_path="millrace-agents/arbiter/verdicts/spec-root-001.json",
+            preferred_report_path=str(tmp_path / "arbiter_report.md"),
+        )
+    return StageRunRequest(**payload)
 
 
 def _raw(
@@ -130,6 +156,27 @@ def test_normalize_prefers_structured_terminal_result_file(tmp_path: Path) -> No
     assert envelope.metadata["valid_terminal_result"] is True
 
 
+def test_stage_run_request_accepts_closure_target_without_active_work_item() -> None:
+    request = _request(Path("/tmp"), stage="arbiter", request_kind="closure_target")
+
+    assert request.request_kind == "closure_target"
+    assert request.active_work_item_kind is None
+    assert request.active_work_item_id is None
+    assert request.closure_target_root_spec_id == "spec-root-001"
+    assert request.preferred_verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
+
+
+def test_render_stage_request_context_lines_include_closure_target_fields(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="arbiter", request_kind="closure_target")
+
+    lines = render_stage_request_context_lines(request)
+
+    assert "Request Kind: closure_target" in lines
+    assert "Closure Target Root Spec ID: spec-root-001" in lines
+    assert "Closure Target Path: millrace-agents/arbiter/targets/spec-root-001.json" in lines
+    assert "Active Work Item Path: none" in lines
+
+
 def test_normalize_falls_back_to_final_stdout_terminal_token(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="checker")
     stdout_path = tmp_path / "runner_stdout.txt"
@@ -150,6 +197,19 @@ def test_normalize_falls_back_to_final_stdout_terminal_token(tmp_path: Path) -> 
     assert envelope.metadata["valid_terminal_result"] is True
 
 
+def test_normalize_uses_root_spec_identity_for_closure_target_requests(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="arbiter", request_kind="closure_target")
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("### REMEDIATION_NEEDED\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(request, _raw(request, stdout_path=stdout_path))
+
+    assert envelope.work_item_kind.value == "spec"
+    assert envelope.work_item_id == "spec-root-001"
+    assert envelope.terminal_result.value == "REMEDIATION_NEEDED"
+    assert envelope.result_class is ResultClass.FOLLOWUP_NEEDED
+
+
 def test_normalize_classifies_illegal_terminal_result_for_stage(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="builder")
     stdout_path = tmp_path / "runner_stdout.txt"
@@ -163,6 +223,31 @@ def test_normalize_classifies_illegal_terminal_result_for_stage(tmp_path: Path) 
     assert envelope.retryable is True
     assert envelope.metadata["failure_class"] == "illegal_terminal_result"
     assert envelope.metadata["valid_terminal_result"] is False
+
+
+def test_runner_artifacts_surface_request_kind_and_closure_target_identity(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="arbiter", request_kind="closure_target")
+    raw = _raw(request)
+
+    invocation = invocation_artifact_from_request(
+        request=request,
+        runner_name="unit-runner",
+        command=("codex", "exec"),
+        prompt_path=str(tmp_path / "prompt.md"),
+        emitted_at=NOW,
+    )
+    completion = completion_artifact_from_raw_result(
+        request=request,
+        runner_name="unit-runner",
+        raw_result=raw,
+        command=("codex", "exec"),
+        emitted_at=NOW,
+    )
+
+    assert invocation.request_kind == "closure_target"
+    assert invocation.closure_target_root_spec_id == "spec-root-001"
+    assert completion.request_kind == "closure_target"
+    assert completion.closure_target_root_spec_id == "spec-root-001"
 
 
 def test_normalize_classifies_conflicting_terminal_results(tmp_path: Path) -> None:
@@ -398,6 +483,7 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "run_id": "Run ID:",
         "plane": "Plane:",
         "stage": "Stage:",
+        "request_kind": "Request Kind:",
         "mode_id": "Mode ID:",
         "compiled_plan_id": "Compiled Plan ID:",
         "entrypoint_path": "Entrypoint Path:",
@@ -407,10 +493,18 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "active_work_item_kind": "Active Work Item:",
         "active_work_item_id": "Active Work Item:",
         "active_work_item_path": "Active Work Item Path:",
+        "closure_target_path": "Closure Target Path:",
+        "closure_target_root_spec_id": "Closure Target Root Spec ID:",
+        "closure_target_root_idea_id": "Closure Target Root Idea ID:",
+        "canonical_root_spec_path": "Canonical Root Spec Path:",
+        "canonical_seed_idea_path": "Canonical Seed Idea Path:",
         "run_dir": "Run Directory:",
         "summary_status_path": "Summary Status Path:",
         "runtime_snapshot_path": "Runtime Snapshot Path:",
         "recovery_counters_path": "Recovery Counters Path:",
+        "preferred_rubric_path": "Preferred Rubric Path:",
+        "preferred_verdict_path": "Preferred Verdict Path:",
+        "preferred_report_path": "Preferred Report Path:",
         "preferred_troubleshoot_report_path": "Preferred Troubleshoot Report Path:",
         "runtime_error_code": "Runtime Error Code:",
         "runtime_error_report_path": "Runtime Error Report Path:",

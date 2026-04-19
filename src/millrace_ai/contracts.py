@@ -31,6 +31,7 @@ class PlanningStageName(str, Enum):
     MANAGER = "manager"
     MECHANIC = "mechanic"
     AUDITOR = "auditor"
+    ARBITER = "arbiter"
 
 
 StageName = ExecutionStageName | PlanningStageName
@@ -54,6 +55,8 @@ class PlanningTerminalResult(str, Enum):
     MANAGER_COMPLETE = "MANAGER_COMPLETE"
     MECHANIC_COMPLETE = "MECHANIC_COMPLETE"
     AUDITOR_COMPLETE = "AUDITOR_COMPLETE"
+    ARBITER_COMPLETE = "ARBITER_COMPLETE"
+    REMEDIATION_NEEDED = "REMEDIATION_NEEDED"
     BLOCKED = "BLOCKED"
 
 
@@ -173,6 +176,7 @@ _STAGE_TO_PLANE: dict[str, Plane] = {
     PlanningStageName.MANAGER.value: Plane.PLANNING,
     PlanningStageName.MECHANIC.value: Plane.PLANNING,
     PlanningStageName.AUDITOR.value: Plane.PLANNING,
+    PlanningStageName.ARBITER.value: Plane.PLANNING,
 }
 
 
@@ -224,6 +228,11 @@ _STAGE_LEGAL_TERMINAL_RESULTS: dict[str, set[str]] = {
         PlanningTerminalResult.AUDITOR_COMPLETE.value,
         PlanningTerminalResult.BLOCKED.value,
     },
+    PlanningStageName.ARBITER.value: {
+        PlanningTerminalResult.ARBITER_COMPLETE.value,
+        PlanningTerminalResult.REMEDIATION_NEEDED.value,
+        PlanningTerminalResult.BLOCKED.value,
+    },
 }
 
 _SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -248,6 +257,8 @@ class TaskDocument(ContractModel):
     title: str
     summary: str = ""
 
+    root_idea_id: str | None = None
+    root_spec_id: str | None = None
     spec_id: str | None = None
     parent_task_id: str | None = None
     incident_id: str | None = None
@@ -270,6 +281,10 @@ class TaskDocument(ContractModel):
     @model_validator(mode="after")
     def validate_identifier_shape(self) -> "TaskDocument":
         _validate_safe_identifier(self.task_id, field_name="task_id")
+        if self.root_idea_id is not None:
+            _validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.root_spec_id is not None:
+            _validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
         if self.spec_id is not None:
             _validate_safe_identifier(self.spec_id, field_name="spec_id")
         if self.parent_task_id is not None:
@@ -290,6 +305,8 @@ class SpecDocument(ContractModel):
     source_type: Literal["idea", "incident", "manual", "derived_spec"]
     source_id: str | None = None
     parent_spec_id: str | None = None
+    root_idea_id: str | None = None
+    root_spec_id: str | None = None
 
     goals: tuple[str, ...] = Field(min_length=1)
     non_goals: tuple[str, ...] = ()
@@ -313,6 +330,10 @@ class SpecDocument(ContractModel):
     @model_validator(mode="after")
     def validate_identifier_shape(self) -> "SpecDocument":
         _validate_safe_identifier(self.spec_id, field_name="spec_id")
+        if self.root_idea_id is not None:
+            _validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.root_spec_id is not None:
+            _validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
         if self.source_id is not None:
             _validate_safe_identifier(self.source_id, field_name="source_id")
         if self.parent_spec_id is not None:
@@ -328,6 +349,8 @@ class IncidentDocument(ContractModel):
     title: str
     summary: str
 
+    root_idea_id: str | None = None
+    root_spec_id: str | None = None
     source_task_id: str | None = None
     source_spec_id: str | None = None
     source_stage: StageName
@@ -354,12 +377,76 @@ class IncidentDocument(ContractModel):
     @model_validator(mode="after")
     def validate_stage_plane_alignment(self) -> "IncidentDocument":
         _validate_safe_identifier(self.incident_id, field_name="incident_id")
+        if self.root_idea_id is not None:
+            _validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.root_spec_id is not None:
+            _validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
         if self.source_task_id is not None:
             _validate_safe_identifier(self.source_task_id, field_name="source_task_id")
         if self.source_spec_id is not None:
             _validate_safe_identifier(self.source_spec_id, field_name="source_spec_id")
         if _STAGE_TO_PLANE[self.source_stage.value] != self.source_plane:
             raise ValueError("source_stage must belong to source_plane")
+        return self
+
+
+class CompletionBehaviorDefinition(ContractModel):
+    trigger: Literal["backlog_drained"]
+    readiness_rule: Literal["no_open_lineage_work"]
+    stage: StageName
+    request_kind: Literal["closure_target"]
+    target_selector: Literal["active_closure_target"]
+    rubric_policy: Literal["reuse_or_create"]
+    blocked_work_policy: Literal["suppress"]
+    skip_if_already_closed: bool = True
+    on_pass_terminal_result: TerminalResult
+    on_gap_terminal_result: TerminalResult
+    create_incident_on_gap: bool = False
+
+    @model_validator(mode="after")
+    def validate_completion_behavior(self) -> "CompletionBehaviorDefinition":
+        if self.on_pass_terminal_result == self.on_gap_terminal_result:
+            raise ValueError("completion behavior pass/gap results must differ")
+        legal_results = _STAGE_LEGAL_TERMINAL_RESULTS[self.stage.value]
+        if self.on_pass_terminal_result.value not in legal_results:
+            raise ValueError("on_pass_terminal_result is not legal for completion stage")
+        if self.on_gap_terminal_result.value not in legal_results:
+            raise ValueError("on_gap_terminal_result is not legal for completion stage")
+        return self
+
+
+class ClosureTargetState(ContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["closure_target_state"] = "closure_target_state"
+
+    root_spec_id: str
+    root_idea_id: str
+    root_spec_path: str
+    root_idea_path: str
+    rubric_path: str
+    latest_verdict_path: str | None = None
+    latest_report_path: str | None = None
+    closure_open: bool = True
+    closure_blocked_by_lineage_work: bool = False
+    blocking_work_ids: tuple[str, ...] = ()
+    opened_at: datetime
+    closed_at: datetime | None = None
+    last_arbiter_run_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_target_state(self) -> "ClosureTargetState":
+        _validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
+        _validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.last_arbiter_run_id is not None:
+            _validate_safe_identifier(self.last_arbiter_run_id, field_name="last_arbiter_run_id")
+        for work_item_id in self.blocking_work_ids:
+            _validate_safe_identifier(work_item_id, field_name="blocking_work_ids")
+        if self.closed_at is not None and self.closed_at < self.opened_at:
+            raise ValueError("closed_at cannot precede opened_at")
+        if self.closed_at is not None and self.closure_open:
+            raise ValueError("closed closure target cannot remain open")
+        if self.blocking_work_ids and not self.closure_blocked_by_lineage_work:
+            raise ValueError("blocking_work_ids require closure_blocked_by_lineage_work=true")
         return self
 
 
@@ -441,6 +528,8 @@ class StageResultEnvelope(ContractModel):
             PlanningTerminalResult.MANAGER_COMPLETE: ResultClass.SUCCESS,
             PlanningTerminalResult.MECHANIC_COMPLETE: ResultClass.SUCCESS,
             PlanningTerminalResult.AUDITOR_COMPLETE: ResultClass.SUCCESS,
+            PlanningTerminalResult.ARBITER_COMPLETE: ResultClass.SUCCESS,
+            PlanningTerminalResult.REMEDIATION_NEEDED: ResultClass.FOLLOWUP_NEEDED,
         }
         if self.result_class != expected_result_class[self.terminal_result]:
             raise ValueError("result_class does not match terminal_result semantics")
@@ -491,6 +580,7 @@ class LoopConfigDefinition(ContractModel):
     entry_stage: StageName
     edges: tuple[LoopEdgeDefinition, ...]
     terminal_results: tuple[TerminalResult, ...]
+    completion_behavior: CompletionBehaviorDefinition | None = None
 
     @model_validator(mode="after")
     def validate_loop_integrity(self) -> "LoopConfigDefinition":
@@ -525,6 +615,16 @@ class LoopConfigDefinition(ContractModel):
                 if edge.terminal_result.value not in terminal_values:
                     raise ValueError("edge terminal_result must be in terminal_results")
                 has_terminal_path = True
+
+        if self.completion_behavior is not None:
+            if self.completion_behavior.stage.value not in stage_set:
+                raise ValueError("completion_behavior stage must be in stages")
+            if _STAGE_TO_PLANE[self.completion_behavior.stage.value] != self.plane:
+                raise ValueError("completion_behavior stage must belong to loop plane")
+            if self.completion_behavior.on_pass_terminal_result.value not in terminal_values:
+                raise ValueError("completion_behavior on_pass_terminal_result must be in terminal_results")
+            if self.completion_behavior.on_gap_terminal_result.value not in terminal_values:
+                raise ValueError("completion_behavior on_gap_terminal_result must be in terminal_results")
 
         if not has_terminal_path:
             raise ValueError("loop must include at least one terminal edge")
@@ -575,6 +675,7 @@ class FrozenRunPlan(ContractModel):
     execution_loop_id: str
     planning_loop_id: str
     stage_plans: tuple[FrozenStagePlan, ...]
+    completion_behavior: CompletionBehaviorDefinition | None = None
     compiled_at: datetime
     source_refs: tuple[str, ...] = ()
 
@@ -583,6 +684,14 @@ class FrozenRunPlan(ContractModel):
         keys = [(plan.plane.value, plan.stage.value) for plan in self.stage_plans]
         if len(keys) != len(set(keys)):
             raise ValueError("stage_plans must be unique by plane/stage")
+        if self.completion_behavior is not None:
+            stage_keys = {(plan.plane.value, plan.stage.value) for plan in self.stage_plans}
+            behavior_key = (
+                _STAGE_TO_PLANE[self.completion_behavior.stage.value].value,
+                self.completion_behavior.stage.value,
+            )
+            if behavior_key not in stage_keys:
+                raise ValueError("completion_behavior stage must exist in stage_plans")
         return self
 
 
@@ -782,7 +891,9 @@ class RecoveryCounters(ContractModel):
 
 
 __all__ = [
+    "ClosureTargetState",
     "CompileDiagnostics",
+    "CompletionBehaviorDefinition",
     "ExecutionStageName",
     "ExecutionTerminalResult",
     "FrozenRunPlan",

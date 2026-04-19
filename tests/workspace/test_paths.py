@@ -41,6 +41,14 @@ def _expected_directories(root: Path) -> list[Path]:
         runtime_root / "logs",
         runtime_root / "entrypoints",
         runtime_root / "skills",
+        runtime_root / "arbiter",
+        runtime_root / "arbiter" / "contracts",
+        runtime_root / "arbiter" / "contracts" / "ideas",
+        runtime_root / "arbiter" / "contracts" / "root-specs",
+        runtime_root / "arbiter" / "targets",
+        runtime_root / "arbiter" / "rubrics",
+        runtime_root / "arbiter" / "verdicts",
+        runtime_root / "arbiter" / "reports",
     ]
 
 
@@ -68,6 +76,13 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.incidents_resolved_dir == root / "millrace-agents" / "incidents" / "resolved"
     assert paths.execution_loops_dir == root / "millrace-agents" / "loops" / "execution"
     assert paths.planning_loops_dir == root / "millrace-agents" / "loops" / "planning"
+    assert paths.arbiter_dir == root / "millrace-agents" / "arbiter"
+    assert paths.arbiter_idea_contracts_dir == root / "millrace-agents" / "arbiter" / "contracts" / "ideas"
+    assert paths.arbiter_root_spec_contracts_dir == root / "millrace-agents" / "arbiter" / "contracts" / "root-specs"
+    assert paths.arbiter_targets_dir == root / "millrace-agents" / "arbiter" / "targets"
+    assert paths.arbiter_rubrics_dir == root / "millrace-agents" / "arbiter" / "rubrics"
+    assert paths.arbiter_verdicts_dir == root / "millrace-agents" / "arbiter" / "verdicts"
+    assert paths.arbiter_reports_dir == root / "millrace-agents" / "arbiter" / "reports"
     assert paths.outline_file == root / "millrace-agents" / "outline.md"
     assert paths.historylog_file == root / "millrace-agents" / "historylog.md"
     assert paths.execution_status_file == root / "millrace-agents" / "state" / "execution_status.md"

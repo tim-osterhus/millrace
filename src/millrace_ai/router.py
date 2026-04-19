@@ -169,6 +169,33 @@ def next_planning_step(
             reason=f"{source_stage.value}:{terminal_result.value}",
         )
 
+    if source_stage is PlanningStageName.ARBITER:
+        if terminal_result is PlanningTerminalResult.ARBITER_COMPLETE:
+            return RouterDecision(
+                action=RouterAction.IDLE,
+                next_plane=None,
+                next_stage=None,
+                reason="arbiter_complete",
+            )
+        if terminal_result is PlanningTerminalResult.REMEDIATION_NEEDED:
+            return RouterDecision(
+                action=RouterAction.HANDOFF,
+                next_plane=Plane.PLANNING,
+                next_stage=PlanningStageName.AUDITOR,
+                reason="arbiter_remediation_needed",
+                failure_class="arbiter_parity_gap",
+                create_incident=True,
+            )
+        if terminal_result is PlanningTerminalResult.BLOCKED:
+            return _blocked(
+                reason="arbiter_blocked",
+                failure_class=_resolve_failure_class(
+                    snapshot,
+                    stage_result,
+                    default="arbiter_blocked",
+                ),
+            )
+
     if terminal_result is PlanningTerminalResult.MANAGER_COMPLETE:
         return _idle(reason="manager_complete")
 
@@ -388,6 +415,17 @@ def _validate_stage_result_matches_snapshot(
         raise ValueError("stage_result stage does not match runtime snapshot active_stage")
     if snapshot.active_run_id is None or snapshot.active_run_id != stage_result.run_id:
         raise ValueError("stage_result run_id does not match runtime snapshot active_run_id")
+    if stage_result.metadata.get("request_kind") == "closure_target":
+        if snapshot.active_work_item_kind is not None or snapshot.active_work_item_id is not None:
+            raise ValueError("closure_target stage_result cannot use active work item snapshot identity")
+        if stage_result.work_item_kind is not WorkItemKind.SPEC:
+            raise ValueError("closure_target stage_result must normalize onto a spec identity")
+        closure_target_root_spec_id = stage_result.metadata.get("closure_target_root_spec_id")
+        if not isinstance(closure_target_root_spec_id, str) or not closure_target_root_spec_id:
+            raise ValueError("closure_target stage_result requires closure_target_root_spec_id metadata")
+        if closure_target_root_spec_id != stage_result.work_item_id:
+            raise ValueError("closure_target_root_spec_id must match stage_result work_item_id")
+        return
     if snapshot.active_work_item_kind != stage_result.work_item_kind:
         raise ValueError("stage_result work_item_kind does not match runtime snapshot active item")
     if snapshot.active_work_item_id != stage_result.work_item_id:

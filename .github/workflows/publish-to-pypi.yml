@@ -60,8 +60,6 @@ jobs:
           .publish-smoke/bin/millrace run once --workspace "$workspace" > "$RUNNER_TEMP/millrace-run-once-no-work.txt"
           .publish-smoke/bin/millrace status --workspace "$workspace" > "$RUNNER_TEMP/millrace-status.txt"
           cat >> "$workspace/millrace-agents/millrace.toml" <<EOF
-
-          [runners.codex]
           command = "$runner_python"
           args = ["$shim_path"]
           EOF

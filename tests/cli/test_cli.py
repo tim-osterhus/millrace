@@ -14,6 +14,7 @@ from millrace_ai import cli
 from millrace_ai.compiler import CompileOutcome
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
+    ClosureTargetState,
     CompileDiagnostics,
     ExecutionStageName,
     FrozenRunPlan,
@@ -31,6 +32,7 @@ from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.run_inspection import InspectedRunSummary, InspectedStageResult
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
+from millrace_ai.workspace.arbiter_state import save_closure_target_state
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -100,6 +102,8 @@ def _inspected_run_summary(
     status: str = "valid",
     failure_class: str | None = None,
     report_artifact: str | None = "troubleshoot_report.md",
+    request_kind: str | None = None,
+    closure_target_root_spec_id: str | None = None,
 ) -> InspectedRunSummary:
     artifact_paths = tuple(
         path for path in (report_artifact, "runner_stdout.txt") if path is not None
@@ -107,6 +111,8 @@ def _inspected_run_summary(
     stage_result = InspectedStageResult(
         stage_result_path="stage_results/request-001.json",
         stage="checker",
+        request_kind=request_kind,
+        closure_target_root_spec_id=closure_target_root_spec_id,
         terminal_result="CHECKER_PASS",
         result_class="success",
         work_item_kind="task",
@@ -133,6 +139,8 @@ def _inspected_run_summary(
         run_id=run_id,
         run_dir=run_dir or f"/tmp/{run_id}",
         status=status,
+        request_kind=request_kind,
+        closure_target_root_spec_id=closure_target_root_spec_id,
         work_item_kind="task",
         work_item_id="task-001",
         failure_class=failure_class,
@@ -470,6 +478,35 @@ def test_status_surfaces_failure_class_and_retry_counters(tmp_path: Path) -> Non
     assert "consultant_invocations: 1" in result.output
 
 
+def test_status_surfaces_closure_target_state(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path="millrace-agents/arbiter/verdicts/spec-root-001.json",
+            latest_report_path="millrace-agents/arbiter/reports/run-001.md",
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "closure_target_root_spec_id: spec-root-001" in result.output
+    assert "closure_target_open: true" in result.output
+    assert "closure_target_latest_verdict_path: millrace-agents/arbiter/verdicts/spec-root-001.json" in result.output
+    assert "closure_target_latest_report_path: millrace-agents/arbiter/reports/run-001.md" in result.output
+
+
 def test_runs_ls_uses_run_inspection_backend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -516,6 +553,30 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     assert "output_tokens: 12" in result.output
     assert "thinking_tokens: 5" in result.output
     assert "report_artifact: troubleshoot_report.md" in result.output
+
+
+def test_runs_show_surfaces_closure_target_request_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "inspect_run_id",
+        lambda target, run_id: _inspected_run_summary(
+            run_id,
+            request_kind="closure_target",
+            closure_target_root_spec_id="spec-root-001",
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["runs", "show", "run-001", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "request_kind: closure_target" in result.output
+    assert "closure_target_root_spec_id: spec-root-001" in result.output
 
 
 def test_runs_tail_chooses_primary_artifact_by_documented_priority(
@@ -1119,7 +1180,31 @@ def test_compile_show_surfaces_compiled_plan_summary(
                     model_name=None,
                     timeout_seconds=1200,
                 ),
+                FrozenStagePlan(
+                    stage="arbiter",
+                    plane=Plane.PLANNING,
+                    entrypoint_path="entrypoints/planning/arbiter.md",
+                    entrypoint_contract_id="arbiter.v1",
+                    required_skills=("skills/stage/planning/arbiter-core/SKILL.md",),
+                    attached_skill_additions=(),
+                    runner_name="codex_cli",
+                    model_name=None,
+                    timeout_seconds=1200,
+                ),
             ),
+            completion_behavior={
+                "trigger": "backlog_drained",
+                "readiness_rule": "no_open_lineage_work",
+                "stage": "arbiter",
+                "request_kind": "closure_target",
+                "target_selector": "active_closure_target",
+                "rubric_policy": "reuse_or_create",
+                "blocked_work_policy": "suppress",
+                "skip_if_already_closed": True,
+                "on_pass_terminal_result": "ARBITER_COMPLETE",
+                "on_gap_terminal_result": "REMEDIATION_NEEDED",
+                "create_incident_on_gap": True,
+            },
             compiled_at=NOW,
             source_refs=(),
         )
@@ -1139,6 +1224,9 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "stage: execution.builder" in result.output
     assert "required_skills: skills/README.md" in result.output
     assert "attached_skills: skills/execution/builder.md" in result.output
+    assert "completion_behavior.stage: arbiter" in result.output
+    assert "completion_behavior.request_kind: closure_target" in result.output
+    assert "completion_behavior.on_gap_terminal_result: REMEDIATION_NEEDED" in result.output
     assert "role_overlays:" not in result.output
 
 

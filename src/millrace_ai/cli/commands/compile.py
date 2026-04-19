@@ -49,6 +49,32 @@ def compile_show(
         typer.echo(f"compiled_plan_id: {plan.compiled_plan_id}")
         typer.echo(f"execution_loop_id: {plan.execution_loop_id}")
         typer.echo(f"planning_loop_id: {plan.planning_loop_id}")
+        if plan.completion_behavior is not None:
+            typer.echo(f"completion_behavior.trigger: {plan.completion_behavior.trigger}")
+            typer.echo(f"completion_behavior.readiness_rule: {plan.completion_behavior.readiness_rule}")
+            typer.echo(f"completion_behavior.stage: {plan.completion_behavior.stage.value}")
+            typer.echo(f"completion_behavior.request_kind: {plan.completion_behavior.request_kind}")
+            typer.echo(f"completion_behavior.target_selector: {plan.completion_behavior.target_selector}")
+            typer.echo(f"completion_behavior.rubric_policy: {plan.completion_behavior.rubric_policy}")
+            typer.echo(
+                f"completion_behavior.blocked_work_policy: {plan.completion_behavior.blocked_work_policy}"
+            )
+            typer.echo(
+                "completion_behavior.skip_if_already_closed: "
+                f"{'true' if plan.completion_behavior.skip_if_already_closed else 'false'}"
+            )
+            typer.echo(
+                "completion_behavior.on_pass_terminal_result: "
+                f"{plan.completion_behavior.on_pass_terminal_result.value}"
+            )
+            typer.echo(
+                "completion_behavior.on_gap_terminal_result: "
+                f"{plan.completion_behavior.on_gap_terminal_result.value}"
+            )
+            typer.echo(
+                "completion_behavior.create_incident_on_gap: "
+                f"{'true' if plan.completion_behavior.create_incident_on_gap else 'false'}"
+            )
         for stage_plan in sorted(plan.stage_plans, key=lambda item: (item.plane.value, item.stage.value)):
             typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.stage.value}")
             typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")

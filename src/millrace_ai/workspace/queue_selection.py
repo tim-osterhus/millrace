@@ -1,4 +1,4 @@
-"""Deterministic queue selection and claim helpers."""
+"""Deterministic queue selection and lineage-scanning helpers."""
 
 from __future__ import annotations
 
@@ -155,6 +155,61 @@ def _list_markdown_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.glob("*.md") if path.is_file())
 
 
+def list_open_lineage_work_ids(
+    paths: WorkspacePaths,
+    *,
+    root_spec_id: str,
+) -> tuple[str, ...]:
+    seen: set[str] = set()
+    work_item_ids: list[str] = []
+    for directory, model, id_attr in _lineage_scan_specs(paths):
+        for path in _list_markdown_files(directory):
+            try:
+                raw = path.read_text(encoding="utf-8")
+                document: TaskDocument | SpecDocument | IncidentDocument
+                if model is TaskDocument:
+                    document = parse_work_document_as(raw, model=TaskDocument, path=path)
+                elif model is SpecDocument:
+                    document = parse_work_document_as(raw, model=SpecDocument, path=path)
+                else:
+                    document = parse_work_document_as(raw, model=IncidentDocument, path=path)
+            except FileNotFoundError:
+                continue
+            except (ValidationError, ValueError):
+                continue
+            if getattr(document, "root_spec_id", None) != root_spec_id:
+                continue
+            work_item_id = str(getattr(document, id_attr))
+            if work_item_id in seen:
+                continue
+            seen.add(work_item_id)
+            work_item_ids.append(work_item_id)
+    return tuple(work_item_ids)
+
+
+def _lineage_scan_specs(
+    paths: WorkspacePaths,
+) -> tuple[
+    tuple[
+        Path,
+        type[TaskDocument] | type[SpecDocument] | type[IncidentDocument],
+        str,
+    ],
+    ...,
+]:
+    return (
+        (paths.tasks_queue_dir, TaskDocument, "task_id"),
+        (paths.tasks_active_dir, TaskDocument, "task_id"),
+        (paths.tasks_blocked_dir, TaskDocument, "task_id"),
+        (paths.specs_queue_dir, SpecDocument, "spec_id"),
+        (paths.specs_active_dir, SpecDocument, "spec_id"),
+        (paths.specs_blocked_dir, SpecDocument, "spec_id"),
+        (paths.incidents_incoming_dir, IncidentDocument, "incident_id"),
+        (paths.incidents_active_dir, IncidentDocument, "incident_id"),
+        (paths.incidents_blocked_dir, IncidentDocument, "incident_id"),
+    )
+
+
 def _quarantine_invalid_artifact(directory: Path, source_path: Path, error: str) -> None:
     destination = source_path.with_suffix(f"{source_path.suffix}.invalid")
     suffix_index = 1
@@ -182,4 +237,9 @@ def _quarantine_invalid_artifact(directory: Path, source_path: Path, error: str)
         )
 
 
-__all__ = ["QueueClaim", "claim_next_execution_task", "claim_next_planning_item"]
+__all__ = [
+    "QueueClaim",
+    "claim_next_execution_task",
+    "claim_next_planning_item",
+    "list_open_lineage_work_ids",
+]

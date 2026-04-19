@@ -30,6 +30,8 @@ def _task_doc(task_id: str, *, created_at: datetime) -> TaskDocument:
         task_id=task_id,
         title=f"Task {task_id}",
         summary="queue test",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
         target_paths=("millrace/queue_store.py",),
         acceptance=("queue behavior is deterministic",),
         required_checks=("uv run pytest tests/workspace/test_queue_store.py -q",),
@@ -46,6 +48,8 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
         title=f"Spec {spec_id}",
         summary="planning input",
         source_type="manual",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
         goals=("define implementation plan",),
         constraints=("stay deterministic",),
         acceptance=("planning queue works",),
@@ -60,6 +64,8 @@ def _incident_doc(incident_id: str, *, opened_at: datetime) -> IncidentDocument:
         incident_id=incident_id,
         title=f"Incident {incident_id}",
         summary="execution recovery",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
         source_stage=ExecutionStageName.CONSULTANT,
         source_plane=Plane.EXECUTION,
         failure_class="malformed_output",
@@ -95,6 +101,8 @@ def _task_markdown_with_blank_optional_scalars() -> str:
         "Task-ID: queue-task\n"
         "Title: Queue task\n"
         "Summary: queue test\n"
+        "Root-Idea-ID:\n\n"
+        "Root-Spec-ID:\n\n"
         "Spec-ID: spec-001\n"
         "Parent-Task-ID:\n\n"
         "Incident-ID:\n\n"
@@ -157,6 +165,21 @@ def test_work_documents_round_trip_for_task_spec_and_incident() -> None:
         assert parsed == document
 
 
+def test_work_documents_render_root_lineage_fields_when_present() -> None:
+    task = _task_doc("task-lineage", created_at=NOW)
+    spec = _spec_doc("spec-lineage", created_at=NOW)
+    incident = _incident_doc("inc-lineage", opened_at=NOW)
+
+    rendered = (
+        render_work_document(task),
+        render_work_document(spec),
+        render_work_document(incident),
+    )
+
+    assert all("Root-Idea-ID: idea-001" in raw for raw in rendered)
+    assert all("Root-Spec-ID: spec-root-001" in raw for raw in rendered)
+
+
 def test_parse_work_document_as_treats_blank_optional_scalar_fields_as_omitted() -> None:
     document = parse_work_document_as(
         _task_markdown_with_blank_optional_scalars(),
@@ -165,6 +188,8 @@ def test_parse_work_document_as_treats_blank_optional_scalar_fields_as_omitted()
     )
 
     assert document.task_id == "queue-task"
+    assert document.root_idea_id is None
+    assert document.root_spec_id is None
     assert document.spec_id == "spec-001"
     assert document.parent_task_id is None
     assert document.incident_id is None

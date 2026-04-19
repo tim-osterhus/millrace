@@ -462,6 +462,11 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
             PlanningTerminalResult.AUDITOR_COMPLETE.value,
             PlanningTerminalResult.BLOCKED.value,
         },
+        PlanningStageName.ARBITER.value: {
+            PlanningTerminalResult.ARBITER_COMPLETE.value,
+            PlanningTerminalResult.REMEDIATION_NEEDED.value,
+            PlanningTerminalResult.BLOCKED.value,
+        },
     }
 
 
@@ -478,6 +483,7 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
         PlanningStageName.MANAGER.value: "manager-core",
         PlanningStageName.MECHANIC.value: "mechanic-core",
         PlanningStageName.AUDITOR.value: "auditor-core",
+        PlanningStageName.ARBITER.value: "arbiter-core",
     }
 
 
@@ -502,6 +508,7 @@ def _expected_stage_core_skill_paths() -> dict[str, Path]:
         PlanningStageName.MANAGER.value: SKILLS_DIR / "stage" / "planning" / "manager-core" / "SKILL.md",
         PlanningStageName.MECHANIC.value: SKILLS_DIR / "stage" / "planning" / "mechanic-core" / "SKILL.md",
         PlanningStageName.AUDITOR.value: SKILLS_DIR / "stage" / "planning" / "auditor-core" / "SKILL.md",
+        PlanningStageName.ARBITER.value: SKILLS_DIR / "stage" / "planning" / "arbiter-core" / "SKILL.md",
     }
 
 
@@ -566,6 +573,11 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "evidence",
             "assumption",
         ),
+        PlanningStageName.ARBITER.value: (
+            "rubric",
+            "parity",
+            "remediation",
+        ),
     }
 
 
@@ -586,6 +598,7 @@ def test_draft_to_runtime_entrypoint_mapping_complete() -> None:
         runtime_root / "planning" / "manager.md",
         runtime_root / "planning" / "mechanic.md",
         runtime_root / "planning" / "auditor.md",
+        runtime_root / "planning" / "arbiter.md",
     }
     assert mapped_runtime == expected_runtime
 
@@ -763,6 +776,8 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "active_work_item_path" in stage_to_body["planner"]
     assert "active_work_item_path" in stage_to_body["auditor"]
     assert "active_work_item_path" in stage_to_body["consultant"]
+    assert "closure_target_path" in stage_to_body["arbiter"]
+    assert "active_work_item_path" not in stage_to_body["arbiter"]
 
     assert "summary_status_path" in stage_to_body["checker"]
     assert "summary_status_path" in stage_to_body["doublechecker"]
@@ -773,6 +788,8 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "millrace-agents/specs/queue/<SPEC_ID>.md" in stage_to_body["planner"]
     assert "millrace-agents/incidents/incoming/<INCIDENT_ID>.md" in stage_to_body["consultant"]
     assert "millrace-agents/incidents/active/<INCIDENT_ID>.md" in stage_to_body["auditor"]
+    assert "millrace-agents/arbiter/contracts/root-specs/<ROOT_SPEC_ID>.md" in stage_to_body["arbiter"]
+    assert "millrace-agents/arbiter/verdicts/<ROOT_SPEC_ID>.json" in stage_to_body["arbiter"]
 
     shipped_skill_ids = _load_shipped_skill_asset_ids()
     assert "skills-readme" in shipped_skill_ids

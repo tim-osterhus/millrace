@@ -91,7 +91,6 @@ def _configure_codex_smoke_runner(workspace: Path, *, runner_python: Path) -> No
     config_path.write_text(
         config_path.read_text(encoding="utf-8")
         + "\n"
-        + "[runners.codex]\n"
         + f"command = {json.dumps(str(runner_python))}\n"
         + f"args = [{json.dumps(str(CODEX_SMOKE_SHIM))}]\n",
         encoding="utf-8",
@@ -113,6 +112,14 @@ def _exercise_minimum_functionality_workspace(
         str(workspace),
         cwd=cwd,
     )
+    compile_show = _run_cli(
+        command_prefix,
+        "compile",
+        "show",
+        "--workspace",
+        str(workspace),
+        cwd=cwd,
+    )
     no_work_run_once = _run_cli(
         command_prefix,
         "run",
@@ -130,9 +137,11 @@ def _exercise_minimum_functionality_workspace(
     )
 
     assert compile_validate.returncode == 0, compile_validate.stderr or compile_validate.stdout
+    assert compile_show.returncode == 0, compile_show.stderr or compile_show.stdout
     assert no_work_run_once.returncode == 0, no_work_run_once.stderr or no_work_run_once.stdout
     assert status.returncode == 0, status.stderr or status.stdout
     assert (workspace / "millrace-agents" / "millrace.toml").is_file()
+    assert "completion_behavior.stage: arbiter" in compile_show.stdout
     assert "tick_reason: no_work" in no_work_run_once.stdout
     assert "compiled_plan_id:" in status.stdout
 

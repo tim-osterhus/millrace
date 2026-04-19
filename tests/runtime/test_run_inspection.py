@@ -193,3 +193,39 @@ def test_list_runs_keeps_incomplete_and_malformed_runs_visible(tmp_path: Path) -
 
     assert [summary.run_id for summary in summaries] == ["run-a", "run-b"]
     assert [summary.status for summary in summaries] == ["malformed", "valid"]
+
+
+def test_inspect_run_surfaces_closure_target_request_metadata(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-arbiter"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-arbiter",
+        plane="planning",
+        stage="arbiter",
+        work_item_kind="spec",
+        work_item_id="spec-root-001",
+        terminal_result="ARBITER_COMPLETE",
+        result_class="success",
+        summary_status_marker="### ARBITER_COMPLETE",
+        success=True,
+        metadata={
+            "failure_class": None,
+            "request_kind": "closure_target",
+            "closure_target_root_spec_id": "spec-root-001",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.request_kind == "closure_target"
+    assert summary.closure_target_root_spec_id == "spec-root-001"
+    assert summary.stage_results[0].request_kind == "closure_target"
+    assert summary.stage_results[0].closure_target_root_spec_id == "spec-root-001"

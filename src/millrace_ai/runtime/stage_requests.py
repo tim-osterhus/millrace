@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from millrace_ai.contracts import (
+    ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
     FrozenStagePlan,
@@ -39,6 +40,7 @@ def build_stage_run_request(engine: RuntimeEngine, stage_plan: FrozenStagePlan) 
     run_id = engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    runtime_error_fields = build_runtime_error_request_fields(engine)
     request = StageRunRequest(
         request_id=new_request_id(),
         run_id=run_id,
@@ -66,7 +68,56 @@ def build_stage_run_request(engine: RuntimeEngine, stage_plan: FrozenStagePlan) 
         runtime_snapshot_path=str(engine.paths.runtime_snapshot_file),
         recovery_counters_path=str(engine.paths.recovery_counters_file),
         preferred_troubleshoot_report_path=str(run_dir / "troubleshoot_report.md"),
-        **build_runtime_error_request_fields(engine),
+        runtime_error_code=runtime_error_fields["runtime_error_code"],
+        runtime_error_report_path=runtime_error_fields["runtime_error_report_path"],
+        runtime_error_catalog_path=runtime_error_fields["runtime_error_catalog_path"],
+        runner_name=stage_plan.runner_name,
+        model_name=stage_plan.model_name,
+        timeout_seconds=stage_plan.timeout_seconds,
+    )
+    engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
+    save_snapshot(engine.paths, engine.snapshot)
+    return request
+
+
+def build_closure_target_stage_run_request(
+    engine: RuntimeEngine,
+    stage_plan: FrozenStagePlan,
+    target_state: ClosureTargetState,
+) -> StageRunRequest:
+    assert engine.snapshot is not None
+    run_id = engine.snapshot.active_run_id or new_run_id()
+    run_dir = engine.paths.runs_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    request = StageRunRequest(
+        request_id=new_request_id(),
+        run_id=run_id,
+        plane=stage_plan.plane,
+        stage=stage_plan.stage,
+        request_kind="closure_target",
+        mode_id=engine.snapshot.active_mode_id,
+        compiled_plan_id=engine.snapshot.compiled_plan_id,
+        entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
+        entrypoint_contract_id=stage_plan.entrypoint_contract_id,
+        required_skill_paths=tuple(
+            str(engine.paths.runtime_root / path) for path in stage_plan.required_skills
+        ),
+        attached_skill_paths=tuple(
+            str(engine.paths.runtime_root / path) for path in stage_plan.attached_skill_additions
+        ),
+        closure_target_path=str(engine.paths.arbiter_targets_dir / f"{target_state.root_spec_id}.json"),
+        closure_target_root_spec_id=target_state.root_spec_id,
+        closure_target_root_idea_id=target_state.root_idea_id,
+        canonical_root_spec_path=target_state.root_spec_path,
+        canonical_seed_idea_path=target_state.root_idea_path,
+        preferred_rubric_path=target_state.rubric_path,
+        preferred_verdict_path=target_state.latest_verdict_path
+        or str(engine.paths.arbiter_verdicts_dir / f"{target_state.root_spec_id}.json"),
+        preferred_report_path=str(run_dir / "arbiter_report.md"),
+        run_dir=str(run_dir),
+        summary_status_path=str(engine.paths.planning_status_file),
+        runtime_snapshot_path=str(engine.paths.runtime_snapshot_file),
+        recovery_counters_path=str(engine.paths.recovery_counters_file),
         runner_name=stage_plan.runner_name,
         model_name=stage_plan.model_name,
         timeout_seconds=stage_plan.timeout_seconds,
@@ -185,6 +236,7 @@ def now() -> datetime:
 
 __all__ = [
     "active_work_item_path",
+    "build_closure_target_stage_run_request",
     "build_stage_run_request",
     "execution_queue_depth",
     "idle_stage_for_no_work",

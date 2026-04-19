@@ -7,7 +7,8 @@
     "planner",
     "manager",
     "mechanic",
-    "auditor"
+    "auditor",
+    "arbiter"
   ],
   "entry_stage": "planner",
   "edges": [
@@ -52,10 +53,43 @@
       "source_stage": "auditor",
       "on_terminal_result": "BLOCKED",
       "target_stage": "mechanic"
+    },
+    {
+      "source_stage": "arbiter",
+      "on_terminal_result": "ARBITER_COMPLETE",
+      "terminal_result": "ARBITER_COMPLETE",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "arbiter",
+      "on_terminal_result": "REMEDIATION_NEEDED",
+      "terminal_result": "REMEDIATION_NEEDED",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "arbiter",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
     }
   ],
   "terminal_results": [
     "MANAGER_COMPLETE",
+    "ARBITER_COMPLETE",
+    "REMEDIATION_NEEDED",
     "BLOCKED"
-  ]
+  ],
+  "completion_behavior": {
+    "trigger": "backlog_drained",
+    "readiness_rule": "no_open_lineage_work",
+    "stage": "arbiter",
+    "request_kind": "closure_target",
+    "target_selector": "active_closure_target",
+    "rubric_policy": "reuse_or_create",
+    "blocked_work_policy": "suppress",
+    "skip_if_already_closed": true,
+    "on_pass_terminal_result": "ARBITER_COMPLETE",
+    "on_gap_terminal_result": "REMEDIATION_NEEDED",
+    "create_incident_on_gap": true
+  }
 }

@@ -23,6 +23,9 @@ class RunnerInvocationArtifact(_ArtifactModel):
     request_id: str
     run_id: str
     stage: str
+    request_kind: str
+    active_work_item_id: str | None = None
+    closure_target_root_spec_id: str | None = None
     runner_name: str
     model_name: str | None = None
     command: tuple[str, ...]
@@ -37,6 +40,9 @@ class RunnerCompletionArtifact(_ArtifactModel):
     request_id: str
     run_id: str
     stage: str
+    request_kind: str
+    active_work_item_id: str | None = None
+    closure_target_root_spec_id: str | None = None
     runner_name: str
     exit_kind: str
     exit_code: int | None = None
@@ -73,6 +79,9 @@ def invocation_artifact_from_request(
         request_id=request.request_id,
         run_id=request.run_id,
         stage=request.stage.value,
+        request_kind=request.request_kind,
+        active_work_item_id=request.active_work_item_id,
+        closure_target_root_spec_id=request.closure_target_root_spec_id,
         runner_name=runner_name,
         model_name=request.model_name,
         command=command,
@@ -95,6 +104,9 @@ def completion_artifact_from_raw_result(
         request_id=request.request_id,
         run_id=request.run_id,
         stage=request.stage.value,
+        request_kind=request.request_kind,
+        active_work_item_id=request.active_work_item_id,
+        closure_target_root_spec_id=request.closure_target_root_spec_id,
         runner_name=runner_name,
         exit_kind=raw_result.exit_kind,
         exit_code=raw_result.exit_code,

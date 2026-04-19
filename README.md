@@ -30,6 +30,7 @@ Use it when the job needs to:
 
 - survive pauses, crashes, or context loss
 - move through explicit execution or planning stages
+- perform a final compiler-governed parity check before declaring completion
 - preserve durable queue and runtime state on disk
 - route failures into recovery work instead of just exiting
 - leave behind persisted run artifacts that an operator can inspect later
@@ -88,6 +89,7 @@ That flow proves three important things quickly:
 
 - Millrace can bootstrap its workspace contract under `millrace-agents/`
 - the selected mode and loops compile into a frozen plan
+- the shipped `standard_plain` mode freezes completion behavior into that plan
 - the runtime can execute one deterministic tick and report persisted status
 
 ## What Millrace Governs
@@ -97,6 +99,7 @@ includes:
 
 - a compile step that freezes mode and loop assets into a persisted run plan
 - separate execution and planning loops
+- compiler-driven backlog-drain behavior that can dispatch `arbiter`
 - typed stage terminals rather than prose-only handoff semantics
 - file-backed runtime state and queue artifacts under `millrace-agents/`
 - persisted run artifacts for inspection and troubleshooting
@@ -114,6 +117,7 @@ Primary docs:
 
 - `docs/skills/millrace-ops-agent-manual/SKILL.md`
 - `docs/runtime/README.md`
+- `docs/runtime/millrace-arbiter-and-completion-behavior.md`
 - `docs/runtime/millrace-cli-reference.md`
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
 - `docs/runtime/millrace-modes-and-loops.md`

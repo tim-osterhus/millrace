@@ -46,6 +46,11 @@ def test_builtin_loops_load_and_validate() -> None:
     assert planning.plane is Plane.PLANNING
     assert execution.entry_stage.value == "builder"
     assert planning.entry_stage.value == "planner"
+    assert "arbiter" in [stage.value for stage in planning.stages]
+    assert planning.completion_behavior is not None
+    assert planning.completion_behavior.stage.value == "arbiter"
+    assert planning.completion_behavior.on_pass_terminal_result.value == "ARBITER_COMPLETE"
+    assert planning.completion_behavior.on_gap_terminal_result.value == "REMEDIATION_NEEDED"
 
 
 def test_builtin_modes_load_and_validate() -> None:
@@ -54,6 +59,7 @@ def test_builtin_modes_load_and_validate() -> None:
     assert bundle.mode.mode_id == "standard_plain"
     assert bundle.execution_loop.loop_id == "execution.standard"
     assert bundle.planning_loop.loop_id == "planning.standard"
+    assert bundle.planning_loop.completion_behavior is not None
 
 
 def test_shipped_modes_same_graph_rule_returns_plain_baseline_graph() -> None:

@@ -11,6 +11,8 @@ from millrace_ai.state_store import save_snapshot
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
+from . import completion_behavior
+
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
     queue = QueueStore(engine.paths)
@@ -45,6 +47,7 @@ def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
         }
     )
     save_snapshot(engine.paths, engine.snapshot)
+    completion_behavior.maybe_open_closure_target_for_claim(engine, claim)
 
 
 def entry_stage_for_kind(work_item_kind: WorkItemKind) -> StageName:

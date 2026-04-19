@@ -49,6 +49,15 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `millrace-agents/state/compile_diagnostics.json`
 - mailbox envelopes/archives and run-scoped runner artifacts
 
+### Arbiter-owned completion artifacts
+
+- `millrace-agents/arbiter/contracts/ideas/*.md`
+- `millrace-agents/arbiter/contracts/root-specs/*.md`
+- `millrace-agents/arbiter/targets/*.json`
+- `millrace-agents/arbiter/rubrics/*.md`
+- `millrace-agents/arbiter/verdicts/*.json`
+- `millrace-agents/arbiter/reports/*.md`
+
 ## Module Topology
 
 - `src/millrace_ai/workspace/paths.py`: workspace contract + bootstrap (`millrace-agents` root + default `millrace.toml`).
@@ -63,6 +72,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
+- `src/millrace_ai/runtime/completion_behavior.py`: closure-target activation, lineage readiness checks, and compiler-driven backlog-drain dispatch.
 - `src/millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
 - `src/millrace_ai/runtime/result_application.py`: router decisions, counter updates, stage-result persistence, and handoff/blocking side effects.
 - `src/millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
@@ -103,12 +113,13 @@ Per tick:
 3. Consume watcher/poll intake events (including idea normalization to planning specs).
 4. Respect pause/stop control gates.
 5. Claim planning or execution work item.
-6. Execute one stage through the configured runner adapter.
-7. Route result markers and persist snapshot/status/counters/events.
+6. If no claimable work remains, consult frozen `completion_behavior` and activate `arbiter` when an open closure target is eligible.
+7. Execute one stage through the configured runner adapter.
+8. Route result markers and persist snapshot/status/counters/events.
 
 Idle:
 
-- If no claimable work exists, runtime emits `no_work` tick reason and keeps the daemon loop alive unless stop requested.
+- If no claimable work exists and no eligible completion audit exists, runtime emits `no_work` and keeps the daemon loop alive unless stop requested.
 
 Compile notes:
 
@@ -134,7 +145,8 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 ## Entrypoint + Skills Contract
 
 - Entrypoints are plain markdown instruction files under `millrace-agents/entrypoints/<plane>/<stage>.md`.
-- Stage requests include `active_work_item_path`, `run_dir`, and relevant context paths so entrypoints do not invent runtime paths.
+- Work-item stage requests include `active_work_item_path`, `run_dir`, and relevant context paths so entrypoints do not invent runtime paths.
+- Closure-target stage requests such as `arbiter` use `request_kind = closure_target` and pass canonical root-spec and seed-idea paths instead of fabricating an active queue document.
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and one required stage-core skill per stage.
 - Entrypoint advisory sections use `Required Stage-Core Skill` and `Optional Secondary Skills` as the only runtime-shipped advisory pattern.
 - Compile output surfaces stage `required_skills` and `attached_skill_additions` for operator inspection (`millrace compile show`).

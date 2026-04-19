@@ -1,3 +1,14 @@
+---
+asset_type: skill
+asset_id: hybrid-format-reference
+version: 1
+description: Reference notes on the portable versus Millrace-opinionated skill format split.
+advisory_only: true
+capability_type: documentation
+forbidden_claims:
+  - routing
+---
+
 # Hybrid Format
 
 This package supports two shapes:
