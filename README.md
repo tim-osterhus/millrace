@@ -162,6 +162,9 @@ That flow proves four things quickly:
 
 ## Read By Journey
 
+Need the single dense system explainer first?
+Start with `docs/millrace-technical-overview.md`.
+
 ### Start Here
 
 - `docs/runtime/README.md`

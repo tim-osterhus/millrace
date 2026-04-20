@@ -6,6 +6,9 @@ This directory is the maintained technical reference surface for the
 Use this index when you already know you are in Millrace and need authoritative
 runtime behavior, command, compiler, or authoring details.
 
+If you want one top-level synthesis document before drilling into the narrower
+runtime references, start with `../millrace-technical-overview.md`.
+
 ## Maintained Runtime Docs
 
 - `millrace-runtime-architecture.md`: workspace ownership model, artifact model, module topology, and tick lifecycle.
