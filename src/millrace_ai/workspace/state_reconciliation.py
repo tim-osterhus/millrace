@@ -23,11 +23,22 @@ _STALE_ACTIVE_FAILURE_CLASS = "stale_active_ownership"
 _IMPOSSIBLE_STATUS_FAILURE_CLASS = "impossible_status_marker"
 _ORPHANED_COUNTER_FAILURE_CLASS = "stale_recovery_without_active_stage"
 
+_RUNNING_MARKER_BY_STAGE: dict[str, str] = {
+    stage.value: f"### {stage.value.upper()}_RUNNING"
+    for stage in (*ExecutionStageName, *PlanningStageName)
+}
+_EXECUTION_RUNNING_MARKERS = frozenset(
+    _RUNNING_MARKER_BY_STAGE[stage.value] for stage in ExecutionStageName
+)
+_PLANNING_RUNNING_MARKERS = frozenset(
+    _RUNNING_MARKER_BY_STAGE[stage.value] for stage in PlanningStageName
+)
+
 _EXECUTION_STATUS_MARKERS = frozenset(
-    {_IDLE_MARKER, *(f"### {value.value}" for value in ExecutionTerminalResult)}
+    {_IDLE_MARKER, *_EXECUTION_RUNNING_MARKERS, *(f"### {value.value}" for value in ExecutionTerminalResult)}
 )
 _PLANNING_STATUS_MARKERS = frozenset(
-    {_IDLE_MARKER, *(f"### {value.value}" for value in PlanningTerminalResult)}
+    {_IDLE_MARKER, *_PLANNING_RUNNING_MARKERS, *(f"### {value.value}" for value in PlanningTerminalResult)}
 )
 
 _STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
@@ -48,6 +59,9 @@ _STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
     PlanningStageName.MANAGER.value: frozenset({"### MANAGER_COMPLETE", "### BLOCKED"}),
     PlanningStageName.MECHANIC.value: frozenset({"### MECHANIC_COMPLETE", "### BLOCKED"}),
     PlanningStageName.AUDITOR.value: frozenset({"### AUDITOR_COMPLETE", "### BLOCKED"}),
+    PlanningStageName.ARBITER.value: frozenset(
+        {"### ARBITER_COMPLETE", "### REMEDIATION_NEEDED", "### BLOCKED"}
+    ),
 }
 
 _STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {
@@ -75,6 +89,7 @@ _STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {
     PlanningStageName.MANAGER.value: frozenset({"### PLANNER_COMPLETE"}),
     PlanningStageName.MECHANIC.value: _PLANNING_STATUS_MARKERS - {_IDLE_MARKER},
     PlanningStageName.AUDITOR.value: frozenset(),
+    PlanningStageName.ARBITER.value: frozenset(),
 }
 
 
@@ -95,6 +110,10 @@ def normalize_execution_status_marker(marker: str) -> str:
 
 def normalize_planning_status_marker(marker: str) -> str:
     return _validate_marker(marker, _PLANNING_STATUS_MARKERS, label="planning status")
+
+
+def running_status_marker_for_stage(stage: StageName) -> str:
+    return _RUNNING_MARKER_BY_STAGE[stage.value]
 
 
 def collect_reconciliation_signals(
@@ -182,6 +201,8 @@ def _has_impossible_marker_for_active_stage(snapshot: RuntimeSnapshot, marker: s
     inbound = _STAGE_INBOUND_MARKERS[snapshot.active_stage.value]
     if marker == _IDLE_MARKER:
         return False
+    if marker == running_status_marker_for_stage(snapshot.active_stage):
+        return False
     return marker not in allowed and marker not in inbound
 
 
@@ -247,4 +268,5 @@ __all__ = [
     "collect_reconciliation_signals",
     "normalize_execution_status_marker",
     "normalize_planning_status_marker",
+    "running_status_marker_for_stage",
 ]

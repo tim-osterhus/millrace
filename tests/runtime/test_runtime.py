@@ -317,6 +317,33 @@ def test_runtime_stage_request_entrypoint_path_exists_after_startup(tmp_path: Pa
     assert captured_request.active_work_item_path.endswith(".md")
 
 
+def test_runtime_writes_running_status_marker_while_stage_runner_is_active(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+
+    observed_execution_status: str | None = None
+    observed_snapshot_marker: str | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal observed_execution_status, observed_snapshot_marker
+        observed_execution_status = load_execution_status(paths)
+        observed_snapshot_marker = load_snapshot(paths).execution_status_marker
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    engine.tick()
+
+    assert observed_execution_status == "### BUILDER_RUNNING"
+    assert observed_snapshot_marker == "### BUILDER_RUNNING"
+    assert load_execution_status(paths) == "### BUILDER_COMPLETE"
+
+
 def test_runtime_can_build_closure_target_request_without_active_work_item(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
 

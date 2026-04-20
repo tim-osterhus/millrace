@@ -22,6 +22,7 @@ from .state_reconciliation import (
     collect_reconciliation_signals,
     normalize_execution_status_marker,
     normalize_planning_status_marker,
+    running_status_marker_for_stage,
 )
 
 
@@ -197,6 +198,7 @@ __all__ = [
     "reset_forward_progress_counters",
     "save_recovery_counters",
     "save_snapshot",
+    "running_status_marker_for_stage",
     "set_execution_status",
     "set_planning_status",
 ]

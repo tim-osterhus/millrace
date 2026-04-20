@@ -24,6 +24,7 @@ for the shipped mode and loop topology the compiler resolves.
 - A second daemon in the same workspace fails fast.
 - Different workspaces can run independent daemons concurrently.
 - `millrace status watch --workspace <PATH> [--workspace <PATH> ...]` is read-only monitoring and does not acquire ownership locks.
+- `state/execution_status.md` and `state/planning_status.md` reflect the active running stage on their plane while work is executing, then the latest terminal marker or `### IDLE` when no stage is active.
 
 ## Canonical Artifact Model
 

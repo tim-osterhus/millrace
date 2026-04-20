@@ -62,6 +62,9 @@ Explicit subcommand form: `millrace status show`
 
 Prints runtime snapshot and queue depth for one workspace.
 When a failure class is active, status also shows the current failure class plus non-zero retry counters.
+The `execution_status_marker` and `planning_status_marker` fields show the
+currently running stage marker while a stage is executing, then fall back to
+the latest terminal marker or `### IDLE` when no stage is active on that plane.
 
 `millrace status show` is an explicit alias for the same output.
 

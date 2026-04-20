@@ -43,6 +43,7 @@ from millrace_ai.state_store import (
     load_recovery_counters,
     load_snapshot,
     reset_forward_progress_counters,
+    running_status_marker_for_stage,
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
@@ -255,6 +256,7 @@ class RuntimeEngine:
             request = self._build_closure_target_stage_run_request(stage_plan, closure_target)
         else:
             request = self._build_stage_run_request(stage_plan)
+        self._mark_active_stage_running(plane=request.plane, stage=request.stage)
         write_runtime_event(
             self.paths,
             event_type="stage_started",
@@ -671,6 +673,21 @@ class RuntimeEngine:
         save_snapshot(self.paths, self.snapshot)
         set_execution_status(self.paths, IDLE_STATUS_MARKER)
         set_planning_status(self.paths, IDLE_STATUS_MARKER)
+
+    def _mark_active_stage_running(self, *, plane: Plane, stage: StageName) -> None:
+        assert self.snapshot is not None
+        marker = running_status_marker_for_stage(stage)
+        if plane is Plane.EXECUTION:
+            set_execution_status(self.paths, marker)
+            self.snapshot = self.snapshot.model_copy(
+                update={"execution_status_marker": marker, "updated_at": self._now()}
+            )
+        else:
+            set_planning_status(self.paths, marker)
+            self.snapshot = self.snapshot.model_copy(
+                update={"planning_status_marker": marker, "updated_at": self._now()}
+            )
+        save_snapshot(self.paths, self.snapshot)
 
     @staticmethod
     def _mailbox_reason(envelope: MailboxCommandEnvelope, *, default: str) -> str:

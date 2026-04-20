@@ -5,6 +5,7 @@ from __future__ import annotations
 from millrace_ai.workspace.state_reconciliation import (
     ReconciliationSignal,
     collect_reconciliation_signals,
+    running_status_marker_for_stage,
 )
 from millrace_ai.workspace.state_store import (
     increment_troubleshoot_attempt,
@@ -28,6 +29,7 @@ __all__ = [
     "load_recovery_counters",
     "load_snapshot",
     "reset_forward_progress_counters",
+    "running_status_marker_for_stage",
     "save_recovery_counters",
     "save_snapshot",
     "set_execution_status",

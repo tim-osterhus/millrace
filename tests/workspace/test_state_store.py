@@ -23,6 +23,7 @@ from millrace_ai.state_store import (
     collect_reconciliation_signals,
     increment_troubleshoot_attempt,
     load_execution_status,
+    load_planning_status,
     load_recovery_counters,
     load_snapshot,
     reset_forward_progress_counters,
@@ -173,9 +174,10 @@ def test_set_execution_status_enforces_terminal_only_marker_rules(tmp_path: Path
     paths = _bootstrap(tmp_path)
 
     set_execution_status(paths, "### CHECKER_PASS")
+    set_execution_status(paths, "### CHECKER_RUNNING")
 
-    assert load_execution_status(paths) == "### CHECKER_PASS"
-    assert paths.execution_status_file.read_text(encoding="utf-8") == "### CHECKER_PASS\n"
+    assert load_execution_status(paths) == "### CHECKER_RUNNING"
+    assert paths.execution_status_file.read_text(encoding="utf-8") == "### CHECKER_RUNNING\n"
 
     with pytest.raises(WorkspaceStateError, match="single line"):
         set_execution_status(paths, "### CHECKER_PASS\n### FIX_NEEDED")
@@ -186,6 +188,9 @@ def test_set_execution_status_enforces_terminal_only_marker_rules(tmp_path: Path
 
 def test_set_planning_status_rejects_execution_marker(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
+
+    set_planning_status(paths, "### ARBITER_RUNNING")
+    assert load_planning_status(paths) == "### ARBITER_RUNNING"
 
     with pytest.raises(WorkspaceStateError, match="Unknown planning status marker"):
         set_planning_status(paths, "### CHECKER_PASS")
@@ -390,6 +395,34 @@ def test_collect_reconciliation_signals_allows_expected_execution_transition_mar
     assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
 
 
+def test_collect_reconciliation_signals_allows_current_execution_running_marker(
+    tmp_path: Path,
+) -> None:
+    paths = _bootstrap(tmp_path)
+    snapshot = RuntimeSnapshot.model_validate(
+        {
+            **load_snapshot(paths).model_dump(mode="python"),
+            "process_running": True,
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.CHECKER,
+            "active_run_id": "run-001",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    signals = collect_reconciliation_signals(
+        snapshot=snapshot,
+        counters=RecoveryCounters(),
+        execution_status_marker="### CHECKER_RUNNING",
+        planning_status_marker="### IDLE",
+    )
+
+    assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
+
+
 def test_collect_reconciliation_signals_flags_orphaned_recovery_counters(
     tmp_path: Path,
 ) -> None:
@@ -444,6 +477,32 @@ def test_collect_reconciliation_signals_allows_expected_planning_transition_mark
         counters=RecoveryCounters(),
         execution_status_marker="### IDLE",
         planning_status_marker="### PLANNER_COMPLETE",
+    )
+
+    assert all(signal.code != "impossible_planning_status_marker" for signal in signals)
+
+
+def test_collect_reconciliation_signals_allows_current_planning_running_marker(
+    tmp_path: Path,
+) -> None:
+    paths = _bootstrap(tmp_path)
+    snapshot = RuntimeSnapshot.model_validate(
+        {
+            **load_snapshot(paths).model_dump(mode="python"),
+            "process_running": True,
+            "active_plane": Plane.PLANNING,
+            "active_stage": PlanningStageName.ARBITER,
+            "active_run_id": "run-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    signals = collect_reconciliation_signals(
+        snapshot=snapshot,
+        counters=RecoveryCounters(),
+        execution_status_marker="### IDLE",
+        planning_status_marker="### ARBITER_RUNNING",
     )
 
     assert all(signal.code != "impossible_planning_status_marker" for signal in signals)
