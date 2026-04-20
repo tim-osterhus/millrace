@@ -1,26 +1,31 @@
 # Millrace Entrypoint Mapping
 
-This document maps canonical draft entrypoints to packaged runtime assets and deployed workspace paths.
+This document maps the current entrypoint source of truth to the deployed
+workspace paths used at runtime.
 
-## Source -> Package -> Workspace
+Millrace currently authors packaged entrypoints directly under
+`src/millrace_ai/assets/entrypoints/`. This repo does not maintain a separate
+pre-packaging draft tree for entrypoints.
+
+## Packaged Source -> Workspace
 
 ### Execution Plane
 
-- `lab/specs/drafts/entrypoints/execution/builder.md` -> `src/millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
-- `lab/specs/drafts/entrypoints/execution/checker.md` -> `src/millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
-- `lab/specs/drafts/entrypoints/execution/fixer.md` -> `src/millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
-- `lab/specs/drafts/entrypoints/execution/doublechecker.md` -> `src/millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`
-- `lab/specs/drafts/entrypoints/execution/updater.md` -> `src/millrace_ai/assets/entrypoints/execution/updater.md` -> `millrace-agents/entrypoints/execution/updater.md`
-- `lab/specs/drafts/entrypoints/execution/troubleshooter.md` -> `src/millrace_ai/assets/entrypoints/execution/troubleshooter.md` -> `millrace-agents/entrypoints/execution/troubleshooter.md`
-- `lab/specs/drafts/entrypoints/execution/consultant.md` -> `src/millrace_ai/assets/entrypoints/execution/consultant.md` -> `millrace-agents/entrypoints/execution/consultant.md`
+- `src/millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
+- `src/millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
+- `src/millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
+- `src/millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`
+- `src/millrace_ai/assets/entrypoints/execution/updater.md` -> `millrace-agents/entrypoints/execution/updater.md`
+- `src/millrace_ai/assets/entrypoints/execution/troubleshooter.md` -> `millrace-agents/entrypoints/execution/troubleshooter.md`
+- `src/millrace_ai/assets/entrypoints/execution/consultant.md` -> `millrace-agents/entrypoints/execution/consultant.md`
 
 ### Planning Plane
 
-- `lab/specs/drafts/entrypoints/planning/planner.md` -> `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
-- `lab/specs/drafts/entrypoints/planning/manager.md` -> `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
-- `lab/specs/drafts/entrypoints/planning/mechanic.md` -> `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
-- `lab/specs/drafts/entrypoints/planning/auditor.md` -> `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
-- `lab/specs/drafts/entrypoints/planning/arbiter.md` -> `src/millrace_ai/assets/entrypoints/planning/arbiter.md` -> `millrace-agents/entrypoints/planning/arbiter.md`
+- `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
+- `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
+- `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
+- `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
+- `src/millrace_ai/assets/entrypoints/planning/arbiter.md` -> `millrace-agents/entrypoints/planning/arbiter.md`
 
 ## Entrypoint Contract Expectations
 
@@ -44,7 +49,9 @@ This document maps canonical draft entrypoints to packaged runtime assets and de
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and per-stage core skills.
 - Each entrypoint includes `Required Stage-Core Skill`, `Optional Secondary Skills`, and `Suggested Operating Approach` sections.
 - Entrypoints should direct stage agents to consult the skills index first, then load only relevant optional skills.
-- Required stage-core skills and attached skill additions are compile-time surfaces and can be inspected via `millrace compile show`.
+- Required stage-core skills and optional attached skills are compile-time
+  surfaces and can be inspected via `millrace compile show` as
+  `required_skills` and `attached_skills`.
 
 ## Bootstrap Behavior
 

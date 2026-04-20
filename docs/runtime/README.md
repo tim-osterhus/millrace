@@ -15,7 +15,7 @@ runtime behavior, command, compiler, or authoring details.
 - `millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage topology, `terminal_results`, and compile-time stage maps.
 - `millrace-loop-authoring.md`: maintainer rules for changing loop and mode assets without violating compiler and contract boundaries.
 - `millrace-runner-architecture.md`: runner dispatch, adapter contract, artifact model, and Codex adapter behavior.
-- `millrace-entrypoint-mapping.md`: canonical draft-to-packaged-to-deployed entrypoint mapping and skill-only advisory expectations.
+- `millrace-entrypoint-mapping.md`: packaged-source-to-deployed-workspace entrypoint mapping and skill-only advisory expectations.
 - `millrace-runtime-error-codes.md`: runtime-owned post-stage failure codes consumed by repair-oriented stages.
 - `../source-package-map.md`: old-to-new module mapping and intentionally preserved compatibility facades for maintainers.
 

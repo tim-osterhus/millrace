@@ -134,11 +134,14 @@ Each run persists under `millrace-agents/runs/<run-id>/`.
 
 Run directories hold:
 
-- run-scoped compile artifacts
 - `stage_results/*.json`
-- runner invocation/completion artifacts plus per-request Codex event logs where present
+- `runner_prompt.<request_id>.md`
+- `runner_invocation.<request_id>.json`
+- `runner_completion.<request_id>.json`
 - runner stdout/stderr artifacts where present
-- troubleshoot reports when `Troubleshooter` emits one
+- per-request Codex event logs where present
+- stage-authored reports such as `troubleshoot_report.md` or
+  `arbiter_report.md` when emitted
 
 The operator-facing `millrace runs ls/show/tail` commands inspect these persisted artifacts without taking runtime ownership.
 
@@ -149,7 +152,7 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 - Closure-target stage requests such as `arbiter` use `request_kind = closure_target` and pass canonical root-spec and seed-idea paths instead of fabricating an active queue document.
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and one required stage-core skill per stage.
 - Entrypoint advisory sections use `Required Stage-Core Skill` and `Optional Secondary Skills` as the only runtime-shipped advisory pattern.
-- Compile output surfaces stage `required_skills` and `attached_skill_additions` for operator inspection (`millrace compile show`).
+- Compile output surfaces stage `required_skills` and `attached_skills` for operator inspection (`millrace compile show`).
 
 For maintainer authoring rules around loops, stage maps, and advisory-vs-runtime
 ownership, use `docs/runtime/millrace-loop-authoring.md`.

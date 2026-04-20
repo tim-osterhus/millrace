@@ -116,13 +116,16 @@ If you are an agent reading this README, load
 Primary docs:
 
 - `docs/skills/millrace-ops-agent-manual/SKILL.md`
+- `docs/skills/millrace-loop-authoring/SKILL.md`
 - `docs/runtime/README.md`
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
 - `docs/runtime/millrace-cli-reference.md`
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
+- `docs/runtime/millrace-entrypoint-mapping.md`
 - `docs/runtime/millrace-modes-and-loops.md`
 - `docs/runtime/millrace-loop-authoring.md`
 - `docs/runtime/millrace-runner-architecture.md`
+- `docs/runtime/millrace-runtime-architecture.md`
 - `docs/runtime/millrace-runtime-error-codes.md`
 - `docs/source-package-map.md`
 
@@ -160,14 +163,10 @@ uv run --with mypy mypy src/millrace_ai
 
 ## Status
 
-Millrace is close to the `v1.0.0` baseline, but it is still stabilizing its
-public documentation and some surrounding release surfaces. If you depend on a
-specific behavior, pin to a patch version instead of assuming the latest build
-is identical.
-
-The formal `CHANGELOG.md` is staged for the `v1.0.0` cut; until then, the
-changelog format is being prepared outside the package repo so the eventual move
-is mechanical rather than improvised.
+Millrace ships as a maintained pre-1.0 runtime line, with the package, CLI, and
+docs evolving together in this repo. If you depend on exact behavior, pin to a
+patch version and verify against the current docs and CLI output rather than
+assuming every newer build is identical.
 
 ## License
 

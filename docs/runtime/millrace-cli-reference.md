@@ -24,9 +24,11 @@ Module entrypoint: `python -m millrace_ai`
 
 Compatibility aliases remain for top-level operator commands:
 
-- `millrace add-task`, `millrace add-spec`
+- `millrace add-task`, `millrace add-spec`, `millrace add-idea`
 - `millrace pause`, `millrace resume`, `millrace stop`
 - `millrace retry-active`, `millrace clear-stale-state`, `millrace reload-config`
+
+These top-level aliases use the same flags and behavior as their grouped forms.
 
 ## Run Commands
 
@@ -111,13 +113,17 @@ Imports `SpecDocument`. Canonical queue artifacts are markdown (`.md`); JSON is 
 
 Drops idea markdown into planning intake.
 
+Top-level convenience alias:
+
+- `millrace add-idea <idea.md>`
+
 ## Control Commands
 
 - `millrace control pause`
 - `millrace control resume`
 - `millrace control stop`
 - `millrace control retry-active --reason "..."`
-- `millrace control clear-stale-state`
+- `millrace control clear-stale-state --reason "..."`
 - `millrace control reload-config`
 
 Control routing behavior:
@@ -157,6 +163,7 @@ Compiles and prints operator inspectability surface:
 
 - `compiled_plan_id`
 - execution/planning loop IDs
+- frozen `completion_behavior.*` fields when the selected planning loop defines one
 - stage ordering
 - entrypoint path per stage
 - `required_skills`, `attached_skills`
@@ -170,7 +177,7 @@ Entrypoint advisory model:
 
 Lists built-in modes and loop references.
 
-### `millrace modes show --mode MODE_ID`
+### `millrace modes show MODE_ID`
 
 Prints one mode definition summary.
 

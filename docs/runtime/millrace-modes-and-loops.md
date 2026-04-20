@@ -41,6 +41,7 @@ Each loop defines:
 - `entry_stage`
 - `edges`
 - `terminal_results`
+- optional `completion_behavior`
 
 An edge validates as `LoopEdgeDefinition` and contains:
 
@@ -93,22 +94,34 @@ governance loop.
 2. `manager`
 3. `mechanic`
 4. `auditor`
+5. `arbiter`
 
 Its entry stage is `planner`.
 
 Its current `terminal_results` are:
 
 - `MANAGER_COMPLETE`
+- `ARBITER_COMPLETE`
+- `REMEDIATION_NEEDED`
 - `BLOCKED`
 
 In the shipped graph:
 
 - `PLANNER_COMPLETE` moves `planner -> manager`
-- blocked planning routes into `mechanic`
+- blocked `planner` or `manager` work routes into `mechanic`
 - `MECHANIC_COMPLETE` loops back into `planner`
 - `MANAGER_COMPLETE` is the normal planning terminal
-- `auditor` is present in the contract even though the default path does not
-  reach it through the current shipped edges
+- `BLOCKED` is the terminal recovery outcome from `mechanic`
+- `auditor` is present in the loop and routes `AUDITOR_COMPLETE -> planner` or
+  `BLOCKED -> mechanic`
+- `arbiter` is present in the loop and terminates with `ARBITER_COMPLETE`,
+  `REMEDIATION_NEEDED`, or `BLOCKED`
+
+`arbiter` is not part of the normal queued work-item handoff path. In the
+shipped baseline, it is activated through the planning loop's frozen
+`completion_behavior` when backlog drain leaves an eligible closure target.
+Use `docs/runtime/millrace-arbiter-and-completion-behavior.md` for that
+runtime-owned dispatch model.
 
 ## What A Mode Defines
 
