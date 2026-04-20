@@ -126,6 +126,14 @@ Use the shortest truthful workflow that proves the workspace is healthy:
 3. `millrace queue ls --workspace <workspace>`
 4. `millrace run once --workspace <workspace>` when it is safe to tick
 
+When reading `millrace status`, treat `execution_status_marker` and
+`planning_status_marker` as active-stage-aware surfaces:
+
+- while a stage is executing on a plane, the marker shows that plane's current
+  running stage, for example `### CHECKER_RUNNING`
+- when no stage is active on that plane, the marker falls back to the latest
+  terminal marker or `### IDLE`
+
 From there, use:
 
 - `millrace runs ls`
