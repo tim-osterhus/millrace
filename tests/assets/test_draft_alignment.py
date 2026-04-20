@@ -10,8 +10,7 @@ ENTRYPOINT_MAPPING_DOC = RUNTIME_DOCS_DIR / "millrace-entrypoint-mapping.md"
 PACKAGED_ENTRYPOINTS_DIR = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints"
 
 ENTRYPOINT_MAPPING_ROW = re.compile(
-    r"- `(?P<draft>lab/specs/drafts/entrypoints/(?P<plane>execution|planning)/(?P<filename>[^`]+\.md))` -> "
-    r"`(?P<packaged>(?:src/)?millrace_ai/assets/entrypoints/(?P=plane)/(?P=filename))` -> "
+    r"- `(?P<packaged>src/millrace_ai/assets/entrypoints/(?P<plane>execution|planning)/(?P<filename>[^`]+\.md))` -> "
     r"`(?P<deployed>millrace-agents/entrypoints/(?P=plane)/(?P=filename))`"
 )
 INDEX_DOC_ROW = re.compile(r"- `(?P<path>[^`]+\.md)`:")
@@ -28,13 +27,12 @@ def _parse_entrypoint_mapping_rows(doc_text: str) -> list[re.Match[str]]:
     return matches
 
 
-def test_coverage_matrix_lists_every_canonical_draft_with_mappings() -> None:
+def test_coverage_matrix_lists_every_packaged_entrypoint_with_workspace_mapping() -> None:
     mapping_text = _read_required_doc(ENTRYPOINT_MAPPING_DOC)
     mapping_rows = _parse_entrypoint_mapping_rows(mapping_text)
 
     mapped_packaged_paths = {
-        path if path.startswith("src/") else f"src/{path}"
-        for path in (match.group("packaged") for match in mapping_rows)
+        match.group("packaged") for match in mapping_rows
     }
     packaged_paths = {
         str(path.relative_to(REPO_ROOT))
@@ -59,7 +57,7 @@ def test_open_decision_gates_are_explicit_and_source_linked() -> None:
         assert candidate.is_file(), f"Runtime docs index references missing doc: {relative_doc}"
 
 
-def test_referenced_draft_filenames_exist_on_disk() -> None:
+def test_runtime_docs_do_not_reference_pending_workspace_specs() -> None:
     docs_text = "\n".join(
         (
             _read_required_doc(DOC_INDEX),

@@ -18,8 +18,7 @@ from millrace_ai.entrypoints import LintLevel, lint_asset_manifests, parse_markd
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT_MAPPING_DOC = REPO_ROOT / "docs" / "runtime" / "millrace-entrypoint-mapping.md"
 ENTRYPOINT_MAPPING_ROW = re.compile(
-    r"- `lab/specs/drafts/entrypoints/(?:execution|planning)/[^`]+\.md` -> "
-    r"`(?P<runtime>(?:src/)?millrace_ai/assets/entrypoints/(?:execution|planning)/[^`]+\.md)` -> "
+    r"- `(?P<runtime>src/millrace_ai/assets/entrypoints/(?:execution|planning)/[^`]+\.md)` -> "
     r"`millrace-agents/entrypoints/(?:execution|planning)/[^`]+\.md`"
 )
 LEGACY_ENTRYPOINT_TOKENS = (
@@ -404,13 +403,9 @@ def test_policy_lint_flags_unnegated_escalate_phrase(tmp_path: Path) -> None:
 
 def _load_runtime_entrypoint_paths_from_docs() -> list[Path]:
     doc_text = ENTRYPOINT_MAPPING_DOC.read_text(encoding="utf-8")
-    runtime_paths = ENTRYPOINT_MAPPING_ROW.findall(doc_text)
+    runtime_paths = [match.group("runtime") for match in ENTRYPOINT_MAPPING_ROW.finditer(doc_text)]
     assert runtime_paths, "Entrypoint mapping doc must include runtime asset paths"
-    normalized_paths = [
-        relative_path if relative_path.startswith("src/") else f"src/{relative_path}"
-        for relative_path in runtime_paths
-    ]
-    return [REPO_ROOT / relative_path for relative_path in normalized_paths]
+    return [REPO_ROOT / relative_path for relative_path in runtime_paths]
 
 
 def _expected_stage_result_sets() -> dict[str, set[str]]:
@@ -581,7 +576,7 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
     }
 
 
-def test_draft_to_runtime_entrypoint_mapping_complete() -> None:
+def test_packaged_to_runtime_entrypoint_mapping_complete() -> None:
     runtime_paths = _load_runtime_entrypoint_paths_from_docs()
     mapped_runtime = set(runtime_paths)
 
