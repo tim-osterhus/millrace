@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tim-osterhus/millrace.svg)](LICENSE)
 
-![Millrace signal mark](docs/assets/svg/readme-hero-mark.svg)
+![Millrace signal mark](docs/assets/images/millrace-icon-signal-transparent.png)
 
 ## Other agents win sprints. Millrace wins marathons.
 
@@ -23,18 +23,84 @@ state, recovery paths, and closure behavior around that work.
 
 ## Runtime Lifecycle
 
-![Millrace runtime lifecycle](docs/assets/svg/readme-runtime-lifecycle.svg)
+```mermaid
+flowchart TD
+    A["Bootstrap workspace contract"] --> B["Load config"]
+    B --> C["Acquire workspace lock"]
+    C --> D["Build watcher session"]
+    D --> E["Compile active mode and loops into frozen plan"]
+    E --> F["Load snapshot and recovery counters"]
+    F --> G["Reconcile stale or impossible state"]
+    G --> H["Persist running snapshot"]
+    H --> I{"Deterministic tick loop"}
+
+    I --> J["Drain mailbox commands"]
+    J --> K["Consume watcher events"]
+    K --> L["Refresh queue depths and reconcile"]
+    L --> M{"Active stage already running?"}
+
+    M -- yes --> RA["Build stage request"]
+    M -- no --> N{"Claim next work item"}
+
+    N -- planning incident --> O["auditor"]
+    N -- planning spec --> P["planner"]
+    N -- execution task --> Q["builder"]
+    N -- nothing claimable --> R{"Completion behavior eligible?"}
+
+    O --> SA["Apply result and route terminal"]
+    P --> T{"PLANNER_COMPLETE?"}
+    T -- yes --> U["manager"]
+    T -- blocked --> V["mechanic"]
+    U --> SA
+    V --> SA
+
+    Q --> W{"BUILDER_COMPLETE?"}
+    W -- yes --> X["checker"]
+    W -- blocked --> Y["troubleshooter"]
+    X --> Z{"CHECKER_PASS or FIX_NEEDED or BLOCKED"}
+    Z -- pass --> AA["updater"]
+    Z -- fix needed --> AB["fixer"]
+    Z -- blocked --> Y
+    AB --> AC["doublechecker"]
+    AC --> AD{"DOUBLECHECK_PASS or FIX_NEEDED or BLOCKED"}
+    AD -- pass --> AA
+    AD -- fix needed --> AB
+    AD -- blocked --> Y
+    Y --> AE{"Recovered?"}
+    AE -- yes --> Q
+    AE -- no --> AF["consultant"]
+    AF --> AG{"CONSULT_COMPLETE or NEEDS_PLANNING or BLOCKED"}
+    AG -- complete --> Y
+    AG -- needs planning --> SA
+    AG -- blocked --> SA
+    AA --> SA
+
+    R -- yes --> AH["arbiter closure_target run"]
+    R -- no --> AI["Idle: no work"]
+    AH --> AJ{"ARBITER_COMPLETE or REMEDIATION_NEEDED or BLOCKED"}
+    AJ -- complete --> SA
+    AJ -- remediation --> AK["Enqueue planning incident"]
+    AK --> SA
+    AJ -- blocked --> SA
+
+    RA --> SA
+    SA --> I
+    AI --> I
+```
 
 Millrace does not try to replace raw harness reasoning with a thicker prompt.
 It wraps long-horizon work in a real runtime:
 
-- intake lands work into a durable `millrace-agents/` workspace contract
-- compile freezes the active mode and loop assets into a persisted run plan
-- stage runs progress through explicit planning, execution, QA, and closure
-  boundaries instead of one continuous chat
-- recovery stages keep failures inside the workflow rather than just exiting
-- backlog drain routes into Arbiter, which decides whether the product really
-  clears or needs remediation
+- compile happens at startup and again only on explicit config reload, not on
+  every intake event
+- planning and execution are not concurrent lanes; they are two claim domains
+  inside one deterministic scheduler
+- `manager` and `updater` return the runtime to an idle or claim boundary
+  rather than directly handing off to the next stage family
+- recovery stages keep failures inside the workflow instead of treating blocked
+  results as the end of the road
+- Arbiter is not the last box in a straight-line pipeline; it activates only
+  when the scheduler finds no lineage work left and closure behavior is ready
 
 The shipped core already includes separate planning and execution loops, typed
 terminal results, compiler-governed completion behavior, and persisted run
