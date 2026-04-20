@@ -9,163 +9,110 @@ default runtime configuration:
 
 The README embeds a simplified version. This file keeps the fuller chart that
 tracks startup, scheduling, result application, recovery routing, and Arbiter
-activation more faithfully. It is rendered as `stateDiagram-v2` to keep the
-full state machine denser than the README view.
+activation more faithfully.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> BootstrapWorkspace
+    direction LR
+    [*] --> Startup
 
-    state "Bootstrap workspace contract" as BootstrapWorkspace
-    state "Load runtime config" as LoadConfig
-    state "Acquire workspace lock" as AcquireLock
-    state "Build watcher session" as BuildWatcher
-    state "Compile active mode and loops into a frozen plan" as CompilePlan
-    state "Load snapshot and recovery counters" as LoadSnapshot
-    state "Reconcile stale or impossible state" as ReconcileStartup
-    state "Persist running snapshot and startup events" as PersistStartup
+    state "Startup and compile" as Startup
+    state "Tick intake and control" as IntakeControl
+    state "Scheduler and activation gate" as Scheduler
+    state "Planning loop" as PlanningLoop
+    state "Execution loop" as ExecutionLoop
+    state "Arbiter closure pass" as ArbiterLoop
+    state "Runtime applies result" as ApplyResult
+    state "Persist snapshot, status,\ncounters, and events" as PersistTick
+    state "Stop runtime,\nrelease lock, and exit" as StopRuntime
 
-    state "Drain mailbox commands" as DrainMailbox
-    state "Config reload requested?" as ConfigReloadCheck <<choice>>
-    state "Rebuild watcher session and recompile frozen plan" as RebuildWatcherAndRecompile
-    state "Consume watcher events and normalize ideas inbox into queued specs" as ConsumeWatcher
-    state "Refresh queue depths" as RefreshQueue1
-    state "Stop requested?" as StopCheck <<choice>>
-    state "Paused?" as PauseCheck <<choice>>
-    state "Idle with paused outcome" as IdlePaused
-    state "Run reconciliation" as ReconcileTick
-    state "Refresh queue depths again" as RefreshQueue2
-    state "Active stage already set?" as ActiveStageCheck <<choice>>
-    state "Claim next work item\nincident -> spec -> task precedence" as ClaimWork <<choice>>
-    state "Claimed spec is root spec with lineage?" as RootSpecCheck <<choice>>
-    state "Open closure target and snapshot idea/root-spec contracts" as OpenClosureTarget
-    state "Completion behavior eligible?" as CompletionEligible <<choice>>
-    state "Active state invalid?" as InvalidActiveCheck <<choice>>
-    state "Clear stale active state" as ClearStaleActive
-    state "Active stage now set?" as FinalActiveCheck <<choice>>
-    state "Idle with no_work outcome" as IdleNoWork
-    state "Build stage request from active stage" as BuildStageRequest
-    state "Persist snapshot, status, counters, and events" as PersistTick
-    state "Reset idle state, release lock, and stop runtime" as StopRuntime
-
-    state "auditor" as Auditor
-    state "planner" as Planner
-    state "manager" as Manager
-    state "mechanic" as Mechanic
-    state "Runtime applies planning result\nnormalize, persist, route, update state" as ApplyPlanningResult
-
-    state "builder" as Builder
-    state "checker" as Checker
-    state "fixer" as Fixer
-    state "doublechecker" as Doublechecker
-    state "troubleshooter" as Troubleshooter
-    state "consultant" as Consultant
-    state "updater" as Updater
-    state "Runtime applies execution result\nnormalize, persist, route, update state" as ApplyExecutionResult
-
-    state "arbiter\nrequest_kind = closure_target" as Arbiter
-    state "Runtime applies Arbiter result\npersist verdict paths, update target state, route next action" as ApplyArbiterResult
-
-    BootstrapWorkspace --> LoadConfig
-    LoadConfig --> AcquireLock
-    AcquireLock --> BuildWatcher
-    BuildWatcher --> CompilePlan
-    CompilePlan --> LoadSnapshot
-    LoadSnapshot --> ReconcileStartup
-    ReconcileStartup --> PersistStartup
-    PersistStartup --> DrainMailbox
-
-    DrainMailbox --> ConfigReloadCheck
-    ConfigReloadCheck --> RebuildWatcherAndRecompile: yes
-    ConfigReloadCheck --> ConsumeWatcher: no
-    RebuildWatcherAndRecompile --> ConsumeWatcher
-    ConsumeWatcher --> RefreshQueue1
-    RefreshQueue1 --> StopCheck
-    StopCheck --> StopRuntime: stop requested
-    StopCheck --> PauseCheck: continue
-    PauseCheck --> IdlePaused: paused
-    PauseCheck --> ReconcileTick: running
-    IdlePaused --> PersistTick
-    ReconcileTick --> RefreshQueue2
-    RefreshQueue2 --> ActiveStageCheck
-    ActiveStageCheck --> BuildStageRequest: yes
-    ActiveStageCheck --> ClaimWork: no
-
-    ClaimWork --> Auditor: planning incident
-    ClaimWork --> RootSpecCheck: planning spec
-    ClaimWork --> Builder: execution task
-    ClaimWork --> CompletionEligible: nothing claimable
-
-    RootSpecCheck --> OpenClosureTarget: root spec with lineage
-    RootSpecCheck --> Planner: no closure target open
-    OpenClosureTarget --> Planner
-
-    CompletionEligible --> Arbiter: yes
-    CompletionEligible --> InvalidActiveCheck: no
-    InvalidActiveCheck --> ClearStaleActive: yes
-    InvalidActiveCheck --> FinalActiveCheck: no
-    ClearStaleActive --> FinalActiveCheck
-    FinalActiveCheck --> BuildStageRequest: yes
-    FinalActiveCheck --> IdleNoWork: no
-    IdleNoWork --> PersistTick
-
-    BuildStageRequest --> Auditor: active = auditor
-    BuildStageRequest --> Planner: active = planner
-    BuildStageRequest --> Manager: active = manager
-    BuildStageRequest --> Mechanic: active = mechanic
-    BuildStageRequest --> Builder: active = builder
-    BuildStageRequest --> Checker: active = checker
-    BuildStageRequest --> Fixer: active = fixer
-    BuildStageRequest --> Doublechecker: active = doublechecker
-    BuildStageRequest --> Troubleshooter: active = troubleshooter
-    BuildStageRequest --> Consultant: active = consultant
-    BuildStageRequest --> Updater: active = updater
-    BuildStageRequest --> Arbiter: active = arbiter
-
-    Auditor --> ApplyPlanningResult
-    Planner --> ApplyPlanningResult
-    Manager --> ApplyPlanningResult
-    Mechanic --> ApplyPlanningResult
-
-    ApplyPlanningResult --> PersistTick: AUDITOR_COMPLETE / set active = planner
-    ApplyPlanningResult --> PersistTick: PLANNER_COMPLETE / set active = manager
-    ApplyPlanningResult --> PersistTick: MANAGER_COMPLETE / clear active and return to idle boundary
-    ApplyPlanningResult --> PersistTick: MECHANIC_COMPLETE / resume metadata stage (default planner)
-    ApplyPlanningResult --> PersistTick: blocked planning / set active = mechanic if attempts remain
-    ApplyPlanningResult --> PersistTick: blocked planning / clear active and persist blocked planning state when exhausted
-
-    Builder --> ApplyExecutionResult
-    Checker --> ApplyExecutionResult
-    Fixer --> ApplyExecutionResult
-    Doublechecker --> ApplyExecutionResult
-    Troubleshooter --> ApplyExecutionResult
-    Consultant --> ApplyExecutionResult
-    Updater --> ApplyExecutionResult
-
-    ApplyExecutionResult --> PersistTick: BUILDER_COMPLETE / set active = checker
-    ApplyExecutionResult --> PersistTick: CHECKER_PASS / set active = updater
-    ApplyExecutionResult --> PersistTick: CHECKER FIX_NEEDED / set active = fixer if budget remains
-    ApplyExecutionResult --> PersistTick: CHECKER FIX_NEEDED / route recovery when fix budget is exhausted
-    ApplyExecutionResult --> PersistTick: FIXER_COMPLETE / set active = doublechecker
-    ApplyExecutionResult --> PersistTick: DOUBLECHECK_PASS / set active = updater
-    ApplyExecutionResult --> PersistTick: DOUBLECHECK FIX_NEEDED / set active = fixer if budget remains
-    ApplyExecutionResult --> PersistTick: DOUBLECHECK FIX_NEEDED / route recovery when fix budget is exhausted
-    ApplyExecutionResult --> PersistTick: UPDATE_COMPLETE / clear active and return to idle boundary
-    ApplyExecutionResult --> PersistTick: blocked execution / set active = troubleshooter if attempts remain
-    ApplyExecutionResult --> PersistTick: blocked execution / set active = consultant when recovery is exhausted
-    ApplyExecutionResult --> PersistTick: TROUBLESHOOT_COMPLETE / resume metadata stage (default builder)
-    ApplyExecutionResult --> PersistTick: CONSULT_COMPLETE / resume metadata stage (default troubleshooter)
-    ApplyExecutionResult --> PersistTick: CONSULT NEEDS_PLANNING / enqueue planning incident and clear active
-    ApplyExecutionResult --> PersistTick: CONSULT BLOCKED / clear active and persist blocked execution state
-
-    Arbiter --> ApplyArbiterResult
-    ApplyArbiterResult --> PersistTick: ARBITER_COMPLETE / close target and clear active
-    ApplyArbiterResult --> PersistTick: REMEDIATION_NEEDED / keep target open and enqueue planning incident
-    ApplyArbiterResult --> PersistTick: BLOCKED / keep target open and persist blocked planning state
-
-    PersistTick --> DrainMailbox
+    Startup --> IntakeControl
+    IntakeControl --> Scheduler
+    Scheduler --> PlanningLoop: planning incident or spec
+    Scheduler --> ExecutionLoop: execution task
+    Scheduler --> ArbiterLoop: closure_target activation
+    Scheduler --> PersistTick: paused or no_work
+    Scheduler --> StopRuntime: stop requested
+    PlanningLoop --> ApplyResult
+    ExecutionLoop --> ApplyResult
+    ArbiterLoop --> ApplyResult
+    ApplyResult --> PersistTick
+    PersistTick --> IntakeControl
     StopRuntime --> [*]
 ```
+
+## State Detail
+
+### Startup and compile
+
+1. Bootstrap workspace contract.
+2. Load runtime config.
+3. Acquire workspace lock.
+4. Build watcher session.
+5. Compile active mode and loops into a frozen plan.
+6. Load snapshot and recovery counters.
+7. Reconcile stale or impossible state.
+8. Persist running snapshot and startup events.
+
+### Tick intake and control
+
+- Drain mailbox commands first on every tick.
+- Explicit config reload is what recompiles the frozen plan.
+- Consume watcher events and normalize ideas into queued specs.
+- Refresh queue depths, run stop and pause checks, then reconcile.
+- Refresh queue depths again before claim or activation.
+
+### Scheduler and activation gate
+
+- Exactly one stage runs per tick at most.
+- Active stages can bypass fresh claim and go straight to request build.
+- Planning claim precedence is incident -> spec -> task.
+- Root-spec claim opens the closure target and snapshots contracts.
+- Arbiter activates only when no lineage work remains and closure is ready.
+- Invalid active state is cleared before the runtime settles on `no_work`.
+
+### Planning loop
+
+- Incident claim activates `auditor`.
+- Spec claim activates `planner`.
+- `AUDITOR_COMPLETE` routes to `planner`.
+- `PLANNER_COMPLETE` routes to `manager`.
+- Blocked planning routes into `mechanic` while attempts remain.
+- `MECHANIC_COMPLETE` resumes the metadata target, default `planner`.
+- `MANAGER_COMPLETE` returns to the idle or claim boundary.
+- Exhausted mechanic attempts persist blocked planning state.
+
+### Execution loop
+
+- Task claim activates `builder`.
+- `BUILDER_COMPLETE` routes to `checker`.
+- `CHECKER_PASS` routes to `updater`.
+- `FIX_NEEDED` routes to `fixer` while fix budget remains, else recovery.
+- `FIXER_COMPLETE` routes to `doublechecker`.
+- `DOUBLECHECK_PASS` routes to `updater`.
+- Blocked execution routes into `troubleshooter`, then `consultant`.
+- `TROUBLESHOOT_COMPLETE` resumes the metadata target, default `builder`.
+- `CONSULT_COMPLETE` resumes the metadata target, default `troubleshooter`.
+- `CONSULT NEEDS_PLANNING` enqueues a planning incident and clears active.
+- `UPDATE_COMPLETE` returns to the idle or claim boundary.
+- `CONSULT BLOCKED` persists blocked execution state.
+
+### Arbiter closure pass
+
+- `request_kind = closure_target`.
+- Arbiter is a completion-behavior activation path, not queue work.
+- `ARBITER_COMPLETE` closes the target and clears active.
+- `REMEDIATION_NEEDED` keeps the target open and enqueues planning work.
+- `BLOCKED` keeps the target open and persists blocked planning state.
+
+### Runtime applies result
+
+- Normalize and persist the stage result.
+- Write stage-result artifacts.
+- Route terminal status.
+- Mark tasks, specs, or incidents done or blocked.
+- Update recovery counters and closure-target state.
+- The runtime, not the stage, owns authoritative state mutation.
 
 Key invariants preserved by this chart:
 
