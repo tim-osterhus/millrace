@@ -16,8 +16,8 @@ def _bootstrap(tmp_path: Path):
 
 
 def test_resolve_watcher_mode_degrades_to_poll_when_watchdog_unavailable() -> None:
-    disabled = RuntimeConfig()
-    enabled = RuntimeConfig(watchers={"enabled": True})
+    disabled = RuntimeConfig(watchers={"enabled": False})
+    enabled = RuntimeConfig()
 
     assert resolve_watcher_mode(disabled, watchdog_available=False) is WatcherMode.OFF
     assert resolve_watcher_mode(enabled, watchdog_available=False) is WatcherMode.POLL

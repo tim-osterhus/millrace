@@ -51,6 +51,13 @@ def test_runtime_config_defaults_codex_permissions_to_maximum() -> None:
     assert RuntimeConfig().runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
 
 
+def test_runtime_config_enables_watchers_and_seeded_idea_intake_by_default() -> None:
+    config = RuntimeConfig()
+
+    assert config.watchers.enabled is True
+    assert config.watchers.watch_ideas_inbox is True
+
+
 def test_runtime_config_rejects_unknown_stage_name() -> None:
     with pytest.raises(ValidationError, match="unknown stage"):
         RuntimeConfig(stages={"unknown_stage": StageConfig()})
@@ -175,7 +182,7 @@ def test_recompile_boundary_helpers_surface_recompile_keys() -> None:
     current = RuntimeConfig()
     candidate_payload = current.model_dump(mode="python")
     candidate_payload["runtime"]["default_mode"] = "role_augmented"
-    candidate_payload["watchers"]["enabled"] = True
+    candidate_payload["watchers"]["enabled"] = False
     candidate_payload["stages"]["builder"] = {
         "runner": "codex",
         "model": "gpt-5",

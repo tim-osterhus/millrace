@@ -72,7 +72,7 @@ class RecoverySection(ConfigModel):
 
 
 class WatchersSection(ConfigModel):
-    enabled: bool = False
+    enabled: bool = True
     debounce_ms: int = Field(default=250, gt=0)
     watch_ideas_inbox: bool = True
     watch_specs_queue: bool = True
