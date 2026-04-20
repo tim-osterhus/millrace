@@ -35,6 +35,7 @@ Turn rough inputs into explicit, testable planning work. This skill keeps planni
 
 - Prefer pass-through when the active planning input is already concrete enough for downstream decomposition.
 - When refinement is needed, prefer refining the active artifact in place over emitting vanity child specs.
+- Preserve root lineage ids when refining or emitting specs; root lineage is contract data, not optional prose.
 - Stay grounded in evidence instead of inventing certainty.
 - Split only when justified.
 - Keep an anti research-theater posture; reading more is only useful when it changes the plan.

@@ -64,11 +64,12 @@ Required format:
      `Goals:`
      `- first goal`
 4. Use canonical labels exactly:
-   - scalars: `Spec-ID`, `Title`, `Summary`, `Source-Type`, `Source-ID`, `Parent-Spec-ID`, `Created-At`, `Created-By`, `Updated-At`
+   - scalars: `Spec-ID`, `Title`, `Summary`, `Source-Type`, `Source-ID`, `Parent-Spec-ID`, `Root-Idea-ID`, `Root-Spec-ID`, `Created-At`, `Created-By`, `Updated-At`
    - lists: `Goals`, `Non-Goals`, `Scope`, `Constraints`, `Assumptions`, `Risks`, `Target-Paths`, `Entrypoints`, `Required-Skills`, `Decomposition-Hints`, `Acceptance`, `References`
 5. Source mapping rules:
    - If the active planning item is a spec, emitted child specs should use `Source-Type: derived_spec` and set `Source-ID` to the active spec id.
    - If the active planning item is an incident, use `Source-Type: incident` and set `Source-ID` to the active incident id.
+   - Preserve or repair the active root lineage ids on every refined or emitted spec. Root specs must carry both `Root-Idea-ID` and `Root-Spec-ID`; child specs must copy them from the active planning item instead of inventing new lineage.
 6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
 
 Template (adapt values):
@@ -82,6 +83,8 @@ Summary: One-paragraph summary.
 Source-Type: derived_spec
 Source-ID: active-spec-id
 Parent-Spec-ID: active-spec-id
+Root-Idea-ID: idea-root-001
+Root-Spec-ID: spec-root-001
 Created-At: 2026-04-16T14:00:00Z
 Created-By: planner
 Updated-At: 2026-04-16T14:00:00Z

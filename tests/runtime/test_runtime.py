@@ -1233,6 +1233,31 @@ def test_runtime_normalize_idea_watch_event_ignores_read_errors(
     assert not any(paths.specs_queue_dir.glob("idea-*.md"))
 
 
+def test_runtime_normalize_idea_watch_event_writes_root_lineage_fields(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    idea_path = paths.root / "ideas" / "inbox" / "seed-idea.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text("# Seed Idea\n\nPreserve root lineage from watcher input.\n", encoding="utf-8")
+
+    engine._normalize_idea_watch_event(idea_path)
+
+    queued_specs = sorted(paths.specs_queue_dir.glob("idea-*.md"))
+    assert len(queued_specs) == 1
+
+    spec_path = queued_specs[0]
+    spec_text = spec_path.read_text(encoding="utf-8")
+
+    assert f"Root-Idea-ID: {spec_path.stem}" in spec_text
+    assert f"Root-Spec-ID: {spec_path.stem}" in spec_text
+
+
 def test_runtime_tick_handles_active_stage_without_work_item_identity(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
 

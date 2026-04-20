@@ -13,11 +13,13 @@ from millrace_ai.contracts import (
     TaskDocument,
 )
 from millrace_ai.errors import WorkspaceStateError
+from millrace_ai.events import read_runtime_events
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.completion_behavior import maybe_activate_completion_stage
+from millrace_ai.state_store import load_planning_status, load_snapshot
 from millrace_ai.workspace.arbiter_state import (
     load_closure_target_state,
     save_closure_target_state,
@@ -214,3 +216,115 @@ def test_maybe_activate_completion_stage_sets_snapshot_to_arbiter_when_target_is
     assert engine.snapshot.active_run_id is not None
     assert engine.snapshot.active_work_item_kind is None
     assert engine.snapshot.active_work_item_id is None
+
+
+def test_maybe_activate_completion_stage_backfills_open_target_from_done_root_spec(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    idea_path = paths.root / "ideas" / "inbox" / "idea-001.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text("# Idea 001\n\nBackfill closure target from root spec.\n", encoding="utf-8")
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(
+        _root_spec_doc(
+            "spec-root-001",
+            root_idea_id="idea-001",
+            created_at=NOW,
+            idea_reference="ideas/inbox/idea-001.md",
+        )
+    )
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+    assert not (paths.arbiter_targets_dir / "spec-root-001.json").exists()
+
+    queue.mark_spec_done("spec-root-001")
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+
+    assert activated is not None
+    assert target.root_spec_id == "spec-root-001"
+    assert target.closure_open is True
+    assert engine.snapshot is not None
+    assert engine.snapshot.active_stage is PlanningStageName.ARBITER
+
+
+def test_maybe_activate_completion_stage_blocks_when_root_spec_missing_lineage(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    idea_path = paths.root / "ideas" / "inbox" / "idea-001.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text("# Idea 001\n\nMissing root lineage should block closure.\n", encoding="utf-8")
+
+    root_spec = _root_spec_doc(
+        "spec-root-001",
+        root_idea_id="idea-001",
+        created_at=NOW,
+        idea_reference="ideas/inbox/idea-001.md",
+    ).model_copy(update={"root_idea_id": None, "root_spec_id": None})
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(root_spec)
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    queue.mark_spec_done("spec-root-001")
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    snapshot = load_snapshot(paths)
+    events = read_runtime_events(paths)
+
+    assert activated is None
+    assert load_planning_status(paths) == "### BLOCKED"
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "missing_root_lineage"
+    assert any(
+        event.event_type == "completion_behavior_blocked"
+        and event.data.get("reason") == "missing_root_lineage"
+        and event.data.get("spec_id") == "spec-root-001"
+        for event in events
+    )
+
+
+def test_maybe_activate_completion_stage_uses_task_spec_id_as_root_lineage_fallback(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+
+    queue = QueueStore(paths)
+    queue.enqueue_task(
+        _task_doc(
+            "task-001",
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            created_at=NOW,
+        ).model_copy(
+            update={
+                "root_spec_id": None,
+                "root_idea_id": None,
+                "spec_id": "spec-root-001",
+            }
+        )
+    )
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+
+    assert activated is None
+    assert target.closure_blocked_by_lineage_work is True
+    assert target.blocking_work_ids == ("task-001",)

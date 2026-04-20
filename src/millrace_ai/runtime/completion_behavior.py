@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import ClosureTargetState, CompletionBehaviorDefinition, FrozenStagePlan, SpecDocument, WorkItemKind
 from millrace_ai.errors import WorkspaceStateError
+from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueClaim
-from millrace_ai.state_store import save_snapshot
+from millrace_ai.state_store import save_snapshot, set_planning_status
 from millrace_ai.workspace.arbiter_state import (
     list_open_closure_target_states,
     load_closure_target_state,
@@ -31,46 +32,7 @@ def maybe_open_closure_target_for_claim(
         return None
 
     spec = _load_spec_document(claim.path)
-    if spec.root_spec_id is None or spec.root_idea_id is None:
-        return None
-    if spec.spec_id != spec.root_spec_id:
-        return None
-
-    existing_target = _existing_target_state(engine, root_spec_id=spec.root_spec_id)
-    if existing_target is not None and existing_target.closure_open:
-        return existing_target
-
-    open_targets = list_open_closure_target_states(engine.paths)
-    if open_targets:
-        raise WorkspaceStateError("cannot open closure target while another open closure target exists")
-
-    idea_markdown = _load_root_idea_markdown(engine, spec)
-    root_spec_markdown = claim.path.read_text(encoding="utf-8")
-    idea_contract = write_canonical_idea_contract(
-        engine.paths,
-        root_idea_id=spec.root_idea_id,
-        markdown=idea_markdown,
-    )
-    root_spec_contract = write_canonical_root_spec_contract(
-        engine.paths,
-        root_spec_id=spec.root_spec_id,
-        markdown=root_spec_markdown,
-    )
-    target = ClosureTargetState(
-        root_spec_id=spec.root_spec_id,
-        root_idea_id=spec.root_idea_id,
-        root_spec_path=_workspace_relative_path(engine, root_spec_contract),
-        root_idea_path=_workspace_relative_path(engine, idea_contract),
-        rubric_path=f"millrace-agents/arbiter/rubrics/{spec.root_spec_id}.md",
-        latest_verdict_path=None,
-        latest_report_path=None,
-        closure_open=True,
-        closure_blocked_by_lineage_work=False,
-        blocking_work_ids=(),
-        opened_at=engine._now(),
-    )
-    save_closure_target_state(engine.paths, target)
-    return target
+    return _open_closure_target_for_spec(engine, spec_path=claim.path, spec=spec)
 
 
 def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState | None:
@@ -81,7 +43,9 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
 
     target = active_closure_target(engine)
     if target is None:
-        return None
+        target = _recover_or_diagnose_missing_closure_target(engine)
+        if target is None:
+            return None
     if completion_behavior.skip_if_already_closed and not target.closure_open:
         return None
 
@@ -138,6 +102,41 @@ def _completion_behavior_for(engine: RuntimeEngine) -> CompletionBehaviorDefinit
     return engine.compiled_plan.completion_behavior
 
 
+def _recover_or_diagnose_missing_closure_target(
+    engine: RuntimeEngine,
+) -> ClosureTargetState | None:
+    candidate = _latest_root_spec_candidate(engine)
+    if candidate is None:
+        return None
+
+    spec_path, spec = candidate
+    if spec.root_spec_id is None or spec.root_idea_id is None:
+        _mark_completion_behavior_blocked(
+            engine,
+            failure_class="missing_root_lineage",
+            spec_id=spec.spec_id,
+            spec_path=spec_path,
+        )
+        return None
+
+    existing_target = _existing_target_state(engine, root_spec_id=spec.root_spec_id)
+    if existing_target is not None:
+        return existing_target if existing_target.closure_open else None
+
+    target = _open_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
+    if target is not None:
+        write_runtime_event(
+            engine.paths,
+            event_type="completion_behavior_target_backfilled",
+            data={
+                "root_spec_id": target.root_spec_id,
+                "root_idea_id": target.root_idea_id,
+                "spec_path": str(spec_path.relative_to(engine.paths.root)),
+            },
+        )
+    return target
+
+
 def _completion_stage_plan(
     engine: RuntimeEngine,
     completion_behavior: CompletionBehaviorDefinition,
@@ -158,12 +157,97 @@ def _existing_target_state(engine: RuntimeEngine, *, root_spec_id: str) -> Closu
         return None
 
 
+def _open_closure_target_for_spec(
+    engine: RuntimeEngine,
+    *,
+    spec_path: Path,
+    spec: SpecDocument,
+) -> ClosureTargetState | None:
+    if spec.root_spec_id is None or spec.root_idea_id is None:
+        return None
+    if spec.spec_id != spec.root_spec_id:
+        return None
+
+    existing_target = _existing_target_state(engine, root_spec_id=spec.root_spec_id)
+    if existing_target is not None:
+        return existing_target
+
+    open_targets = list_open_closure_target_states(engine.paths)
+    if open_targets:
+        raise WorkspaceStateError("cannot open closure target while another open closure target exists")
+
+    idea_markdown = _load_root_idea_markdown(engine, spec)
+    root_spec_markdown = spec_path.read_text(encoding="utf-8")
+    idea_contract = write_canonical_idea_contract(
+        engine.paths,
+        root_idea_id=spec.root_idea_id,
+        markdown=idea_markdown,
+    )
+    root_spec_contract = write_canonical_root_spec_contract(
+        engine.paths,
+        root_spec_id=spec.root_spec_id,
+        markdown=root_spec_markdown,
+    )
+    target = ClosureTargetState(
+        root_spec_id=spec.root_spec_id,
+        root_idea_id=spec.root_idea_id,
+        root_spec_path=_workspace_relative_path(engine, root_spec_contract),
+        root_idea_path=_workspace_relative_path(engine, idea_contract),
+        rubric_path=f"millrace-agents/arbiter/rubrics/{spec.root_spec_id}.md",
+        latest_verdict_path=None,
+        latest_report_path=None,
+        closure_open=True,
+        closure_blocked_by_lineage_work=False,
+        blocking_work_ids=(),
+        opened_at=engine._now(),
+    )
+    save_closure_target_state(engine.paths, target)
+    return target
+
+
 def _load_spec_document(path: Path) -> SpecDocument:
     return parse_work_document_as(
         path.read_text(encoding="utf-8"),
         model=SpecDocument,
         path=path,
     )
+
+
+def _latest_root_spec_candidate(engine: RuntimeEngine) -> tuple[Path, SpecDocument] | None:
+    candidates: list[tuple[SpecDocument, Path]] = []
+    for directory in (
+        engine.paths.specs_active_dir,
+        engine.paths.specs_done_dir,
+        engine.paths.specs_queue_dir,
+        engine.paths.specs_blocked_dir,
+    ):
+        for path in sorted(directory.glob("*.md")):
+            try:
+                spec = _load_spec_document(path)
+            except (FileNotFoundError, ValueError):
+                continue
+            if not _is_root_spec_candidate(spec):
+                continue
+            candidates.append((spec, path))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0].created_at, item[0].spec_id), reverse=True)
+    spec, path = candidates[0]
+    return path, spec
+
+
+def _is_root_spec_candidate(spec: SpecDocument) -> bool:
+    if spec.root_spec_id is not None and spec.spec_id == spec.root_spec_id:
+        return True
+    return spec.source_type in {"idea", "manual"} and not _has_parent_spec(spec)
+
+
+def _has_parent_spec(spec: SpecDocument) -> bool:
+    if spec.parent_spec_id is None:
+        return False
+    return spec.parent_spec_id.strip().lower() != "none"
 
 
 def _load_root_idea_markdown(engine: RuntimeEngine, spec: SpecDocument) -> str:
@@ -200,6 +284,40 @@ def _resolve_reference_path(engine: RuntimeEngine, reference: str) -> Path:
 
 def _workspace_relative_path(engine: RuntimeEngine, path: Path) -> str:
     return str(path.relative_to(engine.paths.root))
+
+
+def _mark_completion_behavior_blocked(
+    engine: RuntimeEngine,
+    *,
+    failure_class: str,
+    spec_id: str,
+    spec_path: Path,
+) -> None:
+    assert engine.snapshot is not None
+    if (
+        engine.snapshot.planning_status_marker == "### BLOCKED"
+        and engine.snapshot.current_failure_class == failure_class
+    ):
+        return
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "planning_status_marker": "### BLOCKED",
+            "current_failure_class": failure_class,
+            "updated_at": engine._now(),
+        }
+    )
+    save_snapshot(engine.paths, engine.snapshot)
+    set_planning_status(engine.paths, "### BLOCKED")
+    write_runtime_event(
+        engine.paths,
+        event_type="completion_behavior_blocked",
+        data={
+            "reason": failure_class,
+            "spec_id": spec_id,
+            "spec_path": str(spec_path.relative_to(engine.paths.root)),
+        },
+    )
 
 
 __all__ = [

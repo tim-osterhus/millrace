@@ -99,6 +99,8 @@ def normalize_idea_watch_event(engine: RuntimeEngine, idea_path: Path) -> None:
         summary=summary,
         source_type="idea",
         source_id=spec_id,
+        root_idea_id=spec_id,
+        root_spec_id=spec_id,
         goals=(summary,),
         constraints=("generated from ideas/inbox watcher event",),
         acceptance=("planner processes this idea-derived spec",),

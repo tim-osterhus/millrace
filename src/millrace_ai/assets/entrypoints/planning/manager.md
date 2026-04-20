@@ -51,10 +51,11 @@ Required format:
      `Target-Paths:`
      `- e2e/pipeline/result.md`
 5. Use canonical labels exactly:
-   - scalars: `Task-ID`, `Title`, `Summary`, `Spec-ID`, `Parent-Task-ID`, `Incident-ID`, `Status-Hint`, `Created-At`, `Created-By`, `Updated-At`
+   - scalars: `Task-ID`, `Title`, `Summary`, `Root-Idea-ID`, `Root-Spec-ID`, `Spec-ID`, `Parent-Task-ID`, `Incident-ID`, `Status-Hint`, `Created-At`, `Created-By`, `Updated-At`
    - lists: `Depends-On`, `Blocks`, `Tags`, `Target-Paths`, `Acceptance`, `Required-Checks`, `References`, `Risk`
 6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
 7. `Status-Hint` must be one of exactly: `queued`, `active`, `blocked`, `done` (use `queued` for newly emitted manager tasks). Do **not** use `queue`.
+8. Copy the active spec's root lineage ids onto every emitted task. Every manager task must preserve `Root-Idea-ID` and `Root-Spec-ID` from the active spec instead of dropping them.
 
 Template (adapt values):
 
@@ -64,6 +65,8 @@ Template (adapt values):
 Task-ID: example-task-id
 Title: Example Task Title
 Summary: Short execution summary.
+Root-Idea-ID: idea-root-001
+Root-Spec-ID: spec-root-001
 Spec-ID: active-spec-id
 Status-Hint: queued
 Created-At: 2026-04-16T14:03:00Z

@@ -220,6 +220,31 @@ def test_task_lifecycle_claim_done_blocked_is_deterministic(tmp_path: Path) -> N
     assert (paths.tasks_blocked_dir / "task-002.md").is_file()
 
 
+def test_claim_next_execution_task_skips_unmet_dependencies_and_claims_oldest_eligible(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+
+    dependent = _task_doc("task-dependent", created_at=NOW).model_copy(
+        update={"depends_on": ("task-prereq",)}
+    )
+    prerequisite = _task_doc("task-prereq", created_at=NOW + timedelta(seconds=1))
+
+    store.enqueue_task(dependent)
+    store.enqueue_task(prerequisite)
+
+    first = store.claim_next_execution_task()
+    assert first is not None
+    assert first.work_item_id == "task-prereq"
+
+    store.mark_task_done("task-prereq")
+
+    second = store.claim_next_execution_task()
+    assert second is not None
+    assert second.work_item_id == "task-dependent"
+
+
 def test_planning_lifecycle_incidents_then_specs_with_done_and_blocked(tmp_path: Path) -> None:
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
     store = QueueStore(paths)

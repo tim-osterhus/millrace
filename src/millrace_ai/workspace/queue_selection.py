@@ -36,7 +36,7 @@ def claim_next_execution_task(paths: WorkspacePaths) -> QueueClaim | None:
         return None
 
     while True:
-        candidate = _select_oldest_task(paths.tasks_queue_dir)
+        candidate = _select_oldest_eligible_task(paths)
         if candidate is None:
             return None
 
@@ -92,6 +92,41 @@ def _select_oldest_task(directory: Path) -> tuple[str, Path] | None:
         id_attr="task_id",
         timestamp_attr="created_at",
     )
+
+
+def _select_oldest_eligible_task(paths: WorkspacePaths) -> tuple[str, Path] | None:
+    completed_task_ids = {path.stem for path in _list_markdown_files(paths.tasks_done_dir)}
+    candidates: list[tuple[datetime, str, Path]] = []
+    for path in _list_markdown_files(paths.tasks_queue_dir):
+        try:
+            document = parse_work_document_as(
+                path.read_text(encoding="utf-8"),
+                model=TaskDocument,
+                path=path,
+            )
+        except FileNotFoundError:
+            continue
+        except (ValidationError, ValueError) as exc:
+            _quarantine_invalid_artifact(paths.tasks_queue_dir, path, str(exc))
+            continue
+        task_id = document.task_id
+        if path.stem != task_id:
+            _quarantine_invalid_artifact(
+                paths.tasks_queue_dir,
+                path,
+                f"filename stem does not match task_id: expected {task_id}, found {path.stem}",
+            )
+            continue
+        if not _task_dependencies_satisfied(document, completed_task_ids):
+            continue
+        candidates.append((document.created_at, task_id, path))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    _timestamp, task_id, path = candidates[0]
+    return task_id, path
 
 
 def _select_oldest_spec(directory: Path) -> tuple[str, Path] | None:
@@ -155,6 +190,10 @@ def _list_markdown_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.glob("*.md") if path.is_file())
 
 
+def _task_dependencies_satisfied(task: TaskDocument, completed_task_ids: set[str]) -> bool:
+    return all(dependency in completed_task_ids for dependency in task.depends_on)
+
+
 def list_open_lineage_work_ids(
     paths: WorkspacePaths,
     *,
@@ -177,7 +216,7 @@ def list_open_lineage_work_ids(
                 continue
             except (ValidationError, ValueError):
                 continue
-            if getattr(document, "root_spec_id", None) != root_spec_id:
+            if _effective_root_spec_id(document) != root_spec_id:
                 continue
             work_item_id = str(getattr(document, id_attr))
             if work_item_id in seen:
@@ -185,6 +224,20 @@ def list_open_lineage_work_ids(
             seen.add(work_item_id)
             work_item_ids.append(work_item_id)
     return tuple(work_item_ids)
+
+
+def _effective_root_spec_id(
+    document: TaskDocument | SpecDocument | IncidentDocument,
+) -> str | None:
+    if document.root_spec_id is not None:
+        return document.root_spec_id
+    if isinstance(document, TaskDocument):
+        return document.spec_id
+    if isinstance(document, IncidentDocument):
+        return document.source_spec_id
+    if document.source_type in {"idea", "manual"}:
+        return document.spec_id
+    return None
 
 
 def _lineage_scan_specs(

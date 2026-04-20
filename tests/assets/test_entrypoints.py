@@ -846,6 +846,48 @@ def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> 
         assert "runtime_error_catalog_path" in body
 
 
+def test_planner_and_manager_assets_require_root_lineage_preservation() -> None:
+    planner_body = (
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "planner.md"
+    ).read_text(encoding="utf-8")
+    manager_body = (
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "manager.md"
+    ).read_text(encoding="utf-8")
+    planner_skill = (
+        REPO_ROOT
+        / "src"
+        / "millrace_ai"
+        / "assets"
+        / "skills"
+        / "stage"
+        / "planning"
+        / "planner-core"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    manager_skill = (
+        REPO_ROOT
+        / "src"
+        / "millrace_ai"
+        / "assets"
+        / "skills"
+        / "stage"
+        / "planning"
+        / "manager-core"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Root-Idea-ID" in planner_body
+    assert "Root-Spec-ID" in planner_body
+    assert "preserve or repair the active root lineage ids" in planner_body.lower()
+
+    assert "Root-Idea-ID" in manager_body
+    assert "Root-Spec-ID" in manager_body
+    assert "copy the active spec's root lineage ids onto every emitted task" in manager_body.lower()
+
+    assert "preserve root lineage ids" in planner_skill.lower()
+    assert "preserve root lineage ids on every emitted task" in manager_skill.lower()
+
+
 def test_troubleshooter_assets_treat_runtime_prompt_contract_mismatches_as_locally_repairable() -> None:
     troubleshooter_body = (
         REPO_ROOT

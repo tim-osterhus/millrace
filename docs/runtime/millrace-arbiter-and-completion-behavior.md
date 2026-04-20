@@ -19,6 +19,10 @@ Those fields live on canonical task, spec, and incident markdown documents. The
 immediate provenance fields still exist, but Arbiter uses root lineage so it
 does not guess which spec family it is judging after remediation churn.
 
+Watcher-seeded root specs are expected to initialize both fields immediately,
+and Planner/Manager are expected to preserve them when refining specs or
+emitting tasks.
+
 ## Canonical Contract Sources
 
 Arbiter judges against canonical copies under its own workspace subtree:
@@ -64,11 +68,15 @@ Runtime behavior is:
 2. claim execution work if available
 3. if no claimable work remains, inspect the frozen completion behavior
 4. locate the single open closure target
-5. scan queued, active, and blocked work for matching `root_spec_id`
-6. suppress Arbiter if lineage work still remains
-7. dispatch Arbiter when the target is eligible
+5. if no open target exists, try to backfill one from the latest root spec that
+   already carries root-lineage ids
+6. scan queued, active, and blocked work for matching `root_spec_id`
+7. suppress Arbiter if lineage work still remains
+8. dispatch Arbiter when the target is eligible
 
-If no open target exists, the runtime simply idles.
+If no open target exists and the latest root spec is still missing root-lineage
+metadata, the runtime marks planning blocked and emits a diagnosable runtime
+event instead of silently idling through required closure behavior.
 
 ## Arbiter Request Contract
 
