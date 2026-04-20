@@ -41,6 +41,7 @@ Before expectations are written:
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
+- when the task needs a broader final-state or end-to-end audit than normal narrow contract verification, load `marathon-qa-audit` from the skills index
 - after that, choose up to two additional relevant skills from the index
 - do not spend tokens on irrelevant skills
 
@@ -50,6 +51,7 @@ Before expectations are written:
 
 ## Optional Secondary Skills
 
+- `marathon-qa-audit`: shipped shared deep-audit skill for broader final-state or end-to-end QA when narrow contract verification is not enough
 - `playwright-ui-verification` (deferred; not shipped in runtime assets) when deterministic UI verification is required
 - `frontend-review` (deferred; not shipped in runtime assets) when the task is frontend-heavy and design correctness matters
 - `codebase-audit-doc` (deferred; not shipped in runtime assets) when the task requires deeper audit-style review beyond normal QA
@@ -58,6 +60,7 @@ Before expectations are written:
 ## Suggested Operating Approach
 
 - Let `checker-core` drive expectations-first validation and concrete findings.
+- Load `marathon-qa-audit` only when the task genuinely needs a broader final-state or end-to-end audit than a normal narrow contract check.
 - Pull optional secondary skills only when they sharpen the verification signal.
 
 ## Workflow
@@ -92,6 +95,7 @@ After expectations exist:
 3. Reproduce claimed verification where possible.
 4. Compare reality against the expectations artifact and active task contract.
 5. Prefer concrete failures over vague criticism.
+6. If the task needs a broader final-state or end-to-end audit, use `marathon-qa-audit` to widen the pass deliberately instead of drifting into unfocused review.
 
 ### Phase 4: write findings
 

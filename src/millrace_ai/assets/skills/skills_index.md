@@ -63,6 +63,7 @@ Usage contract:
 | Skill | Description | Tags | Path | Status |
 | --- | --- | --- | --- | --- |
 | `millrace-skill-creator` | Shipped package for authoring new skill assets in the same hybrid format used by runtime skills. | `documentation`, `authoring` | `skills/millrace-skill-creator/SKILL.md` | shipped |
+| `marathon-qa-audit` | Shared deep-audit method for broad end-to-end QA, first-run closure audits, and evidence-depth handling. | `verification`, `audit` | `skills/shared/marathon-qa-audit/SKILL.md` | shipped |
 | `skills-readme` | Runtime skill-pack rules and constraints. | `documentation`, `runtime` | `skills/README.md` | shipped |
 | `small-diff-discipline` | Keep implementation changes narrow and auditable. | `implementation`, `scope` | `deferred/small-diff-discipline.md` | deferred (not shipped) |
 | `historylog-entry-high-signal` | Write concise, evidence-first history entries. | `reporting`, `evidence` | `deferred/historylog-entry-high-signal.md` | deferred (not shipped) |

@@ -46,6 +46,8 @@ HYBRID_SKILL_SECTION_TITLES = [
 SKILLS_DIR = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills"
 CREATOR_PACKAGE_PATH = SKILLS_DIR / "millrace-skill-creator"
 CREATOR_SKILL_PATH = CREATOR_PACKAGE_PATH / "SKILL.md"
+MARATHON_QA_PACKAGE_PATH = SKILLS_DIR / "shared" / "marathon-qa-audit"
+MARATHON_QA_SKILL_PATH = MARATHON_QA_PACKAGE_PATH / "SKILL.md"
 STAGE_CORE_FORBIDDEN_CLAIMS = {
     "queue_selection",
     "routing",
@@ -708,7 +710,12 @@ def test_runtime_skills_index_stub_has_minimal_shape() -> None:
     assert creator_asset.manifest["asset_id"] == "millrace-skill-creator"
     assert "skills-readme" in text
     assert "skills/README.md" in text
+    assert "marathon-qa-audit" in text
+    assert "skills/shared/marathon-qa-audit/SKILL.md" in text
+    assert MARATHON_QA_PACKAGE_PATH.is_dir()
+    assert MARATHON_QA_SKILL_PATH.is_file()
     assert "Stage-Core Skills" in text
+    assert "Shared And Deferred Skills" in text
     assert "deferred" in text.lower()
 
 
@@ -744,11 +751,38 @@ def test_runtime_skills_readme_describes_creator_package_and_selection_contract(
     assert "deferred" in body.lower()
     assert "millrace-skill-creator" in body
     assert "skills/stage/<plane>/<stage>-core/SKILL.md" in body
+    assert "skills/shared/<skill-id>/SKILL.md" in body
+    assert "marathon-qa-audit" in body
     assert CREATOR_PACKAGE_PATH.is_dir()
     assert CREATOR_SKILL_PATH.is_file()
     creator_asset = parse_markdown_asset(CREATOR_SKILL_PATH)
     assert creator_asset.manifest["asset_id"] == "millrace-skill-creator"
     assert creator_asset.manifest["asset_type"] == "skill"
+
+
+def test_runtime_shared_marathon_qa_skill_is_shipped_with_honest_audit_guidance() -> None:
+    asset = parse_markdown_asset(MARATHON_QA_SKILL_PATH)
+    body = asset.body
+
+    assert asset.manifest["asset_type"] == "skill"
+    assert asset.manifest["asset_id"] == "marathon-qa-audit"
+    assert asset.manifest["advisory_only"] is True
+    assert asset.manifest["capability_type"] == "verification"
+    assert asset.manifest["recommended_for_stages"] == ["checker", "arbiter"]
+    assert set(asset.manifest["forbidden_claims"]) == STAGE_CORE_FORBIDDEN_CLAIMS
+
+    headings = _extract_h2_headings(body)
+    assert "Purpose" in headings
+    assert "Quick Start" in headings
+    assert "Audit Modes" in headings
+    assert "Evidence-Depth Ladder" in headings
+    assert "Decision Rules" in headings
+    assert "Verification Pattern" in headings
+    assert "full-band" in body.lower()
+    assert "reduced evidence quality" in body.lower()
+    assert "affirmative failure evidence" in body.lower()
+    assert "checker" in body.lower()
+    assert "arbiter" in body.lower()
 
 
 def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
@@ -773,8 +807,13 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "active_work_item_path" in stage_to_body["consultant"]
     assert "closure_target_path" in stage_to_body["arbiter"]
     assert "active_work_item_path" not in stage_to_body["arbiter"]
+    assert "marathon-qa-audit" in stage_to_body["arbiter"]
+    assert "if no rubric exists yet" in stage_to_body["arbiter"].lower()
+    assert "full-band audit" in stage_to_body["arbiter"].lower()
 
     assert "summary_status_path" in stage_to_body["checker"]
+    assert "marathon-qa-audit" in stage_to_body["checker"]
+    assert "broader final-state or end-to-end audit" in stage_to_body["checker"].lower()
     assert "summary_status_path" in stage_to_body["doublechecker"]
     assert "summary_status_path" in stage_to_body["updater"]
     assert "run_dir/builder_summary.md" in stage_to_body["builder"]

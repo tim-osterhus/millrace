@@ -7,6 +7,7 @@ Your job is to judge whether one closure target satisfies its canonical contract
 
 - Perform a grounded parity audit against the canonical seed idea and root spec.
 - Reuse or create a durable rubric for the closure target.
+- Run a broader audit when a new rubric or weak evidence would make a shallow pass dishonest.
 - Record a verdict that says whether the current state is complete, remediation-needed, or honestly blocked.
 - Reopen planning only through evidence-backed remediation guidance, not by inventing new runtime behavior.
 
@@ -48,6 +49,7 @@ Process only the assigned closure target for this run.
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
+- if no rubric exists yet, or the current evidence surface is too weak to support an honest narrow pass, load `marathon-qa-audit` from the skills index before the broader audit
 - after that, choose up to two additional relevant skills from the index
 - do not spend tokens on irrelevant skills
 
@@ -57,6 +59,7 @@ Process only the assigned closure target for this run.
 
 ## Optional Secondary Skills
 
+- `marathon-qa-audit`: shipped shared deep-audit skill for first-run rubric creation, weak evidence surfaces, or closure targets that need a broader criterion-by-criterion pass
 - `acceptance-profile-contract` (deferred; not shipped in runtime assets) when the target needs stronger gate framing before parity can be judged cleanly
 - `codebase-audit-doc` (deferred; not shipped in runtime assets) when repo audit notes materially improve the verdict evidence
 - `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise arbiter summary
@@ -66,6 +69,7 @@ Process only the assigned closure target for this run.
 - Start from the assigned closure target and the canonical contract copies.
 - Let `arbiter-core` keep the pass grounded in rubric discipline and parity judgment.
 - Reuse the existing rubric when it already exists for the target.
+- If no rubric exists yet, or the prior evidence surface is too weak to trust narrowly, load `marathon-qa-audit` and run a full-band audit before deciding the verdict.
 - Pull optional secondary skills only when they materially improve the verdict evidence.
 - Surface conflicts and gaps directly instead of smoothing them over.
 
@@ -79,15 +83,21 @@ Process only the assigned closure target for this run.
 - Reuse the existing rubric when present.
 - If no rubric exists, create one grounded in the canonical seed idea and canonical root spec.
 
-3. Judge the finished state.
+3. Choose the audit depth.
+- If no rubric exists yet, or the available evidence is too weak to trust narrowly, run a full-band audit across the whole rubric.
+- Otherwise retest failed, uncertain, or weak-evidence criteria first, then sweep adjacent high-risk areas.
+
+4. Judge the finished state.
 - Inspect the current repo/workspace state against the rubric.
+- Attempt the deepest honest checks realistically available for each criterion.
+- Treat unavailable deeper checks as reduced evidence quality, not automatic failure.
 - Keep the judgment criterion-based rather than impression-based.
 
-4. Write durable evidence.
+5. Write durable evidence.
 - Write the durable verdict to `millrace-agents/arbiter/verdicts/<ROOT_SPEC_ID>.json`.
 - Write the per-run report to request-provided `run_dir/arbiter_report.md`.
 
-5. Write remediation only when needed.
+6. Write remediation only when needed.
 - If parity gaps remain, write one bespoke remediation incident payload for planning intake.
 - Keep the remediation tied to the rubric gaps you actually found.
 
@@ -107,6 +117,12 @@ Required deliverables:
 - a per-run arbiter report
 - a remediation incident payload only when parity gaps remain
 
+The per-run report should make clear:
+- which rubric criteria were checked
+- the highest evidence depth achieved where that matters
+- deeper checks that were unavailable or blocked
+- residual uncertainty when the evidence is weaker than preferred
+
 ## Legal Terminal Results
 
 The stage may emit only:
@@ -123,5 +139,5 @@ After emitting a legal terminal result:
 
 Stop with `### BLOCKED` only when:
 - the canonical seed idea and root spec conflict in a way that prevents honest judgment
-- the evidence needed to apply the rubric is missing and cannot be reconstructed reasonably
+- the evidence needed to apply the rubric is missing and cannot be reconstructed reasonably even after the strongest credible substitute checks
 - the closure target itself is too inconsistent to interpret truthfully

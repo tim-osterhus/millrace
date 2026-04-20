@@ -9,7 +9,7 @@ runtime behavior, command, compiler, or authoring details.
 ## Maintained Runtime Docs
 
 - `millrace-runtime-architecture.md`: workspace ownership model, artifact model, module topology, and tick lifecycle.
-- `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, and compiler-driven backlog-drain behavior.
+- `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used when narrow evidence is not enough.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
 - `millrace-compiler-and-frozen-plans.md`: mode resolution, asset loading, stage-plan freezing, persisted compile artifacts, and `compile validate` / `compile show`.
 - `millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage topology, `terminal_results`, and compile-time stage maps.

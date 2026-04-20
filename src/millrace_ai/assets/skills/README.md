@@ -42,6 +42,8 @@ Runtime shipping notes:
 - `skills_index.md` is the canonical runtime index consumed by entrypoints.
 - `README.md` remains the shared runtime baseline skill asset (`skills-readme`).
 - The shipped `millrace-skill-creator` package is the runtime-facing authoring surface for new skill assets.
+- Shipped shared reusable skills live under `skills/shared/<skill-id>/SKILL.md`.
+- `marathon-qa-audit` is the shipped shared deep-audit skill currently used by `checker` and `arbiter` when a normal narrow pass is not enough.
 - Shipped stage-core skills use the hybrid format with thin manifest frontmatter for identity and structured markdown sections in the body for the actual guidance.
 - Deferred skill assets remain metadata-light until they are shipped into the same hybrid contract.
 - Stage-core skills live under `skills/stage/<plane>/<stage>-core/SKILL.md`.

@@ -82,6 +82,11 @@ event instead of silently idling through required closure behavior.
 
 Arbiter is a real planning-stage run. It does not receive a fake queue item.
 
+Its entrypoint always loads `arbiter-core` first and may additionally load the
+shipped shared `marathon-qa-audit` skill when Arbiter is creating a rubric for
+the first time or when the available evidence surface is too weak for an honest
+narrow pass.
+
 The stage request uses `request_kind = closure_target` and includes:
 
 - `closure_target_path`
