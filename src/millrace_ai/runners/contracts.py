@@ -46,6 +46,8 @@ class RunnerCompletionArtifact(_ArtifactModel):
     runner_name: str
     exit_kind: str
     exit_code: int | None = None
+    observed_exit_kind: str | None = None
+    observed_exit_code: int | None = None
     stdout_path: str | None = None
     stderr_path: str | None = None
     terminal_result_path: str | None = None
@@ -110,6 +112,8 @@ def completion_artifact_from_raw_result(
         runner_name=runner_name,
         exit_kind=raw_result.exit_kind,
         exit_code=raw_result.exit_code,
+        observed_exit_kind=raw_result.observed_exit_kind,
+        observed_exit_code=raw_result.observed_exit_code,
         stdout_path=raw_result.stdout_path,
         stderr_path=raw_result.stderr_path,
         terminal_result_path=raw_result.terminal_result_path,

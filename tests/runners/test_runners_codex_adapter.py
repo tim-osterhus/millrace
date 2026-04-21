@@ -161,6 +161,56 @@ def test_codex_adapter_uses_one_hour_fallback_timeout_when_request_timeout_missi
     assert observed_timeout_seconds == [3600]
 
 
+def test_codex_adapter_reconciles_timeout_after_final_terminal_marker(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path)
+
+    def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
+        del cwd, env, timeout_seconds
+        Path(stdout_path).write_text(
+            '{"type":"thread.started","thread_id":"thread-001"}\n',
+            encoding="utf-8",
+        )
+        Path(_command_option_value(command, "--output-last-message")).write_text(
+            "\n### BUILDER_COMPLETE\n\n",
+            encoding="utf-8",
+        )
+        Path(stderr_path).write_text("runner timed out after 120 seconds\n", encoding="utf-8")
+        now = datetime.now(timezone.utc)
+        return ProcessExecutionResult(
+            exit_code=124,
+            timed_out=True,
+            started_at=now,
+            ended_at=now,
+            error="timeout",
+        )
+
+    adapter = CodexCliRunnerAdapter(
+        config=RuntimeConfig(),
+        workspace_root=tmp_path,
+        process_executor=fake_execute,
+    )
+
+    result = adapter.run(request)
+
+    assert result.exit_kind == "completed"
+    assert result.exit_code == 0
+    assert result.observed_exit_kind == "timeout"
+    assert result.observed_exit_code == 124
+    assert result.stdout_path is not None
+    assert Path(result.stdout_path).read_text(encoding="utf-8") == "\n### BUILDER_COMPLETE\n\n"
+
+    completion_path = Path(request.run_dir) / "runner_completion.req-001.json"
+    completion_payload = json.loads(completion_path.read_text(encoding="utf-8"))
+    assert completion_payload["exit_kind"] == "completed"
+    assert completion_payload["exit_code"] == 0
+    assert completion_payload["failure_class"] is None
+    assert completion_payload["observed_exit_kind"] == "timeout"
+    assert completion_payload["observed_exit_code"] == 124
+    assert any("reconciled" in note for note in completion_payload["notes"])
+
+
 def test_codex_adapter_uses_maximum_permissions_by_default(tmp_path: Path) -> None:
     seen_command: dict[str, tuple[str, ...]] = {}
 

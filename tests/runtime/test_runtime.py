@@ -125,6 +125,9 @@ def _runner_result(
     terminal: str | None,
     now: datetime,
     exit_kind: str = "completed",
+    exit_code: int = 0,
+    observed_exit_kind: str | None = None,
+    observed_exit_code: int | None = None,
 ) -> RunnerRawResult:
     run_dir = Path(request.run_dir)
     stdout_path = run_dir / "runner_stdout.txt"
@@ -138,10 +141,12 @@ def _runner_result(
         runner_name=request.runner_name or "test-runner",
         model_name=request.model_name,
         exit_kind=exit_kind,
-        exit_code=0,
+        exit_code=exit_code,
         stdout_path=str(stdout_path),
         stderr_path=None,
         terminal_result_path=None,
+        observed_exit_kind=observed_exit_kind,
+        observed_exit_code=observed_exit_code,
         started_at=now,
         ended_at=now + timedelta(seconds=1),
     )
@@ -207,6 +212,52 @@ def test_runtime_snapshot_queue_depths_match_filesystem_after_tick(tmp_path: Pat
     )
     assert snapshot.queue_depth_execution == execution_queue_depth
     assert snapshot.queue_depth_planning == planning_queue_depth
+
+
+def test_runtime_advances_after_reconciled_builder_timeout(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+
+    seen_stages: list[str] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        seen_stages.append(request.stage.value)
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+                now=NOW,
+                exit_kind="completed",
+                exit_code=0,
+                observed_exit_kind="timeout",
+                observed_exit_code=124,
+            )
+        if request.stage is ExecutionStageName.CHECKER:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.CHECKER_PASS.value,
+                now=NOW,
+            )
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.UPDATE_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    first = engine.tick()
+    snapshot = load_snapshot(paths)
+
+    assert first.stage == ExecutionStageName.BUILDER
+    assert first.stage_result.terminal_result == ExecutionTerminalResult.BUILDER_COMPLETE
+    assert first.router_decision.action is RouterAction.RUN_STAGE
+    assert first.router_decision.next_stage == ExecutionStageName.CHECKER
+    assert snapshot.active_stage == ExecutionStageName.CHECKER
+    assert snapshot.current_failure_class is None
+    assert seen_stages == ["builder"]
 
 
 def test_runtime_writes_snapshot_status_events_and_stage_result_artifacts(tmp_path: Path) -> None:

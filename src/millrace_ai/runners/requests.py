@@ -191,6 +191,8 @@ class RunnerRawResult(BaseModel):
 
     exit_kind: RunnerExitKind
     exit_code: int | None = None
+    observed_exit_kind: RunnerExitKind | None = None
+    observed_exit_code: int | None = None
 
     stdout_path: str | None = None
     stderr_path: str | None = None

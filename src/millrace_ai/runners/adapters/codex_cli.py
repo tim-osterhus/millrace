@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
@@ -147,14 +148,27 @@ class CodexCliRunnerAdapter:
             event_log_path=persisted_event_log_path,
         )
 
+        reconciled_timeout_marker = _reconciled_timeout_terminal_marker(
+            request.stage,
+            output_last_message_path=output_last_message_path,
+        )
+        observed_exit_kind = exit_kind if reconciled_timeout_marker is not None else None
+        observed_exit_code = (
+            process_result.exit_code if reconciled_timeout_marker is not None else None
+        )
+        canonical_exit_kind = "completed" if reconciled_timeout_marker is not None else exit_kind
+        canonical_exit_code = 0 if reconciled_timeout_marker is not None else process_result.exit_code
+
         result = RunnerRawResult(
             request_id=request.request_id,
             run_id=request.run_id,
             stage=request.stage,
             runner_name=self.name,
             model_name=request.model_name,
-            exit_kind=exit_kind,
-            exit_code=process_result.exit_code,
+            exit_kind=canonical_exit_kind,
+            exit_code=canonical_exit_code,
+            observed_exit_kind=observed_exit_kind,
+            observed_exit_code=observed_exit_code,
             stdout_path=str(materialized_stdout_path) if materialized_stdout_path else None,
             stderr_path=str(stderr_path),
             terminal_result_path=None,
@@ -168,7 +182,12 @@ class CodexCliRunnerAdapter:
 
         failure_class = None
         notes: tuple[str, ...] = ()
-        if process_result.timed_out:
+        if reconciled_timeout_marker is not None:
+            notes = (
+                "runner timeout reconciled after final terminal marker "
+                f"### {reconciled_timeout_marker}",
+            )
+        elif process_result.timed_out:
             failure_class = "runner_timeout"
             notes = ("runner process exceeded timeout",)
         elif process_result.error is not None:
@@ -351,6 +370,46 @@ def _materialize_stdout_artifact(
         stdout_path.write_text(event_log_path.read_text(encoding="utf-8"), encoding="utf-8")
         return stdout_path
     return None
+
+
+_TERMINAL_MARKER_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
+
+
+def _reconciled_timeout_terminal_marker(
+    stage: ExecutionStageName | PlanningStageName,
+    *,
+    output_last_message_path: Path,
+) -> str | None:
+    if not output_last_message_path.exists():
+        return None
+
+    try:
+        lines = output_last_message_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    stripped_nonempty = [line.strip() for line in lines if line.strip()]
+    if not stripped_nonempty:
+        return None
+
+    legal_markers = set(_legal_terminal_markers(stage))
+    observed_markers: list[str] = []
+    for line in lines:
+        match = _TERMINAL_MARKER_PATTERN.match(line.strip())
+        if match is None:
+            continue
+        marker = match.group(1)
+        if marker in legal_markers:
+            observed_markers.append(marker)
+
+    if len(observed_markers) != 1:
+        return None
+
+    marker = observed_markers[0]
+    if stripped_nonempty[-1] != f"### {marker}":
+        return None
+
+    return marker
 
 
 def _extract_token_usage(event_log_path: Path | None) -> TokenUsage | None:

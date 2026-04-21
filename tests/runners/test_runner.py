@@ -102,6 +102,8 @@ def _raw(
     exit_code: int | None = 0,
     event_log_path: Path | None = None,
     token_usage: TokenUsage | None = None,
+    observed_exit_kind: str | None = None,
+    observed_exit_code: int | None = None,
 ) -> RunnerRawResult:
     return RunnerRawResult(
         request_id=request.request_id,
@@ -116,6 +118,8 @@ def _raw(
         terminal_result_path=str(terminal_result_path) if terminal_result_path else None,
         event_log_path=str(event_log_path) if event_log_path else None,
         token_usage=token_usage,
+        observed_exit_kind=observed_exit_kind,
+        observed_exit_code=observed_exit_code,
         started_at=NOW,
         ended_at=NOW + timedelta(seconds=3),
     )
@@ -322,7 +326,33 @@ def test_normalize_rejects_summary_artifact_traversal_outside_run_dir(tmp_path: 
     assert envelope.metadata["valid_terminal_result"] is False
 
 
-def test_normalize_classifies_timeout_even_with_terminal_like_stdout(tmp_path: Path) -> None:
+def test_normalize_preserves_reconciled_timeout_evidence_on_success(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="builder")
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("\n### BUILDER_COMPLETE\n\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(
+            request,
+            exit_kind="completed",
+            stdout_path=stdout_path,
+            exit_code=0,
+            observed_exit_kind="timeout",
+            observed_exit_code=124,
+        ),
+    )
+
+    assert envelope.terminal_result.value == "BUILDER_COMPLETE"
+    assert envelope.result_class is ResultClass.SUCCESS
+    assert envelope.success is True
+    assert envelope.exit_code == 0
+    assert envelope.metadata["raw_exit_kind"] == "timeout"
+    assert envelope.metadata["raw_exit_code"] == 124
+    assert envelope.metadata["timeout_reconciled"] is True
+
+
+def test_normalize_classifies_unreconciled_timeout_even_with_terminal_like_stdout(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="builder")
     stdout_path = tmp_path / "runner_stdout.txt"
     stdout_path.write_text("### BUILDER_COMPLETE\n", encoding="utf-8")

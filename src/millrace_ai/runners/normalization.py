@@ -189,7 +189,7 @@ def normalize_stage_result(
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
         token_usage=raw_result.token_usage,
-        notes=extraction.notes,
+        notes=extraction.notes + _transport_reconciliation_notes(raw_result),
         metadata={
             **_request_metadata(request),
             "normalization_source": (
@@ -199,7 +199,9 @@ def normalize_stage_result(
             ),
             "failure_class": None,
             "valid_terminal_result": True,
-            "raw_exit_kind": raw_result.exit_kind,
+            "raw_exit_kind": _raw_exit_kind(raw_result),
+            "raw_exit_code": _raw_exit_code(raw_result),
+            "timeout_reconciled": _timeout_reconciled(raw_result),
         },
         started_at=raw_result.started_at,
         completed_at=raw_result.ended_at,
@@ -494,7 +496,9 @@ def _failure_envelope(
             "normalization_source": "failure",
             "failure_class": failure_class,
             "valid_terminal_result": False,
-            "raw_exit_kind": raw_result.exit_kind,
+            "raw_exit_kind": _raw_exit_kind(raw_result),
+            "raw_exit_code": _raw_exit_code(raw_result),
+            "timeout_reconciled": _timeout_reconciled(raw_result),
         },
         started_at=raw_result.started_at,
         completed_at=raw_result.ended_at,
@@ -543,6 +547,28 @@ def _blocked_terminal_for_plane(plane: Plane) -> TerminalResult:
     if plane is Plane.EXECUTION:
         return ExecutionTerminalResult.BLOCKED
     return PlanningTerminalResult.BLOCKED
+
+
+def _raw_exit_kind(raw_result: RunnerRawResult) -> str:
+    return raw_result.observed_exit_kind or raw_result.exit_kind
+
+
+def _raw_exit_code(raw_result: RunnerRawResult) -> int | None:
+    if raw_result.observed_exit_code is not None:
+        return raw_result.observed_exit_code
+    return raw_result.exit_code
+
+
+def _timeout_reconciled(raw_result: RunnerRawResult) -> bool:
+    return raw_result.observed_exit_kind == "timeout" and raw_result.exit_kind == "completed"
+
+
+def _transport_reconciliation_notes(raw_result: RunnerRawResult) -> tuple[str, ...]:
+    if not _timeout_reconciled(raw_result):
+        return ()
+    return (
+        "runner timeout was reconciled after a final terminal marker was captured",
+    )
 
 
 def _resolved_report_artifact(request: StageRunRequest) -> str | None:
