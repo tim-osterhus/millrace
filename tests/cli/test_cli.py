@@ -440,7 +440,7 @@ def test_status_surfaces_active_mode_and_compiled_plan_id(tmp_path: Path) -> Non
     paths = _workspace(tmp_path)
     snapshot = load_snapshot(paths).model_copy(
         update={
-            "active_mode_id": "standard_plain",
+            "active_mode_id": "default_codex",
             "compiled_plan_id": "plan-status-123",
             "queue_depth_execution": 4,
             "queue_depth_planning": 2,
@@ -452,7 +452,7 @@ def test_status_surfaces_active_mode_and_compiled_plan_id(tmp_path: Path) -> Non
     result = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
 
     assert result.exit_code == 0
-    assert "active_mode_id: standard_plain" in result.output
+    assert "active_mode_id: default_codex" in result.output
     assert "compiled_plan_id: plan-status-123" in result.output
 
 
@@ -1096,8 +1096,19 @@ def test_modes_list_outputs_shipped_modes() -> None:
     result = runner.invoke(cli.app, ["modes", "list"])
 
     assert result.exit_code == 0
-    assert "standard_plain" in result.output
+    assert "default_codex" in result.output
+    assert "default_pi" in result.output
+    assert "standard_plain -> default_codex" in result.output
     assert "standard_role_augmented" not in result.output
+
+
+def test_modes_show_reports_alias_resolution_for_standard_plain() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["modes", "show", "standard_plain"])
+
+    assert result.exit_code == 0
+    assert "alias_of: default_codex" in result.output
+    assert "mode_id: default_codex" in result.output
 
 
 def test_compile_validate_returns_diagnostics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

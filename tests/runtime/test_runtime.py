@@ -1905,7 +1905,7 @@ def test_runtime_mailbox_reload_config_retains_previous_plan_on_compile_failure(
 
     reloaded_snapshot = load_snapshot(paths)
     assert reloaded_snapshot.compiled_plan_id == original_compiled_plan_id
-    assert reloaded_snapshot.active_mode_id == "standard_plain"
+    assert reloaded_snapshot.active_mode_id == "default_codex"
     assert reloaded_snapshot.last_reload_outcome == "failed_retained_previous_plan"
     assert reloaded_snapshot.last_reload_error is not None
     assert "missing_mode" in reloaded_snapshot.last_reload_error

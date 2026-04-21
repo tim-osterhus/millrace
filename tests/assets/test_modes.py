@@ -17,6 +17,7 @@ from millrace_ai.modes import (
     load_builtin_loop_definition,
     load_builtin_mode_bundle,
     load_builtin_mode_definition,
+    resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
 from millrace_ai.paths import bootstrap_workspace
@@ -56,7 +57,7 @@ def test_builtin_loops_load_and_validate() -> None:
 def test_builtin_modes_load_and_validate() -> None:
     bundle = load_builtin_mode_bundle("standard_plain")
 
-    assert bundle.mode.mode_id == "standard_plain"
+    assert bundle.mode.mode_id == "default_codex"
     assert bundle.execution_loop.loop_id == "execution.standard"
     assert bundle.planning_loop.loop_id == "planning.standard"
     assert bundle.planning_loop.completion_behavior is not None
@@ -64,6 +65,26 @@ def test_builtin_modes_load_and_validate() -> None:
 
 def test_shipped_modes_same_graph_rule_returns_plain_baseline_graph() -> None:
     assert validate_shipped_mode_same_graph() == ("execution.standard", "planning.standard")
+
+
+def test_builtin_mode_alias_resolves_to_canonical_default_codex() -> None:
+    assert resolve_builtin_mode_id("standard_plain") == "default_codex"
+    assert resolve_builtin_mode_id("default_codex") == "default_codex"
+    assert load_builtin_mode_definition("standard_plain").mode_id == "default_codex"
+
+
+def test_builtin_modes_load_new_canonical_codex_and_pi_presets() -> None:
+    codex_bundle = load_builtin_mode_bundle("default_codex")
+    pi_bundle = load_builtin_mode_bundle("default_pi")
+
+    assert codex_bundle.mode.mode_id == "default_codex"
+    assert pi_bundle.mode.mode_id == "default_pi"
+    assert codex_bundle.execution_loop.loop_id == pi_bundle.execution_loop.loop_id
+    assert codex_bundle.planning_loop.loop_id == pi_bundle.planning_loop.loop_id
+    assert codex_bundle.mode.stage_runner_bindings
+    assert pi_bundle.mode.stage_runner_bindings
+    assert set(codex_bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
+    assert set(pi_bundle.mode.stage_runner_bindings.values()) == {"pi_rpc"}
 
 
 def test_mode_asset_errors_use_project_error_hierarchy() -> None:
@@ -78,7 +99,7 @@ def test_unknown_mode_fails_deterministically() -> None:
 
 def test_invalid_mode_json_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
     mode_path.write_text("{not-valid-json", encoding="utf-8")
 
     with pytest.raises(ModeAssetError, match="Invalid JSON in mode asset"):
@@ -87,7 +108,7 @@ def test_invalid_mode_json_fails_deterministically(tmp_path: Path) -> None:
 
 def test_unknown_loop_reference_in_mode_bundle_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
 
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["planning_loop_id"] = "planning.unknown"
@@ -98,7 +119,7 @@ def test_unknown_loop_reference_in_mode_bundle_fails_deterministically(tmp_path:
 
 
 def test_shipped_mode_ids_are_stable() -> None:
-    assert SHIPPED_MODE_IDS == ("standard_plain",)
+    assert SHIPPED_MODE_IDS == ("default_codex", "default_pi")
 
 
 def test_removed_role_augmented_mode_is_unknown() -> None:
@@ -120,7 +141,7 @@ def test_standard_plain_compiles_for_bootstrapped_workspace_without_role_overlay
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "standard_plain"
+    assert outcome.active_plan.mode_id == "default_codex"
     assert outcome.active_plan.execution_loop_id == "execution.standard"
     assert outcome.active_plan.planning_loop_id == "planning.standard"
     assert all(

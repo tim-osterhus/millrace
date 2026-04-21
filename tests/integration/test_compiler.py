@@ -58,7 +58,7 @@ def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) ->
         diagnostics_path.read_text(encoding="utf-8")
     )
 
-    assert persisted_plan.mode_id == "standard_plain"
+    assert persisted_plan.mode_id == "default_codex"
     assert persisted_plan.execution_loop_id == "execution.standard"
     assert persisted_plan.planning_loop_id == "planning.standard"
     assert len(persisted_plan.stage_plans) == 12
@@ -66,7 +66,49 @@ def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) ->
     assert persisted_plan.completion_behavior.stage.value == "arbiter"
     assert any(ref.startswith("completion_behavior:") for ref in persisted_plan.source_refs)
     assert persisted_diagnostics.ok is True
-    assert persisted_diagnostics.mode_id == "standard_plain"
+    assert persisted_diagnostics.mode_id == "default_codex"
+
+
+def test_standard_plain_alias_and_default_codex_compile_to_identical_plan_ids(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    alias_outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    canonical_outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+    )
+
+    assert alias_outcome.diagnostics.ok is True
+    assert canonical_outcome.diagnostics.ok is True
+    assert alias_outcome.active_plan is not None
+    assert canonical_outcome.active_plan is not None
+    assert alias_outcome.active_plan.mode_id == "default_codex"
+    assert canonical_outcome.active_plan.mode_id == "default_codex"
+    assert alias_outcome.active_plan.compiled_plan_id == canonical_outcome.active_plan.compiled_plan_id
+
+
+def test_default_pi_compiles_with_pi_runner_bound_for_every_stage(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_pi",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "default_pi"
+    assert {stage_plan.runner_name for stage_plan in outcome.active_plan.stage_plans} == {"pi_rpc"}
 
 
 def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
@@ -148,7 +190,7 @@ def test_compile_surfaces_stage_skill_attachments_without_role_overlays(tmp_path
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_skill_additions"] = {
         "builder": ["skills/execution/builder.md"],
@@ -179,7 +221,7 @@ def test_compile_rejects_invalid_entrypoint_override_deterministically(tmp_path:
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_entrypoint_overrides"] = {"builder": "roles/not-an-entrypoint.md"}
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -204,7 +246,7 @@ def test_compile_rejects_entrypoint_override_path_traversal(tmp_path: Path) -> N
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_entrypoint_overrides"] = {"builder": "../entrypoints/execution/builder.md"}
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -229,7 +271,7 @@ def test_compile_ignores_removed_stage_role_overlay_field_in_mode_assets(tmp_pat
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_role_overlays"] = {"builder": ["roles/execution/builder_advisory.md"]}
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -246,7 +288,7 @@ def test_compile_ignores_removed_stage_role_overlay_field_in_mode_assets(tmp_pat
     assert outcome.used_last_known_good is False
     assert outcome.diagnostics.errors == (
         "Invalid mode definition in asset: "
-        f"{assets_root / 'modes' / 'standard_plain.json'}",
+        f"{assets_root / 'modes' / 'default_codex.json'}",
     )
 
 
@@ -267,7 +309,7 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     baseline_plan_text = compiled_plan_path.read_text(encoding="utf-8")
 
     assets_root = _copy_builtin_assets(tmp_path / "recompile")
-    mode_path = assets_root / "modes" / "standard_plain.json"
+    mode_path = assets_root / "modes" / "default_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["planning_loop_id"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -288,5 +330,5 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
     diagnostics = CompileDiagnostics.model_validate_json(diagnostics_path.read_text(encoding="utf-8"))
     assert diagnostics.ok is False
-    assert diagnostics.mode_id == "standard_plain"
+    assert diagnostics.mode_id == "default_codex"
     assert diagnostics.errors[0] == "Unknown built-in loop id: planning.unknown"

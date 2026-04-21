@@ -254,7 +254,7 @@ def _default_runtime_snapshot_payload(paths: WorkspacePaths) -> str:
         runtime_mode=RuntimeMode.DAEMON,
         process_running=False,
         paused=False,
-        active_mode_id="standard_plain",
+        active_mode_id="default_codex",
         execution_loop_id="execution.standard",
         planning_loop_id="planning.standard",
         compiled_plan_id="bootstrap",

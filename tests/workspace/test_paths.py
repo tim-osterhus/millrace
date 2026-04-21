@@ -138,11 +138,12 @@ def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None
     assert counters.entries == ()
 
     config = load_runtime_config(paths.runtime_root / "millrace.toml")
-    assert config.runtime.default_mode == "standard_plain"
+    assert config.runtime.default_mode == "default_codex"
     assert config.runtime.run_style == "daemon"
     assert config.runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
     config_text = paths.runtime_root.joinpath("millrace.toml").read_text(encoding="utf-8")
     assert "[runners.codex]" in config_text
+    assert '[runtime]\ndefault_mode = "default_codex"' in config_text
     assert 'permission_default = "maximum"' in config_text
 
 

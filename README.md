@@ -175,8 +175,17 @@ That flow proves four things quickly:
 
 - Millrace can bootstrap its workspace contract under `millrace-agents/`
 - the selected mode and loops compile into a frozen plan before execution
-- the shipped `standard_plain` mode freezes closure behavior into that plan
+- the shipped `default_codex` mode freezes closure behavior into that plan
 - the runtime can execute a deterministic tick and report persisted status
+
+Canonical shipped modes today:
+
+- `default_codex`
+- `default_pi`
+
+Compatibility alias:
+
+- `standard_plain -> default_codex`
 
 ## Read By Journey
 

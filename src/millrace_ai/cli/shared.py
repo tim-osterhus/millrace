@@ -12,6 +12,7 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import SpecDocument, TaskDocument
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.runners.adapters.codex_cli import CodexCliRunnerAdapter
+from millrace_ai.runners.adapters.pi_rpc import PiRpcRunnerAdapter
 from millrace_ai.runners.dispatcher import StageRunnerDispatcher
 from millrace_ai.runners.registry import RunnerRegistry
 from millrace_ai.work_documents import parse_work_document_as, read_json_import
@@ -112,20 +113,21 @@ def _validate_work_item_id(value: str) -> str:
 def _build_stage_runner(*, config: RuntimeConfig, workspace_root: Path) -> StageRunnerDispatcher:
     registry = RunnerRegistry()
     registry.register(CodexCliRunnerAdapter(config=config, workspace_root=workspace_root))
+    registry.register(PiRpcRunnerAdapter(config=config, workspace_root=workspace_root))
     _validate_configured_stage_runners(config=config, registry=registry)
     return StageRunnerDispatcher(registry=registry, config=config)
 
 
 def _validate_configured_stage_runners(*, config: RuntimeConfig, registry: RunnerRegistry) -> None:
-    unknown = sorted(
-        {
-            stage_config.runner.strip()
-            for stage_config in config.stages.values()
-            if stage_config.runner is not None
-            and stage_config.runner.strip()
-            and registry.get(stage_config.runner.strip()) is None
-        }
-    )
+    configured_names = {
+        stage_config.runner.strip()
+        for stage_config in config.stages.values()
+        if stage_config.runner is not None and stage_config.runner.strip()
+    }
+    if config.runners.default_runner.strip():
+        configured_names.add(config.runners.default_runner.strip())
+
+    unknown = sorted(name for name in configured_names if registry.get(name) is None)
     if unknown:
         names = ", ".join(unknown)
         raise ValueError(f"Unknown configured stage runner(s): {names}")

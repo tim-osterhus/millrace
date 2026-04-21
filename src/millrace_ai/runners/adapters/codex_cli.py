@@ -12,11 +12,10 @@ from typing import Callable, Literal
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
 from millrace_ai.contracts import (
     ExecutionStageName,
-    ExecutionTerminalResult,
     PlanningStageName,
-    PlanningTerminalResult,
     TokenUsage,
 )
+from millrace_ai.runners.adapters._prompting import build_stage_prompt, legal_terminal_markers
 from millrace_ai.runners.contracts import (
     completion_artifact_from_raw_result,
     invocation_artifact_from_request,
@@ -28,7 +27,6 @@ from millrace_ai.runners.process import ProcessExecutionResult, run_process
 from millrace_ai.runners.requests import (
     RunnerRawResult,
     StageRunRequest,
-    render_stage_request_context_lines,
 )
 
 
@@ -262,91 +260,7 @@ class CodexCliRunnerAdapter:
         return ("--dangerously-bypass-approvals-and-sandbox",)
 
     def _build_prompt(self, request: StageRunRequest) -> str:
-        request_context = render_stage_request_context_lines(request)
-        legal_markers = ", ".join(f"`### {marker}`" for marker in _legal_terminal_markers(request.stage))
-        return "\n".join(
-            (
-                "You are executing one Millrace runtime stage request.",
-                f"Open `{request.entrypoint_path}` and follow instructions exactly.",
-                "",
-                "Stage Request Context:",
-                *request_context,
-                "",
-                (
-                    "When done, print exactly one legal terminal marker defined by the opened "
-                    "entrypoint contract."
-                ),
-                f"Legal markers for this stage: {legal_markers}.",
-                "Do not invent or rename terminal markers.",
-                "Do not print multiple terminal markers.",
-            )
-        )
-
-
-def _legal_terminal_markers(stage: ExecutionStageName | PlanningStageName) -> tuple[str, ...]:
-    if stage is ExecutionStageName.BUILDER:
-        return (
-            ExecutionTerminalResult.BUILDER_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.CHECKER:
-        return (
-            ExecutionTerminalResult.CHECKER_PASS.value,
-            ExecutionTerminalResult.FIX_NEEDED.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.FIXER:
-        return (
-            ExecutionTerminalResult.FIXER_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.DOUBLECHECKER:
-        return (
-            ExecutionTerminalResult.DOUBLECHECK_PASS.value,
-            ExecutionTerminalResult.FIX_NEEDED.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.UPDATER:
-        return (
-            ExecutionTerminalResult.UPDATE_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.TROUBLESHOOTER:
-        return (
-            ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.CONSULTANT:
-        return (
-            ExecutionTerminalResult.CONSULT_COMPLETE.value,
-            ExecutionTerminalResult.NEEDS_PLANNING.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.PLANNER:
-        return (
-            PlanningTerminalResult.PLANNER_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.MANAGER:
-        return (
-            PlanningTerminalResult.MANAGER_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.MECHANIC:
-        return (
-            PlanningTerminalResult.MECHANIC_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.AUDITOR:
-        return (
-            PlanningTerminalResult.AUDITOR_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    return (
-        PlanningTerminalResult.ARBITER_COMPLETE.value,
-        PlanningTerminalResult.REMEDIATION_NEEDED.value,
-        PlanningTerminalResult.BLOCKED.value,
-    )
+        return build_stage_prompt(request)
 
 
 def _persist_event_log(stdout_path: Path, event_log_path: Path) -> Path | None:
@@ -392,7 +306,7 @@ def _reconciled_timeout_terminal_marker(
     if not stripped_nonempty:
         return None
 
-    legal_markers = set(_legal_terminal_markers(stage))
+    legal_markers = set(legal_terminal_markers(stage))
     observed_markers: list[str] = []
     for line in lines:
         match = _TERMINAL_MARKER_PATTERN.match(line.strip())

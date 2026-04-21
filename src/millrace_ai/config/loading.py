@@ -37,7 +37,7 @@ def render_bootstrap_runtime_config() -> str:
     return "\n".join(
         [
             "[runtime]",
-            'default_mode = "standard_plain"',
+            'default_mode = "default_codex"',
             'run_style = "daemon"',
             "",
             "[runners.codex]",

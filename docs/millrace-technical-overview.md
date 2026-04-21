@@ -146,12 +146,16 @@ The compiler resolves:
 `compiled_plan.json` is therefore the authoritative compiled runtime contract
 for the current workspace, not an incidental cache.
 
-The compiler currently ships with one built-in mode and one built-in loop per
-plane:
+The compiler currently ships with two canonical built-in modes and one built-in
+loop per plane:
 
-- mode: `standard_plain`
+- modes: `default_codex`, `default_pi`
 - execution loop: `execution.standard`
 - planning loop: `planning.standard`
+
+`standard_plain` remains accepted as a compatibility alias that canonicalizes to
+`default_codex` before compile diagnostics, frozen-plan ids, and runtime
+snapshot state are written.
 
 Compile output is operator-visible through `millrace compile validate` and
 `millrace compile show`. Failed recompiles preserve the last known good plan.
@@ -179,6 +183,14 @@ as:
 - stage skill additions
 - stage model bindings
 - stage runner bindings
+
+In the shipped baseline, that runner binding map is how harness choice is
+expressed:
+
+- `default_codex` binds all shipped stages to `codex_cli`
+- `default_pi` binds all shipped stages to `pi_rpc`
+
+The loop topology does not fork just because the harness changes.
 
 The compiler then freezes that into one `FrozenRunPlan`, which contains one
 `FrozenStagePlan` per stage. A frozen stage plan records the exact runtime
@@ -241,6 +253,21 @@ recovery. `auditor` is the incident intake entrypoint. `arbiter` is special: it
 is part of the planning loop topology but is not a normal queued successor. It
 is activated by completion behavior when backlog drain makes closure evaluation
 possible.
+
+## Runner Baselines
+
+Millrace currently ships two first-class built-in runner adapters:
+
+- `codex_cli`
+- `pi_rpc`
+
+Codex remains the canonical bootstrap posture. New workspaces default to
+`runtime.default_mode = "default_codex"` and `runners.default_runner = "codex_cli"`.
+
+Pi is opt-in through `default_pi` or direct runner selection. The Pi adapter
+uses RPC mode and disables Pi-native context-file and skill discovery by
+default so the baseline stays governed by Millrace entrypoints rather than
+ambient Pi project state.
 
 ## Deterministic Tick Lifecycle
 

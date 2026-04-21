@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "default_codex",
+  "execution_loop_id": "execution.standard",
+  "planning_loop_id": "planning.standard",
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "builder": "codex_cli",
+    "checker": "codex_cli",
+    "fixer": "codex_cli",
+    "doublechecker": "codex_cli",
+    "updater": "codex_cli",
+    "troubleshooter": "codex_cli",
+    "consultant": "codex_cli",
+    "planner": "codex_cli",
+    "manager": "codex_cli",
+    "mechanic": "codex_cli",
+    "auditor": "codex_cli",
+    "arbiter": "codex_cli"
+  }
+}

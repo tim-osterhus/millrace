@@ -38,6 +38,7 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "runtime.idle_sleep_seconds": ApplyBoundary.NEXT_TICK,
     "runners.default_runner": ApplyBoundary.NEXT_TICK,
     "runners.codex": ApplyBoundary.NEXT_TICK,
+    "runners.pi": ApplyBoundary.NEXT_TICK,
     "recovery.max_fix_cycles": ApplyBoundary.NEXT_TICK,
     "recovery.max_troubleshoot_attempts_before_consult": ApplyBoundary.NEXT_TICK,
     "recovery.max_mechanic_attempts": ApplyBoundary.NEXT_TICK,

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "default_pi",
+  "execution_loop_id": "execution.standard",
+  "planning_loop_id": "planning.standard",
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "builder": "pi_rpc",
+    "checker": "pi_rpc",
+    "fixer": "pi_rpc",
+    "doublechecker": "pi_rpc",
+    "updater": "pi_rpc",
+    "troubleshooter": "pi_rpc",
+    "consultant": "pi_rpc",
+    "planner": "pi_rpc",
+    "manager": "pi_rpc",
+    "mechanic": "pi_rpc",
+    "auditor": "pi_rpc",
+    "arbiter": "pi_rpc"
+  }
+}

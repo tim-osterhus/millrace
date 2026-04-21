@@ -22,7 +22,7 @@ class ConfigModel(BaseModel):
 
 
 class RuntimeSection(ConfigModel):
-    default_mode: str = "standard_plain"
+    default_mode: str = "default_codex"
     run_style: RuntimeMode = RuntimeMode.DAEMON
     idle_sleep_seconds: float = Field(default=1.0, gt=0)
 
@@ -59,9 +59,47 @@ class CodexRunnerSection(ConfigModel):
         return value
 
 
+_PI_RESERVED_ARGS = frozenset(
+    {
+        "--mode",
+        "--no-session",
+        "--provider",
+        "--model",
+        "--thinking",
+        "--no-context-files",
+        "--no-skills",
+    }
+)
+
+
+class PiRunnerSection(ConfigModel):
+    command: str = "pi"
+    args: tuple[str, ...] = ()
+    provider: str | None = None
+    thinking: str | None = None
+    disable_context_files: bool = True
+    disable_skills: bool = True
+    env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("args")
+    @classmethod
+    def validate_reserved_transport_flags(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        conflicts = tuple(
+            arg
+            for arg in value
+            if arg in _PI_RESERVED_ARGS
+            or any(arg.startswith(f"{reserved}=") for reserved in _PI_RESERVED_ARGS)
+        )
+        if conflicts:
+            joined = ", ".join(conflicts)
+            raise ValueError(f"reserved pi runner flags are not allowed in runners.pi.args: {joined}")
+        return value
+
+
 class RunnersSection(ConfigModel):
     default_runner: str = "codex_cli"
     codex: CodexRunnerSection = Field(default_factory=CodexRunnerSection)
+    pi: PiRunnerSection = Field(default_factory=PiRunnerSection)
 
 
 class RecoverySection(ConfigModel):
@@ -108,6 +146,7 @@ __all__ = [
     "DEFAULT_CONFIG_PATH",
     "KNOWN_STAGE_NAMES",
     "RecoverySection",
+    "PiRunnerSection",
     "RunnersSection",
     "RuntimeConfig",
     "RuntimeSection",

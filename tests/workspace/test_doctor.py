@@ -125,13 +125,38 @@ def test_doctor_flags_invalid_mode_assets_deterministically(tmp_path: Path) -> N
     paths = _bootstrap(tmp_path)
     assets_root = _copy_assets(tmp_path)
 
-    broken_mode_path = assets_root / "modes" / "standard_plain.json"
+    broken_mode_path = assets_root / "modes" / "default_codex.json"
     broken_mode_path.write_text("{not-valid-json", encoding="utf-8")
 
     report = run_workspace_doctor(paths, assets_root=assets_root)
 
     assert report.ok is False
     assert any(item.code == "mode_definition_invalid" for item in report.errors)
+
+
+def test_doctor_warns_when_resolved_runner_binary_is_unavailable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _bootstrap(tmp_path)
+    paths.runtime_root.joinpath("millrace.toml").write_text(
+        "\n".join(
+            [
+                "[runtime]",
+                'default_mode = "default_pi"',
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("millrace_ai.doctor.shutil.which", lambda command: None)
+
+    report = run_workspace_doctor(paths)
+
+    assert any(item.code == "runner_binary_unavailable" for item in report.warnings)
+    assert any("pi_rpc" in item.message for item in report.warnings)
 
 
 def test_doctor_reports_active_runtime_ownership_lock_health(tmp_path: Path) -> None:

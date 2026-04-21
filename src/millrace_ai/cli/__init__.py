@@ -13,7 +13,12 @@ from millrace_ai.compiler import CompileOutcome, compile_and_persist_workspace_p
 from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.control import ControlActionResult, RuntimeControl
 from millrace_ai.doctor import run_workspace_doctor
-from millrace_ai.modes import BUILTIN_MODE_PATHS, load_builtin_mode_definition
+from millrace_ai.modes import (
+    BUILTIN_MODE_ALIASES,
+    BUILTIN_MODE_PATHS,
+    builtin_mode_alias_target,
+    load_builtin_mode_definition,
+)
 from millrace_ai.run_inspection import (
     InspectedRunSummary,
     inspect_run_id,
@@ -44,6 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "BUILTIN_MODE_PATHS",
+    "BUILTIN_MODE_ALIASES",
     "CompileOutcome",
     "ControlActionResult",
     "InspectedRunSummary",
@@ -56,6 +62,7 @@ __all__ = [
     "compile_and_persist_workspace_plan",
     "inspect_run_id",
     "list_runs",
+    "builtin_mode_alias_target",
     "load_builtin_mode_definition",
     "load_runtime_config",
     "main",

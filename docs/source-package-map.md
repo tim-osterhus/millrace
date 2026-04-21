@@ -39,6 +39,27 @@ These modules remain at the package root because they still have one coherent re
 - `src/millrace_ai/watchers.py`
 - `src/millrace_ai/errors.py`
 
+## Runner Package Notes
+
+The built-in runner package now contains two first-class adapter paths:
+
+- `src/millrace_ai/runners/adapters/codex_cli.py`
+- `src/millrace_ai/runners/adapters/pi_rpc.py`
+
+Shared runner-owned helpers live alongside them:
+
+- `src/millrace_ai/runners/adapters/_prompting.py`
+- `src/millrace_ai/runners/adapters/pi_rpc_client.py`
+
+Mode assets in `src/millrace_ai/assets/modes/` freeze those built-in harness
+presets through canonical mode ids:
+
+- `default_codex`
+- `default_pi`
+
+`standard_plain` is preserved only as a compatibility alias in the asset-loading
+layer, not as a third duplicated mode asset file.
+
 ## Test Ownership Map
 
 | Source area | Mirrored tests |

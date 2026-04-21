@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,11 +17,15 @@ from millrace_ai.assets import (
     BUILTIN_MODE_PATHS,
     LintLevel,
     ModeAssetError,
+    ModeBundle,
     lint_asset_manifests,
     load_builtin_loop_definition,
+    load_builtin_mode_bundle,
     load_builtin_mode_definition,
+    resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
+from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.contracts import (
     ExecutionStageName,
     IncidentDocument,
@@ -103,6 +108,12 @@ def run_workspace_doctor(
     resolved_assets_root = ASSETS_ROOT if assets_root is None else Path(assets_root)
     _validate_mode_and_loop_assets(resolved_assets_root, errors)
     _validate_entrypoint_assets(resolved_assets_root, errors, warnings)
+    _validate_resolved_runner_posture(
+        paths=paths,
+        assets_root=resolved_assets_root,
+        errors=errors,
+        warnings=warnings,
+    )
 
     return DoctorReport(
         ok=not errors,
@@ -385,6 +396,104 @@ def _validate_entrypoint_assets(
             errors.append(issue)
         else:
             warnings.append(issue)
+
+
+def _validate_resolved_runner_posture(
+    *,
+    paths: WorkspacePaths,
+    assets_root: Path,
+    errors: list[DoctorIssue],
+    warnings: list[DoctorIssue],
+) -> None:
+    config_path = paths.runtime_root / "millrace.toml"
+    try:
+        config = load_runtime_config(config_path)
+    except (OSError, ValidationError, ValueError) as exc:
+        errors.append(
+            DoctorIssue(
+                code="runtime_config_invalid",
+                message=str(exc),
+                path=config_path,
+            )
+        )
+        return
+
+    requested_mode_id = config.runtime.default_mode.strip() or "default_codex"
+    canonical_mode_id = resolve_builtin_mode_id(requested_mode_id)
+    try:
+        bundle = load_builtin_mode_bundle(canonical_mode_id, assets_root=assets_root)
+    except ModeAssetError as exc:
+        errors.append(
+            DoctorIssue(
+                code="resolved_mode_invalid",
+                message=f"{canonical_mode_id}: {exc}",
+                path=config_path,
+            )
+        )
+        return
+
+    resolved_runners = _resolved_runner_names_for_bundle(config=config, bundle=bundle)
+    for runner_name in sorted(resolved_runners):
+        command = _runner_command_for_name(config=config, runner_name=runner_name)
+        if command is None:
+            errors.append(
+                DoctorIssue(
+                    code="configured_runner_unknown",
+                    message=(
+                        f"resolved runner `{runner_name}` is not a built-in configured runner "
+                        f"for mode `{canonical_mode_id}`"
+                    ),
+                    path=config_path,
+                )
+            )
+            continue
+        if _command_exists(command):
+            continue
+        warnings.append(
+            DoctorIssue(
+                code="runner_binary_unavailable",
+                message=(
+                    f"resolved runner `{runner_name}` for mode `{canonical_mode_id}` "
+                    f"uses command `{command}`, which is not available"
+                ),
+                path=config_path,
+            )
+        )
+
+
+def _resolved_runner_names_for_bundle(
+    *,
+    config: RuntimeConfig,
+    bundle: ModeBundle,
+) -> set[str]:
+    selected_stages = (*bundle.execution_loop.stages, *bundle.planning_loop.stages)
+    resolved: set[str] = set()
+    for stage in selected_stages:
+        stage_config = config.stages.get(stage.value)
+        runner_name = bundle.mode.stage_runner_bindings.get(stage)
+        if runner_name is None and stage_config is not None and stage_config.runner is not None:
+            candidate = stage_config.runner.strip()
+            runner_name = candidate or None
+        if runner_name is None:
+            candidate = config.runners.default_runner.strip()
+            runner_name = candidate or "codex_cli"
+        resolved.add(runner_name)
+    return resolved
+
+
+def _runner_command_for_name(*, config: RuntimeConfig, runner_name: str) -> str | None:
+    if runner_name == "codex_cli":
+        return config.runners.codex.command
+    if runner_name == "pi_rpc":
+        return config.runners.pi.command
+    return None
+
+
+def _command_exists(command: str) -> bool:
+    candidate = Path(command).expanduser()
+    if candidate.is_absolute() or "/" in command:
+        return candidate.exists()
+    return shutil.which(command) is not None
 
 
 def _canonical_contract_ids_by_stage() -> dict[str, str]:

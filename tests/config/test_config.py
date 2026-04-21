@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from millrace_ai.config import (
     ApplyBoundary,
     CodexPermissionLevel,
+    PiRunnerSection,
     RuntimeConfig,
     StageConfig,
     apply_boundary_for_field,
@@ -49,6 +50,19 @@ def test_stage_config_uses_one_hour_default_timeout() -> None:
 
 def test_runtime_config_defaults_codex_permissions_to_maximum() -> None:
     assert RuntimeConfig().runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
+
+
+def test_runtime_config_defaults_canonical_mode_and_pi_determinism_flags() -> None:
+    config = RuntimeConfig()
+
+    assert config.runtime.default_mode == "default_codex"
+    assert config.runners.pi.disable_context_files is True
+    assert config.runners.pi.disable_skills is True
+
+
+def test_pi_runner_section_rejects_reserved_transport_flags() -> None:
+    with pytest.raises(ValidationError, match="reserved pi runner flags"):
+        PiRunnerSection(args=("--mode", "rpc"))
 
 
 def test_runtime_config_enables_watchers_and_seeded_idea_intake_by_default() -> None:

@@ -29,8 +29,14 @@ dispatch happens.
   - invocation/completion artifact schemas
 - `src/millrace_ai/runners/process.py`
   - subprocess helper with timeout/error mapping
+- `src/millrace_ai/runners/adapters/_prompting.py`
+  - shared Millrace-owned stage prompt construction
 - `src/millrace_ai/runners/adapters/codex_cli.py`
   - built-in Codex CLI adapter
+- `src/millrace_ai/runners/adapters/pi_rpc.py`
+  - built-in Pi RPC adapter
+- `src/millrace_ai/runners/adapters/pi_rpc_client.py`
+  - focused JSONL RPC transport used by the Pi adapter
 - `src/millrace_ai/runner.py`
   - thin compatibility facade that preserves the legacy root import path
 
@@ -48,6 +54,13 @@ In practice, that means there are two distinct moments:
 
 1. compile decides what runner name is attached to a frozen stage-plan
 2. dispatch decides which adapter to execute from the resolved request
+
+The shipped canonical modes make that explicit:
+
+- `default_codex` binds every shipped stage to `codex_cli`
+- `default_pi` binds every shipped stage to `pi_rpc`
+- `standard_plain` remains accepted only as a compatibility alias for
+  `default_codex`
 
 ## Artifacts
 
@@ -82,7 +95,6 @@ default_runner = "codex_cli"
 [runners.codex]
 command = "codex"
 args = ["exec"]
-profile = "default"
 permission_default = "maximum"
 # permission_by_stage = { planner = "elevated", builder = "maximum" }
 # permission_by_model = { "gpt-5.4" = "maximum" }
@@ -115,6 +127,36 @@ Codex permission mappings:
 - `basic`: `--full-auto`
 - `elevated`: `-c approval_policy="never" --sandbox danger-full-access`
 - `maximum`: `--dangerously-bypass-approvals-and-sandbox`
+
+## Pi Adapter Behavior
+
+Pi adapter:
+
+- shells out to `pi --mode rpc --no-session`
+- sends the same Millrace-owned stage prompt contract used by the Codex path
+- persists streamed Pi events to `runner_events.<request_id>.jsonl`
+- materializes final assistant text into `runner_stdout.<request_id>.txt`
+- queries `get_last_assistant_text` and `get_session_stats` after `agent_end`
+- uses Millrace timeout governance, including RPC `abort` plus bounded hard-kill
+  fallback
+
+Default Pi config fields:
+
+```toml
+[runners.pi]
+command = "pi"
+args = []
+disable_context_files = true
+disable_skills = true
+```
+
+Pi can auto-discover `AGENTS.md` / `CLAUDE.md` context files and Pi-native
+skills on its own. Millrace disables both by default in the built-in Pi posture
+so `default_pi` stays deterministic against the same stage-entrypoint contract
+as `default_codex`.
+
+`runners.default_runner` remains a generic runtime fallback. It is not the
+primary selector for the shipped harness presets.
 
 ## Phase 2 Compatibility
 

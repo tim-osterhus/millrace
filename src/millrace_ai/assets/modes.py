@@ -20,10 +20,15 @@ BUILTIN_LOOP_PATHS: dict[str, Path] = {
 }
 
 BUILTIN_MODE_PATHS: dict[str, Path] = {
-    "standard_plain": Path("modes/standard_plain.json"),
+    "default_codex": Path("modes/default_codex.json"),
+    "default_pi": Path("modes/default_pi.json"),
 }
 
-SHIPPED_MODE_IDS: tuple[str, ...] = ("standard_plain",)
+BUILTIN_MODE_ALIASES: dict[str, str] = {
+    "standard_plain": "default_codex",
+}
+
+SHIPPED_MODE_IDS: tuple[str, ...] = ("default_codex", "default_pi")
 
 
 class ModeAssetError(AssetValidationError):
@@ -39,11 +44,12 @@ class ModeBundle:
 
 def load_builtin_mode_bundle(mode_id: str, *, assets_root: Path | None = None) -> ModeBundle:
     root = _resolve_assets_root(assets_root)
-    mode = load_builtin_mode_definition(mode_id, assets_root=root)
+    canonical_mode_id = resolve_builtin_mode_id(mode_id)
+    mode = load_builtin_mode_definition(canonical_mode_id, assets_root=root)
     execution_loop = load_builtin_loop_definition(mode.execution_loop_id, assets_root=root)
     planning_loop = load_builtin_loop_definition(mode.planning_loop_id, assets_root=root)
 
-    if mode_id in SHIPPED_MODE_IDS:
+    if canonical_mode_id in SHIPPED_MODE_IDS:
         validate_shipped_mode_same_graph(assets_root=root)
 
     if execution_loop.plane is not Plane.EXECUTION:
@@ -64,12 +70,23 @@ def load_builtin_mode_definition(
     assets_root: Path | None = None,
 ) -> ModeDefinition:
     root = _resolve_assets_root(assets_root)
-    mode = _load_mode_definition_raw(mode_id, root)
+    canonical_mode_id = resolve_builtin_mode_id(mode_id)
+    mode = _load_mode_definition_raw(canonical_mode_id, root)
 
-    if mode.mode_id != mode_id:
-        raise ModeAssetError(f"Mode asset id mismatch: expected {mode_id}, found {mode.mode_id}")
+    if mode.mode_id != canonical_mode_id:
+        raise ModeAssetError(
+            f"Mode asset id mismatch: expected {canonical_mode_id}, found {mode.mode_id}"
+        )
 
     return mode
+
+
+def resolve_builtin_mode_id(mode_id: str) -> str:
+    return BUILTIN_MODE_ALIASES.get(mode_id, mode_id)
+
+
+def builtin_mode_alias_target(mode_id: str) -> str | None:
+    return BUILTIN_MODE_ALIASES.get(mode_id)
 
 
 def load_builtin_loop_definition(
@@ -162,13 +179,16 @@ def _load_json_asset(path: Path, *, asset_kind: str) -> dict[str, Any]:
 
 __all__ = [
     "ASSETS_ROOT",
+    "BUILTIN_MODE_ALIASES",
     "BUILTIN_LOOP_PATHS",
     "BUILTIN_MODE_PATHS",
     "ModeAssetError",
     "ModeBundle",
     "SHIPPED_MODE_IDS",
+    "builtin_mode_alias_target",
     "load_builtin_loop_definition",
     "load_builtin_mode_bundle",
     "load_builtin_mode_definition",
+    "resolve_builtin_mode_id",
     "validate_shipped_mode_same_graph",
 ]

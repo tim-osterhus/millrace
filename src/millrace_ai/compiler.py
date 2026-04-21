@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from millrace_ai.assets import ModeAssetError, load_builtin_mode_bundle
+from millrace_ai.assets import ModeAssetError, load_builtin_mode_bundle, resolve_builtin_mode_id
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     CompileDiagnostics,
@@ -27,7 +27,7 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import ConfigurationError
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
-_DEFAULT_MODE_ID = "standard_plain"
+_DEFAULT_MODE_ID = "default_codex"
 _DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
 _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     ExecutionStageName.BUILDER: ("skills/stage/execution/builder-core/SKILL.md",),
@@ -308,13 +308,13 @@ def _build_source_refs(
 
 def _resolve_mode_id(requested_mode_id: str | None, config: RuntimeConfig) -> str:
     if requested_mode_id and requested_mode_id.strip():
-        return requested_mode_id.strip()
+        return resolve_builtin_mode_id(requested_mode_id.strip())
 
     default_mode = config.runtime.default_mode.strip()
     if default_mode:
-        return default_mode
+        return resolve_builtin_mode_id(default_mode)
 
-    return _DEFAULT_MODE_ID
+    return resolve_builtin_mode_id(_DEFAULT_MODE_ID)
 
 
 def _resolve_paths(target: WorkspacePaths | Path | str) -> WorkspacePaths:

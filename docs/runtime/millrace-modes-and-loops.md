@@ -25,9 +25,14 @@ Today the shipped loop ids are:
 - `execution.standard`
 - `planning.standard`
 
-The shipped mode id is:
+The shipped canonical mode ids are:
 
-- `standard_plain`
+- `default_codex`
+- `default_pi`
+
+Compatibility alias:
+
+- `standard_plain -> default_codex`
 
 ## What A Loop Defines
 
@@ -137,13 +142,19 @@ The current mode shape is intentionally small:
 - `stage_model_bindings`
 - `stage_runner_bindings`
 
-The shipped `standard_plain` mode points at:
+Both shipped canonical modes point at:
 
 - `execution_loop_id = execution.standard`
 - `planning_loop_id = planning.standard`
 
-Today all of its stage maps are empty, which means the baseline behavior comes
-from the loops, the default packaged entrypoints, and runtime config.
+They differ only in `stage_runner_bindings`:
+
+- `default_codex` binds every shipped stage to `codex_cli`
+- `default_pi` binds every shipped stage to `pi_rpc`
+
+Entrypoint, skill-addition, and model maps otherwise remain empty in the
+baseline, which means loop topology and stage semantics stay identical across
+the two harness presets.
 
 ## Stage Maps And What They Do
 
@@ -212,6 +223,10 @@ Relevant examples:
 - `stages.<stage>.model`
 - `stages.<stage>.timeout_seconds`
 
+New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.
+Existing configs that still use `standard_plain` continue to resolve to the
+same canonical Codex-backed plan.
+
 Those are the fields that change the frozen stage-plan contract rather than only
 affecting next-tick runtime behavior.
 
@@ -238,6 +253,11 @@ Maintainers should think about loops and modes as separate contracts:
 - modes choose which loops are active and which stage maps apply to them
 
 That separation is why a mode map cannot legally mention a stage that is not
+selected by the chosen loops.
+
+The important operator consequence is that changing from `default_codex` to
+`default_pi` does not change the loop graph. It changes only the frozen runner
+binding attached to each shipped stage.
 present in the selected loops. The compiler enforces that scope.
 
 For the authoring rules and validation checklist, use

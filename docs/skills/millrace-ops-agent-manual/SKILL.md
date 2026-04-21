@@ -92,6 +92,14 @@ millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 ```
 
+Know which shipped harness posture you are validating:
+
+- `default_codex` is the canonical bootstrap baseline
+- `default_pi` keeps the same loops and stage semantics, but swaps every stage
+  to the Pi RPC adapter
+- `standard_plain` remains accepted only as a compatibility alias for
+  `default_codex`
+
 5. Intake work only after the workspace is healthy and Millrace use is allowed.
 6. Run `millrace run once --workspace <workspace>` when you want one safe tick,
    or `millrace run daemon --workspace <workspace>` when long-running operation
@@ -148,6 +156,7 @@ Load these on demand when the current task requires them:
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
 - `docs/runtime/millrace-runner-architecture.md`
 - `docs/runtime/millrace-runtime-error-codes.md`
+- `docs/runtime/millrace-modes-and-loops.md`
 
 ## Operating Constraints
 
@@ -162,6 +171,8 @@ Load these on demand when the current task requires them:
   stage asset.
 - Operate Millrace as a governance layer over raw harness sessions, not as a
   replacement for them.
+- Treat `runners.default_runner` as a generic fallback, not as the definition
+  of the shipped baseline mode posture.
 
 ## Inputs This Skill Expects
 
@@ -240,6 +251,8 @@ Important monitoring note:
 
 - `millrace status watch` is monitor-only and does not acquire runtime
   ownership locks
+- `millrace doctor` is the quick integrity check for mode assets and resolved
+  runner posture, including missing harness binaries
 
 ## Monitoring And Intervention
 
@@ -274,7 +287,11 @@ Use intervention commands only when the runtime state actually justifies them:
 - Treat `<workspace>/millrace-agents/millrace.toml` as the supported operator
   configuration surface.
 - Configure runner behavior there rather than inventing side channels.
+- New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
+  `runners.default_runner = "codex_cli"`.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.
+- Pi defaults to disabling Pi-native context-file and skill discovery so the
+  shipped `default_pi` posture remains deterministic.
 - Permission resolution order for Codex is:
   1. `runners.codex.permission_by_stage`
   2. `runners.codex.permission_by_model`
