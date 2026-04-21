@@ -20,7 +20,7 @@
     {"edge_id": "manager-complete-to-terminal-manager-complete", "from_node_id": "manager", "terminal_state_id": "manager_complete", "on_outcomes": ["MANAGER_COMPLETE"], "kind": "terminal"},
     {"edge_id": "manager-blocked-to-mechanic", "from_node_id": "manager", "to_node_id": "mechanic", "on_outcomes": ["BLOCKED"]},
     {"edge_id": "mechanic-complete-to-planner", "from_node_id": "mechanic", "to_node_id": "planner", "on_outcomes": ["MECHANIC_COMPLETE"]},
-    {"edge_id": "mechanic-blocked-to-terminal-blocked", "from_node_id": "mechanic", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"},
+    {"edge_id": "mechanic-blocked-to-mechanic", "from_node_id": "mechanic", "to_node_id": "mechanic", "on_outcomes": ["BLOCKED"]},
     {"edge_id": "auditor-complete-to-planner", "from_node_id": "auditor", "to_node_id": "planner", "on_outcomes": ["AUDITOR_COMPLETE"]},
     {"edge_id": "auditor-blocked-to-mechanic", "from_node_id": "auditor", "to_node_id": "mechanic", "on_outcomes": ["BLOCKED"]},
     {"edge_id": "arbiter-complete-to-terminal-arbiter-complete", "from_node_id": "arbiter", "terminal_state_id": "arbiter_complete", "on_outcomes": ["ARBITER_COMPLETE"], "kind": "terminal"},
@@ -33,6 +33,28 @@
     {"terminal_state_id": "remediation_needed", "terminal_class": "followup_needed", "writes_status": "REMEDIATION_NEEDED", "emits_artifacts": ["stage_result", "incident_report", "verdict", "report"]},
     {"terminal_state_id": "blocked", "terminal_class": "blocked", "writes_status": "BLOCKED", "emits_artifacts": ["stage_result", "report"]}
   ],
+  "dynamic_policies": {
+    "resume_policies": [
+      {
+        "policy_id": "planning.mechanic.resume",
+        "source_node_id": "mechanic",
+        "on_outcome": "MECHANIC_COMPLETE",
+        "default_target_node_id": "planner",
+        "metadata_stage_keys": ["resume_stage"],
+        "disallowed_target_node_ids": ["mechanic"]
+      }
+    ],
+    "threshold_policies": [
+      {
+        "policy_id": "planning.blocked.recovery",
+        "source_node_ids": ["planner", "manager", "auditor", "mechanic"],
+        "on_outcome": "BLOCKED",
+        "counter_name": "mechanic_attempt_count",
+        "threshold": 2,
+        "exhausted_terminal_state_id": "blocked"
+      }
+    ]
+  },
   "completion_behavior": {
     "trigger": "backlog_drained",
     "readiness_rule": "no_open_lineage_work",

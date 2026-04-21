@@ -11,6 +11,7 @@ from millrace_ai.contracts import Plane
 
 from .loop_graphs import (
     GraphLoopCompletionBehaviorDefinition,
+    GraphLoopCounterName,
     GraphLoopEdgeDefinition,
     GraphLoopEdgeKind,
     GraphLoopEntryDefinition,
@@ -25,6 +26,23 @@ class CompiledGraphEntryPlan(ArchitectureContractModel):
     node_id: str
     stage_kind_id: str
     plane: Plane
+
+
+class CompiledGraphCompletionEntryPlan(ArchitectureContractModel):
+    entry_key: Literal[GraphLoopEntryKey.CLOSURE_TARGET] = GraphLoopEntryKey.CLOSURE_TARGET
+    node_id: str
+    stage_kind_id: str
+    plane: Plane
+    trigger: Literal["backlog_drained"]
+    readiness_rule: Literal["no_open_lineage_work"]
+    request_kind: Literal["closure_target"]
+    target_selector: Literal["active_closure_target"]
+    rubric_policy: Literal["reuse_or_create"]
+    blocked_work_policy: Literal["suppress"]
+    skip_if_already_closed: bool = True
+    on_pass_terminal_state_id: str
+    on_gap_terminal_state_id: str
+    create_incident_on_gap: bool = False
 
 
 class CompiledGraphTransitionPlan(ArchitectureContractModel):
@@ -43,6 +61,36 @@ class CompiledGraphTransitionPlan(ArchitectureContractModel):
         if target_count != 1:
             raise ValueError(
                 "compiled graph transition must target exactly one node or terminal_state_id"
+            )
+        return self
+
+
+class CompiledGraphResumePolicyPlan(ArchitectureContractModel):
+    policy_id: str
+    source_node_id: str
+    on_outcome: str
+    default_target_node_id: str
+    metadata_stage_keys: tuple[str, ...] = ()
+    disallowed_target_node_ids: tuple[str, ...] = ()
+
+
+class CompiledGraphThresholdPolicyPlan(ArchitectureContractModel):
+    policy_id: str
+    source_node_ids: tuple[str, ...] = Field(min_length=1)
+    on_outcome: str
+    counter_name: GraphLoopCounterName
+    threshold: int = Field(ge=1)
+    exhausted_target_node_id: str | None = None
+    exhausted_terminal_state_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_target_shape(self) -> "CompiledGraphThresholdPolicyPlan":
+        target_count = int(self.exhausted_target_node_id is not None) + int(
+            self.exhausted_terminal_state_id is not None
+        )
+        if target_count != 1:
+            raise ValueError(
+                "compiled threshold policy must target exactly one exhausted node or terminal state"
             )
         return self
 
@@ -72,7 +120,10 @@ class FrozenGraphPlanePlan(ArchitectureContractModel):
     entry_nodes: tuple[GraphLoopEntryDefinition, ...] = Field(min_length=1)
     transitions: tuple[GraphLoopEdgeDefinition, ...] = Field(min_length=1)
     compiled_entries: tuple[CompiledGraphEntryPlan, ...] = Field(min_length=1)
+    compiled_completion_entry: CompiledGraphCompletionEntryPlan | None = None
     compiled_transitions: tuple[CompiledGraphTransitionPlan, ...] = Field(min_length=1)
+    compiled_resume_policies: tuple[CompiledGraphResumePolicyPlan, ...] = ()
+    compiled_threshold_policies: tuple[CompiledGraphThresholdPolicyPlan, ...] = ()
     terminal_states: tuple[GraphLoopTerminalStateDefinition, ...] = Field(min_length=1)
     completion_behavior: GraphLoopCompletionBehaviorDefinition | None = None
 
@@ -82,6 +133,15 @@ class FrozenGraphPlanePlan(ArchitectureContractModel):
             raise ValueError("all graph nodes must belong to graph plane")
         if any(entry.plane is not self.plane for entry in self.compiled_entries):
             raise ValueError("all compiled graph entries must belong to graph plane")
+        if self.compiled_completion_entry is not None and self.compiled_completion_entry.plane is not self.plane:
+            raise ValueError("compiled completion entry must belong to graph plane")
+        if self.completion_behavior is None and self.compiled_completion_entry is not None:
+            raise ValueError("compiled completion entry requires completion_behavior")
+        if self.completion_behavior is not None:
+            if self.compiled_completion_entry is None:
+                raise ValueError("graphs with completion_behavior must define compiled completion entry")
+            if self.compiled_completion_entry.node_id != self.completion_behavior.target_node_id:
+                raise ValueError("compiled completion entry must target completion_behavior.target_node_id")
         return self
 
 
@@ -112,6 +172,9 @@ class FrozenGraphRunPlan(ArchitectureContractModel):
 
 __all__ = [
     "CompiledGraphEntryPlan",
+    "CompiledGraphCompletionEntryPlan",
+    "CompiledGraphResumePolicyPlan",
+    "CompiledGraphThresholdPolicyPlan",
     "CompiledGraphTransitionPlan",
     "FrozenGraphPlanePlan",
     "FrozenGraphRunPlan",

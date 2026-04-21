@@ -188,6 +188,56 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
         for entry in graph_plan.execution_graph.compiled_entries
     } == {("task", "builder", "builder")}
     assert {
+        (
+            policy.policy_id,
+            policy.source_node_id,
+            policy.on_outcome,
+            policy.default_target_node_id,
+            policy.metadata_stage_keys,
+        )
+        for policy in graph_plan.execution_graph.compiled_resume_policies
+    } == {
+        (
+            "execution.troubleshooter.resume",
+            "troubleshooter",
+            "TROUBLESHOOT_COMPLETE",
+            "builder",
+            ("resume_stage",),
+        ),
+        (
+            "execution.consultant.resume",
+            "consultant",
+            "CONSULT_COMPLETE",
+            "troubleshooter",
+            ("target_stage", "resume_stage"),
+        ),
+    }
+    assert {
+        (
+            policy.policy_id,
+            policy.counter_name.value,
+            policy.threshold,
+            policy.exhausted_target_node_id,
+            policy.exhausted_terminal_state_id,
+        )
+        for policy in graph_plan.execution_graph.compiled_threshold_policies
+    } == {
+        (
+            "execution.fix-needed.exhaustion",
+            "fix_cycle_count",
+            2,
+            "troubleshooter",
+            None,
+        ),
+        (
+            "execution.blocked.recovery",
+            "troubleshoot_attempt_count",
+            2,
+            "consultant",
+            None,
+        ),
+    }
+    assert {
         (transition.source_node_id, transition.outcome, transition.target_node_id)
         for transition in graph_plan.execution_graph.compiled_transitions
         if transition.target_node_id is not None
@@ -199,21 +249,60 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
     }
     assert graph_plan.planning_graph.completion_behavior is not None
     assert graph_plan.planning_graph.completion_behavior.target_node_id == "arbiter"
+    assert graph_plan.planning_graph.compiled_completion_entry is not None
+    assert graph_plan.planning_graph.compiled_completion_entry.entry_key.value == "closure_target"
+    assert graph_plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
+    assert graph_plan.planning_graph.compiled_completion_entry.stage_kind_id == "arbiter"
+    assert graph_plan.planning_graph.compiled_completion_entry.request_kind == "closure_target"
+    assert graph_plan.planning_graph.compiled_completion_entry.target_selector == (
+        "active_closure_target"
+    )
+    assert graph_plan.planning_graph.compiled_completion_entry.on_pass_terminal_state_id == (
+        "arbiter_complete"
+    )
+    assert graph_plan.planning_graph.compiled_completion_entry.on_gap_terminal_state_id == (
+        "remediation_needed"
+    )
+    assert {
+        (
+            policy.policy_id,
+            policy.source_node_id,
+            policy.on_outcome,
+            policy.default_target_node_id,
+            policy.metadata_stage_keys,
+        )
+        for policy in graph_plan.planning_graph.compiled_resume_policies
+    } == {
+        (
+            "planning.mechanic.resume",
+            "mechanic",
+            "MECHANIC_COMPLETE",
+            "planner",
+            ("resume_stage",),
+        ),
+    }
+    assert {
+        (
+            policy.policy_id,
+            policy.counter_name.value,
+            policy.threshold,
+            policy.exhausted_target_node_id,
+            policy.exhausted_terminal_state_id,
+        )
+        for policy in graph_plan.planning_graph.compiled_threshold_policies
+    } == {
+        (
+            "planning.blocked.recovery",
+            "mechanic_attempt_count",
+            2,
+            None,
+            "blocked",
+        ),
+    }
     assert graph_plan.execution_graph.transitions
     assert graph_plan.planning_graph.transitions
-    assert graph_plan.legacy_equivalence_ready_for_cutover is False
-    assert "execution.standard: fix-needed exhaustion routing is not yet encoded" in (
-        graph_plan.legacy_equivalence_issues
-    )
-    assert "execution.standard: blocked recovery attempt thresholds are not yet encoded" in (
-        graph_plan.legacy_equivalence_issues
-    )
-    assert "execution.standard: consultant metadata-target routing is not yet encoded" in (
-        graph_plan.legacy_equivalence_issues
-    )
-    assert "planning.standard: mechanic metadata resume routing is not yet encoded" in (
-        graph_plan.legacy_equivalence_issues
-    )
+    assert graph_plan.legacy_equivalence_ready_for_cutover is True
+    assert graph_plan.legacy_equivalence_issues == ()
 
 
 def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:

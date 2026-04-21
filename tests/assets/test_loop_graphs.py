@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from millrace_ai.architecture import GraphLoopTerminalClass
+from millrace_ai.architecture import GraphLoopCounterName, GraphLoopTerminalClass
 from millrace_ai.contracts import Plane
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.loop_graphs import (
@@ -147,11 +147,30 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
     execution_entry_nodes = {entry.entry_key.value: entry.node_id for entry in execution.entry_nodes}
     planning_entry_nodes = {entry.entry_key.value: entry.node_id for entry in planning.entry_nodes}
     execution_edges = {edge.edge_id: edge for edge in execution.edges}
+    execution_dynamic = execution.dynamic_policies
+    planning_dynamic = planning.dynamic_policies
 
     assert execution.plane is Plane.EXECUTION
     assert execution_entry_nodes == {"task": "builder"}
     assert [node.stage_kind_id for node in execution.nodes][:3] == ["builder", "checker", "fixer"]
     assert execution_edges["troubleshooter-complete-to-builder"].to_node_id == "builder"
+    assert execution_edges["troubleshooter-blocked-to-troubleshooter"].to_node_id == "troubleshooter"
+    assert execution_dynamic is not None
+    assert {policy.policy_id for policy in execution_dynamic.resume_policies} == {
+        "execution.troubleshooter.resume",
+        "execution.consultant.resume",
+    }
+    assert {policy.policy_id for policy in execution_dynamic.threshold_policies} == {
+        "execution.fix-needed.exhaustion",
+        "execution.blocked.recovery",
+    }
+    blocked_policy = next(
+        policy
+        for policy in execution_dynamic.threshold_policies
+        if policy.policy_id == "execution.blocked.recovery"
+    )
+    assert blocked_policy.counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT
+    assert blocked_policy.exhausted_target_node_id == "consultant"
     assert {state.terminal_state_id for state in execution.terminal_states} == {
         "update_complete",
         "needs_planning",
@@ -160,6 +179,13 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
 
     assert planning.plane is Plane.PLANNING
     assert planning_entry_nodes == {"incident": "auditor", "spec": "planner"}
+    assert planning_dynamic is not None
+    assert {policy.policy_id for policy in planning_dynamic.resume_policies} == {
+        "planning.mechanic.resume"
+    }
+    assert {policy.policy_id for policy in planning_dynamic.threshold_policies} == {
+        "planning.blocked.recovery"
+    }
     assert planning.completion_behavior is not None
     assert planning.completion_behavior.target_node_id == "arbiter"
     assert planning.completion_behavior.on_gap_terminal_state_id == "remediation_needed"
@@ -219,6 +245,20 @@ def test_broken_edge_target_fails_deterministically(tmp_path: Path) -> None:
 
     with pytest.raises(GraphLoopAssetError, match="references unknown to_node_id"):
         load_builtin_graph_loop_definition("planning.standard", assets_root=assets_root)
+
+
+def test_invalid_resume_policy_target_fails_deterministically(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload["dynamic_policies"]["resume_policies"][0]["default_target_node_id"] = "missing_node"
+    graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        GraphLoopAssetError,
+        match="resume policy execution.troubleshooter.resume references unknown default_target_node_id",
+    ):
+        load_builtin_graph_loop_definition("execution.standard", assets_root=assets_root)
 
 
 def test_discover_graph_loop_definitions_includes_synthetic_graph_loop(tmp_path: Path) -> None:

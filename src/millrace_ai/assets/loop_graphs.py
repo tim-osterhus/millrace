@@ -135,6 +135,29 @@ def _validate_graph_loop_against_stage_kinds(
                     f"outcome {outcome} for stage kind {source_stage_kind.stage_kind_id}"
                 )
 
+    if graph_loop.dynamic_policies is not None:
+        for resume_policy in graph_loop.dynamic_policies.resume_policies:
+            source_node = node_map[resume_policy.source_node_id]
+            source_stage_kind = stage_kinds[source_node.stage_kind_id]
+            if resume_policy.on_outcome not in source_stage_kind.legal_outcomes:
+                raise GraphLoopAssetError(
+                    f"Graph loop {graph_loop.loop_id} resume policy {resume_policy.policy_id} "
+                    f"declares illegal outcome {resume_policy.on_outcome} for stage kind "
+                    f"{source_stage_kind.stage_kind_id}"
+                )
+
+        for threshold_policy in graph_loop.dynamic_policies.threshold_policies:
+            for source_node_id in threshold_policy.source_node_ids:
+                source_node = node_map[source_node_id]
+                source_stage_kind = stage_kinds[source_node.stage_kind_id]
+                if threshold_policy.on_outcome not in source_stage_kind.legal_outcomes:
+                    raise GraphLoopAssetError(
+                        f"Graph loop {graph_loop.loop_id} threshold policy "
+                        f"{threshold_policy.policy_id} declares illegal outcome "
+                        f"{threshold_policy.on_outcome} for stage kind "
+                        f"{source_stage_kind.stage_kind_id}"
+                    )
+
     if graph_loop.completion_behavior is not None:
         target_node = node_map[graph_loop.completion_behavior.target_node_id]
         target_stage_kind = stage_kinds[target_node.stage_kind_id]

@@ -44,6 +44,12 @@ class GraphLoopTerminalClass(str, Enum):
     ESCALATE_PLANNING = "escalate_planning"
 
 
+class GraphLoopCounterName(str, Enum):
+    FIX_CYCLE_COUNT = "fix_cycle_count"
+    TROUBLESHOOT_ATTEMPT_COUNT = "troubleshoot_attempt_count"
+    MECHANIC_ATTEMPT_COUNT = "mechanic_attempt_count"
+
+
 class GraphLoopNodeDefinition(ArchitectureContractModel):
     node_id: str
     stage_kind_id: str
@@ -228,6 +234,110 @@ class GraphLoopCompletionBehaviorDefinition(ArchitectureContractModel):
         return self
 
 
+class GraphLoopResumePolicyDefinition(ArchitectureContractModel):
+    policy_id: str
+    source_node_id: str
+    on_outcome: str
+    default_target_node_id: str
+    metadata_stage_keys: tuple[str, ...] = ()
+    disallowed_target_node_ids: tuple[str, ...] = ()
+
+    @field_validator(
+        "policy_id",
+        "source_node_id",
+        "default_target_node_id",
+        mode="before",
+    )
+    @classmethod
+    def validate_canonical_refs(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", None) or "canonical id"
+        return normalize_canonical_id(str(value), field_label=field_name)
+
+    @field_validator("on_outcome")
+    @classmethod
+    def validate_on_outcome(cls, value: str) -> str:
+        return normalize_status(value, field_label="resume policy outcome")
+
+    @field_validator("metadata_stage_keys", "disallowed_target_node_ids", mode="before")
+    @classmethod
+    def normalize_tuple_refs(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+        info: object,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        field_name = getattr(info, "field_name", None) or "tuple ref"
+        normalized = [
+            normalize_canonical_id(str(item), field_label=field_name)
+            for item in value
+        ]
+        return dedupe_preserve_order(normalized)
+
+
+class GraphLoopThresholdPolicyDefinition(ArchitectureContractModel):
+    policy_id: str
+    source_node_ids: tuple[str, ...] = Field(min_length=1)
+    on_outcome: str
+    counter_name: GraphLoopCounterName
+    threshold: int = Field(ge=1)
+    exhausted_target_node_id: str | None = None
+    exhausted_terminal_state_id: str | None = None
+
+    @field_validator("policy_id", "exhausted_target_node_id", "exhausted_terminal_state_id")
+    @classmethod
+    def validate_canonical_refs(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        field_name = getattr(info, "field_name", None) or "canonical ref"
+        return normalize_canonical_id(value, field_label=field_name)
+
+    @field_validator("source_node_ids", mode="before")
+    @classmethod
+    def normalize_source_node_ids(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized = [
+            normalize_canonical_id(str(item), field_label="source_node_ids")
+            for item in value
+        ]
+        return dedupe_preserve_order(normalized)
+
+    @field_validator("on_outcome")
+    @classmethod
+    def validate_on_outcome(cls, value: str) -> str:
+        return normalize_status(value, field_label="threshold policy outcome")
+
+    @model_validator(mode="after")
+    def validate_exhausted_target_shape(self) -> "GraphLoopThresholdPolicyDefinition":
+        target_count = int(self.exhausted_target_node_id is not None) + int(
+            self.exhausted_terminal_state_id is not None
+        )
+        if target_count != 1:
+            raise ValueError(
+                "threshold policies must define exactly one exhausted target node or terminal state"
+            )
+        return self
+
+
+class GraphLoopDynamicPoliciesDefinition(ArchitectureContractModel):
+    resume_policies: tuple[GraphLoopResumePolicyDefinition, ...] = ()
+    threshold_policies: tuple[GraphLoopThresholdPolicyDefinition, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_unique_policy_ids(self) -> "GraphLoopDynamicPoliciesDefinition":
+        policy_ids = [
+            *[policy.policy_id for policy in self.resume_policies],
+            *[policy.policy_id for policy in self.threshold_policies],
+        ]
+        if len(set(policy_ids)) != len(policy_ids):
+            raise ValueError("graph loops may not contain duplicate dynamic policy ids")
+        return self
+
+
 class GraphLoopDefinition(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["graph_loop"] = "graph_loop"
@@ -238,6 +348,7 @@ class GraphLoopDefinition(ArchitectureContractModel):
     edges: tuple[GraphLoopEdgeDefinition, ...] = Field(min_length=1)
     entry_nodes: tuple[GraphLoopEntryDefinition, ...] = Field(min_length=1)
     terminal_states: tuple[GraphLoopTerminalStateDefinition, ...] = Field(min_length=1)
+    dynamic_policies: GraphLoopDynamicPoliciesDefinition | None = None
     completion_behavior: GraphLoopCompletionBehaviorDefinition | None = None
 
     @field_validator("loop_id")
@@ -288,6 +399,62 @@ class GraphLoopDefinition(ArchitectureContractModel):
                     f"edge {edge.edge_id} references unknown terminal_state_id {edge.terminal_state_id}"
                 )
 
+        if self.dynamic_policies is not None:
+            for resume_policy in self.dynamic_policies.resume_policies:
+                if resume_policy.source_node_id not in node_id_set:
+                    raise ValueError(
+                        "resume policy "
+                        f"{resume_policy.policy_id} references unknown source_node_id "
+                        f"{resume_policy.source_node_id}"
+                    )
+                if resume_policy.default_target_node_id not in node_id_set:
+                    raise ValueError(
+                        "resume policy "
+                        f"{resume_policy.policy_id} references unknown default_target_node_id "
+                        f"{resume_policy.default_target_node_id}"
+                    )
+                unknown_disallowed = sorted(
+                    node_id
+                    for node_id in resume_policy.disallowed_target_node_ids
+                    if node_id not in node_id_set
+                )
+                if unknown_disallowed:
+                    raise ValueError(
+                        "resume policy "
+                        f"{resume_policy.policy_id} references unknown disallowed_target_node_ids "
+                        f"{', '.join(unknown_disallowed)}"
+                    )
+            for threshold_policy in self.dynamic_policies.threshold_policies:
+                unknown_sources = sorted(
+                    node_id
+                    for node_id in threshold_policy.source_node_ids
+                    if node_id not in node_id_set
+                )
+                if unknown_sources:
+                    raise ValueError(
+                        "threshold policy "
+                        f"{threshold_policy.policy_id} references unknown source_node_ids "
+                        f"{', '.join(unknown_sources)}"
+                    )
+                if (
+                    threshold_policy.exhausted_target_node_id is not None
+                    and threshold_policy.exhausted_target_node_id not in node_id_set
+                ):
+                    raise ValueError(
+                        "threshold policy "
+                        f"{threshold_policy.policy_id} references unknown exhausted_target_node_id "
+                        f"{threshold_policy.exhausted_target_node_id}"
+                    )
+                if (
+                    threshold_policy.exhausted_terminal_state_id is not None
+                    and threshold_policy.exhausted_terminal_state_id not in terminal_state_id_set
+                ):
+                    raise ValueError(
+                        "threshold policy "
+                        f"{threshold_policy.policy_id} references unknown exhausted_terminal_state_id "
+                        f"{threshold_policy.exhausted_terminal_state_id}"
+                    )
+
         if self.completion_behavior is not None:
             if self.completion_behavior.target_node_id not in node_id_set:
                 raise ValueError(
@@ -334,13 +501,17 @@ def _normalize_markdown_asset_path(
 
 
 __all__ = [
+    "GraphLoopCounterName",
     "GraphLoopCompletionBehaviorDefinition",
+    "GraphLoopDynamicPoliciesDefinition",
     "GraphLoopDefinition",
     "GraphLoopEdgeDefinition",
     "GraphLoopEdgeKind",
     "GraphLoopEntryDefinition",
     "GraphLoopEntryKey",
     "GraphLoopNodeDefinition",
+    "GraphLoopResumePolicyDefinition",
+    "GraphLoopThresholdPolicyDefinition",
     "GraphLoopTerminalClass",
     "GraphLoopTerminalStateDefinition",
 ]

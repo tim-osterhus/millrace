@@ -13,13 +13,19 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from millrace_ai.architecture import (
+    CompiledGraphCompletionEntryPlan,
     CompiledGraphEntryPlan,
+    CompiledGraphResumePolicyPlan,
+    CompiledGraphThresholdPolicyPlan,
     CompiledGraphTransitionPlan,
     FrozenGraphPlanePlan,
     FrozenGraphRunPlan,
+    GraphLoopCounterName,
     GraphLoopDefinition,
     GraphLoopEdgeDefinition,
     GraphLoopNodeDefinition,
+    GraphLoopResumePolicyDefinition,
+    GraphLoopThresholdPolicyDefinition,
     MaterializedGraphNodePlan,
     RegisteredStageKindDefinition,
 )
@@ -357,7 +363,21 @@ def _materialize_graph_plane_plan(
             )
             for entry in graph_loop.entry_nodes
         ),
+        compiled_completion_entry=_compile_graph_completion_entry(
+            graph_loop=graph_loop,
+            node_plan_by_id=node_plan_by_id,
+        ),
         compiled_transitions=_compile_graph_transitions(graph_loop.edges),
+        compiled_resume_policies=_compile_graph_resume_policies(
+            graph_loop.dynamic_policies.resume_policies
+            if graph_loop.dynamic_policies is not None
+            else ()
+        ),
+        compiled_threshold_policies=_compile_graph_threshold_policies(
+            graph_loop.dynamic_policies.threshold_policies
+            if graph_loop.dynamic_policies is not None
+            else ()
+        ),
         terminal_states=graph_loop.terminal_states,
         completion_behavior=graph_loop.completion_behavior,
     )
@@ -461,6 +481,66 @@ def _compile_graph_transitions(
     return tuple(compiled)
 
 
+def _compile_graph_completion_entry(
+    *,
+    graph_loop: GraphLoopDefinition,
+    node_plan_by_id: dict[str, MaterializedGraphNodePlan],
+) -> CompiledGraphCompletionEntryPlan | None:
+    completion_behavior = graph_loop.completion_behavior
+    if completion_behavior is None:
+        return None
+
+    node_plan = node_plan_by_id[completion_behavior.target_node_id]
+    return CompiledGraphCompletionEntryPlan(
+        node_id=completion_behavior.target_node_id,
+        stage_kind_id=node_plan.stage_kind_id,
+        plane=graph_loop.plane,
+        trigger=completion_behavior.trigger,
+        readiness_rule=completion_behavior.readiness_rule,
+        request_kind=completion_behavior.request_kind,
+        target_selector=completion_behavior.target_selector,
+        rubric_policy=completion_behavior.rubric_policy,
+        blocked_work_policy=completion_behavior.blocked_work_policy,
+        skip_if_already_closed=completion_behavior.skip_if_already_closed,
+        on_pass_terminal_state_id=completion_behavior.on_pass_terminal_state_id,
+        on_gap_terminal_state_id=completion_behavior.on_gap_terminal_state_id,
+        create_incident_on_gap=completion_behavior.create_incident_on_gap,
+    )
+
+
+def _compile_graph_resume_policies(
+    policies: tuple[GraphLoopResumePolicyDefinition, ...],
+) -> tuple[CompiledGraphResumePolicyPlan, ...]:
+    return tuple(
+        CompiledGraphResumePolicyPlan(
+            policy_id=policy.policy_id,
+            source_node_id=policy.source_node_id,
+            on_outcome=policy.on_outcome,
+            default_target_node_id=policy.default_target_node_id,
+            metadata_stage_keys=policy.metadata_stage_keys,
+            disallowed_target_node_ids=policy.disallowed_target_node_ids,
+        )
+        for policy in policies
+    )
+
+
+def _compile_graph_threshold_policies(
+    policies: tuple[GraphLoopThresholdPolicyDefinition, ...],
+) -> tuple[CompiledGraphThresholdPolicyPlan, ...]:
+    return tuple(
+        CompiledGraphThresholdPolicyPlan(
+            policy_id=policy.policy_id,
+            source_node_ids=policy.source_node_ids,
+            on_outcome=policy.on_outcome,
+            counter_name=policy.counter_name,
+            threshold=policy.threshold,
+            exhausted_target_node_id=policy.exhausted_target_node_id,
+            exhausted_terminal_state_id=policy.exhausted_terminal_state_id,
+        )
+        for policy in policies
+    )
+
+
 def _legacy_equivalence_issues_for_shipped_defaults(
     *,
     execution_graph: FrozenGraphPlanePlan,
@@ -483,6 +563,18 @@ def _legacy_equivalence_issues_for_shipped_defaults(
         (transition.source_node_id, transition.outcome): transition
         for transition in planning_graph.compiled_transitions
     }
+    execution_resume_policies = {
+        policy.policy_id: policy for policy in execution_graph.compiled_resume_policies
+    }
+    execution_threshold_policies = {
+        policy.policy_id: policy for policy in execution_graph.compiled_threshold_policies
+    }
+    planning_resume_policies = {
+        policy.policy_id: policy for policy in planning_graph.compiled_resume_policies
+    }
+    planning_threshold_policies = {
+        policy.policy_id: policy for policy in planning_graph.compiled_threshold_policies
+    }
 
     if execution_transitions.get(("troubleshooter", "TROUBLESHOOT_COMPLETE"), None) is None:
         issues.append("execution.standard: troubleshooter completion transition is missing")
@@ -492,6 +584,19 @@ def _legacy_equivalence_issues_for_shipped_defaults(
             issues.append(
                 "execution.standard: troubleshooter completion default target does not match legacy builder resume"
             )
+    expected_execution_resume = execution_resume_policies.get("execution.troubleshooter.resume")
+    if (
+        expected_execution_resume is None
+        or expected_execution_resume.metadata_stage_keys != ("resume_stage",)
+    ):
+        issues.append("execution.standard: troubleshooter metadata resume routing is not yet encoded")
+    consultant_resume = execution_resume_policies.get("execution.consultant.resume")
+    if (
+        consultant_resume is None
+        or consultant_resume.metadata_stage_keys != ("target_stage", "resume_stage")
+        or consultant_resume.default_target_node_id != "troubleshooter"
+    ):
+        issues.append("execution.standard: consultant metadata-target routing is not yet encoded")
 
     if not {
         ("checker", "FIX_NEEDED"),
@@ -505,11 +610,27 @@ def _legacy_equivalence_issues_for_shipped_defaults(
         }
         if fix_needed_targets != {"fixer"}:
             issues.append("execution.standard: fix-needed direct transition no longer targets fixer")
+    fix_needed_exhaustion = execution_threshold_policies.get("execution.fix-needed.exhaustion")
+    if (
+        fix_needed_exhaustion is None
+        or set(fix_needed_exhaustion.source_node_ids) != {"checker", "doublechecker"}
+        or fix_needed_exhaustion.counter_name is not GraphLoopCounterName.FIX_CYCLE_COUNT
+        or fix_needed_exhaustion.threshold != 2
+        or fix_needed_exhaustion.exhausted_target_node_id != "troubleshooter"
+    ):
         issues.append("execution.standard: fix-needed exhaustion routing is not yet encoded")
 
-    issues.append("execution.standard: blocked recovery attempt thresholds are not yet encoded")
-    issues.append("execution.standard: consultant metadata-target routing is not yet encoded")
-    issues.append("planning.standard: mechanic metadata resume routing is not yet encoded")
+    execution_blocked_recovery = execution_threshold_policies.get("execution.blocked.recovery")
+    if (
+        execution_blocked_recovery is None
+        or set(execution_blocked_recovery.source_node_ids)
+        != {"builder", "checker", "fixer", "doublechecker", "updater", "troubleshooter"}
+        or execution_blocked_recovery.counter_name
+        is not GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT
+        or execution_blocked_recovery.threshold != 2
+        or execution_blocked_recovery.exhausted_target_node_id != "consultant"
+    ):
+        issues.append("execution.standard: blocked recovery attempt thresholds are not yet encoded")
 
     planner_complete = planning_transitions.get(("planner", "PLANNER_COMPLETE"))
     if planner_complete is None or planner_complete.target_node_id != "manager":
@@ -517,9 +638,39 @@ def _legacy_equivalence_issues_for_shipped_defaults(
     auditor_complete = planning_transitions.get(("auditor", "AUDITOR_COMPLETE"))
     if auditor_complete is None or auditor_complete.target_node_id != "planner":
         issues.append("planning.standard: auditor completion no longer targets planner")
+    mechanic_resume = planning_resume_policies.get("planning.mechanic.resume")
+    if (
+        mechanic_resume is None
+        or mechanic_resume.metadata_stage_keys != ("resume_stage",)
+        or mechanic_resume.default_target_node_id != "planner"
+    ):
+        issues.append("planning.standard: mechanic metadata resume routing is not yet encoded")
+    planning_blocked_recovery = planning_threshold_policies.get("planning.blocked.recovery")
+    if (
+        planning_blocked_recovery is None
+        or set(planning_blocked_recovery.source_node_ids)
+        != {"planner", "manager", "auditor", "mechanic"}
+        or planning_blocked_recovery.counter_name
+        is not GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT
+        or planning_blocked_recovery.threshold != 2
+        or planning_blocked_recovery.exhausted_terminal_state_id != "blocked"
+    ):
+        issues.append("planning.standard: blocked recovery attempt thresholds are not yet encoded")
 
     if planning_graph.completion_behavior is None or planning_graph.completion_behavior.target_node_id != "arbiter":
         issues.append("planning.standard: completion behavior no longer targets arbiter")
+    completion_entry = planning_graph.compiled_completion_entry
+    if completion_entry is None:
+        issues.append("planning.standard: closure-target activation entry is missing")
+    else:
+        if completion_entry.node_id != "arbiter" or completion_entry.stage_kind_id != "arbiter":
+            issues.append("planning.standard: closure-target activation entry no longer targets arbiter")
+        if completion_entry.request_kind != "closure_target":
+            issues.append("planning.standard: closure-target activation request kind drifted from legacy behavior")
+        if completion_entry.target_selector != "active_closure_target":
+            issues.append(
+                "planning.standard: closure-target selector no longer matches legacy activation behavior"
+            )
 
     return tuple(dict.fromkeys(issues))
 

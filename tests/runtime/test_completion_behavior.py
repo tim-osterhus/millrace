@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.architecture import FrozenGraphRunPlan
 from millrace_ai.contracts import (
     ClosureTargetState,
     Plane,
@@ -202,10 +203,15 @@ def test_maybe_activate_completion_stage_sets_snapshot_to_arbiter_when_target_is
 
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
+    graph_plan = FrozenGraphRunPlan.model_validate_json(
+        (paths.state_dir / "compiled_graph_plan.json").read_text(encoding="utf-8")
+    )
 
     activated = maybe_activate_completion_stage(engine)
     target = load_closure_target_state(paths, root_spec_id="spec-root-001")
 
+    assert graph_plan.planning_graph.compiled_completion_entry is not None
+    assert graph_plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
     assert activated is not None
     assert activated.root_spec_id == "spec-root-001"
     assert target.closure_blocked_by_lineage_work is False
@@ -213,6 +219,7 @@ def test_maybe_activate_completion_stage_sets_snapshot_to_arbiter_when_target_is
     assert engine.snapshot is not None
     assert engine.snapshot.active_plane is Plane.PLANNING
     assert engine.snapshot.active_stage is PlanningStageName.ARBITER
+    assert engine.snapshot.active_stage.value == graph_plan.planning_graph.compiled_completion_entry.node_id
     assert engine.snapshot.active_run_id is not None
     assert engine.snapshot.active_work_item_kind is None
     assert engine.snapshot.active_work_item_id is None
