@@ -1,6 +1,6 @@
 # Millrace Arbiter And Completion Behavior
 
-This document describes the shipped completion model for `standard_plain`.
+This document describes the shipped completion model for `default_codex`.
 
 Millrace no longer treats backlog drain as automatic completion. When a root
 lineage has an open closure target and no queued, active, or blocked work
@@ -53,7 +53,7 @@ records:
 
 ## Backlog-Drain Behavior
 
-The frozen planning-loop `completion_behavior` for `standard_plain` is:
+The frozen planning-loop `completion_behavior` for `default_codex` is:
 
 - trigger: `backlog_drained`
 - readiness rule: `no_open_lineage_work`

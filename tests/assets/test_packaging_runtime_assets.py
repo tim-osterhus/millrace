@@ -53,9 +53,13 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
     required_assets = {
         "millrace_ai/assets/entrypoints/execution/builder.md",
         "millrace_ai/assets/entrypoints/planning/planner.md",
+        "millrace_ai/assets/graphs/execution/standard.json",
+        "millrace_ai/assets/graphs/planning/standard.json",
         "millrace_ai/assets/loops/execution/default.json",
         "millrace_ai/assets/modes/default_codex.json",
         "millrace_ai/assets/modes/default_pi.json",
+        "millrace_ai/assets/registry/stage_kinds/execution/builder.json",
+        "millrace_ai/assets/registry/stage_kinds/planning/arbiter.json",
         "millrace_ai/assets/skills/README.md",
         "millrace_ai/assets/skills/millrace-skill-creator/SKILL.md",
         "millrace_ai/assets/skills/millrace-skill-creator/references/hybrid-format.md",

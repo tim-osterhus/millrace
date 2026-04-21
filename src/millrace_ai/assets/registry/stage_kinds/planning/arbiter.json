@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "kind": "registered_stage_kind",
+  "stage_kind_id": "arbiter",
+  "plane": "planning",
+  "display_name": "Arbiter",
+  "default_entrypoint_path": "entrypoints/planning/arbiter.md",
+  "required_skill_paths": ["skills/stage/planning/arbiter-core/SKILL.md"],
+  "suggested_skill_paths": [],
+  "running_status_marker": "ARBITER_RUNNING",
+  "legal_outcomes": ["ARBITER_COMPLETE", "REMEDIATION_NEEDED", "BLOCKED"],
+  "success_outcomes": ["ARBITER_COMPLETE"],
+  "failure_outcomes": ["REMEDIATION_NEEDED", "BLOCKED"],
+  "allowed_input_artifacts": ["rubric"],
+  "declared_output_artifacts": ["stage_result", "rubric", "verdict", "report"],
+  "idempotence_policy": "single_attempt_only",
+  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "can_start_tasks": false,
+  "can_start_specs": false,
+  "can_start_incidents": false,
+  "recovery_role": null,
+  "closure_role": true
+}

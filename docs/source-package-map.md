@@ -18,6 +18,8 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/config.py` | `src/millrace_ai/config/models.py`, `src/millrace_ai/config/loading.py`, `src/millrace_ai/config/boundaries.py` | `millrace_ai.config` is now a package surface. |
 | `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints.py` | Root `entrypoints.py` remains a thin compatibility facade. |
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
+| `millrace_ai/stage_kinds.py` | `src/millrace_ai/assets/architecture.py`, `src/millrace_ai/architecture/stage_kinds.py` | Root `stage_kinds.py` is the thin public facade for stage-kind registry loading. |
+| `millrace_ai/loop_graphs.py` | `src/millrace_ai/assets/loop_graphs.py`, `src/millrace_ai/architecture/loop_graphs.py` | Root `loop_graphs.py` is the thin public facade for graph-loop loading. |
 | `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package. |
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
 | `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py` | Root `paths.py` remains a thin compatibility facade. |
@@ -27,6 +29,22 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/work_documents.py` | `src/millrace_ai/workspace/work_documents.py` | Root `work_documents.py` remains a thin compatibility facade. |
 | `millrace_ai/queue_store.py` | `src/millrace_ai/workspace/queue_store.py`, `queue_selection.py`, `queue_transitions.py`, `queue_reconciliation.py` | Root `queue_store.py` remains a thin compatibility facade over the workspace queue package. |
 | `millrace_ai/state_store.py` | `src/millrace_ai/workspace/state_store.py`, `state_reconciliation.py` | Root `state_store.py` remains a thin compatibility facade over the workspace state package. |
+
+## Phase-1 Architecture Scaffolding
+
+The loop-configurable runtime work now has a dedicated additive package and
+asset family:
+
+- `src/millrace_ai/architecture/stage_kinds.py` defines typed stage-kind contracts
+- `src/millrace_ai/architecture/loop_graphs.py` defines typed graph-loop contracts
+- `src/millrace_ai/architecture/materialization.py` defines the non-authoritative graph-plan materialization contracts
+- `src/millrace_ai/assets/architecture.py` loads stage-kind registry assets
+- `src/millrace_ai/assets/loop_graphs.py` loads graph-loop assets
+- `src/millrace_ai/assets/registry/stage_kinds/` ships the stage-kind registry JSON
+- `src/millrace_ai/assets/graphs/` ships the graph-loop JSON
+
+This scaffolding is compile/materialization truth for phase 1, but runtime
+execution still routes through the legacy loop and router surfaces.
 
 ## Intentionally Preserved Root Modules
 
@@ -38,6 +56,12 @@ These modules remain at the package root because they still have one coherent re
 - `src/millrace_ai/router.py`
 - `src/millrace_ai/watchers.py`
 - `src/millrace_ai/errors.py`
+
+Additional thin compatibility facades also exist at the root for the new
+phase-1 architecture surfaces:
+
+- `src/millrace_ai/stage_kinds.py`
+- `src/millrace_ai/loop_graphs.py`
 
 ## Runner Package Notes
 

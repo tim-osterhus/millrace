@@ -3,8 +3,9 @@
 This document explains the current shipped mode and loop model used by the
 Millrace compiler and runtime.
 
-The goal is not to describe a future extension system. The goal is to describe
-the exact structure the runtime ships and validates today.
+The goal is to describe the exact structure the runtime ships and validates
+today, including the new phase-1 graph-loop scaffolding without pretending that
+runtime execution has already cut over to it.
 
 ## The Two Current Planes
 
@@ -13,12 +14,16 @@ Millrace runs two distinct planes:
 - execution
 - planning
 
-Each plane is backed by a loop asset that declares:
+Each plane is backed by a legacy loop asset that declares:
 
 - its stage list
 - its entry stage
 - its edges
 - its `terminal_results`
+
+Those legacy loop assets are still the runtime-authoritative control-flow
+surface used by `compiled_plan.json`, `router.py`, and activation/result
+application code.
 
 Today the shipped loop ids are:
 
@@ -34,7 +39,7 @@ Compatibility alias:
 
 - `standard_plain -> default_codex`
 
-## What A Loop Defines
+## What A Legacy Loop Defines
 
 Loop assets validate as `LoopConfigDefinition` in `src/millrace_ai/contracts.py`.
 
@@ -56,8 +61,30 @@ An edge validates as `LoopEdgeDefinition` and contains:
 - `edge_kind`
 - optional `max_attempts`
 
-That means loops are not just ordered stage lists. They are explicit terminal-
-driven transition tables.
+That means legacy loops are not just ordered stage lists. They are explicit
+terminal-driven transition tables.
+
+## Parallel Stage-Kind And Graph-Loop Scaffolding
+
+Phase 1 also ships a parallel architecture surface:
+
+- stage kinds under `src/millrace_ai/assets/registry/stage_kinds/`
+- graph loops under `src/millrace_ai/assets/graphs/`
+
+These assets validate as:
+
+- `RegisteredStageKindDefinition`
+- `GraphLoopDefinition`
+
+The graph-loop surface does two things today:
+
+- it proves the shipped execution and planning topology can be represented as
+  node-and-edge graphs over declared stage kinds
+- it lets the compiler emit `compiled_graph_plan.json` as a non-authoritative
+  materialization artifact for later cutover work
+
+That graph surface is real and typed, but the runtime still executes the legacy
+frozen stage-plan path today.
 
 ## Shipped Execution Loop
 
@@ -71,7 +98,7 @@ driven transition tables.
 6. `troubleshooter`
 7. `consultant`
 
-Its entry stage is `builder`.
+Its legacy loop `entry_stage` is `builder`.
 
 Its current `terminal_results` are:
 
@@ -101,7 +128,7 @@ governance loop.
 4. `auditor`
 5. `arbiter`
 
-Its entry stage is `planner`.
+Its legacy loop `entry_stage` is `planner`.
 
 Its current `terminal_results` are:
 
@@ -127,6 +154,16 @@ shipped baseline, it is activated through the planning loop's frozen
 `completion_behavior` when backlog drain leaves an eligible closure target.
 Use `docs/runtime/millrace-arbiter-and-completion-behavior.md` for that
 runtime-owned dispatch model.
+
+The phase-1 graph-loop asset makes the planning intake split explicit through
+`entry_nodes`:
+
+- `spec -> planner`
+- `incident -> auditor`
+
+That means the new graph surface already models the shipped incident intake
+behavior more directly than the legacy single-`entry_stage` loop schema, even
+though runtime execution has not cut over to that graph path yet.
 
 ## What A Mode Defines
 
@@ -212,6 +249,11 @@ This matters because the runtime executes the frozen stage-plan later. It does
 not keep re-deriving this structure from raw mode and loop JSON on every
 handoff.
 
+In phase 1, the compiler also materializes the selected shipped graph loops
+into `compiled_graph_plan.json`. That sidecar includes node plans,
+transitions, entry-node mappings, and terminal states, but it is explicitly
+non-authoritative for runtime execution.
+
 ## Config Interaction And Recompile Boundaries
 
 The config system classifies certain fields as recompile-triggering boundaries.
@@ -249,8 +291,12 @@ actually active.
 
 Maintainers should think about loops and modes as separate contracts:
 
-- loops define stage topology and transition semantics
+- legacy loops define current runtime-authoritative stage topology and
+  transition semantics
 - modes choose which loops are active and which stage maps apply to them
+- stage kinds and graph loops define the newer compile/materialization surface
+  that must stay aligned with the shipped legacy loops until later cutover work
+  lands
 
 That separation is why a mode map cannot legally mention a stage that is not
 selected by the chosen loops.
@@ -258,7 +304,6 @@ selected by the chosen loops.
 The important operator consequence is that changing from `default_codex` to
 `default_pi` does not change the loop graph. It changes only the frozen runner
 binding attached to each shipped stage.
-present in the selected loops. The compiler enforces that scope.
 
 For the authoring rules and validation checklist, use
 `docs/runtime/millrace-loop-authoring.md`.

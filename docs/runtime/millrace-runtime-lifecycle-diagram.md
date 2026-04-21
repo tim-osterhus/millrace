@@ -3,7 +3,7 @@
 This is the dense, implementation-accurate lifecycle chart for the shipped
 default runtime configuration:
 
-- mode: `standard_plain`
+- mode: `default_codex`
 - planning loop: `planning.standard`
 - execution loop: `execution.standard`
 

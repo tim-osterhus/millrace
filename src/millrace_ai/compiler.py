@@ -12,7 +12,23 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from millrace_ai.assets import ModeAssetError, load_builtin_mode_bundle, resolve_builtin_mode_id
+from millrace_ai.architecture import (
+    FrozenGraphPlanePlan,
+    FrozenGraphRunPlan,
+    GraphLoopDefinition,
+    GraphLoopNodeDefinition,
+    MaterializedGraphNodePlan,
+    RegisteredStageKindDefinition,
+)
+from millrace_ai.architecture.common import dedupe_preserve_order
+from millrace_ai.assets import (
+    discover_stage_kind_definitions,
+    load_builtin_graph_loop_definition,
+    load_builtin_mode_bundle,
+    load_builtin_stage_kind_definitions,
+    load_graph_loop_definition,
+    resolve_builtin_mode_id,
+)
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     CompileDiagnostics,
@@ -21,10 +37,11 @@ from millrace_ai.contracts import (
     FrozenStagePlan,
     LoopConfigDefinition,
     ModeDefinition,
+    Plane,
     PlanningStageName,
     StageName,
 )
-from millrace_ai.errors import ConfigurationError
+from millrace_ai.errors import AssetValidationError, ConfigurationError
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 _DEFAULT_MODE_ID = "default_codex"
@@ -43,6 +60,10 @@ _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     PlanningStageName.AUDITOR: ("skills/stage/planning/auditor-core/SKILL.md",),
     PlanningStageName.ARBITER: ("skills/stage/planning/arbiter-core/SKILL.md",),
 }
+_STAGE_NAME_BY_VALUE: dict[str, StageName] = {
+    **{stage.value: stage for stage in ExecutionStageName},
+    **{stage.value: stage for stage in PlanningStageName},
+}
 
 class CompilerValidationError(ConfigurationError):
     """Raised when a mode bundle fails reduced-compiler validation rules."""
@@ -55,6 +76,27 @@ class CompileOutcome:
     active_plan: FrozenRunPlan | None
     diagnostics: CompileDiagnostics
     used_last_known_good: bool
+
+
+def preview_graph_loop_plan(
+    loop_id: str,
+    *,
+    config: RuntimeConfig,
+    assets_root: Path | None = None,
+) -> FrozenGraphPlanePlan:
+    """Materialize one discovered graph loop into a non-authoritative plane plan."""
+
+    graph_loop = load_graph_loop_definition(loop_id, assets_root=assets_root)
+    stage_kinds = {
+        stage_kind.stage_kind_id: stage_kind
+        for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
+    }
+    return _materialize_graph_plane_plan(
+        graph_loop=graph_loop,
+        mode=_graph_preview_mode_definition(graph_loop),
+        config=config,
+        stage_kinds=stage_kinds,
+    )
 
 
 def compile_and_persist_workspace_plan(
@@ -77,6 +119,7 @@ def compile_and_persist_workspace_plan(
     compile_time = _utc_now(now)
     mode_id = _resolve_mode_id(requested_mode_id, config)
     compiled_plan_path = paths.state_dir / "compiled_plan.json"
+    compiled_graph_plan_path = paths.state_dir / "compiled_graph_plan.json"
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
 
     last_known_good = _load_existing_plan(compiled_plan_path)
@@ -88,6 +131,13 @@ def compile_and_persist_workspace_plan(
             assets_root=assets_root,
             compile_time=compile_time,
         )
+        graph_plan = _compile_frozen_graph_run_plan(
+            config=config,
+            mode_id=mode_id,
+            assets_root=assets_root,
+            compile_time=compile_time,
+            compiled_plan_id=plan.compiled_plan_id,
+        )
         diagnostics = CompileDiagnostics(
             ok=True,
             mode_id=mode_id,
@@ -95,10 +145,11 @@ def compile_and_persist_workspace_plan(
             emitted_at=compile_time,
         )
         _atomic_write_json(compiled_plan_path, plan.model_dump(mode="json"))
+        _atomic_write_json(compiled_graph_plan_path, graph_plan.model_dump(mode="json"))
         _atomic_write_json(diagnostics_path, diagnostics.model_dump(mode="json"))
         return CompileOutcome(active_plan=plan, diagnostics=diagnostics, used_last_known_good=False)
 
-    except (ModeAssetError, CompilerValidationError, ValidationError, ValueError) as exc:
+    except (AssetValidationError, CompilerValidationError, ValidationError, ValueError) as exc:
         diagnostics = CompileDiagnostics(
             ok=False,
             mode_id=mode_id,
@@ -214,6 +265,158 @@ def _required_skills_for_stage(stage: StageName) -> tuple[str, ...]:
     return _REQUIRED_SKILLS_BY_STAGE.get(stage, ())
 
 
+def _compile_frozen_graph_run_plan(
+    *,
+    config: RuntimeConfig,
+    mode_id: str,
+    assets_root: Path | None,
+    compile_time: datetime,
+    compiled_plan_id: str,
+) -> FrozenGraphRunPlan:
+    bundle = load_builtin_mode_bundle(mode_id, assets_root=assets_root)
+    execution_graph = load_builtin_graph_loop_definition(
+        bundle.execution_loop.loop_id,
+        assets_root=assets_root,
+    )
+    planning_graph = load_builtin_graph_loop_definition(
+        bundle.planning_loop.loop_id,
+        assets_root=assets_root,
+    )
+    stage_kinds = {
+        stage_kind.stage_kind_id: stage_kind
+        for stage_kind in load_builtin_stage_kind_definitions(assets_root=assets_root)
+    }
+
+    return FrozenGraphRunPlan(
+        compiled_plan_id=compiled_plan_id,
+        mode_id=bundle.mode.mode_id,
+        authoritative_for_runtime_execution=False,
+        execution_graph=_materialize_graph_plane_plan(
+            graph_loop=execution_graph,
+            mode=bundle.mode,
+            config=config,
+            stage_kinds=stage_kinds,
+        ),
+        planning_graph=_materialize_graph_plane_plan(
+            graph_loop=planning_graph,
+            mode=bundle.mode,
+            config=config,
+            stage_kinds=stage_kinds,
+        ),
+        compiled_at=compile_time,
+        source_refs=_build_graph_source_refs(
+            bundle.mode.mode_id,
+            execution_graph.loop_id,
+            planning_graph.loop_id,
+            has_planning_completion_behavior=planning_graph.completion_behavior is not None,
+        ),
+    )
+
+
+def _materialize_graph_plane_plan(
+    *,
+    graph_loop: GraphLoopDefinition,
+    mode: ModeDefinition,
+    config: RuntimeConfig,
+    stage_kinds: dict[str, RegisteredStageKindDefinition],
+) -> FrozenGraphPlanePlan:
+    return FrozenGraphPlanePlan(
+        loop_id=graph_loop.loop_id,
+        plane=graph_loop.plane,
+        nodes=tuple(
+            _materialize_graph_node_plan(
+                node=node,
+                plane=graph_loop.plane,
+                mode=mode,
+                config=config,
+                stage_kinds=stage_kinds,
+            )
+            for node in graph_loop.nodes
+        ),
+        entry_nodes=graph_loop.entry_nodes,
+        transitions=graph_loop.edges,
+        terminal_states=graph_loop.terminal_states,
+        completion_behavior=graph_loop.completion_behavior,
+    )
+
+
+def _materialize_graph_node_plan(
+    *,
+    node: GraphLoopNodeDefinition,
+    plane: Plane,
+    mode: ModeDefinition,
+    config: RuntimeConfig,
+    stage_kinds: dict[str, RegisteredStageKindDefinition],
+) -> MaterializedGraphNodePlan:
+    stage_kind = stage_kinds[node.stage_kind_id]
+    stage_name = _stage_name_for_identifier(node.stage_kind_id)
+    stage_config = config.stages.get(node.stage_kind_id)
+
+    entrypoint_path = stage_kind.default_entrypoint_path
+    if node.entrypoint_path is not None:
+        entrypoint_path = node.entrypoint_path
+    if stage_name is not None:
+        entrypoint_override = mode.stage_entrypoint_overrides.get(stage_name)
+        if entrypoint_override is not None:
+            entrypoint_path = _validate_entrypoint_override(node.node_id, entrypoint_override)
+
+    attached_skill_additions = tuple(node.attached_skill_additions)
+    if stage_name is not None:
+        attached_skill_additions = dedupe_preserve_order(
+            [*attached_skill_additions, *mode.stage_skill_additions.get(stage_name, ())]
+        )
+
+    runner_name = node.runner_name
+    if stage_config is not None and stage_config.runner is not None:
+        runner_name = stage_config.runner
+    if stage_name is not None:
+        mode_runner = mode.stage_runner_bindings.get(stage_name)
+        if mode_runner is not None:
+            runner_name = mode_runner
+
+    model_name = node.model_name
+    if stage_config is not None and stage_config.model is not None:
+        model_name = stage_config.model
+    if stage_name is not None:
+        mode_model = mode.stage_model_bindings.get(stage_name)
+        if mode_model is not None:
+            model_name = mode_model
+
+    timeout_seconds = (
+        node.timeout_seconds
+        if node.timeout_seconds is not None
+        else _DEFAULT_STAGE_TIMEOUT_SECONDS
+    )
+    if stage_config is not None and stage_config.timeout_seconds is not None:
+        timeout_seconds = stage_config.timeout_seconds
+
+    return MaterializedGraphNodePlan(
+        node_id=node.node_id,
+        stage_kind_id=node.stage_kind_id,
+        plane=plane,
+        entrypoint_path=entrypoint_path,
+        required_skill_paths=stage_kind.required_skill_paths,
+        attached_skill_additions=attached_skill_additions,
+        runner_name=runner_name,
+        model_name=model_name,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _stage_name_for_identifier(identifier: str) -> StageName | None:
+    return _STAGE_NAME_BY_VALUE.get(identifier)
+
+
+def _graph_preview_mode_definition(graph_loop: GraphLoopDefinition) -> ModeDefinition:
+    execution_loop_id = graph_loop.loop_id if graph_loop.plane is Plane.EXECUTION else "preview.execution"
+    planning_loop_id = graph_loop.loop_id if graph_loop.plane is Plane.PLANNING else "preview.planning"
+    return ModeDefinition(
+        mode_id=f"graph_preview.{graph_loop.loop_id}",
+        execution_loop_id=execution_loop_id,
+        planning_loop_id=planning_loop_id,
+    )
+
+
 def _validate_mode_stage_maps(mode: ModeDefinition, selected_stages: set[StageName]) -> None:
     for map_name, mapping in (
         ("stage_entrypoint_overrides", mode.stage_entrypoint_overrides),
@@ -306,6 +509,23 @@ def _build_source_refs(
     return tuple(refs)
 
 
+def _build_graph_source_refs(
+    mode_id: str,
+    execution_loop_id: str,
+    planning_loop_id: str,
+    *,
+    has_planning_completion_behavior: bool,
+) -> tuple[str, ...]:
+    refs = [
+        f"mode:{mode_id}",
+        f"graph_loop:{execution_loop_id}",
+        f"graph_loop:{planning_loop_id}",
+    ]
+    if has_planning_completion_behavior:
+        refs.append(f"graph_completion_behavior:{planning_loop_id}")
+    return tuple(refs)
+
+
 def _resolve_mode_id(requested_mode_id: str | None, config: RuntimeConfig) -> str:
     if requested_mode_id and requested_mode_id.strip():
         return resolve_builtin_mode_id(requested_mode_id.strip())
@@ -364,4 +584,5 @@ __all__ = [
     "CompileOutcome",
     "CompilerValidationError",
     "compile_and_persist_workspace_plan",
+    "preview_graph_loop_plan",
 ]

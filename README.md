@@ -171,11 +171,12 @@ millrace run once --workspace "$WORKSPACE"
 millrace status --workspace "$WORKSPACE"
 ```
 
-That flow proves four things quickly:
+That flow proves five things quickly:
 
 - Millrace can bootstrap its workspace contract under `millrace-agents/`
-- the selected mode and loops compile into a frozen plan before execution
-- the shipped `default_codex` mode freezes closure behavior into that plan
+- the selected mode and legacy loops compile into an authoritative frozen plan before execution
+- compile also emits `compiled_graph_plan.json`, a non-authoritative phase-1 graph sidecar built from the stage-kind registry and graph-loop assets
+- the shipped `default_codex` mode freezes closure behavior into the authoritative runtime plan
 - the runtime can execute a deterministic tick and report persisted status
 
 Canonical shipped modes today:

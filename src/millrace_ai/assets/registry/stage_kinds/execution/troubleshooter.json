@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "kind": "registered_stage_kind",
+  "stage_kind_id": "troubleshooter",
+  "plane": "execution",
+  "display_name": "Troubleshooter",
+  "default_entrypoint_path": "entrypoints/execution/troubleshooter.md",
+  "required_skill_paths": ["skills/stage/execution/troubleshooter-core/SKILL.md"],
+  "suggested_skill_paths": [],
+  "running_status_marker": "TROUBLESHOOTER_RUNNING",
+  "legal_outcomes": ["TROUBLESHOOT_COMPLETE", "BLOCKED"],
+  "success_outcomes": ["TROUBLESHOOT_COMPLETE"],
+  "failure_outcomes": ["BLOCKED"],
+  "allowed_input_artifacts": [],
+  "declared_output_artifacts": ["stage_result", "report"],
+  "idempotence_policy": "retry_safe_with_key",
+  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "can_start_tasks": false,
+  "can_start_specs": false,
+  "can_start_incidents": false,
+  "recovery_role": "local_repair",
+  "closure_role": false
+}

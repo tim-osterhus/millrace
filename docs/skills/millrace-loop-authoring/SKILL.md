@@ -19,7 +19,8 @@ Before changing anything, load these source-of-truth files:
 - `src/millrace_ai/assets/modes.py`
 - `src/millrace_ai/assets/loops/execution/default.json`
 - `src/millrace_ai/assets/loops/planning/default.json`
-- `src/millrace_ai/assets/modes/standard_plain.json`
+- `src/millrace_ai/assets/modes/default_codex.json`
+- `src/millrace_ai/assets/modes/default_pi.json`
 
 If you are writing docs as part of the change, also read:
 

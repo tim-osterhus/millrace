@@ -5,9 +5,14 @@ import json
 import shutil
 from pathlib import Path
 
-from millrace_ai.compiler import CompilerValidationError, compile_and_persist_workspace_plan
+from millrace_ai.architecture import FrozenGraphRunPlan
+from millrace_ai.compiler import (
+    CompilerValidationError,
+    compile_and_persist_workspace_plan,
+    preview_graph_loop_plan,
+)
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import CompileDiagnostics, FrozenRunPlan
+from millrace_ai.contracts import CompileDiagnostics, FrozenRunPlan, Plane
 from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
@@ -26,6 +31,85 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
     return copied_root
+
+
+def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
+    stage_kind_path = (
+        assets_root / "registry" / "stage_kinds" / "execution" / "synthetic_worker.json"
+    )
+    payload = {
+        "schema_version": "1.0",
+        "kind": "registered_stage_kind",
+        "stage_kind_id": "synthetic_worker",
+        "plane": "execution",
+        "display_name": "Synthetic Worker",
+        "default_entrypoint_path": "entrypoints/execution/builder.md",
+        "required_skill_paths": ["skills/stage/execution/builder-core/SKILL.md"],
+        "suggested_skill_paths": [],
+        "running_status_marker": "SYNTHETIC_RUNNING",
+        "legal_outcomes": ["SYNTHETIC_COMPLETE", "BLOCKED"],
+        "success_outcomes": ["SYNTHETIC_COMPLETE"],
+        "failure_outcomes": ["BLOCKED"],
+        "allowed_input_artifacts": [],
+        "declared_output_artifacts": ["stage_result", "report"],
+        "idempotence_policy": "retry_safe_with_key",
+        "allowed_overrides": [
+            "entrypoint_path",
+            "runner_name",
+            "model_name",
+            "timeout_seconds",
+            "attached_skill_additions",
+        ],
+        "can_start_tasks": True,
+        "can_start_specs": False,
+        "can_start_incidents": False,
+        "recovery_role": None,
+        "closure_role": False,
+    }
+    stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_synthetic_graph_loop_asset(assets_root: Path) -> None:
+    graph_path = assets_root / "graphs" / "execution" / "synthetic.json"
+    payload = {
+        "schema_version": "1.0",
+        "kind": "graph_loop",
+        "loop_id": "execution.synthetic",
+        "plane": "execution",
+        "nodes": [{"node_id": "synthetic_worker", "stage_kind_id": "synthetic_worker"}],
+        "entry_nodes": [{"entry_key": "task", "node_id": "synthetic_worker"}],
+        "edges": [
+            {
+                "edge_id": "synthetic-complete-to-terminal",
+                "from_node_id": "synthetic_worker",
+                "terminal_state_id": "synthetic_complete",
+                "on_outcomes": ["SYNTHETIC_COMPLETE"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "synthetic-blocked-to-terminal",
+                "from_node_id": "synthetic_worker",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BLOCKED"],
+                "kind": "terminal",
+            },
+        ],
+        "terminal_states": [
+            {
+                "terminal_state_id": "synthetic_complete",
+                "terminal_class": "success",
+                "writes_status": "SYNTHETIC_COMPLETE",
+                "emits_artifacts": ["stage_result", "report"],
+            },
+            {
+                "terminal_state_id": "blocked",
+                "terminal_class": "blocked",
+                "writes_status": "BLOCKED",
+                "emits_artifacts": ["stage_result", "report"],
+            },
+        ],
+    }
+    graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def test_compiler_validation_errors_use_project_error_hierarchy() -> None:
@@ -67,6 +151,65 @@ def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) ->
     assert any(ref.startswith("completion_behavior:") for ref in persisted_plan.source_refs)
     assert persisted_diagnostics.ok is True
     assert persisted_diagnostics.mode_id == "default_codex"
+
+
+def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+
+    paths = workspace_paths(workspace_root)
+    graph_plan_path = paths.state_dir / "compiled_graph_plan.json"
+
+    assert outcome.diagnostics.ok is True
+    assert graph_plan_path.is_file()
+
+    graph_plan = FrozenGraphRunPlan.model_validate_json(graph_plan_path.read_text(encoding="utf-8"))
+    execution_entry_nodes = {
+        entry.entry_key.value: entry.node_id for entry in graph_plan.execution_graph.entry_nodes
+    }
+    planning_entry_nodes = {
+        entry.entry_key.value: entry.node_id for entry in graph_plan.planning_graph.entry_nodes
+    }
+
+    assert graph_plan.mode_id == "default_codex"
+    assert graph_plan.authoritative_for_runtime_execution is False
+    assert graph_plan.execution_graph.loop_id == "execution.standard"
+    assert graph_plan.planning_graph.loop_id == "planning.standard"
+    assert execution_entry_nodes == {"task": "builder"}
+    assert planning_entry_nodes == {"incident": "auditor", "spec": "planner"}
+    assert graph_plan.planning_graph.completion_behavior is not None
+    assert graph_plan.planning_graph.completion_behavior.target_node_id == "arbiter"
+    assert graph_plan.execution_graph.transitions
+    assert graph_plan.planning_graph.transitions
+
+
+def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    _write_synthetic_stage_kind_asset(assets_root)
+    _write_synthetic_graph_loop_asset(assets_root)
+
+    graph_plan = preview_graph_loop_plan(
+        "execution.synthetic",
+        config=RuntimeConfig(),
+        assets_root=assets_root,
+    )
+
+    entry_nodes = {entry.entry_key.value: entry.node_id for entry in graph_plan.entry_nodes}
+
+    assert graph_plan.loop_id == "execution.synthetic"
+    assert graph_plan.plane is Plane.EXECUTION
+    assert [node.stage_kind_id for node in graph_plan.nodes] == ["synthetic_worker"]
+    assert entry_nodes == {"task": "synthetic_worker"}
+    assert {state.terminal_state_id for state in graph_plan.terminal_states} == {
+        "synthetic_complete",
+        "blocked",
+    }
 
 
 def test_standard_plain_alias_and_default_codex_compile_to_identical_plan_ids(

@@ -4,8 +4,9 @@ This document describes the current compile contract implemented by
 `src/millrace_ai/compiler.py`.
 
 The compiler is responsible for turning the selected runtime mode plus its
-execution and planning loop assets into one persisted frozen run plan under the
-workspace state tree.
+execution and planning legacy loop assets into one persisted frozen run plan
+under the workspace state tree. In phase 1 it also emits a non-authoritative
+graph-plan sidecar built from the stage-kind registry and graph-loop assets.
 
 ## Why The Compile Step Exists
 
@@ -31,20 +32,30 @@ The compiler resolves the active mode in this order:
 
 1. explicit `requested_mode_id` from the CLI command
 2. `runtime.default_mode` from `millrace.toml`
-3. fallback default `standard_plain`
+3. fallback default `default_codex`
 
-Today, the shipped baseline mode is `standard_plain`.
+Today, the shipped baseline canonical mode is `default_codex`.
+`standard_plain` remains accepted only as a compatibility alias that resolves to
+`default_codex`.
 
 ## Built-In Asset Loading
 
-The current compiler loads built-in mode and loop assets through
+The current compiler loads built-in mode and legacy loop assets through
 `src/millrace_ai/assets/modes.py`.
+
+For the phase-1 graph sidecar, it also loads:
+
+- stage kinds through `src/millrace_ai/assets/architecture.py`
+- graph loops through `src/millrace_ai/assets/loop_graphs.py`
 
 Current shipped asset ids:
 
-- mode: `standard_plain`
+- modes: `default_codex`, `default_pi`
+- compatibility alias: `standard_plain -> default_codex`
 - execution loop: `execution.standard`
 - planning loop: `planning.standard`
+- execution graph loop: `execution.standard`
+- planning graph loop: `planning.standard`
 
 The mode bundle load step validates all of the following before the runtime gets
 a frozen plan:
@@ -61,7 +72,7 @@ This is a built-in asset contract today, not a generalized plugin system.
 
 ## What Gets Frozen
 
-The compiler freezes one `FrozenRunPlan` with these core fields:
+The compiler freezes one authoritative `FrozenRunPlan` with these core fields:
 
 - `compiled_plan_id`
 - `mode_id`
@@ -90,8 +101,22 @@ execution contract from loop, mode, and config inputs.
 
 `completion_behavior` is where the compiler freezes backlog-drain semantics that
 materially affect runtime control flow. In the shipped baseline, the planning
-loop for `standard_plain` freezes a closure-target policy that dispatches the
+loop for `default_codex` freezes a closure-target policy that dispatches the
 `arbiter` stage when a root lineage drains cleanly.
+
+In phase 1, the compiler also writes a non-authoritative `FrozenGraphRunPlan`
+to `compiled_graph_plan.json`. That sidecar contains:
+
+- materialized execution and planning graph-loop ids
+- per-node materialized entrypoint/skill/runner/model/timeout data
+- explicit graph transitions
+- explicit graph `entry_nodes`
+- explicit graph terminal states
+- graph-shaped completion behavior for the planning plane
+
+The runtime does not execute from that sidecar yet. It exists to prove and
+inspect the graph-cutover scaffolding while runtime execution remains on the
+legacy frozen stage-plan path.
 
 ## Stage-Plan Freezing Rules
 
@@ -145,13 +170,17 @@ plan id even if they happen at different times.
 
 ## Persisted Compile Artifacts
 
-The compiler writes two canonical JSON artifacts under
+The compiler writes three canonical JSON artifacts under
 `<workspace>/millrace-agents/state/`:
 
 - `compiled_plan.json`
+- `compiled_graph_plan.json`
 - `compile_diagnostics.json`
 
-`compiled_plan.json` stores the active frozen plan.
+`compiled_plan.json` stores the active runtime-authoritative frozen plan.
+
+`compiled_graph_plan.json` stores the phase-1 graph materialization sidecar. It
+is intentionally not authoritative for runtime execution yet.
 
 `compile_diagnostics.json` stores the latest compile result with:
 
@@ -194,6 +223,8 @@ It proves:
 - the referenced built-in loop assets can be loaded and validated
 - all mode stage maps stay inside the selected loops
 - all stage-plans can be frozen successfully
+- the shipped stage-kind and graph-loop assets can be materialized into the
+  sidecar graph plan
 - the workspace now has current compile diagnostics
 
 It does not prove that a later stage run will succeed. It proves that the
@@ -223,9 +254,12 @@ than only asking whether the compile was valid.
 
 The current shipped baseline is intentionally small:
 
-- one built-in mode: `standard_plain`
+- two canonical built-in modes: `default_codex`, `default_pi`
+- one compatibility alias: `standard_plain -> default_codex`
 - one built-in execution loop: `execution.standard`
 - one built-in planning loop: `planning.standard`
+- one built-in execution graph loop: `execution.standard`
+- one built-in planning graph loop: `planning.standard`
 
 That is why the compiler docs should stay concrete. They should explain the
 actual shipped compile contract, not a hypothetical future extension model.
@@ -236,6 +270,7 @@ For operators, the compile step is the authoritative way to answer:
 
 - which mode is active
 - which loops are active
+- which graph loops were materialized into the phase-1 sidecar
 - whether backlog drain dispatches a completion stage and which one
 - which entrypoints the runtime will use
 - which stage-core skills and attached skills are present

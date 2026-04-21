@@ -37,6 +37,13 @@ def _expected_directories(root: Path) -> list[Path]:
         runtime_root / "loops",
         runtime_root / "loops" / "execution",
         runtime_root / "loops" / "planning",
+        runtime_root / "graphs",
+        runtime_root / "graphs" / "execution",
+        runtime_root / "graphs" / "planning",
+        runtime_root / "registry",
+        runtime_root / "registry" / "stage_kinds",
+        runtime_root / "registry" / "stage_kinds" / "execution",
+        runtime_root / "registry" / "stage_kinds" / "planning",
         runtime_root / "modes",
         runtime_root / "logs",
         runtime_root / "entrypoints",
@@ -76,6 +83,16 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.incidents_resolved_dir == root / "millrace-agents" / "incidents" / "resolved"
     assert paths.execution_loops_dir == root / "millrace-agents" / "loops" / "execution"
     assert paths.planning_loops_dir == root / "millrace-agents" / "loops" / "planning"
+    assert paths.execution_graphs_dir == root / "millrace-agents" / "graphs" / "execution"
+    assert paths.planning_graphs_dir == root / "millrace-agents" / "graphs" / "planning"
+    assert (
+        paths.execution_stage_kind_registry_dir
+        == root / "millrace-agents" / "registry" / "stage_kinds" / "execution"
+    )
+    assert (
+        paths.planning_stage_kind_registry_dir
+        == root / "millrace-agents" / "registry" / "stage_kinds" / "planning"
+    )
     assert paths.arbiter_dir == root / "millrace-agents" / "arbiter"
     assert paths.arbiter_idea_contracts_dir == root / "millrace-agents" / "arbiter" / "contracts" / "ideas"
     assert paths.arbiter_root_spec_contracts_dir == root / "millrace-agents" / "arbiter" / "contracts" / "root-specs"
@@ -112,10 +129,32 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
         assert file_path.is_file(), f"Missing file: {file_path}"
 
     # Runtime bootstrap should not create legacy root-level runtime surfaces.
-    for legacy in ("state", "runs", "tasks", "specs", "incidents", "loops", "logs", "entrypoints", "skills", "roles"):
+    for legacy in (
+        "state",
+        "runs",
+        "tasks",
+        "specs",
+        "incidents",
+        "loops",
+        "graphs",
+        "registry",
+        "logs",
+        "entrypoints",
+        "skills",
+        "roles",
+    ):
         assert not (root / legacy).exists(), f"Unexpected root-level runtime artifact: {legacy}"
 
     assert not (root / "millrace-agents" / "roles").exists()
+
+    expected_runtime_assets = [
+        root / "millrace-agents" / "graphs" / "execution" / "standard.json",
+        root / "millrace-agents" / "graphs" / "planning" / "standard.json",
+        root / "millrace-agents" / "registry" / "stage_kinds" / "execution" / "builder.json",
+        root / "millrace-agents" / "registry" / "stage_kinds" / "planning" / "arbiter.json",
+    ]
+    for asset_path in expected_runtime_assets:
+        assert asset_path.is_file(), f"Missing runtime asset: {asset_path}"
 
 
 def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None:

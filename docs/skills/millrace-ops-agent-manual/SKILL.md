@@ -104,6 +104,8 @@ Know which shipped harness posture you are validating:
 6. Run `millrace run once --workspace <workspace>` when you want one safe tick,
    or `millrace run daemon --workspace <workspace>` when long-running operation
    is actually intended.
+   If you need the daemon to persist beyond the current harness process, spawn
+   it inside a `tmux` pane rather than as an ordinary shell background process.
 7. Monitor with `millrace status watch`, `millrace runs ls`, and
    `millrace runs show <run_id>`.
 
@@ -203,7 +205,8 @@ When you use this skill well, your output should include:
 6. Intake work through the queue commands, not by dropping ad hoc files into
    runtime-owned folders unless the documented intake path does exactly that.
 7. Choose `run once` for bounded safe progression and `run daemon` only when a
-   longer-running operator posture is actually intended.
+   longer-running operator posture is actually intended. If daemon persistence
+   matters, launch it inside a `tmux` pane, not as a normal background process.
 8. Monitor through status and run-inspection surfaces.
 9. Intervene through control commands when needed.
 10. Report what changed, what the runtime now says, and what the next truthful
@@ -318,6 +321,8 @@ Do not invent semantics for runtime error codes from memory alone.
 - Treating direct queue-folder mutation as equivalent to the CLI intake surface.
 - Acting as if planning and execution are concurrent independent lanes inside
   one workspace owner.
+- Starting a daemon as a plain background job when you actually need it to keep
+  running; use a `tmux` pane for persistent daemon operation.
 - Treating this repo-local operator skill as a runtime-shipped stage skill.
 - Running a daemon when one explicit `run once` tick is the safer truthful move.
 

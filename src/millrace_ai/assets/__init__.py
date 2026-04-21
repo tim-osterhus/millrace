@@ -2,7 +2,25 @@
 
 from __future__ import annotations
 
+from .architecture import (
+    BUILTIN_STAGE_KIND_PATHS,
+    SHIPPED_STAGE_KIND_IDS,
+    ArchitectureAssetError,
+    discover_stage_kind_definitions,
+    load_builtin_stage_kind_definition,
+    load_builtin_stage_kind_definitions,
+    load_stage_kind_definition,
+)
 from .entrypoints import LintLevel, lint_asset_manifests, parse_markdown_asset
+from .loop_graphs import (
+    BUILTIN_GRAPH_LOOP_PATHS,
+    SHIPPED_GRAPH_LOOP_IDS,
+    GraphLoopAssetError,
+    discover_graph_loop_definitions,
+    load_builtin_graph_loop_definition,
+    load_builtin_graph_loop_definitions,
+    load_graph_loop_definition,
+)
 from .modes import (
     ASSETS_ROOT,
     BUILTIN_LOOP_PATHS,
@@ -21,18 +39,32 @@ from .modes import (
 
 __all__ = [
     "ASSETS_ROOT",
-    "BUILTIN_MODE_ALIASES",
+    "ArchitectureAssetError",
+    "BUILTIN_GRAPH_LOOP_PATHS",
     "BUILTIN_LOOP_PATHS",
+    "BUILTIN_MODE_ALIASES",
     "BUILTIN_MODE_PATHS",
+    "BUILTIN_STAGE_KIND_PATHS",
+    "GraphLoopAssetError",
     "LintLevel",
     "ModeAssetError",
     "ModeBundle",
+    "SHIPPED_GRAPH_LOOP_IDS",
     "SHIPPED_MODE_IDS",
+    "SHIPPED_STAGE_KIND_IDS",
     "builtin_mode_alias_target",
+    "discover_graph_loop_definitions",
+    "discover_stage_kind_definitions",
     "lint_asset_manifests",
+    "load_graph_loop_definition",
+    "load_stage_kind_definition",
+    "load_builtin_graph_loop_definition",
+    "load_builtin_graph_loop_definitions",
     "load_builtin_loop_definition",
     "load_builtin_mode_bundle",
     "load_builtin_mode_definition",
+    "load_builtin_stage_kind_definition",
+    "load_builtin_stage_kind_definitions",
     "parse_markdown_asset",
     "resolve_builtin_mode_id",
     "validate_shipped_mode_same_graph",

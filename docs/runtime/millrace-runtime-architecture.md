@@ -137,7 +137,8 @@ Idle:
 
 Compile notes:
 
-- startup compiles the active mode and loop graph into `compiled_plan.json`
+- startup compiles the active mode and legacy loops into `compiled_plan.json`
+- startup also emits `compiled_graph_plan.json` as a non-authoritative phase-1 graph sidecar
 - compile diagnostics persist separately in `compile_diagnostics.json`
 - failed compile attempts keep the last known-good frozen plan intact when one
   exists

@@ -11,7 +11,14 @@ from millrace_ai.config import render_bootstrap_runtime_config
 from millrace_ai.contracts import RecoveryCounters, RuntimeMode, RuntimeSnapshot, WatcherMode
 
 _IDLE_MARKER = "### IDLE\n"
-_RUNTIME_ASSET_DIRS: tuple[str, ...] = ("entrypoints", "skills", "modes", "loops")
+_RUNTIME_ASSET_DIRS: tuple[str, ...] = (
+    "entrypoints",
+    "skills",
+    "modes",
+    "loops",
+    "graphs",
+    "registry",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +66,13 @@ class WorkspacePaths:
     loops_dir: Path
     execution_loops_dir: Path
     planning_loops_dir: Path
+    graphs_dir: Path
+    execution_graphs_dir: Path
+    planning_graphs_dir: Path
+    registry_dir: Path
+    stage_kind_registry_dir: Path
+    execution_stage_kind_registry_dir: Path
+    planning_stage_kind_registry_dir: Path
 
     modes_dir: Path
     logs_dir: Path
@@ -111,6 +125,13 @@ class WorkspacePaths:
             self.loops_dir,
             self.execution_loops_dir,
             self.planning_loops_dir,
+            self.graphs_dir,
+            self.execution_graphs_dir,
+            self.planning_graphs_dir,
+            self.registry_dir,
+            self.stage_kind_registry_dir,
+            self.execution_stage_kind_registry_dir,
+            self.planning_stage_kind_registry_dir,
             self.modes_dir,
             self.logs_dir,
             self.entrypoints_dir,
@@ -131,6 +152,9 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
     arbiter_dir = runtime_root / "arbiter"
     arbiter_contracts_dir = arbiter_dir / "contracts"
     loops_dir = runtime_root / "loops"
+    graphs_dir = runtime_root / "graphs"
+    registry_dir = runtime_root / "registry"
+    stage_kind_registry_dir = registry_dir / "stage_kinds"
 
     return WorkspacePaths(
         root=resolved_root,
@@ -167,6 +191,13 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         loops_dir=loops_dir,
         execution_loops_dir=loops_dir / "execution",
         planning_loops_dir=loops_dir / "planning",
+        graphs_dir=graphs_dir,
+        execution_graphs_dir=graphs_dir / "execution",
+        planning_graphs_dir=graphs_dir / "planning",
+        registry_dir=registry_dir,
+        stage_kind_registry_dir=stage_kind_registry_dir,
+        execution_stage_kind_registry_dir=stage_kind_registry_dir / "execution",
+        planning_stage_kind_registry_dir=stage_kind_registry_dir / "planning",
         modes_dir=runtime_root / "modes",
         logs_dir=runtime_root / "logs",
         entrypoints_dir=runtime_root / "entrypoints",
