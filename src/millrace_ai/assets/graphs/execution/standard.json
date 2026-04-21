@@ -28,7 +28,7 @@
     {"edge_id": "doublechecker-blocked-to-troubleshooter", "from_node_id": "doublechecker", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
     {"edge_id": "updater-complete-to-terminal-update-complete", "from_node_id": "updater", "terminal_state_id": "update_complete", "on_outcomes": ["UPDATE_COMPLETE"], "kind": "terminal"},
     {"edge_id": "updater-blocked-to-troubleshooter", "from_node_id": "updater", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "troubleshooter-complete-to-checker", "from_node_id": "troubleshooter", "to_node_id": "checker", "on_outcomes": ["TROUBLESHOOT_COMPLETE"]},
+    {"edge_id": "troubleshooter-complete-to-builder", "from_node_id": "troubleshooter", "to_node_id": "builder", "on_outcomes": ["TROUBLESHOOT_COMPLETE"]},
     {"edge_id": "troubleshooter-blocked-to-consultant", "from_node_id": "troubleshooter", "to_node_id": "consultant", "on_outcomes": ["BLOCKED"]},
     {"edge_id": "consultant-complete-to-troubleshooter", "from_node_id": "consultant", "to_node_id": "troubleshooter", "on_outcomes": ["CONSULT_COMPLETE"]},
     {"edge_id": "consultant-needs-planning-to-terminal-needs-planning", "from_node_id": "consultant", "terminal_state_id": "needs_planning", "on_outcomes": ["NEEDS_PLANNING"], "kind": "terminal"},

@@ -146,10 +146,12 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
     planning = load_builtin_graph_loop_definition("planning.standard")
     execution_entry_nodes = {entry.entry_key.value: entry.node_id for entry in execution.entry_nodes}
     planning_entry_nodes = {entry.entry_key.value: entry.node_id for entry in planning.entry_nodes}
+    execution_edges = {edge.edge_id: edge for edge in execution.edges}
 
     assert execution.plane is Plane.EXECUTION
     assert execution_entry_nodes == {"task": "builder"}
     assert [node.stage_kind_id for node in execution.nodes][:3] == ["builder", "checker", "fixer"]
+    assert execution_edges["troubleshooter-complete-to-builder"].to_node_id == "builder"
     assert {state.terminal_state_id for state in execution.terminal_states} == {
         "update_complete",
         "needs_planning",

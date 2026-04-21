@@ -12,6 +12,8 @@ from millrace_ai.architecture.loop_graphs import (
     GraphLoopTerminalStateDefinition,
 )
 from millrace_ai.architecture.materialization import (
+    CompiledGraphEntryPlan,
+    CompiledGraphTransitionPlan,
     FrozenGraphPlanePlan,
     FrozenGraphRunPlan,
     MaterializedGraphNodePlan,
@@ -25,6 +27,8 @@ from millrace_ai.architecture.stage_kinds import (
 
 __all__ = [
     "ArchitectureContractModel",
+    "CompiledGraphEntryPlan",
+    "CompiledGraphTransitionPlan",
     "FrozenGraphPlanePlan",
     "FrozenGraphRunPlan",
     "GraphLoopCompletionBehaviorDefinition",

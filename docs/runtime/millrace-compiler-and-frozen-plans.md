@@ -104,19 +104,26 @@ materially affect runtime control flow. In the shipped baseline, the planning
 loop for `default_codex` freezes a closure-target policy that dispatches the
 `arbiter` stage when a root lineage drains cleanly.
 
-In phase 1, the compiler also writes a non-authoritative `FrozenGraphRunPlan`
+In the current phase-2 scaffolding slice, the compiler also writes a
+non-authoritative `FrozenGraphRunPlan`
 to `compiled_graph_plan.json`. That sidecar contains:
 
 - materialized execution and planning graph-loop ids
 - per-node materialized entrypoint/skill/runner/model/timeout data
-- explicit graph transitions
-- explicit graph `entry_nodes`
+- raw graph transitions
+- raw graph `entry_nodes`
+- normalized `compiled_entries`
+- normalized `compiled_transitions`
 - explicit graph terminal states
 - graph-shaped completion behavior for the planning plane
+- `legacy_equivalence_ready_for_cutover`
+- `legacy_equivalence_issues`
 
 The runtime does not execute from that sidecar yet. It exists to prove and
 inspect the graph-cutover scaffolding while runtime execution remains on the
-legacy frozen stage-plan path.
+legacy frozen stage-plan path. The `legacy_equivalence_*` fields are the
+compiler's explicit record of which legacy router/activation semantics still
+are not encoded strongly enough for cutover.
 
 ## Stage-Plan Freezing Rules
 
@@ -179,8 +186,8 @@ The compiler writes three canonical JSON artifacts under
 
 `compiled_plan.json` stores the active runtime-authoritative frozen plan.
 
-`compiled_graph_plan.json` stores the phase-1 graph materialization sidecar. It
-is intentionally not authoritative for runtime execution yet.
+`compiled_graph_plan.json` stores the graph materialization sidecar. It is
+intentionally not authoritative for runtime execution yet.
 
 `compile_diagnostics.json` stores the latest compile result with:
 

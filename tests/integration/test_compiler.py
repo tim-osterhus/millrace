@@ -183,10 +183,37 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
     assert graph_plan.planning_graph.loop_id == "planning.standard"
     assert execution_entry_nodes == {"task": "builder"}
     assert planning_entry_nodes == {"incident": "auditor", "spec": "planner"}
+    assert {
+        (entry.entry_key.value, entry.node_id, entry.stage_kind_id)
+        for entry in graph_plan.execution_graph.compiled_entries
+    } == {("task", "builder", "builder")}
+    assert {
+        (transition.source_node_id, transition.outcome, transition.target_node_id)
+        for transition in graph_plan.execution_graph.compiled_transitions
+        if transition.target_node_id is not None
+    } >= {
+        ("builder", "BUILDER_COMPLETE", "checker"),
+        ("checker", "CHECKER_PASS", "updater"),
+        ("fixer", "FIXER_COMPLETE", "doublechecker"),
+        ("troubleshooter", "TROUBLESHOOT_COMPLETE", "builder"),
+    }
     assert graph_plan.planning_graph.completion_behavior is not None
     assert graph_plan.planning_graph.completion_behavior.target_node_id == "arbiter"
     assert graph_plan.execution_graph.transitions
     assert graph_plan.planning_graph.transitions
+    assert graph_plan.legacy_equivalence_ready_for_cutover is False
+    assert "execution.standard: fix-needed exhaustion routing is not yet encoded" in (
+        graph_plan.legacy_equivalence_issues
+    )
+    assert "execution.standard: blocked recovery attempt thresholds are not yet encoded" in (
+        graph_plan.legacy_equivalence_issues
+    )
+    assert "execution.standard: consultant metadata-target routing is not yet encoded" in (
+        graph_plan.legacy_equivalence_issues
+    )
+    assert "planning.standard: mechanic metadata resume routing is not yet encoded" in (
+        graph_plan.legacy_equivalence_issues
+    )
 
 
 def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:

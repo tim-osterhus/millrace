@@ -13,9 +13,12 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from millrace_ai.architecture import (
+    CompiledGraphEntryPlan,
+    CompiledGraphTransitionPlan,
     FrozenGraphPlanePlan,
     FrozenGraphRunPlan,
     GraphLoopDefinition,
+    GraphLoopEdgeDefinition,
     GraphLoopNodeDefinition,
     MaterializedGraphNodePlan,
     RegisteredStageKindDefinition,
@@ -274,11 +277,11 @@ def _compile_frozen_graph_run_plan(
     compiled_plan_id: str,
 ) -> FrozenGraphRunPlan:
     bundle = load_builtin_mode_bundle(mode_id, assets_root=assets_root)
-    execution_graph = load_builtin_graph_loop_definition(
+    execution_graph_loop = load_builtin_graph_loop_definition(
         bundle.execution_loop.loop_id,
         assets_root=assets_root,
     )
-    planning_graph = load_builtin_graph_loop_definition(
+    planning_graph_loop = load_builtin_graph_loop_definition(
         bundle.planning_loop.loop_id,
         assets_root=assets_root,
     )
@@ -286,29 +289,37 @@ def _compile_frozen_graph_run_plan(
         stage_kind.stage_kind_id: stage_kind
         for stage_kind in load_builtin_stage_kind_definitions(assets_root=assets_root)
     }
+    execution_graph = _materialize_graph_plane_plan(
+        graph_loop=execution_graph_loop,
+        mode=bundle.mode,
+        config=config,
+        stage_kinds=stage_kinds,
+    )
+    planning_graph = _materialize_graph_plane_plan(
+        graph_loop=planning_graph_loop,
+        mode=bundle.mode,
+        config=config,
+        stage_kinds=stage_kinds,
+    )
+    legacy_equivalence_issues = _legacy_equivalence_issues_for_shipped_defaults(
+        execution_graph=execution_graph,
+        planning_graph=planning_graph,
+    )
 
     return FrozenGraphRunPlan(
         compiled_plan_id=compiled_plan_id,
         mode_id=bundle.mode.mode_id,
         authoritative_for_runtime_execution=False,
-        execution_graph=_materialize_graph_plane_plan(
-            graph_loop=execution_graph,
-            mode=bundle.mode,
-            config=config,
-            stage_kinds=stage_kinds,
-        ),
-        planning_graph=_materialize_graph_plane_plan(
-            graph_loop=planning_graph,
-            mode=bundle.mode,
-            config=config,
-            stage_kinds=stage_kinds,
-        ),
+        legacy_equivalence_ready_for_cutover=not legacy_equivalence_issues,
+        legacy_equivalence_issues=legacy_equivalence_issues,
+        execution_graph=execution_graph,
+        planning_graph=planning_graph,
         compiled_at=compile_time,
         source_refs=_build_graph_source_refs(
             bundle.mode.mode_id,
-            execution_graph.loop_id,
-            planning_graph.loop_id,
-            has_planning_completion_behavior=planning_graph.completion_behavior is not None,
+            execution_graph_loop.loop_id,
+            planning_graph_loop.loop_id,
+            has_planning_completion_behavior=planning_graph_loop.completion_behavior is not None,
         ),
     )
 
@@ -320,21 +331,33 @@ def _materialize_graph_plane_plan(
     config: RuntimeConfig,
     stage_kinds: dict[str, RegisteredStageKindDefinition],
 ) -> FrozenGraphPlanePlan:
+    node_plans = tuple(
+        _materialize_graph_node_plan(
+            node=node,
+            plane=graph_loop.plane,
+            mode=mode,
+            config=config,
+            stage_kinds=stage_kinds,
+        )
+        for node in graph_loop.nodes
+    )
+    node_plan_by_id = {node.node_id: node for node in node_plans}
     return FrozenGraphPlanePlan(
         loop_id=graph_loop.loop_id,
         plane=graph_loop.plane,
-        nodes=tuple(
-            _materialize_graph_node_plan(
-                node=node,
-                plane=graph_loop.plane,
-                mode=mode,
-                config=config,
-                stage_kinds=stage_kinds,
-            )
-            for node in graph_loop.nodes
-        ),
+        nodes=node_plans,
         entry_nodes=graph_loop.entry_nodes,
         transitions=graph_loop.edges,
+        compiled_entries=tuple(
+            CompiledGraphEntryPlan(
+                entry_key=entry.entry_key,
+                node_id=entry.node_id,
+                stage_kind_id=node_plan_by_id[entry.node_id].stage_kind_id,
+                plane=graph_loop.plane,
+            )
+            for entry in graph_loop.entry_nodes
+        ),
+        compiled_transitions=_compile_graph_transitions(graph_loop.edges),
         terminal_states=graph_loop.terminal_states,
         completion_behavior=graph_loop.completion_behavior,
     )
@@ -415,6 +438,90 @@ def _graph_preview_mode_definition(graph_loop: GraphLoopDefinition) -> ModeDefin
         execution_loop_id=execution_loop_id,
         planning_loop_id=planning_loop_id,
     )
+
+
+def _compile_graph_transitions(
+    edges: tuple[GraphLoopEdgeDefinition, ...],
+) -> tuple[CompiledGraphTransitionPlan, ...]:
+    compiled: list[CompiledGraphTransitionPlan] = []
+    for edge in edges:
+        for outcome in edge.on_outcomes:
+            compiled.append(
+                CompiledGraphTransitionPlan(
+                    edge_id=edge.edge_id,
+                    source_node_id=edge.from_node_id,
+                    outcome=outcome,
+                    target_node_id=edge.to_node_id,
+                    terminal_state_id=edge.terminal_state_id,
+                    kind=edge.kind,
+                    priority=edge.priority,
+                    max_attempts=edge.max_attempts,
+                )
+            )
+    return tuple(compiled)
+
+
+def _legacy_equivalence_issues_for_shipped_defaults(
+    *,
+    execution_graph: FrozenGraphPlanePlan,
+    planning_graph: FrozenGraphPlanePlan,
+) -> tuple[str, ...]:
+    issues: list[str] = []
+
+    execution_entries = {entry.entry_key.value: entry.node_id for entry in execution_graph.compiled_entries}
+    planning_entries = {entry.entry_key.value: entry.node_id for entry in planning_graph.compiled_entries}
+    if execution_entries != {"task": "builder"}:
+        issues.append("execution.standard: task intake entry no longer matches legacy builder activation")
+    if planning_entries != {"spec": "planner", "incident": "auditor"}:
+        issues.append("planning.standard: spec/incident intake entries no longer match legacy activation")
+
+    execution_transitions = {
+        (transition.source_node_id, transition.outcome): transition
+        for transition in execution_graph.compiled_transitions
+    }
+    planning_transitions = {
+        (transition.source_node_id, transition.outcome): transition
+        for transition in planning_graph.compiled_transitions
+    }
+
+    if execution_transitions.get(("troubleshooter", "TROUBLESHOOT_COMPLETE"), None) is None:
+        issues.append("execution.standard: troubleshooter completion transition is missing")
+    else:
+        troubleshooter_complete = execution_transitions[("troubleshooter", "TROUBLESHOOT_COMPLETE")]
+        if troubleshooter_complete.target_node_id != "builder":
+            issues.append(
+                "execution.standard: troubleshooter completion default target does not match legacy builder resume"
+            )
+
+    if not {
+        ("checker", "FIX_NEEDED"),
+        ("doublechecker", "FIX_NEEDED"),
+    }.issubset(execution_transitions):
+        issues.append("execution.standard: fix-needed routing coverage is incomplete")
+    else:
+        fix_needed_targets = {
+            execution_transitions[("checker", "FIX_NEEDED")].target_node_id,
+            execution_transitions[("doublechecker", "FIX_NEEDED")].target_node_id,
+        }
+        if fix_needed_targets != {"fixer"}:
+            issues.append("execution.standard: fix-needed direct transition no longer targets fixer")
+        issues.append("execution.standard: fix-needed exhaustion routing is not yet encoded")
+
+    issues.append("execution.standard: blocked recovery attempt thresholds are not yet encoded")
+    issues.append("execution.standard: consultant metadata-target routing is not yet encoded")
+    issues.append("planning.standard: mechanic metadata resume routing is not yet encoded")
+
+    planner_complete = planning_transitions.get(("planner", "PLANNER_COMPLETE"))
+    if planner_complete is None or planner_complete.target_node_id != "manager":
+        issues.append("planning.standard: planner completion no longer targets manager")
+    auditor_complete = planning_transitions.get(("auditor", "AUDITOR_COMPLETE"))
+    if auditor_complete is None or auditor_complete.target_node_id != "planner":
+        issues.append("planning.standard: auditor completion no longer targets planner")
+
+    if planning_graph.completion_behavior is None or planning_graph.completion_behavior.target_node_id != "arbiter":
+        issues.append("planning.standard: completion behavior no longer targets arbiter")
+
+    return tuple(dict.fromkeys(issues))
 
 
 def _validate_mode_stage_maps(mode: ModeDefinition, selected_stages: set[StageName]) -> None:

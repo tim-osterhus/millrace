@@ -149,12 +149,13 @@ The compiler resolves:
 `compiled_plan.json` is therefore the authoritative compiled runtime contract
 for the current workspace, not an incidental cache.
 
-Phase 1 also adds `compiled_graph_plan.json`, a non-authoritative sidecar that
-materializes the stage-kind registry and graph-loop assets into explicit node
-plans, transitions, entry-node mappings, and terminal states. That sidecar is
-for proof, inspection, and later runtime cutover work. The live runtime still
-executes from `compiled_plan.json`, the legacy loop schema, and the existing
-router/activation seams.
+Phase 1 added `compiled_graph_plan.json`, and the current phase-2 scaffolding
+slice enriches it further. The file now materializes the stage-kind registry
+and graph-loop assets into explicit node plans, raw transitions, normalized
+compiled entries/transitions, terminal states, and an explicit
+legacy-equivalence gap list. That sidecar is for proof, inspection, and later
+runtime cutover work. The live runtime still executes from `compiled_plan.json`,
+the legacy loop schema, and the existing router/activation seams.
 
 The compiler currently ships with two canonical built-in modes and one built-in
 loop per plane:
@@ -205,7 +206,7 @@ The graph-loop assets describe the same shipped topology in a richer node model:
 
 The compiler freezes the legacy surface into `FrozenRunPlan` for runtime
 execution and freezes the graph surface into `compiled_graph_plan.json` for
-phase-1 cutover scaffolding.
+phase-1/phase-2 cutover scaffolding.
 
 The selected mode connects the two loops and can add compile-time overrides such
 as:

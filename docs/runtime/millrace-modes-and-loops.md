@@ -249,10 +249,11 @@ This matters because the runtime executes the frozen stage-plan later. It does
 not keep re-deriving this structure from raw mode and loop JSON on every
 handoff.
 
-In phase 1, the compiler also materializes the selected shipped graph loops
-into `compiled_graph_plan.json`. That sidecar includes node plans,
-transitions, entry-node mappings, and terminal states, but it is explicitly
-non-authoritative for runtime execution.
+In the current phase-2 scaffolding slice, the compiler also materializes the
+selected shipped graph loops into `compiled_graph_plan.json`. That sidecar
+includes node plans, raw transitions, normalized compiled entry/transition
+indexes, terminal states, and an explicit legacy-equivalence gap list, but it
+is explicitly non-authoritative for runtime execution.
 
 ## Config Interaction And Recompile Boundaries
 
