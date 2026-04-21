@@ -251,6 +251,13 @@ A tick follows this broad order:
 9. normalize the result and apply the router decision
 10. persist snapshot, status markers, counters, and events
 
+In code, that is no longer implemented as one monolithic runtime script.
+`RuntimeEngine` remains the stable stateful façade, while internal collaborators
+own the lifecycle bootstrap (`runtime/lifecycle.py`), the one-tick
+orchestration block (`runtime/tick_cycle.py`), and the routed post-stage
+mutation seams (`runtime/result_application.py` plus the counter, transition,
+incident, persistence, and closure-target helper modules beneath it).
+
 Millrace is staged and deterministic by construction. It does not run planning
 and execution as concurrent lanes inside one workspace owner. It serializes
 stage execution under one scheduler.

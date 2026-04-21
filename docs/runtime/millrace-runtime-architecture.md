@@ -69,13 +69,20 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/compiler.py`: mode+loop compile into frozen plan + diagnostics.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex adapter.
 - `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
-- `src/millrace_ai/runtime/engine.py`: orchestration facade for startup, tick ordering, lock lifecycle, and runtime-owned control resets.
+- `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
+- `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
+- `src/millrace_ai/runtime/tick_cycle.py`: deterministic one-tick orchestration from mailbox intake through stage execution and router-decision finalization.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
 - `src/millrace_ai/runtime/completion_behavior.py`: closure-target activation, lineage readiness checks, and compiler-driven backlog-drain dispatch.
 - `src/millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
-- `src/millrace_ai/runtime/result_application.py`: router decisions, counter updates, stage-result persistence, and handoff/blocking side effects.
+- `src/millrace_ai/runtime/result_application.py`: stable façade over routed post-stage mutation helpers.
+- `src/millrace_ai/runtime/result_counters.py`: recovery-counter entry mutation and snapshot counter increments.
+- `src/millrace_ai/runtime/work_item_transitions.py`: non-closure work-item completion, blocked transitions, and active-snapshot clearing.
+- `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and arbiter-gap incident materialization.
+- `src/millrace_ai/runtime/stage_result_persistence.py`: persisted stage-result JSON writes and plane status-marker updates.
+- `src/millrace_ai/runtime/closure_transitions.py`: closure-target state mutation, arbiter report canonicalization, and arbiter-specific handoff/block/close paths.
 - `src/millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
 - `src/millrace_ai/runtime/inspection.py`: persisted run summary inspection and artifact selection helpers.
 - `src/millrace_ai/run_inspection.py`: thin compatibility layer that re-exports the runtime inspection surface.
@@ -117,6 +124,12 @@ Per tick:
 6. If no claimable work remains, consult frozen `completion_behavior` and activate `arbiter` when an open closure target is eligible.
 7. Execute one stage through the configured runner adapter.
 8. Route result markers and persist snapshot/status/counters/events.
+
+The implementation mirrors that ordering directly:
+
+- `RuntimeEngine` holds state and exposes the stable methods
+- `runtime/tick_cycle.py` owns the one-tick orchestration block
+- `runtime/result_application.py` delegates routed mutation into owned collaborators for counters, work-item movement, incident creation, persistence, and closure-target handling
 
 Idle:
 

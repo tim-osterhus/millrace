@@ -12,6 +12,7 @@ from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
+    IncidentDocument,
     MailboxCommandEnvelope,
     Plane,
     PlanningStageName,
@@ -50,6 +51,8 @@ from millrace_ai.state_store import (
     set_execution_status,
     set_planning_status,
 )
+from millrace_ai.watchers import WatcherMode, WatchEvent
+from millrace_ai.work_documents import read_work_document_as
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -289,6 +292,47 @@ def test_runtime_stage_events_surface_failure_class_and_troubleshoot_report_path
     assert stage_completed.data["troubleshoot_report_path"] == captured_request.preferred_troubleshoot_report_path
     assert router_decision.data["failure_class"] == "missing_terminal_result"
     assert outcome.stage_result.report_artifact == captured_request.preferred_troubleshoot_report_path
+
+
+def test_runtime_single_tick_emits_stage_events_in_order(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    events = read_runtime_events(paths)
+    event_types = [event.event_type for event in events]
+
+    assert captured_request is not None
+    assert outcome.stage is ExecutionStageName.BUILDER
+    runtime_started_index = event_types.index("runtime_started")
+    stage_started_index = event_types.index("stage_started")
+    stage_completed_index = event_types.index("stage_completed")
+    router_decision_index = event_types.index("router_decision")
+
+    assert runtime_started_index < stage_started_index < stage_completed_index < router_decision_index
+    assert events[stage_started_index].data["run_id"] == captured_request.run_id
+    assert events[stage_started_index].data["stage"] == "builder"
+    assert (
+        events[stage_completed_index].data["terminal_result"]
+        == ExecutionTerminalResult.BUILDER_COMPLETE.value
+    )
+    assert events[router_decision_index].data["action"] == "run_stage"
+    assert events[router_decision_index].data["next_stage"] == "checker"
 
 
 def test_runtime_stage_request_entrypoint_path_exists_after_startup(tmp_path: Path) -> None:
@@ -642,11 +686,14 @@ def test_runtime_blocked_planning_item_is_moved_to_blocked_without_snapshot_cras
     assert snapshot.active_plane is None
     assert snapshot.active_work_item_kind is None
     assert snapshot.active_work_item_id is None
+    assert snapshot.current_failure_class == "planner_blocked"
     assert load_planning_status(paths) == "### BLOCKED"
     assert (paths.specs_blocked_dir / "spec-001.md").is_file()
     assert not (paths.specs_active_dir / "spec-001.md").exists()
     assert load_recovery_counters(paths).entries == ()
     assert seen_stages == ["planner", "mechanic"]
+    assert second.router_decision.action is RouterAction.BLOCKED
+    assert second.router_decision.reason == "mechanic_blocked:mechanic_attempts_exhausted"
 
 
 def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: Path) -> None:
@@ -701,8 +748,17 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
     assert snapshot_after_handoff.active_stage is None
     assert snapshot_after_handoff.active_plane is None
     assert snapshot_after_handoff.active_work_item_id is None
+    assert snapshot_after_handoff.current_failure_class is None
     assert (paths.tasks_blocked_dir / "task-001.md").is_file()
     assert len(tuple(paths.incidents_incoming_dir.glob("*.md"))) == 1
+    incident_path = next(paths.incidents_incoming_dir.glob("*.md"))
+    incident = read_work_document_as(incident_path, model=IncidentDocument)
+    assert incident.needs_planning is True
+    assert incident.trigger_reason == "consultant_needs_planning"
+    assert incident.source_stage is ExecutionStageName.CONSULTANT
+
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+    assert "runtime_handoff_incident_enqueued" in event_types
 
     fourth = engine.tick()
     assert fourth.stage is PlanningStageName.AUDITOR
@@ -1231,6 +1287,60 @@ def test_runtime_tick_normalizes_idea_watch_event_before_execution(tmp_path: Pat
     assert any(paths.specs_active_dir.glob("idea-*.md"))
 
 
+def test_runtime_tick_applies_mailbox_then_watcher_before_no_work_idle(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+
+    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    write_mailbox_command(paths, _mailbox_command("cmd-reload-idle-order", "reload_config"))
+
+    ignored_path = paths.root / "ignored.target"
+    ignored_path.write_text("ignore watcher event\n", encoding="utf-8")
+
+    class _FakeWatcherSession:
+        mode = WatcherMode.POLL
+
+        def poll_once(self, *, now: datetime | None = None) -> tuple[WatchEvent, ...]:
+            del now
+            return (
+                WatchEvent(
+                    target="unknown_target",
+                    path=ignored_path,
+                    event_kind="changed",
+                    observed_at=NOW,
+                ),
+            )
+
+        def close(self) -> None:
+            return
+
+    fake_watcher = _FakeWatcherSession()
+
+    def rebuild_watcher_session() -> None:
+        engine._watcher_session = fake_watcher
+
+    engine._watcher_session = fake_watcher
+    engine._rebuild_watcher_session = rebuild_watcher_session  # type: ignore[method-assign]
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+
+    assert outcome.router_decision.reason == "no_work"
+    assert snapshot.runtime_mode is RuntimeMode.ONCE
+    assert snapshot.last_reload_outcome == "applied"
+    assert event_types.index("runtime_config_reloaded") < event_types.index("watcher_event_ignored")
+    assert event_types.index("watcher_event_ignored") < event_types.index("watcher_events_consumed")
+    assert event_types.index("watcher_events_consumed") < event_types.index("runtime_tick_idle")
+
+
 def test_runtime_normalize_idea_watch_event_ignores_read_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1499,11 +1609,15 @@ def test_runtime_tick_enqueues_remediation_incident_for_arbiter_gap(tmp_path: Pa
     assert target.closure_open is True
     assert target.closed_at is None
     assert target.last_arbiter_run_id == outcome.stage_result.run_id
+    assert target.latest_verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
+    assert target.latest_report_path == f"millrace-agents/arbiter/reports/{outcome.stage_result.run_id}.md"
     assert len(incident_paths) == 1
     incident_text = incident_paths[0].read_text(encoding="utf-8")
+    assert "Failure-Class: arbiter_parity_gap" in incident_text
     assert "Root-Spec-ID: spec-root-001" in incident_text
     assert "Root-Idea-ID: idea-001" in incident_text
     assert "Source-Stage: arbiter" in incident_text
+    assert "Trigger-Reason: arbiter_remediation_needed" in incident_text
 
 
 def test_runtime_mailbox_retry_active_requeues_active_item_and_resets_counters(tmp_path: Path) -> None:

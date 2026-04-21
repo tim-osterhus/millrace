@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from uuid import uuid4
 
-from millrace_ai.compiler import compile_and_persist_workspace_plan
-from millrace_ai.config import RuntimeConfig, fingerprint_runtime_config, load_runtime_config
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ClosureTargetState,
     FrozenRunPlan,
@@ -23,25 +21,15 @@ from millrace_ai.contracts import (
     WatcherMode,
     WorkItemKind,
 )
-from millrace_ai.errors import (
-    QueueStateError,
-    RuntimeLifecycleError,
-    WorkspaceStateError,
-)
+from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.router import RouterDecision
-from millrace_ai.runners import RunnerRawResult, StageRunRequest, normalize_stage_result
-from millrace_ai.runtime_lock import (
-    RuntimeOwnershipLockError,
-    acquire_runtime_ownership_lock,
-    release_runtime_ownership_lock,
-)
+from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.state_store import (
     ReconciliationSignal,
     load_recovery_counters,
-    load_snapshot,
     reset_forward_progress_counters,
     running_status_marker_for_stage,
     save_recovery_counters,
@@ -54,13 +42,14 @@ from millrace_ai.watchers import WatcherSession, WatchEvent
 from . import (
     activation,
     completion_behavior,
+    lifecycle,
     mailbox_intake,
     reconciliation,
     result_application,
     stage_requests,
+    tick_cycle,
     watcher_intake,
 )
-from .error_recovery import schedule_post_stage_exception_recovery
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
@@ -118,245 +107,17 @@ class RuntimeEngine:
     def close(self) -> None:
         """Release any runtime-owned resources held by this engine session."""
 
-        self._close_watcher_session()
-        self._release_daemon_ownership_lock(force=False)
+        lifecycle.close_engine(self)
 
     def startup(self) -> RuntimeSnapshot:
         """Load config, compile the active mode, and reconcile stale runtime state."""
 
-        lock_acquired = False
-        try:
-            self.config = load_runtime_config(self.config_path)
-            if self._requires_daemon_ownership_lock():
-                lock_acquired = self._acquire_daemon_ownership_lock()
-            self._rebuild_watcher_session()
-
-            compile_outcome = compile_and_persist_workspace_plan(
-                self.paths,
-                config=self.config,
-                requested_mode_id=self.mode_id,
-                assets_root=self.assets_root,
-            )
-            compiled_plan = compile_outcome.active_plan
-            if compiled_plan is None:
-                errors = ", ".join(compile_outcome.diagnostics.errors) or "compile failed"
-                raise RuntimeLifecycleError(errors)
-
-            self.compiled_plan = compiled_plan
-
-            self.snapshot = load_snapshot(self.paths)
-            self.counters = load_recovery_counters(self.paths)
-            self._run_reconciliation_if_needed()
-
-            assert self.snapshot is not None
-            snapshot = self.snapshot.model_copy(
-                update={
-                    "runtime_mode": self.config.runtime.run_style,
-                    "process_running": True,
-                    "active_mode_id": compiled_plan.mode_id,
-                    "execution_loop_id": compiled_plan.execution_loop_id,
-                    "planning_loop_id": compiled_plan.planning_loop_id,
-                    "compiled_plan_id": compiled_plan.compiled_plan_id,
-                    "compiled_plan_path": str((self.paths.state_dir / "compiled_plan.json").relative_to(self.paths.root)),
-                    "queue_depth_execution": self._execution_queue_depth(),
-                    "queue_depth_planning": self._planning_queue_depth(),
-                    "config_version": fingerprint_runtime_config(self.config),
-                    "watcher_mode": self._watcher_mode_value(),
-                    "last_reload_outcome": None,
-                    "last_reload_error": None,
-                    "updated_at": self._now(),
-                }
-            )
-
-            self.snapshot = snapshot
-            save_snapshot(self.paths, snapshot)
-            write_runtime_event(
-                self.paths,
-                event_type="runtime_started",
-                data={
-                    "mode_id": snapshot.active_mode_id,
-                    "compiled_plan_id": snapshot.compiled_plan_id,
-                    "process_running": snapshot.process_running,
-                },
-            )
-            return snapshot
-        except Exception:
-            self._close_watcher_session()
-            if lock_acquired:
-                self._release_daemon_ownership_lock(force=True)
-            raise
+        return lifecycle.startup_engine(self)
 
     def tick(self) -> RuntimeTickOutcome:
         """Run one deterministic runtime tick."""
 
-        if self.snapshot is None or self.counters is None or self.compiled_plan is None:
-            self.startup()
-        assert self.snapshot is not None
-        assert self.counters is not None
-        assert self.compiled_plan is not None
-
-        # Deterministic tick order: mailbox/control intake, reconciliation, then stage execution.
-        self._drain_mailbox()
-        self._consume_watcher_events()
-        self._refresh_runtime_queue_depths()
-
-        if self.snapshot.stop_requested:
-            self._reset_runtime_to_idle(
-                process_running=False,
-                clear_stop_requested=True,
-                clear_paused=True,
-            )
-            self._close_watcher_session()
-            self._release_daemon_ownership_lock(force=False)
-            write_runtime_event(self.paths, event_type="runtime_tick_stopped")
-            return self._idle_tick_outcome(reason="stop_requested")
-
-        if self.snapshot.paused:
-            save_snapshot(self.paths, self.snapshot)
-            write_runtime_event(self.paths, event_type="runtime_tick_paused")
-            return self._idle_tick_outcome(reason="paused")
-
-        self._run_reconciliation_if_needed()
-        self._refresh_runtime_queue_depths(process_running=True)
-
-        if self.snapshot.active_stage is None:
-            self._claim_next_work_item()
-
-        if self.snapshot.active_stage is None:
-            self._maybe_activate_completion_stage()
-
-        if (
-            self.snapshot.active_stage is not None
-            and self.snapshot.active_plane is not None
-            and (
-                self.snapshot.active_work_item_kind is None
-                or self.snapshot.active_work_item_id is None
-            )
-            and not self._is_completion_stage_active()
-        ):
-            write_runtime_event(
-                self.paths,
-                event_type="runtime_tick_invalid_active_state",
-                data={"reason": "missing_active_work_item_identity"},
-            )
-            self._clear_stale_state()
-            save_snapshot(self.paths, self.snapshot)
-            return self._idle_tick_outcome(reason="missing_active_work_item_identity")
-
-        if self.snapshot.active_stage is None or self.snapshot.active_plane is None:
-            save_snapshot(self.paths, self.snapshot)
-            write_runtime_event(self.paths, event_type="runtime_tick_idle")
-            return self._idle_tick_outcome(reason="no_work")
-
-        stage_plan = self._stage_plan_for(self.snapshot.active_plane, self.snapshot.active_stage)
-        if self._is_completion_stage_active():
-            closure_target = self._active_closure_target()
-            if closure_target is None:
-                raise WorkspaceStateError("completion stage is active without an open closure target")
-            request = self._build_closure_target_stage_run_request(stage_plan, closure_target)
-        else:
-            request = self._build_stage_run_request(stage_plan)
-        self._mark_active_stage_running(plane=request.plane, stage=request.stage)
-        write_runtime_event(
-            self.paths,
-            event_type="stage_started",
-            data={
-                "request_id": request.request_id,
-                "stage": request.stage.value,
-                "plane": request.plane.value,
-                "run_id": request.run_id,
-                "work_item_kind": request.active_work_item_kind.value if request.active_work_item_kind else None,
-                "work_item_id": request.active_work_item_id,
-                "troubleshoot_report_path": request.preferred_troubleshoot_report_path,
-            },
-        )
-
-        try:
-            raw_result = self.stage_runner(request)
-        except Exception as exc:  # pragma: no cover - defensive path
-            raw_result = self._runner_failure_result(request, failure_class="runner_error", error=str(exc))
-
-        stage_result = normalize_stage_result(request, raw_result)
-        stage_result_path: Path | None = None
-        router_decision: RouterDecision | None = None
-        try:
-            stage_result_path = self._write_stage_result(request, stage_result)
-            router_decision = self._route_stage_result(stage_result)
-            self._write_plane_status(stage_result)
-            self._apply_router_decision(router_decision, stage_result)
-        except Exception as exc:
-            recovery_decision = schedule_post_stage_exception_recovery(
-                self,
-                stage_result=stage_result,
-                error=exc,
-                router_decision=router_decision,
-                stage_result_path=stage_result_path,
-            )
-            return RuntimeTickOutcome(
-                stage=stage_result.stage,
-                stage_result=stage_result,
-                stage_result_path=stage_result_path
-                or (self.paths.logs_dir / f"{request.request_id}.stage_result.unavailable.json"),
-                router_decision=recovery_decision,
-                snapshot=self.snapshot,
-            )
-
-        assert stage_result_path is not None
-        assert router_decision is not None
-        self.snapshot = self.snapshot.model_copy(
-            update={
-                "last_terminal_result": stage_result.terminal_result,
-                "last_stage_result_path": str(stage_result_path.relative_to(self.paths.root)),
-                "queue_depth_execution": self._execution_queue_depth(),
-                "queue_depth_planning": self._planning_queue_depth(),
-                "updated_at": self._now(),
-            }
-        )
-        save_snapshot(self.paths, self.snapshot)
-        write_runtime_event(
-            self.paths,
-            event_type="stage_completed",
-            data={
-                "request_id": request.request_id,
-                "stage": stage_result.stage.value,
-                "plane": stage_result.plane.value,
-                "run_id": request.run_id,
-                "work_item_kind": stage_result.work_item_kind.value,
-                "work_item_id": stage_result.work_item_id,
-                "terminal_result": stage_result.terminal_result.value,
-                "failure_class": stage_result.metadata.get("failure_class"),
-                "troubleshoot_report_path": (
-                    stage_result.report_artifact or request.preferred_troubleshoot_report_path
-                ),
-            },
-        )
-        write_runtime_event(
-            self.paths,
-            event_type="router_decision",
-            data={
-                "action": router_decision.action.value,
-                "plane": stage_result.plane.value,
-                "run_id": request.run_id,
-                "work_item_kind": stage_result.work_item_kind.value,
-                "work_item_id": stage_result.work_item_id,
-                "stage": stage_result.stage.value,
-                "terminal_result": stage_result.terminal_result.value,
-                "failure_class": stage_result.metadata.get("failure_class"),
-                "troubleshoot_report_path": (
-                    stage_result.report_artifact or request.preferred_troubleshoot_report_path
-                ),
-                "next_stage": router_decision.next_stage.value if router_decision.next_stage else None,
-                "reason": router_decision.reason,
-            },
-        )
-
-        return RuntimeTickOutcome(
-            stage=stage_result.stage,
-            stage_result=stage_result,
-            stage_result_path=stage_result_path,
-            router_decision=router_decision,
-            snapshot=self.snapshot,
-        )
+        return tick_cycle.run_tick(self)
 
     def _drain_mailbox(self) -> None:
         mailbox_intake.drain_mailbox(self)
@@ -717,48 +478,13 @@ class RuntimeEngine:
         )
 
     def _requires_daemon_ownership_lock(self) -> bool:
-        return self.config is not None
+        return lifecycle.requires_daemon_ownership_lock(self)
 
     def _acquire_daemon_ownership_lock(self) -> bool:
-        if self._daemon_lock_session_id is not None:
-            return False
-
-        session_id = uuid4().hex
-        try:
-            acquire_runtime_ownership_lock(self.paths, owner_session_id=session_id)
-        except RuntimeOwnershipLockError as exc:
-            write_runtime_event(
-                self.paths,
-                event_type="runtime_daemon_lock_denied",
-                data={"reason": str(exc)},
-            )
-            raise RuntimeLifecycleError(str(exc)) from exc
-
-        self._daemon_lock_session_id = session_id
-        write_runtime_event(
-            self.paths,
-            event_type="runtime_daemon_lock_acquired",
-            data={"session_id": session_id},
-        )
-        return True
+        return lifecycle.acquire_daemon_ownership_lock(self)
 
     def _release_daemon_ownership_lock(self, *, force: bool) -> bool:
-        session_id = self._daemon_lock_session_id
-        if session_id is None and not force:
-            return False
-        released = release_runtime_ownership_lock(
-            self.paths,
-            owner_session_id=session_id,
-            force=force,
-        )
-        if released:
-            write_runtime_event(
-                self.paths,
-                event_type="runtime_daemon_lock_released",
-                data={"session_id": session_id},
-            )
-        self._daemon_lock_session_id = None
-        return released
+        return lifecycle.release_daemon_ownership_lock(self, force=force)
 
     def _new_run_id(self) -> str:
         return stage_requests.new_run_id()
