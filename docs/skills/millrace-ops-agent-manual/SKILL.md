@@ -1,111 +1,206 @@
-# Millrace Ops Agent Manual
+---
+asset_type: skill
+asset_id: millrace-ops-agent-manual
+version: 1
+description: External operator skill for deciding when to use Millrace and how to run, monitor, and intervene safely.
+advisory_only: true
+capability_type: operator_manual
+forbidden_claims:
+  - queue_selection
+  - routing
+  - retry_thresholds
+  - escalation_policy
+  - status_persistence
+  - terminal_results
+  - required_artifacts
+---
 
-This document is for external agents acting as the dedicated operator of a
-Millrace workspace.
+# Millrace Operator
 
-## What Millrace Is
+Use this skill when you are acting as the operator of a Millrace workspace or
+when you need to decide whether work should run through Millrace instead of a
+direct Codex or Claude Code session.
 
-Millrace is a governed runtime for long-running agent work that needs durable
-state, staged execution, deterministic handoffs, and recovery-aware operation.
+If your harness supports repo-local `SKILL.md` packages, load this directory as
+the skill package. If the harness ignores YAML frontmatter, treat the markdown
+body below as the canonical operator instructions.
 
-Millrace is not the coding model itself. It wraps and governs coding sessions
-run by raw agent harnesses such as Codex, Claude Code, or Aider.
+## Harness Install Notes
 
-In practice, Millrace adds:
+- Skill package root: `docs/skills/millrace-ops-agent-manual/`
+- Entry file: `docs/skills/millrace-ops-agent-manual/SKILL.md`
+- Codex or Claude Code: if local project skills are supported, load the
+  package root; otherwise load the entry file directly.
+- Other harnesses: use whichever of those two surfaces the harness actually
+  understands, without inventing extra metadata requirements.
 
-- a compile step that freezes a mode and loop topology into a run plan
-- file-backed runtime state under `<workspace>/millrace-agents/`
-- staged execution and planning loops with typed terminal results
-- persisted run artifacts and repair-oriented recovery paths
-- runner dispatch that invokes a raw harness through a defined adapter contract
+## Purpose
 
-## What Millrace Is Not
+Become a truthful Millrace operator:
 
-Millrace is not:
+- decide whether the work should stay in a direct harness session or be
+  delegated into Millrace
+- ask the user what Millrace delegation authority you are allowed to exercise
+- operate Millrace through the supported CLI rather than by mutating
+  runtime-owned state directly
+- monitor runtime state, runs, queue movement, and recovery signals without
+  inventing semantics
 
-- a replacement for raw agent harnesses across all tasks
-- the best tool for one-shot greenfield coding or short bounded edits
-- a general chat agent that should be dropped into arbitrary repos with no
-  operator posture
-- a substitute for thinking about whether the work actually needs governance
+## When To Load This Skill
 
-If the work fits comfortably in one session and does not need durable runtime
-state, staged gates, or recovery routing, use the raw harness directly.
+Load this skill when any of the following is true:
 
-## Relationship To Raw Harnesses
+- the user asks you to operate, run, monitor, or troubleshoot Millrace
+- the user asks whether a task or spec should be delegated into Millrace
+- you are managing a workspace that already contains `millrace-agents/`
+- you need to intake tasks, specs, or ideas into a Millrace queue
+- you need to watch or report on a running Millrace daemon
 
-Millrace should be used in conjunction with raw harnesses, not instead of them.
+Do not load this skill just because the repo happens to contain Millrace.
+Ordinary direct code edits do not automatically require the Millrace operator
+posture.
 
-Think of the relationship this way:
+## Required Autonomy Handshake
 
-- the raw harness does the local reasoning and code-editing work for one stage
-- Millrace owns the queue, compiled plan, runtime state, stage progression,
-  recovery routing, and persisted audit trail
-- the ops agent decides when work should enter Millrace and how the runtime
-  should be configured for the workspace
+Before you use Millrace on a user's behalf in a thread or workspace where no
+Millrace delegation policy is already established, ask once:
 
-Millrace is useful when the harness alone is not enough because the job needs to
-survive pauses, crashes, context loss, retries, or multi-stage validation.
+1. may I use Millrace at my own discretion when it is a good fit
+2. should I suggest Millrace and wait for approval before using it
+3. should I use Millrace only when you explicitly request it
 
-## Required Operator Posture
+Recommended fallback while no answer exists: behave as option 2.
 
-Millrace is designed to be operated by a dedicated ops agent.
+After the user answers:
 
-That ops agent should:
+- keep that choice stable for the current thread or workspace unless the user
+  changes it
+- do not re-ask every turn
+- do not silently escalate from option 2 or 3 into option 1
 
-- treat the runtime as the source of truth for queue state and run state
-- prefer supported CLI commands over direct mutation of runtime-owned files
-- keep operator-authored content outcome-focused instead of embedding ad hoc
-  stage-routing instructions into work items
-- distinguish runtime-owned behavior from stage-owned reasoning
-- route deeper technical questions into the runtime docs instead of improvising
-  policy from memory
+## Quick Start
 
-The ops agent should not behave like a generic one-shot coding agent inside the
-Millrace repo. Its job is governance and operation first.
+1. Decide whether the work is a Millrace candidate or better handled directly.
+2. If no Millrace delegation policy is on record, ask the autonomy handshake.
+3. Read `docs/runtime/millrace-cli-reference.md` and
+   `docs/runtime/millrace-runtime-architecture.md`.
+4. Validate the workspace:
 
-## When To Use Millrace
+```bash
+millrace compile validate --workspace <workspace>
+millrace status --workspace <workspace>
+millrace queue ls --workspace <workspace>
+```
 
-Use Millrace when one or more of these are true:
+5. Intake work only after the workspace is healthy and Millrace use is allowed.
+6. Run `millrace run once --workspace <workspace>` when you want one safe tick,
+   or `millrace run daemon --workspace <workspace>` when long-running operation
+   is actually intended.
+7. Monitor with `millrace status watch`, `millrace runs ls`, and
+   `millrace runs show <run_id>`.
 
-- the work spans multiple sessions or needs resumability
+## Millrace Fit Test
+
+Prefer a direct raw-harness session when all of these are true:
+
+- the task is small, bounded, and likely to finish in one session
+- durable queue state is unnecessary
+- staged planning or execution gates are unnecessary
+- interruption or retry cost is low
+- no persisted run trail or closure pass is needed
+
+Prefer Millrace when any of these are mandatory or strongly desirable:
+
+- the work must survive pauses, context loss, or crashes
 - durable queue state matters
-- recovery behavior matters more than raw one-shot speed
-- staged execution or planning gates should be enforced explicitly
-- you need persisted run artifacts and diagnosable failure surfaces
-- a dedicated ops agent is available to manage the workspace and intake flow
+- stage progression should be runtime-governed rather than conversational
+- recovery routing matters more than raw one-shot speed
+- you need persisted run artifacts, runtime snapshots, or diagnosable failure
+  surfaces
+- closure should be based on real runtime criteria rather than "the agent said
+  it was done"
 
-Typical examples:
+Good Millrace examples:
 
-- long-running implementation work that must survive interruption
-- planning-to-execution pipelines where specs are compiled, handed off, and
-  audited across multiple stages
-- repair-sensitive work where a runtime failure should route into Mechanic or
-  Troubleshooter rather than simply exiting
+- long-running implementation work that will outlast one session
+- planning-to-execution flows that need durable decomposition and auditability
+- repair-sensitive work where blockage should route into Mechanic or
+  Troubleshooter instead of simply ending the session
 
-## When Not To Use Millrace
+Bad Millrace examples:
 
-Do not use Millrace when:
+- a small direct bugfix in one file
+- a short exploratory coding spike
+- an ordinary repo edit where governance overhead would be larger than the work
+- source-repo maintenance where you are not actually operating a runtime
+  workspace
 
-- the task is small, bounded, and well served by a direct Codex or Claude Code
-  session
-- governance overhead is not justified
-- no dedicated ops agent is available to operate the runtime intentionally
-- the task is mostly exploratory and does not need durable orchestration
+## Read These First
 
-Millrace adds process. That process is valuable only when the work benefits from
-runtime ownership.
+Minimum operator reading:
 
-## Operating Baseline
+- `docs/runtime/README.md`
+- `docs/runtime/millrace-cli-reference.md`
+- `docs/runtime/millrace-runtime-architecture.md`
 
-Millrace assumes:
+Load these on demand when the current task requires them:
 
-- package namespace: `millrace_ai`
-- installed CLI: `millrace`
-- runtime workspace root: `<workspace>/millrace-agents/`
-- default runtime config: `<workspace>/millrace-agents/millrace.toml`
+- `docs/runtime/millrace-arbiter-and-completion-behavior.md`
+- `docs/runtime/millrace-runner-architecture.md`
+- `docs/runtime/millrace-runtime-error-codes.md`
 
-During source development, use module form:
+## Operating Constraints
+
+- Treat the runtime as the source of truth for queue and run state.
+- Prefer supported CLI commands over direct mutation of runtime-owned files.
+- Treat content under `<workspace>/millrace-agents/` as runtime-owned unless a
+  documented intake surface says otherwise.
+- Keep operator-authored tasks, specs, and ideas outcome-focused; do not hide
+  routing instructions inside them.
+- Do not invent new queue states, stage names, or terminal results.
+- Do not describe this `docs/skills/` skill as if it were a runtime-shipped
+  stage asset.
+- Operate Millrace as a governance layer over raw harness sessions, not as a
+  replacement for them.
+
+## Inputs This Skill Expects
+
+- a workspace root path
+- the user's Millrace delegation policy for the current thread or workspace
+- a candidate task, spec, or idea, or a running Millrace workspace to monitor
+- enough local repo or workspace context to tell whether Millrace is warranted
+
+## Output Contract
+
+When you use this skill well, your output should include:
+
+- a clear call on whether the work should stay direct or enter Millrace
+- a statement of which user delegation policy is in force
+- the next truthful operator action
+- status, queue, or run evidence when you are monitoring an existing workspace
+- intervention guidance only through supported control surfaces
+
+## Procedure
+
+1. Classify the work as direct-session work or Millrace-candidate work.
+2. Check whether a Millrace delegation policy is already established.
+3. If not established, ask the autonomy handshake and default to suggestion
+   mode until answered.
+4. If the work should stay direct, say so plainly and do not force Millrace
+   into the flow.
+5. If Millrace is warranted and permitted, validate the workspace first.
+6. Intake work through the queue commands, not by dropping ad hoc files into
+   runtime-owned folders unless the documented intake path does exactly that.
+7. Choose `run once` for bounded safe progression and `run daemon` only when a
+   longer-running operator posture is actually intended.
+8. Monitor through status and run-inspection surfaces.
+9. Intervene through control commands when needed.
+10. Report what changed, what the runtime now says, and what the next truthful
+    action is.
+
+## Canonical Command Baseline
+
+During source development, module form is acceptable:
 
 ```bash
 uv run --extra dev python -m millrace_ai <command>
@@ -117,105 +212,122 @@ In an installed environment, use CLI form:
 millrace <command>
 ```
 
-## Minimal Operator Workflow
+Canonical baseline commands:
 
-Use the shortest truthful workflow that proves the workspace is healthy:
+```bash
+millrace compile validate --workspace <workspace>
+millrace status --workspace <workspace>
+millrace queue ls --workspace <workspace>
+millrace run once --workspace <workspace>
+millrace status watch --workspace <workspace>
+millrace runs ls --workspace <workspace>
+millrace runs show <run_id> --workspace <workspace>
+millrace runs tail <run_id> --workspace <workspace>
+millrace queue add-task <task.md|task.json> --workspace <workspace>
+millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
+millrace queue add-idea <idea.md> --workspace <workspace>
+millrace control pause --workspace <workspace>
+millrace control resume --workspace <workspace>
+millrace control stop --workspace <workspace>
+millrace planning retry-active --reason "<reason>" --workspace <workspace>
+millrace config show --workspace <workspace>
+millrace config validate --workspace <workspace>
+millrace config reload --workspace <workspace>
+millrace doctor --workspace <workspace>
+```
 
-1. `millrace compile validate --workspace <workspace>`
-2. `millrace status --workspace <workspace>`
-3. `millrace queue ls --workspace <workspace>`
-4. `millrace run once --workspace <workspace>` when it is safe to tick
+Important monitoring note:
 
-When reading `millrace status`, treat `execution_status_marker` and
-`planning_status_marker` as active-stage-aware surfaces:
+- `millrace status watch` is monitor-only and does not acquire runtime
+  ownership locks
 
-- while a stage is executing on a plane, the marker shows that plane's current
-  running stage, for example `### CHECKER_RUNNING`
-- when no stage is active on that plane, the marker falls back to the latest
+## Monitoring And Intervention
+
+Use this rhythm:
+
+1. `millrace status --workspace <workspace>` for current snapshot state.
+2. `millrace queue ls --workspace <workspace>` for queue shape.
+3. `millrace runs ls --workspace <workspace>` to find the recent run.
+4. `millrace runs show <run_id> --workspace <workspace>` for one run's
+   evidence.
+5. `millrace runs tail <run_id> --workspace <workspace>` when the primary run
+   artifact matters more than the summary.
+
+Interpret status markers literally:
+
+- while a stage is running on a plane, the marker shows that running stage, for
+  example `### CHECKER_RUNNING`
+- when no stage is active on a plane, the marker falls back to the latest
   terminal marker or `### IDLE`
 
-From there, use:
+Use intervention commands only when the runtime state actually justifies them:
 
-- `millrace runs ls`
-- `millrace runs show <RUN_ID>`
-- `millrace queue add-task <path>`
-- `millrace queue add-spec <path>`
-- `millrace queue add-idea <path>`
-- `millrace pause`
-- `millrace resume`
-- `millrace stop`
+- `control pause` to stop further ticks cleanly
+- `control resume` to continue a paused daemon
+- `control stop` to request daemon shutdown
+- `planning retry-active` only for planning-plane retry intent
+- `config reload` when config changed and daemon-safe recompile is desired
+- `doctor` when workspace integrity or ownership state is in doubt
 
-The complete command inventory lives in `docs/runtime/millrace-cli-reference.md`.
+## Configuration Notes
 
-## Configuration And Deployment Guidance
-
-As the ops agent:
-
-- treat `millrace.toml` as the supported configuration surface
-- configure runners, stage-level overrides, and workspace defaults through that
-  file rather than inventing side channels
-- assume the runtime owns content under `millrace-agents/`
-- avoid direct edits to runtime-owned state or queue folders except where the
-  documented CLI import surfaces intentionally accept queue input
-
-### Codex Permission Baseline
-
-Millrace intentionally defaults Codex execution to maximum permissions.
-
-That is the shipped baseline because Millrace is for long-running autonomous
-work. A more restrictive baseline makes stage execution less reliable and
-creates avoidable operator friction without actually simplifying the runtime's
-governance seams.
-
-Permission resolution order is:
-
-1. `runners.codex.permission_by_stage`
-2. `runners.codex.permission_by_model`
-3. `runners.codex.permission_default`
-
-That means:
-
-- use `permission_by_stage` when one stage needs a different posture than the
-  rest of the runtime
-- use `permission_by_model` when one model family needs a different posture
-- use `permission_default` as the workspace-wide fallback
-
-For new workspaces, bootstrap writes `permission_default = "maximum"` into the
-generated `millrace.toml`.
-
-For existing workspaces, Millrace preserves the current `millrace.toml` on
-bootstrap/update. If an operator has already customized `permission_default`,
-`permission_by_stage`, or `permission_by_model`, those choices are not
-overwritten by deploying a newer Millrace version.
-
-For deeper details, use:
-
-- `docs/runtime/millrace-runtime-architecture.md`
-- `docs/runtime/millrace-cli-reference.md`
-- `docs/runtime/millrace-runner-architecture.md`
-- `docs/runtime/millrace-runtime-error-codes.md`
+- Treat `<workspace>/millrace-agents/millrace.toml` as the supported operator
+  configuration surface.
+- Configure runner behavior there rather than inventing side channels.
+- New workspaces bootstrap with Codex `permission_default = "maximum"`.
+- Permission resolution order for Codex is:
+  1. `runners.codex.permission_by_stage`
+  2. `runners.codex.permission_by_model`
+  3. `runners.codex.permission_default`
 
 ## Recovery-Aware Behavior
 
-If the runtime hands a failure into a recovery stage with a
-`runtime_error_code`, treat that as a runtime-owned incident rather than a stage
-failure invented by the agent.
+If the runtime surfaces a recovery-stage request with a `runtime_error_code`,
+treat that as runtime-owned evidence, not as an invitation to improvise your
+own interpretation.
 
-When present, the primary evidence is:
+Read in this order when present:
 
-- `runtime_error_report_path`
-- `runtime_error_catalog_path`
+1. `runtime_error_report_path`
+2. `runtime_error_catalog_path`
 
-Read the report first, then consult the error catalog if the code needs more
-context. Do not improvise your own meaning for runtime error codes.
+Do not invent semantics for runtime error codes from memory alone.
 
-## Guardrails For External Ops Agents
+## Pitfalls And Gotchas
 
-- Do not invent new queue states, stage names, or terminal results.
-- Do not claim that docs in `docs/skills/` are runtime-shipped assets.
-- Do not position Millrace as replacing raw harnesses entirely.
-- Do not widen the runtime contract in documentation just because a future
-  extension seems plausible.
+- Using Millrace because it sounds more advanced, not because the task needs
+  governance.
+- Forgetting to ask the user which Millrace delegation authority you have.
+- Treating direct queue-folder mutation as equivalent to the CLI intake surface.
+- Acting as if planning and execution are concurrent independent lanes inside
+  one workspace owner.
+- Treating this repo-local operator skill as a runtime-shipped stage skill.
+- Running a daemon when one explicit `run once` tick is the safer truthful move.
 
-Operate Millrace as a governance layer over harness sessions, not as a
-marketing abstraction over them.
+## Progressive Disclosure
+
+Start with the fit test, the delegation-policy check, and the CLI reference.
+Read deeper runtime docs only when the current operator decision depends on
+them. Do not dump the full architecture into every turn if a direct command or
+recommendation is enough.
+
+## Verification Pattern
+
+Before claiming that Millrace is ready or that a workspace is healthy, verify at
+least:
+
+```bash
+millrace compile validate --workspace <workspace>
+millrace status --workspace <workspace>
+millrace queue ls --workspace <workspace>
+```
+
+Before claiming that execution actually progressed, verify run evidence:
+
+```bash
+millrace runs ls --workspace <workspace>
+millrace runs show <run_id> --workspace <workspace>
+```
+
+If those surfaces do not support your claim, you do not yet know enough to make
+it.

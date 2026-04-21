@@ -33,6 +33,15 @@ interruption-prone, recovery-sensitive, or closure-sensitive.
 In other words, Millrace is for situations where "the agent said it was done"
 is not a strong enough completion criterion.
 
+Millrace is also agent-native in how it is meant to be operated. The intended
+posture is an external agent acting as the Millrace operator, not a human
+manually steering runtime internals without an agent in the loop. Humans can
+still invoke the CLI directly, but when a harness such as Codex or Claude Code
+supports repo-local skills, the right starting point is
+`docs/skills/millrace-ops-agent-manual/SKILL.md` so the operator agent has the
+right fit criteria, autonomy handshake, and command discipline before deciding
+whether work should enter Millrace.
+
 ## High-Level System Model
 
 Millrace has five layers:
@@ -511,6 +520,8 @@ Use this document as the front door, then drop into the narrower references when
 needed:
 
 - `README.md` for the public landing-page framing
+- `docs/skills/millrace-ops-agent-manual/SKILL.md` if you are an external
+  agent deciding when to use Millrace and how to operate it safely
 - `docs/runtime/millrace-runtime-architecture.md` for the runtime/storage model
 - `docs/runtime/millrace-compiler-and-frozen-plans.md` for compile semantics
 - `docs/runtime/millrace-modes-and-loops.md` for loop topology and mode maps

@@ -27,6 +27,24 @@ Millrace is a governed runtime for long-running agent work. The harness still
 does the local stage work. Millrace owns the queue, the compiled plan, runtime
 state, recovery paths, and closure behavior around that work.
 
+> If you are an agent and your harness supports repo-local skills, for example
+> Codex or Claude Code, install
+> `docs/skills/millrace-ops-agent-manual/SKILL.md` to become a Millrace
+> Operator before deciding whether work should enter Millrace. It teaches when
+> to use Millrace, when not to, and how to run, monitor, and intervene safely.
+
+### Agent Install Examples
+
+- Codex: if your environment supports repo-local skills, load
+  `docs/skills/millrace-ops-agent-manual/` as the local skill package. The
+  entry file is `docs/skills/millrace-ops-agent-manual/SKILL.md`.
+- Claude Code: use the same package path or entry file as the local project
+  skill, then follow the autonomy handshake inside the skill before deciding
+  whether work should enter Millrace.
+- Other harnesses: if the harness accepts a `SKILL.md`, point it at
+  `docs/skills/millrace-ops-agent-manual/SKILL.md`; if it supports directory
+  packages, prefer `docs/skills/millrace-ops-agent-manual/`.
+
 ## Runtime Lifecycle
 
 Need the full implementation-accurate flow instead of the landing-page view?
