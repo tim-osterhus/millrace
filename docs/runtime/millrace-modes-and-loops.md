@@ -251,9 +251,12 @@ handoff.
 
 In the current phase-2 scaffolding slice, the compiler also materializes the
 selected shipped graph loops into `compiled_graph_plan.json`. That sidecar
-includes node plans, raw transitions, normalized compiled entry/transition
-indexes, terminal states, and an explicit legacy-equivalence gap list, but it
-is explicitly non-authoritative for runtime execution.
+includes node plans, raw transitions, normalized compiled intake entries,
+normalized closure-target activation entry when completion behavior is present,
+normalized compiled transition indexes, compiled resume and threshold recovery
+policies, terminal states, and explicit cutover-readiness diagnostics. It
+remains non-authoritative for runtime execution even when the shipped defaults
+report no known legacy-equivalence gaps.
 
 ## Config Interaction And Recompile Boundaries
 

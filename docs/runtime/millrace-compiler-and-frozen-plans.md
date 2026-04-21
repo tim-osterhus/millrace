@@ -5,8 +5,8 @@ This document describes the current compile contract implemented by
 
 The compiler is responsible for turning the selected runtime mode plus its
 execution and planning legacy loop assets into one persisted frozen run plan
-under the workspace state tree. In phase 1 it also emits a non-authoritative
-graph-plan sidecar built from the stage-kind registry and graph-loop assets.
+under the workspace state tree. It also emits a non-authoritative graph-plan
+sidecar built from the stage-kind registry and graph-loop assets.
 
 ## Why The Compile Step Exists
 
@@ -43,7 +43,7 @@ Today, the shipped baseline canonical mode is `default_codex`.
 The current compiler loads built-in mode and legacy loop assets through
 `src/millrace_ai/assets/modes.py`.
 
-For the phase-1 graph sidecar, it also loads:
+For the graph sidecar, it also loads:
 
 - stage kinds through `src/millrace_ai/assets/architecture.py`
 - graph loops through `src/millrace_ai/assets/loop_graphs.py`
@@ -105,15 +105,19 @@ loop for `default_codex` freezes a closure-target policy that dispatches the
 `arbiter` stage when a root lineage drains cleanly.
 
 In the current phase-2 scaffolding slice, the compiler also writes a
-non-authoritative `FrozenGraphRunPlan`
-to `compiled_graph_plan.json`. That sidecar contains:
+non-authoritative `FrozenGraphRunPlan` to `compiled_graph_plan.json`. That
+sidecar contains:
 
 - materialized execution and planning graph-loop ids
 - per-node materialized entrypoint/skill/runner/model/timeout data
-- raw graph transitions
 - raw graph `entry_nodes`
+- raw graph transitions
 - normalized `compiled_entries`
+- normalized `compiled_completion_entry` for closure-target activation when the
+  planning graph declares completion behavior
 - normalized `compiled_transitions`
+- normalized `compiled_resume_policies`
+- normalized `compiled_threshold_policies`
 - explicit graph terminal states
 - graph-shaped completion behavior for the planning plane
 - `legacy_equivalence_ready_for_cutover`
@@ -122,8 +126,10 @@ to `compiled_graph_plan.json`. That sidecar contains:
 The runtime does not execute from that sidecar yet. It exists to prove and
 inspect the graph-cutover scaffolding while runtime execution remains on the
 legacy frozen stage-plan path. The `legacy_equivalence_*` fields are the
-compiler's explicit record of which legacy router/activation semantics still
-are not encoded strongly enough for cutover.
+compiler's explicit record of whether the shipped graph sidecar can already
+explain the current legacy activation/routing semantics without known static
+gaps. They do not mean runtime authority has already switched to the graph
+sidecar.
 
 ## Stage-Plan Freezing Rules
 
@@ -187,7 +193,16 @@ The compiler writes three canonical JSON artifacts under
 `compiled_plan.json` stores the active runtime-authoritative frozen plan.
 
 `compiled_graph_plan.json` stores the graph materialization sidecar. It is
-intentionally not authoritative for runtime execution yet.
+intentionally not authoritative for runtime execution yet. Its job today is to
+capture a richer executable graph model for inspection and proof:
+
+- materialized node execution contracts
+- normalized intake entry surfaces
+- normalized closure-target activation entry when present
+- normalized transition tables
+- compiled resume and threshold recovery policies
+- explicit terminal-state semantics
+- cutover-readiness diagnostics for the shipped defaults
 
 `compile_diagnostics.json` stores the latest compile result with:
 
@@ -277,7 +292,9 @@ For operators, the compile step is the authoritative way to answer:
 
 - which mode is active
 - which loops are active
-- which graph loops were materialized into the phase-1 sidecar
+- which graph loops were materialized into the graph sidecar
+- whether the graph sidecar encoded the shipped recovery/resume/closure seams
+  cleanly enough to report cutover readiness
 - whether backlog drain dispatches a completion stage and which one
 - which entrypoints the runtime will use
 - which stage-core skills and attached skills are present

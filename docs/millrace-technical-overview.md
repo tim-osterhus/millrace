@@ -152,8 +152,9 @@ for the current workspace, not an incidental cache.
 Phase 1 added `compiled_graph_plan.json`, and the current phase-2 scaffolding
 slice enriches it further. The file now materializes the stage-kind registry
 and graph-loop assets into explicit node plans, raw transitions, normalized
-compiled entries/transitions, terminal states, and an explicit
-legacy-equivalence gap list. That sidecar is for proof, inspection, and later
+compiled intake entries, a normalized closure-target activation entry, compiled
+resume and threshold recovery policies, explicit terminal semantics, and
+cutover-readiness diagnostics. That sidecar is for proof, inspection, and later
 runtime cutover work. The live runtime still executes from `compiled_plan.json`,
 the legacy loop schema, and the existing router/activation seams.
 

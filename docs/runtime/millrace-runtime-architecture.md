@@ -138,10 +138,12 @@ Idle:
 Compile notes:
 
 - startup compiles the active mode and legacy loops into `compiled_plan.json`
-- startup also emits `compiled_graph_plan.json` as a non-authoritative phase-1 graph sidecar
+- startup also emits `compiled_graph_plan.json` as a non-authoritative graph sidecar with materialized node plans plus compiled entry, transition, recovery, and closure-activation surfaces
 - compile diagnostics persist separately in `compile_diagnostics.json`
 - failed compile attempts keep the last known-good frozen plan intact when one
   exists
+- the live runtime still executes from `compiled_plan.json`, `completion_behavior`,
+  and the legacy router/activation seams until a later cutover phase lands
 
 ## Run Artifact Model
 

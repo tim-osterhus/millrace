@@ -14,7 +14,7 @@ runtime references, start with `../millrace-technical-overview.md`.
 - `millrace-runtime-architecture.md`: workspace ownership model, artifact model, module topology, and tick lifecycle.
 - `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used when narrow evidence is not enough.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
-- `millrace-compiler-and-frozen-plans.md`: mode resolution, asset loading, stage-plan freezing, persisted compile artifacts, and `compile validate` / `compile show`.
+- `millrace-compiler-and-frozen-plans.md`: mode resolution, asset loading, stage-plan freezing, persisted compile artifacts, graph-sidecar semantics, and `compile validate` / `compile show`.
 - `millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage topology, `terminal_results`, and compile-time stage maps.
 - `millrace-loop-authoring.md`: maintainer rules for changing loop and mode assets without violating compiler and contract boundaries.
 - `millrace-runner-architecture.md`: runner dispatch, adapter contract, artifact model, and Codex adapter behavior.
