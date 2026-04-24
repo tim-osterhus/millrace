@@ -142,9 +142,10 @@ Compile notes:
 - compile diagnostics persist separately in `compile_diagnostics.json`
 - failed compile attempts keep the last known-good frozen plan intact when one
   exists
-- the live runtime executes activation and post-stage routing from
-  `compiled_graph_plan.json`, while `compiled_plan.json` remains the stage
-  execution contract used to build stage requests
+- the live runtime executes stage-request construction, activation, and
+  post-stage routing from `compiled_graph_plan.json`
+- `compiled_plan.json` remains a compatibility snapshot rather than a live
+  execution authority surface
 - set `MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION=1` if you want runtime events
   when graph authority disagrees with the preserved legacy router oracle
 

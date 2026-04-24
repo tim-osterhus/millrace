@@ -7,12 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from millrace_ai.architecture import FrozenGraphRunPlan
+from millrace_ai.architecture import FrozenGraphRunPlan, MaterializedGraphNodePlan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ClosureTargetState,
     FrozenRunPlan,
-    FrozenStagePlan,
     MailboxCommandEnvelope,
     Plane,
     RecoveryCounters,
@@ -294,17 +293,17 @@ class RuntimeEngine:
     def _write_plane_status(self, stage_result: StageResultEnvelope) -> None:
         result_application.write_plane_status(self, stage_result)
 
-    def _build_stage_run_request(self, stage_plan: FrozenStagePlan) -> StageRunRequest:
+    def _build_stage_run_request(self, stage_plan: MaterializedGraphNodePlan) -> StageRunRequest:
         return stage_requests.build_stage_run_request(self, stage_plan)
 
     def _build_closure_target_stage_run_request(
         self,
-        stage_plan: FrozenStagePlan,
+        stage_plan: MaterializedGraphNodePlan,
         target_state: ClosureTargetState,
     ) -> StageRunRequest:
         return stage_requests.build_closure_target_stage_run_request(self, stage_plan, target_state)
 
-    def _stage_plan_for(self, plane: Plane, stage: StageName) -> FrozenStagePlan:
+    def _stage_plan_for(self, plane: Plane, stage: StageName) -> MaterializedGraphNodePlan:
         return stage_requests.stage_plan_for(self, plane, stage)
 
     def _entry_stage_for_kind(self, work_item_kind: WorkItemKind) -> StageName:

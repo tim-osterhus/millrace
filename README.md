@@ -174,9 +174,9 @@ millrace status --workspace "$WORKSPACE"
 That flow proves five things quickly:
 
 - Millrace can bootstrap its workspace contract under `millrace-agents/`
-- the selected mode and legacy loops compile into a frozen stage execution plan before execution
-- compile also emits `compiled_graph_plan.json`, the runtime-authoritative graph control-flow plan for intake, recovery, closure-target activation, and post-stage routing
-- the shipped `default_codex` mode freezes closure behavior into both the stage-plan artifact and the graph control-flow artifact
+- the selected mode and legacy loops compile into a persisted compatibility stage-plan snapshot before execution
+- compile also emits `compiled_graph_plan.json`, the runtime-authoritative graph plan for request binding, intake, recovery, closure-target activation, and post-stage routing
+- the shipped `default_codex` mode freezes closure behavior into both the compatibility snapshot and the authoritative graph artifact
 - the runtime can execute a deterministic tick and report persisted status
 
 Canonical shipped modes today:

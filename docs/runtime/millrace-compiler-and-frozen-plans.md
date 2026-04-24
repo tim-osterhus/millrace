@@ -123,13 +123,12 @@ That graph plan contains:
 - `legacy_equivalence_ready_for_cutover`
 - `legacy_equivalence_issues`
 
-The runtime now executes claim activation, closure-target activation, and
-post-stage routing from that graph plan. `compiled_plan.json` still remains the
-frozen stage execution contract used to build stage requests, attach
-entrypoints and skills, and resolve runner/model/timeout metadata. The
-`legacy_equivalence_*` fields are now compatibility diagnostics: they record
-whether the shipped graph plan still matches the historical legacy activation
-and routing behavior for the selected config.
+The runtime now executes claim activation, closure-target activation,
+stage-request construction, and post-stage routing from that graph plan.
+`compiled_plan.json` now remains as a compatibility snapshot of the frozen
+stage-plan surface. The `legacy_equivalence_*` fields are compatibility
+diagnostics: they record whether the shipped graph plan still matches the
+historical legacy activation and routing behavior for the selected config.
 
 ## Stage-Plan Freezing Rules
 
@@ -190,12 +189,13 @@ The compiler writes three canonical JSON artifacts under
 - `compiled_graph_plan.json`
 - `compile_diagnostics.json`
 
-`compiled_plan.json` stores the frozen stage execution plan.
+`compiled_plan.json` stores the frozen stage-plan compatibility snapshot.
 
 `compiled_graph_plan.json` stores the runtime-authoritative graph control-flow
 plan. It captures:
 
 - materialized node execution contracts
+- entrypoint contract ids for those node execution contracts
 - normalized intake entry surfaces
 - normalized closure-target activation entry when present
 - normalized transition tables
@@ -207,6 +207,10 @@ The compiled threshold policies are materialized against the effective recovery
 config, so config values such as `max_fix_cycles`,
 `max_troubleshoot_attempts_before_consult`, and `max_mechanic_attempts` are
 encoded into the graph plan rather than being re-derived later at runtime.
+The runtime also builds stage requests from these graph node plans, so
+entrypoint paths, contract ids, required skills, attached skills, runner/model
+bindings, and timeout values now come from the graph artifact rather than the
+compatibility snapshot.
 
 `compile_diagnostics.json` stores the latest compile result with:
 
@@ -225,6 +229,7 @@ The compile failure policy is narrow and important:
 
 - the compiler always writes fresh diagnostics
 - a failed compile does not overwrite the existing `compiled_plan.json`
+- a failed compile does not overwrite the existing `compiled_graph_plan.json`
 - if a valid previous plan exists, the compiler returns it as the
   last-known-good active plan
 - if no valid previous plan exists, `active_plan` is `None`
@@ -267,6 +272,9 @@ Today that includes:
 - graph authority fields such as `graph_authoritative_for_runtime_execution`
   and `graph_legacy_equivalence_ready_for_cutover`
 - graph intake entries and graph completion activation entries
+- graph node request-binding surfaces including `entrypoint_path`,
+  `entrypoint_contract_id`, `required_skills`, `attached_skills`,
+  `runner_name`, `model_name`, and `timeout_seconds`
 - `compiled_plan_id`
 - `execution_loop_id`
 - `planning_loop_id`
@@ -301,9 +309,9 @@ For operators, the compile step is the authoritative way to answer:
 - which loops are active
 - whether the runtime-authoritative graph plan encoded the shipped
   recovery/resume/closure seams cleanly enough to report compatibility readiness
+- which node-bound entrypoints, skills, runner/model bindings, and timeouts the
+  runtime will actually use
 - whether backlog drain dispatches a completion stage and which one
-- which entrypoints the runtime will use
-- which stage-core skills and attached skills are present
 - whether a config or asset change actually produced a new frozen plan
 
 If you need legacy-oracle comparison events while debugging a graph control-flow

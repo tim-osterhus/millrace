@@ -100,6 +100,7 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     stage_kind_id: str
     plane: Plane
     entrypoint_path: str
+    entrypoint_contract_id: str | None = None
     required_skill_paths: tuple[str, ...] = ()
     attached_skill_additions: tuple[str, ...] = ()
     runner_name: str | None = None

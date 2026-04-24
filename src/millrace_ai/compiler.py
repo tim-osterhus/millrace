@@ -454,6 +454,7 @@ def _materialize_graph_node_plan(
         stage_kind_id=node.stage_kind_id,
         plane=plane,
         entrypoint_path=entrypoint_path,
+        entrypoint_contract_id=f"{node.node_id}.contract.v1",
         required_skill_paths=stage_kind.required_skill_paths,
         attached_skill_additions=attached_skill_additions,
         runner_name=runner_name,

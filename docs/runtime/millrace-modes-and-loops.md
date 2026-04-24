@@ -84,9 +84,9 @@ The graph-loop surface does two things today:
   authoritative control-flow artifact for intake, recovery, closure-target
   activation, and routing
 
-That graph surface is real, typed, and now runtime-authoritative for control
-flow. The legacy loop surface still feeds the frozen stage-plan contract used
-to build stage requests.
+That graph surface is real, typed, and now runtime-authoritative for both
+request binding and control flow. The legacy loop surface still feeds the
+compatibility stage-plan snapshot written to `compiled_plan.json`.
 
 ## Shipped Execution Loop
 
@@ -257,8 +257,8 @@ transitions, normalized compiled intake entries, normalized closure-target
 activation entry when completion behavior is present, normalized compiled
 transition indexes, compiled resume and threshold recovery policies, terminal
 states, and explicit compatibility diagnostics. It is now authoritative for
-runtime control flow, while `compiled_plan.json` remains authoritative for the
-frozen stage execution contract.
+runtime request binding and control flow, while `compiled_plan.json` remains a
+compatibility snapshot of the older frozen stage-plan surface.
 
 ## Config Interaction And Recompile Boundaries
 
@@ -275,8 +275,8 @@ New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.
 Existing configs that still use `standard_plain` continue to resolve to the
 same canonical Codex-backed plan.
 
-Those are the fields that change the frozen stage-plan contract rather than only
-affecting next-tick runtime behavior.
+Those are the fields that change both the compatibility snapshot and the
+runtime-authoritative graph node binding surface.
 
 ## Operator View
 

@@ -165,6 +165,7 @@ Compiles active mode and emits diagnostics (`ok`, warnings/errors, fallback usag
 Compiles and prints operator inspectability surface:
 
 - graph authority flags and graph entry surfaces
+- graph node request-binding surfaces
 - `compiled_plan_id`
 - execution/planning loop IDs
 - frozen `completion_behavior.*` fields when the selected planning loop defines one

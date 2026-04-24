@@ -146,15 +146,16 @@ The compiler resolves:
 - which shipped stage-kind and graph-loop assets materialize into the graph
   control-flow plan
 
-`compiled_plan.json` is therefore the authoritative stage execution contract for
-the current workspace, not an incidental cache.
+`compiled_plan.json` is now the compatibility snapshot of the older frozen
+stage-plan contract for the current workspace.
 
 `compiled_graph_plan.json` materializes the stage-kind registry and graph-loop
 assets into explicit node plans, raw transitions, normalized compiled intake
 entries, a normalized closure-target activation entry, compiled resume and
 threshold recovery policies, explicit terminal semantics, and compatibility
-diagnostics. The live runtime now executes claim activation, closure-target
-activation, recovery, and post-stage routing from that graph plan.
+diagnostics. The live runtime now executes stage-request construction, claim
+activation, closure-target activation, recovery, and post-stage routing from
+that graph plan.
 
 The compiler currently ships with two canonical built-in modes and one built-in
 loop per plane:
@@ -202,9 +203,9 @@ The graph-loop assets describe the same shipped topology in a richer node model:
 - explicit `terminal_states`
 - edges validated against stage-kind legal outcomes
 
-The compiler freezes the legacy surface into `FrozenRunPlan` for stage
-execution and freezes the graph surface into `compiled_graph_plan.json` for
-runtime control flow.
+The compiler freezes the legacy surface into `FrozenRunPlan` as a compatibility
+snapshot and freezes the graph surface into `compiled_graph_plan.json` for
+runtime request binding and control flow.
 
 The selected mode connects the two loops and can add compile-time overrides such
 as:

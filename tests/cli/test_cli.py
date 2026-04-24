@@ -1183,24 +1183,24 @@ def test_compile_show_surfaces_compiled_plan_summary(
                 FrozenStagePlan(
                     stage=ExecutionStageName.BUILDER,
                     plane=Plane.EXECUTION,
-                    entrypoint_path="entrypoints/execution/builder.md",
-                    entrypoint_contract_id="builder.v1",
-                    required_skills=("skills/README.md",),
-                    attached_skill_additions=("skills/execution/builder.md",),
-                    runner_name="codex_cli",
-                    model_name=None,
-                    timeout_seconds=1200,
+                    entrypoint_path="entrypoints/execution/compat-builder.md",
+                    entrypoint_contract_id="compat-builder.v1",
+                    required_skills=("skills/compat-builder.md",),
+                    attached_skill_additions=("skills/execution/compat-builder.md",),
+                    runner_name="compat_runner",
+                    model_name="compat-model",
+                    timeout_seconds=99,
                 ),
                 FrozenStagePlan(
                     stage="arbiter",
                     plane=Plane.PLANNING,
-                    entrypoint_path="entrypoints/planning/arbiter.md",
-                    entrypoint_contract_id="arbiter.v1",
-                    required_skills=("skills/stage/planning/arbiter-core/SKILL.md",),
-                    attached_skill_additions=(),
-                    runner_name="codex_cli",
-                    model_name=None,
-                    timeout_seconds=1200,
+                    entrypoint_path="entrypoints/planning/compat-arbiter.md",
+                    entrypoint_contract_id="compat-arbiter.v1",
+                    required_skills=("skills/compat-arbiter.md",),
+                    attached_skill_additions=("skills/planning/compat-arbiter.md",),
+                    runner_name="compat_runner",
+                    model_name="compat-arbiter-model",
+                    timeout_seconds=98,
                 ),
             ),
             completion_behavior={
@@ -1224,6 +1224,19 @@ def test_compile_show_surfaces_compiled_plan_summary(
             legacy_equivalence_ready_for_cutover=True,
             legacy_equivalence_issues=(),
             execution_graph=SimpleNamespace(
+                nodes=(
+                    SimpleNamespace(
+                        plane=Plane.EXECUTION,
+                        node_id="builder",
+                        entrypoint_path="entrypoints/execution/builder.md",
+                        entrypoint_contract_id="builder.contract.v1",
+                        required_skill_paths=("skills/stage/execution/builder-core/SKILL.md",),
+                        attached_skill_additions=(),
+                        runner_name="codex_cli",
+                        model_name=None,
+                        timeout_seconds=3600,
+                    ),
+                ),
                 compiled_entries=(
                     SimpleNamespace(
                         entry_key=SimpleNamespace(value="task"),
@@ -1232,6 +1245,19 @@ def test_compile_show_surfaces_compiled_plan_summary(
                 ),
             ),
             planning_graph=SimpleNamespace(
+                nodes=(
+                    SimpleNamespace(
+                        plane=Plane.PLANNING,
+                        node_id="arbiter",
+                        entrypoint_path="entrypoints/planning/arbiter.md",
+                        entrypoint_contract_id="arbiter.contract.v1",
+                        required_skill_paths=("skills/stage/planning/arbiter-core/SKILL.md",),
+                        attached_skill_additions=(),
+                        runner_name="codex_cli",
+                        model_name=None,
+                        timeout_seconds=3600,
+                    ),
+                ),
                 compiled_entries=(
                     SimpleNamespace(
                         entry_key=SimpleNamespace(value="spec"),
@@ -1274,8 +1300,13 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "graph_completion: closure_target -> arbiter" in result.output
     assert "compiled_plan_id: plan-001" in result.output
     assert "stage: execution.builder" in result.output
-    assert "required_skills: skills/README.md" in result.output
-    assert "attached_skills: skills/execution/builder.md" in result.output
+    assert "entrypoint_path: entrypoints/execution/builder.md" in result.output
+    assert "entrypoint_contract_id: builder.contract.v1" in result.output
+    assert "required_skills: skills/stage/execution/builder-core/SKILL.md" in result.output
+    assert "attached_skills: none" in result.output
+    assert "runner_name: codex_cli" in result.output
+    assert "model_name: none" in result.output
+    assert "timeout_seconds: 3600" in result.output
     assert "completion_behavior.stage: arbiter" in result.output
     assert "completion_behavior.request_kind: closure_target" in result.output
     assert "completion_behavior.on_gap_terminal_result: REMEDIATION_NEEDED" in result.output

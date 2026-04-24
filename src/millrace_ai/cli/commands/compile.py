@@ -100,13 +100,44 @@ def compile_show(
                 "completion_behavior.create_incident_on_gap: "
                 f"{'true' if plan.completion_behavior.create_incident_on_gap else 'false'}"
             )
-        for stage_plan in sorted(plan.stage_plans, key=lambda item: (item.plane.value, item.stage.value)):
-            typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.stage.value}")
-            typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")
-            typer.echo(f"required_skills: {', '.join(stage_plan.required_skills) if stage_plan.required_skills else 'none'}")
-            typer.echo(
-                "attached_skills: "
-                f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}"
+        if outcome.active_graph_plan is not None:
+            graph_nodes = sorted(
+                (
+                    *outcome.active_graph_plan.execution_graph.nodes,
+                    *outcome.active_graph_plan.planning_graph.nodes,
+                ),
+                key=lambda item: (item.plane.value, item.node_id),
             )
+            for stage_plan in graph_nodes:
+                typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.node_id}")
+                typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")
+                typer.echo(f"entrypoint_contract_id: {stage_plan.entrypoint_contract_id or 'none'}")
+                typer.echo(
+                    "required_skills: "
+                    f"{', '.join(stage_plan.required_skill_paths) if stage_plan.required_skill_paths else 'none'}"
+                )
+                typer.echo(
+                    "attached_skills: "
+                    f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}"
+                )
+                typer.echo(f"runner_name: {stage_plan.runner_name or 'none'}")
+                typer.echo(f"model_name: {stage_plan.model_name or 'none'}")
+                typer.echo(f"timeout_seconds: {stage_plan.timeout_seconds}")
+        else:
+            for stage_plan in sorted(plan.stage_plans, key=lambda item: (item.plane.value, item.stage.value)):
+                typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.stage.value}")
+                typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")
+                typer.echo(f"entrypoint_contract_id: {stage_plan.entrypoint_contract_id or 'none'}")
+                typer.echo(
+                    "required_skills: "
+                    f"{', '.join(stage_plan.required_skills) if stage_plan.required_skills else 'none'}"
+                )
+                typer.echo(
+                    "attached_skills: "
+                    f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}"
+                )
+                typer.echo(f"runner_name: {stage_plan.runner_name or 'none'}")
+                typer.echo(f"model_name: {stage_plan.model_name or 'none'}")
+                typer.echo(f"timeout_seconds: {stage_plan.timeout_seconds}")
 
     raise typer.Exit(code=exit_code)

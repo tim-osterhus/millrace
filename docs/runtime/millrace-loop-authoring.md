@@ -43,16 +43,16 @@ Millrace currently ships two loop-description layers that must not drift apart:
    `src/millrace_ai/assets/graphs/` and
    `src/millrace_ai/assets/registry/stage_kinds/`
 
-Today the runtime executes control flow from `compiled_graph_plan.json`, while
-the legacy loop path still feeds the frozen stage-plan contract in
-`compiled_plan.json`.
+Today the runtime executes both request binding and control flow from
+`compiled_graph_plan.json`, while the legacy loop path still feeds the
+compatibility stage-plan snapshot in `compiled_plan.json`.
 
 The graph-loop path exists to:
 
 - prove the shipped topology can be represented as typed node graphs over stage kinds
 - emit `compiled_graph_plan.json` during compile
-- drive runtime intake, recovery, closure-target activation, and post-stage
-  routing
+- drive runtime request binding, intake, recovery, closure-target activation,
+  and post-stage routing
 - support preview materialization of discovered graph loops without modifying
   the frozen stage-plan authoring path
 

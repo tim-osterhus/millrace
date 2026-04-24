@@ -597,6 +597,63 @@ def test_runtime_stage_request_entrypoint_path_exists_after_startup(tmp_path: Pa
     assert captured_request.active_work_item_path.endswith(".md")
 
 
+def test_runtime_stage_request_prefers_compiled_graph_node_binding_over_compiled_stage_plan(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    assert engine.compiled_plan is not None
+
+    engine.compiled_plan = engine.compiled_plan.model_copy(
+        update={
+            "stage_plans": tuple(
+                stage_plan.model_copy(
+                    update={
+                        "entrypoint_path": "entrypoints/execution/consultant.md",
+                        "entrypoint_contract_id": "compat-builder.contract.v999",
+                        "required_skills": ("skills/compat-only.md",),
+                        "attached_skill_additions": ("skills/compat-extra.md",),
+                        "runner_name": "compat_runner",
+                        "model_name": "compat-model",
+                        "timeout_seconds": 17,
+                    }
+                )
+                if stage_plan.plane is Plane.EXECUTION and stage_plan.stage is ExecutionStageName.BUILDER
+                else stage_plan
+                for stage_plan in engine.compiled_plan.stage_plans
+            )
+        }
+    )
+
+    engine.tick()
+
+    assert captured_request is not None
+    assert captured_request.entrypoint_path.endswith("entrypoints/execution/builder.md")
+    assert captured_request.entrypoint_contract_id == "builder.contract.v1"
+    assert captured_request.required_skill_paths == (
+        str(paths.runtime_root / "skills/stage/execution/builder-core/SKILL.md"),
+    )
+    assert captured_request.attached_skill_paths == ()
+    assert captured_request.runner_name == "codex_cli"
+    assert captured_request.model_name is None
+    assert captured_request.timeout_seconds == 3600
+
+
 def test_runtime_writes_running_status_marker_while_stage_runner_is_active(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -662,6 +719,73 @@ def test_runtime_can_build_closure_target_request_without_active_work_item(tmp_p
     assert request.active_work_item_path is None
     assert request.closure_target_root_spec_id == "spec-root-001"
     assert request.canonical_root_spec_path.endswith("spec-root-001.md")
+
+
+def test_runtime_closure_target_request_prefers_compiled_graph_node_binding_over_compiled_stage_plan(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.ARBITER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    target = ClosureTargetState(
+        root_spec_id="spec-root-001",
+        root_idea_id="idea-001",
+        root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+        root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+        rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+        latest_verdict_path="millrace-agents/arbiter/verdicts/spec-root-001.json",
+        latest_report_path="millrace-agents/arbiter/reports/run-001.md",
+        closure_open=True,
+        closure_blocked_by_lineage_work=False,
+        blocking_work_ids=(),
+        opened_at=NOW,
+    )
+    save_closure_target_state(paths, target)
+
+    engine.compiled_plan = engine.compiled_plan.model_copy(
+        update={
+            "stage_plans": tuple(
+                stage_plan.model_copy(
+                    update={
+                        "entrypoint_path": "entrypoints/planning/mechanic.md",
+                        "entrypoint_contract_id": "compat-arbiter.contract.v999",
+                        "required_skills": ("skills/compat-arbiter.md",),
+                        "attached_skill_additions": ("skills/compat-arbiter-extra.md",),
+                        "runner_name": "compat_planning_runner",
+                        "model_name": "compat-planning-model",
+                        "timeout_seconds": 19,
+                    }
+                )
+                if stage_plan.plane is Plane.PLANNING and stage_plan.stage is PlanningStageName.ARBITER
+                else stage_plan
+                for stage_plan in engine.compiled_plan.stage_plans
+            )
+        }
+    )
+
+    arbiter_plan = engine._stage_plan_for(Plane.PLANNING, PlanningStageName.ARBITER)
+    request = engine._build_closure_target_stage_run_request(arbiter_plan, target)
+
+    assert request.entrypoint_path.endswith("entrypoints/planning/arbiter.md")
+    assert request.entrypoint_contract_id == "arbiter.contract.v1"
+    assert request.required_skill_paths == (
+        str(paths.runtime_root / "skills/stage/planning/arbiter-core/SKILL.md"),
+    )
+    assert request.attached_skill_paths == ()
+    assert request.runner_name == "codex_cli"
+    assert request.model_name is None
+    assert request.timeout_seconds == 3600
 
 
 def test_runtime_planning_retry_scope_skips_execution_active_work(tmp_path: Path) -> None:

@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from millrace_ai.architecture import MaterializedGraphNodePlan
 from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
-    FrozenStagePlan,
     Plane,
+    PlanningStageName,
     ResultClass,
     StageName,
     StageResultEnvelope,
@@ -30,7 +31,10 @@ from .error_recovery import build_runtime_error_request_fields
 _STATUS_IDLE = "### IDLE"
 
 
-def build_stage_run_request(engine: RuntimeEngine, stage_plan: FrozenStagePlan) -> StageRunRequest:
+def build_stage_run_request(
+    engine: RuntimeEngine,
+    stage_plan: MaterializedGraphNodePlan,
+) -> StageRunRequest:
     assert engine.snapshot is not None
     active_path = active_work_item_path(
         engine,
@@ -41,17 +45,18 @@ def build_stage_run_request(engine: RuntimeEngine, stage_plan: FrozenStagePlan) 
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     runtime_error_fields = build_runtime_error_request_fields(engine)
+    stage_name = _stage_name_for_node_plan(stage_plan)
     request = StageRunRequest(
         request_id=new_request_id(),
         run_id=run_id,
         plane=stage_plan.plane,
-        stage=stage_plan.stage,
+        stage=stage_name,
         mode_id=engine.snapshot.active_mode_id,
         compiled_plan_id=engine.snapshot.compiled_plan_id,
         entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=tuple(
-            str(engine.paths.runtime_root / path) for path in stage_plan.required_skills
+            str(engine.paths.runtime_root / path) for path in stage_plan.required_skill_paths
         ),
         attached_skill_paths=tuple(
             str(engine.paths.runtime_root / path) for path in stage_plan.attached_skill_additions
@@ -82,25 +87,26 @@ def build_stage_run_request(engine: RuntimeEngine, stage_plan: FrozenStagePlan) 
 
 def build_closure_target_stage_run_request(
     engine: RuntimeEngine,
-    stage_plan: FrozenStagePlan,
+    stage_plan: MaterializedGraphNodePlan,
     target_state: ClosureTargetState,
 ) -> StageRunRequest:
     assert engine.snapshot is not None
     run_id = engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    stage_name = _stage_name_for_node_plan(stage_plan)
     request = StageRunRequest(
         request_id=new_request_id(),
         run_id=run_id,
         plane=stage_plan.plane,
-        stage=stage_plan.stage,
+        stage=stage_name,
         request_kind="closure_target",
         mode_id=engine.snapshot.active_mode_id,
         compiled_plan_id=engine.snapshot.compiled_plan_id,
         entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=tuple(
-            str(engine.paths.runtime_root / path) for path in stage_plan.required_skills
+            str(engine.paths.runtime_root / path) for path in stage_plan.required_skill_paths
         ),
         attached_skill_paths=tuple(
             str(engine.paths.runtime_root / path) for path in stage_plan.attached_skill_additions
@@ -127,12 +133,17 @@ def build_closure_target_stage_run_request(
     return request
 
 
-def stage_plan_for(engine: RuntimeEngine, plane: Plane, stage: StageName) -> FrozenStagePlan:
-    assert engine.compiled_plan is not None
-    for stage_plan in engine.compiled_plan.stage_plans:
-        if stage_plan.plane is plane and stage_plan.stage is stage:
-            return stage_plan
-    raise KeyError(f"No compiled stage plan for {plane.value}:{stage.value}")
+def stage_plan_for(engine: RuntimeEngine, plane: Plane, stage: StageName) -> MaterializedGraphNodePlan:
+    assert engine.compiled_graph_plan is not None
+    graph = (
+        engine.compiled_graph_plan.execution_graph
+        if plane is Plane.EXECUTION
+        else engine.compiled_graph_plan.planning_graph
+    )
+    for node in graph.nodes:
+        if node.plane is plane and node.node_id == stage.value:
+            return node
+    raise KeyError(f"No compiled graph node plan for {plane.value}:{stage.value}")
 
 
 def idle_stage_for_no_work() -> StageName:
@@ -232,6 +243,12 @@ def new_request_id() -> str:
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _stage_name_for_node_plan(stage_plan: MaterializedGraphNodePlan) -> StageName:
+    if stage_plan.plane is Plane.EXECUTION:
+        return ExecutionStageName(stage_plan.node_id)
+    return PlanningStageName(stage_plan.node_id)
 
 
 __all__ = [

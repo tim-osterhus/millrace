@@ -187,6 +187,10 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
         (entry.entry_key.value, entry.node_id, entry.stage_kind_id)
         for entry in graph_plan.execution_graph.compiled_entries
     } == {("task", "builder", "builder")}
+    builder_node = next(node for node in graph_plan.execution_graph.nodes if node.node_id == "builder")
+    arbiter_node = next(node for node in graph_plan.planning_graph.nodes if node.node_id == "arbiter")
+    assert builder_node.entrypoint_contract_id == "builder.contract.v1"
+    assert arbiter_node.entrypoint_contract_id == "arbiter.contract.v1"
     assert {
         (
             policy.policy_id,
