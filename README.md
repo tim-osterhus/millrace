@@ -174,9 +174,9 @@ millrace status --workspace "$WORKSPACE"
 That flow proves five things quickly:
 
 - Millrace can bootstrap its workspace contract under `millrace-agents/`
-- the selected mode and legacy loops compile into a persisted compatibility stage-plan snapshot before execution
-- compile also emits `compiled_graph_plan.json`, the runtime-authoritative graph plan for request binding, intake, recovery, closure-target activation, and post-stage routing
-- the shipped `default_codex` mode freezes closure behavior into both the compatibility snapshot and the authoritative graph artifact
+- the selected mode compiles into one persisted `compiled_plan.json` before execution
+- that compiled plan carries node bindings, intake entries, recovery policies, closure-target activation, and post-stage routing
+- the shipped `default_codex` mode freezes closure behavior directly into that single compiled artifact
 - the runtime can execute a deterministic tick and report persisted status
 
 Canonical shipped modes today:

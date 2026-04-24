@@ -34,7 +34,7 @@ The authoritative sources are:
 
 Loop and mode docs should describe those contracts, not override them.
 
-## Two Parallel Authoring Surfaces
+## Two Shipped Authoring Surfaces
 
 Millrace currently ships two loop-description layers that must not drift apart:
 
@@ -43,22 +43,20 @@ Millrace currently ships two loop-description layers that must not drift apart:
    `src/millrace_ai/assets/graphs/` and
    `src/millrace_ai/assets/registry/stage_kinds/`
 
-Today the runtime executes both request binding and control flow from
-`compiled_graph_plan.json`, while the legacy loop path still feeds the
-compatibility stage-plan snapshot in `compiled_plan.json`.
+Today the runtime executes request binding and control flow from
+`compiled_plan.json`, which is built from graph loops and stage kinds.
 
 The graph-loop path exists to:
 
 - prove the shipped topology can be represented as typed node graphs over stage kinds
-- emit `compiled_graph_plan.json` during compile
+- emit `compiled_plan.json` during compile
 - drive runtime request binding, intake, recovery, closure-target activation,
   and post-stage routing
 - support preview materialization of discovered graph loops without modifying
-  the frozen stage-plan authoring path
+  the shipped runtime plan contract
 
-For shipped defaults, maintainers should keep both surfaces aligned until a
-later unification phase removes the remaining split between graph control flow
-and legacy stage-plan freezing.
+For shipped defaults, maintainers should keep both surfaces aligned even though
+the graph surface is the canonical runtime source of truth.
 
 ## Legacy Loop JSON Rules
 
@@ -180,9 +178,9 @@ When you change loops or modes:
 1. update the asset JSON first
 2. run `millrace compile validate`
 3. run `millrace compile show`
-4. check that the frozen stage-plan reflects the intended entrypoints, skills,
+4. check that the compiled plan reflects the intended entrypoints, skills,
    runner names, model names, and loop ids
-5. inspect `compiled_graph_plan.json` when the change also touches stage kinds
+5. inspect `compiled_plan.json` when the change also touches stage kinds
    or graph loops
 6. update docs that describe the changed contract
 

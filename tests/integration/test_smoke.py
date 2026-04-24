@@ -141,7 +141,7 @@ def _exercise_minimum_functionality_workspace(
     assert no_work_run_once.returncode == 0, no_work_run_once.stderr or no_work_run_once.stdout
     assert status.returncode == 0, status.stderr or status.stdout
     assert (workspace / "millrace-agents" / "millrace.toml").is_file()
-    assert "completion_behavior.stage: arbiter" in compile_show.stdout
+    assert "completion_behavior.request_kind: closure_target" in compile_show.stdout
     assert "tick_reason: no_work" in no_work_run_once.stdout
     assert "compiled_plan_id:" in status.stdout
 

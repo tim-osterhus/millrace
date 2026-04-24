@@ -44,100 +44,63 @@ def compile_show(
     )
     exit_code = _render_compile_diagnostics(outcome)
 
-    if outcome.active_graph_plan is not None:
-        graph_plan = outcome.active_graph_plan
-        typer.echo(
-            "graph_authoritative_for_runtime_execution: "
-            f"{'true' if graph_plan.authoritative_for_runtime_execution else 'false'}"
-        )
-        typer.echo(
-            "graph_legacy_equivalence_ready_for_cutover: "
-            f"{'true' if graph_plan.legacy_equivalence_ready_for_cutover else 'false'}"
-        )
-        typer.echo(
-            "graph_legacy_equivalence_issues: "
-            f"{', '.join(graph_plan.legacy_equivalence_issues) if graph_plan.legacy_equivalence_issues else 'none'}"
-        )
-        for entry in graph_plan.execution_graph.compiled_entries:
-            typer.echo(f"graph_entry: execution.{entry.entry_key.value} -> {entry.node_id}")
-        for entry in graph_plan.planning_graph.compiled_entries:
-            typer.echo(f"graph_entry: planning.{entry.entry_key.value} -> {entry.node_id}")
-        if graph_plan.planning_graph.compiled_completion_entry is not None:
-            typer.echo(
-                "graph_completion: "
-                f"{graph_plan.planning_graph.compiled_completion_entry.entry_key.value}"
-                f" -> {graph_plan.planning_graph.compiled_completion_entry.node_id}"
-            )
-
     if outcome.active_plan is not None:
         plan = outcome.active_plan
         typer.echo(f"compiled_plan_id: {plan.compiled_plan_id}")
         typer.echo(f"execution_loop_id: {plan.execution_loop_id}")
         typer.echo(f"planning_loop_id: {plan.planning_loop_id}")
-        if plan.completion_behavior is not None:
-            typer.echo(f"completion_behavior.trigger: {plan.completion_behavior.trigger}")
-            typer.echo(f"completion_behavior.readiness_rule: {plan.completion_behavior.readiness_rule}")
-            typer.echo(f"completion_behavior.stage: {plan.completion_behavior.stage.value}")
-            typer.echo(f"completion_behavior.request_kind: {plan.completion_behavior.request_kind}")
-            typer.echo(f"completion_behavior.target_selector: {plan.completion_behavior.target_selector}")
-            typer.echo(f"completion_behavior.rubric_policy: {plan.completion_behavior.rubric_policy}")
+        for entry in plan.execution_graph.compiled_entries:
+            typer.echo(f"entry: execution.{entry.entry_key.value} -> {entry.node_id}")
+        for entry in plan.planning_graph.compiled_entries:
+            typer.echo(f"entry: planning.{entry.entry_key.value} -> {entry.node_id}")
+        completion_entry = plan.planning_graph.compiled_completion_entry
+        if completion_entry is not None:
+            typer.echo(f"completion: {completion_entry.entry_key.value} -> {completion_entry.node_id}")
+
+        completion_behavior = plan.planning_graph.completion_behavior
+        if completion_behavior is not None:
+            typer.echo(f"completion_behavior.trigger: {completion_behavior.trigger}")
+            typer.echo(f"completion_behavior.readiness_rule: {completion_behavior.readiness_rule}")
+            typer.echo(f"completion_behavior.request_kind: {completion_behavior.request_kind}")
+            typer.echo(f"completion_behavior.target_selector: {completion_behavior.target_selector}")
+            typer.echo(f"completion_behavior.rubric_policy: {completion_behavior.rubric_policy}")
             typer.echo(
-                f"completion_behavior.blocked_work_policy: {plan.completion_behavior.blocked_work_policy}"
+                f"completion_behavior.blocked_work_policy: {completion_behavior.blocked_work_policy}"
             )
             typer.echo(
                 "completion_behavior.skip_if_already_closed: "
-                f"{'true' if plan.completion_behavior.skip_if_already_closed else 'false'}"
+                f"{'true' if completion_behavior.skip_if_already_closed else 'false'}"
             )
             typer.echo(
-                "completion_behavior.on_pass_terminal_result: "
-                f"{plan.completion_behavior.on_pass_terminal_result.value}"
+                "completion_behavior.on_pass_terminal_state_id: "
+                f"{completion_behavior.on_pass_terminal_state_id}"
             )
             typer.echo(
-                "completion_behavior.on_gap_terminal_result: "
-                f"{plan.completion_behavior.on_gap_terminal_result.value}"
+                "completion_behavior.on_gap_terminal_state_id: "
+                f"{completion_behavior.on_gap_terminal_state_id}"
             )
             typer.echo(
                 "completion_behavior.create_incident_on_gap: "
-                f"{'true' if plan.completion_behavior.create_incident_on_gap else 'false'}"
+                f"{'true' if completion_behavior.create_incident_on_gap else 'false'}"
             )
-        if outcome.active_graph_plan is not None:
-            graph_nodes = sorted(
-                (
-                    *outcome.active_graph_plan.execution_graph.nodes,
-                    *outcome.active_graph_plan.planning_graph.nodes,
-                ),
-                key=lambda item: (item.plane.value, item.node_id),
+        graph_nodes = sorted(
+            (*plan.execution_graph.nodes, *plan.planning_graph.nodes),
+            key=lambda item: (item.plane.value, item.node_id),
+        )
+        for stage_plan in graph_nodes:
+            typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.node_id}")
+            typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")
+            typer.echo(f"entrypoint_contract_id: {stage_plan.entrypoint_contract_id or 'none'}")
+            typer.echo(
+                "required_skills: "
+                f"{', '.join(stage_plan.required_skill_paths) if stage_plan.required_skill_paths else 'none'}"
             )
-            for stage_plan in graph_nodes:
-                typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.node_id}")
-                typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")
-                typer.echo(f"entrypoint_contract_id: {stage_plan.entrypoint_contract_id or 'none'}")
-                typer.echo(
-                    "required_skills: "
-                    f"{', '.join(stage_plan.required_skill_paths) if stage_plan.required_skill_paths else 'none'}"
-                )
-                typer.echo(
-                    "attached_skills: "
-                    f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}"
-                )
-                typer.echo(f"runner_name: {stage_plan.runner_name or 'none'}")
-                typer.echo(f"model_name: {stage_plan.model_name or 'none'}")
-                typer.echo(f"timeout_seconds: {stage_plan.timeout_seconds}")
-        else:
-            for stage_plan in sorted(plan.stage_plans, key=lambda item: (item.plane.value, item.stage.value)):
-                typer.echo(f"stage: {stage_plan.plane.value}.{stage_plan.stage.value}")
-                typer.echo(f"entrypoint_path: {stage_plan.entrypoint_path}")
-                typer.echo(f"entrypoint_contract_id: {stage_plan.entrypoint_contract_id or 'none'}")
-                typer.echo(
-                    "required_skills: "
-                    f"{', '.join(stage_plan.required_skills) if stage_plan.required_skills else 'none'}"
-                )
-                typer.echo(
-                    "attached_skills: "
-                    f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}"
-                )
-                typer.echo(f"runner_name: {stage_plan.runner_name or 'none'}")
-                typer.echo(f"model_name: {stage_plan.model_name or 'none'}")
-                typer.echo(f"timeout_seconds: {stage_plan.timeout_seconds}")
+            typer.echo(
+                "attached_skills: "
+                f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}"
+            )
+            typer.echo(f"runner_name: {stage_plan.runner_name or 'none'}")
+            typer.echo(f"model_name: {stage_plan.model_name or 'none'}")
+            typer.echo(f"timeout_seconds: {stage_plan.timeout_seconds}")
 
     raise typer.Exit(code=exit_code)

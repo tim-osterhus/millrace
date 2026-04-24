@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
 from . import completion_behavior
 from .graph_authority import work_item_activation_for_graph
-from .graph_shadow import maybe_report_work_item_activation_mismatch
 
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
@@ -30,14 +29,9 @@ def claim_next_work_item(engine: RuntimeEngine) -> None:
 
 def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
     assert engine.snapshot is not None
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
 
-    activation = work_item_activation_for_graph(engine.compiled_graph_plan, claim.work_item_kind)
-    maybe_report_work_item_activation_mismatch(
-        engine,
-        work_item_kind=claim.work_item_kind,
-        graph_decision=activation,
-    )
+    activation = work_item_activation_for_graph(engine.compiled_plan, claim.work_item_kind)
     engine.snapshot = engine.snapshot.model_copy(
         update={
             "active_plane": activation.plane,

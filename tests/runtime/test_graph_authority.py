@@ -116,28 +116,28 @@ def _stage_result(
     )
 
 
-def test_runtime_startup_loads_compiled_graph_plan(tmp_path: Path) -> None:
+def test_runtime_startup_loads_compiled_plan(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
 
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
-    assert engine.compiled_graph_plan.execution_graph.loop_id == "execution.standard"
-    assert engine.compiled_graph_plan.planning_graph.loop_id == "planning.standard"
+    assert engine.compiled_plan is not None
+    assert engine.compiled_plan.execution_graph.loop_id == "execution.standard"
+    assert engine.compiled_plan.planning_graph.loop_id == "planning.standard"
 
 
-def test_work_item_activation_resolves_from_compiled_graph_entries(tmp_path: Path) -> None:
+def test_work_item_activation_resolves_from_compiled_plan_entries(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
 
-    task = work_item_activation_for_graph(engine.compiled_graph_plan, WorkItemKind.TASK)
-    spec = work_item_activation_for_graph(engine.compiled_graph_plan, WorkItemKind.SPEC)
-    incident = work_item_activation_for_graph(engine.compiled_graph_plan, WorkItemKind.INCIDENT)
-    completion = completion_activation_for_graph(engine.compiled_graph_plan)
+    task = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.TASK)
+    spec = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.SPEC)
+    incident = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.INCIDENT)
+    completion = completion_activation_for_graph(engine.compiled_plan)
 
     assert task.plane is Plane.EXECUTION
     assert task.stage is ExecutionStageName.BUILDER
@@ -154,10 +154,10 @@ def test_work_item_activation_fails_when_required_entry_is_missing(tmp_path: Pat
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
-    broken_graph_plan = engine.compiled_graph_plan.model_copy(
+    assert engine.compiled_plan is not None
+    broken_graph_plan = engine.compiled_plan.model_copy(
         update={
-            "execution_graph": engine.compiled_graph_plan.execution_graph.model_copy(
+            "execution_graph": engine.compiled_plan.execution_graph.model_copy(
                 update={"compiled_entries": ()}
             )
         }
@@ -172,10 +172,10 @@ def test_completion_activation_fails_when_completion_entry_is_missing(tmp_path: 
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
-    broken_graph_plan = engine.compiled_graph_plan.model_copy(
+    assert engine.compiled_plan is not None
+    broken_graph_plan = engine.compiled_plan.model_copy(
         update={
-            "planning_graph": engine.compiled_graph_plan.planning_graph.model_copy(
+            "planning_graph": engine.compiled_plan.planning_graph.model_copy(
                 update={"compiled_completion_entry": None}
             )
         }
@@ -312,10 +312,10 @@ def test_route_stage_result_from_graph_matches_shipped_default_semantics(
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
 
     decision = route_stage_result_from_graph(
-        engine.compiled_graph_plan,
+        engine.compiled_plan,
         snapshot,
         stage_result,
         counters,
@@ -335,7 +335,7 @@ def test_route_stage_result_from_graph_rejects_invalid_closure_target_identity(
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
     snapshot = _snapshot(
         plane=Plane.PLANNING,
         stage=PlanningStageName.ARBITER,
@@ -353,7 +353,7 @@ def test_route_stage_result_from_graph_rejects_invalid_closure_target_identity(
 
     with pytest.raises(ValueError, match="closure_target_root_spec_id"):
         route_stage_result_from_graph(
-            engine.compiled_graph_plan,
+            engine.compiled_plan,
             snapshot,
             stage_result,
             RecoveryCounters(),

@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ClosureTargetState, CompletionBehaviorDefinition, SpecDocument, WorkItemKind
+from millrace_ai.architecture import GraphLoopCompletionBehaviorDefinition
+from millrace_ai.contracts import ClosureTargetState, SpecDocument, WorkItemKind
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueClaim
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 from .graph_authority import completion_activation_for_graph
-from .graph_shadow import maybe_report_completion_activation_mismatch
 
 
 def maybe_open_closure_target_for_claim(
@@ -40,7 +40,7 @@ def maybe_open_closure_target_for_claim(
 
 def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState | None:
     assert engine.snapshot is not None
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
     completion_behavior = _completion_behavior_for(engine)
     if completion_behavior is None:
         return None
@@ -57,8 +57,7 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
     if target.closure_blocked_by_lineage_work:
         return None
 
-    activation = completion_activation_for_graph(engine.compiled_graph_plan)
-    maybe_report_completion_activation_mismatch(engine, graph_decision=activation)
+    activation = completion_activation_for_graph(engine.compiled_plan)
     engine.snapshot = engine.snapshot.model_copy(
         update={
             "active_plane": activation.plane,
@@ -102,9 +101,9 @@ def refresh_closure_target_readiness(
     return updated
 
 
-def _completion_behavior_for(engine: RuntimeEngine) -> CompletionBehaviorDefinition | None:
+def _completion_behavior_for(engine: RuntimeEngine) -> GraphLoopCompletionBehaviorDefinition | None:
     assert engine.compiled_plan is not None
-    return engine.compiled_plan.completion_behavior
+    return engine.compiled_plan.planning_graph.completion_behavior
 
 
 def _recover_or_diagnose_missing_closure_target(

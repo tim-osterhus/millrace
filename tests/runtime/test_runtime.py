@@ -189,9 +189,8 @@ def test_runtime_tick_prioritizes_planning_before_execution(tmp_path: Path) -> N
     assert (paths.tasks_active_dir / "task-001.md").is_file()
 
 
-def test_runtime_tick_claim_activation_uses_compiled_graph_authority(
+def test_runtime_tick_claim_activation_uses_compiled_plan_authority(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -207,19 +206,18 @@ def test_runtime_tick_claim_activation_uses_compiled_graph_authority(
             now=NOW,
         )
 
-    monkeypatch.setenv("MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION", "1")
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
     task_entry = next(
         entry
-        for entry in engine.compiled_graph_plan.execution_graph.compiled_entries
+        for entry in engine.compiled_plan.execution_graph.compiled_entries
         if entry.entry_key.value == "task"
     )
-    engine.compiled_graph_plan = engine.compiled_graph_plan.model_copy(
+    engine.compiled_plan = engine.compiled_plan.model_copy(
         update={
-            "execution_graph": engine.compiled_graph_plan.execution_graph.model_copy(
+            "execution_graph": engine.compiled_plan.execution_graph.model_copy(
                 update={
                     "compiled_entries": tuple(
                         entry.model_copy(
@@ -230,7 +228,7 @@ def test_runtime_tick_claim_activation_uses_compiled_graph_authority(
                         )
                         if entry == task_entry
                         else entry
-                        for entry in engine.compiled_graph_plan.execution_graph.compiled_entries
+                        for entry in engine.compiled_plan.execution_graph.compiled_entries
                     )
                 }
             )
@@ -239,22 +237,15 @@ def test_runtime_tick_claim_activation_uses_compiled_graph_authority(
 
     outcome = engine.tick()
     snapshot = load_snapshot(paths)
-    mismatch_events = [
-        event for event in read_runtime_events(paths) if event.event_type == "compiled_graph_activation_mismatch"
-    ]
 
     assert captured_request is not None
     assert captured_request.stage is ExecutionStageName.CHECKER
     assert outcome.stage is ExecutionStageName.CHECKER
     assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
     assert snapshot.active_stage is ExecutionStageName.UPDATER
-    assert mismatch_events[-1].data["legacy_stage"] == "builder"
-    assert mismatch_events[-1].data["graph_stage"] == "checker"
 
-
-def test_runtime_tick_completion_activation_uses_compiled_graph_authority(
+def test_runtime_tick_completion_activation_uses_compiled_plan_authority(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
     save_closure_target_state(
@@ -286,42 +277,63 @@ def test_runtime_tick_completion_activation_uses_compiled_graph_authority(
         report_path.write_text("# Arbiter Report\n\nParity holds.\n", encoding="utf-8")
         return _runner_result(
             request,
-            terminal=PlanningTerminalResult.ARBITER_COMPLETE.value,
+            terminal=(
+                PlanningTerminalResult.PLANNER_COMPLETE.value
+                if request.stage is PlanningStageName.PLANNER
+                else PlanningTerminalResult.ARBITER_COMPLETE.value
+            ),
             now=NOW,
         )
 
-    monkeypatch.setenv("MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION", "1")
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
 
     assert engine.compiled_plan is not None
-    assert engine.compiled_plan.completion_behavior is not None
     engine.compiled_plan = engine.compiled_plan.model_copy(
         update={
-            "completion_behavior": engine.compiled_plan.completion_behavior.model_copy(
-                update={"stage": PlanningStageName.PLANNER}
+            "planning_graph": engine.compiled_plan.planning_graph.model_copy(
+                update={
+                    "nodes": tuple(
+                        node.model_copy(
+                            update={
+                                "entrypoint_path": "entrypoints/planning/mechanic.md",
+                                "entrypoint_contract_id": "arbiter.contract.v999",
+                                "required_skill_paths": ("skills/custom-arbiter.md",),
+                                "attached_skill_additions": ("skills/custom-audit-pass.md",),
+                                "runner_name": "custom_runner",
+                                "model_name": "custom-model",
+                                "timeout_seconds": 47,
+                            }
+                        )
+                        if node.node_id == "arbiter"
+                        else node
+                        for node in engine.compiled_plan.planning_graph.nodes
+                    )
+                }
             )
         }
     )
 
     outcome = engine.tick()
-    mismatch_events = [
-        event
-        for event in read_runtime_events(paths)
-        if event.event_type == "compiled_graph_completion_activation_mismatch"
-    ]
 
     assert captured_request is not None
     assert captured_request.stage is PlanningStageName.ARBITER
+    assert captured_request.entrypoint_path.endswith("entrypoints/planning/mechanic.md")
+    assert captured_request.entrypoint_contract_id == "arbiter.contract.v999"
+    assert captured_request.required_skill_paths == (
+        str(paths.runtime_root / "skills/custom-arbiter.md"),
+    )
+    assert captured_request.attached_skill_paths == (
+        str(paths.runtime_root / "skills/custom-audit-pass.md"),
+    )
+    assert captured_request.runner_name == "custom_runner"
+    assert captured_request.model_name == "custom-model"
+    assert captured_request.timeout_seconds == 47
     assert outcome.stage is PlanningStageName.ARBITER
     assert outcome.router_decision.reason == "arbiter_complete"
-    assert mismatch_events[-1].data["legacy_stage"] == "planner"
-    assert mismatch_events[-1].data["graph_stage"] == "arbiter"
 
-
-def test_runtime_tick_routes_stage_results_from_compiled_graph_authority(
+def test_runtime_tick_routes_stage_results_from_compiled_plan_authority(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -335,26 +347,25 @@ def test_runtime_tick_routes_stage_results_from_compiled_graph_authority(
             now=NOW,
         )
 
-    monkeypatch.setenv("MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION", "1")
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
 
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
     builder_complete = next(
         transition
-        for transition in engine.compiled_graph_plan.execution_graph.compiled_transitions
+        for transition in engine.compiled_plan.execution_graph.compiled_transitions
         if transition.source_node_id == "builder"
         and transition.outcome == ExecutionTerminalResult.BUILDER_COMPLETE.value
     )
-    engine.compiled_graph_plan = engine.compiled_graph_plan.model_copy(
+    engine.compiled_plan = engine.compiled_plan.model_copy(
         update={
-            "execution_graph": engine.compiled_graph_plan.execution_graph.model_copy(
+            "execution_graph": engine.compiled_plan.execution_graph.model_copy(
                 update={
                     "compiled_transitions": tuple(
                         transition.model_copy(update={"target_node_id": "updater"})
                         if transition == builder_complete
                         else transition
-                        for transition in engine.compiled_graph_plan.execution_graph.compiled_transitions
+                        for transition in engine.compiled_plan.execution_graph.compiled_transitions
                     )
                 }
             )
@@ -363,15 +374,10 @@ def test_runtime_tick_routes_stage_results_from_compiled_graph_authority(
 
     outcome = engine.tick()
     snapshot = load_snapshot(paths)
-    mismatch_events = [
-        event for event in read_runtime_events(paths) if event.event_type == "compiled_graph_routing_mismatch"
-    ]
 
     assert outcome.stage is ExecutionStageName.BUILDER
     assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
     assert snapshot.active_stage is ExecutionStageName.UPDATER
-    assert mismatch_events[-1].data["legacy_decision"]["next_stage"] == "checker"
-    assert mismatch_events[-1].data["graph_decision"]["next_stage"] == "updater"
 
 
 def test_runtime_snapshot_queue_depths_match_filesystem_after_tick(tmp_path: Path) -> None:
@@ -597,7 +603,7 @@ def test_runtime_stage_request_entrypoint_path_exists_after_startup(tmp_path: Pa
     assert captured_request.active_work_item_path.endswith(".md")
 
 
-def test_runtime_stage_request_prefers_compiled_graph_node_binding_over_compiled_stage_plan(
+def test_runtime_stage_request_uses_compiled_node_binding(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -621,21 +627,25 @@ def test_runtime_stage_request_prefers_compiled_graph_node_binding_over_compiled
 
     engine.compiled_plan = engine.compiled_plan.model_copy(
         update={
-            "stage_plans": tuple(
-                stage_plan.model_copy(
-                    update={
-                        "entrypoint_path": "entrypoints/execution/consultant.md",
-                        "entrypoint_contract_id": "compat-builder.contract.v999",
-                        "required_skills": ("skills/compat-only.md",),
-                        "attached_skill_additions": ("skills/compat-extra.md",),
-                        "runner_name": "compat_runner",
-                        "model_name": "compat-model",
-                        "timeout_seconds": 17,
-                    }
-                )
-                if stage_plan.plane is Plane.EXECUTION and stage_plan.stage is ExecutionStageName.BUILDER
-                else stage_plan
-                for stage_plan in engine.compiled_plan.stage_plans
+            "execution_graph": engine.compiled_plan.execution_graph.model_copy(
+                update={
+                    "nodes": tuple(
+                        stage_plan.model_copy(
+                            update={
+                                "entrypoint_path": "entrypoints/execution/consultant.md",
+                                "entrypoint_contract_id": "compat-builder.contract.v999",
+                                "required_skill_paths": ("skills/compat-only.md",),
+                                "attached_skill_additions": ("skills/compat-extra.md",),
+                                "runner_name": "compat_runner",
+                                "model_name": "compat-model",
+                                "timeout_seconds": 17,
+                            }
+                        )
+                        if stage_plan.plane is Plane.EXECUTION and stage_plan.node_id == "builder"
+                        else stage_plan
+                        for stage_plan in engine.compiled_plan.execution_graph.nodes
+                    )
+                }
             )
         }
     )
@@ -643,15 +653,17 @@ def test_runtime_stage_request_prefers_compiled_graph_node_binding_over_compiled
     engine.tick()
 
     assert captured_request is not None
-    assert captured_request.entrypoint_path.endswith("entrypoints/execution/builder.md")
-    assert captured_request.entrypoint_contract_id == "builder.contract.v1"
+    assert captured_request.entrypoint_path.endswith("entrypoints/execution/consultant.md")
+    assert captured_request.entrypoint_contract_id == "compat-builder.contract.v999"
     assert captured_request.required_skill_paths == (
-        str(paths.runtime_root / "skills/stage/execution/builder-core/SKILL.md"),
+        str(paths.runtime_root / "skills/compat-only.md"),
     )
-    assert captured_request.attached_skill_paths == ()
-    assert captured_request.runner_name == "codex_cli"
-    assert captured_request.model_name is None
-    assert captured_request.timeout_seconds == 3600
+    assert captured_request.attached_skill_paths == (
+        str(paths.runtime_root / "skills/compat-extra.md"),
+    )
+    assert captured_request.runner_name == "compat_runner"
+    assert captured_request.model_name == "compat-model"
+    assert captured_request.timeout_seconds == 17
 
 
 def test_runtime_writes_running_status_marker_while_stage_runner_is_active(tmp_path: Path) -> None:
@@ -721,7 +733,7 @@ def test_runtime_can_build_closure_target_request_without_active_work_item(tmp_p
     assert request.canonical_root_spec_path.endswith("spec-root-001.md")
 
 
-def test_runtime_closure_target_request_prefers_compiled_graph_node_binding_over_compiled_stage_plan(
+def test_runtime_closure_target_request_uses_compiled_node_binding(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -755,21 +767,25 @@ def test_runtime_closure_target_request_prefers_compiled_graph_node_binding_over
 
     engine.compiled_plan = engine.compiled_plan.model_copy(
         update={
-            "stage_plans": tuple(
-                stage_plan.model_copy(
-                    update={
-                        "entrypoint_path": "entrypoints/planning/mechanic.md",
-                        "entrypoint_contract_id": "compat-arbiter.contract.v999",
-                        "required_skills": ("skills/compat-arbiter.md",),
-                        "attached_skill_additions": ("skills/compat-arbiter-extra.md",),
-                        "runner_name": "compat_planning_runner",
-                        "model_name": "compat-planning-model",
-                        "timeout_seconds": 19,
-                    }
-                )
-                if stage_plan.plane is Plane.PLANNING and stage_plan.stage is PlanningStageName.ARBITER
-                else stage_plan
-                for stage_plan in engine.compiled_plan.stage_plans
+            "planning_graph": engine.compiled_plan.planning_graph.model_copy(
+                update={
+                    "nodes": tuple(
+                        stage_plan.model_copy(
+                            update={
+                                "entrypoint_path": "entrypoints/planning/mechanic.md",
+                                "entrypoint_contract_id": "compat-arbiter.contract.v999",
+                                "required_skill_paths": ("skills/compat-arbiter.md",),
+                                "attached_skill_additions": ("skills/compat-arbiter-extra.md",),
+                                "runner_name": "compat_planning_runner",
+                                "model_name": "compat-planning-model",
+                                "timeout_seconds": 19,
+                            }
+                        )
+                        if stage_plan.plane is Plane.PLANNING and stage_plan.node_id == "arbiter"
+                        else stage_plan
+                        for stage_plan in engine.compiled_plan.planning_graph.nodes
+                    )
+                }
             )
         }
     )
@@ -777,15 +793,17 @@ def test_runtime_closure_target_request_prefers_compiled_graph_node_binding_over
     arbiter_plan = engine._stage_plan_for(Plane.PLANNING, PlanningStageName.ARBITER)
     request = engine._build_closure_target_stage_run_request(arbiter_plan, target)
 
-    assert request.entrypoint_path.endswith("entrypoints/planning/arbiter.md")
-    assert request.entrypoint_contract_id == "arbiter.contract.v1"
+    assert request.entrypoint_path.endswith("entrypoints/planning/mechanic.md")
+    assert request.entrypoint_contract_id == "compat-arbiter.contract.v999"
     assert request.required_skill_paths == (
-        str(paths.runtime_root / "skills/stage/planning/arbiter-core/SKILL.md"),
+        str(paths.runtime_root / "skills/compat-arbiter.md"),
     )
-    assert request.attached_skill_paths == ()
-    assert request.runner_name == "codex_cli"
-    assert request.model_name is None
-    assert request.timeout_seconds == 3600
+    assert request.attached_skill_paths == (
+        str(paths.runtime_root / "skills/compat-arbiter-extra.md"),
+    )
+    assert request.runner_name == "compat_planning_runner"
+    assert request.model_name == "compat-planning-model"
+    assert request.timeout_seconds == 19
 
 
 def test_runtime_planning_retry_scope_skips_execution_active_work(tmp_path: Path) -> None:

@@ -117,7 +117,6 @@ These are machine-owned, typed state and runtime outputs such as:
 - `millrace-agents/state/runtime_snapshot.json`
 - `millrace-agents/state/recovery_counters.json`
 - `millrace-agents/state/compiled_plan.json`
-- `millrace-agents/state/compiled_graph_plan.json`
 - `millrace-agents/state/compile_diagnostics.json`
 - `millrace-agents/state/execution_status.md`
 - `millrace-agents/state/planning_status.md`
@@ -146,16 +145,12 @@ The compiler resolves:
 - which shipped stage-kind and graph-loop assets materialize into the graph
   control-flow plan
 
-`compiled_plan.json` is now the compatibility snapshot of the older frozen
-stage-plan contract for the current workspace.
-
-`compiled_graph_plan.json` materializes the stage-kind registry and graph-loop
-assets into explicit node plans, raw transitions, normalized compiled intake
-entries, a normalized closure-target activation entry, compiled resume and
-threshold recovery policies, explicit terminal semantics, and compatibility
-diagnostics. The live runtime now executes stage-request construction, claim
-activation, closure-target activation, recovery, and post-stage routing from
-that graph plan.
+`compiled_plan.json` materializes the stage-kind registry and graph-loop assets
+into explicit node plans, raw transitions, normalized compiled intake entries,
+a normalized closure-target activation entry, compiled resume and threshold
+recovery policies, and explicit terminal semantics. The live runtime executes
+stage-request construction, claim activation, closure-target activation,
+recovery, and post-stage routing from that compiled plan.
 
 The compiler currently ships with two canonical built-in modes and one built-in
 loop per plane:
@@ -203,9 +198,8 @@ The graph-loop assets describe the same shipped topology in a richer node model:
 - explicit `terminal_states`
 - edges validated against stage-kind legal outcomes
 
-The compiler freezes the legacy surface into `FrozenRunPlan` as a compatibility
-snapshot and freezes the graph surface into `compiled_graph_plan.json` for
-runtime request binding and control flow.
+The compiler now materializes one `CompiledRunPlan` in `compiled_plan.json` for
+both runtime request binding and control flow.
 
 The selected mode connects the two loops and can add compile-time overrides such
 as:
@@ -223,11 +217,10 @@ expressed:
 
 The loop topology does not fork just because the harness changes.
 
-The compiler then freezes that into one `FrozenRunPlan`, which contains one
-`FrozenStagePlan` per stage. A frozen stage plan records the exact runtime
-execution contract the engine will use later:
+The compiler then materializes one `CompiledRunPlan`, whose graph nodes record
+the exact runtime execution contract the engine will use later:
 
-- stage name
+- node id
 - plane
 - entrypoint path
 - entrypoint contract id

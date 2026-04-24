@@ -5,14 +5,14 @@ import json
 import shutil
 from pathlib import Path
 
-from millrace_ai.architecture import FrozenGraphRunPlan
+from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.compiler import (
     CompilerValidationError,
     compile_and_persist_workspace_plan,
     preview_graph_loop_plan,
 )
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import CompileDiagnostics, FrozenRunPlan, Plane
+from millrace_ai.contracts import CompileDiagnostics, Plane
 from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
@@ -23,7 +23,7 @@ def test_compiler_consumes_config_and_assets_package_surfaces() -> None:
     config_module = importlib.import_module("millrace_ai.config")
 
     assert compiler_module.RuntimeConfig is config_module.RuntimeConfig
-    assert compiler_module.load_builtin_mode_bundle is assets_package.load_builtin_mode_bundle
+    assert compiler_module.load_builtin_mode_definition is assets_package.load_builtin_mode_definition
 
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:
@@ -112,12 +112,16 @@ def _write_synthetic_graph_loop_asset(assets_root: Path) -> None:
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _all_nodes(plan: CompiledRunPlan):
+    return (*plan.execution_graph.nodes, *plan.planning_graph.nodes)
+
+
 def test_compiler_validation_errors_use_project_error_hierarchy() -> None:
     assert issubclass(ConfigurationError, MillraceError)
     assert issubclass(CompilerValidationError, ConfigurationError)
 
 
-def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) -> None:
+def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
@@ -135,9 +139,10 @@ def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) ->
     assert outcome.active_plan is not None
     assert outcome.used_last_known_good is False
     assert compiled_plan_path.is_file()
+    assert not (paths.state_dir / "compiled_graph_plan.json").exists()
     assert diagnostics_path.is_file()
 
-    persisted_plan = FrozenRunPlan.model_validate_json(compiled_plan_path.read_text(encoding="utf-8"))
+    persisted_plan = CompiledRunPlan.model_validate_json(compiled_plan_path.read_text(encoding="utf-8"))
     persisted_diagnostics = CompileDiagnostics.model_validate_json(
         diagnostics_path.read_text(encoding="utf-8")
     )
@@ -145,15 +150,21 @@ def test_compile_writes_frozen_plan_and_diagnostics_artifacts(tmp_path: Path) ->
     assert persisted_plan.mode_id == "default_codex"
     assert persisted_plan.execution_loop_id == "execution.standard"
     assert persisted_plan.planning_loop_id == "planning.standard"
-    assert len(persisted_plan.stage_plans) == 12
-    assert persisted_plan.completion_behavior is not None
-    assert persisted_plan.completion_behavior.stage.value == "arbiter"
-    assert any(ref.startswith("completion_behavior:") for ref in persisted_plan.source_refs)
+    assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.execution_graph.compiled_entries} == {
+        "task": "builder"
+    }
+    assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.planning_graph.compiled_entries} == {
+        "incident": "auditor",
+        "spec": "planner",
+    }
+    assert persisted_plan.planning_graph.compiled_completion_entry is not None
+    assert persisted_plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
+    assert any(ref.startswith("graph_completion_behavior:") for ref in persisted_plan.source_refs)
     assert persisted_diagnostics.ok is True
     assert persisted_diagnostics.mode_id == "default_codex"
 
 
-def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) -> None:
+def test_compile_materializes_compiled_plan_graph_surface(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
@@ -163,32 +174,13 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
         requested_mode_id="standard_plain",
     )
 
-    paths = workspace_paths(workspace_root)
-    graph_plan_path = paths.state_dir / "compiled_graph_plan.json"
-
     assert outcome.diagnostics.ok is True
-    assert graph_plan_path.is_file()
+    assert outcome.active_plan is not None
 
-    graph_plan = FrozenGraphRunPlan.model_validate_json(graph_plan_path.read_text(encoding="utf-8"))
-    execution_entry_nodes = {
-        entry.entry_key.value: entry.node_id for entry in graph_plan.execution_graph.entry_nodes
-    }
-    planning_entry_nodes = {
-        entry.entry_key.value: entry.node_id for entry in graph_plan.planning_graph.entry_nodes
-    }
+    plan = outcome.active_plan
+    builder_node = next(node for node in plan.execution_graph.nodes if node.node_id == "builder")
+    arbiter_node = next(node for node in plan.planning_graph.nodes if node.node_id == "arbiter")
 
-    assert graph_plan.mode_id == "default_codex"
-    assert graph_plan.authoritative_for_runtime_execution is True
-    assert graph_plan.execution_graph.loop_id == "execution.standard"
-    assert graph_plan.planning_graph.loop_id == "planning.standard"
-    assert execution_entry_nodes == {"task": "builder"}
-    assert planning_entry_nodes == {"incident": "auditor", "spec": "planner"}
-    assert {
-        (entry.entry_key.value, entry.node_id, entry.stage_kind_id)
-        for entry in graph_plan.execution_graph.compiled_entries
-    } == {("task", "builder", "builder")}
-    builder_node = next(node for node in graph_plan.execution_graph.nodes if node.node_id == "builder")
-    arbiter_node = next(node for node in graph_plan.planning_graph.nodes if node.node_id == "arbiter")
     assert builder_node.entrypoint_contract_id == "builder.contract.v1"
     assert arbiter_node.entrypoint_contract_id == "arbiter.contract.v1"
     assert {
@@ -199,7 +191,7 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
             policy.default_target_node_id,
             policy.metadata_stage_keys,
         )
-        for policy in graph_plan.execution_graph.compiled_resume_policies
+        for policy in plan.execution_graph.compiled_resume_policies
     } == {
         (
             "execution.troubleshooter.resume",
@@ -224,7 +216,7 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
             policy.exhausted_target_node_id,
             policy.exhausted_terminal_state_id,
         )
-        for policy in graph_plan.execution_graph.compiled_threshold_policies
+        for policy in plan.execution_graph.compiled_threshold_policies
     } == {
         (
             "execution.fix-needed.exhaustion",
@@ -243,7 +235,7 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
     }
     assert {
         (transition.source_node_id, transition.outcome, transition.target_node_id)
-        for transition in graph_plan.execution_graph.compiled_transitions
+        for transition in plan.execution_graph.compiled_transitions
         if transition.target_node_id is not None
     } >= {
         ("builder", "BUILDER_COMPLETE", "checker"),
@@ -251,65 +243,19 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
         ("fixer", "FIXER_COMPLETE", "doublechecker"),
         ("troubleshooter", "TROUBLESHOOT_COMPLETE", "builder"),
     }
-    assert graph_plan.planning_graph.completion_behavior is not None
-    assert graph_plan.planning_graph.completion_behavior.target_node_id == "arbiter"
-    assert graph_plan.planning_graph.compiled_completion_entry is not None
-    assert graph_plan.planning_graph.compiled_completion_entry.entry_key.value == "closure_target"
-    assert graph_plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
-    assert graph_plan.planning_graph.compiled_completion_entry.stage_kind_id == "arbiter"
-    assert graph_plan.planning_graph.compiled_completion_entry.request_kind == "closure_target"
-    assert graph_plan.planning_graph.compiled_completion_entry.target_selector == (
-        "active_closure_target"
-    )
-    assert graph_plan.planning_graph.compiled_completion_entry.on_pass_terminal_state_id == (
-        "arbiter_complete"
-    )
-    assert graph_plan.planning_graph.compiled_completion_entry.on_gap_terminal_state_id == (
-        "remediation_needed"
-    )
-    assert {
-        (
-            policy.policy_id,
-            policy.source_node_id,
-            policy.on_outcome,
-            policy.default_target_node_id,
-            policy.metadata_stage_keys,
-        )
-        for policy in graph_plan.planning_graph.compiled_resume_policies
-    } == {
-        (
-            "planning.mechanic.resume",
-            "mechanic",
-            "MECHANIC_COMPLETE",
-            "planner",
-            ("resume_stage",),
-        ),
-    }
-    assert {
-        (
-            policy.policy_id,
-            policy.counter_name.value,
-            policy.threshold,
-            policy.exhausted_target_node_id,
-            policy.exhausted_terminal_state_id,
-        )
-        for policy in graph_plan.planning_graph.compiled_threshold_policies
-    } == {
-        (
-            "planning.blocked.recovery",
-            "mechanic_attempt_count",
-            2,
-            None,
-            "blocked",
-        ),
-    }
-    assert graph_plan.execution_graph.transitions
-    assert graph_plan.planning_graph.transitions
-    assert graph_plan.legacy_equivalence_ready_for_cutover is True
-    assert graph_plan.legacy_equivalence_issues == ()
+    assert plan.planning_graph.completion_behavior is not None
+    assert plan.planning_graph.completion_behavior.target_node_id == "arbiter"
+    assert plan.planning_graph.compiled_completion_entry is not None
+    assert plan.planning_graph.compiled_completion_entry.entry_key.value == "closure_target"
+    assert plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
+    assert plan.planning_graph.compiled_completion_entry.stage_kind_id == "arbiter"
+    assert plan.planning_graph.compiled_completion_entry.request_kind == "closure_target"
+    assert plan.planning_graph.compiled_completion_entry.target_selector == "active_closure_target"
+    assert plan.execution_graph.transitions
+    assert plan.planning_graph.transitions
 
 
-def test_compile_materializes_configured_recovery_thresholds_into_graph_plan(tmp_path: Path) -> None:
+def test_compile_materializes_configured_recovery_thresholds_into_compiled_plan(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
@@ -326,17 +272,17 @@ def test_compile_materializes_configured_recovery_thresholds_into_graph_plan(tmp
     )
 
     assert outcome.diagnostics.ok is True
-    assert outcome.active_graph_plan is not None
+    assert outcome.active_plan is not None
     assert {
         (policy.policy_id, policy.threshold)
-        for policy in outcome.active_graph_plan.execution_graph.compiled_threshold_policies
+        for policy in outcome.active_plan.execution_graph.compiled_threshold_policies
     } == {
         ("execution.fix-needed.exhaustion", 5),
         ("execution.blocked.recovery", 4),
     }
     assert {
         (policy.policy_id, policy.threshold)
-        for policy in outcome.active_graph_plan.planning_graph.compiled_threshold_policies
+        for policy in outcome.active_plan.planning_graph.compiled_threshold_policies
     } == {
         ("planning.blocked.recovery", 3),
     }
@@ -391,7 +337,7 @@ def test_standard_plain_alias_and_default_codex_compile_to_identical_plan_ids(
     assert alias_outcome.active_plan.compiled_plan_id == canonical_outcome.active_plan.compiled_plan_id
 
 
-def test_default_pi_compiles_with_pi_runner_bound_for_every_stage(tmp_path: Path) -> None:
+def test_default_pi_compiles_with_pi_runner_bound_for_every_node(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
@@ -404,7 +350,7 @@ def test_default_pi_compiles_with_pi_runner_bound_for_every_stage(tmp_path: Path
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
     assert outcome.active_plan.mode_id == "default_pi"
-    assert {stage_plan.runner_name for stage_plan in outcome.active_plan.stage_plans} == {"pi_rpc"}
+    assert {node.runner_name for node in _all_nodes(outcome.active_plan)} == {"pi_rpc"}
 
 
 def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
@@ -421,8 +367,8 @@ def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
     assert outcome.active_plan is not None
 
     required_by_stage = {
-        stage_plan.stage.value: stage_plan.required_skills
-        for stage_plan in outcome.active_plan.stage_plans
+        node.node_id: node.required_skill_paths
+        for node in _all_nodes(outcome.active_plan)
     }
 
     assert len(required_by_stage) == 12
@@ -433,7 +379,7 @@ def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
     assert required_by_stage["arbiter"] == ("skills/stage/planning/arbiter-core/SKILL.md",)
 
 
-def test_compile_plan_identity_changes_when_completion_behavior_changes(tmp_path: Path) -> None:
+def test_compile_plan_identity_changes_when_graph_completion_behavior_changes(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
@@ -447,10 +393,10 @@ def test_compile_plan_identity_changes_when_completion_behavior_changes(tmp_path
     assert baseline.active_plan is not None
 
     assets_root = _copy_builtin_assets(tmp_path / "mutated")
-    planning_loop_path = assets_root / "loops" / "planning" / "default.json"
-    payload = json.loads(planning_loop_path.read_text(encoding="utf-8"))
+    planning_graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    payload = json.loads(planning_graph_path.read_text(encoding="utf-8"))
     payload["completion_behavior"]["skip_if_already_closed"] = False
-    planning_loop_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    planning_graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     mutated = compile_and_persist_workspace_plan(
         workspace_root,
@@ -478,7 +424,7 @@ def test_compile_uses_one_hour_default_stage_timeout_when_stage_config_omits_it(
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert {stage_plan.timeout_seconds for stage_plan in outcome.active_plan.stage_plans} == {3600}
+    assert {node.timeout_seconds for node in _all_nodes(outcome.active_plan)} == {3600}
 
 
 def test_compile_surfaces_stage_skill_attachments_without_role_overlays(tmp_path: Path) -> None:
@@ -503,11 +449,9 @@ def test_compile_surfaces_stage_skill_attachments_without_role_overlays(tmp_path
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
 
-    builder_plan = next(
-        stage_plan for stage_plan in outcome.active_plan.stage_plans if stage_plan.stage.value == "builder"
-    )
+    builder_plan = next(node for node in outcome.active_plan.execution_graph.nodes if node.node_id == "builder")
 
-    assert builder_plan.required_skills == ("skills/stage/execution/builder-core/SKILL.md",)
+    assert builder_plan.required_skill_paths == ("skills/stage/execution/builder-core/SKILL.md",)
     assert builder_plan.attached_skill_additions == ("skills/execution/builder.md",)
     assert "role_overlays" not in builder_plan.model_dump(mode="json")
 
@@ -627,4 +571,4 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     diagnostics = CompileDiagnostics.model_validate_json(diagnostics_path.read_text(encoding="utf-8"))
     assert diagnostics.ok is False
     assert diagnostics.mode_id == "default_codex"
-    assert diagnostics.errors[0] == "Unknown built-in loop id: planning.unknown"
+    assert diagnostics.errors[0] == "Unknown built-in graph loop id: planning.unknown"

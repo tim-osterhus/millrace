@@ -646,55 +646,6 @@ class ModeDefinition(ContractModel):
     stage_runner_bindings: dict[StageName, str] = Field(default_factory=dict)
 
 
-class FrozenStagePlan(ContractModel):
-    stage: StageName
-    plane: Plane
-    entrypoint_path: str
-    entrypoint_contract_id: str | None = None
-    required_skills: tuple[str, ...] = ()
-    attached_skill_additions: tuple[str, ...] = ()
-    runner_name: str | None = None
-    model_name: str | None = None
-    timeout_seconds: int = 0
-
-    @model_validator(mode="after")
-    def validate_plane(self) -> "FrozenStagePlan":
-        if _STAGE_TO_PLANE[self.stage.value] != self.plane:
-            raise ValueError("stage must belong to plane")
-        if self.timeout_seconds < 0:
-            raise ValueError("timeout_seconds must be >= 0")
-        return self
-
-
-class FrozenRunPlan(ContractModel):
-    schema_version: Literal["1.0"] = "1.0"
-    kind: Literal["frozen_run_plan"] = "frozen_run_plan"
-
-    compiled_plan_id: str
-    mode_id: str
-    execution_loop_id: str
-    planning_loop_id: str
-    stage_plans: tuple[FrozenStagePlan, ...]
-    completion_behavior: CompletionBehaviorDefinition | None = None
-    compiled_at: datetime
-    source_refs: tuple[str, ...] = ()
-
-    @model_validator(mode="after")
-    def validate_unique_stage_plans(self) -> "FrozenRunPlan":
-        keys = [(plan.plane.value, plan.stage.value) for plan in self.stage_plans]
-        if len(keys) != len(set(keys)):
-            raise ValueError("stage_plans must be unique by plane/stage")
-        if self.completion_behavior is not None:
-            stage_keys = {(plan.plane.value, plan.stage.value) for plan in self.stage_plans}
-            behavior_key = (
-                _STAGE_TO_PLANE[self.completion_behavior.stage.value].value,
-                self.completion_behavior.stage.value,
-            )
-            if behavior_key not in stage_keys:
-                raise ValueError("completion_behavior stage must exist in stage_plans")
-        return self
-
-
 class CompileDiagnostics(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["compile_diagnostics"] = "compile_diagnostics"
@@ -896,8 +847,6 @@ __all__ = [
     "CompletionBehaviorDefinition",
     "ExecutionStageName",
     "ExecutionTerminalResult",
-    "FrozenRunPlan",
-    "FrozenStagePlan",
     "IncidentDocument",
     "IncidentDecision",
     "IncidentSeverity",

@@ -1,4 +1,4 @@
-"""Materialized non-authoritative frozen graph-plan contracts."""
+"""Materialized compiled plan contracts."""
 
 from __future__ import annotations
 
@@ -146,38 +146,39 @@ class FrozenGraphPlanePlan(ArchitectureContractModel):
         return self
 
 
-class FrozenGraphRunPlan(ArchitectureContractModel):
+class CompiledRunPlan(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
-    kind: Literal["frozen_graph_run_plan"] = "frozen_graph_run_plan"
+    kind: Literal["compiled_run_plan"] = "compiled_run_plan"
 
     compiled_plan_id: str
     mode_id: str
-    authoritative_for_runtime_execution: bool = False
-    legacy_equivalence_ready_for_cutover: bool = False
-    legacy_equivalence_issues: tuple[str, ...] = ()
+    execution_loop_id: str
+    planning_loop_id: str
     execution_graph: FrozenGraphPlanePlan
     planning_graph: FrozenGraphPlanePlan
     compiled_at: datetime
     source_refs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def validate_graph_planes(self) -> "FrozenGraphRunPlan":
+    def validate_graph_planes(self) -> "CompiledRunPlan":
         if self.execution_graph.plane is not Plane.EXECUTION:
             raise ValueError("execution_graph must declare plane=execution")
         if self.planning_graph.plane is not Plane.PLANNING:
             raise ValueError("planning_graph must declare plane=planning")
-        if self.legacy_equivalence_ready_for_cutover and self.legacy_equivalence_issues:
-            raise ValueError("cutover-ready graph plans may not retain legacy equivalence issues")
+        if self.execution_graph.loop_id != self.execution_loop_id:
+            raise ValueError("execution_loop_id must match execution_graph.loop_id")
+        if self.planning_graph.loop_id != self.planning_loop_id:
+            raise ValueError("planning_loop_id must match planning_graph.loop_id")
         return self
 
 
 __all__ = [
-    "CompiledGraphEntryPlan",
     "CompiledGraphCompletionEntryPlan",
+    "CompiledGraphEntryPlan",
     "CompiledGraphResumePolicyPlan",
     "CompiledGraphThresholdPolicyPlan",
     "CompiledGraphTransitionPlan",
+    "CompiledRunPlan",
     "FrozenGraphPlanePlan",
-    "FrozenGraphRunPlan",
     "MaterializedGraphNodePlan",
 ]

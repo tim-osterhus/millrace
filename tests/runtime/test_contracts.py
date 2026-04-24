@@ -9,14 +9,10 @@ from millrace_ai.contracts import (
     ClosureTargetState,
     CompileDiagnostics,
     CompletionBehaviorDefinition,
-    ExecutionStageName,
-    FrozenRunPlan,
-    FrozenStagePlan,
     IncidentDocument,
     LoopConfigDefinition,
     MailboxCommandEnvelope,
     ModeDefinition,
-    Plane,
     PlanningStageName,
     PlanningTerminalResult,
     RecoveryCounters,
@@ -386,84 +382,15 @@ def test_mode_definition_rejects_unknown_stage_key() -> None:
         )
 
 
-def test_mode_definition_and_frozen_stage_plan_are_skill_only() -> None:
+def test_mode_definition_is_skill_only() -> None:
     mode = ModeDefinition(
         mode_id="standard_plain",
         execution_loop_id="execution.standard",
         planning_loop_id="planning.standard",
         stage_skill_additions={"builder": ("skills/execution/builder.md",)},
     )
-    stage_plan = FrozenStagePlan(
-        stage=ExecutionStageName.BUILDER,
-        plane=Plane.EXECUTION,
-        entrypoint_path="entrypoints/execution/builder.md",
-        required_skills=("skills/README.md",),
-        attached_skill_additions=("skills/execution/builder.md",),
-    )
 
     assert "stage_role_overlays" not in mode.model_dump(mode="json")
-    assert "role_overlays" not in stage_plan.model_dump(mode="json")
-
-
-def test_frozen_run_plan_rejects_duplicate_stage_entries() -> None:
-    with pytest.raises(ValidationError):
-        FrozenRunPlan(
-            compiled_plan_id="plan-001",
-            mode_id="standard_plain",
-            execution_loop_id="execution.standard",
-            planning_loop_id="planning.standard",
-            stage_plans=[
-                {
-                    "stage": "builder",
-                    "plane": "execution",
-                    "entrypoint_path": "assets/entrypoints/execution/builder.md",
-                },
-                {
-                    "stage": "builder",
-                    "plane": "execution",
-                    "entrypoint_path": "assets/entrypoints/execution/builder-v2.md",
-                },
-            ],
-            compiled_at=NOW,
-        )
-
-
-def test_frozen_run_plan_accepts_typed_completion_behavior() -> None:
-    plan = FrozenRunPlan(
-        compiled_plan_id="plan-001",
-        mode_id="standard_plain",
-        execution_loop_id="execution.standard",
-        planning_loop_id="planning.standard",
-        stage_plans=[
-            {
-                "stage": "builder",
-                "plane": "execution",
-                "entrypoint_path": "entrypoints/execution/builder.md",
-            },
-            {
-                "stage": "arbiter",
-                "plane": "planning",
-                "entrypoint_path": "entrypoints/planning/arbiter.md",
-            },
-        ],
-        completion_behavior={
-            "trigger": "backlog_drained",
-            "readiness_rule": "no_open_lineage_work",
-            "stage": "arbiter",
-            "request_kind": "closure_target",
-            "target_selector": "active_closure_target",
-            "rubric_policy": "reuse_or_create",
-            "blocked_work_policy": "suppress",
-            "skip_if_already_closed": True,
-            "on_pass_terminal_result": "ARBITER_COMPLETE",
-            "on_gap_terminal_result": "REMEDIATION_NEEDED",
-            "create_incident_on_gap": True,
-        },
-        compiled_at=NOW,
-    )
-
-    assert isinstance(plan.completion_behavior, CompletionBehaviorDefinition)
-    assert plan.completion_behavior.stage is PlanningStageName.ARBITER
 
 
 def test_stage_result_envelope_accepts_arbiter_remediation_needed() -> None:

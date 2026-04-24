@@ -146,5 +146,8 @@ def test_standard_plain_compiles_for_bootstrapped_workspace_without_role_overlay
     assert outcome.active_plan.planning_loop_id == "planning.standard"
     assert all(
         "role_overlays" not in stage_plan.model_dump(mode="json")
-        for stage_plan in outcome.active_plan.stage_plans
+        for stage_plan in (
+            *outcome.active_plan.execution_graph.nodes,
+            *outcome.active_plan.planning_graph.nodes,
+        )
     )

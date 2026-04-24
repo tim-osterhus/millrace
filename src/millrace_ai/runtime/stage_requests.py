@@ -134,11 +134,11 @@ def build_closure_target_stage_run_request(
 
 
 def stage_plan_for(engine: RuntimeEngine, plane: Plane, stage: StageName) -> MaterializedGraphNodePlan:
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
     graph = (
-        engine.compiled_graph_plan.execution_graph
+        engine.compiled_plan.execution_graph
         if plane is Plane.EXECUTION
-        else engine.compiled_graph_plan.planning_graph
+        else engine.compiled_plan.planning_graph
     )
     for node in graph.nodes:
         if node.plane is plane and node.node_id == stage.value:

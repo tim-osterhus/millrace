@@ -18,8 +18,8 @@ from millrace_ai.architecture import (
     CompiledGraphResumePolicyPlan,
     CompiledGraphThresholdPolicyPlan,
     CompiledGraphTransitionPlan,
+    CompiledRunPlan,
     FrozenGraphPlanePlan,
-    FrozenGraphRunPlan,
     GraphLoopCounterName,
     GraphLoopDefinition,
     GraphLoopEdgeDefinition,
@@ -33,7 +33,7 @@ from millrace_ai.architecture.common import dedupe_preserve_order
 from millrace_ai.assets import (
     discover_stage_kind_definitions,
     load_builtin_graph_loop_definition,
-    load_builtin_mode_bundle,
+    load_builtin_mode_definition,
     load_builtin_stage_kind_definitions,
     load_graph_loop_definition,
     resolve_builtin_mode_id,
@@ -42,9 +42,6 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     CompileDiagnostics,
     ExecutionStageName,
-    FrozenRunPlan,
-    FrozenStagePlan,
-    LoopConfigDefinition,
     ModeDefinition,
     Plane,
     PlanningStageName,
@@ -82,10 +79,9 @@ class CompilerValidationError(ConfigurationError):
 class CompileOutcome:
     """Result of one compile attempt including fallback state."""
 
-    active_plan: FrozenRunPlan | None
+    active_plan: CompiledRunPlan | None
     diagnostics: CompileDiagnostics
     used_last_known_good: bool
-    active_graph_plan: FrozenGraphRunPlan | None = None
 
 
 def preview_graph_loop_plan(
@@ -129,25 +125,16 @@ def compile_and_persist_workspace_plan(
     compile_time = _utc_now(now)
     mode_id = _resolve_mode_id(requested_mode_id, config)
     compiled_plan_path = paths.state_dir / "compiled_plan.json"
-    compiled_graph_plan_path = paths.state_dir / "compiled_graph_plan.json"
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
 
     last_known_good = _load_existing_plan(compiled_plan_path)
-    last_known_good_graph = _load_existing_graph_plan(compiled_graph_plan_path)
 
     try:
-        plan = _compile_frozen_run_plan(
+        plan = _compile_compiled_run_plan(
             config=config,
             mode_id=mode_id,
             assets_root=assets_root,
             compile_time=compile_time,
-        )
-        graph_plan = _compile_frozen_graph_run_plan(
-            config=config,
-            mode_id=mode_id,
-            assets_root=assets_root,
-            compile_time=compile_time,
-            compiled_plan_id=plan.compiled_plan_id,
         )
         diagnostics = CompileDiagnostics(
             ok=True,
@@ -156,13 +143,11 @@ def compile_and_persist_workspace_plan(
             emitted_at=compile_time,
         )
         _atomic_write_json(compiled_plan_path, plan.model_dump(mode="json"))
-        _atomic_write_json(compiled_graph_plan_path, graph_plan.model_dump(mode="json"))
         _atomic_write_json(diagnostics_path, diagnostics.model_dump(mode="json"))
         return CompileOutcome(
             active_plan=plan,
             diagnostics=diagnostics,
             used_last_known_good=False,
-            active_graph_plan=graph_plan,
         )
 
     except (AssetValidationError, CompilerValidationError, ValidationError, ValueError) as exc:
@@ -178,171 +163,71 @@ def compile_and_persist_workspace_plan(
             active_plan=last_known_good,
             diagnostics=diagnostics,
             used_last_known_good=last_known_good is not None,
-            active_graph_plan=last_known_good_graph,
         )
 
-
-def _load_existing_graph_plan(path: Path) -> FrozenGraphRunPlan | None:
-    if not path.exists():
-        return None
-    return FrozenGraphRunPlan.model_validate_json(path.read_text(encoding="utf-8"))
-
-
-def _compile_frozen_run_plan(
+def _compile_compiled_run_plan(
     *,
     config: RuntimeConfig,
     mode_id: str,
     assets_root: Path | None,
     compile_time: datetime,
-) -> FrozenRunPlan:
-    # Phase 1 + 2: resolve mode and loop definitions.
-    bundle = load_builtin_mode_bundle(mode_id, assets_root=assets_root)
-
-    # Phase 3 + 4 + 5 + 6: validate map scope, resolve bundles, enforce boundaries.
-    stage_plans = _freeze_stage_plans(
-        config=config,
-        mode=bundle.mode,
-        execution_loop=bundle.execution_loop,
-        planning_loop=bundle.planning_loop,
-    )
-
-    # Phase 7: freeze run plan.
-    return FrozenRunPlan(
-        compiled_plan_id=_build_compiled_plan_id(
-            mode=bundle.mode,
-            execution_loop_id=bundle.execution_loop.loop_id,
-            planning_loop_id=bundle.planning_loop.loop_id,
-            stage_plans=stage_plans,
-            completion_behavior=bundle.planning_loop.completion_behavior,
-        ),
-        mode_id=bundle.mode.mode_id,
-        execution_loop_id=bundle.execution_loop.loop_id,
-        planning_loop_id=bundle.planning_loop.loop_id,
-        stage_plans=stage_plans,
-        completion_behavior=bundle.planning_loop.completion_behavior,
-        compiled_at=compile_time,
-        source_refs=_build_source_refs(
-            bundle.mode,
-            bundle.execution_loop.loop_id,
-            bundle.planning_loop.loop_id,
-            bundle.planning_loop.completion_behavior,
-        ),
-    )
-
-
-def _freeze_stage_plans(
-    *,
-    config: RuntimeConfig,
-    mode: ModeDefinition,
-    execution_loop: LoopConfigDefinition,
-    planning_loop: LoopConfigDefinition,
-) -> tuple[FrozenStagePlan, ...]:
-    selected_stages = {stage for stage in execution_loop.stages} | {
-        stage for stage in planning_loop.stages
-    }
-    _validate_mode_stage_maps(mode, selected_stages)
-
-    stage_plans: list[FrozenStagePlan] = []
-    for loop in (execution_loop, planning_loop):
-        for stage in loop.stages:
-            stage_name = stage.value
-            entrypoint_override = mode.stage_entrypoint_overrides.get(stage)
-            if entrypoint_override is not None:
-                entrypoint_path = _validate_entrypoint_override(stage_name, entrypoint_override)
-            else:
-                entrypoint_path = f"entrypoints/{loop.plane.value}/{stage_name}.md"
-
-            stage_config = config.stages.get(stage_name)
-            runner_name = mode.stage_runner_bindings.get(stage)
-            if runner_name is None and stage_config is not None:
-                runner_name = stage_config.runner
-
-            model_name = mode.stage_model_bindings.get(stage)
-            if model_name is None and stage_config is not None:
-                model_name = stage_config.model
-
-            timeout_seconds = (
-                stage_config.timeout_seconds
-                if stage_config is not None
-                else _DEFAULT_STAGE_TIMEOUT_SECONDS
-            )
-
-            stage_plans.append(
-                FrozenStagePlan(
-                    stage=stage,
-                    plane=loop.plane,
-                    entrypoint_path=entrypoint_path,
-                    entrypoint_contract_id=f"{stage_name}.contract.v1",
-                    required_skills=_required_skills_for_stage(stage),
-                    attached_skill_additions=tuple(mode.stage_skill_additions.get(stage, ())),
-                    runner_name=runner_name,
-                    model_name=model_name,
-                    timeout_seconds=timeout_seconds,
-                )
-            )
-
-    return tuple(stage_plans)
-
-
-def _required_skills_for_stage(stage: StageName) -> tuple[str, ...]:
-    return _REQUIRED_SKILLS_BY_STAGE.get(stage, ())
-
-
-def _compile_frozen_graph_run_plan(
-    *,
-    config: RuntimeConfig,
-    mode_id: str,
-    assets_root: Path | None,
-    compile_time: datetime,
-    compiled_plan_id: str,
-) -> FrozenGraphRunPlan:
-    bundle = load_builtin_mode_bundle(mode_id, assets_root=assets_root)
+) -> CompiledRunPlan:
+    mode = load_builtin_mode_definition(mode_id, assets_root=assets_root)
     execution_graph_loop = load_builtin_graph_loop_definition(
-        bundle.execution_loop.loop_id,
+        mode.execution_loop_id,
         assets_root=assets_root,
     )
     planning_graph_loop = load_builtin_graph_loop_definition(
-        bundle.planning_loop.loop_id,
+        mode.planning_loop_id,
         assets_root=assets_root,
     )
+    _validate_mode_stage_maps(
+        mode,
+        _selected_stages_for_graph_loops(execution_graph_loop, planning_graph_loop),
+    )
+
     stage_kinds = {
         stage_kind.stage_kind_id: stage_kind
         for stage_kind in load_builtin_stage_kind_definitions(assets_root=assets_root)
     }
     execution_graph = _materialize_graph_plane_plan(
         graph_loop=execution_graph_loop,
-        mode=bundle.mode,
+        mode=mode,
         config=config,
         stage_kinds=stage_kinds,
     )
     planning_graph = _materialize_graph_plane_plan(
         graph_loop=planning_graph_loop,
-        mode=bundle.mode,
+        mode=mode,
         config=config,
         stage_kinds=stage_kinds,
     )
-    legacy_equivalence_issues = _legacy_equivalence_issues_for_shipped_defaults(
-        execution_graph=execution_graph,
-        planning_graph=planning_graph,
-        config=config,
-    )
 
-    return FrozenGraphRunPlan(
-        compiled_plan_id=compiled_plan_id,
-        mode_id=bundle.mode.mode_id,
-        authoritative_for_runtime_execution=True,
-        legacy_equivalence_ready_for_cutover=not legacy_equivalence_issues,
-        legacy_equivalence_issues=legacy_equivalence_issues,
+    return CompiledRunPlan(
+        compiled_plan_id=_build_compiled_plan_id(
+            mode_id=mode.mode_id,
+            execution_loop_id=execution_graph.loop_id,
+            planning_loop_id=planning_graph.loop_id,
+            execution_graph=execution_graph,
+            planning_graph=planning_graph,
+        ),
+        mode_id=mode.mode_id,
+        execution_loop_id=execution_graph.loop_id,
+        planning_loop_id=planning_graph.loop_id,
         execution_graph=execution_graph,
         planning_graph=planning_graph,
         compiled_at=compile_time,
         source_refs=_build_graph_source_refs(
-            bundle.mode.mode_id,
-            execution_graph_loop.loop_id,
-            planning_graph_loop.loop_id,
-            has_planning_completion_behavior=planning_graph_loop.completion_behavior is not None,
+            mode.mode_id,
+            execution_graph.loop_id,
+            planning_graph.loop_id,
+            has_planning_completion_behavior=planning_graph.completion_behavior is not None,
         ),
     )
+
+
+def _required_skills_for_stage(stage: StageName) -> tuple[str, ...]:
+    return _REQUIRED_SKILLS_BY_STAGE.get(stage, ())
 
 
 def _materialize_graph_plane_plan(
@@ -463,6 +348,16 @@ def _materialize_graph_node_plan(
     )
 
 
+def _selected_stages_for_graph_loops(*graph_loops: GraphLoopDefinition) -> set[StageName]:
+    selected_stages: set[StageName] = set()
+    for graph_loop in graph_loops:
+        for node in graph_loop.nodes:
+            stage_name = _stage_name_for_identifier(node.stage_kind_id)
+            if stage_name is not None:
+                selected_stages.add(stage_name)
+    return selected_stages
+
+
 def _stage_name_for_identifier(identifier: str) -> StageName | None:
     return _STAGE_NAME_BY_VALUE.get(identifier)
 
@@ -574,142 +469,6 @@ def _resolved_threshold_for_policy(
     return policy.threshold
 
 
-def _legacy_equivalence_issues_for_shipped_defaults(
-    *,
-    execution_graph: FrozenGraphPlanePlan,
-    planning_graph: FrozenGraphPlanePlan,
-    config: RuntimeConfig,
-) -> tuple[str, ...]:
-    issues: list[str] = []
-
-    execution_entries = {entry.entry_key.value: entry.node_id for entry in execution_graph.compiled_entries}
-    planning_entries = {entry.entry_key.value: entry.node_id for entry in planning_graph.compiled_entries}
-    if execution_entries != {"task": "builder"}:
-        issues.append("execution.standard: task intake entry no longer matches legacy builder activation")
-    if planning_entries != {"spec": "planner", "incident": "auditor"}:
-        issues.append("planning.standard: spec/incident intake entries no longer match legacy activation")
-
-    execution_transitions = {
-        (transition.source_node_id, transition.outcome): transition
-        for transition in execution_graph.compiled_transitions
-    }
-    planning_transitions = {
-        (transition.source_node_id, transition.outcome): transition
-        for transition in planning_graph.compiled_transitions
-    }
-    execution_resume_policies = {
-        policy.policy_id: policy for policy in execution_graph.compiled_resume_policies
-    }
-    execution_threshold_policies = {
-        policy.policy_id: policy for policy in execution_graph.compiled_threshold_policies
-    }
-    planning_resume_policies = {
-        policy.policy_id: policy for policy in planning_graph.compiled_resume_policies
-    }
-    planning_threshold_policies = {
-        policy.policy_id: policy for policy in planning_graph.compiled_threshold_policies
-    }
-
-    if execution_transitions.get(("troubleshooter", "TROUBLESHOOT_COMPLETE"), None) is None:
-        issues.append("execution.standard: troubleshooter completion transition is missing")
-    else:
-        troubleshooter_complete = execution_transitions[("troubleshooter", "TROUBLESHOOT_COMPLETE")]
-        if troubleshooter_complete.target_node_id != "builder":
-            issues.append(
-                "execution.standard: troubleshooter completion default target does not match legacy builder resume"
-            )
-    expected_execution_resume = execution_resume_policies.get("execution.troubleshooter.resume")
-    if (
-        expected_execution_resume is None
-        or expected_execution_resume.metadata_stage_keys != ("resume_stage",)
-    ):
-        issues.append("execution.standard: troubleshooter metadata resume routing is not yet encoded")
-    consultant_resume = execution_resume_policies.get("execution.consultant.resume")
-    if (
-        consultant_resume is None
-        or consultant_resume.metadata_stage_keys != ("target_stage", "resume_stage")
-        or consultant_resume.default_target_node_id != "troubleshooter"
-    ):
-        issues.append("execution.standard: consultant metadata-target routing is not yet encoded")
-
-    if not {
-        ("checker", "FIX_NEEDED"),
-        ("doublechecker", "FIX_NEEDED"),
-    }.issubset(execution_transitions):
-        issues.append("execution.standard: fix-needed routing coverage is incomplete")
-    else:
-        fix_needed_targets = {
-            execution_transitions[("checker", "FIX_NEEDED")].target_node_id,
-            execution_transitions[("doublechecker", "FIX_NEEDED")].target_node_id,
-        }
-        if fix_needed_targets != {"fixer"}:
-            issues.append("execution.standard: fix-needed direct transition no longer targets fixer")
-    fix_needed_exhaustion = execution_threshold_policies.get("execution.fix-needed.exhaustion")
-    if (
-        fix_needed_exhaustion is None
-        or set(fix_needed_exhaustion.source_node_ids) != {"checker", "doublechecker"}
-        or fix_needed_exhaustion.counter_name is not GraphLoopCounterName.FIX_CYCLE_COUNT
-        or fix_needed_exhaustion.threshold != config.recovery.max_fix_cycles
-        or fix_needed_exhaustion.exhausted_target_node_id != "troubleshooter"
-    ):
-        issues.append("execution.standard: fix-needed exhaustion routing is not yet encoded")
-
-    execution_blocked_recovery = execution_threshold_policies.get("execution.blocked.recovery")
-    if (
-        execution_blocked_recovery is None
-        or set(execution_blocked_recovery.source_node_ids)
-        != {"builder", "checker", "fixer", "doublechecker", "updater", "troubleshooter"}
-        or execution_blocked_recovery.counter_name
-        is not GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT
-        or execution_blocked_recovery.threshold
-        != config.recovery.max_troubleshoot_attempts_before_consult
-        or execution_blocked_recovery.exhausted_target_node_id != "consultant"
-    ):
-        issues.append("execution.standard: blocked recovery attempt thresholds are not yet encoded")
-
-    planner_complete = planning_transitions.get(("planner", "PLANNER_COMPLETE"))
-    if planner_complete is None or planner_complete.target_node_id != "manager":
-        issues.append("planning.standard: planner completion no longer targets manager")
-    auditor_complete = planning_transitions.get(("auditor", "AUDITOR_COMPLETE"))
-    if auditor_complete is None or auditor_complete.target_node_id != "planner":
-        issues.append("planning.standard: auditor completion no longer targets planner")
-    mechanic_resume = planning_resume_policies.get("planning.mechanic.resume")
-    if (
-        mechanic_resume is None
-        or mechanic_resume.metadata_stage_keys != ("resume_stage",)
-        or mechanic_resume.default_target_node_id != "planner"
-    ):
-        issues.append("planning.standard: mechanic metadata resume routing is not yet encoded")
-    planning_blocked_recovery = planning_threshold_policies.get("planning.blocked.recovery")
-    if (
-        planning_blocked_recovery is None
-        or set(planning_blocked_recovery.source_node_ids)
-        != {"planner", "manager", "auditor", "mechanic"}
-        or planning_blocked_recovery.counter_name
-        is not GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT
-        or planning_blocked_recovery.threshold != config.recovery.max_mechanic_attempts
-        or planning_blocked_recovery.exhausted_terminal_state_id != "blocked"
-    ):
-        issues.append("planning.standard: blocked recovery attempt thresholds are not yet encoded")
-
-    if planning_graph.completion_behavior is None or planning_graph.completion_behavior.target_node_id != "arbiter":
-        issues.append("planning.standard: completion behavior no longer targets arbiter")
-    completion_entry = planning_graph.compiled_completion_entry
-    if completion_entry is None:
-        issues.append("planning.standard: closure-target activation entry is missing")
-    else:
-        if completion_entry.node_id != "arbiter" or completion_entry.stage_kind_id != "arbiter":
-            issues.append("planning.standard: closure-target activation entry no longer targets arbiter")
-        if completion_entry.request_kind != "closure_target":
-            issues.append("planning.standard: closure-target activation request kind drifted from legacy behavior")
-        if completion_entry.target_selector != "active_closure_target":
-            issues.append(
-                "planning.standard: closure-target selector no longer matches legacy activation behavior"
-            )
-
-    return tuple(dict.fromkeys(issues))
-
-
 def _validate_mode_stage_maps(mode: ModeDefinition, selected_stages: set[StageName]) -> None:
     for map_name, mapping in (
         ("stage_entrypoint_overrides", mode.stage_entrypoint_overrides),
@@ -759,47 +518,22 @@ def _normalize_relative_asset_path(raw_path: str) -> str | None:
 
 def _build_compiled_plan_id(
     *,
-    mode: ModeDefinition,
+    mode_id: str,
     execution_loop_id: str,
     planning_loop_id: str,
-    stage_plans: tuple[FrozenStagePlan, ...],
-    completion_behavior: object | None,
+    execution_graph: FrozenGraphPlanePlan,
+    planning_graph: FrozenGraphPlanePlan,
 ) -> str:
-    serialized_completion_behavior = (
-        completion_behavior.model_dump(mode="json")
-        if hasattr(completion_behavior, "model_dump")
-        else completion_behavior
-    )
     payload = {
-        "mode_id": mode.mode_id,
+        "mode_id": mode_id,
         "execution_loop_id": execution_loop_id,
         "planning_loop_id": planning_loop_id,
-        "stage_plans": [stage_plan.model_dump(mode="json") for stage_plan in stage_plans],
-        "completion_behavior": serialized_completion_behavior,
+        "execution_graph": execution_graph.model_dump(mode="json"),
+        "planning_graph": planning_graph.model_dump(mode="json"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
-    return f"plan-{mode.mode_id}-{digest}"
-
-
-def _build_source_refs(
-    mode: ModeDefinition,
-    execution_loop_id: str,
-    planning_loop_id: str,
-    completion_behavior: object | None,
-) -> tuple[str, ...]:
-    refs = [
-        f"mode:{mode.mode_id}",
-        f"loop:{execution_loop_id}",
-        f"loop:{planning_loop_id}",
-    ]
-    if completion_behavior is not None:
-        if hasattr(completion_behavior, "stage"):
-            stage_value = completion_behavior.stage.value
-        else:
-            stage_value = "unknown"
-        refs.append(f"completion_behavior:{planning_loop_id}:{stage_value}")
-    return tuple(refs)
+    return f"plan-{mode_id}-{digest}"
 
 
 def _build_graph_source_refs(
@@ -842,7 +576,7 @@ def _utc_now(now: datetime | None) -> datetime:
     return now.astimezone(timezone.utc)
 
 
-def _load_existing_plan(path: Path) -> FrozenRunPlan | None:
+def _load_existing_plan(path: Path) -> CompiledRunPlan | None:
     if not path.is_file():
         return None
 
@@ -852,7 +586,7 @@ def _load_existing_plan(path: Path) -> FrozenRunPlan | None:
         return None
 
     try:
-        return FrozenRunPlan.model_validate_json(payload)
+        return CompiledRunPlan.model_validate_json(payload)
     except ValidationError:
         return None
 

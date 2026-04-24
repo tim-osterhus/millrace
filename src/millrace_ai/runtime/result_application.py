@@ -15,7 +15,6 @@ from millrace_ai.router import RouterAction, RouterDecision
 from .closure_transitions import apply_closure_target_router_decision
 from .error_recovery import clear_runtime_error_context
 from .graph_authority import route_stage_result_from_graph
-from .graph_shadow import maybe_report_routing_mismatch
 from .handoff_incidents import enqueue_handoff_incident
 from .result_counters import increment_counter_field, increment_route_counters
 from .stage_result_persistence import write_plane_status, write_stage_result
@@ -35,10 +34,10 @@ if TYPE_CHECKING:
 def route_stage_result(engine: RuntimeEngine, stage_result: StageResultEnvelope) -> RouterDecision:
     assert engine.snapshot is not None
     assert engine.counters is not None
-    assert engine.compiled_graph_plan is not None
+    assert engine.compiled_plan is not None
 
     decision = route_stage_result_from_graph(
-        engine.compiled_graph_plan,
+        engine.compiled_plan,
         engine.snapshot,
         stage_result,
         engine.counters,
@@ -47,13 +46,6 @@ def route_stage_result(engine: RuntimeEngine, stage_result: StageResultEnvelope)
             engine.config.recovery.max_troubleshoot_attempts_before_consult if engine.config else 2
         ),
         max_mechanic_attempts=engine.config.recovery.max_mechanic_attempts if engine.config else 2,
-    )
-    maybe_report_routing_mismatch(
-        engine,
-        snapshot=engine.snapshot,
-        stage_result=stage_result,
-        counters=engine.counters,
-        graph_decision=decision,
     )
     return decision
 

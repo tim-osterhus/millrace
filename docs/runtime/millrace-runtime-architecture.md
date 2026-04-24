@@ -66,7 +66,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
-- `src/millrace_ai/compiler.py`: mode+loop compile into frozen plan + diagnostics.
+- `src/millrace_ai/compiler.py`: mode+graph-loop compile into one runtime plan + diagnostics.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex adapter.
 - `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
 - `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
@@ -98,7 +98,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 
 Per stage execution:
 
-1. Runtime builds `StageRunRequest` from compiled plan and active work item.
+1. Runtime builds `StageRunRequest` from the compiled plan and active work item.
 2. `StageRunnerDispatcher` resolves adapter by runner name precedence.
 3. Adapter executes (`codex_cli` by default) and returns `RunnerRawResult`.
 4. Runtime normalizes into `StageResultEnvelope` and routes next state.
@@ -110,7 +110,7 @@ The runtime boundary stays `StageRunRequest -> RunnerRawResult` so additional ad
 Startup:
 
 1. Bootstrap workspace directories/files under `millrace-agents/`, including a minimal `millrace.toml`.
-2. Load config and compile active mode/loops.
+2. Load config and compile the active mode.
 3. Acquire daemon ownership lock (daemon mode).
 4. Reconcile stale/impossible runtime state.
 
@@ -137,17 +137,13 @@ Idle:
 
 Compile notes:
 
-- startup compiles the active mode and legacy loops into `compiled_plan.json`
-- startup also emits `compiled_graph_plan.json` with materialized node plans plus compiled entry, transition, recovery, and closure-activation surfaces
+- startup compiles the active mode into `compiled_plan.json`
+- that compiled plan carries materialized node plans plus compiled entry, transition, recovery, and closure-activation surfaces
 - compile diagnostics persist separately in `compile_diagnostics.json`
 - failed compile attempts keep the last known-good frozen plan intact when one
   exists
 - the live runtime executes stage-request construction, activation, and
-  post-stage routing from `compiled_graph_plan.json`
-- `compiled_plan.json` remains a compatibility snapshot rather than a live
-  execution authority surface
-- set `MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION=1` if you want runtime events
-  when graph authority disagrees with the preserved legacy router oracle
+  post-stage routing from `compiled_plan.json`
 
 ## Run Artifact Model
 

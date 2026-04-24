@@ -48,12 +48,8 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
         if compiled_plan is None:
             errors = ", ".join(compile_outcome.diagnostics.errors) or "compile failed"
             raise RuntimeLifecycleError(errors)
-        compiled_graph_plan = compile_outcome.active_graph_plan
-        if compiled_graph_plan is None:
-            raise RuntimeLifecycleError("compiled graph plan is missing after successful compile")
 
         engine.compiled_plan = compiled_plan
-        engine.compiled_graph_plan = compiled_graph_plan
 
         engine.snapshot = load_snapshot(engine.paths)
         engine.counters = load_recovery_counters(engine.paths)

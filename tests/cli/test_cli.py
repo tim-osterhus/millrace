@@ -16,9 +16,6 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ClosureTargetState,
     CompileDiagnostics,
-    ExecutionStageName,
-    FrozenRunPlan,
-    FrozenStagePlan,
     MailboxCommand,
     Plane,
     ReloadOutcome,
@@ -1174,55 +1171,11 @@ def test_compile_show_surfaces_compiled_plan_summary(
             errors=(),
             emitted_at=NOW,
         )
-        active_plan = FrozenRunPlan(
+        active_plan = SimpleNamespace(
             compiled_plan_id="plan-001",
             mode_id="standard_plain",
             execution_loop_id="execution.standard",
             planning_loop_id="planning.standard",
-            stage_plans=(
-                FrozenStagePlan(
-                    stage=ExecutionStageName.BUILDER,
-                    plane=Plane.EXECUTION,
-                    entrypoint_path="entrypoints/execution/compat-builder.md",
-                    entrypoint_contract_id="compat-builder.v1",
-                    required_skills=("skills/compat-builder.md",),
-                    attached_skill_additions=("skills/execution/compat-builder.md",),
-                    runner_name="compat_runner",
-                    model_name="compat-model",
-                    timeout_seconds=99,
-                ),
-                FrozenStagePlan(
-                    stage="arbiter",
-                    plane=Plane.PLANNING,
-                    entrypoint_path="entrypoints/planning/compat-arbiter.md",
-                    entrypoint_contract_id="compat-arbiter.v1",
-                    required_skills=("skills/compat-arbiter.md",),
-                    attached_skill_additions=("skills/planning/compat-arbiter.md",),
-                    runner_name="compat_runner",
-                    model_name="compat-arbiter-model",
-                    timeout_seconds=98,
-                ),
-            ),
-            completion_behavior={
-                "trigger": "backlog_drained",
-                "readiness_rule": "no_open_lineage_work",
-                "stage": "arbiter",
-                "request_kind": "closure_target",
-                "target_selector": "active_closure_target",
-                "rubric_policy": "reuse_or_create",
-                "blocked_work_policy": "suppress",
-                "skip_if_already_closed": True,
-                "on_pass_terminal_result": "ARBITER_COMPLETE",
-                "on_gap_terminal_result": "REMEDIATION_NEEDED",
-                "create_incident_on_gap": True,
-            },
-            compiled_at=NOW,
-            source_refs=(),
-        )
-        active_graph_plan = SimpleNamespace(
-            authoritative_for_runtime_execution=True,
-            legacy_equivalence_ready_for_cutover=True,
-            legacy_equivalence_issues=(),
             execution_graph=SimpleNamespace(
                 nodes=(
                     SimpleNamespace(
@@ -1243,6 +1196,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         node_id="builder",
                     ),
                 ),
+                compiled_completion_entry=None,
             ),
             planning_graph=SimpleNamespace(
                 nodes=(
@@ -1272,13 +1226,24 @@ def test_compile_show_surfaces_compiled_plan_summary(
                     entry_key=SimpleNamespace(value="closure_target"),
                     node_id="arbiter",
                 ),
+                completion_behavior=SimpleNamespace(
+                    trigger="backlog_drained",
+                    readiness_rule="no_open_lineage_work",
+                    request_kind="closure_target",
+                    target_selector="active_closure_target",
+                    rubric_policy="reuse_or_create",
+                    blocked_work_policy="suppress",
+                    skip_if_already_closed=True,
+                    on_pass_terminal_state_id="arbiter_complete",
+                    on_gap_terminal_state_id="remediation_needed",
+                    create_incident_on_gap=True,
+                ),
             ),
         )
         return CompileOutcome(
             active_plan=active_plan,
             diagnostics=diagnostics,
             used_last_known_good=False,
-            active_graph_plan=active_graph_plan,
         )
 
     monkeypatch.setattr(cli, "load_runtime_config", fake_load_runtime_config)
@@ -1291,13 +1256,13 @@ def test_compile_show_surfaces_compiled_plan_summary(
     )
 
     assert result.exit_code == 0
-    assert "graph_authoritative_for_runtime_execution: true" in result.output
-    assert "graph_legacy_equivalence_ready_for_cutover: true" in result.output
-    assert "graph_legacy_equivalence_issues: none" in result.output
-    assert "graph_entry: execution.task -> builder" in result.output
-    assert "graph_entry: planning.spec -> planner" in result.output
-    assert "graph_entry: planning.incident -> auditor" in result.output
-    assert "graph_completion: closure_target -> arbiter" in result.output
+    assert "graph_authoritative_for_runtime_execution:" not in result.output
+    assert "graph_legacy_equivalence_ready_for_cutover:" not in result.output
+    assert "graph_legacy_equivalence_issues:" not in result.output
+    assert "entry: execution.task -> builder" in result.output
+    assert "entry: planning.spec -> planner" in result.output
+    assert "entry: planning.incident -> auditor" in result.output
+    assert "completion: closure_target -> arbiter" in result.output
     assert "compiled_plan_id: plan-001" in result.output
     assert "stage: execution.builder" in result.output
     assert "entrypoint_path: entrypoints/execution/builder.md" in result.output
@@ -1307,9 +1272,9 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "runner_name: codex_cli" in result.output
     assert "model_name: none" in result.output
     assert "timeout_seconds: 3600" in result.output
-    assert "completion_behavior.stage: arbiter" in result.output
+    assert "completion_behavior.trigger: backlog_drained" in result.output
     assert "completion_behavior.request_kind: closure_target" in result.output
-    assert "completion_behavior.on_gap_terminal_result: REMEDIATION_NEEDED" in result.output
+    assert "completion_behavior.on_gap_terminal_state_id: remediation_needed" in result.output
     assert "role_overlays:" not in result.output
 
 

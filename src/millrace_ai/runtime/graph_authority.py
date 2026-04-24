@@ -10,8 +10,8 @@ from millrace_ai.architecture import (
     CompiledGraphResumePolicyPlan,
     CompiledGraphThresholdPolicyPlan,
     CompiledGraphTransitionPlan,
+    CompiledRunPlan,
     FrozenGraphPlanePlan,
-    FrozenGraphRunPlan,
     GraphLoopTerminalStateDefinition,
 )
 from millrace_ai.contracts import (
@@ -40,7 +40,7 @@ class GraphActivationDecision:
 
 
 def work_item_activation_for_graph(
-    graph_plan: FrozenGraphRunPlan,
+    graph_plan: CompiledRunPlan,
     work_item_kind: WorkItemKind,
 ) -> GraphActivationDecision:
     entry_key = _entry_key_for_work_item_kind(work_item_kind)
@@ -48,7 +48,7 @@ def work_item_activation_for_graph(
     return _activation_from_entry(graph, entry_key)
 
 
-def completion_activation_for_graph(graph_plan: FrozenGraphRunPlan) -> GraphActivationDecision:
+def completion_activation_for_graph(graph_plan: CompiledRunPlan) -> GraphActivationDecision:
     completion_entry = graph_plan.planning_graph.compiled_completion_entry
     if completion_entry is None:
         raise ValueError("compiled graph is missing closure_target completion entry")
@@ -56,7 +56,7 @@ def completion_activation_for_graph(graph_plan: FrozenGraphRunPlan) -> GraphActi
 
 
 def route_stage_result_from_graph(
-    graph_plan: FrozenGraphRunPlan,
+    graph_plan: CompiledRunPlan,
     snapshot: RuntimeSnapshot,
     stage_result: StageResultEnvelope,
     counters: RecoveryCounters,

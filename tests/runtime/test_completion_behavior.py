@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from millrace_ai.architecture import FrozenGraphRunPlan
+from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import (
     ClosureTargetState,
     Plane,
@@ -203,8 +203,8 @@ def test_maybe_activate_completion_stage_sets_snapshot_to_arbiter_when_target_is
 
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
-    graph_plan = FrozenGraphRunPlan.model_validate_json(
-        (paths.state_dir / "compiled_graph_plan.json").read_text(encoding="utf-8")
+    graph_plan = CompiledRunPlan.model_validate_json(
+        (paths.state_dir / "compiled_plan.json").read_text(encoding="utf-8")
     )
 
     activated = maybe_activate_completion_stage(engine)

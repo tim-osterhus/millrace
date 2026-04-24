@@ -4,8 +4,8 @@ This document explains the current shipped mode and loop model used by the
 Millrace compiler and runtime.
 
 The goal is to describe the exact structure the runtime ships and validates
-today, including the new phase-1 graph-loop scaffolding without pretending that
-runtime execution has already cut over to it.
+today. Runtime execution now compiles and runs from the graph-loop-backed
+compiled plan.
 
 ## The Two Current Planes
 
@@ -14,16 +14,17 @@ Millrace runs two distinct planes:
 - execution
 - planning
 
-Each plane is backed by a legacy loop asset that declares:
+Each plane still ships with a legacy loop asset that declares:
 
 - its stage list
 - its entry stage
 - its edges
 - its `terminal_results`
 
-Those legacy loop assets now feed the frozen stage-plan surface used by
-`compiled_plan.json`. `router.py` remains in the package as a compatibility
-oracle, not the runtime's live routing authority.
+Those legacy loop assets remain part of the shipped asset contract, but the
+compiler/runtime now materialize `compiled_plan.json` from graph loops and stage
+kinds. `router.py` remains in the package as a shared decision-shape module, not
+the runtime's live routing authority.
 
 Today the shipped loop ids are:
 
@@ -64,7 +65,7 @@ An edge validates as `LoopEdgeDefinition` and contains:
 That means legacy loops are not just ordered stage lists. They are explicit
 terminal-driven transition tables.
 
-## Parallel Stage-Kind And Graph-Loop Scaffolding
+## Stage-Kind And Graph-Loop Runtime Surface
 
 Phase 1 also ships a parallel architecture surface:
 
@@ -80,13 +81,12 @@ The graph-loop surface does two things today:
 
 - it proves the shipped execution and planning topology can be represented as
   node-and-edge graphs over declared stage kinds
-- it lets the compiler emit `compiled_graph_plan.json` as the runtime's
+- it lets the compiler emit `compiled_plan.json` as the runtime's
   authoritative control-flow artifact for intake, recovery, closure-target
-  activation, and routing
+  activation, request binding, and routing
 
-That graph surface is real, typed, and now runtime-authoritative for both
-request binding and control flow. The legacy loop surface still feeds the
-compatibility stage-plan snapshot written to `compiled_plan.json`.
+That graph surface is real, typed, and runtime-authoritative for both request
+binding and control flow.
 
 ## Shipped Execution Loop
 
@@ -163,9 +163,8 @@ The phase-1 graph-loop asset makes the planning intake split explicit through
 - `spec -> planner`
 - `incident -> auditor`
 
-That means the new graph surface already models the shipped incident intake
-behavior more directly than the legacy single-`entry_stage` loop schema, even
-though runtime execution has not cut over to that graph path yet.
+That means the graph surface models the shipped incident intake behavior more
+directly than the legacy single-`entry_stage` loop schema.
 
 ## What A Mode Defines
 
@@ -214,7 +213,7 @@ Anything else fails compile validation.
 
 ### `stage_skill_additions`
 
-This map attaches additional advisory skill paths to a stage-plan.
+This map attaches additional advisory skill paths to a node binding.
 
 It does not change runtime-owned routing. It only changes the advisory skill
 surface attached to the frozen stage plan.
@@ -233,12 +232,12 @@ If present, it wins over stage-level config for that stage during compile.
 
 ## What The Compiler Freezes From Modes And Loops
 
-During compile, the runtime converts the selected mode plus the selected loops
-into one frozen stage-plan entry per stage in those loops.
+During compile, the runtime converts the selected mode plus the selected graph
+loops into one compiled runtime plan.
 
-Each frozen stage-plan records:
+Each materialized node binding records:
 
-- `stage`
+- `node_id`
 - `plane`
 - `entrypoint_path`
 - `required_skills`
@@ -247,18 +246,14 @@ Each frozen stage-plan records:
 - `model_name`
 - `timeout_seconds`
 
-This matters because the runtime executes the frozen stage-plan later. It does
-not keep re-deriving this structure from raw mode and loop JSON on every
+This matters because the runtime executes the compiled node bindings later. It
+does not keep re-deriving this structure from raw mode and loop JSON on every
 handoff.
 
-The compiler also materializes the selected shipped graph loops into
-`compiled_graph_plan.json`. That graph plan includes node plans, raw
-transitions, normalized compiled intake entries, normalized closure-target
-activation entry when completion behavior is present, normalized compiled
-transition indexes, compiled resume and threshold recovery policies, terminal
-states, and explicit compatibility diagnostics. It is now authoritative for
-runtime request binding and control flow, while `compiled_plan.json` remains a
-compatibility snapshot of the older frozen stage-plan surface.
+`compiled_plan.json` includes node plans, raw transitions, normalized compiled
+intake entries, normalized closure-target activation entry when completion
+behavior is present, normalized compiled transition indexes, compiled resume and
+threshold recovery policies, and terminal states.
 
 ## Config Interaction And Recompile Boundaries
 
@@ -275,8 +270,7 @@ New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.
 Existing configs that still use `standard_plain` continue to resolve to the
 same canonical Codex-backed plan.
 
-Those are the fields that change both the compatibility snapshot and the
-runtime-authoritative graph node binding surface.
+Those are the fields that change the compiled runtime plan.
 
 ## Operator View
 
@@ -298,17 +292,17 @@ actually active.
 Maintainers should think about loops and modes as separate contracts:
 
 - graph loops and stage kinds define the current runtime-authoritative
-  control-flow topology and transition semantics
+  control-flow topology, request binding, and transition semantics
 - modes choose which loops are active and which stage maps apply to them
-- legacy loops still define the frozen stage-plan surface that must stay aligned
-  with the shipped graph loops until later unification work lands
+- legacy loops remain shipped reference assets and should stay semantically
+  aligned with the graph loops
 
 That separation is why a mode map cannot legally mention a stage that is not
 selected by the chosen loops.
 
 The important operator consequence is that changing from `default_codex` to
-`default_pi` does not change the loop graph. It changes only the frozen runner
-binding attached to each shipped stage.
+`default_pi` does not change the loop graph. It changes only the compiled
+runner binding attached to each shipped stage.
 
 For the authoring rules and validation checklist, use
 `docs/runtime/millrace-loop-authoring.md`.

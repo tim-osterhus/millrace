@@ -21,8 +21,8 @@ from millrace_ai.architecture.materialization import (
     CompiledGraphResumePolicyPlan,
     CompiledGraphThresholdPolicyPlan,
     CompiledGraphTransitionPlan,
+    CompiledRunPlan,
     FrozenGraphPlanePlan,
-    FrozenGraphRunPlan,
     MaterializedGraphNodePlan,
 )
 from millrace_ai.architecture.stage_kinds import (
@@ -34,13 +34,13 @@ from millrace_ai.architecture.stage_kinds import (
 
 __all__ = [
     "ArchitectureContractModel",
+    "CompiledRunPlan",
     "CompiledGraphCompletionEntryPlan",
     "CompiledGraphEntryPlan",
     "CompiledGraphResumePolicyPlan",
     "CompiledGraphThresholdPolicyPlan",
     "CompiledGraphTransitionPlan",
     "FrozenGraphPlanePlan",
-    "FrozenGraphRunPlan",
     "GraphLoopCounterName",
     "GraphLoopCompletionBehaviorDefinition",
     "GraphLoopDynamicPoliciesDefinition",
