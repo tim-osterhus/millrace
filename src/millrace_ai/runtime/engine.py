@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from millrace_ai.architecture import FrozenGraphRunPlan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ClosureTargetState,
@@ -93,6 +94,7 @@ class RuntimeEngine:
 
         self.config: RuntimeConfig | None = None
         self.compiled_plan: FrozenRunPlan | None = None
+        self.compiled_graph_plan: FrozenGraphRunPlan | None = None
         self.snapshot: RuntimeSnapshot | None = None
         self.counters: RecoveryCounters | None = None
         self._daemon_lock_session_id: str | None = None
@@ -186,13 +188,15 @@ class RuntimeEngine:
 
     def _is_completion_stage_active(self) -> bool:
         assert self.snapshot is not None
-        assert self.compiled_plan is not None
-        completion = self.compiled_plan.completion_behavior
+        assert self.compiled_graph_plan is not None
+        completion = self.compiled_graph_plan.planning_graph.compiled_completion_entry
         if completion is None:
             return False
         if self.snapshot.active_plane is None or self.snapshot.active_stage is None:
             return False
-        if self.snapshot.active_stage != completion.stage:
+        if self.snapshot.active_plane is not completion.plane:
+            return False
+        if self.snapshot.active_stage.value != completion.node_id:
             return False
         return self.snapshot.active_work_item_kind is None and self.snapshot.active_work_item_id is None
 

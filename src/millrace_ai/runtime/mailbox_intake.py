@@ -123,9 +123,13 @@ def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
         )
         return
 
+    if compile_outcome.active_graph_plan is None:
+        raise ControlRoutingError("compiled graph plan is missing after successful config reload")
+
     engine.config = reloaded_config
     engine._rebuild_watcher_session()
     engine.compiled_plan = active_plan
+    engine.compiled_graph_plan = compile_outcome.active_graph_plan
     engine.snapshot = engine.snapshot.model_copy(
         update={
             "runtime_mode": reloaded_config.runtime.run_style,

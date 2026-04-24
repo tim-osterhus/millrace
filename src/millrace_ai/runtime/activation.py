@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName, StageName, WorkItemKind
+from millrace_ai.contracts import ExecutionStageName, PlanningStageName, StageName, WorkItemKind
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.state_store import save_snapshot
 
@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 from . import completion_behavior
+from .graph_authority import work_item_activation_for_graph
+from .graph_shadow import maybe_report_work_item_activation_mismatch
 
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
@@ -28,16 +30,18 @@ def claim_next_work_item(engine: RuntimeEngine) -> None:
 
 def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
     assert engine.snapshot is not None
-    stage = entry_stage_for_kind(claim.work_item_kind)
-    active_plane = (
-        Plane.PLANNING
-        if claim.work_item_kind in {WorkItemKind.SPEC, WorkItemKind.INCIDENT}
-        else Plane.EXECUTION
+    assert engine.compiled_graph_plan is not None
+
+    activation = work_item_activation_for_graph(engine.compiled_graph_plan, claim.work_item_kind)
+    maybe_report_work_item_activation_mismatch(
+        engine,
+        work_item_kind=claim.work_item_kind,
+        graph_decision=activation,
     )
     engine.snapshot = engine.snapshot.model_copy(
         update={
-            "active_plane": active_plane,
-            "active_stage": stage,
+            "active_plane": activation.plane,
+            "active_stage": activation.stage,
             "active_run_id": engine._new_run_id(),
             "active_work_item_kind": claim.work_item_kind,
             "active_work_item_id": claim.work_item_id,

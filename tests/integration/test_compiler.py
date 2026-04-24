@@ -178,7 +178,7 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
     }
 
     assert graph_plan.mode_id == "default_codex"
-    assert graph_plan.authoritative_for_runtime_execution is False
+    assert graph_plan.authoritative_for_runtime_execution is True
     assert graph_plan.execution_graph.loop_id == "execution.standard"
     assert graph_plan.planning_graph.loop_id == "planning.standard"
     assert execution_entry_nodes == {"task": "builder"}
@@ -303,6 +303,39 @@ def test_compile_writes_non_authoritative_graph_plan_artifact(tmp_path: Path) ->
     assert graph_plan.planning_graph.transitions
     assert graph_plan.legacy_equivalence_ready_for_cutover is True
     assert graph_plan.legacy_equivalence_issues == ()
+
+
+def test_compile_materializes_configured_recovery_thresholds_into_graph_plan(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(
+            recovery={
+                "max_fix_cycles": 5,
+                "max_troubleshoot_attempts_before_consult": 4,
+                "max_mechanic_attempts": 3,
+            }
+        ),
+        requested_mode_id="standard_plain",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_graph_plan is not None
+    assert {
+        (policy.policy_id, policy.threshold)
+        for policy in outcome.active_graph_plan.execution_graph.compiled_threshold_policies
+    } == {
+        ("execution.fix-needed.exhaustion", 5),
+        ("execution.blocked.recovery", 4),
+    }
+    assert {
+        (policy.policy_id, policy.threshold)
+        for policy in outcome.active_graph_plan.planning_graph.compiled_threshold_policies
+    } == {
+        ("planning.blocked.recovery", 3),
+    }
 
 
 def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:

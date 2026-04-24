@@ -21,9 +21,9 @@ Each plane is backed by a legacy loop asset that declares:
 - its edges
 - its `terminal_results`
 
-Those legacy loop assets are still the runtime-authoritative control-flow
-surface used by `compiled_plan.json`, `router.py`, and activation/result
-application code.
+Those legacy loop assets now feed the frozen stage-plan surface used by
+`compiled_plan.json`. `router.py` remains in the package as a compatibility
+oracle, not the runtime's live routing authority.
 
 Today the shipped loop ids are:
 
@@ -80,11 +80,13 @@ The graph-loop surface does two things today:
 
 - it proves the shipped execution and planning topology can be represented as
   node-and-edge graphs over declared stage kinds
-- it lets the compiler emit `compiled_graph_plan.json` as a non-authoritative
-  materialization artifact for later cutover work
+- it lets the compiler emit `compiled_graph_plan.json` as the runtime's
+  authoritative control-flow artifact for intake, recovery, closure-target
+  activation, and routing
 
-That graph surface is real and typed, but the runtime still executes the legacy
-frozen stage-plan path today.
+That graph surface is real, typed, and now runtime-authoritative for control
+flow. The legacy loop surface still feeds the frozen stage-plan contract used
+to build stage requests.
 
 ## Shipped Execution Loop
 
@@ -249,14 +251,14 @@ This matters because the runtime executes the frozen stage-plan later. It does
 not keep re-deriving this structure from raw mode and loop JSON on every
 handoff.
 
-In the current phase-2 scaffolding slice, the compiler also materializes the
-selected shipped graph loops into `compiled_graph_plan.json`. That sidecar
-includes node plans, raw transitions, normalized compiled intake entries,
-normalized closure-target activation entry when completion behavior is present,
-normalized compiled transition indexes, compiled resume and threshold recovery
-policies, terminal states, and explicit cutover-readiness diagnostics. It
-remains non-authoritative for runtime execution even when the shipped defaults
-report no known legacy-equivalence gaps.
+The compiler also materializes the selected shipped graph loops into
+`compiled_graph_plan.json`. That graph plan includes node plans, raw
+transitions, normalized compiled intake entries, normalized closure-target
+activation entry when completion behavior is present, normalized compiled
+transition indexes, compiled resume and threshold recovery policies, terminal
+states, and explicit compatibility diagnostics. It is now authoritative for
+runtime control flow, while `compiled_plan.json` remains authoritative for the
+frozen stage execution contract.
 
 ## Config Interaction And Recompile Boundaries
 
@@ -295,12 +297,11 @@ actually active.
 
 Maintainers should think about loops and modes as separate contracts:
 
-- legacy loops define current runtime-authoritative stage topology and
-  transition semantics
+- graph loops and stage kinds define the current runtime-authoritative
+  control-flow topology and transition semantics
 - modes choose which loops are active and which stage maps apply to them
-- stage kinds and graph loops define the newer compile/materialization surface
-  that must stay aligned with the shipped legacy loops until later cutover work
-  lands
+- legacy loops still define the frozen stage-plan surface that must stay aligned
+  with the shipped graph loops until later unification work lands
 
 That separation is why a mode map cannot legally mention a stage that is not
 selected by the chosen loops.

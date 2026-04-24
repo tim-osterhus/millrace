@@ -143,20 +143,18 @@ The compiler resolves:
 - which optional attached skills were added at compile time
 - which runner/model/timeout each stage will use
 - whether a completion behavior exists and what it freezes
-- which shipped stage-kind and graph-loop assets materialize into the phase-1
-  graph sidecar
+- which shipped stage-kind and graph-loop assets materialize into the graph
+  control-flow plan
 
-`compiled_plan.json` is therefore the authoritative compiled runtime contract
-for the current workspace, not an incidental cache.
+`compiled_plan.json` is therefore the authoritative stage execution contract for
+the current workspace, not an incidental cache.
 
-Phase 1 added `compiled_graph_plan.json`, and the current phase-2 scaffolding
-slice enriches it further. The file now materializes the stage-kind registry
-and graph-loop assets into explicit node plans, raw transitions, normalized
-compiled intake entries, a normalized closure-target activation entry, compiled
-resume and threshold recovery policies, explicit terminal semantics, and
-cutover-readiness diagnostics. That sidecar is for proof, inspection, and later
-runtime cutover work. The live runtime still executes from `compiled_plan.json`,
-the legacy loop schema, and the existing router/activation seams.
+`compiled_graph_plan.json` materializes the stage-kind registry and graph-loop
+assets into explicit node plans, raw transitions, normalized compiled intake
+entries, a normalized closure-target activation entry, compiled resume and
+threshold recovery policies, explicit terminal semantics, and compatibility
+diagnostics. The live runtime now executes claim activation, closure-target
+activation, recovery, and post-stage routing from that graph plan.
 
 The compiler currently ships with two canonical built-in modes and one built-in
 loop per plane:
@@ -173,8 +171,8 @@ Compile output is operator-visible through `millrace compile validate` and
 `millrace compile show`. Failed recompiles preserve the last known good plan.
 
 For compile-time proof work, the package also exposes a graph preview surface
-that can materialize a discovered graph loop without adding it to the legacy
-runtime-authoritative loop tables.
+that can materialize a discovered graph loop without adding it to the shipped
+frozen stage-plan tables.
 
 ## Modes, Loops, And Frozen Stage Plans
 
@@ -186,11 +184,10 @@ The runtime has two planes:
 Each plane is currently described in two parallel ways:
 
 1. legacy loop assets in `src/millrace_ai/assets/loops/`
-2. phase-1 graph-loop assets in `src/millrace_ai/assets/graphs/` over stage
+2. graph-loop assets in `src/millrace_ai/assets/graphs/` over stage
    kinds declared in `src/millrace_ai/assets/registry/stage_kinds/`
 
-The legacy loop assets remain the runtime-authoritative control-flow surface
-today. They declare:
+The legacy loop assets still define the frozen stage-plan surface. They declare:
 
 - the stages present in that plane
 - the plane entry stage
@@ -205,9 +202,9 @@ The graph-loop assets describe the same shipped topology in a richer node model:
 - explicit `terminal_states`
 - edges validated against stage-kind legal outcomes
 
-The compiler freezes the legacy surface into `FrozenRunPlan` for runtime
+The compiler freezes the legacy surface into `FrozenRunPlan` for stage
 execution and freezes the graph surface into `compiled_graph_plan.json` for
-phase-1/phase-2 cutover scaffolding.
+runtime control flow.
 
 The selected mode connects the two loops and can add compile-time overrides such
 as:

@@ -138,12 +138,15 @@ Idle:
 Compile notes:
 
 - startup compiles the active mode and legacy loops into `compiled_plan.json`
-- startup also emits `compiled_graph_plan.json` as a non-authoritative graph sidecar with materialized node plans plus compiled entry, transition, recovery, and closure-activation surfaces
+- startup also emits `compiled_graph_plan.json` with materialized node plans plus compiled entry, transition, recovery, and closure-activation surfaces
 - compile diagnostics persist separately in `compile_diagnostics.json`
 - failed compile attempts keep the last known-good frozen plan intact when one
   exists
-- the live runtime still executes from `compiled_plan.json`, `completion_behavior`,
-  and the legacy router/activation seams until a later cutover phase lands
+- the live runtime executes activation and post-stage routing from
+  `compiled_graph_plan.json`, while `compiled_plan.json` remains the stage
+  execution contract used to build stage requests
+- set `MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION=1` if you want runtime events
+  when graph authority disagrees with the preserved legacy router oracle
 
 ## Run Artifact Model
 

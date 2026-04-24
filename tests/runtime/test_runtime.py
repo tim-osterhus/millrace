@@ -189,6 +189,191 @@ def test_runtime_tick_prioritizes_planning_before_execution(tmp_path: Path) -> N
     assert (paths.tasks_active_dir / "task-001.md").is_file()
 
 
+def test_runtime_tick_claim_activation_uses_compiled_graph_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.CHECKER_PASS.value,
+            now=NOW,
+        )
+
+    monkeypatch.setenv("MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION", "1")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    assert engine.compiled_graph_plan is not None
+    task_entry = next(
+        entry
+        for entry in engine.compiled_graph_plan.execution_graph.compiled_entries
+        if entry.entry_key.value == "task"
+    )
+    engine.compiled_graph_plan = engine.compiled_graph_plan.model_copy(
+        update={
+            "execution_graph": engine.compiled_graph_plan.execution_graph.model_copy(
+                update={
+                    "compiled_entries": tuple(
+                        entry.model_copy(
+                            update={
+                                "node_id": "checker",
+                                "stage_kind_id": "checker",
+                            }
+                        )
+                        if entry == task_entry
+                        else entry
+                        for entry in engine.compiled_graph_plan.execution_graph.compiled_entries
+                    )
+                }
+            )
+        }
+    )
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    mismatch_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "compiled_graph_activation_mismatch"
+    ]
+
+    assert captured_request is not None
+    assert captured_request.stage is ExecutionStageName.CHECKER
+    assert outcome.stage is ExecutionStageName.CHECKER
+    assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
+    assert snapshot.active_stage is ExecutionStageName.UPDATER
+    assert mismatch_events[-1].data["legacy_stage"] == "builder"
+    assert mismatch_events[-1].data["graph_stage"] == "checker"
+
+
+def test_runtime_tick_completion_activation_uses_compiled_graph_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"pass"}\n', encoding="utf-8")
+        report_path = Path(request.preferred_report_path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Arbiter Report\n\nParity holds.\n", encoding="utf-8")
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.ARBITER_COMPLETE.value,
+            now=NOW,
+        )
+
+    monkeypatch.setenv("MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION", "1")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    assert engine.compiled_plan.completion_behavior is not None
+    engine.compiled_plan = engine.compiled_plan.model_copy(
+        update={
+            "completion_behavior": engine.compiled_plan.completion_behavior.model_copy(
+                update={"stage": PlanningStageName.PLANNER}
+            )
+        }
+    )
+
+    outcome = engine.tick()
+    mismatch_events = [
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "compiled_graph_completion_activation_mismatch"
+    ]
+
+    assert captured_request is not None
+    assert captured_request.stage is PlanningStageName.ARBITER
+    assert outcome.stage is PlanningStageName.ARBITER
+    assert outcome.router_decision.reason == "arbiter_complete"
+    assert mismatch_events[-1].data["legacy_stage"] == "planner"
+    assert mismatch_events[-1].data["graph_stage"] == "arbiter"
+
+
+def test_runtime_tick_routes_stage_results_from_compiled_graph_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        assert request.stage is ExecutionStageName.BUILDER
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    monkeypatch.setenv("MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION", "1")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    assert engine.compiled_graph_plan is not None
+    builder_complete = next(
+        transition
+        for transition in engine.compiled_graph_plan.execution_graph.compiled_transitions
+        if transition.source_node_id == "builder"
+        and transition.outcome == ExecutionTerminalResult.BUILDER_COMPLETE.value
+    )
+    engine.compiled_graph_plan = engine.compiled_graph_plan.model_copy(
+        update={
+            "execution_graph": engine.compiled_graph_plan.execution_graph.model_copy(
+                update={
+                    "compiled_transitions": tuple(
+                        transition.model_copy(update={"target_node_id": "updater"})
+                        if transition == builder_complete
+                        else transition
+                        for transition in engine.compiled_graph_plan.execution_graph.compiled_transitions
+                    )
+                }
+            )
+        }
+    )
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    mismatch_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "compiled_graph_routing_mismatch"
+    ]
+
+    assert outcome.stage is ExecutionStageName.BUILDER
+    assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
+    assert snapshot.active_stage is ExecutionStageName.UPDATER
+    assert mismatch_events[-1].data["legacy_decision"]["next_stage"] == "checker"
+    assert mismatch_events[-1].data["graph_decision"]["next_stage"] == "updater"
+
+
 def test_runtime_snapshot_queue_depths_match_filesystem_after_tick(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)

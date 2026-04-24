@@ -85,6 +85,7 @@ class CompileOutcome:
     active_plan: FrozenRunPlan | None
     diagnostics: CompileDiagnostics
     used_last_known_good: bool
+    active_graph_plan: FrozenGraphRunPlan | None = None
 
 
 def preview_graph_loop_plan(
@@ -132,6 +133,7 @@ def compile_and_persist_workspace_plan(
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
 
     last_known_good = _load_existing_plan(compiled_plan_path)
+    last_known_good_graph = _load_existing_graph_plan(compiled_graph_plan_path)
 
     try:
         plan = _compile_frozen_run_plan(
@@ -156,7 +158,12 @@ def compile_and_persist_workspace_plan(
         _atomic_write_json(compiled_plan_path, plan.model_dump(mode="json"))
         _atomic_write_json(compiled_graph_plan_path, graph_plan.model_dump(mode="json"))
         _atomic_write_json(diagnostics_path, diagnostics.model_dump(mode="json"))
-        return CompileOutcome(active_plan=plan, diagnostics=diagnostics, used_last_known_good=False)
+        return CompileOutcome(
+            active_plan=plan,
+            diagnostics=diagnostics,
+            used_last_known_good=False,
+            active_graph_plan=graph_plan,
+        )
 
     except (AssetValidationError, CompilerValidationError, ValidationError, ValueError) as exc:
         diagnostics = CompileDiagnostics(
@@ -171,7 +178,14 @@ def compile_and_persist_workspace_plan(
             active_plan=last_known_good,
             diagnostics=diagnostics,
             used_last_known_good=last_known_good is not None,
+            active_graph_plan=last_known_good_graph,
         )
+
+
+def _load_existing_graph_plan(path: Path) -> FrozenGraphRunPlan | None:
+    if not path.exists():
+        return None
+    return FrozenGraphRunPlan.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def _compile_frozen_run_plan(
@@ -310,12 +324,13 @@ def _compile_frozen_graph_run_plan(
     legacy_equivalence_issues = _legacy_equivalence_issues_for_shipped_defaults(
         execution_graph=execution_graph,
         planning_graph=planning_graph,
+        config=config,
     )
 
     return FrozenGraphRunPlan(
         compiled_plan_id=compiled_plan_id,
         mode_id=bundle.mode.mode_id,
-        authoritative_for_runtime_execution=False,
+        authoritative_for_runtime_execution=True,
         legacy_equivalence_ready_for_cutover=not legacy_equivalence_issues,
         legacy_equivalence_issues=legacy_equivalence_issues,
         execution_graph=execution_graph,
@@ -376,7 +391,8 @@ def _materialize_graph_plane_plan(
         compiled_threshold_policies=_compile_graph_threshold_policies(
             graph_loop.dynamic_policies.threshold_policies
             if graph_loop.dynamic_policies is not None
-            else ()
+            else (),
+            config=config,
         ),
         terminal_states=graph_loop.terminal_states,
         completion_behavior=graph_loop.completion_behavior,
@@ -526,6 +542,8 @@ def _compile_graph_resume_policies(
 
 def _compile_graph_threshold_policies(
     policies: tuple[GraphLoopThresholdPolicyDefinition, ...],
+    *,
+    config: RuntimeConfig,
 ) -> tuple[CompiledGraphThresholdPolicyPlan, ...]:
     return tuple(
         CompiledGraphThresholdPolicyPlan(
@@ -533,7 +551,7 @@ def _compile_graph_threshold_policies(
             source_node_ids=policy.source_node_ids,
             on_outcome=policy.on_outcome,
             counter_name=policy.counter_name,
-            threshold=policy.threshold,
+            threshold=_resolved_threshold_for_policy(policy, config=config),
             exhausted_target_node_id=policy.exhausted_target_node_id,
             exhausted_terminal_state_id=policy.exhausted_terminal_state_id,
         )
@@ -541,10 +559,25 @@ def _compile_graph_threshold_policies(
     )
 
 
+def _resolved_threshold_for_policy(
+    policy: GraphLoopThresholdPolicyDefinition,
+    *,
+    config: RuntimeConfig,
+) -> int:
+    if policy.counter_name is GraphLoopCounterName.FIX_CYCLE_COUNT:
+        return config.recovery.max_fix_cycles
+    if policy.counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT:
+        return config.recovery.max_troubleshoot_attempts_before_consult
+    if policy.counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT:
+        return config.recovery.max_mechanic_attempts
+    return policy.threshold
+
+
 def _legacy_equivalence_issues_for_shipped_defaults(
     *,
     execution_graph: FrozenGraphPlanePlan,
     planning_graph: FrozenGraphPlanePlan,
+    config: RuntimeConfig,
 ) -> tuple[str, ...]:
     issues: list[str] = []
 
@@ -615,7 +648,7 @@ def _legacy_equivalence_issues_for_shipped_defaults(
         fix_needed_exhaustion is None
         or set(fix_needed_exhaustion.source_node_ids) != {"checker", "doublechecker"}
         or fix_needed_exhaustion.counter_name is not GraphLoopCounterName.FIX_CYCLE_COUNT
-        or fix_needed_exhaustion.threshold != 2
+        or fix_needed_exhaustion.threshold != config.recovery.max_fix_cycles
         or fix_needed_exhaustion.exhausted_target_node_id != "troubleshooter"
     ):
         issues.append("execution.standard: fix-needed exhaustion routing is not yet encoded")
@@ -627,7 +660,8 @@ def _legacy_equivalence_issues_for_shipped_defaults(
         != {"builder", "checker", "fixer", "doublechecker", "updater", "troubleshooter"}
         or execution_blocked_recovery.counter_name
         is not GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT
-        or execution_blocked_recovery.threshold != 2
+        or execution_blocked_recovery.threshold
+        != config.recovery.max_troubleshoot_attempts_before_consult
         or execution_blocked_recovery.exhausted_target_node_id != "consultant"
     ):
         issues.append("execution.standard: blocked recovery attempt thresholds are not yet encoded")
@@ -652,7 +686,7 @@ def _legacy_equivalence_issues_for_shipped_defaults(
         != {"planner", "manager", "auditor", "mechanic"}
         or planning_blocked_recovery.counter_name
         is not GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT
-        or planning_blocked_recovery.threshold != 2
+        or planning_blocked_recovery.threshold != config.recovery.max_mechanic_attempts
         or planning_blocked_recovery.exhausted_terminal_state_id != "blocked"
     ):
         issues.append("planning.standard: blocked recovery attempt thresholds are not yet encoded")

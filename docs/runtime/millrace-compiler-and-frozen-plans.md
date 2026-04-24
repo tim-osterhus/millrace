@@ -5,8 +5,8 @@ This document describes the current compile contract implemented by
 
 The compiler is responsible for turning the selected runtime mode plus its
 execution and planning legacy loop assets into one persisted frozen run plan
-under the workspace state tree. It also emits a non-authoritative graph-plan
-sidecar built from the stage-kind registry and graph-loop assets.
+under the workspace state tree. It also emits a compiled graph-plan companion
+built from the stage-kind registry and graph-loop assets.
 
 ## Why The Compile Step Exists
 
@@ -43,7 +43,7 @@ Today, the shipped baseline canonical mode is `default_codex`.
 The current compiler loads built-in mode and legacy loop assets through
 `src/millrace_ai/assets/modes.py`.
 
-For the graph sidecar, it also loads:
+For the graph plan, it also loads:
 
 - stage kinds through `src/millrace_ai/assets/architecture.py`
 - graph loops through `src/millrace_ai/assets/loop_graphs.py`
@@ -104,9 +104,8 @@ materially affect runtime control flow. In the shipped baseline, the planning
 loop for `default_codex` freezes a closure-target policy that dispatches the
 `arbiter` stage when a root lineage drains cleanly.
 
-In the current phase-2 scaffolding slice, the compiler also writes a
-non-authoritative `FrozenGraphRunPlan` to `compiled_graph_plan.json`. That
-sidecar contains:
+The compiler also writes `FrozenGraphRunPlan` to `compiled_graph_plan.json`.
+That graph plan contains:
 
 - materialized execution and planning graph-loop ids
 - per-node materialized entrypoint/skill/runner/model/timeout data
@@ -120,16 +119,17 @@ sidecar contains:
 - normalized `compiled_threshold_policies`
 - explicit graph terminal states
 - graph-shaped completion behavior for the planning plane
+- `authoritative_for_runtime_execution`
 - `legacy_equivalence_ready_for_cutover`
 - `legacy_equivalence_issues`
 
-The runtime does not execute from that sidecar yet. It exists to prove and
-inspect the graph-cutover scaffolding while runtime execution remains on the
-legacy frozen stage-plan path. The `legacy_equivalence_*` fields are the
-compiler's explicit record of whether the shipped graph sidecar can already
-explain the current legacy activation/routing semantics without known static
-gaps. They do not mean runtime authority has already switched to the graph
-sidecar.
+The runtime now executes claim activation, closure-target activation, and
+post-stage routing from that graph plan. `compiled_plan.json` still remains the
+frozen stage execution contract used to build stage requests, attach
+entrypoints and skills, and resolve runner/model/timeout metadata. The
+`legacy_equivalence_*` fields are now compatibility diagnostics: they record
+whether the shipped graph plan still matches the historical legacy activation
+and routing behavior for the selected config.
 
 ## Stage-Plan Freezing Rules
 
@@ -190,11 +190,10 @@ The compiler writes three canonical JSON artifacts under
 - `compiled_graph_plan.json`
 - `compile_diagnostics.json`
 
-`compiled_plan.json` stores the active runtime-authoritative frozen plan.
+`compiled_plan.json` stores the frozen stage execution plan.
 
-`compiled_graph_plan.json` stores the graph materialization sidecar. It is
-intentionally not authoritative for runtime execution yet. Its job today is to
-capture a richer executable graph model for inspection and proof:
+`compiled_graph_plan.json` stores the runtime-authoritative graph control-flow
+plan. It captures:
 
 - materialized node execution contracts
 - normalized intake entry surfaces
@@ -202,7 +201,12 @@ capture a richer executable graph model for inspection and proof:
 - normalized transition tables
 - compiled resume and threshold recovery policies
 - explicit terminal-state semantics
-- cutover-readiness diagnostics for the shipped defaults
+- cutover/compatibility diagnostics for the shipped defaults
+
+The compiled threshold policies are materialized against the effective recovery
+config, so config values such as `max_fix_cycles`,
+`max_troubleshoot_attempts_before_consult`, and `max_mechanic_attempts` are
+encoded into the graph plan rather than being re-derived later at runtime.
 
 `compile_diagnostics.json` stores the latest compile result with:
 
@@ -260,6 +264,9 @@ active frozen plan.
 
 Today that includes:
 
+- graph authority fields such as `graph_authoritative_for_runtime_execution`
+  and `graph_legacy_equivalence_ready_for_cutover`
+- graph intake entries and graph completion activation entries
 - `compiled_plan_id`
 - `execution_loop_id`
 - `planning_loop_id`
@@ -292,13 +299,17 @@ For operators, the compile step is the authoritative way to answer:
 
 - which mode is active
 - which loops are active
-- which graph loops were materialized into the graph sidecar
-- whether the graph sidecar encoded the shipped recovery/resume/closure seams
-  cleanly enough to report cutover readiness
+- whether the runtime-authoritative graph plan encoded the shipped
+  recovery/resume/closure seams cleanly enough to report compatibility readiness
 - whether backlog drain dispatches a completion stage and which one
 - which entrypoints the runtime will use
 - which stage-core skills and attached skills are present
 - whether a config or asset change actually produced a new frozen plan
+
+If you need legacy-oracle comparison events while debugging a graph control-flow
+change, set `MILLRACE_ENABLE_GRAPH_SHADOW_VALIDATION=1` before running the
+runtime. The runtime will then emit mismatch events when graph authority and
+the preserved legacy oracle disagree.
 
 If you change mode selection, stage config, or loop-linked assets, re-run
 `millrace compile validate` or `millrace compile show` before assuming the

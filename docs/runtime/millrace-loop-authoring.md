@@ -38,23 +38,27 @@ Loop and mode docs should describe those contracts, not override them.
 
 Millrace currently ships two loop-description layers that must not drift apart:
 
-1. legacy runtime-authoritative loops under `src/millrace_ai/assets/loops/`
-2. phase-1 graph-loop and stage-kind scaffolding under
+1. legacy loop assets under `src/millrace_ai/assets/loops/`
+2. graph-loop and stage-kind assets under
    `src/millrace_ai/assets/graphs/` and
    `src/millrace_ai/assets/registry/stage_kinds/`
 
-Today the runtime still executes from the legacy loop path and the frozen
-stage-plan contract in `compiled_plan.json`.
+Today the runtime executes control flow from `compiled_graph_plan.json`, while
+the legacy loop path still feeds the frozen stage-plan contract in
+`compiled_plan.json`.
 
 The graph-loop path exists to:
 
 - prove the shipped topology can be represented as typed node graphs over stage kinds
 - emit `compiled_graph_plan.json` during compile
+- drive runtime intake, recovery, closure-target activation, and post-stage
+  routing
 - support preview materialization of discovered graph loops without modifying
-  the legacy router tables
+  the frozen stage-plan authoring path
 
 For shipped defaults, maintainers should keep both surfaces aligned until a
-later runtime cutover phase makes the graph path authoritative.
+later unification phase removes the remaining split between graph control flow
+and legacy stage-plan freezing.
 
 ## Legacy Loop JSON Rules
 
@@ -210,8 +214,8 @@ Good loop and mode authoring is:
 - compiler-valid
 - explicit about `terminal_results`
 - explicit about stage topology
-- explicit about whether you changed the runtime-authoritative legacy loop
-  surface, the phase-1 graph/stage-kind surface, or both
+- explicit about whether you changed the frozen stage-plan legacy loop surface,
+  the runtime-authoritative graph/stage-kind surface, or both
 - explicit about what is runtime-owned and what is advisory
 
 Bad authoring:

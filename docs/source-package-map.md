@@ -37,15 +37,15 @@ asset family:
 
 - `src/millrace_ai/architecture/stage_kinds.py` defines typed stage-kind contracts
 - `src/millrace_ai/architecture/loop_graphs.py` defines typed graph-loop contracts
-- `src/millrace_ai/architecture/materialization.py` defines the non-authoritative graph-plan materialization contracts, including normalized compiled entry/transition indexes and legacy-equivalence gap reporting
+- `src/millrace_ai/architecture/materialization.py` defines the graph-plan materialization contracts, including normalized compiled entry/transition indexes, runtime-authority flags, and legacy-equivalence compatibility reporting
 - `src/millrace_ai/assets/architecture.py` loads stage-kind registry assets
 - `src/millrace_ai/assets/loop_graphs.py` loads graph-loop assets
 - `src/millrace_ai/assets/registry/stage_kinds/` ships the stage-kind registry JSON
 - `src/millrace_ai/assets/graphs/` ships the graph-loop JSON
 
-This scaffolding is compile/materialization truth for phase 1 and the first
-phase-2 slice, but runtime execution still routes through the legacy loop and
-router surfaces.
+This scaffolding now owns the runtime control-flow authority surface. The
+legacy loop and router modules still remain in the package as frozen
+stage-plan inputs and compatibility oracles.
 
 ## Intentionally Preserved Root Modules
 

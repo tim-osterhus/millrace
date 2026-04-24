@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ClosureTargetState, CompletionBehaviorDefinition, FrozenStagePlan, SpecDocument, WorkItemKind
+from millrace_ai.contracts import ClosureTargetState, CompletionBehaviorDefinition, SpecDocument, WorkItemKind
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueClaim
@@ -23,6 +23,9 @@ from millrace_ai.workspace.work_documents import parse_work_document_as
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
+from .graph_authority import completion_activation_for_graph
+from .graph_shadow import maybe_report_completion_activation_mismatch
+
 
 def maybe_open_closure_target_for_claim(
     engine: RuntimeEngine,
@@ -37,6 +40,7 @@ def maybe_open_closure_target_for_claim(
 
 def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState | None:
     assert engine.snapshot is not None
+    assert engine.compiled_graph_plan is not None
     completion_behavior = _completion_behavior_for(engine)
     if completion_behavior is None:
         return None
@@ -53,11 +57,12 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
     if target.closure_blocked_by_lineage_work:
         return None
 
-    stage_plan = _completion_stage_plan(engine, completion_behavior)
+    activation = completion_activation_for_graph(engine.compiled_graph_plan)
+    maybe_report_completion_activation_mismatch(engine, graph_decision=activation)
     engine.snapshot = engine.snapshot.model_copy(
         update={
-            "active_plane": stage_plan.plane,
-            "active_stage": stage_plan.stage,
+            "active_plane": activation.plane,
+            "active_stage": activation.stage,
             "active_run_id": engine._new_run_id(),
             "active_work_item_kind": None,
             "active_work_item_id": None,
@@ -135,19 +140,6 @@ def _recover_or_diagnose_missing_closure_target(
             },
         )
     return target
-
-
-def _completion_stage_plan(
-    engine: RuntimeEngine,
-    completion_behavior: CompletionBehaviorDefinition,
-) -> FrozenStagePlan:
-    assert engine.compiled_plan is not None
-    for stage_plan in engine.compiled_plan.stage_plans:
-        if stage_plan.stage == completion_behavior.stage:
-            return stage_plan
-    raise WorkspaceStateError(
-        f"completion stage {completion_behavior.stage.value} is missing from compiled stage plans"
-    )
 
 
 def _existing_target_state(engine: RuntimeEngine, *, root_spec_id: str) -> ClosureTargetState | None:

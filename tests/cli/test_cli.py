@@ -1219,7 +1219,41 @@ def test_compile_show_surfaces_compiled_plan_summary(
             compiled_at=NOW,
             source_refs=(),
         )
-        return CompileOutcome(active_plan=active_plan, diagnostics=diagnostics, used_last_known_good=False)
+        active_graph_plan = SimpleNamespace(
+            authoritative_for_runtime_execution=True,
+            legacy_equivalence_ready_for_cutover=True,
+            legacy_equivalence_issues=(),
+            execution_graph=SimpleNamespace(
+                compiled_entries=(
+                    SimpleNamespace(
+                        entry_key=SimpleNamespace(value="task"),
+                        node_id="builder",
+                    ),
+                ),
+            ),
+            planning_graph=SimpleNamespace(
+                compiled_entries=(
+                    SimpleNamespace(
+                        entry_key=SimpleNamespace(value="spec"),
+                        node_id="planner",
+                    ),
+                    SimpleNamespace(
+                        entry_key=SimpleNamespace(value="incident"),
+                        node_id="auditor",
+                    ),
+                ),
+                compiled_completion_entry=SimpleNamespace(
+                    entry_key=SimpleNamespace(value="closure_target"),
+                    node_id="arbiter",
+                ),
+            ),
+        )
+        return CompileOutcome(
+            active_plan=active_plan,
+            diagnostics=diagnostics,
+            used_last_known_good=False,
+            active_graph_plan=active_graph_plan,
+        )
 
     monkeypatch.setattr(cli, "load_runtime_config", fake_load_runtime_config)
     monkeypatch.setattr(cli, "compile_and_persist_workspace_plan", fake_compile_and_persist_workspace_plan)
@@ -1231,6 +1265,13 @@ def test_compile_show_surfaces_compiled_plan_summary(
     )
 
     assert result.exit_code == 0
+    assert "graph_authoritative_for_runtime_execution: true" in result.output
+    assert "graph_legacy_equivalence_ready_for_cutover: true" in result.output
+    assert "graph_legacy_equivalence_issues: none" in result.output
+    assert "graph_entry: execution.task -> builder" in result.output
+    assert "graph_entry: planning.spec -> planner" in result.output
+    assert "graph_entry: planning.incident -> auditor" in result.output
+    assert "graph_completion: closure_target -> arbiter" in result.output
     assert "compiled_plan_id: plan-001" in result.output
     assert "stage: execution.builder" in result.output
     assert "required_skills: skills/README.md" in result.output

@@ -44,6 +44,31 @@ def compile_show(
     )
     exit_code = _render_compile_diagnostics(outcome)
 
+    if outcome.active_graph_plan is not None:
+        graph_plan = outcome.active_graph_plan
+        typer.echo(
+            "graph_authoritative_for_runtime_execution: "
+            f"{'true' if graph_plan.authoritative_for_runtime_execution else 'false'}"
+        )
+        typer.echo(
+            "graph_legacy_equivalence_ready_for_cutover: "
+            f"{'true' if graph_plan.legacy_equivalence_ready_for_cutover else 'false'}"
+        )
+        typer.echo(
+            "graph_legacy_equivalence_issues: "
+            f"{', '.join(graph_plan.legacy_equivalence_issues) if graph_plan.legacy_equivalence_issues else 'none'}"
+        )
+        for entry in graph_plan.execution_graph.compiled_entries:
+            typer.echo(f"graph_entry: execution.{entry.entry_key.value} -> {entry.node_id}")
+        for entry in graph_plan.planning_graph.compiled_entries:
+            typer.echo(f"graph_entry: planning.{entry.entry_key.value} -> {entry.node_id}")
+        if graph_plan.planning_graph.compiled_completion_entry is not None:
+            typer.echo(
+                "graph_completion: "
+                f"{graph_plan.planning_graph.compiled_completion_entry.entry_key.value}"
+                f" -> {graph_plan.planning_graph.compiled_completion_entry.node_id}"
+            )
+
     if outcome.active_plan is not None:
         plan = outcome.active_plan
         typer.echo(f"compiled_plan_id: {plan.compiled_plan_id}")
