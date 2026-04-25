@@ -58,6 +58,7 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
     can_start_tasks: bool = False
     can_start_specs: bool = False
     can_start_incidents: bool = False
+    can_start_learning_requests: bool = False
     recovery_role: RecoveryRole | None = None
     closure_role: bool = False
 

@@ -28,6 +28,7 @@ from millrace_ai.state_store import (
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
+    set_learning_status,
     set_planning_status,
 )
 
@@ -287,6 +288,9 @@ class DirectControlMutations(Generic[ResultT]):
         if work_item_kind is WorkItemKind.SPEC:
             queue.requeue_spec(work_item_id, reason=reason)
             return
+        if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+            queue.requeue_learning_request(work_item_id, reason=reason)
+            return
         queue.requeue_incident(work_item_id, reason=reason)
 
     def _reset_runtime_to_idle(
@@ -303,6 +307,7 @@ class DirectControlMutations(Generic[ResultT]):
                 process_running=process_running,
                 queue_depth_execution=self._execution_queue_depth(),
                 queue_depth_planning=self._planning_queue_depth(),
+                queue_depth_learning=self._learning_queue_depth(),
                 clear_stop_requested=clear_stop_requested,
                 clear_paused=clear_paused,
             )
@@ -311,6 +316,7 @@ class DirectControlMutations(Generic[ResultT]):
         save_snapshot(self.paths, updated)
         set_execution_status(self.paths, IDLE_STATUS_MARKER)
         set_planning_status(self.paths, IDLE_STATUS_MARKER)
+        set_learning_status(self.paths, IDLE_STATUS_MARKER)
 
     def _execution_queue_depth(self) -> int:
         return len(tuple(self.paths.tasks_queue_dir.glob("*.md")))
@@ -319,6 +325,9 @@ class DirectControlMutations(Generic[ResultT]):
         specs = len(tuple(self.paths.specs_queue_dir.glob("*.md")))
         incidents = len(tuple(self.paths.incidents_incoming_dir.glob("*.md")))
         return specs + incidents
+
+    def _learning_queue_depth(self) -> int:
+        return len(tuple(self.paths.learning_requests_queue_dir.glob("*.md")))
 
 
 __all__ = ["DirectControlMutations"]

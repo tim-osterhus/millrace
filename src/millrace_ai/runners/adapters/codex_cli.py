@@ -11,8 +11,7 @@ from typing import Callable, Literal
 
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
 from millrace_ai.contracts import (
-    ExecutionStageName,
-    PlanningStageName,
+    StageName,
     TokenUsage,
 )
 from millrace_ai.runners.adapters._prompting import build_stage_prompt, legal_terminal_markers
@@ -290,7 +289,7 @@ _TERMINAL_MARKER_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
 
 
 def _reconciled_timeout_terminal_marker(
-    stage: ExecutionStageName | PlanningStageName,
+    stage: StageName,
     *,
     output_last_message_path: Path,
 ) -> str | None:

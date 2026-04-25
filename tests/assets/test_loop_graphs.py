@@ -131,7 +131,11 @@ def test_builtin_graph_loops_load_and_validate() -> None:
     graph_loops = load_builtin_graph_loop_definitions()
 
     assert [graph.loop_id for graph in graph_loops] == list(SHIPPED_GRAPH_LOOP_IDS)
-    assert {graph.plane for graph in graph_loops} == {Plane.EXECUTION, Plane.PLANNING}
+    assert {graph.plane for graph in graph_loops} == {
+        Plane.EXECUTION,
+        Plane.PLANNING,
+        Plane.LEARNING,
+    }
     assert all(graph.nodes for graph in graph_loops)
     assert all(graph.edges for graph in graph_loops)
     assert all(graph.terminal_states for graph in graph_loops)
@@ -141,6 +145,7 @@ def test_shipped_graph_loop_ids_are_stable() -> None:
     assert SHIPPED_GRAPH_LOOP_IDS == (
         "execution.standard",
         "execution.skills_pipeline",
+        "learning.standard",
         "planning.standard",
         "planning.skills_pipeline",
     )
@@ -198,6 +203,24 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
         state.terminal_class is GraphLoopTerminalClass.FOLLOWUP_NEEDED
         for state in planning.terminal_states
     )
+
+
+def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:
+    learning = load_builtin_graph_loop_definition("learning.standard")
+
+    assert learning.plane is Plane.LEARNING
+    assert {entry.entry_key.value: entry.node_id for entry in learning.entry_nodes} == {
+        "learning_request": "analyst"
+    }
+    assert [node.stage_kind_id for node in learning.nodes] == [
+        "analyst",
+        "professor",
+        "curator",
+    ]
+    assert {state.terminal_state_id for state in learning.terminal_states} == {
+        "learning_complete",
+        "blocked",
+    }
 
 
 def test_graph_loop_asset_errors_use_project_error_hierarchy() -> None:

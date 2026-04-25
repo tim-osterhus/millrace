@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
 
 from .paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from .queue_reconciliation import (
@@ -12,18 +12,27 @@ from .queue_reconciliation import (
     detect_execution_stale_state,
     detect_planning_stale_state,
 )
-from .queue_selection import QueueClaim, claim_next_execution_task, claim_next_planning_item
+from .queue_selection import (
+    QueueClaim,
+    claim_next_execution_task,
+    claim_next_learning_request,
+    claim_next_planning_item,
+)
 from .queue_transitions import (
     enqueue_incident,
+    enqueue_learning_request,
     enqueue_spec,
     enqueue_task,
     mark_incident_blocked,
     mark_incident_resolved,
+    mark_learning_request_blocked,
+    mark_learning_request_done,
     mark_spec_blocked,
     mark_spec_done,
     mark_task_blocked,
     mark_task_done,
     requeue_incident,
+    requeue_learning_request,
     requeue_spec,
     requeue_task,
 )
@@ -45,11 +54,17 @@ class QueueStore:
     def enqueue_incident(self, doc: IncidentDocument) -> Path:
         return enqueue_incident(self.paths, doc)
 
+    def enqueue_learning_request(self, doc: LearningRequestDocument) -> Path:
+        return enqueue_learning_request(self.paths, doc)
+
     def claim_next_execution_task(self) -> QueueClaim | None:
         return claim_next_execution_task(self.paths)
 
     def claim_next_planning_item(self) -> QueueClaim | None:
         return claim_next_planning_item(self.paths)
+
+    def claim_next_learning_request(self) -> QueueClaim | None:
+        return claim_next_learning_request(self.paths)
 
     def mark_task_done(self, task_id: str) -> Path:
         return mark_task_done(self.paths, task_id)
@@ -69,6 +84,12 @@ class QueueStore:
     def mark_incident_blocked(self, incident_id: str) -> Path:
         return mark_incident_blocked(self.paths, incident_id)
 
+    def mark_learning_request_done(self, learning_request_id: str) -> Path:
+        return mark_learning_request_done(self.paths, learning_request_id)
+
+    def mark_learning_request_blocked(self, learning_request_id: str) -> Path:
+        return mark_learning_request_blocked(self.paths, learning_request_id)
+
     def requeue_task(self, task_id: str, *, reason: str) -> Path:
         return requeue_task(self.paths, task_id, reason=reason)
 
@@ -77,6 +98,9 @@ class QueueStore:
 
     def requeue_incident(self, incident_id: str, *, reason: str) -> Path:
         return requeue_incident(self.paths, incident_id, reason=reason)
+
+    def requeue_learning_request(self, learning_request_id: str, *, reason: str) -> Path:
+        return requeue_learning_request(self.paths, learning_request_id, reason=reason)
 
     def detect_execution_stale_state(self, *, snapshot_active_task_id: str | None) -> StaleActiveState:
         return detect_execution_stale_state(self.paths, snapshot_active_task_id=snapshot_active_task_id)

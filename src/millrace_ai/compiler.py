@@ -42,6 +42,8 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     CompileDiagnostics,
     ExecutionStageName,
+    LearningStageName,
+    LearningTriggerRuleDefinition,
     ModeDefinition,
     Plane,
     PlanningStageName,
@@ -65,10 +67,14 @@ _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     PlanningStageName.MECHANIC: ("skills/stage/planning/mechanic-core/SKILL.md",),
     PlanningStageName.AUDITOR: ("skills/stage/planning/auditor-core/SKILL.md",),
     PlanningStageName.ARBITER: ("skills/stage/planning/arbiter-core/SKILL.md",),
+    LearningStageName.ANALYST: ("skills/stage/learning/analyst-core/SKILL.md",),
+    LearningStageName.PROFESSOR: ("skills/stage/learning/professor-core/SKILL.md",),
+    LearningStageName.CURATOR: ("skills/stage/learning/curator-core/SKILL.md",),
 }
 _STAGE_NAME_BY_VALUE: dict[str, StageName] = {
     **{stage.value: stage for stage in ExecutionStageName},
     **{stage.value: stage for stage in PlanningStageName},
+    **{stage.value: stage for stage in LearningStageName},
 }
 
 class CompilerValidationError(ConfigurationError):
@@ -173,54 +179,58 @@ def _compile_compiled_run_plan(
     compile_time: datetime,
 ) -> CompiledRunPlan:
     mode = load_builtin_mode_definition(mode_id, assets_root=assets_root)
-    execution_graph_loop = load_builtin_graph_loop_definition(
-        mode.execution_loop_id,
-        assets_root=assets_root,
-    )
-    planning_graph_loop = load_builtin_graph_loop_definition(
-        mode.planning_loop_id,
-        assets_root=assets_root,
-    )
+    graph_loops = {
+        plane: load_builtin_graph_loop_definition(loop_id, assets_root=assets_root)
+        for plane, loop_id in mode.loop_ids_by_plane.items()
+    }
     _validate_mode_stage_maps(
         mode,
-        _selected_stages_for_graph_loops(execution_graph_loop, planning_graph_loop),
+        _selected_stages_for_graph_loops(*graph_loops.values()),
     )
 
     stage_kinds = {
         stage_kind.stage_kind_id: stage_kind
         for stage_kind in load_builtin_stage_kind_definitions(assets_root=assets_root)
     }
-    execution_graph = _materialize_graph_plane_plan(
-        graph_loop=execution_graph_loop,
-        mode=mode,
-        config=config,
-        stage_kinds=stage_kinds,
-    )
-    planning_graph = _materialize_graph_plane_plan(
-        graph_loop=planning_graph_loop,
-        mode=mode,
-        config=config,
-        stage_kinds=stage_kinds,
-    )
+    graphs_by_plane = {
+        plane: _materialize_graph_plane_plan(
+            graph_loop=graph_loop,
+            mode=mode,
+            config=config,
+            stage_kinds=stage_kinds,
+        )
+        for plane, graph_loop in graph_loops.items()
+    }
+    selected_stages = _selected_stages_for_graph_loops(*graph_loops.values())
+    _validate_learning_trigger_rules(mode, selected_stages)
+
+    execution_graph = graphs_by_plane[Plane.EXECUTION]
+    planning_graph = graphs_by_plane[Plane.PLANNING]
+    learning_graph = graphs_by_plane.get(Plane.LEARNING)
 
     return CompiledRunPlan(
         compiled_plan_id=_build_compiled_plan_id(
             mode_id=mode.mode_id,
-            execution_loop_id=execution_graph.loop_id,
-            planning_loop_id=planning_graph.loop_id,
-            execution_graph=execution_graph,
-            planning_graph=planning_graph,
+            loop_ids_by_plane=mode.loop_ids_by_plane,
+            graphs_by_plane=graphs_by_plane,
+            concurrency_policy=mode.concurrency_policy,
+            learning_trigger_rules=mode.learning_trigger_rules,
         ),
         mode_id=mode.mode_id,
+        loop_ids_by_plane=mode.loop_ids_by_plane,
         execution_loop_id=execution_graph.loop_id,
         planning_loop_id=planning_graph.loop_id,
+        learning_loop_id=learning_graph.loop_id if learning_graph is not None else None,
+        graphs_by_plane=graphs_by_plane,
         execution_graph=execution_graph,
         planning_graph=planning_graph,
+        learning_graph=learning_graph,
+        concurrency_policy=mode.concurrency_policy,
+        learning_trigger_rules=mode.learning_trigger_rules,
         compiled_at=compile_time,
         source_refs=_build_graph_source_refs(
             mode.mode_id,
-            execution_graph.loop_id,
-            planning_graph.loop_id,
+            graphs_by_plane,
             has_planning_completion_behavior=planning_graph.completion_behavior is not None,
         ),
     )
@@ -363,12 +373,19 @@ def _stage_name_for_identifier(identifier: str) -> StageName | None:
 
 
 def _graph_preview_mode_definition(graph_loop: GraphLoopDefinition) -> ModeDefinition:
-    execution_loop_id = graph_loop.loop_id if graph_loop.plane is Plane.EXECUTION else "preview.execution"
-    planning_loop_id = graph_loop.loop_id if graph_loop.plane is Plane.PLANNING else "preview.planning"
+    loop_ids_by_plane = {
+        Plane.EXECUTION: graph_loop.loop_id
+        if graph_loop.plane is Plane.EXECUTION
+        else "execution.preview",
+        Plane.PLANNING: graph_loop.loop_id
+        if graph_loop.plane is Plane.PLANNING
+        else "planning.preview",
+    }
+    if graph_loop.plane is Plane.LEARNING:
+        loop_ids_by_plane[Plane.LEARNING] = graph_loop.loop_id
     return ModeDefinition(
         mode_id=f"graph_preview.{graph_loop.loop_id}",
-        execution_loop_id=execution_loop_id,
-        planning_loop_id=planning_loop_id,
+        loop_ids_by_plane=loop_ids_by_plane,
     )
 
 
@@ -483,6 +500,23 @@ def _validate_mode_stage_maps(mode: ModeDefinition, selected_stages: set[StageNa
                 )
 
 
+def _validate_learning_trigger_rules(
+    mode: ModeDefinition,
+    selected_stages: set[StageName],
+) -> None:
+    for rule in mode.learning_trigger_rules:
+        if rule.source_stage not in selected_stages:
+            raise CompilerValidationError(
+                "Learning trigger rule references source stage outside selected loops: "
+                f"{rule.rule_id}:{rule.source_stage.value}"
+            )
+        if rule.target_stage not in selected_stages:
+            raise CompilerValidationError(
+                "Learning trigger rule references target learning stage outside selected loops: "
+                f"{rule.rule_id}:{rule.target_stage.value}"
+            )
+
+
 def _validate_entrypoint_override(stage_name: str, raw_path: str) -> str:
     normalized = _normalize_relative_asset_path(raw_path)
     if (
@@ -519,17 +553,30 @@ def _normalize_relative_asset_path(raw_path: str) -> str | None:
 def _build_compiled_plan_id(
     *,
     mode_id: str,
-    execution_loop_id: str,
-    planning_loop_id: str,
-    execution_graph: FrozenGraphPlanePlan,
-    planning_graph: FrozenGraphPlanePlan,
+    loop_ids_by_plane: dict[Plane, str],
+    graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
+    concurrency_policy: object,
+    learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...],
 ) -> str:
     payload = {
         "mode_id": mode_id,
-        "execution_loop_id": execution_loop_id,
-        "planning_loop_id": planning_loop_id,
-        "execution_graph": execution_graph.model_dump(mode="json"),
-        "planning_graph": planning_graph.model_dump(mode="json"),
+        "loop_ids_by_plane": {
+            plane.value: loop_id
+            for plane, loop_id in sorted(loop_ids_by_plane.items(), key=lambda item: item[0].value)
+        },
+        "graphs_by_plane": {
+            plane.value: graph.model_dump(mode="json")
+            for plane, graph in sorted(graphs_by_plane.items(), key=lambda item: item[0].value)
+        },
+        "concurrency_policy": (
+            concurrency_policy.model_dump(mode="json")
+            if hasattr(concurrency_policy, "model_dump")
+            else None
+        ),
+        "learning_trigger_rules": [
+            rule.model_dump(mode="json")
+            for rule in learning_trigger_rules
+        ],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
@@ -538,18 +585,19 @@ def _build_compiled_plan_id(
 
 def _build_graph_source_refs(
     mode_id: str,
-    execution_loop_id: str,
-    planning_loop_id: str,
+    graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     *,
     has_planning_completion_behavior: bool,
 ) -> tuple[str, ...]:
     refs = [
         f"mode:{mode_id}",
-        f"graph_loop:{execution_loop_id}",
-        f"graph_loop:{planning_loop_id}",
+        *[
+            f"graph_loop:{graph.loop_id}"
+            for _plane, graph in sorted(graphs_by_plane.items(), key=lambda item: item[0].value)
+        ],
     ]
     if has_planning_completion_behavior:
-        refs.append(f"graph_completion_behavior:{planning_loop_id}")
+        refs.append(f"graph_completion_behavior:{graphs_by_plane[Plane.PLANNING].loop_id}")
     return tuple(refs)
 
 

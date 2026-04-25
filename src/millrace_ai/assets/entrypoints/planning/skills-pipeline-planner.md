@@ -16,6 +16,12 @@ Convert one skill idea or submitted skill into a concrete skill production spec.
 3. `docs/superpowers/specs/2026-04-25-millrace-optional-skills-pipeline-design.md`
 4. `dev/source/skills-repo/README.md` and `dev/source/skills-repo/skills/` when present
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `planner-core`: load the runtime-provided planning posture from `required_skill_paths`

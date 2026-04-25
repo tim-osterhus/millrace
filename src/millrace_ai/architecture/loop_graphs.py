@@ -27,6 +27,7 @@ class GraphLoopEntryKey(str, Enum):
     SPEC = "spec"
     INCIDENT = "incident"
     CLOSURE_TARGET = "closure_target"
+    LEARNING_REQUEST = "learning_request"
 
 
 class GraphLoopEdgeKind(str, Enum):

@@ -21,6 +21,7 @@ from .state_reconciliation import (
     ReconciliationSignal,
     collect_reconciliation_signals,
     normalize_execution_status_marker,
+    normalize_learning_status_marker,
     normalize_planning_status_marker,
     running_status_marker_for_stage,
 )
@@ -92,6 +93,12 @@ def load_planning_status(target: WorkspacePaths | Path | str) -> str:
     return normalize_planning_status_marker(marker)
 
 
+def load_learning_status(target: WorkspacePaths | Path | str) -> str:
+    paths = _resolve_paths(target)
+    marker = paths.learning_status_file.read_text(encoding="utf-8")
+    return normalize_learning_status_marker(marker)
+
+
 def set_execution_status(target: WorkspacePaths | Path | str, marker: str) -> str:
     paths = _resolve_paths(target)
     normalized = normalize_execution_status_marker(marker)
@@ -103,6 +110,13 @@ def set_planning_status(target: WorkspacePaths | Path | str, marker: str) -> str
     paths = _resolve_paths(target)
     normalized = normalize_planning_status_marker(marker)
     _atomic_write_text(paths.planning_status_file, normalized + "\n")
+    return normalized
+
+
+def set_learning_status(target: WorkspacePaths | Path | str, marker: str) -> str:
+    paths = _resolve_paths(target)
+    normalized = normalize_learning_status_marker(marker)
+    _atomic_write_text(paths.learning_status_file, normalized + "\n")
     return normalized
 
 
@@ -192,6 +206,7 @@ __all__ = [
     "collect_reconciliation_signals",
     "increment_troubleshoot_attempt",
     "load_execution_status",
+    "load_learning_status",
     "load_planning_status",
     "load_recovery_counters",
     "load_snapshot",
@@ -200,5 +215,6 @@ __all__ = [
     "save_snapshot",
     "running_status_marker_for_stage",
     "set_execution_status",
+    "set_learning_status",
     "set_planning_status",
 ]

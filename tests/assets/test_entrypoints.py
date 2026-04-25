@@ -10,6 +10,8 @@ from millrace_ai.assets.entrypoints import ParsedMarkdownAsset
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
+    LearningStageName,
+    LearningTerminalResult,
     PlanningStageName,
     PlanningTerminalResult,
 )
@@ -18,8 +20,8 @@ from millrace_ai.entrypoints import LintLevel, lint_asset_manifests, parse_markd
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT_MAPPING_DOC = REPO_ROOT / "docs" / "runtime" / "millrace-entrypoint-mapping.md"
 ENTRYPOINT_MAPPING_ROW = re.compile(
-    r"- `(?P<runtime>src/millrace_ai/assets/entrypoints/(?:execution|planning)/[^`]+\.md)` -> "
-    r"`millrace-agents/entrypoints/(?:execution|planning)/[^`]+\.md`"
+    r"- `(?P<runtime>src/millrace_ai/assets/entrypoints/(?:execution|planning|learning)/[^`]+\.md)` -> "
+    r"`millrace-agents/entrypoints/(?:execution|planning|learning)/[^`]+\.md`"
 )
 LEGACY_ENTRYPOINT_TOKENS = (
     "current-task",
@@ -464,6 +466,18 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
             PlanningTerminalResult.REMEDIATION_NEEDED.value,
             PlanningTerminalResult.BLOCKED.value,
         },
+        LearningStageName.ANALYST.value: {
+            LearningTerminalResult.ANALYST_COMPLETE.value,
+            LearningTerminalResult.BLOCKED.value,
+        },
+        LearningStageName.PROFESSOR.value: {
+            LearningTerminalResult.PROFESSOR_COMPLETE.value,
+            LearningTerminalResult.BLOCKED.value,
+        },
+        LearningStageName.CURATOR.value: {
+            LearningTerminalResult.CURATOR_COMPLETE.value,
+            LearningTerminalResult.BLOCKED.value,
+        },
     }
 
 
@@ -481,6 +495,9 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
         PlanningStageName.MECHANIC.value: "mechanic-core",
         PlanningStageName.AUDITOR.value: "auditor-core",
         PlanningStageName.ARBITER.value: "arbiter-core",
+        LearningStageName.ANALYST.value: "analyst-core",
+        LearningStageName.PROFESSOR.value: "professor-core",
+        LearningStageName.CURATOR.value: "curator-core",
     }
 
 
@@ -506,6 +523,9 @@ def _expected_stage_core_skill_paths() -> dict[str, Path]:
         PlanningStageName.MECHANIC.value: SKILLS_DIR / "stage" / "planning" / "mechanic-core" / "SKILL.md",
         PlanningStageName.AUDITOR.value: SKILLS_DIR / "stage" / "planning" / "auditor-core" / "SKILL.md",
         PlanningStageName.ARBITER.value: SKILLS_DIR / "stage" / "planning" / "arbiter-core" / "SKILL.md",
+        LearningStageName.ANALYST.value: SKILLS_DIR / "stage" / "learning" / "analyst-core" / "SKILL.md",
+        LearningStageName.PROFESSOR.value: SKILLS_DIR / "stage" / "learning" / "professor-core" / "SKILL.md",
+        LearningStageName.CURATOR.value: SKILLS_DIR / "stage" / "learning" / "curator-core" / "SKILL.md",
     }
 
 
@@ -575,6 +595,21 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "parity",
             "remediation",
         ),
+        LearningStageName.ANALYST.value: (
+            "learning request",
+            "research packet",
+            "evidence",
+        ),
+        LearningStageName.PROFESSOR.value: (
+            "skill candidates",
+            "research packets",
+            "skill-creator",
+        ),
+        LearningStageName.CURATOR.value: (
+            "skill improvements",
+            "evidence",
+            "scope",
+        ),
     }
 
 
@@ -584,18 +619,8 @@ def test_packaged_to_runtime_entrypoint_mapping_complete() -> None:
 
     runtime_root = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints"
     expected_runtime = {
-        runtime_root / "execution" / "builder.md",
-        runtime_root / "execution" / "checker.md",
-        runtime_root / "execution" / "fixer.md",
-        runtime_root / "execution" / "doublechecker.md",
-        runtime_root / "execution" / "updater.md",
-        runtime_root / "execution" / "troubleshooter.md",
-        runtime_root / "execution" / "consultant.md",
-        runtime_root / "planning" / "planner.md",
-        runtime_root / "planning" / "manager.md",
-        runtime_root / "planning" / "mechanic.md",
-        runtime_root / "planning" / "auditor.md",
-        runtime_root / "planning" / "arbiter.md",
+        path
+        for path in runtime_root.rglob("*.md")
     }
     assert mapped_runtime == expected_runtime
 
@@ -704,12 +729,14 @@ def test_runtime_entrypoint_required_result_sets() -> None:
         assert not raw.startswith("---")
 
         asset = parse_markdown_asset(runtime_path)
-        stage = runtime_path.stem
+        stage = str(asset.manifest["stage"])
         assert stage in expected_stage_results
 
         plane = runtime_path.parent.name
         if stage in {member.value for member in ExecutionStageName}:
             assert plane == "execution"
+        elif stage in {member.value for member in LearningStageName}:
+            assert plane == "learning"
         else:
             assert plane == "planning"
 
@@ -823,11 +850,15 @@ def test_runtime_shared_marathon_qa_skill_is_shipped_with_honest_audit_guidance(
 def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     runtime_paths = _load_runtime_entrypoint_paths_from_docs()
     stage_to_body: dict[str, str] = {}
+    entrypoint_bodies: list[tuple[str, str, str]] = []
     expected_stage_core_ids = _expected_stage_core_skill_ids()
 
     for runtime_path in runtime_paths:
         body = parse_markdown_asset(runtime_path).body
-        stage_to_body[runtime_path.stem] = body
+        entrypoint_id = runtime_path.stem
+        stage = entrypoint_id.removeprefix("skills-pipeline-")
+        entrypoint_bodies.append((entrypoint_id, stage, body))
+        stage_to_body[entrypoint_id] = body
         for token in LEGACY_ENTRYPOINT_TOKENS:
             assert token not in body
         assert "runs/<RUN_ID>" not in body
@@ -865,7 +896,8 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     for skill_id in _expected_stage_core_skill_ids().values():
         assert skill_id in shipped_skill_ids
 
-    for stage, body in stage_to_body.items():
+    for entrypoint_id, stage, body in entrypoint_bodies:
+        assert stage in expected_stage_core_ids, f"entrypoint `{entrypoint_id}` does not map to a known stage"
         assert "millrace-agents/skills/skills_index.md" in body
         assert "up to two additional relevant skills" in body
         assert "required_skill_paths" in body

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from millrace_ai.contracts import (
     ExecutionStageName,
+    LearningStageName,
     Plane,
     PlanningStageName,
     StageName,
@@ -24,7 +25,7 @@ RunnerExitKind = Literal[
     "provider_error",
     "interrupted",
 ]
-RequestKind = Literal["active_work_item", "closure_target"]
+RequestKind = Literal["active_work_item", "closure_target", "learning_request"]
 
 _STAGE_TO_PLANE: dict[str, Plane] = {
     ExecutionStageName.BUILDER.value: Plane.EXECUTION,
@@ -39,6 +40,9 @@ _STAGE_TO_PLANE: dict[str, Plane] = {
     PlanningStageName.MECHANIC.value: Plane.PLANNING,
     PlanningStageName.AUDITOR.value: Plane.PLANNING,
     PlanningStageName.ARBITER.value: Plane.PLANNING,
+    LearningStageName.ANALYST.value: Plane.LEARNING,
+    LearningStageName.PROFESSOR.value: Plane.LEARNING,
+    LearningStageName.CURATOR.value: Plane.LEARNING,
 }
 
 
@@ -81,6 +85,7 @@ class StageRunRequest(BaseModel):
     runtime_error_code: str | None = None
     runtime_error_report_path: str | None = None
     runtime_error_catalog_path: str | None = None
+    skill_revision_evidence_path: str | None = None
 
     runner_name: str | None = None
     model_name: str | None = None
@@ -113,13 +118,22 @@ class StageRunRequest(BaseModel):
                 raise ValueError(
                     "active_work_item requests cannot declare closure target fields"
                 )
-        else:
+        elif self.request_kind == "closure_target":
             if has_kind or self.active_work_item_path is not None:
                 raise ValueError(
                     "closure_target requests cannot declare active work item fields"
                 )
             if any(field is None for field in closure_fields):
                 raise ValueError("closure_target requests require closure target fields")
+        else:
+            if self.plane is not Plane.LEARNING:
+                raise ValueError("learning_request requests must run on the learning plane")
+            if self.active_work_item_kind is not WorkItemKind.LEARNING_REQUEST:
+                raise ValueError("learning_request requests require learning_request work item kind")
+            if self.active_work_item_path is None:
+                raise ValueError("learning_request requests require active_work_item_path")
+            if any(field is not None for field in closure_fields):
+                raise ValueError("learning_request requests cannot declare closure target fields")
 
         if self.timeout_seconds < 0:
             raise ValueError("timeout_seconds must be >= 0")
@@ -170,6 +184,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
             f"Runtime Error Code: {request.runtime_error_code or 'none'}",
             f"Runtime Error Report Path: {request.runtime_error_report_path or 'none'}",
             f"Runtime Error Catalog Path: {request.runtime_error_catalog_path or 'none'}",
+            f"Skill Revision Evidence Path: {request.skill_revision_evidence_path or 'none'}",
             f"Runner Name: {request.runner_name or 'none'}",
             f"Model Name: {request.model_name or 'none'}",
             f"Timeout Seconds: {request.timeout_seconds}",

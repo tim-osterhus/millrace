@@ -2,8 +2,10 @@
   "schema_version": "1.0",
   "kind": "mode",
   "mode_id": "default_codex",
-  "execution_loop_id": "execution.standard",
-  "planning_loop_id": "planning.standard",
+  "loop_ids_by_plane": {
+    "execution": "execution.standard",
+    "planning": "planning.standard"
+  },
   "stage_entrypoint_overrides": {},
   "stage_skill_additions": {},
   "stage_model_bindings": {},

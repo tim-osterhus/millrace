@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import fingerprint_runtime_config, load_runtime_config
+from millrace_ai.contracts import Plane
 from millrace_ai.errors import RuntimeLifecycleError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.runtime_lock import (
@@ -63,12 +64,20 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
                 "active_mode_id": compiled_plan.mode_id,
                 "execution_loop_id": compiled_plan.execution_loop_id,
                 "planning_loop_id": compiled_plan.planning_loop_id,
+                "learning_loop_id": compiled_plan.learning_loop_id,
+                "loop_ids_by_plane": compiled_plan.loop_ids_by_plane,
                 "compiled_plan_id": compiled_plan.compiled_plan_id,
                 "compiled_plan_path": str(
                     (engine.paths.state_dir / "compiled_plan.json").relative_to(engine.paths.root)
                 ),
                 "queue_depth_execution": engine._execution_queue_depth(),
                 "queue_depth_planning": engine._planning_queue_depth(),
+                "queue_depth_learning": engine._learning_queue_depth(),
+                "queue_depths_by_plane": {
+                    Plane.EXECUTION: engine._execution_queue_depth(),
+                    Plane.PLANNING: engine._planning_queue_depth(),
+                    Plane.LEARNING: engine._learning_queue_depth(),
+                },
                 "config_version": fingerprint_runtime_config(engine.config),
                 "watcher_mode": engine._watcher_mode_value(),
                 "last_reload_outcome": None,

@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
+    LearningStageName,
+    LearningTerminalResult,
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
@@ -82,6 +84,18 @@ _STAGE_LEGAL_TERMINALS: dict[str, set[str]] = {
         PlanningTerminalResult.REMEDIATION_NEEDED.value,
         PlanningTerminalResult.BLOCKED.value,
     },
+    LearningStageName.ANALYST.value: {
+        LearningTerminalResult.ANALYST_COMPLETE.value,
+        LearningTerminalResult.BLOCKED.value,
+    },
+    LearningStageName.PROFESSOR.value: {
+        LearningTerminalResult.PROFESSOR_COMPLETE.value,
+        LearningTerminalResult.BLOCKED.value,
+    },
+    LearningStageName.CURATOR.value: {
+        LearningTerminalResult.CURATOR_COMPLETE.value,
+        LearningTerminalResult.BLOCKED.value,
+    },
 }
 
 _RESULT_CLASS_BY_TERMINAL: dict[str, ResultClass] = {
@@ -100,6 +114,9 @@ _RESULT_CLASS_BY_TERMINAL: dict[str, ResultClass] = {
     PlanningTerminalResult.AUDITOR_COMPLETE.value: ResultClass.SUCCESS,
     PlanningTerminalResult.ARBITER_COMPLETE.value: ResultClass.SUCCESS,
     PlanningTerminalResult.REMEDIATION_NEEDED.value: ResultClass.FOLLOWUP_NEEDED,
+    LearningTerminalResult.ANALYST_COMPLETE.value: ResultClass.SUCCESS,
+    LearningTerminalResult.PROFESSOR_COMPLETE.value: ResultClass.SUCCESS,
+    LearningTerminalResult.CURATOR_COMPLETE.value: ResultClass.SUCCESS,
 }
 
 _TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
@@ -161,7 +178,10 @@ def normalize_stage_result(
     result_class = extraction.result_class
     assert isinstance(result_class, ResultClass)
     terminal_result = extraction.terminal_result
-    assert isinstance(terminal_result, (ExecutionTerminalResult, PlanningTerminalResult))
+    assert isinstance(
+        terminal_result,
+        (ExecutionTerminalResult, PlanningTerminalResult, LearningTerminalResult),
+    )
     report_artifact = _resolved_report_artifact(request)
 
     return StageResultEnvelope(
@@ -513,6 +533,8 @@ def _terminal_result_for_stage(stage: StageName, token: str) -> TerminalResult |
     stage_plane = _STAGE_TO_PLANE[stage.value]
     if stage_plane is Plane.EXECUTION:
         return ExecutionTerminalResult(token)
+    if stage_plane is Plane.LEARNING:
+        return LearningTerminalResult(token)
     return PlanningTerminalResult(token)
 
 
@@ -546,6 +568,8 @@ def _resolve_result_class(
 def _blocked_terminal_for_plane(plane: Plane) -> TerminalResult:
     if plane is Plane.EXECUTION:
         return ExecutionTerminalResult.BLOCKED
+    if plane is Plane.LEARNING:
+        return LearningTerminalResult.BLOCKED
     return PlanningTerminalResult.BLOCKED
 
 
@@ -585,6 +609,10 @@ def _request_result_identity(request: StageRunRequest) -> tuple[WorkItemKind, st
         if request.closure_target_root_spec_id is None:
             raise ValueError("closure_target_root_spec_id is required for closure_target requests")
         return (WorkItemKind.SPEC, request.closure_target_root_spec_id)
+    if request.request_kind == "learning_request":
+        if request.active_work_item_id is None:
+            raise ValueError("active_work_item_id is required for learning_request requests")
+        return (WorkItemKind.LEARNING_REQUEST, request.active_work_item_id)
 
     if request.active_work_item_kind is None or request.active_work_item_id is None:
         raise ValueError(
@@ -632,6 +660,7 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "preferred_rubric_path": request.preferred_rubric_path,
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,
+        "skill_revision_evidence_path": request.skill_revision_evidence_path,
     }
 
 

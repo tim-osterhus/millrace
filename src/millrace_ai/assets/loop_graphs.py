@@ -18,6 +18,7 @@ GRAPH_LOOPS_ROOT = Path("graphs")
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("graphs/execution/standard.json"),
     "execution.skills_pipeline": Path("graphs/execution/skills_pipeline.json"),
+    "learning.standard": Path("graphs/learning/standard.json"),
     "planning.standard": Path("graphs/planning/standard.json"),
     "planning.skills_pipeline": Path("graphs/planning/skills_pipeline.json"),
 }

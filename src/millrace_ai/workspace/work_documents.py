@@ -9,10 +9,10 @@ from typing import TypeVar
 
 from pydantic import ValidationError
 
-from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument
+from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument
 
-WorkDocument = TaskDocument | SpecDocument | IncidentDocument
-_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument)
+WorkDocument = TaskDocument | SpecDocument | IncidentDocument | LearningRequestDocument
+_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
 _TITLE_PATTERN = re.compile(r"^#\s+(?P<title>.+?)\s*$")
 _FIELD_PATTERN = re.compile(r"^(?P<label>[A-Za-z][A-Za-z0-9-]*):(?:\s*(?P<value>.*))?$")
 _LIST_ITEM_PATTERN = re.compile(r"^-\s+(?P<value>.+?)\s*$")
@@ -116,10 +116,32 @@ _INCIDENT_SCHEMA = _DocumentSchema(
         ("References", "references"),
     ),
 )
+_LEARNING_REQUEST_SCHEMA = _DocumentSchema(
+    model=LearningRequestDocument,
+    id_field="learning_request_id",
+    scalar_fields=(
+        ("Learning-Request-ID", "learning_request_id"),
+        ("Title", "title"),
+        ("Summary", "summary"),
+        ("Requested-Action", "requested_action"),
+        ("Target-Skill-ID", "target_skill_id"),
+        ("Created-At", "created_at"),
+        ("Created-By", "created_by"),
+        ("Updated-At", "updated_at"),
+    ),
+    list_fields=(
+        ("Source-Refs", "source_refs"),
+        ("Preferred-Output-Paths", "preferred_output_paths"),
+        ("Originating-Run-IDs", "originating_run_ids"),
+        ("Artifact-Paths", "artifact_paths"),
+        ("References", "references"),
+    ),
+)
 _SCHEMA_BY_MODEL: dict[type[WorkDocument], _DocumentSchema] = {
     TaskDocument: _TASK_SCHEMA,
     SpecDocument: _SPEC_SCHEMA,
     IncidentDocument: _INCIDENT_SCHEMA,
+    LearningRequestDocument: _LEARNING_REQUEST_SCHEMA,
 }
 _SCHEMA_BY_ID_FIELD: dict[str, _DocumentSchema] = {
     schema.id_field: schema for schema in _SCHEMA_BY_MODEL.values()
@@ -150,7 +172,13 @@ def parse_work_document(raw: str, *, path: Path | None = None) -> WorkDocument:
         return _validate_document(model=TaskDocument, heading_title=heading_title, field_payload=field_payload)
     if model is SpecDocument:
         return _validate_document(model=SpecDocument, heading_title=heading_title, field_payload=field_payload)
-    return _validate_document(model=IncidentDocument, heading_title=heading_title, field_payload=field_payload)
+    if model is IncidentDocument:
+        return _validate_document(model=IncidentDocument, heading_title=heading_title, field_payload=field_payload)
+    return _validate_document(
+        model=LearningRequestDocument,
+        heading_title=heading_title,
+        field_payload=field_payload,
+    )
 
 
 def parse_work_document_as(raw: str, *, model: type[_DocT], path: Path | None = None) -> _DocT:

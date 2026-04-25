@@ -34,6 +34,7 @@ from millrace_ai.state_store import (
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
+    set_learning_status,
     set_planning_status,
 )
 from millrace_ai.watchers import WatcherSession, WatchEvent
@@ -397,6 +398,12 @@ class RuntimeEngine:
             except QueueStateError:
                 continue
             requeued_count += 1
+        for path in sorted(self.paths.learning_requests_active_dir.glob("*.md")):
+            try:
+                queue.requeue_learning_request(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
         return requeued_count
 
     def _requeue_active_item(
@@ -413,6 +420,9 @@ class RuntimeEngine:
         if work_item_kind is WorkItemKind.SPEC:
             queue.requeue_spec(work_item_id, reason=reason)
             return
+        if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+            queue.requeue_learning_request(work_item_id, reason=reason)
+            return
         queue.requeue_incident(work_item_id, reason=reason)
 
     def _reset_runtime_to_idle(
@@ -428,6 +438,7 @@ class RuntimeEngine:
             process_running=process_running,
             queue_depth_execution=self._execution_queue_depth(),
             queue_depth_planning=self._planning_queue_depth(),
+            queue_depth_learning=self._learning_queue_depth(),
             clear_stop_requested=clear_stop_requested,
             clear_paused=clear_paused,
         )
@@ -435,6 +446,7 @@ class RuntimeEngine:
         save_snapshot(self.paths, self.snapshot)
         set_execution_status(self.paths, IDLE_STATUS_MARKER)
         set_planning_status(self.paths, IDLE_STATUS_MARKER)
+        set_learning_status(self.paths, IDLE_STATUS_MARKER)
 
     def _mark_active_stage_running(self, *, plane: Plane, stage: StageName) -> None:
         assert self.snapshot is not None
@@ -443,6 +455,11 @@ class RuntimeEngine:
             set_execution_status(self.paths, marker)
             self.snapshot = self.snapshot.model_copy(
                 update={"execution_status_marker": marker, "updated_at": self._now()}
+            )
+        elif plane is Plane.LEARNING:
+            set_learning_status(self.paths, marker)
+            self.snapshot = self.snapshot.model_copy(
+                update={"learning_status_marker": marker, "updated_at": self._now()}
             )
         else:
             set_planning_status(self.paths, marker)
@@ -464,6 +481,9 @@ class RuntimeEngine:
 
     def _planning_queue_depth(self) -> int:
         return stage_requests.planning_queue_depth(self)
+
+    def _learning_queue_depth(self) -> int:
+        return stage_requests.learning_queue_depth(self)
 
     def _runner_failure_result(
         self,

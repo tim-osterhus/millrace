@@ -8,12 +8,13 @@ from enum import Enum
 from pathlib import PurePath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 
 class Plane(str, Enum):
     EXECUTION = "execution"
     PLANNING = "planning"
+    LEARNING = "learning"
 
 
 class ExecutionStageName(str, Enum):
@@ -34,7 +35,13 @@ class PlanningStageName(str, Enum):
     ARBITER = "arbiter"
 
 
-StageName = ExecutionStageName | PlanningStageName
+class LearningStageName(str, Enum):
+    ANALYST = "analyst"
+    PROFESSOR = "professor"
+    CURATOR = "curator"
+
+
+StageName = ExecutionStageName | PlanningStageName | LearningStageName
 
 
 class ExecutionTerminalResult(str, Enum):
@@ -60,7 +67,14 @@ class PlanningTerminalResult(str, Enum):
     BLOCKED = "BLOCKED"
 
 
-TerminalResult = ExecutionTerminalResult | PlanningTerminalResult
+class LearningTerminalResult(str, Enum):
+    ANALYST_COMPLETE = "ANALYST_COMPLETE"
+    PROFESSOR_COMPLETE = "PROFESSOR_COMPLETE"
+    CURATOR_COMPLETE = "CURATOR_COMPLETE"
+    BLOCKED = "BLOCKED"
+
+
+TerminalResult = ExecutionTerminalResult | PlanningTerminalResult | LearningTerminalResult
 
 
 class ResultClass(str, Enum):
@@ -75,6 +89,15 @@ class WorkItemKind(str, Enum):
     TASK = "task"
     SPEC = "spec"
     INCIDENT = "incident"
+    LEARNING_REQUEST = "learning_request"
+
+
+class LearningRequestAction(str, Enum):
+    CREATE = "create"
+    IMPROVE = "improve"
+    PROMOTE = "promote"
+    EXPORT = "export"
+    INSTALL = "install"
 
 
 class TaskStatusHint(str, Enum):
@@ -177,6 +200,9 @@ _STAGE_TO_PLANE: dict[str, Plane] = {
     PlanningStageName.MECHANIC.value: Plane.PLANNING,
     PlanningStageName.AUDITOR.value: Plane.PLANNING,
     PlanningStageName.ARBITER.value: Plane.PLANNING,
+    LearningStageName.ANALYST.value: Plane.LEARNING,
+    LearningStageName.PROFESSOR.value: Plane.LEARNING,
+    LearningStageName.CURATOR.value: Plane.LEARNING,
 }
 
 
@@ -232,6 +258,18 @@ _STAGE_LEGAL_TERMINAL_RESULTS: dict[str, set[str]] = {
         PlanningTerminalResult.ARBITER_COMPLETE.value,
         PlanningTerminalResult.REMEDIATION_NEEDED.value,
         PlanningTerminalResult.BLOCKED.value,
+    },
+    LearningStageName.ANALYST.value: {
+        LearningTerminalResult.ANALYST_COMPLETE.value,
+        LearningTerminalResult.BLOCKED.value,
+    },
+    LearningStageName.PROFESSOR.value: {
+        LearningTerminalResult.PROFESSOR_COMPLETE.value,
+        LearningTerminalResult.BLOCKED.value,
+    },
+    LearningStageName.CURATOR.value: {
+        LearningTerminalResult.CURATOR_COMPLETE.value,
+        LearningTerminalResult.BLOCKED.value,
     },
 }
 
@@ -390,6 +428,37 @@ class IncidentDocument(ContractModel):
         return self
 
 
+class LearningRequestDocument(ContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["learning_request"] = "learning_request"
+
+    learning_request_id: str
+    title: str
+    summary: str = ""
+
+    requested_action: LearningRequestAction
+    target_skill_id: str | None = None
+    source_refs: tuple[str, ...] = ()
+    preferred_output_paths: tuple[str, ...] = ()
+    trigger_metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    originating_run_ids: tuple[str, ...] = ()
+    artifact_paths: tuple[str, ...] = ()
+    references: tuple[str, ...] = ()
+
+    created_at: datetime
+    created_by: str
+    updated_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_identifier_shape(self) -> "LearningRequestDocument":
+        _validate_safe_identifier(self.learning_request_id, field_name="learning_request_id")
+        if self.target_skill_id is not None:
+            _validate_safe_identifier(self.target_skill_id, field_name="target_skill_id")
+        for run_id in self.originating_run_ids:
+            _validate_safe_identifier(run_id, field_name="originating_run_ids")
+        return self
+
+
 class CompletionBehaviorDefinition(ContractModel):
     trigger: Literal["backlog_drained"]
     readiness_rule: Literal["no_open_lineage_work"]
@@ -530,6 +599,9 @@ class StageResultEnvelope(ContractModel):
             PlanningTerminalResult.AUDITOR_COMPLETE: ResultClass.SUCCESS,
             PlanningTerminalResult.ARBITER_COMPLETE: ResultClass.SUCCESS,
             PlanningTerminalResult.REMEDIATION_NEEDED: ResultClass.FOLLOWUP_NEEDED,
+            LearningTerminalResult.ANALYST_COMPLETE: ResultClass.SUCCESS,
+            LearningTerminalResult.PROFESSOR_COMPLETE: ResultClass.SUCCESS,
+            LearningTerminalResult.CURATOR_COMPLETE: ResultClass.SUCCESS,
         }
         if self.result_class != expected_result_class[self.terminal_result]:
             raise ValueError("result_class does not match terminal_result semantics")
@@ -632,18 +704,112 @@ class LoopConfigDefinition(ContractModel):
         return self
 
 
+class LearningTriggerRuleDefinition(ContractModel):
+    rule_id: str
+    source_plane: Plane
+    source_stage: StageName
+    on_terminal_results: tuple[str, ...] = Field(min_length=1)
+    target_stage: LearningStageName
+    requested_action: LearningRequestAction = LearningRequestAction.IMPROVE
+
+    @field_validator("on_terminal_results", mode="before")
+    @classmethod
+    def normalize_terminal_results(cls, value: tuple[str, ...] | list[str] | str) -> tuple[str, ...]:
+        if isinstance(value, str):
+            raw_values = [value]
+        else:
+            raw_values = list(value)
+        normalized = tuple(str(item).strip() for item in raw_values if str(item).strip())
+        if not normalized:
+            raise ValueError("on_terminal_results must not be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_rule_shape(self) -> "LearningTriggerRuleDefinition":
+        _validate_safe_identifier(self.rule_id, field_name="rule_id")
+        if _STAGE_TO_PLANE[self.source_stage.value] is not self.source_plane:
+            raise ValueError("source_stage must belong to source_plane")
+        if self.source_plane is Plane.LEARNING:
+            raise ValueError("learning triggers must originate outside the learning plane")
+        legal = _STAGE_LEGAL_TERMINAL_RESULTS[self.source_stage.value]
+        unknown = tuple(result for result in self.on_terminal_results if result not in legal)
+        if unknown:
+            raise ValueError(
+                "on_terminal_results contains values illegal for source_stage: "
+                + ", ".join(unknown)
+            )
+        return self
+
+
+class PlaneConcurrencyPolicyDefinition(ContractModel):
+    mutually_exclusive_planes: tuple[tuple[Plane, ...], ...] = ()
+    may_run_concurrently: tuple[tuple[Plane, ...], ...] = ()
+
+
 class ModeDefinition(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["mode"] = "mode"
 
     mode_id: str
-    execution_loop_id: str
-    planning_loop_id: str
+    loop_ids_by_plane: dict[Plane, str]
 
     stage_entrypoint_overrides: dict[StageName, str] = Field(default_factory=dict)
     stage_skill_additions: dict[StageName, tuple[str, ...]] = Field(default_factory=dict)
     stage_model_bindings: dict[StageName, str] = Field(default_factory=dict)
     stage_runner_bindings: dict[StageName, str] = Field(default_factory=dict)
+    concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
+    learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_loop_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        loop_ids = dict(payload.get("loop_ids_by_plane") or {})
+        legacy_execution = payload.pop("execution_loop_id", None)
+        legacy_planning = payload.pop("planning_loop_id", None)
+
+        if legacy_execution is not None:
+            loop_ids[Plane.EXECUTION.value] = legacy_execution
+        if legacy_planning is not None:
+            loop_ids[Plane.PLANNING.value] = legacy_planning
+        if loop_ids:
+            payload["loop_ids_by_plane"] = loop_ids
+        return payload
+
+    @model_validator(mode="after")
+    def validate_loop_bindings(self) -> "ModeDefinition":
+        if Plane.EXECUTION not in self.loop_ids_by_plane:
+            raise ValueError("loop_ids_by_plane must include execution")
+        if Plane.PLANNING not in self.loop_ids_by_plane:
+            raise ValueError("loop_ids_by_plane must include planning")
+        for plane, loop_id in self.loop_ids_by_plane.items():
+            expected_prefix = f"{plane.value}."
+            if not loop_id.startswith(expected_prefix):
+                raise ValueError(
+                    f"loop id for plane {plane.value} must start with {expected_prefix!r}"
+                )
+        if self.learning_trigger_rules and not self.learning_enabled:
+            raise ValueError("learning_trigger_rules require a learning loop binding")
+        return self
+
+    @property
+    def execution_loop_id(self) -> str:
+        return self.loop_ids_by_plane[Plane.EXECUTION]
+
+    @property
+    def planning_loop_id(self) -> str:
+        return self.loop_ids_by_plane[Plane.PLANNING]
+
+    @property
+    def learning_loop_id(self) -> str | None:
+        return self.loop_ids_by_plane.get(Plane.LEARNING)
+
+    @property
+    def learning_enabled(self) -> bool:
+        return Plane.LEARNING in self.loop_ids_by_plane
 
 
 class CompileDiagnostics(ContractModel):
@@ -674,6 +840,8 @@ class RuntimeSnapshot(ContractModel):
     active_mode_id: str
     execution_loop_id: str
     planning_loop_id: str
+    learning_loop_id: str | None = None
+    loop_ids_by_plane: dict[Plane, str] = Field(default_factory=dict)
     compiled_plan_id: str
     compiled_plan_path: str
 
@@ -685,9 +853,13 @@ class RuntimeSnapshot(ContractModel):
 
     execution_status_marker: str
     planning_status_marker: str
+    learning_status_marker: str = "### IDLE"
+    status_markers_by_plane: dict[Plane, str] = Field(default_factory=dict)
 
     queue_depth_execution: int = 0
     queue_depth_planning: int = 0
+    queue_depth_learning: int = 0
+    queue_depths_by_plane: dict[Plane, int] = Field(default_factory=dict)
 
     last_terminal_result: TerminalResult | None = None
     last_stage_result_path: str | None = None
@@ -706,6 +878,44 @@ class RuntimeSnapshot(ContractModel):
     started_at: datetime | None = None
     active_since: datetime | None = None
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_plane_indexed_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        loop_ids = dict(payload.get("loop_ids_by_plane") or {})
+        if "execution_loop_id" in payload:
+            loop_ids.setdefault(Plane.EXECUTION.value, payload["execution_loop_id"])
+        if "planning_loop_id" in payload:
+            loop_ids.setdefault(Plane.PLANNING.value, payload["planning_loop_id"])
+        if payload.get("learning_loop_id") is not None:
+            loop_ids.setdefault(Plane.LEARNING.value, payload["learning_loop_id"])
+        if loop_ids:
+            payload["loop_ids_by_plane"] = loop_ids
+
+        status_markers = dict(payload.get("status_markers_by_plane") or {})
+        if "execution_status_marker" in payload:
+            status_markers.setdefault(Plane.EXECUTION.value, payload["execution_status_marker"])
+        if "planning_status_marker" in payload:
+            status_markers.setdefault(Plane.PLANNING.value, payload["planning_status_marker"])
+        if "learning_status_marker" in payload:
+            status_markers.setdefault(Plane.LEARNING.value, payload["learning_status_marker"])
+        if status_markers:
+            payload["status_markers_by_plane"] = status_markers
+
+        queue_depths = dict(payload.get("queue_depths_by_plane") or {})
+        if "queue_depth_execution" in payload:
+            queue_depths.setdefault(Plane.EXECUTION.value, payload["queue_depth_execution"])
+        if "queue_depth_planning" in payload:
+            queue_depths.setdefault(Plane.PLANNING.value, payload["queue_depth_planning"])
+        if "queue_depth_learning" in payload:
+            queue_depths.setdefault(Plane.LEARNING.value, payload["queue_depth_learning"])
+        if queue_depths:
+            payload["queue_depths_by_plane"] = queue_depths
+        return payload
 
     @model_validator(mode="after")
     def validate_active_state(self) -> "RuntimeSnapshot":
@@ -734,8 +944,10 @@ class RuntimeSnapshot(ContractModel):
         if self.active_since is not None and self.active_stage is None:
             raise ValueError("active_since requires active_stage")
 
-        if self.queue_depth_execution < 0 or self.queue_depth_planning < 0:
+        if self.queue_depth_execution < 0 or self.queue_depth_planning < 0 or self.queue_depth_learning < 0:
             raise ValueError("queue depth values must be >= 0")
+        if any(depth < 0 for depth in self.queue_depths_by_plane.values()):
+            raise ValueError("plane-indexed queue depth values must be >= 0")
 
         return self
 

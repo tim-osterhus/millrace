@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
+    LearningStageName,
+    LearningTerminalResult,
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
@@ -25,7 +27,7 @@ _ORPHANED_COUNTER_FAILURE_CLASS = "stale_recovery_without_active_stage"
 
 _RUNNING_MARKER_BY_STAGE: dict[str, str] = {
     stage.value: f"### {stage.value.upper()}_RUNNING"
-    for stage in (*ExecutionStageName, *PlanningStageName)
+    for stage in (*ExecutionStageName, *PlanningStageName, *LearningStageName)
 }
 _EXECUTION_RUNNING_MARKERS = frozenset(
     _RUNNING_MARKER_BY_STAGE[stage.value] for stage in ExecutionStageName
@@ -33,12 +35,18 @@ _EXECUTION_RUNNING_MARKERS = frozenset(
 _PLANNING_RUNNING_MARKERS = frozenset(
     _RUNNING_MARKER_BY_STAGE[stage.value] for stage in PlanningStageName
 )
+_LEARNING_RUNNING_MARKERS = frozenset(
+    _RUNNING_MARKER_BY_STAGE[stage.value] for stage in LearningStageName
+)
 
 _EXECUTION_STATUS_MARKERS = frozenset(
     {_IDLE_MARKER, *_EXECUTION_RUNNING_MARKERS, *(f"### {value.value}" for value in ExecutionTerminalResult)}
 )
 _PLANNING_STATUS_MARKERS = frozenset(
     {_IDLE_MARKER, *_PLANNING_RUNNING_MARKERS, *(f"### {value.value}" for value in PlanningTerminalResult)}
+)
+_LEARNING_STATUS_MARKERS = frozenset(
+    {_IDLE_MARKER, *_LEARNING_RUNNING_MARKERS, *(f"### {value.value}" for value in LearningTerminalResult)}
 )
 
 _STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
@@ -62,6 +70,9 @@ _STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
     PlanningStageName.ARBITER.value: frozenset(
         {"### ARBITER_COMPLETE", "### REMEDIATION_NEEDED", "### BLOCKED"}
     ),
+    LearningStageName.ANALYST.value: frozenset({"### ANALYST_COMPLETE", "### BLOCKED"}),
+    LearningStageName.PROFESSOR.value: frozenset({"### PROFESSOR_COMPLETE", "### BLOCKED"}),
+    LearningStageName.CURATOR.value: frozenset({"### CURATOR_COMPLETE", "### BLOCKED"}),
 }
 
 _STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {
@@ -90,6 +101,9 @@ _STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {
     PlanningStageName.MECHANIC.value: _PLANNING_STATUS_MARKERS - {_IDLE_MARKER},
     PlanningStageName.AUDITOR.value: frozenset(),
     PlanningStageName.ARBITER.value: frozenset(),
+    LearningStageName.ANALYST.value: frozenset(),
+    LearningStageName.PROFESSOR.value: frozenset({"### ANALYST_COMPLETE"}),
+    LearningStageName.CURATOR.value: frozenset({"### PROFESSOR_COMPLETE"}),
 }
 
 
@@ -110,6 +124,10 @@ def normalize_execution_status_marker(marker: str) -> str:
 
 def normalize_planning_status_marker(marker: str) -> str:
     return _validate_marker(marker, _PLANNING_STATUS_MARKERS, label="planning status")
+
+
+def normalize_learning_status_marker(marker: str) -> str:
+    return _validate_marker(marker, _LEARNING_STATUS_MARKERS, label="learning status")
 
 
 def running_status_marker_for_stage(stage: StageName) -> str:
@@ -267,6 +285,7 @@ __all__ = [
     "ReconciliationSignal",
     "collect_reconciliation_signals",
     "normalize_execution_status_marker",
+    "normalize_learning_status_marker",
     "normalize_planning_status_marker",
     "running_status_marker_for_stage",
 ]

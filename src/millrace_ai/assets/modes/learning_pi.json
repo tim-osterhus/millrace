@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "learning_pi",
+  "loop_ids_by_plane": {
+    "execution": "execution.standard",
+    "planning": "planning.standard",
+    "learning": "learning.standard"
+  },
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "builder": "pi_rpc",
+    "checker": "pi_rpc",
+    "fixer": "pi_rpc",
+    "doublechecker": "pi_rpc",
+    "updater": "pi_rpc",
+    "troubleshooter": "pi_rpc",
+    "consultant": "pi_rpc",
+    "planner": "pi_rpc",
+    "manager": "pi_rpc",
+    "mechanic": "pi_rpc",
+    "auditor": "pi_rpc",
+    "arbiter": "pi_rpc",
+    "analyst": "pi_rpc",
+    "professor": "pi_rpc",
+    "curator": "pi_rpc"
+  },
+  "concurrency_policy": {
+    "mutually_exclusive_planes": [["execution", "planning"]],
+    "may_run_concurrently": [["learning", "execution"], ["learning", "planning"]]
+  },
+  "learning_trigger_rules": [
+    {
+      "rule_id": "execution.doublechecker.success-to-curator",
+      "source_plane": "execution",
+      "source_stage": "doublechecker",
+      "on_terminal_results": ["DOUBLECHECK_PASS"],
+      "target_stage": "curator",
+      "requested_action": "improve"
+    },
+    {
+      "rule_id": "execution.troubleshooter.recovery-to-analyst",
+      "source_plane": "execution",
+      "source_stage": "troubleshooter",
+      "on_terminal_results": ["TROUBLESHOOT_COMPLETE", "BLOCKED"],
+      "target_stage": "analyst",
+      "requested_action": "improve"
+    },
+    {
+      "rule_id": "execution.consultant.recovery-to-analyst",
+      "source_plane": "execution",
+      "source_stage": "consultant",
+      "on_terminal_results": ["CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"],
+      "target_stage": "analyst",
+      "requested_action": "improve"
+    }
+  ]
+}

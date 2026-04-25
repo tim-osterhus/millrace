@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from millrace_ai.contracts import Plane
+
 IDLE_STATUS_MARKER = "### IDLE"
 
 
@@ -13,6 +15,7 @@ def idle_snapshot_update(
     process_running: bool,
     queue_depth_execution: int,
     queue_depth_planning: int,
+    queue_depth_learning: int,
     clear_stop_requested: bool,
     clear_paused: bool,
 ) -> dict[str, object]:
@@ -33,8 +36,15 @@ def idle_snapshot_update(
         "consultant_invocations": 0,
         "execution_status_marker": IDLE_STATUS_MARKER,
         "planning_status_marker": IDLE_STATUS_MARKER,
+        "learning_status_marker": IDLE_STATUS_MARKER,
         "queue_depth_execution": queue_depth_execution,
         "queue_depth_planning": queue_depth_planning,
+        "queue_depth_learning": queue_depth_learning,
+        "queue_depths_by_plane": {
+            Plane.EXECUTION: queue_depth_execution,
+            Plane.PLANNING: queue_depth_planning,
+            Plane.LEARNING: queue_depth_learning,
+        },
         "updated_at": now,
     }
     if clear_paused:

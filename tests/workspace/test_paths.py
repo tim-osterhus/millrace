@@ -34,16 +34,28 @@ def _expected_directories(root: Path) -> list[Path]:
         runtime_root / "incidents" / "active",
         runtime_root / "incidents" / "resolved",
         runtime_root / "incidents" / "blocked",
+        runtime_root / "learning",
+        runtime_root / "learning" / "requests",
+        runtime_root / "learning" / "requests" / "queue",
+        runtime_root / "learning" / "requests" / "active",
+        runtime_root / "learning" / "requests" / "done",
+        runtime_root / "learning" / "requests" / "blocked",
+        runtime_root / "learning" / "research-packets",
+        runtime_root / "learning" / "skill-candidates",
+        runtime_root / "learning" / "update-candidates",
         runtime_root / "loops",
         runtime_root / "loops" / "execution",
         runtime_root / "loops" / "planning",
+        runtime_root / "loops" / "learning",
         runtime_root / "graphs",
         runtime_root / "graphs" / "execution",
         runtime_root / "graphs" / "planning",
+        runtime_root / "graphs" / "learning",
         runtime_root / "registry",
         runtime_root / "registry" / "stage_kinds",
         runtime_root / "registry" / "stage_kinds" / "execution",
         runtime_root / "registry" / "stage_kinds" / "planning",
+        runtime_root / "registry" / "stage_kinds" / "learning",
         runtime_root / "modes",
         runtime_root / "logs",
         runtime_root / "entrypoints",
@@ -81,10 +93,14 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.tasks_queue_dir == root / "millrace-agents" / "tasks" / "queue"
     assert paths.specs_active_dir == root / "millrace-agents" / "specs" / "active"
     assert paths.incidents_resolved_dir == root / "millrace-agents" / "incidents" / "resolved"
+    assert paths.learning_requests_queue_dir == root / "millrace-agents" / "learning" / "requests" / "queue"
+    assert paths.learning_research_packets_dir == root / "millrace-agents" / "learning" / "research-packets"
     assert paths.execution_loops_dir == root / "millrace-agents" / "loops" / "execution"
     assert paths.planning_loops_dir == root / "millrace-agents" / "loops" / "planning"
+    assert paths.learning_loops_dir == root / "millrace-agents" / "loops" / "learning"
     assert paths.execution_graphs_dir == root / "millrace-agents" / "graphs" / "execution"
     assert paths.planning_graphs_dir == root / "millrace-agents" / "graphs" / "planning"
+    assert paths.learning_graphs_dir == root / "millrace-agents" / "graphs" / "learning"
     assert (
         paths.execution_stage_kind_registry_dir
         == root / "millrace-agents" / "registry" / "stage_kinds" / "execution"
@@ -104,6 +120,7 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.historylog_file == root / "millrace-agents" / "historylog.md"
     assert paths.execution_status_file == root / "millrace-agents" / "state" / "execution_status.md"
     assert paths.planning_status_file == root / "millrace-agents" / "state" / "planning_status.md"
+    assert paths.learning_status_file == root / "millrace-agents" / "state" / "learning_status.md"
     assert not hasattr(paths, "roles_dir")
 
 
@@ -122,8 +139,10 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
         root / "millrace-agents" / "millrace.toml",
         root / "millrace-agents" / "state" / "execution_status.md",
         root / "millrace-agents" / "state" / "planning_status.md",
+        root / "millrace-agents" / "state" / "learning_status.md",
         root / "millrace-agents" / "state" / "runtime_snapshot.json",
         root / "millrace-agents" / "state" / "recovery_counters.json",
+        root / "millrace-agents" / "learning" / "events.jsonl",
     ]
     for file_path in expected_files:
         assert file_path.is_file(), f"Missing file: {file_path}"
@@ -164,12 +183,15 @@ def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None
 
     assert paths.execution_status_file.read_text(encoding="utf-8") == "### IDLE\n"
     assert paths.planning_status_file.read_text(encoding="utf-8") == "### IDLE\n"
+    assert paths.learning_status_file.read_text(encoding="utf-8") == "### IDLE\n"
 
     snapshot_payload = json.loads(paths.runtime_snapshot_file.read_text(encoding="utf-8"))
     snapshot = RuntimeSnapshot.model_validate(snapshot_payload)
     assert snapshot.runtime_mode == "daemon"
     assert snapshot.execution_status_marker == "### IDLE"
     assert snapshot.planning_status_marker == "### IDLE"
+    assert snapshot.learning_status_marker == "### IDLE"
+    assert snapshot.queue_depth_learning == 0
     assert snapshot.active_stage is None
 
     counters_payload = json.loads(paths.recovery_counters_file.read_text(encoding="utf-8"))

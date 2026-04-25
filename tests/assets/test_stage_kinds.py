@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.architecture import RecoveryRole, StageIdempotencePolicy
-from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName
+from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plane, PlanningStageName
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.stage_kinds import (
     SHIPPED_STAGE_KIND_IDS,
@@ -87,9 +87,13 @@ def test_stage_kinds_module_is_assets_facade() -> None:
 def test_builtin_stage_kinds_load_and_validate() -> None:
     stage_kinds = load_builtin_stage_kind_definitions()
 
-    assert len(stage_kinds) == 12
+    assert len(stage_kinds) == 15
     assert [stage_kind.stage_kind_id for stage_kind in stage_kinds] == list(SHIPPED_STAGE_KIND_IDS)
-    assert {stage_kind.plane for stage_kind in stage_kinds} == {Plane.EXECUTION, Plane.PLANNING}
+    assert {stage_kind.plane for stage_kind in stage_kinds} == {
+        Plane.EXECUTION,
+        Plane.PLANNING,
+        Plane.LEARNING,
+    }
     assert all(stage_kind.required_skill_paths for stage_kind in stage_kinds)
     assert all(stage_kind.success_outcomes for stage_kind in stage_kinds)
     assert all(
@@ -112,6 +116,9 @@ def test_shipped_stage_kind_ids_are_stable() -> None:
         "mechanic",
         "auditor",
         "arbiter",
+        "analyst",
+        "professor",
+        "curator",
     )
 
 
@@ -119,6 +126,7 @@ def test_builtin_stage_kinds_cover_current_shipped_stage_enums() -> None:
     expected_stage_ids = {
         *(stage.value for stage in ExecutionStageName),
         *(stage.value for stage in PlanningStageName),
+        *(stage.value for stage in LearningStageName),
     }
 
     assert set(SHIPPED_STAGE_KIND_IDS) == expected_stage_ids
@@ -128,6 +136,7 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     builder = load_builtin_stage_kind_definition("builder")
     arbiter = load_builtin_stage_kind_definition("arbiter")
     troubleshooter = load_builtin_stage_kind_definition("troubleshooter")
+    analyst = load_builtin_stage_kind_definition("analyst")
 
     assert builder.plane is Plane.EXECUTION
     assert builder.default_entrypoint_path == "entrypoints/execution/builder.md"
@@ -142,6 +151,10 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert arbiter.closure_role is True
     assert arbiter.failure_outcomes == ("REMEDIATION_NEEDED", "BLOCKED")
     assert arbiter.idempotence_policy is StageIdempotencePolicy.SINGLE_ATTEMPT_ONLY
+
+    assert analyst.plane is Plane.LEARNING
+    assert analyst.can_start_learning_requests is True
+    assert analyst.required_skill_paths == ("skills/stage/learning/analyst-core/SKILL.md",)
 
 
 def test_stage_kind_asset_errors_use_project_error_hierarchy() -> None:

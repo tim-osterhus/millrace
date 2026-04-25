@@ -12,20 +12,34 @@ pre-packaging draft tree for entrypoints.
 ### Execution Plane
 
 - `src/millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
+- `src/millrace_ai/assets/entrypoints/execution/skills-pipeline-builder.md` -> `millrace-agents/entrypoints/execution/skills-pipeline-builder.md`
 - `src/millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
+- `src/millrace_ai/assets/entrypoints/execution/skills-pipeline-checker.md` -> `millrace-agents/entrypoints/execution/skills-pipeline-checker.md`
 - `src/millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
+- `src/millrace_ai/assets/entrypoints/execution/skills-pipeline-fixer.md` -> `millrace-agents/entrypoints/execution/skills-pipeline-fixer.md`
 - `src/millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`
+- `src/millrace_ai/assets/entrypoints/execution/skills-pipeline-doublechecker.md` -> `millrace-agents/entrypoints/execution/skills-pipeline-doublechecker.md`
 - `src/millrace_ai/assets/entrypoints/execution/updater.md` -> `millrace-agents/entrypoints/execution/updater.md`
+- `src/millrace_ai/assets/entrypoints/execution/skills-pipeline-updater.md` -> `millrace-agents/entrypoints/execution/skills-pipeline-updater.md`
 - `src/millrace_ai/assets/entrypoints/execution/troubleshooter.md` -> `millrace-agents/entrypoints/execution/troubleshooter.md`
 - `src/millrace_ai/assets/entrypoints/execution/consultant.md` -> `millrace-agents/entrypoints/execution/consultant.md`
 
 ### Planning Plane
 
 - `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
+- `src/millrace_ai/assets/entrypoints/planning/skills-pipeline-planner.md` -> `millrace-agents/entrypoints/planning/skills-pipeline-planner.md`
 - `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
+- `src/millrace_ai/assets/entrypoints/planning/skills-pipeline-manager.md` -> `millrace-agents/entrypoints/planning/skills-pipeline-manager.md`
 - `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
 - `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
 - `src/millrace_ai/assets/entrypoints/planning/arbiter.md` -> `millrace-agents/entrypoints/planning/arbiter.md`
+- `src/millrace_ai/assets/entrypoints/planning/skills-pipeline-arbiter.md` -> `millrace-agents/entrypoints/planning/skills-pipeline-arbiter.md`
+
+### Learning Plane
+
+- `src/millrace_ai/assets/entrypoints/learning/analyst.md` -> `millrace-agents/entrypoints/learning/analyst.md`
+- `src/millrace_ai/assets/entrypoints/learning/professor.md` -> `millrace-agents/entrypoints/learning/professor.md`
+- `src/millrace_ai/assets/entrypoints/learning/curator.md` -> `millrace-agents/entrypoints/learning/curator.md`
 
 ## Entrypoint Contract Expectations
 
@@ -36,6 +50,7 @@ pre-packaging draft tree for entrypoints.
   - `active_work_item_path`: `millrace-agents/tasks/active/<TASK_ID>.md`
   - `active_work_item_path`: `millrace-agents/specs/active/<SPEC_ID>.md`
   - `active_work_item_path`: `millrace-agents/incidents/active/<INCIDENT_ID>.md`
+  - `active_work_item_path`: `millrace-agents/learning/requests/active/<REQUEST_ID>.md`
 - Closure-target-driven audits read request-provided closure state such as:
   - `closure_target_path`: `millrace-agents/arbiter/targets/<ROOT_SPEC_ID>.json`
 - Planning outputs that should be re-ingested target markdown queue surfaces:

@@ -16,9 +16,20 @@ Run isolated A/B QA for a draft skill package.
 3. request-provided `run_dir/skill_spec.md`
 4. `lab/skills-pipeline/rubrics/ab-qa.md`
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `checker-core`: load the runtime-provided verification posture from `required_skill_paths`
+
+## Optional Secondary Skills
+
+- No default optional skill; choose only from the skills index when it improves
+  the QA pass.
 
 ## QA Agent Policy
 

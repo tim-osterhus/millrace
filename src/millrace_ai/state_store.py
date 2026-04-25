@@ -10,6 +10,7 @@ from millrace_ai.workspace.state_reconciliation import (
 from millrace_ai.workspace.state_store import (
     increment_troubleshoot_attempt,
     load_execution_status,
+    load_learning_status,
     load_planning_status,
     load_recovery_counters,
     load_snapshot,
@@ -17,6 +18,7 @@ from millrace_ai.workspace.state_store import (
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
+    set_learning_status,
     set_planning_status,
 )
 
@@ -25,6 +27,7 @@ __all__ = [
     "collect_reconciliation_signals",
     "increment_troubleshoot_attempt",
     "load_execution_status",
+    "load_learning_status",
     "load_planning_status",
     "load_recovery_counters",
     "load_snapshot",
@@ -33,5 +36,6 @@ __all__ = [
     "save_recovery_counters",
     "save_snapshot",
     "set_execution_status",
+    "set_learning_status",
     "set_planning_status",
 ]

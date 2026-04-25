@@ -87,6 +87,20 @@ def test_builtin_modes_load_new_canonical_codex_and_pi_presets() -> None:
     assert set(pi_bundle.mode.stage_runner_bindings.values()) == {"pi_rpc"}
 
 
+def test_learning_modes_load_learning_plane_without_changing_default_modes() -> None:
+    default_bundle = load_builtin_mode_bundle("default_codex")
+    learning_bundle = load_builtin_mode_bundle("learning_codex")
+
+    assert default_bundle.mode.learning_enabled is False
+    assert set(default_bundle.mode.loop_ids_by_plane) == {Plane.EXECUTION, Plane.PLANNING}
+    assert learning_bundle.mode.learning_enabled is True
+    assert learning_bundle.learning_loop is not None
+    assert learning_bundle.learning_loop.loop_id == "learning.standard"
+    assert learning_bundle.learning_loop.plane is Plane.LEARNING
+    assert learning_bundle.mode.learning_trigger_rules
+    assert set(learning_bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
+
+
 def test_skills_pipeline_codex_mode_loads_pipeline_loops_and_stage_bindings() -> None:
     bundle = load_builtin_mode_bundle("skills_pipeline_codex")
 
@@ -133,7 +147,12 @@ def test_unknown_loop_reference_in_mode_bundle_fails_deterministically(tmp_path:
 
 
 def test_shipped_mode_ids_are_stable() -> None:
-    assert SHIPPED_MODE_IDS == ("default_codex", "default_pi")
+    assert SHIPPED_MODE_IDS == (
+        "default_codex",
+        "default_pi",
+        "learning_codex",
+        "learning_pi",
+    )
 
 
 def test_removed_role_augmented_mode_is_unknown() -> None:

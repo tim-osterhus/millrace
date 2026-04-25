@@ -19,6 +19,12 @@ def refresh_runtime_queue_depths(engine: RuntimeEngine, *, process_running: bool
     update: dict[str, object] = {
         "queue_depth_execution": engine._execution_queue_depth(),
         "queue_depth_planning": engine._planning_queue_depth(),
+        "queue_depth_learning": engine._learning_queue_depth(),
+        "queue_depths_by_plane": {
+            Plane.EXECUTION: engine._execution_queue_depth(),
+            Plane.PLANNING: engine._planning_queue_depth(),
+            Plane.LEARNING: engine._learning_queue_depth(),
+        },
         "updated_at": engine._now(),
     }
     if process_running is not None:

@@ -7,13 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
-from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
 from millrace_ai.errors import QueueStateError
 
 from .paths import WorkspacePaths
 from .work_documents import render_work_document
 
-_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument)
+_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
 
 
 def enqueue_task(paths: WorkspacePaths, doc: TaskDocument) -> Path:
@@ -33,6 +33,13 @@ def enqueue_spec(paths: WorkspacePaths, doc: SpecDocument) -> Path:
 def enqueue_incident(paths: WorkspacePaths, doc: IncidentDocument) -> Path:
     _ensure_unique_incident_id(paths, doc.incident_id)
     destination = paths.incidents_incoming_dir / f"{doc.incident_id}.md"
+    _write_model(destination, doc)
+    return destination
+
+
+def enqueue_learning_request(paths: WorkspacePaths, doc: LearningRequestDocument) -> Path:
+    _ensure_unique_learning_request_id(paths, doc.learning_request_id)
+    destination = paths.learning_requests_queue_dir / f"{doc.learning_request_id}.md"
     _write_model(destination, doc)
     return destination
 
@@ -91,6 +98,24 @@ def mark_incident_blocked(paths: WorkspacePaths, incident_id: str) -> Path:
     )
 
 
+def mark_learning_request_done(paths: WorkspacePaths, learning_request_id: str) -> Path:
+    return _move_item(
+        source_dir=paths.learning_requests_active_dir,
+        destination_dir=paths.learning_requests_done_dir,
+        item_id=learning_request_id,
+        kind=WorkItemKind.LEARNING_REQUEST,
+    )
+
+
+def mark_learning_request_blocked(paths: WorkspacePaths, learning_request_id: str) -> Path:
+    return _move_item(
+        source_dir=paths.learning_requests_active_dir,
+        destination_dir=paths.learning_requests_blocked_dir,
+        item_id=learning_request_id,
+        kind=WorkItemKind.LEARNING_REQUEST,
+    )
+
+
 def requeue_task(paths: WorkspacePaths, task_id: str, *, reason: str) -> Path:
     destination = _move_item(
         source_dir=paths.tasks_active_dir,
@@ -121,6 +146,22 @@ def requeue_incident(paths: WorkspacePaths, incident_id: str, *, reason: str) ->
         kind=WorkItemKind.INCIDENT,
     )
     _append_requeue_reason(paths.incidents_incoming_dir, incident_id, WorkItemKind.INCIDENT, reason)
+    return destination
+
+
+def requeue_learning_request(paths: WorkspacePaths, learning_request_id: str, *, reason: str) -> Path:
+    destination = _move_item(
+        source_dir=paths.learning_requests_active_dir,
+        destination_dir=paths.learning_requests_queue_dir,
+        item_id=learning_request_id,
+        kind=WorkItemKind.LEARNING_REQUEST,
+    )
+    _append_requeue_reason(
+        paths.learning_requests_queue_dir,
+        learning_request_id,
+        WorkItemKind.LEARNING_REQUEST,
+        reason,
+    )
     return destination
 
 
@@ -202,6 +243,19 @@ def _ensure_unique_incident_id(paths: WorkspacePaths, incident_id: str) -> None:
     )
 
 
+def _ensure_unique_learning_request_id(paths: WorkspacePaths, learning_request_id: str) -> None:
+    _ensure_unique_id(
+        work_item_id=learning_request_id,
+        directories=(
+            paths.learning_requests_queue_dir,
+            paths.learning_requests_active_dir,
+            paths.learning_requests_done_dir,
+            paths.learning_requests_blocked_dir,
+        ),
+        kind=WorkItemKind.LEARNING_REQUEST,
+    )
+
+
 def _ensure_unique_id(
     *,
     work_item_id: str,
@@ -220,15 +274,19 @@ def _write_model(destination: Path, document: _DocT) -> None:
 
 __all__ = [
     "enqueue_incident",
+    "enqueue_learning_request",
     "enqueue_spec",
     "enqueue_task",
     "mark_incident_blocked",
     "mark_incident_resolved",
+    "mark_learning_request_blocked",
+    "mark_learning_request_done",
     "mark_spec_blocked",
     "mark_spec_done",
     "mark_task_blocked",
     "mark_task_done",
     "requeue_incident",
+    "requeue_learning_request",
     "requeue_spec",
     "requeue_task",
 ]

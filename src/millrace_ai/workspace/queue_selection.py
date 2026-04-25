@@ -10,13 +10,13 @@ from typing import TypeVar
 
 from pydantic import ValidationError
 
-from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
 from millrace_ai.errors import QueueStateError
 
 from .paths import WorkspacePaths
 from .work_documents import parse_work_document_as
 
-_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument)
+_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +85,31 @@ def claim_next_planning_item(paths: WorkspacePaths) -> QueueClaim | None:
         return QueueClaim(work_item_kind=WorkItemKind.SPEC, work_item_id=spec_id, path=destination)
 
 
+def claim_next_learning_request(paths: WorkspacePaths) -> QueueClaim | None:
+    active = _list_markdown_files(paths.learning_requests_active_dir)
+    if len(active) > 1:
+        raise QueueStateError("Multiple active learning requests found")
+    if active:
+        return None
+
+    while True:
+        candidate = _select_oldest_learning_request(paths.learning_requests_queue_dir)
+        if candidate is None:
+            return None
+
+        learning_request_id, source = candidate
+        destination = paths.learning_requests_active_dir / source.name
+        try:
+            source.replace(destination)
+        except FileNotFoundError:
+            continue
+        return QueueClaim(
+            work_item_kind=WorkItemKind.LEARNING_REQUEST,
+            work_item_id=learning_request_id,
+            path=destination,
+        )
+
+
 def _select_oldest_task(directory: Path) -> tuple[str, Path] | None:
     return _select_oldest_document(
         directory=directory,
@@ -144,6 +169,15 @@ def _select_oldest_incident(directory: Path) -> tuple[str, Path] | None:
         model=IncidentDocument,
         id_attr="incident_id",
         timestamp_attr="opened_at",
+    )
+
+
+def _select_oldest_learning_request(directory: Path) -> tuple[str, Path] | None:
+    return _select_oldest_document(
+        directory=directory,
+        model=LearningRequestDocument,
+        id_attr="learning_request_id",
+        timestamp_attr="created_at",
     )
 
 
@@ -293,6 +327,7 @@ def _quarantine_invalid_artifact(directory: Path, source_path: Path, error: str)
 __all__ = [
     "QueueClaim",
     "claim_next_execution_task",
+    "claim_next_learning_request",
     "claim_next_planning_item",
     "list_open_lineage_work_ids",
 ]

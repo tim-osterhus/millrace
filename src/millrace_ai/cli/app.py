@@ -21,6 +21,7 @@ from millrace_ai.cli.commands.planning import planning_app
 from millrace_ai.cli.commands.queue import add_spec, add_task, queue_add_idea, queue_app
 from millrace_ai.cli.commands.run import run_app
 from millrace_ai.cli.commands.runs import runs_app
+from millrace_ai.cli.commands.skills import skills_app
 from millrace_ai.cli.commands.status import status_app
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
@@ -34,6 +35,7 @@ app.add_typer(planning_app, name="planning")
 app.add_typer(config_app, name="config")
 app.add_typer(modes_app, name="modes")
 app.add_typer(compile_app, name="compile")
+app.add_typer(skills_app, name="skills")
 
 app.command("add-task")(add_task)
 app.command("add-spec")(add_spec)

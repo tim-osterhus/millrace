@@ -17,6 +17,12 @@ Research, draft, or revise one optional Codex skill package.
 4. `lab/skills-pipeline/rubrics/`
 5. `dev/source/skills-repo/skills/` when revamping an existing skill
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `builder-core`: load the runtime-provided implementation posture from `required_skill_paths`

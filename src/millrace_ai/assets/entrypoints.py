@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
-from millrace_ai.contracts import ExecutionStageName, PlanningStageName
+from millrace_ai.contracts import ExecutionStageName, LearningStageName, PlanningStageName
 
 
 class LintLevel(str, Enum):
@@ -41,8 +41,9 @@ class ParsedMarkdownAsset:
 
 KNOWN_EXECUTION_STAGES = {stage.value for stage in ExecutionStageName}
 KNOWN_PLANNING_STAGES = {stage.value for stage in PlanningStageName}
-KNOWN_STAGES = KNOWN_EXECUTION_STAGES | KNOWN_PLANNING_STAGES
-KNOWN_PLANES = {"execution", "planning"}
+KNOWN_LEARNING_STAGES = {stage.value for stage in LearningStageName}
+KNOWN_STAGES = KNOWN_EXECUTION_STAGES | KNOWN_PLANNING_STAGES | KNOWN_LEARNING_STAGES
+KNOWN_PLANES = {"execution", "planning", "learning"}
 KNOWN_ASSET_TYPES = {"entrypoint", "skill"}
 
 CORE_FORBIDDEN_CLAIMS = {
@@ -263,7 +264,7 @@ def _lint_structural(asset: ParsedMarkdownAsset) -> list[AssetLintDiagnostic]:
                 asset,
                 LintLevel.STRUCTURAL,
                 reason=f"unknown stage: {stage}",
-                suggested_fix="set `stage` to a known execution/planning stage",
+                suggested_fix="set `stage` to a known execution/planning/learning stage",
             )
         )
 
@@ -279,8 +280,8 @@ def _lint_structural_entrypoint(asset: ParsedMarkdownAsset) -> list[AssetLintDia
             _diag(
                 asset,
                 LintLevel.STRUCTURAL,
-                reason="entrypoint path must live under entrypoints/execution|planning",
-                suggested_fix="move file under entrypoints/execution or entrypoints/planning",
+                reason="entrypoint path must live under entrypoints/execution|planning|learning",
+                suggested_fix="move file under entrypoints/execution, entrypoints/planning, or entrypoints/learning",
             )
         )
     elif path_stage is None:
@@ -300,7 +301,7 @@ def _lint_structural_entrypoint(asset: ParsedMarkdownAsset) -> list[AssetLintDia
                 asset,
                 LintLevel.STRUCTURAL,
                 reason=f"unknown plane: {plane}",
-                suggested_fix="set `plane` to execution or planning",
+                suggested_fix="set `plane` to execution, planning, or learning",
             )
         )
 
@@ -474,7 +475,12 @@ def _lint_compatibility(
     plane = _string_value(asset.manifest, "plane")
 
     if stage is not None and plane is not None:
-        expected_plane = "execution" if stage in KNOWN_EXECUTION_STAGES else "planning"
+        if stage in KNOWN_EXECUTION_STAGES:
+            expected_plane = "execution"
+        elif stage in KNOWN_LEARNING_STAGES:
+            expected_plane = "learning"
+        else:
+            expected_plane = "planning"
         if stage in KNOWN_STAGES and plane != expected_plane:
             diagnostics.append(
                 _diag(

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Union
 
 from millrace_ai.config import render_bootstrap_runtime_config
-from millrace_ai.contracts import RecoveryCounters, RuntimeMode, RuntimeSnapshot, WatcherMode
+from millrace_ai.contracts import Plane, RecoveryCounters, RuntimeMode, RuntimeSnapshot, WatcherMode
 
 _IDLE_MARKER = "### IDLE\n"
 _RUNTIME_ASSET_DIRS: tuple[str, ...] = (
@@ -54,6 +54,17 @@ class WorkspacePaths:
     incidents_resolved_dir: Path
     incidents_blocked_dir: Path
 
+    learning_dir: Path
+    learning_requests_dir: Path
+    learning_requests_queue_dir: Path
+    learning_requests_active_dir: Path
+    learning_requests_done_dir: Path
+    learning_requests_blocked_dir: Path
+    learning_research_packets_dir: Path
+    learning_skill_candidates_dir: Path
+    learning_update_candidates_dir: Path
+    learning_events_file: Path
+
     arbiter_dir: Path
     arbiter_contracts_dir: Path
     arbiter_idea_contracts_dir: Path
@@ -66,13 +77,16 @@ class WorkspacePaths:
     loops_dir: Path
     execution_loops_dir: Path
     planning_loops_dir: Path
+    learning_loops_dir: Path
     graphs_dir: Path
     execution_graphs_dir: Path
     planning_graphs_dir: Path
+    learning_graphs_dir: Path
     registry_dir: Path
     stage_kind_registry_dir: Path
     execution_stage_kind_registry_dir: Path
     planning_stage_kind_registry_dir: Path
+    learning_stage_kind_registry_dir: Path
 
     modes_dir: Path
     logs_dir: Path
@@ -83,6 +97,7 @@ class WorkspacePaths:
     historylog_file: Path
     execution_status_file: Path
     planning_status_file: Path
+    learning_status_file: Path
     runtime_snapshot_file: Path
     recovery_counters_file: Path
     runtime_error_context_file: Path
@@ -114,6 +129,15 @@ class WorkspacePaths:
             self.incidents_active_dir,
             self.incidents_resolved_dir,
             self.incidents_blocked_dir,
+            self.learning_dir,
+            self.learning_requests_dir,
+            self.learning_requests_queue_dir,
+            self.learning_requests_active_dir,
+            self.learning_requests_done_dir,
+            self.learning_requests_blocked_dir,
+            self.learning_research_packets_dir,
+            self.learning_skill_candidates_dir,
+            self.learning_update_candidates_dir,
             self.arbiter_dir,
             self.arbiter_contracts_dir,
             self.arbiter_idea_contracts_dir,
@@ -125,13 +149,16 @@ class WorkspacePaths:
             self.loops_dir,
             self.execution_loops_dir,
             self.planning_loops_dir,
+            self.learning_loops_dir,
             self.graphs_dir,
             self.execution_graphs_dir,
             self.planning_graphs_dir,
+            self.learning_graphs_dir,
             self.registry_dir,
             self.stage_kind_registry_dir,
             self.execution_stage_kind_registry_dir,
             self.planning_stage_kind_registry_dir,
+            self.learning_stage_kind_registry_dir,
             self.modes_dir,
             self.logs_dir,
             self.entrypoints_dir,
@@ -149,6 +176,8 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
     tasks_dir = runtime_root / "tasks"
     specs_dir = runtime_root / "specs"
     incidents_dir = runtime_root / "incidents"
+    learning_dir = runtime_root / "learning"
+    learning_requests_dir = learning_dir / "requests"
     arbiter_dir = runtime_root / "arbiter"
     arbiter_contracts_dir = arbiter_dir / "contracts"
     loops_dir = runtime_root / "loops"
@@ -180,6 +209,16 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         incidents_active_dir=incidents_dir / "active",
         incidents_resolved_dir=incidents_dir / "resolved",
         incidents_blocked_dir=incidents_dir / "blocked",
+        learning_dir=learning_dir,
+        learning_requests_dir=learning_requests_dir,
+        learning_requests_queue_dir=learning_requests_dir / "queue",
+        learning_requests_active_dir=learning_requests_dir / "active",
+        learning_requests_done_dir=learning_requests_dir / "done",
+        learning_requests_blocked_dir=learning_requests_dir / "blocked",
+        learning_research_packets_dir=learning_dir / "research-packets",
+        learning_skill_candidates_dir=learning_dir / "skill-candidates",
+        learning_update_candidates_dir=learning_dir / "update-candidates",
+        learning_events_file=learning_dir / "events.jsonl",
         arbiter_dir=arbiter_dir,
         arbiter_contracts_dir=arbiter_contracts_dir,
         arbiter_idea_contracts_dir=arbiter_contracts_dir / "ideas",
@@ -191,13 +230,16 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         loops_dir=loops_dir,
         execution_loops_dir=loops_dir / "execution",
         planning_loops_dir=loops_dir / "planning",
+        learning_loops_dir=loops_dir / "learning",
         graphs_dir=graphs_dir,
         execution_graphs_dir=graphs_dir / "execution",
         planning_graphs_dir=graphs_dir / "planning",
+        learning_graphs_dir=graphs_dir / "learning",
         registry_dir=registry_dir,
         stage_kind_registry_dir=stage_kind_registry_dir,
         execution_stage_kind_registry_dir=stage_kind_registry_dir / "execution",
         planning_stage_kind_registry_dir=stage_kind_registry_dir / "planning",
+        learning_stage_kind_registry_dir=stage_kind_registry_dir / "learning",
         modes_dir=runtime_root / "modes",
         logs_dir=runtime_root / "logs",
         entrypoints_dir=runtime_root / "entrypoints",
@@ -206,6 +248,7 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         historylog_file=runtime_root / "historylog.md",
         execution_status_file=state_dir / "execution_status.md",
         planning_status_file=state_dir / "planning_status.md",
+        learning_status_file=state_dir / "learning_status.md",
         runtime_snapshot_file=state_dir / "runtime_snapshot.json",
         recovery_counters_file=state_dir / "recovery_counters.json",
         runtime_error_context_file=state_dir / "runtime_error_context.json",
@@ -275,6 +318,8 @@ def _default_file_payloads(paths: WorkspacePaths) -> dict[Path, str]:
         paths.runtime_root / "millrace.toml": render_bootstrap_runtime_config(),
         paths.execution_status_file: _IDLE_MARKER,
         paths.planning_status_file: _IDLE_MARKER,
+        paths.learning_status_file: _IDLE_MARKER,
+        paths.learning_events_file: "",
         paths.runtime_snapshot_file: _default_runtime_snapshot_payload(paths),
         paths.recovery_counters_file: _default_recovery_counters_payload(),
     }
@@ -288,10 +333,25 @@ def _default_runtime_snapshot_payload(paths: WorkspacePaths) -> str:
         active_mode_id="default_codex",
         execution_loop_id="execution.standard",
         planning_loop_id="planning.standard",
+        loop_ids_by_plane={
+            Plane.EXECUTION: "execution.standard",
+            Plane.PLANNING: "planning.standard",
+        },
         compiled_plan_id="bootstrap",
         compiled_plan_path=str((paths.state_dir / "compiled_plan.json").relative_to(paths.root)),
         execution_status_marker=_IDLE_MARKER.strip(),
         planning_status_marker=_IDLE_MARKER.strip(),
+        learning_status_marker=_IDLE_MARKER.strip(),
+        status_markers_by_plane={
+            Plane.EXECUTION: _IDLE_MARKER.strip(),
+            Plane.PLANNING: _IDLE_MARKER.strip(),
+            Plane.LEARNING: _IDLE_MARKER.strip(),
+        },
+        queue_depths_by_plane={
+            Plane.EXECUTION: 0,
+            Plane.PLANNING: 0,
+            Plane.LEARNING: 0,
+        },
         config_version="bootstrap",
         watcher_mode=WatcherMode.OFF,
         updated_at=datetime.now(timezone.utc),

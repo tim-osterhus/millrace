@@ -10,9 +10,13 @@ from millrace_ai.contracts import (
     CompileDiagnostics,
     CompletionBehaviorDefinition,
     IncidentDocument,
+    LearningRequestDocument,
+    LearningStageName,
+    LearningTerminalResult,
     LoopConfigDefinition,
     MailboxCommandEnvelope,
     ModeDefinition,
+    Plane,
     PlanningStageName,
     PlanningTerminalResult,
     RecoveryCounters,
@@ -72,6 +76,46 @@ def test_spec_document_valid_minimal_payload() -> None:
     )
 
     assert doc.kind == "spec"
+
+
+def test_learning_request_document_valid_payload() -> None:
+    doc = LearningRequestDocument(
+        learning_request_id="learn-001",
+        title="Improve checker skill",
+        summary="Use observed run evidence to improve checker guidance",
+        requested_action="improve",
+        target_skill_id="checker-core",
+        source_refs=["run:run-001"],
+        preferred_output_paths=["millrace-agents/skills/stage/execution/checker-core/SKILL.md"],
+        trigger_metadata={"source_stage": "doublechecker", "terminal_result": "DOUBLECHECK_PASS"},
+        originating_run_ids=["run-001"],
+        artifact_paths=["millrace-agents/runs/run-001/stage_results/request-001.json"],
+        created_at=NOW,
+        created_by="tester",
+    )
+
+    assert doc.kind == "learning_request"
+    assert doc.requested_action == "improve"
+    assert doc.target_skill_id == "checker-core"
+
+
+def test_learning_stage_result_envelope_valid_payload() -> None:
+    env = StageResultEnvelope(
+        run_id="run-001",
+        plane="learning",
+        stage="curator",
+        work_item_kind="learning_request",
+        work_item_id="learn-001",
+        terminal_result="CURATOR_COMPLETE",
+        result_class="success",
+        summary_status_marker="### CURATOR_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    assert env.stage is LearningStageName.CURATOR
+    assert env.terminal_result is LearningTerminalResult.CURATOR_COMPLETE
 
 
 def test_work_documents_accept_root_lineage_fields() -> None:
@@ -385,12 +429,41 @@ def test_mode_definition_rejects_unknown_stage_key() -> None:
 def test_mode_definition_is_skill_only() -> None:
     mode = ModeDefinition(
         mode_id="standard_plain",
-        execution_loop_id="execution.standard",
-        planning_loop_id="planning.standard",
+        loop_ids_by_plane={
+            "execution": "execution.standard",
+            "planning": "planning.standard",
+        },
         stage_skill_additions={"builder": ("skills/execution/builder.md",)},
     )
 
     assert "stage_role_overlays" not in mode.model_dump(mode="json")
+    assert "execution_loop_id" not in mode.model_dump(mode="json")
+    assert mode.loop_ids_by_plane[Plane.EXECUTION] == "execution.standard"
+
+
+def test_mode_definition_supports_learning_plane_bindings_and_triggers() -> None:
+    mode = ModeDefinition(
+        mode_id="learning_codex",
+        loop_ids_by_plane={
+            "execution": "execution.standard",
+            "planning": "planning.standard",
+            "learning": "learning.standard",
+        },
+        learning_trigger_rules=[
+            {
+                "rule_id": "execution.doublechecker.success-to-curator",
+                "source_plane": "execution",
+                "source_stage": "doublechecker",
+                "on_terminal_results": ["DOUBLECHECK_PASS"],
+                "target_stage": "curator",
+                "requested_action": "improve",
+            }
+        ],
+    )
+
+    assert mode.learning_enabled is True
+    assert mode.learning_loop_id == "learning.standard"
+    assert mode.learning_trigger_rules[0].target_stage is LearningStageName.CURATOR
 
 
 def test_stage_result_envelope_accepts_arbiter_remediation_needed() -> None:

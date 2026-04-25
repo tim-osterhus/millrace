@@ -16,6 +16,12 @@ Turn the skill spec into executable pipeline tasks.
 3. `lab/skills-pipeline/templates/`
 4. `lab/skills-pipeline/rubrics/`
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `manager-core`: load the runtime-provided decomposition posture from `required_skill_paths`

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "kind": "graph_loop",
+  "loop_id": "learning.standard",
+  "plane": "learning",
+  "nodes": [
+    {"node_id": "analyst", "stage_kind_id": "analyst"},
+    {"node_id": "professor", "stage_kind_id": "professor"},
+    {"node_id": "curator", "stage_kind_id": "curator"}
+  ],
+  "entry_nodes": [
+    {"entry_key": "learning_request", "node_id": "analyst"}
+  ],
+  "edges": [
+    {"edge_id": "analyst-complete-to-professor", "from_node_id": "analyst", "to_node_id": "professor", "on_outcomes": ["ANALYST_COMPLETE"]},
+    {"edge_id": "professor-complete-to-curator", "from_node_id": "professor", "to_node_id": "curator", "on_outcomes": ["PROFESSOR_COMPLETE"]},
+    {"edge_id": "curator-complete-to-terminal-learning-complete", "from_node_id": "curator", "terminal_state_id": "learning_complete", "on_outcomes": ["CURATOR_COMPLETE"], "kind": "terminal"},
+    {"edge_id": "analyst-blocked-to-terminal-blocked", "from_node_id": "analyst", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"},
+    {"edge_id": "professor-blocked-to-terminal-blocked", "from_node_id": "professor", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"},
+    {"edge_id": "curator-blocked-to-terminal-blocked", "from_node_id": "curator", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"}
+  ],
+  "terminal_states": [
+    {"terminal_state_id": "learning_complete", "terminal_class": "success", "writes_status": "CURATOR_COMPLETE", "emits_artifacts": ["stage_result", "skill_update"]},
+    {"terminal_state_id": "blocked", "terminal_class": "blocked", "writes_status": "BLOCKED", "emits_artifacts": ["stage_result", "report"]}
+  ]
+}

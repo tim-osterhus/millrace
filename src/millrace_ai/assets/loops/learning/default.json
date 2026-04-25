@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "kind": "loop_config",
+  "loop_id": "learning.standard",
+  "plane": "learning",
+  "stages": ["analyst", "professor", "curator"],
+  "entry_stage": "analyst",
+  "edges": [
+    {
+      "source_stage": "analyst",
+      "on_terminal_result": "ANALYST_COMPLETE",
+      "target_stage": "professor"
+    },
+    {
+      "source_stage": "professor",
+      "on_terminal_result": "PROFESSOR_COMPLETE",
+      "target_stage": "curator"
+    },
+    {
+      "source_stage": "curator",
+      "on_terminal_result": "CURATOR_COMPLETE",
+      "terminal_result": "CURATOR_COMPLETE",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "analyst",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "professor",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "curator",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
+    }
+  ],
+  "terminal_results": ["CURATOR_COMPLETE", "BLOCKED"]
+}

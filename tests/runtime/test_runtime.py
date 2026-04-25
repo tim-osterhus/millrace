@@ -244,6 +244,41 @@ def test_runtime_tick_claim_activation_uses_compiled_plan_authority(
     assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
     assert snapshot.active_stage is ExecutionStageName.UPDATER
 
+
+def test_learning_mode_stage_requests_persist_skill_revision_evidence(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        return _runner_result(
+            request,
+            terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine.startup()
+    engine.tick()
+
+    assert captured_request is not None
+    assert captured_request.skill_revision_evidence_path is not None
+    evidence_path = Path(captured_request.skill_revision_evidence_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+
+    assert evidence["kind"] == "skill_revision_evidence"
+    assert evidence["mode_id"] == "learning_codex"
+    assert evidence["request_id"] == captured_request.request_id
+    assert evidence["skills"]
+    assert {skill["path"] for skill in evidence["skills"]} >= set(
+        captured_request.required_skill_paths
+    )
+    assert all(skill["sha256"] for skill in evidence["skills"])
+
+
 def test_runtime_tick_completion_activation_uses_compiled_plan_authority(
     tmp_path: Path,
 ) -> None:

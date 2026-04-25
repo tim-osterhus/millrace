@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
     ExecutionStageName,
+    LearningStageName,
     Plane,
     PlanningStageName,
     StageResultEnvelope,
@@ -66,7 +67,7 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
         assert next_stage is not None
         updated = engine.snapshot.model_copy(
             update={
-                "active_plane": Plane.EXECUTION if isinstance(next_stage, ExecutionStageName) else Plane.PLANNING,
+                "active_plane": _plane_for_stage(next_stage),
                 "active_stage": next_stage,
                 "active_since": engine._now(),
                 "current_failure_class": decision.failure_class,
@@ -93,6 +94,14 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
 
 def _is_closure_target_result(stage_result: StageResultEnvelope) -> bool:
     return stage_result.metadata.get("request_kind") == "closure_target"
+
+
+def _plane_for_stage(stage: object) -> Plane:
+    if isinstance(stage, ExecutionStageName):
+        return Plane.EXECUTION
+    if isinstance(stage, LearningStageName):
+        return Plane.LEARNING
+    return Plane.PLANNING
 
 
 __all__ = [

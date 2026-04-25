@@ -10,7 +10,7 @@ ENTRYPOINT_MAPPING_DOC = RUNTIME_DOCS_DIR / "millrace-entrypoint-mapping.md"
 PACKAGED_ENTRYPOINTS_DIR = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints"
 
 ENTRYPOINT_MAPPING_ROW = re.compile(
-    r"- `(?P<packaged>src/millrace_ai/assets/entrypoints/(?P<plane>execution|planning)/(?P<filename>[^`]+\.md))` -> "
+    r"- `(?P<packaged>src/millrace_ai/assets/entrypoints/(?P<plane>execution|planning|learning)/(?P<filename>[^`]+\.md))` -> "
     r"`(?P<deployed>millrace-agents/entrypoints/(?P=plane)/(?P=filename))`"
 )
 INDEX_DOC_ROW = re.compile(r"- `(?P<path>[^`]+\.md)`:")

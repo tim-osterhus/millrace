@@ -45,9 +45,11 @@ def test_cli_import_surface_moves_to_package_directory() -> None:
 def test_cli_package_exposes_split_command_modules() -> None:
     run_module = importlib.import_module("millrace_ai.cli.commands.run")
     app_module = importlib.import_module("millrace_ai.cli.app")
+    skills_module = importlib.import_module("millrace_ai.cli.commands.skills")
 
     assert hasattr(run_module, "run_once")
     assert hasattr(app_module, "app")
+    assert hasattr(skills_module, "skills_app")
 
 
 def test_cli_package_consumes_public_runtime_control_facade() -> None:
@@ -261,6 +263,69 @@ def test_run_daemon_respects_max_ticks(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert calls["stage_runner"] is sentinel_runner
     assert "run_mode: daemon" in result.output
     assert "ticks: 3" in result.output
+
+
+def test_skills_install_copies_local_skill_and_updates_workspace_index(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    source_skill = tmp_path / "source-skill"
+    source_skill.mkdir()
+    source_skill.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: source-skill\n"
+        "description: A test skill\n"
+        "---\n"
+        "# Source Skill\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        ["skills", "install", str(source_skill), "--workspace", str(paths.root)],
+    )
+
+    installed_skill = paths.skills_dir / "source-skill" / "SKILL.md"
+    index_text = paths.skills_dir.joinpath("skills_index.md").read_text(encoding="utf-8")
+
+    assert result.exit_code == 0
+    assert installed_skill.is_file()
+    assert "installed_skill: source-skill" in result.output
+    assert "- source-skill: source-skill/SKILL.md" in index_text
+
+
+def test_skills_install_refuses_existing_skill_without_force(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    source_skill = tmp_path / "source-skill"
+    source_skill.mkdir()
+    source_skill.joinpath("SKILL.md").write_text("# Source Skill\n", encoding="utf-8")
+
+    runner = CliRunner()
+    first = runner.invoke(
+        cli.app,
+        ["skills", "install", str(source_skill), "--workspace", str(paths.root)],
+    )
+    second = runner.invoke(
+        cli.app,
+        ["skills", "install", str(source_skill), "--workspace", str(paths.root)],
+    )
+
+    assert first.exit_code == 0
+    assert second.exit_code == 1
+    assert "skill already exists" in second.output
+
+
+def test_skills_create_refuses_when_learning_plane_is_not_enabled(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        ["skills", "create", "write a checker skill", "--workspace", str(paths.root)],
+    )
+
+    assert result.exit_code == 1
+    assert "current mode does not enable the learning plane" in result.output
+    assert not any(paths.learning_requests_queue_dir.glob("*.md"))
 
 
 def test_run_daemon_sleeps_between_ticks_when_unbounded(

@@ -16,9 +16,20 @@ Decide whether a pipeline run is accepted, archived, or blocked.
 3. checker and doublechecker QA reports
 4. `dev/source/skills-repo/` diff when publication is claimed
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `arbiter-core`: load the runtime-provided rubric and closure posture from `required_skill_paths`
+
+## Optional Secondary Skills
+
+- No default optional skill; choose only from the skills index when it improves
+  acceptance or archive judgment.
 
 ## Workflow
 

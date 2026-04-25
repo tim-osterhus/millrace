@@ -27,6 +27,9 @@ BUILTIN_STAGE_KIND_PATHS: dict[str, Path] = {
     "mechanic": Path("registry/stage_kinds/planning/mechanic.json"),
     "auditor": Path("registry/stage_kinds/planning/auditor.json"),
     "arbiter": Path("registry/stage_kinds/planning/arbiter.json"),
+    "analyst": Path("registry/stage_kinds/learning/analyst.json"),
+    "professor": Path("registry/stage_kinds/learning/professor.json"),
+    "curator": Path("registry/stage_kinds/learning/curator.json"),
 }
 
 SHIPPED_STAGE_KIND_IDS: tuple[str, ...] = tuple(BUILTIN_STAGE_KIND_PATHS)

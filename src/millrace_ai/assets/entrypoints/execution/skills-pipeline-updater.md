@@ -16,9 +16,20 @@ Publish accepted optional skills to `dev/source/skills-repo/`.
 3. accepted draft skill package under the run directory
 4. `dev/source/skills-repo/`
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `updater-core`: load the runtime-provided reconciliation posture from `required_skill_paths`
+
+## Optional Secondary Skills
+
+- No default optional skill; choose only from the skills index when it improves
+  publication validation.
 
 ## Workflow
 

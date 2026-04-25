@@ -5,13 +5,16 @@ from __future__ import annotations
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
+    LearningStageName,
+    LearningTerminalResult,
     PlanningStageName,
     PlanningTerminalResult,
+    StageName,
 )
 from millrace_ai.runners.requests import StageRunRequest, render_stage_request_context_lines
 
 
-def legal_terminal_markers(stage: ExecutionStageName | PlanningStageName) -> tuple[str, ...]:
+def legal_terminal_markers(stage: StageName) -> tuple[str, ...]:
     if stage is ExecutionStageName.BUILDER:
         return (
             ExecutionTerminalResult.BUILDER_COMPLETE.value,
@@ -70,11 +73,28 @@ def legal_terminal_markers(stage: ExecutionStageName | PlanningStageName) -> tup
             PlanningTerminalResult.AUDITOR_COMPLETE.value,
             PlanningTerminalResult.BLOCKED.value,
         )
-    return (
-        PlanningTerminalResult.ARBITER_COMPLETE.value,
-        PlanningTerminalResult.REMEDIATION_NEEDED.value,
-        PlanningTerminalResult.BLOCKED.value,
-    )
+    if stage is PlanningStageName.ARBITER:
+        return (
+            PlanningTerminalResult.ARBITER_COMPLETE.value,
+            PlanningTerminalResult.REMEDIATION_NEEDED.value,
+            PlanningTerminalResult.BLOCKED.value,
+        )
+    if stage is LearningStageName.ANALYST:
+        return (
+            LearningTerminalResult.ANALYST_COMPLETE.value,
+            LearningTerminalResult.BLOCKED.value,
+        )
+    if stage is LearningStageName.PROFESSOR:
+        return (
+            LearningTerminalResult.PROFESSOR_COMPLETE.value,
+            LearningTerminalResult.BLOCKED.value,
+        )
+    if stage is LearningStageName.CURATOR:
+        return (
+            LearningTerminalResult.CURATOR_COMPLETE.value,
+            LearningTerminalResult.BLOCKED.value,
+        )
+    raise ValueError(f"unknown stage: {stage}")
 
 
 def build_stage_prompt(request: StageRunRequest) -> str:

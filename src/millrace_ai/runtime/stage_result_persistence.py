@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import Plane, StageResultEnvelope
 from millrace_ai.runners import StageRunRequest
-from millrace_ai.state_store import set_execution_status, set_planning_status
+from millrace_ai.state_store import set_execution_status, set_learning_status, set_planning_status
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -33,6 +33,12 @@ def write_plane_status(engine: RuntimeEngine, stage_result: StageResultEnvelope)
         set_execution_status(engine.paths, stage_result.summary_status_marker)
         engine.snapshot = engine.snapshot.model_copy(
             update={"execution_status_marker": stage_result.summary_status_marker}
+        )
+        return
+    if stage_result.plane is Plane.LEARNING:
+        set_learning_status(engine.paths, stage_result.summary_status_marker)
+        engine.snapshot = engine.snapshot.model_copy(
+            update={"learning_status_marker": stage_result.summary_status_marker}
         )
         return
     set_planning_status(engine.paths, stage_result.summary_status_marker)

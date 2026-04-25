@@ -17,6 +17,8 @@ from millrace_ai.architecture import (
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
+    LearningStageName,
+    LearningTerminalResult,
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
@@ -44,7 +46,14 @@ def work_item_activation_for_graph(
     work_item_kind: WorkItemKind,
 ) -> GraphActivationDecision:
     entry_key = _entry_key_for_work_item_kind(work_item_kind)
-    graph = graph_plan.execution_graph if work_item_kind is WorkItemKind.TASK else graph_plan.planning_graph
+    if work_item_kind is WorkItemKind.TASK:
+        graph = graph_plan.execution_graph
+    elif work_item_kind is WorkItemKind.LEARNING_REQUEST:
+        if graph_plan.learning_graph is None:
+            raise ValueError("compiled graph is missing learning plane")
+        graph = graph_plan.learning_graph
+    else:
+        graph = graph_plan.planning_graph
     return _activation_from_entry(graph, entry_key)
 
 
@@ -77,6 +86,14 @@ def route_stage_result_from_graph(
             counters,
             max_fix_cycles=max_fix_cycles,
             max_troubleshoot_attempts_before_consult=max_troubleshoot_attempts_before_consult,
+        )
+    if stage_result.plane is Plane.LEARNING:
+        if graph_plan.learning_graph is None:
+            raise ValueError("compiled graph is missing learning plane")
+        return _route_learning_stage_result_from_graph(
+            graph_plan.learning_graph,
+            snapshot,
+            stage_result,
         )
     if max_mechanic_attempts < 1:
         raise ValueError("max_mechanic_attempts must be >= 1")
@@ -125,6 +142,8 @@ def _entry_key_for_work_item_kind(work_item_kind: WorkItemKind) -> str:
         return "spec"
     if work_item_kind is WorkItemKind.INCIDENT:
         return "incident"
+    if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+        return "learning_request"
     raise ValueError(f"unsupported work_item_kind: {work_item_kind}")
 
 
@@ -269,6 +288,39 @@ def _route_planning_stage_result_from_graph(
         stage_result=stage_result,
         transition=transition,
         counters=counters,
+    )
+
+
+def _route_learning_stage_result_from_graph(
+    graph: FrozenGraphPlanePlan,
+    snapshot: RuntimeSnapshot,
+    stage_result: StageResultEnvelope,
+) -> RouterDecision:
+    _validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.LEARNING)
+    source_stage = LearningStageName(stage_result.stage)
+    outcome = LearningTerminalResult(stage_result.terminal_result)
+    transition = _transition_for_source(graph, source_node_id=source_stage.value, outcome=outcome.value)
+
+    if transition.target_node_id is not None:
+        return RouterDecision(
+            action=RouterAction.RUN_STAGE,
+            next_plane=Plane.LEARNING,
+            next_stage=_stage_for_node(Plane.LEARNING, transition.target_node_id),
+            reason=f"{source_stage.value}:{outcome.value}",
+        )
+
+    if outcome is LearningTerminalResult.BLOCKED:
+        return RouterDecision(
+            action=RouterAction.BLOCKED,
+            next_plane=None,
+            next_stage=None,
+            reason=f"{source_stage.value}_blocked",
+        )
+    return RouterDecision(
+        action=RouterAction.IDLE,
+        next_plane=None,
+        next_stage=None,
+        reason=f"{source_stage.value}:{outcome.value}",
     )
 
 
@@ -562,6 +614,8 @@ def _terminal_state_by_id(
 def _stage_for_node(plane: Plane, node_id: str) -> StageName:
     if plane is Plane.EXECUTION:
         return ExecutionStageName(node_id)
+    if plane is Plane.LEARNING:
+        return LearningStageName(node_id)
     return PlanningStageName(node_id)
 
 

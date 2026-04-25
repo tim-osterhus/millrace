@@ -25,6 +25,11 @@ def claim_next_work_item(engine: RuntimeEngine) -> None:
     claim = queue.claim_next_execution_task()
     if claim is not None:
         activate_claim(engine, claim)
+        return
+
+    claim = queue.claim_next_learning_request()
+    if claim is not None:
+        activate_claim(engine, claim)
 
 
 def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
@@ -53,6 +58,10 @@ def entry_stage_for_kind(work_item_kind: WorkItemKind) -> StageName:
         return ExecutionStageName.BUILDER
     if work_item_kind is WorkItemKind.SPEC:
         return PlanningStageName.PLANNER
+    if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+        from millrace_ai.contracts import LearningStageName
+
+        return LearningStageName.ANALYST
     return PlanningStageName.AUDITOR
 
 

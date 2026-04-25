@@ -7,7 +7,11 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from millrace_ai.contracts import Plane
+from millrace_ai.contracts import (
+    LearningTriggerRuleDefinition,
+    Plane,
+    PlaneConcurrencyPolicyDefinition,
+)
 
 from .loop_graphs import (
     GraphLoopCompletionBehaviorDefinition,
@@ -152,23 +156,54 @@ class CompiledRunPlan(ArchitectureContractModel):
 
     compiled_plan_id: str
     mode_id: str
+    loop_ids_by_plane: dict[Plane, str]
     execution_loop_id: str
     planning_loop_id: str
+    learning_loop_id: str | None = None
+    graphs_by_plane: dict[Plane, FrozenGraphPlanePlan]
     execution_graph: FrozenGraphPlanePlan
     planning_graph: FrozenGraphPlanePlan
+    learning_graph: FrozenGraphPlanePlan | None = None
+    concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
+    learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
     compiled_at: datetime
     source_refs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_graph_planes(self) -> "CompiledRunPlan":
+        if self.loop_ids_by_plane.get(Plane.EXECUTION) != self.execution_loop_id:
+            raise ValueError("loop_ids_by_plane execution id must match execution_loop_id")
+        if self.loop_ids_by_plane.get(Plane.PLANNING) != self.planning_loop_id:
+            raise ValueError("loop_ids_by_plane planning id must match planning_loop_id")
+        if self.learning_loop_id is not None:
+            if self.loop_ids_by_plane.get(Plane.LEARNING) != self.learning_loop_id:
+                raise ValueError("loop_ids_by_plane learning id must match learning_loop_id")
+        elif Plane.LEARNING in self.loop_ids_by_plane:
+            raise ValueError("learning loop binding requires learning_loop_id")
+
         if self.execution_graph.plane is not Plane.EXECUTION:
             raise ValueError("execution_graph must declare plane=execution")
         if self.planning_graph.plane is not Plane.PLANNING:
             raise ValueError("planning_graph must declare plane=planning")
+        if self.learning_graph is not None and self.learning_graph.plane is not Plane.LEARNING:
+            raise ValueError("learning_graph must declare plane=learning")
         if self.execution_graph.loop_id != self.execution_loop_id:
             raise ValueError("execution_loop_id must match execution_graph.loop_id")
         if self.planning_graph.loop_id != self.planning_loop_id:
             raise ValueError("planning_loop_id must match planning_graph.loop_id")
+        if self.learning_graph is not None and self.learning_graph.loop_id != self.learning_loop_id:
+            raise ValueError("learning_loop_id must match learning_graph.loop_id")
+        if self.graphs_by_plane.get(Plane.EXECUTION) != self.execution_graph:
+            raise ValueError("graphs_by_plane execution graph must match execution_graph")
+        if self.graphs_by_plane.get(Plane.PLANNING) != self.planning_graph:
+            raise ValueError("graphs_by_plane planning graph must match planning_graph")
+        if self.learning_graph is not None:
+            if self.graphs_by_plane.get(Plane.LEARNING) != self.learning_graph:
+                raise ValueError("graphs_by_plane learning graph must match learning_graph")
+        elif Plane.LEARNING in self.graphs_by_plane:
+            raise ValueError("learning graph binding requires learning_graph")
+        if self.learning_trigger_rules and self.learning_graph is None:
+            raise ValueError("learning_trigger_rules require learning_graph")
         return self
 
 

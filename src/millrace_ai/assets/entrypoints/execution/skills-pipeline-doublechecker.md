@@ -17,9 +17,20 @@ Re-run focused A/B QA after a fixer revision.
 4. previous QA report and fix contract
 5. `lab/skills-pipeline/rubrics/ab-qa.md`
 
+## Skill Loading
+
+- open `millrace-agents/skills/skills_index.md`
+- load the required stage-core skill from request-provided `required_skill_paths`
+- after that, choose up to two additional relevant skills from the index
+
 ## Required Stage-Core Skill
 
 - `doublechecker-core`: load the runtime-provided re-validation posture from `required_skill_paths`
+
+## Optional Secondary Skills
+
+- No default optional skill; choose only from the skills index when it improves
+  the re-validation pass.
 
 ## QA Agent Policy
 

@@ -14,6 +14,7 @@ from millrace_ai.state_store import (
     reset_forward_progress_counters,
     save_snapshot,
     set_execution_status,
+    set_learning_status,
     set_planning_status,
 )
 
@@ -34,6 +35,9 @@ def mark_active_work_item_complete(engine: RuntimeEngine, stage_result: StageRes
         return
     if stage_result.work_item_kind is WorkItemKind.INCIDENT:
         queue.mark_incident_resolved(stage_result.work_item_id)
+        return
+    if stage_result.work_item_kind is WorkItemKind.LEARNING_REQUEST:
+        queue.mark_learning_request_done(stage_result.work_item_id)
 
 
 def mark_active_work_item_blocked(engine: RuntimeEngine, stage_result: StageResultEnvelope) -> None:
@@ -46,6 +50,9 @@ def mark_active_work_item_blocked(engine: RuntimeEngine, stage_result: StageResu
         return
     if stage_result.work_item_kind is WorkItemKind.INCIDENT:
         queue.mark_incident_blocked(stage_result.work_item_id)
+        return
+    if stage_result.work_item_kind is WorkItemKind.LEARNING_REQUEST:
+        queue.mark_learning_request_blocked(stage_result.work_item_id)
 
 
 def mark_active_work_item_blocked_with_recovery(
@@ -76,10 +83,12 @@ def apply_idle_router_decision(engine: RuntimeEngine, stage_result: StageResultE
         current_failure_class=None,
         execution_status_marker="### IDLE",
         planning_status_marker="### IDLE",
+        learning_status_marker="### IDLE",
     )
     save_snapshot(engine.paths, engine.snapshot)
     set_execution_status(engine.paths, "### IDLE")
     set_planning_status(engine.paths, "### IDLE")
+    set_learning_status(engine.paths, "### IDLE")
     reset_forward_progress_counters(
         engine.paths,
         work_item_kind=stage_result.work_item_kind,
@@ -142,6 +151,7 @@ def _cleared_active_snapshot(
     current_failure_class: str | None,
     execution_status_marker: str | None = None,
     planning_status_marker: str | None = None,
+    learning_status_marker: str | None = None,
 ) -> RuntimeSnapshot:
     assert engine.snapshot is not None
     update = {
@@ -162,6 +172,8 @@ def _cleared_active_snapshot(
         update["execution_status_marker"] = execution_status_marker
     if planning_status_marker is not None:
         update["planning_status_marker"] = planning_status_marker
+    if learning_status_marker is not None:
+        update["learning_status_marker"] = learning_status_marker
     return engine.snapshot.model_copy(update=update)
 
 

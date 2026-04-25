@@ -423,6 +423,20 @@ def test_render_stage_request_context_lines_includes_live_envelope_fields(
     assert "- millrace-agents/skills/test-driven-development/SKILL.md" in context
 
 
+def test_render_stage_request_context_lines_includes_skill_revision_evidence_path(
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / "skill_revision_evidence.json"
+    request = _request(tmp_path).model_copy(
+        update={"skill_revision_evidence_path": str(evidence_path)}
+    )
+
+    context = "\n".join(render_stage_request_context_lines(request))
+
+    assert "Skill Revision Evidence Path:" in context
+    assert str(evidence_path) in context
+
+
 def test_render_stage_request_context_lines_includes_preferred_troubleshoot_report_path(
     tmp_path: Path,
 ) -> None:
@@ -539,6 +553,7 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "runtime_error_code": "Runtime Error Code:",
         "runtime_error_report_path": "Runtime Error Report Path:",
         "runtime_error_catalog_path": "Runtime Error Catalog Path:",
+        "skill_revision_evidence_path": "Skill Revision Evidence Path:",
         "runner_name": "Runner Name:",
         "model_name": "Model Name:",
         "timeout_seconds": "Timeout Seconds:",

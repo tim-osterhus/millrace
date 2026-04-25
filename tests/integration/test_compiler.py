@@ -113,7 +113,7 @@ def _write_synthetic_graph_loop_asset(assets_root: Path) -> None:
 
 
 def _all_nodes(plan: CompiledRunPlan):
-    return (*plan.execution_graph.nodes, *plan.planning_graph.nodes)
+    return tuple(node for graph in plan.graphs_by_plane.values() for node in graph.nodes)
 
 
 def test_compiler_validation_errors_use_project_error_hierarchy() -> None:
@@ -148,8 +148,15 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     )
 
     assert persisted_plan.mode_id == "default_codex"
+    assert persisted_plan.loop_ids_by_plane == {
+        Plane.EXECUTION: "execution.standard",
+        Plane.PLANNING: "planning.standard",
+    }
+    assert set(persisted_plan.graphs_by_plane) == {Plane.EXECUTION, Plane.PLANNING}
     assert persisted_plan.execution_loop_id == "execution.standard"
     assert persisted_plan.planning_loop_id == "planning.standard"
+    assert persisted_plan.learning_graph is None
+    assert persisted_plan.learning_trigger_rules == ()
     assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.execution_graph.compiled_entries} == {
         "task": "builder"
     }
@@ -321,6 +328,47 @@ def test_compile_materializes_skills_pipeline_mode_contract(tmp_path: Path) -> N
         "entrypoints/planning/skills-pipeline-planner.md"
     )
     assert fix_threshold.threshold == 5
+
+
+def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="learning_codex",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "learning_codex"
+    assert outcome.active_plan.loop_ids_by_plane == {
+        Plane.EXECUTION: "execution.standard",
+        Plane.PLANNING: "planning.standard",
+        Plane.LEARNING: "learning.standard",
+    }
+    assert outcome.active_plan.learning_graph is not None
+    assert [node.node_id for node in outcome.active_plan.learning_graph.nodes] == [
+        "analyst",
+        "professor",
+        "curator",
+    ]
+    assert {node.runner_name for node in _all_nodes(outcome.active_plan)} == {"codex_cli"}
+    assert {
+        (
+            rule.source_stage.value,
+            rule.on_terminal_results,
+            rule.target_stage.value,
+            rule.requested_action,
+        )
+        for rule in outcome.active_plan.learning_trigger_rules
+    } == {
+        ("doublechecker", ("DOUBLECHECK_PASS",), "curator", "improve"),
+        ("troubleshooter", ("TROUBLESHOOT_COMPLETE", "BLOCKED"), "analyst", "improve"),
+        ("consultant", ("CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"), "analyst", "improve"),
+    }
+    assert "graph_loop:learning.standard" in outcome.active_plan.source_refs
 
 
 def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:

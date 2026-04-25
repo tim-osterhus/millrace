@@ -17,6 +17,7 @@ ASSETS_ROOT = Path(__file__).resolve().parent
 BUILTIN_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("loops/execution/default.json"),
     "execution.skills_pipeline": Path("loops/execution/skills_pipeline.json"),
+    "learning.standard": Path("loops/learning/default.json"),
     "planning.standard": Path("loops/planning/default.json"),
     "planning.skills_pipeline": Path("loops/planning/skills_pipeline.json"),
 }
@@ -24,6 +25,8 @@ BUILTIN_LOOP_PATHS: dict[str, Path] = {
 BUILTIN_MODE_PATHS: dict[str, Path] = {
     "default_codex": Path("modes/default_codex.json"),
     "default_pi": Path("modes/default_pi.json"),
+    "learning_codex": Path("modes/learning_codex.json"),
+    "learning_pi": Path("modes/learning_pi.json"),
     "skills_pipeline_codex": Path("modes/skills_pipeline_codex.json"),
 }
 
@@ -31,7 +34,13 @@ BUILTIN_MODE_ALIASES: dict[str, str] = {
     "standard_plain": "default_codex",
 }
 
-SHIPPED_MODE_IDS: tuple[str, ...] = ("default_codex", "default_pi")
+SHIPPED_MODE_IDS: tuple[str, ...] = (
+    "default_codex",
+    "default_pi",
+    "learning_codex",
+    "learning_pi",
+)
+_DEFAULT_MODE_IDS: tuple[str, ...] = ("default_codex", "default_pi")
 
 
 class ModeAssetError(AssetValidationError):
@@ -43,16 +52,23 @@ class ModeBundle:
     mode: ModeDefinition
     execution_loop: LoopConfigDefinition
     planning_loop: LoopConfigDefinition
+    learning_loop: LoopConfigDefinition | None = None
+    loops_by_plane: dict[Plane, LoopConfigDefinition] | None = None
 
 
 def load_builtin_mode_bundle(mode_id: str, *, assets_root: Path | None = None) -> ModeBundle:
     root = _resolve_assets_root(assets_root)
     canonical_mode_id = resolve_builtin_mode_id(mode_id)
     mode = load_builtin_mode_definition(canonical_mode_id, assets_root=root)
-    execution_loop = load_builtin_loop_definition(mode.execution_loop_id, assets_root=root)
-    planning_loop = load_builtin_loop_definition(mode.planning_loop_id, assets_root=root)
+    loops_by_plane = {
+        plane: load_builtin_loop_definition(loop_id, assets_root=root)
+        for plane, loop_id in mode.loop_ids_by_plane.items()
+    }
+    execution_loop = loops_by_plane[Plane.EXECUTION]
+    planning_loop = loops_by_plane[Plane.PLANNING]
+    learning_loop = loops_by_plane.get(Plane.LEARNING)
 
-    if canonical_mode_id in SHIPPED_MODE_IDS:
+    if canonical_mode_id in _DEFAULT_MODE_IDS:
         validate_shipped_mode_same_graph(assets_root=root)
 
     if execution_loop.plane is not Plane.EXECUTION:
@@ -63,8 +79,18 @@ def load_builtin_mode_bundle(mode_id: str, *, assets_root: Path | None = None) -
         raise ModeAssetError(
             f"Planning loop {planning_loop.loop_id} must declare plane=planning"
         )
+    if learning_loop is not None and learning_loop.plane is not Plane.LEARNING:
+        raise ModeAssetError(
+            f"Learning loop {learning_loop.loop_id} must declare plane=learning"
+        )
 
-    return ModeBundle(mode=mode, execution_loop=execution_loop, planning_loop=planning_loop)
+    return ModeBundle(
+        mode=mode,
+        execution_loop=execution_loop,
+        planning_loop=planning_loop,
+        learning_loop=learning_loop,
+        loops_by_plane=loops_by_plane,
+    )
 
 
 def load_builtin_mode_definition(
@@ -116,7 +142,7 @@ def validate_shipped_mode_same_graph(*, assets_root: Path | None = None) -> tupl
     root = _resolve_assets_root(assets_root)
     selected_graph: tuple[str, str] | None = None
 
-    for mode_id in SHIPPED_MODE_IDS:
+    for mode_id in _DEFAULT_MODE_IDS:
         mode = _load_mode_definition_raw(mode_id, root)
         graph = (mode.execution_loop_id, mode.planning_loop_id)
         if selected_graph is None:

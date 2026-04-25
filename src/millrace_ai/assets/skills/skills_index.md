@@ -18,6 +18,9 @@ recommended_for_stages:
   - mechanic
   - auditor
   - arbiter
+  - analyst
+  - professor
+  - curator
 forbidden_claims:
   - queue_selection
   - routing
@@ -57,6 +60,9 @@ Usage contract:
 | `mechanic-core` | Mechanic repair posture for planning-side inconsistencies. | `planning`, `stage-core` | `skills/stage/planning/mechanic-core/SKILL.md` | shipped |
 | `auditor-core` | Auditor intake posture, evidence linkage, and incident normalization habits. | `planning`, `stage-core` | `skills/stage/planning/auditor-core/SKILL.md` | shipped |
 | `arbiter-core` | Arbiter rubric discipline, parity judgment, and remediation handoff posture. | `planning`, `stage-core` | `skills/stage/planning/arbiter-core/SKILL.md` | shipped |
+| `analyst-core` | Analyst research posture for skill learning requests and evidence packets. | `learning`, `stage-core` | `skills/stage/learning/analyst-core/SKILL.md` | shipped |
+| `professor-core` | Professor authoring posture for skill candidates from research packets. | `learning`, `stage-core` | `skills/stage/learning/professor-core/SKILL.md` | shipped |
+| `curator-core` | Curator improvement posture for workspace-installed skill updates. | `learning`, `stage-core` | `skills/stage/learning/curator-core/SKILL.md` | shipped |
 
 ## Shared And Deferred Skills
 
