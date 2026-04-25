@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from millrace_ai.config import RuntimeConfig
+from millrace_ai.config import PiEventLogPolicy, RuntimeConfig
 from millrace_ai.runners.adapters._prompting import build_stage_prompt
 from millrace_ai.runners.adapters.pi_rpc_client import PiRpcClient, PiRpcSessionResult
 from millrace_ai.runners.contracts import (
@@ -141,9 +142,13 @@ class PiRpcRunnerAdapter:
             )
             return result
 
-        if session_result.event_lines:
+        persisted_event_lines = self._persistable_event_lines(session_result.event_lines)
+        if self._should_persist_event_log(
+            session_result=session_result,
+            persisted_event_lines=persisted_event_lines,
+        ):
             event_log_path.write_text(
-                "\n".join(session_result.event_lines) + "\n",
+                "\n".join(persisted_event_lines) + "\n",
                 encoding="utf-8",
             )
         if session_result.assistant_text is not None:
@@ -199,6 +204,31 @@ class PiRpcRunnerAdapter:
             command.append("--no-skills")
 
         return tuple(command)
+
+    def _should_persist_event_log(
+        self,
+        *,
+        session_result: PiRpcSessionResult,
+        persisted_event_lines: tuple[str, ...],
+    ) -> bool:
+        if not persisted_event_lines:
+            return False
+
+        policy = self.config.runners.pi.event_log_policy
+        if policy is PiEventLogPolicy.FULL:
+            return True
+        return session_result.exit_kind != "completed"
+
+    def _persistable_event_lines(self, event_lines: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(line for line in event_lines if not _is_message_update_event(line))
+
+
+def _is_message_update_event(raw_line: str) -> bool:
+    try:
+        payload = json.loads(raw_line)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("type") == "message_update"
 
 
 __all__ = ["PiRpcRunnerAdapter", "PiRpcSessionResult"]

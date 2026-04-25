@@ -6,7 +6,13 @@ description: Reference notes on the portable versus Millrace-opinionated skill f
 advisory_only: true
 capability_type: documentation
 forbidden_claims:
+  - queue_selection
   - routing
+  - retry_thresholds
+  - escalation_policy
+  - status_persistence
+  - terminal_results
+  - required_artifacts
 ---
 
 # Hybrid Format

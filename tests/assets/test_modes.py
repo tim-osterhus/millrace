@@ -87,6 +87,20 @@ def test_builtin_modes_load_new_canonical_codex_and_pi_presets() -> None:
     assert set(pi_bundle.mode.stage_runner_bindings.values()) == {"pi_rpc"}
 
 
+def test_skills_pipeline_codex_mode_loads_pipeline_loops_and_stage_bindings() -> None:
+    bundle = load_builtin_mode_bundle("skills_pipeline_codex")
+
+    assert bundle.mode.mode_id == "skills_pipeline_codex"
+    assert bundle.execution_loop.loop_id == "execution.skills_pipeline"
+    assert bundle.planning_loop.loop_id == "planning.skills_pipeline"
+    assert bundle.mode.stage_entrypoint_overrides["checker"] == (
+        "entrypoints/execution/skills-pipeline-checker.md"
+    )
+    assert bundle.mode.stage_model_bindings["checker"] == "gpt-5.4"
+    assert bundle.mode.stage_model_bindings["builder"] == "gpt-5.4-mini"
+    assert set(bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
+
+
 def test_mode_asset_errors_use_project_error_hierarchy() -> None:
     assert issubclass(AssetValidationError, MillraceError)
     assert issubclass(ModeAssetError, AssetValidationError)

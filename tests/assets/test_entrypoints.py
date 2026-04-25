@@ -620,6 +620,41 @@ def test_parse_markdown_asset_accepts_metadata_free_entrypoint_only(tmp_path: Pa
         parse_markdown_asset(skill_path)
 
 
+def test_parse_markdown_asset_accepts_stage_suffixed_entrypoint_filename(tmp_path: Path) -> None:
+    entrypoint_path = tmp_path / "entrypoints" / "execution" / "skills-pipeline-builder.md"
+    entrypoint_path.parent.mkdir(parents=True, exist_ok=True)
+    entrypoint_path.write_text("# Builder\n\nInstruction body.\n", encoding="utf-8")
+
+    parsed_entrypoint = parse_markdown_asset(entrypoint_path)
+
+    assert parsed_entrypoint.manifest["asset_type"] == "entrypoint"
+    assert parsed_entrypoint.manifest["stage"] == "builder"
+    assert parsed_entrypoint.manifest["plane"] == "execution"
+
+
+def test_lint_accepts_stage_suffixed_entrypoint_filename(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "assets"
+    entrypoint_path = assets_dir / "entrypoints" / "planning" / "skills-pipeline-planner.md"
+    _write_entrypoint_doc(
+        entrypoint_path,
+        body=(
+            "## Required Stage-Core Skill\n"
+            "- `planner-core`\n"
+        ),
+    )
+
+    diagnostics = lint_asset_manifests(assets_root=assets_dir)
+
+    assert all(
+        not (
+            diag.path == entrypoint_path
+            and diag.lint_level is LintLevel.STRUCTURAL
+            and "filename must match a known stage name" in diag.reason
+        )
+        for diag in diagnostics
+    )
+
+
 def _extract_legal_terminal_results(body: str) -> set[str]:
     tokens = set(re.findall(r"`###\s+([A-Z][A-Z_]+)`", body))
     tokens.update(re.findall(r"^###\s+([A-Z][A-Z_]+)\s*$", body, flags=re.MULTILINE))

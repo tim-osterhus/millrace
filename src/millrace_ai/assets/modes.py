@@ -16,12 +16,15 @@ ASSETS_ROOT = Path(__file__).resolve().parent
 
 BUILTIN_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("loops/execution/default.json"),
+    "execution.skills_pipeline": Path("loops/execution/skills_pipeline.json"),
     "planning.standard": Path("loops/planning/default.json"),
+    "planning.skills_pipeline": Path("loops/planning/skills_pipeline.json"),
 }
 
 BUILTIN_MODE_PATHS: dict[str, Path] = {
     "default_codex": Path("modes/default_codex.json"),
     "default_pi": Path("modes/default_pi.json"),
+    "skills_pipeline_codex": Path("modes/skills_pipeline_codex.json"),
 }
 
 BUILTIN_MODE_ALIASES: dict[str, str] = {

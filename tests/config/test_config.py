@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from millrace_ai.config import (
     ApplyBoundary,
     CodexPermissionLevel,
+    PiEventLogPolicy,
     PiRunnerSection,
     RuntimeConfig,
     StageConfig,
@@ -58,6 +59,13 @@ def test_runtime_config_defaults_canonical_mode_and_pi_determinism_flags() -> No
     assert config.runtime.default_mode == "default_codex"
     assert config.runners.pi.disable_context_files is True
     assert config.runners.pi.disable_skills is True
+    assert config.runners.pi.event_log_policy is PiEventLogPolicy.FAILURE_FULL
+
+
+def test_runtime_config_accepts_explicit_full_pi_event_log_policy() -> None:
+    config = RuntimeConfig(runners={"pi": {"event_log_policy": "full"}})
+
+    assert config.runners.pi.event_log_policy is PiEventLogPolicy.FULL
 
 
 def test_pi_runner_section_rejects_reserved_transport_flags() -> None:

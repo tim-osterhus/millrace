@@ -756,7 +756,18 @@ def _infer_entrypoint_path_target(path: Path) -> tuple[str | None, str | None]:
     if plane not in KNOWN_PLANES:
         return None, None
 
-    stage = path.stem if path.stem in KNOWN_STAGES else None
+    stem = path.stem
+    if stem in KNOWN_STAGES:
+        return plane, stem
+
+    stage = next(
+        (
+            candidate
+            for candidate in sorted(KNOWN_STAGES, key=len, reverse=True)
+            if stem.endswith(f"-{candidate}") or stem.endswith(f"_{candidate}")
+        ),
+        None,
+    )
     return plane, stage
 
 

@@ -46,7 +46,7 @@ The current compiler loads built-in mode assets through
 
 Current shipped asset ids:
 
-- modes: `default_codex`, `default_pi`
+- modes: `default_codex`, `default_pi`, `skills_pipeline_codex`
 - compatibility alias: `standard_plain -> default_codex`
 - execution loop: `execution.standard`
 - planning loop: `planning.standard`
@@ -247,6 +247,7 @@ rather than only asking whether the compile was valid.
 The current shipped baseline is intentionally small:
 
 - two canonical built-in modes: `default_codex`, `default_pi`
+- one specialized pipeline mode: `skills_pipeline_codex`
 - one compatibility alias: `standard_plain -> default_codex`
 - one built-in execution loop: `execution.standard`
 - one built-in planning loop: `planning.standard`

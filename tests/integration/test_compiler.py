@@ -288,6 +288,41 @@ def test_compile_materializes_configured_recovery_thresholds_into_compiled_plan(
     }
 
 
+def test_compile_materializes_skills_pipeline_mode_contract(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(recovery={"max_fix_cycles": 5}),
+        requested_mode_id="skills_pipeline_codex",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "skills_pipeline_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.skills_pipeline"
+    assert outcome.active_plan.planning_loop_id == "planning.skills_pipeline"
+
+    execution_nodes = {node.node_id: node for node in outcome.active_plan.execution_graph.nodes}
+    planning_nodes = {node.node_id: node for node in outcome.active_plan.planning_graph.nodes}
+    fix_threshold = next(
+        policy
+        for policy in outcome.active_plan.execution_graph.compiled_threshold_policies
+        if policy.policy_id == "execution.skills-pipeline.fix-needed.exhaustion"
+    )
+
+    assert execution_nodes["checker"].entrypoint_path == (
+        "entrypoints/execution/skills-pipeline-checker.md"
+    )
+    assert execution_nodes["checker"].model_name == "gpt-5.4"
+    assert execution_nodes["builder"].model_name == "gpt-5.4-mini"
+    assert planning_nodes["planner"].entrypoint_path == (
+        "entrypoints/planning/skills-pipeline-planner.md"
+    )
+    assert fix_threshold.threshold == 5
+
+
 def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     _write_synthetic_stage_kind_asset(assets_root)

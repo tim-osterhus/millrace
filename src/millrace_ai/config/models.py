@@ -33,6 +33,11 @@ class CodexPermissionLevel(str, Enum):
     MAXIMUM = "maximum"
 
 
+class PiEventLogPolicy(str, Enum):
+    FAILURE_FULL = "failure_full"
+    FULL = "full"
+
+
 class CodexRunnerSection(ConfigModel):
     command: str = "codex"
     args: tuple[str, ...] = ("exec",)
@@ -79,6 +84,7 @@ class PiRunnerSection(ConfigModel):
     thinking: str | None = None
     disable_context_files: bool = True
     disable_skills: bool = True
+    event_log_policy: PiEventLogPolicy = PiEventLogPolicy.FAILURE_FULL
     env: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("args")
@@ -146,6 +152,7 @@ __all__ = [
     "DEFAULT_CONFIG_PATH",
     "KNOWN_STAGE_NAMES",
     "RecoverySection",
+    "PiEventLogPolicy",
     "PiRunnerSection",
     "RunnersSection",
     "RuntimeConfig",

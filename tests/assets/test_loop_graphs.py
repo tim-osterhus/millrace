@@ -138,7 +138,12 @@ def test_builtin_graph_loops_load_and_validate() -> None:
 
 
 def test_shipped_graph_loop_ids_are_stable() -> None:
-    assert SHIPPED_GRAPH_LOOP_IDS == ("execution.standard", "planning.standard")
+    assert SHIPPED_GRAPH_LOOP_IDS == (
+        "execution.standard",
+        "execution.skills_pipeline",
+        "planning.standard",
+        "planning.skills_pipeline",
+    )
 
 
 def test_specific_builtin_graph_loop_fields_are_expected() -> None:

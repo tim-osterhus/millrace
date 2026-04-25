@@ -134,7 +134,11 @@ Pi adapter:
 
 - shells out to `pi --mode rpc --no-session`
 - sends the same Millrace-owned stage prompt contract used by the Codex path
-- persists streamed Pi events to `runner_events.<request_id>.jsonl`
+- persists streamed Pi events to `runner_events.<request_id>.jsonl` only for
+  failed runs by default, or for every run when `event_log_policy = "full"`
+- strips verbose `message_update` snapshots from persisted event logs because
+  they duplicate the final assistant text that is already written to
+  `runner_stdout.<request_id>.txt`
 - materializes final assistant text into `runner_stdout.<request_id>.txt`
 - queries `get_last_assistant_text` and `get_session_stats` after `agent_end`
 - uses Millrace timeout governance, including RPC `abort` plus bounded hard-kill
@@ -148,12 +152,17 @@ command = "pi"
 args = []
 disable_context_files = true
 disable_skills = true
+event_log_policy = "failure_full"
 ```
 
 Pi can auto-discover `AGENTS.md` / `CLAUDE.md` context files and Pi-native
 skills on its own. Millrace disables both by default in the built-in Pi posture
 so `default_pi` stays deterministic against the same stage-entrypoint contract
 as `default_codex`.
+
+The default `failure_full` policy keeps successful runs closer to the Codex
+artifact footprint while still preserving the raw RPC trace for timeouts,
+provider failures, and other PI-side debugging cases.
 
 `runners.default_runner` remains a generic runtime fallback. It is not the
 primary selector for the shipped harness presets.

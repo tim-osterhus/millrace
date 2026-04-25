@@ -17,7 +17,9 @@ GRAPH_LOOPS_ROOT = Path("graphs")
 
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("graphs/execution/standard.json"),
+    "execution.skills_pipeline": Path("graphs/execution/skills_pipeline.json"),
     "planning.standard": Path("graphs/planning/standard.json"),
+    "planning.skills_pipeline": Path("graphs/planning/skills_pipeline.json"),
 }
 
 SHIPPED_GRAPH_LOOP_IDS: tuple[str, ...] = tuple(BUILTIN_GRAPH_LOOP_PATHS)

@@ -19,7 +19,7 @@ Allowed:
 
 Not allowed:
 - perform broad product implementation work
-- silently escalate to another plane without preserving evidence
+- silently hand work across planes without preserving evidence
 - rewrite large planning structures when a narrow repair is sufficient
 - discard evidence needed by later planning stages
 
