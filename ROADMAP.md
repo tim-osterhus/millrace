@@ -70,20 +70,6 @@ Expected user impact:
 - clearer distinction between shipped facts, planned work, and speculative ideas
 - easier evaluation of whether Millrace is ready for a given workspace
 
-### Installed-Package-Centric Operation
-
-Millrace is being overhauled from a workspace-centric runtime posture toward an
-installed-package-centric one. Workspaces should remain durable runtime state
-locations, but normal operation should depend on the installed package's CLI,
-assets, docs, and defaults rather than on source-tree assumptions.
-
-Expected user impact:
-
-- cleaner packaged installs
-- fewer source-checkout assumptions during runtime evaluation
-- a clearer boundary between package-owned runtime assets and workspace-owned
-  state
-
 ### Basic Daemon Logging
 
 Daemon mode should be able to log basic runtime events when an operator passes
@@ -243,6 +229,14 @@ First-class runner support for other CLI harnesses such as Claude Code or
 Gemini CLI is unlikely. Millrace's supported runner surface should stay narrow,
 deterministic, and easy to diagnose rather than becoming a general wrapper over
 every coding-agent CLI.
+
+### Installed-Package-Centric Overhaul
+
+A full overhaul from workspace-centric operation to installed-package-centric
+operation is unlikely. Workspaces should remain the primary durable runtime
+boundary, even though packaged installs still need to avoid source-tree
+assumptions and keep package-owned assets clearly separated from workspace-owned
+state.
 
 ## How To Contribute
 
