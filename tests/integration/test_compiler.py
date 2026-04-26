@@ -12,7 +12,7 @@ from millrace_ai.compiler import (
     preview_graph_loop_plan,
 )
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import CompileDiagnostics, Plane
+from millrace_ai.contracts import CompileDiagnostics, Plane, ResultClass
 from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
@@ -50,6 +50,10 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "legal_outcomes": ["SYNTHETIC_COMPLETE", "BLOCKED"],
         "success_outcomes": ["SYNTHETIC_COMPLETE"],
         "failure_outcomes": ["BLOCKED"],
+        "allowed_result_classes_by_outcome": {
+            "SYNTHETIC_COMPLETE": ["success"],
+            "BLOCKED": ["blocked", "recoverable_failure"],
+        },
         "allowed_input_artifacts": [],
         "declared_output_artifacts": ["stage_result", "report"],
         "idempotence_policy": "retry_safe_with_key",
@@ -157,6 +161,7 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     assert persisted_plan.planning_loop_id == "planning.standard"
     assert persisted_plan.learning_graph is None
     assert persisted_plan.learning_trigger_rules == ()
+    assert persisted_plan.resolved_assets
     assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.execution_graph.compiled_entries} == {
         "task": "builder"
     }
@@ -189,7 +194,17 @@ def test_compile_materializes_compiled_plan_graph_surface(tmp_path: Path) -> Non
     arbiter_node = next(node for node in plan.planning_graph.nodes if node.node_id == "arbiter")
 
     assert builder_node.entrypoint_contract_id == "builder.contract.v1"
+    assert builder_node.running_status_marker == "BUILDER_RUNNING"
+    assert builder_node.allowed_result_classes_by_outcome["BLOCKED"] == (
+        ResultClass.BLOCKED,
+        ResultClass.RECOVERABLE_FAILURE,
+    )
+    assert builder_node.declared_output_artifacts == ("stage_result", "report")
     assert arbiter_node.entrypoint_contract_id == "arbiter.contract.v1"
+    assert arbiter_node.running_status_marker == "ARBITER_RUNNING"
+    assert any(ref.logical_id == "mode:default_codex" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "stage_kind:builder" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "entrypoint:entrypoints/execution/builder.md" for ref in plan.resolved_assets)
     assert {
         (
             policy.policy_id,

@@ -44,6 +44,10 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "legal_outcomes": ["SYNTHETIC_COMPLETE", "BLOCKED"],
         "success_outcomes": ["SYNTHETIC_COMPLETE"],
         "failure_outcomes": ["BLOCKED"],
+        "allowed_result_classes_by_outcome": {
+            "SYNTHETIC_COMPLETE": ["success"],
+            "BLOCKED": ["blocked", "recoverable_failure"],
+        },
         "allowed_input_artifacts": [],
         "declared_output_artifacts": ["stage_result", "report"],
         "idempotence_policy": "retry_safe_with_key",
@@ -250,6 +254,17 @@ def test_unknown_stage_kind_reference_fails_deterministically(tmp_path: Path) ->
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(GraphLoopAssetError, match="references unknown stage_kind_id"):
+        load_builtin_graph_loop_definition("execution.standard", assets_root=assets_root)
+
+
+def test_graph_loop_surfaces_invalid_stage_kind_result_class_policy(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
+    payload.pop("allowed_result_classes_by_outcome", None)
+    stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(GraphLoopAssetError, match="cannot validate stage kinds"):
         load_builtin_graph_loop_definition("execution.standard", assets_root=assets_root)
 
 

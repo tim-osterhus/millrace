@@ -30,8 +30,12 @@ from millrace_ai.architecture import (
     MaterializedGraphNodePlan,
     RegisteredStageKindDefinition,
 )
+from millrace_ai.architecture.materialization import ResolvedAssetRef
 from millrace_ai.architecture.common import dedupe_preserve_order
 from millrace_ai.assets import (
+    BUILTIN_GRAPH_LOOP_PATHS,
+    BUILTIN_MODE_PATHS,
+    BUILTIN_STAGE_KIND_PATHS,
     discover_stage_kind_definitions,
     load_builtin_graph_loop_definition,
     load_builtin_mode_definition,
@@ -163,6 +167,7 @@ def compile_and_persist_workspace_plan(
 
     try:
         plan = _compile_compiled_run_plan(
+            paths=paths,
             config=config,
             mode_id=mode_id,
             assets_root=assets_root,
@@ -209,6 +214,7 @@ def compile_and_persist_workspace_plan(
 
 def _compile_compiled_run_plan(
     *,
+    paths: WorkspacePaths,
     config: RuntimeConfig,
     mode_id: str,
     assets_root: Path | None,
@@ -266,6 +272,13 @@ def _compile_compiled_run_plan(
         concurrency_policy=mode.concurrency_policy,
         learning_trigger_rules=mode.learning_trigger_rules,
         compiled_at=compile_time,
+        resolved_assets=_build_resolved_asset_refs(
+            paths=paths,
+            mode=mode,
+            graph_loops=graph_loops,
+            node_plans=tuple(node for graph in graphs_by_plane.values() for node in graph.nodes),
+            assets_root=_resolve_compile_assets_root(paths, assets_root),
+        ),
         source_refs=_build_graph_source_refs(
             mode.mode_id,
             graphs_by_plane,
@@ -388,6 +401,9 @@ def _materialize_graph_node_plan(
         plane=plane,
         entrypoint_path=entrypoint_path,
         entrypoint_contract_id=f"{node.node_id}.contract.v1",
+        running_status_marker=stage_kind.running_status_marker,
+        allowed_result_classes_by_outcome=stage_kind.allowed_result_classes_by_outcome,
+        declared_output_artifacts=stage_kind.declared_output_artifacts,
         required_skill_paths=stage_kind.required_skill_paths,
         attached_skill_additions=attached_skill_additions,
         runner_name=runner_name,
@@ -619,6 +635,112 @@ def _build_compiled_plan_id(
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
     return f"plan-{mode_id}-{digest}"
+
+
+def _build_resolved_asset_refs(
+    *,
+    paths: WorkspacePaths,
+    mode: ModeDefinition,
+    graph_loops: dict[Plane, GraphLoopDefinition],
+    node_plans: tuple[MaterializedGraphNodePlan, ...],
+    assets_root: Path,
+) -> tuple[ResolvedAssetRef, ...]:
+    refs: list[ResolvedAssetRef] = [
+        _resolved_packaged_asset_ref(
+            asset_family="mode",
+            logical_id=f"mode:{mode.mode_id}",
+            relative_path=BUILTIN_MODE_PATHS[mode.mode_id],
+            assets_root=assets_root,
+        ),
+        *[
+            _resolved_packaged_asset_ref(
+                asset_family="graph_loop",
+                logical_id=f"graph_loop:{graph_loop.loop_id}",
+                relative_path=BUILTIN_GRAPH_LOOP_PATHS[graph_loop.loop_id],
+                assets_root=assets_root,
+            )
+            for _plane, graph_loop in sorted(graph_loops.items(), key=lambda item: item[0].value)
+        ],
+    ]
+
+    used_stage_kind_ids = dedupe_preserve_order(node.stage_kind_id for node in node_plans)
+    refs.extend(
+        _resolved_packaged_asset_ref(
+            asset_family="stage_kind",
+            logical_id=f"stage_kind:{stage_kind_id}",
+            relative_path=BUILTIN_STAGE_KIND_PATHS[stage_kind_id],
+            assets_root=assets_root,
+        )
+        for stage_kind_id in used_stage_kind_ids
+    )
+
+    entrypoint_paths = dedupe_preserve_order(node.entrypoint_path for node in node_plans)
+    refs.extend(
+        _resolved_workspace_asset_ref(
+            asset_family="entrypoint",
+            logical_id=f"entrypoint:{entrypoint_path}",
+            relative_path=entrypoint_path,
+            paths=paths,
+        )
+        for entrypoint_path in entrypoint_paths
+    )
+
+    skill_paths = dedupe_preserve_order(
+        skill_path
+        for node in node_plans
+        for skill_path in node.required_skill_paths
+    )
+    refs.extend(
+        _resolved_workspace_asset_ref(
+            asset_family="skill",
+            logical_id=f"skill:{skill_path}",
+            relative_path=skill_path,
+            paths=paths,
+        )
+        for skill_path in skill_paths
+    )
+
+    return tuple(refs)
+
+
+def _resolved_packaged_asset_ref(
+    *,
+    asset_family: str,
+    logical_id: str,
+    relative_path: Path,
+    assets_root: Path,
+) -> ResolvedAssetRef:
+    compile_path = assets_root / relative_path
+    return ResolvedAssetRef(
+        asset_family=asset_family,
+        logical_id=logical_id,
+        compile_time_path=relative_path.as_posix(),
+        content_sha256=_sha256_file(compile_path),
+    )
+
+
+def _resolved_workspace_asset_ref(
+    *,
+    asset_family: str,
+    logical_id: str,
+    relative_path: str,
+    paths: WorkspacePaths,
+) -> ResolvedAssetRef:
+    compile_path = paths.runtime_root / relative_path
+    return ResolvedAssetRef(
+        asset_family=asset_family,
+        logical_id=logical_id,
+        compile_time_path=compile_path.relative_to(paths.root).as_posix(),
+        content_sha256=_sha256_file(compile_path),
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise CompilerValidationError(f"Cannot read compile asset: {path}") from exc
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _build_graph_source_refs(

@@ -5,16 +5,43 @@
   "plane": "planning",
   "display_name": "Mechanic",
   "default_entrypoint_path": "entrypoints/planning/mechanic.md",
-  "required_skill_paths": ["skills/stage/planning/mechanic-core/SKILL.md"],
+  "required_skill_paths": [
+    "skills/stage/planning/mechanic-core/SKILL.md"
+  ],
   "suggested_skill_paths": [],
   "running_status_marker": "MECHANIC_RUNNING",
-  "legal_outcomes": ["MECHANIC_COMPLETE", "BLOCKED"],
-  "success_outcomes": ["MECHANIC_COMPLETE"],
-  "failure_outcomes": ["BLOCKED"],
+  "legal_outcomes": [
+    "MECHANIC_COMPLETE",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "MECHANIC_COMPLETE"
+  ],
+  "failure_outcomes": [
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "MECHANIC_COMPLETE": [
+      "success"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
   "allowed_input_artifacts": [],
-  "declared_output_artifacts": ["stage_result", "report"],
+  "declared_output_artifacts": [
+    "stage_result",
+    "report"
+  ],
   "idempotence_policy": "retry_safe_with_key",
-  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
   "can_start_tasks": false,
   "can_start_specs": false,
   "can_start_incidents": false,

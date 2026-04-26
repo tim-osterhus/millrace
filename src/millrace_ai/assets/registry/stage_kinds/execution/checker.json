@@ -5,16 +5,48 @@
   "plane": "execution",
   "display_name": "Checker",
   "default_entrypoint_path": "entrypoints/execution/checker.md",
-  "required_skill_paths": ["skills/stage/execution/checker-core/SKILL.md"],
+  "required_skill_paths": [
+    "skills/stage/execution/checker-core/SKILL.md"
+  ],
   "suggested_skill_paths": [],
   "running_status_marker": "CHECKER_RUNNING",
-  "legal_outcomes": ["CHECKER_PASS", "FIX_NEEDED", "BLOCKED"],
-  "success_outcomes": ["CHECKER_PASS"],
-  "failure_outcomes": ["FIX_NEEDED", "BLOCKED"],
+  "legal_outcomes": [
+    "CHECKER_PASS",
+    "FIX_NEEDED",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "CHECKER_PASS"
+  ],
+  "failure_outcomes": [
+    "FIX_NEEDED",
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "CHECKER_PASS": [
+      "success"
+    ],
+    "FIX_NEEDED": [
+      "followup_needed"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
   "allowed_input_artifacts": [],
-  "declared_output_artifacts": ["stage_result", "report"],
+  "declared_output_artifacts": [
+    "stage_result",
+    "report"
+  ],
   "idempotence_policy": "retry_safe_with_key",
-  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
   "can_start_tasks": false,
   "can_start_specs": false,
   "can_start_incidents": false,

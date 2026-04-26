@@ -5,16 +5,47 @@
   "plane": "learning",
   "display_name": "Curator",
   "default_entrypoint_path": "entrypoints/learning/curator.md",
-  "required_skill_paths": ["skills/stage/learning/curator-core/SKILL.md"],
+  "required_skill_paths": [
+    "skills/stage/learning/curator-core/SKILL.md"
+  ],
   "suggested_skill_paths": [],
   "running_status_marker": "CURATOR_RUNNING",
-  "legal_outcomes": ["CURATOR_COMPLETE", "BLOCKED"],
-  "success_outcomes": ["CURATOR_COMPLETE"],
-  "failure_outcomes": ["BLOCKED"],
-  "allowed_input_artifacts": ["learning_request", "research_packet", "skill_candidate"],
-  "declared_output_artifacts": ["stage_result", "skill_update"],
+  "legal_outcomes": [
+    "CURATOR_COMPLETE",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "CURATOR_COMPLETE"
+  ],
+  "failure_outcomes": [
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "CURATOR_COMPLETE": [
+      "success"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "learning_request",
+    "research_packet",
+    "skill_candidate"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "skill_update"
+  ],
   "idempotence_policy": "retry_safe_with_key",
-  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
   "can_start_tasks": false,
   "can_start_specs": false,
   "can_start_incidents": false,

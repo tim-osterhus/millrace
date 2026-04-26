@@ -5,16 +5,48 @@
   "plane": "learning",
   "display_name": "Professor",
   "default_entrypoint_path": "entrypoints/learning/professor.md",
-  "required_skill_paths": ["skills/stage/learning/professor-core/SKILL.md"],
-  "suggested_skill_paths": ["skills/millrace-skill-creator/SKILL.md"],
+  "required_skill_paths": [
+    "skills/stage/learning/professor-core/SKILL.md"
+  ],
+  "suggested_skill_paths": [
+    "skills/millrace-skill-creator/SKILL.md"
+  ],
   "running_status_marker": "PROFESSOR_RUNNING",
-  "legal_outcomes": ["PROFESSOR_COMPLETE", "BLOCKED"],
-  "success_outcomes": ["PROFESSOR_COMPLETE"],
-  "failure_outcomes": ["BLOCKED"],
-  "allowed_input_artifacts": ["learning_request", "research_packet"],
-  "declared_output_artifacts": ["stage_result", "skill_candidate"],
+  "legal_outcomes": [
+    "PROFESSOR_COMPLETE",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "PROFESSOR_COMPLETE"
+  ],
+  "failure_outcomes": [
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "PROFESSOR_COMPLETE": [
+      "success"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "learning_request",
+    "research_packet"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "skill_candidate"
+  ],
   "idempotence_policy": "retry_safe_with_key",
-  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
   "can_start_tasks": false,
   "can_start_specs": false,
   "can_start_incidents": false,

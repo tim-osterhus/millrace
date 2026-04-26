@@ -5,16 +5,52 @@
   "plane": "planning",
   "display_name": "Arbiter",
   "default_entrypoint_path": "entrypoints/planning/arbiter.md",
-  "required_skill_paths": ["skills/stage/planning/arbiter-core/SKILL.md"],
+  "required_skill_paths": [
+    "skills/stage/planning/arbiter-core/SKILL.md"
+  ],
   "suggested_skill_paths": [],
   "running_status_marker": "ARBITER_RUNNING",
-  "legal_outcomes": ["ARBITER_COMPLETE", "REMEDIATION_NEEDED", "BLOCKED"],
-  "success_outcomes": ["ARBITER_COMPLETE"],
-  "failure_outcomes": ["REMEDIATION_NEEDED", "BLOCKED"],
-  "allowed_input_artifacts": ["rubric"],
-  "declared_output_artifacts": ["stage_result", "rubric", "verdict", "report"],
+  "legal_outcomes": [
+    "ARBITER_COMPLETE",
+    "REMEDIATION_NEEDED",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "ARBITER_COMPLETE"
+  ],
+  "failure_outcomes": [
+    "REMEDIATION_NEEDED",
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "ARBITER_COMPLETE": [
+      "success"
+    ],
+    "REMEDIATION_NEEDED": [
+      "followup_needed"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "rubric"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "rubric",
+    "verdict",
+    "report"
+  ],
   "idempotence_policy": "single_attempt_only",
-  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
   "can_start_tasks": false,
   "can_start_specs": false,
   "can_start_incidents": false,

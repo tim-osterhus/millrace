@@ -5,16 +5,45 @@
   "plane": "learning",
   "display_name": "Analyst",
   "default_entrypoint_path": "entrypoints/learning/analyst.md",
-  "required_skill_paths": ["skills/stage/learning/analyst-core/SKILL.md"],
+  "required_skill_paths": [
+    "skills/stage/learning/analyst-core/SKILL.md"
+  ],
   "suggested_skill_paths": [],
   "running_status_marker": "ANALYST_RUNNING",
-  "legal_outcomes": ["ANALYST_COMPLETE", "BLOCKED"],
-  "success_outcomes": ["ANALYST_COMPLETE"],
-  "failure_outcomes": ["BLOCKED"],
-  "allowed_input_artifacts": ["learning_request"],
-  "declared_output_artifacts": ["stage_result", "research_packet"],
+  "legal_outcomes": [
+    "ANALYST_COMPLETE",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "ANALYST_COMPLETE"
+  ],
+  "failure_outcomes": [
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "ANALYST_COMPLETE": [
+      "success"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "learning_request"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "research_packet"
+  ],
   "idempotence_policy": "retry_safe_with_key",
-  "allowed_overrides": ["entrypoint_path", "runner_name", "model_name", "timeout_seconds", "attached_skill_additions"],
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
   "can_start_tasks": false,
   "can_start_specs": false,
   "can_start_incidents": false,

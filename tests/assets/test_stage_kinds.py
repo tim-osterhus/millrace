@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.architecture import RecoveryRole, StageIdempotencePolicy
-from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plane, PlanningStageName
+from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plane, PlanningStageName, ResultClass
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.stage_kinds import (
     SHIPPED_STAGE_KIND_IDS,
@@ -44,6 +44,10 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "legal_outcomes": ["SYNTHETIC_COMPLETE", "BLOCKED"],
         "success_outcomes": ["SYNTHETIC_COMPLETE"],
         "failure_outcomes": ["BLOCKED"],
+        "allowed_result_classes_by_outcome": {
+            "SYNTHETIC_COMPLETE": ["success"],
+            "BLOCKED": ["blocked", "recoverable_failure"],
+        },
         "allowed_input_artifacts": [],
         "declared_output_artifacts": ["stage_result", "report"],
         "idempotence_policy": "retry_safe_with_key",
@@ -100,6 +104,7 @@ def test_builtin_stage_kinds_load_and_validate() -> None:
         set(stage_kind.success_outcomes).issubset(stage_kind.legal_outcomes)
         for stage_kind in stage_kinds
     )
+    assert all(set(stage_kind.allowed_result_classes_by_outcome) == set(stage_kind.legal_outcomes) for stage_kind in stage_kinds)
 
 
 def test_shipped_stage_kind_ids_are_stable() -> None:
@@ -141,15 +146,26 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert builder.plane is Plane.EXECUTION
     assert builder.default_entrypoint_path == "entrypoints/execution/builder.md"
     assert builder.required_skill_paths == ("skills/stage/execution/builder-core/SKILL.md",)
+    assert builder.allowed_result_classes_by_outcome == {
+        "BUILDER_COMPLETE": (ResultClass.SUCCESS,),
+        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
+    }
     assert builder.can_start_tasks is True
     assert builder.idempotence_policy is StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
 
     assert troubleshooter.recovery_role is RecoveryRole.LOCAL_REPAIR
     assert troubleshooter.running_status_marker == "TROUBLESHOOTER_RUNNING"
+    assert troubleshooter.allowed_result_classes_by_outcome["BLOCKED"] == (
+        ResultClass.BLOCKED,
+        ResultClass.RECOVERABLE_FAILURE,
+    )
 
     assert arbiter.plane is Plane.PLANNING
     assert arbiter.closure_role is True
     assert arbiter.failure_outcomes == ("REMEDIATION_NEEDED", "BLOCKED")
+    assert arbiter.allowed_result_classes_by_outcome["REMEDIATION_NEEDED"] == (
+        ResultClass.FOLLOWUP_NEEDED,
+    )
     assert arbiter.idempotence_policy is StageIdempotencePolicy.SINGLE_ATTEMPT_ONLY
 
     assert analyst.plane is Plane.LEARNING
@@ -176,6 +192,17 @@ def test_invalid_stage_kind_json_fails_deterministically(tmp_path: Path) -> None
         load_builtin_stage_kind_definition("builder", assets_root=assets_root)
 
 
+def test_stage_kind_requires_allowed_result_classes_by_outcome(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
+    payload.pop("allowed_result_classes_by_outcome", None)
+    stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ArchitectureAssetError, match="Invalid stage kind definition in asset"):
+        load_builtin_stage_kind_definition("builder", assets_root=assets_root)
+
+
 def test_stage_kind_id_mismatch_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
@@ -198,3 +225,7 @@ def test_discover_stage_kind_definitions_includes_synthetic_stage_kind(tmp_path:
     assert "synthetic_worker" in discovered_ids
     assert synthetic.stage_kind_id == "synthetic_worker"
     assert synthetic.legal_outcomes == ("SYNTHETIC_COMPLETE", "BLOCKED")
+    assert synthetic.allowed_result_classes_by_outcome["BLOCKED"] == (
+        ResultClass.BLOCKED,
+        ResultClass.RECOVERABLE_FAILURE,
+    )

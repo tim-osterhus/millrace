@@ -11,6 +11,7 @@ from millrace_ai.contracts import (
     LearningTriggerRuleDefinition,
     Plane,
     PlaneConcurrencyPolicyDefinition,
+    ResultClass,
 )
 
 from .loop_graphs import (
@@ -105,6 +106,9 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     plane: Plane
     entrypoint_path: str
     entrypoint_contract_id: str | None = None
+    running_status_marker: str
+    allowed_result_classes_by_outcome: dict[str, tuple[ResultClass, ...]]
+    declared_output_artifacts: tuple[str, ...] = ()
     required_skill_paths: tuple[str, ...] = ()
     attached_skill_additions: tuple[str, ...] = ()
     runner_name: str | None = None
@@ -156,6 +160,13 @@ class CompileInputFingerprint(ArchitectureContractModel):
     assets_fingerprint: str
 
 
+class ResolvedAssetRef(ArchitectureContractModel):
+    asset_family: str
+    logical_id: str
+    compile_time_path: str
+    content_sha256: str
+
+
 class CompiledRunPlan(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["compiled_run_plan"] = "compiled_run_plan"
@@ -174,6 +185,7 @@ class CompiledRunPlan(ArchitectureContractModel):
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
     compiled_at: datetime
+    resolved_assets: tuple[ResolvedAssetRef, ...] = ()
     source_refs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -224,4 +236,5 @@ __all__ = [
     "CompiledRunPlan",
     "FrozenGraphPlanePlan",
     "MaterializedGraphNodePlan",
+    "ResolvedAssetRef",
 ]

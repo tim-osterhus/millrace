@@ -25,6 +25,7 @@ from millrace_ai.architecture.materialization import (
     CompiledRunPlan,
     FrozenGraphPlanePlan,
     MaterializedGraphNodePlan,
+    ResolvedAssetRef,
 )
 from millrace_ai.architecture.stage_kinds import (
     ArchitectureContractModel,
@@ -59,5 +60,6 @@ __all__ = [
     "MaterializedGraphNodePlan",
     "RecoveryRole",
     "RegisteredStageKindDefinition",
+    "ResolvedAssetRef",
     "StageIdempotencePolicy",
 ]

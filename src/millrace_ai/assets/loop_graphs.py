@@ -9,7 +9,10 @@ from typing import Any
 from pydantic import ValidationError
 
 from millrace_ai.architecture import GraphLoopDefinition
-from millrace_ai.assets.architecture import discover_stage_kind_definitions
+from millrace_ai.assets.architecture import (
+    ArchitectureAssetError,
+    discover_stage_kind_definitions,
+)
 from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent
@@ -103,10 +106,15 @@ def _validate_graph_loop_against_stage_kinds(
     *,
     assets_root: Path,
 ) -> None:
-    stage_kinds = {
-        stage_kind.stage_kind_id: stage_kind
-        for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
-    }
+    try:
+        stage_kinds = {
+            stage_kind.stage_kind_id: stage_kind
+            for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
+        }
+    except ArchitectureAssetError as exc:
+        raise GraphLoopAssetError(
+            f"Graph loop {graph_loop.loop_id} cannot validate stage kinds: {exc}"
+        ) from exc
     node_map = {node.node_id: node for node in graph_loop.nodes}
 
     for node in graph_loop.nodes:
