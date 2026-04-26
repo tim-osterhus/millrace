@@ -41,6 +41,7 @@ jobs:
           shim_path="$PWD/tests/integration/codex_smoke_shim.py"
           rm -rf "$workspace"
           mkdir -p "$workspace"
+          .publish-smoke/bin/millrace init --workspace "$workspace" > "$RUNNER_TEMP/millrace-init.txt"
           cat > "$task_json" <<'JSON'
           {
             "task_id": "smoke-task-001",
