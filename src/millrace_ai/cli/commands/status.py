@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from millrace_ai.cli.formatting import _print_status, _print_statuses
-from millrace_ai.cli.shared import WorkspaceOption, _ensure_paths
+from millrace_ai.cli.shared import WorkspaceOption, _require_paths
 
 status_app = typer.Typer(add_completion=False, no_args_is_help=False)
 
@@ -19,12 +19,12 @@ def status(
     workspace: WorkspaceOption = Path("."),
 ) -> None:
     if ctx.invoked_subcommand is None:
-        _print_status(_ensure_paths(workspace))
+        _print_status(_require_paths(workspace))
 
 
 @status_app.command("show")
 def status_show(workspace: WorkspaceOption = Path(".")) -> None:
-    _print_status(_ensure_paths(workspace))
+    _print_status(_require_paths(workspace))
 
 
 @status_app.command("watch")
@@ -55,7 +55,7 @@ def status_watch(
     unique_paths = []
     seen_roots: set[Path] = set()
     for path in workspace_values:
-        resolved = _ensure_paths(path)
+        resolved = _require_paths(path)
         if resolved.root in seen_roots:
             continue
         seen_roots.add(resolved.root)

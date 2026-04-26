@@ -10,7 +10,8 @@ import typer
 
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import SpecDocument, TaskDocument
-from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
+from millrace_ai.cli.formatting import _print_error
+from millrace_ai.paths import WorkspacePaths, initialize_workspace, require_initialized_workspace, workspace_paths
 from millrace_ai.runners.adapters.codex_cli import CodexCliRunnerAdapter
 from millrace_ai.runners.adapters.pi_rpc import PiRpcRunnerAdapter
 from millrace_ai.runners.dispatcher import StageRunnerDispatcher
@@ -43,8 +44,19 @@ ConfigOption = Annotated[
 ]
 
 
+def _initialize_paths(workspace: Path) -> WorkspacePaths:
+    return initialize_workspace(workspace_paths(workspace))
+
+
+def _require_paths(workspace: Path) -> WorkspacePaths:
+    try:
+        return require_initialized_workspace(workspace_paths(workspace))
+    except ValueError as exc:
+        raise typer.Exit(code=_print_error(str(exc))) from exc
+
+
 def _ensure_paths(workspace: Path) -> WorkspacePaths:
-    return bootstrap_workspace(workspace_paths(workspace))
+    return _require_paths(workspace)
 
 
 def _resolve_config_path(paths: WorkspacePaths, config_path: Path | None) -> Path:
@@ -147,9 +159,11 @@ __all__ = [
     "_build_stage_runner",
     "_cli_api",
     "_ensure_paths",
+    "_initialize_paths",
     "_load_spec_document",
     "_load_task_document",
     "_queue_lookup",
+    "_require_paths",
     "_resolve_config_path",
     "_validate_configured_stage_runners",
     "_validate_work_item_id",

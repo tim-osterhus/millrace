@@ -12,7 +12,7 @@ from uuid import uuid4
 import typer
 
 from millrace_ai.cli.formatting import _print_error
-from millrace_ai.cli.shared import WorkspaceOption, _ensure_paths
+from millrace_ai.cli.shared import WorkspaceOption, _require_paths
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import LearningRequestAction, LearningRequestDocument
 from millrace_ai.modes import ModeAssetError, load_builtin_mode_definition, resolve_builtin_mode_id
@@ -29,7 +29,7 @@ def skills_install(
     force: Annotated[bool, typer.Option("--force", help="Replace an existing local skill.")] = False,
     update: Annotated[bool, typer.Option("--update", help="Update an existing local skill.")] = False,
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     source = _resolve_local_skill_source(skill_ref)
     if source is None:
         raise typer.Exit(code=_print_error(f"cannot resolve skill ref: {skill_ref}"))
@@ -63,7 +63,7 @@ def skills_create(
     foreground: Annotated[bool, typer.Option("--foreground", help="Run immediately instead of queueing.")] = False,
 ) -> None:
     del foreground
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     _require_learning_mode(paths.root, mode_id=mode)
     document = _learning_request_document(
         requested_action=LearningRequestAction.CREATE,
@@ -83,7 +83,7 @@ def skills_improve(
     foreground: Annotated[bool, typer.Option("--foreground", help="Run immediately instead of queueing.")] = False,
 ) -> None:
     del foreground
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     _require_learning_mode(paths.root, mode_id=mode)
     document = _learning_request_document(
         requested_action=LearningRequestAction.IMPROVE,
@@ -100,7 +100,7 @@ def skills_promote(
     skill_id: Annotated[str, typer.Argument(help="Workspace skill id to promote into source assets.")],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     source = paths.skills_dir / skill_id
     if not source.joinpath("SKILL.md").is_file():
         raise typer.Exit(code=_print_error(f"workspace skill not found: {skill_id}"))
@@ -127,7 +127,7 @@ def skills_export(
     workspace: WorkspaceOption = Path("."),
     output: Annotated[Path | None, typer.Option("--output", help="Destination archive path.")] = None,
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     source = paths.skills_dir / skill_id
     if not source.joinpath("SKILL.md").is_file():
         raise typer.Exit(code=_print_error(f"skill not found: {skill_id}"))
@@ -145,7 +145,7 @@ def skills_export(
 
 @skills_app.command("ls")
 def skills_ls(workspace: WorkspaceOption = Path(".")) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     for skill_id in _list_skill_ids(paths.skills_dir):
         typer.echo(skill_id)
 
@@ -155,7 +155,7 @@ def skills_show(
     skill_id: Annotated[str, typer.Argument(help="Installed skill id to inspect.")],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     skill_path = paths.skills_dir / skill_id / "SKILL.md"
     if not skill_path.is_file():
         raise typer.Exit(code=_print_error(f"skill not found: {skill_id}"))
@@ -171,7 +171,7 @@ def skills_search(
     query: Annotated[str, typer.Argument(help="Search query.")],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     needle = query.strip().lower()
     if not needle:
         raise typer.Exit(code=_print_error("search query is required"))

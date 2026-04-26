@@ -6,11 +6,11 @@ from pathlib import Path
 
 import typer
 
-from millrace_ai.cli.shared import WorkspaceOption, _cli_api, _ensure_paths
+from millrace_ai.cli.shared import WorkspaceOption, _cli_api, _require_paths
 
 
 def doctor(workspace: WorkspaceOption = Path(".")) -> None:
-    report = _cli_api().run_workspace_doctor(_ensure_paths(workspace))
+    report = _cli_api().run_workspace_doctor(_require_paths(workspace))
     typer.echo(f"ok: {'true' if report.ok else 'false'}")
     typer.echo(f"errors: {len(report.errors)}")
     typer.echo(f"warnings: {len(report.warnings)}")

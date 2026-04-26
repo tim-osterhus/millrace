@@ -12,10 +12,10 @@ from millrace_ai.cli.formatting import _print_control_result, _print_error
 from millrace_ai.cli.shared import (
     WorkspaceOption,
     _cli_api,
-    _ensure_paths,
     _load_spec_document,
     _load_task_document,
     _queue_lookup,
+    _require_paths,
     _validate_work_item_id,
 )
 from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument
@@ -26,7 +26,7 @@ queue_app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 @queue_app.command("ls")
 def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     execution_queue_depth = len(tuple(paths.tasks_queue_dir.glob("*.md")))
     planning_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md"))) + len(
         tuple(paths.incidents_incoming_dir.glob("*.md"))
@@ -47,7 +47,7 @@ def queue_show(
     work_item_id: Annotated[str, typer.Argument(help="Task/spec/incident ID to inspect.")],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     try:
         validated_work_item_id = _validate_work_item_id(work_item_id)
     except ValueError as exc:
@@ -90,7 +90,7 @@ def queue_add_task(
     task_path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, resolve_path=True)],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     try:
         document = _load_task_document(task_path)
         result = _cli_api().RuntimeControl(paths).add_task(document)
@@ -109,7 +109,7 @@ def queue_add_spec(
     spec_path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, resolve_path=True)],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     try:
         document = _load_spec_document(spec_path)
         result = _cli_api().RuntimeControl(paths).add_spec(document)
@@ -128,7 +128,7 @@ def queue_add_idea(
     idea_path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, resolve_path=True)],
     workspace: WorkspaceOption = Path("."),
 ) -> None:
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     try:
         markdown = idea_path.read_text(encoding="utf-8")
         result = _cli_api().RuntimeControl(paths).add_idea_markdown(

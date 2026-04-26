@@ -8,26 +8,26 @@ from typing import Annotated
 import typer
 
 from millrace_ai.cli.formatting import _print_control_result
-from millrace_ai.cli.shared import WorkspaceOption, _cli_api, _ensure_paths
+from millrace_ai.cli.shared import WorkspaceOption, _cli_api, _require_paths
 
 control_app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
 @control_app.command("pause")
 def control_pause(workspace: WorkspaceOption = Path(".")) -> None:
-    result = _cli_api().RuntimeControl(_ensure_paths(workspace)).pause_runtime()
+    result = _cli_api().RuntimeControl(_require_paths(workspace)).pause_runtime()
     _print_control_result(result)
 
 
 @control_app.command("resume")
 def control_resume(workspace: WorkspaceOption = Path(".")) -> None:
-    result = _cli_api().RuntimeControl(_ensure_paths(workspace)).resume_runtime()
+    result = _cli_api().RuntimeControl(_require_paths(workspace)).resume_runtime()
     _print_control_result(result)
 
 
 @control_app.command("stop")
 def control_stop(workspace: WorkspaceOption = Path(".")) -> None:
-    result = _cli_api().RuntimeControl(_ensure_paths(workspace)).stop_runtime()
+    result = _cli_api().RuntimeControl(_require_paths(workspace)).stop_runtime()
     _print_control_result(result)
 
 
@@ -36,7 +36,7 @@ def control_retry_active(
     workspace: WorkspaceOption = Path("."),
     reason: Annotated[str, typer.Option("--reason", help="Reason attached to retry action.")] = "operator requested retry",
 ) -> None:
-    result = _cli_api().RuntimeControl(_ensure_paths(workspace)).retry_active(reason=reason)
+    result = _cli_api().RuntimeControl(_require_paths(workspace)).retry_active(reason=reason)
     _print_control_result(result)
 
 
@@ -48,13 +48,13 @@ def control_clear_stale_state(
         typer.Option("--reason", help="Reason attached to stale-state clear action."),
     ] = "operator requested stale-state clear",
 ) -> None:
-    result = _cli_api().RuntimeControl(_ensure_paths(workspace)).clear_stale_state(reason=reason)
+    result = _cli_api().RuntimeControl(_require_paths(workspace)).clear_stale_state(reason=reason)
     _print_control_result(result)
 
 
 @control_app.command("reload-config")
 def control_reload_config(workspace: WorkspaceOption = Path(".")) -> None:
-    result = _cli_api().RuntimeControl(_ensure_paths(workspace)).reload_config()
+    result = _cli_api().RuntimeControl(_require_paths(workspace)).reload_config()
     _print_control_result(result)
 
 

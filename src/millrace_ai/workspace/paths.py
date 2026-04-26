@@ -262,19 +262,9 @@ def bootstrap_workspace(
     assets_root: Path | str | None = None,
 ) -> WorkspacePaths:
     """Create canonical workspace directories and default files if missing."""
+    from millrace_ai.workspace.initialization import initialize_workspace
 
-    paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
-
-    for directory in paths.directories():
-        directory.mkdir(parents=True, exist_ok=True)
-
-    defaults = _default_file_payloads(paths)
-    for file_path, payload in defaults.items():
-        if not file_path.exists():
-            file_path.write_text(payload, encoding="utf-8")
-
-    _deploy_runtime_assets(paths, assets_root=assets_root)
-    return paths
+    return initialize_workspace(target, assets_root=assets_root)
 
 
 def _deploy_runtime_assets(paths: WorkspacePaths, *, assets_root: Path | str | None) -> None:

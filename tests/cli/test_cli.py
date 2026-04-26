@@ -40,6 +40,50 @@ def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
 
 
+def test_init_command_creates_workspace_baseline(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["init", "--workspace", str(root)])
+
+    paths = workspace_paths(root)
+
+    assert result.exit_code == 0
+    assert "workspace:" in result.output
+    assert "initialized: true" in result.output
+    assert paths.runtime_root.is_dir()
+    assert paths.runtime_root.joinpath("millrace.toml").is_file()
+    assert paths.runtime_snapshot_file.is_file()
+
+
+@pytest.mark.parametrize(
+    ("argv"),
+    [
+        ["run", "once"],
+        ["compile", "validate"],
+        ["queue", "ls"],
+        ["status"],
+        ["runs", "ls"],
+        ["control", "pause"],
+        ["skills", "ls"],
+        ["doctor"],
+    ],
+)
+def test_operational_commands_refuse_uninitialized_workspace(
+    tmp_path: Path,
+    argv: list[str],
+) -> None:
+    root = tmp_path / "workspace"
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, [*argv, "--workspace", str(root)])
+
+    assert result.exit_code == 1
+    assert "error: workspace is not initialized" in result.output
+    assert "millrace init --workspace" in result.output
+    assert not (root / "millrace-agents").exists()
+
+
 def test_cli_import_surface_moves_to_package_directory() -> None:
     assert Path(cli.__file__).as_posix().endswith("/cli/__init__.py")
 

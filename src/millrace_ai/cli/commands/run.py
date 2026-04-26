@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from millrace_ai.cli.formatting import _print_error, _run_once_exit_code, _value
-from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _ensure_paths, _resolve_config_path
+from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _require_paths, _resolve_config_path
 
 run_app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -20,7 +20,7 @@ def run_once(
     config_path: ConfigOption = None,
 ) -> None:
     cli_api = _cli_api()
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     resolved_config_path = _resolve_config_path(paths, config_path)
     try:
         runtime_config = cli_api.load_runtime_config(resolved_config_path)
@@ -58,7 +58,7 @@ def run_daemon(
     ] = None,
 ) -> None:
     cli_api = _cli_api()
-    paths = _ensure_paths(workspace)
+    paths = _require_paths(workspace)
     resolved_config_path = _resolve_config_path(paths, config_path)
     try:
         runtime_config = cli_api.load_runtime_config(resolved_config_path)

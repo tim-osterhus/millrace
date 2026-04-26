@@ -4,6 +4,8 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
+
 from millrace_ai.config import CodexPermissionLevel, load_runtime_config
 from millrace_ai.contracts import RecoveryCounters, RuntimeSnapshot
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -74,11 +76,15 @@ def _expected_directories(root: Path) -> list[Path]:
 def test_paths_module_is_workspace_facade() -> None:
     paths_module = importlib.import_module("millrace_ai.paths")
     workspace_paths_module = importlib.import_module("millrace_ai.workspace.paths")
+    initialization_module = importlib.import_module("millrace_ai.workspace.initialization")
 
     assert Path(paths_module.__file__).as_posix().endswith("/paths.py")
     assert paths_module.WorkspacePaths.__module__ == "millrace_ai.workspace.paths"
     assert paths_module.workspace_paths is workspace_paths_module.workspace_paths
     assert paths_module.bootstrap_workspace is workspace_paths_module.bootstrap_workspace
+    assert paths_module.initialize_workspace is initialization_module.initialize_workspace
+    assert paths_module.require_initialized_workspace is initialization_module.require_initialized_workspace
+    assert paths_module.ensure_runtime_state_surfaces is initialization_module.ensure_runtime_state_surfaces
 
 
 def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
@@ -174,6 +180,63 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
     ]
     for asset_path in expected_runtime_assets:
         assert asset_path.is_file(), f"Missing runtime asset: {asset_path}"
+
+
+def test_require_initialized_workspace_rejects_uninitialized_target(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    paths_module = importlib.import_module("millrace_ai.paths")
+
+    with pytest.raises(ValueError, match="workspace is not initialized"):
+        paths_module.require_initialized_workspace(root)
+
+    assert not root.exists()
+
+
+def test_initialize_workspace_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    paths_module = importlib.import_module("millrace_ai.paths")
+
+    paths = paths_module.initialize_workspace(root)
+
+    assert paths == workspace_paths(root)
+    for directory in _expected_directories(root):
+        assert directory.is_dir(), f"Missing directory: {directory}"
+
+    expected_files = [
+        root / "millrace-agents" / "outline.md",
+        root / "millrace-agents" / "historylog.md",
+        root / "millrace-agents" / "millrace.toml",
+        root / "millrace-agents" / "state" / "execution_status.md",
+        root / "millrace-agents" / "state" / "planning_status.md",
+        root / "millrace-agents" / "state" / "learning_status.md",
+        root / "millrace-agents" / "state" / "runtime_snapshot.json",
+        root / "millrace-agents" / "state" / "recovery_counters.json",
+        root / "millrace-agents" / "learning" / "events.jsonl",
+    ]
+    for file_path in expected_files:
+        assert file_path.is_file(), f"Missing file: {file_path}"
+
+
+def test_ensure_runtime_state_surfaces_restores_missing_runtime_state_defaults(tmp_path: Path) -> None:
+    paths_module = importlib.import_module("millrace_ai.paths")
+    paths = paths_module.initialize_workspace(tmp_path / "workspace")
+
+    paths.execution_status_file.unlink()
+    paths.planning_status_file.unlink()
+    paths.learning_status_file.unlink()
+    paths.runtime_snapshot_file.unlink()
+    paths.recovery_counters_file.unlink()
+    paths.learning_events_file.unlink()
+
+    ensured = paths_module.ensure_runtime_state_surfaces(paths)
+
+    assert ensured == paths
+    assert paths.execution_status_file.read_text(encoding="utf-8") == "### IDLE\n"
+    assert paths.planning_status_file.read_text(encoding="utf-8") == "### IDLE\n"
+    assert paths.learning_status_file.read_text(encoding="utf-8") == "### IDLE\n"
+    assert json.loads(paths.runtime_snapshot_file.read_text(encoding="utf-8"))["compiled_plan_id"] == "bootstrap"
+    assert json.loads(paths.recovery_counters_file.read_text(encoding="utf-8"))["entries"] == []
+    assert paths.learning_events_file.read_text(encoding="utf-8") == ""
 
 
 def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None:
