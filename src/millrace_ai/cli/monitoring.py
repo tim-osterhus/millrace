@@ -276,16 +276,16 @@ def _format_plane_mapping(
     *,
     normalize_markers: bool = False,
 ) -> str:
-    parts = []
+    parts: list[str] = []
     for plane in ("execution", "planning", "learning"):
         if plane in mapping:
             value = str(mapping[plane])
             if normalize_markers:
                 value = _normalize_marker(value)
             parts.append(f"{plane}={value}")
-    for key, value in mapping.items():
+    for key, item in mapping.items():
         if key not in {"execution", "planning", "learning"}:
-            text = str(value)
+            text = str(item)
             if normalize_markers:
                 text = _normalize_marker(text)
             parts.append(f"{key}={text}")

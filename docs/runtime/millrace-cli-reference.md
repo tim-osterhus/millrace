@@ -97,6 +97,17 @@ Options:
 - `--mode MODE_ID`
 - `--config PATH`
 - `--max-ticks N`
+- `--monitor [none|basic]`
+
+The default monitor mode is `none`; `millrace run daemon` does not print live
+monitor lines unless `--monitor basic` is passed explicitly. The existing
+daemon summary output remains unchanged.
+
+`--monitor basic` prints a compact terminal stream for visible daemon sessions:
+startup lifecycle context, baseline/currentness identity, loop and concurrency
+policy, status/queue snapshots, stage start and completion lines, router
+decisions, run elapsed time, and token usage. Monitor output is live-only and
+does not replace persisted runtime events or run artifacts.
 
 ## Status Commands
 

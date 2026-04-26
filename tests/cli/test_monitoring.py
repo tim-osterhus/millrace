@@ -123,3 +123,92 @@ def test_basic_terminal_monitor_renders_independent_status_lines() -> None:
         )
     )
     assert "status plane=planning run=run-456 from=MANAGER_RUNNING to=NEEDS_EXECUTION" in stream.getvalue()
+
+
+def test_basic_terminal_monitor_renders_unknown_tokens_when_usage_missing() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW,
+            payload={
+                "plane": "learning",
+                "stage": "analyst",
+                "node_id": "analyst",
+                "stage_kind_id": "analyst",
+                "run_id": "run-learning-1",
+                "terminal_result": "ANALYST_COMPLETE",
+                "summary_status_marker": "### ANALYST_COMPLETE",
+                "started_at": NOW.isoformat(),
+                "completed_at": (NOW + timedelta(seconds=5)).isoformat(),
+                "duration_seconds": 5.0,
+                "token_usage": None,
+            },
+        )
+    )
+    assert "tokens=unknown" in stream.getvalue()
+
+
+def test_basic_terminal_monitor_keys_aggregates_by_plane_and_run() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW,
+            payload={
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": "run-shared",
+                "terminal_result": "BUILDER_COMPLETE",
+                "summary_status_marker": "### BUILDER_COMPLETE",
+                "started_at": NOW.isoformat(),
+                "completed_at": (NOW + timedelta(seconds=10)).isoformat(),
+                "duration_seconds": 10.0,
+                "token_usage": {
+                    "input_tokens": 100,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 10,
+                    "thinking_tokens": 5,
+                    "total_tokens": 115,
+                },
+            },
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW,
+            payload={
+                "plane": "learning",
+                "stage": "analyst",
+                "node_id": "analyst",
+                "stage_kind_id": "analyst",
+                "run_id": "run-shared",
+                "terminal_result": "ANALYST_COMPLETE",
+                "summary_status_marker": "### ANALYST_COMPLETE",
+                "started_at": NOW.isoformat(),
+                "completed_at": (NOW + timedelta(seconds=5)).isoformat(),
+                "duration_seconds": 5.0,
+                "token_usage": {
+                    "input_tokens": 7,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 3,
+                    "thinking_tokens": 2,
+                    "total_tokens": 12,
+                },
+            },
+        )
+    )
+    output = stream.getvalue()
+    assert (
+        "run update plane=execution run=run-shared elapsed=10.0s "
+        "tokens=in=100 cached=0 out=10 think=5 total=115"
+    ) in output
+    assert (
+        "run update plane=learning run=run-shared elapsed=5.0s "
+        "tokens=in=7 cached=0 out=3 think=2 total=12"
+    ) in output

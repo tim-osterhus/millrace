@@ -106,7 +106,7 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
         engine._close_watcher_session()
         if lock_acquired:
             engine._release_daemon_ownership_lock(force=True)
-    raise
+        raise
 
 
 def _emit_startup_monitor_events(engine: RuntimeEngine, snapshot: RuntimeSnapshot) -> None:

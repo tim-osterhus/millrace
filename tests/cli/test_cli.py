@@ -396,6 +396,51 @@ def test_run_daemon_with_monitor_basic_installs_monitor_and_prints_output(
     assert "runtime started mode=standard_plain" in result.output
 
 
+def test_run_daemon_without_monitor_stays_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    class FakeRuntimeEngine:
+        def __init__(
+            self,
+            target,
+            *,
+            stage_runner,
+            config_path=None,
+            mode_id=None,
+            assets_root=None,
+            monitor=None,
+        ) -> None:
+            del target, stage_runner, config_path, mode_id, assets_root
+            self.monitor = monitor
+            self.snapshot = SimpleNamespace(stop_requested=False, process_running=False)
+
+        def startup(self):
+            assert self.monitor is not None
+            self.monitor.emit(
+                RuntimeMonitorEvent(
+                    event_type="runtime_started",
+                    occurred_at=NOW,
+                    payload={"mode_id": "standard_plain", "compiled_plan_id": "plan-001"},
+                )
+            )
+            return SimpleNamespace(active_mode_id="standard_plain", compiled_plan_id="plan-001")
+
+        def tick(self):
+            return SimpleNamespace(router_decision=SimpleNamespace(reason="loop"))
+
+    monkeypatch.setattr(cli, "RuntimeEngine", FakeRuntimeEngine)
+    result = CliRunner().invoke(
+        cli.app,
+        ["run", "daemon", "--workspace", str(paths.root), "--max-ticks", "1"],
+    )
+
+    assert result.exit_code == 0
+    assert "runtime started" not in result.output
+
+
 def test_skills_install_copies_local_skill_and_updates_workspace_index(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     source_skill = tmp_path / "source-skill"
