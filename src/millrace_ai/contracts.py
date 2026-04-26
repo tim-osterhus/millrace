@@ -527,6 +527,8 @@ class StageResultEnvelope(ContractModel):
     run_id: str
     plane: Plane
     stage: StageName
+    node_id: str = ""
+    stage_kind_id: str = ""
     work_item_kind: WorkItemKind
     work_item_id: str
 
@@ -560,9 +562,10 @@ class StageResultEnvelope(ContractModel):
     def validate_contract(self) -> "StageResultEnvelope":
         if _STAGE_TO_PLANE[self.stage.value] != self.plane:
             raise ValueError("stage must belong to plane")
-
-        if self.terminal_result.value not in _STAGE_LEGAL_TERMINAL_RESULTS[self.stage.value]:
-            raise ValueError("terminal_result is not legal for stage")
+        if not self.node_id:
+            self.node_id = self.stage.value
+        if not self.stage_kind_id:
+            self.stage_kind_id = self.stage.value
 
         marker = f"### {self.terminal_result.value}"
         if self.summary_status_marker != marker:
@@ -573,40 +576,6 @@ class StageResultEnvelope(ContractModel):
 
         if self.duration_seconds < 0:
             raise ValueError("duration_seconds must be >= 0")
-
-        if self.terminal_result.value == "BLOCKED":
-            if self.result_class not in {
-                ResultClass.BLOCKED,
-                ResultClass.RECOVERABLE_FAILURE,
-            }:
-                raise ValueError("BLOCKED requires blocked or recoverable_failure result_class")
-            if self.success:
-                raise ValueError("BLOCKED terminal_result cannot be success=true")
-            return self
-
-        expected_result_class: dict[TerminalResult, ResultClass] = {
-            ExecutionTerminalResult.BUILDER_COMPLETE: ResultClass.SUCCESS,
-            ExecutionTerminalResult.CHECKER_PASS: ResultClass.SUCCESS,
-            ExecutionTerminalResult.FIX_NEEDED: ResultClass.FOLLOWUP_NEEDED,
-            ExecutionTerminalResult.FIXER_COMPLETE: ResultClass.SUCCESS,
-            ExecutionTerminalResult.DOUBLECHECK_PASS: ResultClass.SUCCESS,
-            ExecutionTerminalResult.UPDATE_COMPLETE: ResultClass.SUCCESS,
-            ExecutionTerminalResult.TROUBLESHOOT_COMPLETE: ResultClass.SUCCESS,
-            ExecutionTerminalResult.CONSULT_COMPLETE: ResultClass.SUCCESS,
-            ExecutionTerminalResult.NEEDS_PLANNING: ResultClass.ESCALATE_PLANNING,
-            PlanningTerminalResult.PLANNER_COMPLETE: ResultClass.SUCCESS,
-            PlanningTerminalResult.MANAGER_COMPLETE: ResultClass.SUCCESS,
-            PlanningTerminalResult.MECHANIC_COMPLETE: ResultClass.SUCCESS,
-            PlanningTerminalResult.AUDITOR_COMPLETE: ResultClass.SUCCESS,
-            PlanningTerminalResult.ARBITER_COMPLETE: ResultClass.SUCCESS,
-            PlanningTerminalResult.REMEDIATION_NEEDED: ResultClass.FOLLOWUP_NEEDED,
-            LearningTerminalResult.ANALYST_COMPLETE: ResultClass.SUCCESS,
-            LearningTerminalResult.PROFESSOR_COMPLETE: ResultClass.SUCCESS,
-            LearningTerminalResult.CURATOR_COMPLETE: ResultClass.SUCCESS,
-        }
-        if self.result_class != expected_result_class[self.terminal_result]:
-            raise ValueError("result_class does not match terminal_result semantics")
-
         if self.result_class == ResultClass.SUCCESS and not self.success:
             raise ValueError("success result_class requires success=true")
         if self.result_class != ResultClass.SUCCESS and self.success:

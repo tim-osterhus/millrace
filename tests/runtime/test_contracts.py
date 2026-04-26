@@ -206,6 +206,8 @@ def test_stage_result_envelope_valid_payload() -> None:
         run_id="run-001",
         plane="execution",
         stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
         work_item_kind="task",
         work_item_id="task-001",
         terminal_result="BUILDER_COMPLETE",
@@ -220,21 +222,26 @@ def test_stage_result_envelope_valid_payload() -> None:
     assert env.retryable is False
 
 
-def test_stage_result_envelope_rejects_illegal_terminal_result_for_stage() -> None:
-    with pytest.raises(ValidationError):
-        StageResultEnvelope(
-            run_id="run-001",
-            plane="execution",
-            stage="builder",
-            work_item_kind="task",
-            work_item_id="task-001",
-            terminal_result="PLANNER_COMPLETE",
-            result_class="success",
-            summary_status_marker="### PLANNER_COMPLETE",
-            success=True,
-            started_at=NOW,
-            completed_at=NOW,
-        )
+def test_stage_result_envelope_accepts_request_driven_terminal_identity() -> None:
+    env = StageResultEnvelope(
+        run_id="run-001",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="CHECKER_PASS",
+        result_class="success",
+        summary_status_marker="### CHECKER_PASS",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    assert env.terminal_result.value == "CHECKER_PASS"
+    assert env.node_id == "builder"
+    assert env.stage_kind_id == "builder"
 
 
 def test_stage_result_envelope_rejects_inconsistent_semantics() -> None:

@@ -70,6 +70,11 @@ def build_stage_run_request(
         stage=stage_name,
         mode_id=engine.snapshot.active_mode_id,
         compiled_plan_id=engine.snapshot.compiled_plan_id,
+        node_id=stage_plan.node_id,
+        stage_kind_id=stage_plan.stage_kind_id,
+        running_status_marker=stage_plan.running_status_marker,
+        legal_terminal_markers=_legal_terminal_markers_for_stage_plan(stage_plan),
+        allowed_result_classes_by_outcome=stage_plan.allowed_result_classes_by_outcome,
         request_kind=_request_kind_for_active_kind(engine.snapshot.active_work_item_kind),
         entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
@@ -130,6 +135,11 @@ def build_closure_target_stage_run_request(
         request_kind="closure_target",
         mode_id=engine.snapshot.active_mode_id,
         compiled_plan_id=engine.snapshot.compiled_plan_id,
+        node_id=stage_plan.node_id,
+        stage_kind_id=stage_plan.stage_kind_id,
+        running_status_marker=stage_plan.running_status_marker,
+        legal_terminal_markers=_legal_terminal_markers_for_stage_plan(stage_plan),
+        allowed_result_classes_by_outcome=stage_plan.allowed_result_classes_by_outcome,
         entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
@@ -295,6 +305,14 @@ def _status_file_for_plane(engine: RuntimeEngine, plane: Plane) -> Path:
     if plane is Plane.LEARNING:
         return engine.paths.learning_status_file
     return engine.paths.planning_status_file
+
+
+def _legal_terminal_markers_for_stage_plan(
+    stage_plan: MaterializedGraphNodePlan,
+) -> tuple[str, ...]:
+    return tuple(
+        f"### {outcome}" for outcome in stage_plan.allowed_result_classes_by_outcome
+    )
 
 
 def _write_skill_revision_evidence_if_enabled(

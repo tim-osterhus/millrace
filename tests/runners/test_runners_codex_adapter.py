@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
-from millrace_ai.contracts import ExecutionStageName, Plane, TokenUsage, WorkItemKind
+from millrace_ai.contracts import ExecutionStageName, Plane, ResultClass, TokenUsage, WorkItemKind
 from millrace_ai.runner import StageRunRequest
 from millrace_ai.runners.adapters.codex_cli import CodexCliRunnerAdapter
 from millrace_ai.runners.errors import RunnerBinaryNotFoundError
@@ -519,6 +519,47 @@ def test_codex_adapter_prompt_includes_stage_request_context_fields(tmp_path: Pa
     assert "### TOKEN" not in prompt
     assert "legal terminal marker defined by the opened entrypoint contract" in prompt
     assert "Do not invent or rename terminal markers." in prompt
+
+
+def test_codex_adapter_prompt_uses_request_legal_terminal_markers(tmp_path: Path) -> None:
+    request = _request(tmp_path).model_copy(
+        update={
+            "legal_terminal_markers": ("### CHECKER_PASS",),
+            "allowed_result_classes_by_outcome": {
+                "CHECKER_PASS": (ResultClass.SUCCESS,),
+            },
+        }
+    )
+
+    def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
+        del cwd, env, timeout_seconds
+        Path(stdout_path).write_text("", encoding="utf-8")
+        Path(_command_option_value(command, "--output-last-message")).write_text(
+            "### CHECKER_PASS\n",
+            encoding="utf-8",
+        )
+        Path(stderr_path).write_text("", encoding="utf-8")
+        now = datetime.now(timezone.utc)
+        return ProcessExecutionResult(
+            exit_code=0,
+            timed_out=False,
+            started_at=now,
+            ended_at=now,
+            error=None,
+        )
+
+    adapter = CodexCliRunnerAdapter(
+        config=RuntimeConfig(),
+        workspace_root=tmp_path,
+        process_executor=fake_execute,
+    )
+    adapter.run(request)
+
+    prompt_path = Path(request.run_dir) / f"runner_prompt.{request.request_id}.md"
+    prompt = prompt_path.read_text(encoding="utf-8")
+
+    assert "`### CHECKER_PASS`" in prompt
+    assert "`### BUILDER_COMPLETE`" not in prompt
 
 
 def test_codex_adapter_prompt_uses_none_for_absent_optional_context(tmp_path: Path) -> None:

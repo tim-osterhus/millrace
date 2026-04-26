@@ -164,6 +164,14 @@ def test_stage_run_request_accepts_closure_target_without_active_work_item() -> 
     request = _request(Path("/tmp"), stage="arbiter", request_kind="closure_target")
 
     assert request.request_kind == "closure_target"
+    assert request.node_id == "arbiter"
+    assert request.stage_kind_id == "arbiter"
+    assert request.running_status_marker == "ARBITER_RUNNING"
+    assert request.legal_terminal_markers == (
+        "### ARBITER_COMPLETE",
+        "### REMEDIATION_NEEDED",
+        "### BLOCKED",
+    )
     assert request.active_work_item_kind is None
     assert request.active_work_item_id is None
     assert request.closure_target_root_spec_id == "spec-root-001"
@@ -199,6 +207,30 @@ def test_normalize_falls_back_to_final_stdout_terminal_token(tmp_path: Path) -> 
     assert envelope.success is False
     assert envelope.metadata["failure_class"] is None
     assert envelope.metadata["valid_terminal_result"] is True
+
+
+def test_normalize_uses_request_policy_not_global_stage_table(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="builder").model_copy(
+        update={
+            "legal_terminal_markers": ("### CHECKER_PASS",),
+            "allowed_result_classes_by_outcome": {
+                "CHECKER_PASS": (ResultClass.SUCCESS,),
+            },
+        }
+    )
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("analysis output\n### CHECKER_PASS\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, stdout_path=stdout_path),
+    )
+
+    assert envelope.node_id == request.node_id
+    assert envelope.stage_kind_id == request.stage_kind_id
+    assert envelope.terminal_result.value == "CHECKER_PASS"
+    assert envelope.result_class is ResultClass.SUCCESS
+    assert envelope.success is True
 
 
 def test_normalize_uses_root_spec_identity_for_closure_target_requests(tmp_path: Path) -> None:
@@ -416,6 +448,12 @@ def test_render_stage_request_context_lines_includes_live_envelope_fields(
     assert "Request ID: req-001" in context
     assert "Entrypoint Path: assets/entrypoints/builder.md" in context
     assert "Entrypoint Contract ID: none" in context
+    assert "Node ID: builder" in context
+    assert "Stage Kind ID: builder" in context
+    assert "Running Status Marker: BUILDER_RUNNING" in context
+    assert "Legal Terminal Markers:" in context
+    assert "- ### BUILDER_COMPLETE" in context
+    assert "- ### BLOCKED" in context
     assert "Active Work Item Path: lab/tasks/queue/task-001.md" in context
     assert "Required Skill Paths:" in context
     assert "- millrace-agents/skills/requesting-code-review/SKILL.md" in context
@@ -530,6 +568,11 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "request_kind": "Request Kind:",
         "mode_id": "Mode ID:",
         "compiled_plan_id": "Compiled Plan ID:",
+        "node_id": "Node ID:",
+        "stage_kind_id": "Stage Kind ID:",
+        "running_status_marker": "Running Status Marker:",
+        "legal_terminal_markers": "Legal Terminal Markers",
+        "allowed_result_classes_by_outcome": "Allowed Result Classes By Outcome",
         "entrypoint_path": "Entrypoint Path:",
         "entrypoint_contract_id": "Entrypoint Contract ID:",
         "required_skill_paths": "Required Skill Paths",

@@ -118,6 +118,18 @@ def test_pi_adapter_omits_event_log_for_success_by_default(
     ]
 
 
+def test_pi_request_carries_compiled_identity_defaults(tmp_path: Path) -> None:
+    request = _request(tmp_path)
+
+    assert request.node_id == "builder"
+    assert request.stage_kind_id == "builder"
+    assert request.running_status_marker == "BUILDER_RUNNING"
+    assert request.legal_terminal_markers == (
+        "### BUILDER_COMPLETE",
+        "### BLOCKED",
+    )
+
+
 def test_pi_adapter_persists_event_log_when_full_policy_is_enabled(
     tmp_path: Path,
 ) -> None:

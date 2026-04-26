@@ -9,115 +9,22 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from millrace_ai.contracts import (
-    ExecutionStageName,
     ExecutionTerminalResult,
-    LearningStageName,
     LearningTerminalResult,
     Plane,
-    PlanningStageName,
     PlanningTerminalResult,
     ResultClass,
-    StageName,
     StageResultEnvelope,
     TerminalResult,
     WorkItemKind,
 )
 
 from .requests import (
-    _STAGE_TO_PLANE,
     RunnerExitKind,
     RunnerRawResult,
     StageRunRequest,
     _TerminalExtraction,
 )
-
-_STAGE_LEGAL_TERMINALS: dict[str, set[str]] = {
-    ExecutionStageName.BUILDER.value: {
-        ExecutionTerminalResult.BUILDER_COMPLETE.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    ExecutionStageName.CHECKER.value: {
-        ExecutionTerminalResult.CHECKER_PASS.value,
-        ExecutionTerminalResult.FIX_NEEDED.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    ExecutionStageName.FIXER.value: {
-        ExecutionTerminalResult.FIXER_COMPLETE.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    ExecutionStageName.DOUBLECHECKER.value: {
-        ExecutionTerminalResult.DOUBLECHECK_PASS.value,
-        ExecutionTerminalResult.FIX_NEEDED.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    ExecutionStageName.UPDATER.value: {
-        ExecutionTerminalResult.UPDATE_COMPLETE.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    ExecutionStageName.TROUBLESHOOTER.value: {
-        ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    ExecutionStageName.CONSULTANT.value: {
-        ExecutionTerminalResult.CONSULT_COMPLETE.value,
-        ExecutionTerminalResult.NEEDS_PLANNING.value,
-        ExecutionTerminalResult.BLOCKED.value,
-    },
-    PlanningStageName.PLANNER.value: {
-        PlanningTerminalResult.PLANNER_COMPLETE.value,
-        PlanningTerminalResult.BLOCKED.value,
-    },
-    PlanningStageName.MANAGER.value: {
-        PlanningTerminalResult.MANAGER_COMPLETE.value,
-        PlanningTerminalResult.BLOCKED.value,
-    },
-    PlanningStageName.MECHANIC.value: {
-        PlanningTerminalResult.MECHANIC_COMPLETE.value,
-        PlanningTerminalResult.BLOCKED.value,
-    },
-    PlanningStageName.AUDITOR.value: {
-        PlanningTerminalResult.AUDITOR_COMPLETE.value,
-        PlanningTerminalResult.BLOCKED.value,
-    },
-    PlanningStageName.ARBITER.value: {
-        PlanningTerminalResult.ARBITER_COMPLETE.value,
-        PlanningTerminalResult.REMEDIATION_NEEDED.value,
-        PlanningTerminalResult.BLOCKED.value,
-    },
-    LearningStageName.ANALYST.value: {
-        LearningTerminalResult.ANALYST_COMPLETE.value,
-        LearningTerminalResult.BLOCKED.value,
-    },
-    LearningStageName.PROFESSOR.value: {
-        LearningTerminalResult.PROFESSOR_COMPLETE.value,
-        LearningTerminalResult.BLOCKED.value,
-    },
-    LearningStageName.CURATOR.value: {
-        LearningTerminalResult.CURATOR_COMPLETE.value,
-        LearningTerminalResult.BLOCKED.value,
-    },
-}
-
-_RESULT_CLASS_BY_TERMINAL: dict[str, ResultClass] = {
-    ExecutionTerminalResult.BUILDER_COMPLETE.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.CHECKER_PASS.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.FIX_NEEDED.value: ResultClass.FOLLOWUP_NEEDED,
-    ExecutionTerminalResult.FIXER_COMPLETE.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.DOUBLECHECK_PASS.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.UPDATE_COMPLETE.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.CONSULT_COMPLETE.value: ResultClass.SUCCESS,
-    ExecutionTerminalResult.NEEDS_PLANNING.value: ResultClass.ESCALATE_PLANNING,
-    PlanningTerminalResult.PLANNER_COMPLETE.value: ResultClass.SUCCESS,
-    PlanningTerminalResult.MANAGER_COMPLETE.value: ResultClass.SUCCESS,
-    PlanningTerminalResult.MECHANIC_COMPLETE.value: ResultClass.SUCCESS,
-    PlanningTerminalResult.AUDITOR_COMPLETE.value: ResultClass.SUCCESS,
-    PlanningTerminalResult.ARBITER_COMPLETE.value: ResultClass.SUCCESS,
-    PlanningTerminalResult.REMEDIATION_NEEDED.value: ResultClass.FOLLOWUP_NEEDED,
-    LearningTerminalResult.ANALYST_COMPLETE.value: ResultClass.SUCCESS,
-    LearningTerminalResult.PROFESSOR_COMPLETE.value: ResultClass.SUCCESS,
-    LearningTerminalResult.CURATOR_COMPLETE.value: ResultClass.SUCCESS,
-}
 
 _TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
 
@@ -188,6 +95,8 @@ def normalize_stage_result(
         run_id=request.run_id,
         plane=request.plane,
         stage=request.stage,
+        node_id=request.node_id,
+        stage_kind_id=request.stage_kind_id,
         work_item_kind=work_item_kind,
         work_item_id=work_item_id,
         terminal_result=terminal_result,
@@ -301,7 +210,7 @@ def _extract_from_structured_result_file(
             ),
         )
 
-    terminal_result = _terminal_result_for_stage(request.stage, payload.terminal_result)
+    terminal_result = _terminal_result_for_request(request, payload.terminal_result)
     if terminal_result is None:
         return _TerminalExtraction(
             terminal_result=None,
@@ -310,12 +219,13 @@ def _extract_from_structured_result_file(
             artifact_paths=payload.summary_artifact_paths,
             failure_class="illegal_terminal_result",
             notes=(
-                f"terminal result {payload.terminal_result!r} is illegal for stage {request.stage.value}",
+                f"terminal result {payload.terminal_result!r} is illegal for request node {request.node_id}",
             ),
         )
 
     resolved_result_class = _resolve_result_class(
-        terminal_result,
+        request,
+        payload.terminal_result,
         payload.result_class,
     )
     if resolved_result_class is None:
@@ -422,7 +332,7 @@ def _extract_from_stdout_tokens(
         )
 
     final_token = tokens[-1]
-    terminal_result = _terminal_result_for_stage(request.stage, final_token)
+    terminal_result = _terminal_result_for_request(request, final_token)
     if terminal_result is None:
         return _TerminalExtraction(
             terminal_result=None,
@@ -431,11 +341,11 @@ def _extract_from_stdout_tokens(
             artifact_paths=(),
             failure_class="illegal_terminal_result",
             notes=(
-                f"terminal token {final_token!r} is illegal for stage {request.stage.value}",
+                f"terminal token {final_token!r} is illegal for request node {request.node_id}",
             ),
         )
 
-    result_class = _resolve_result_class(terminal_result, None)
+    result_class = _resolve_result_class(request, final_token, None)
     assert result_class is not None
 
     return _TerminalExtraction(
@@ -489,6 +399,8 @@ def _failure_envelope(
         run_id=request.run_id,
         plane=request.plane,
         stage=request.stage,
+        node_id=request.node_id,
+        stage_kind_id=request.stage_kind_id,
         work_item_kind=work_item_kind,
         work_item_id=work_item_id,
         terminal_result=blocked_terminal,
@@ -525,42 +437,47 @@ def _failure_envelope(
     )
 
 
-def _terminal_result_for_stage(stage: StageName, token: str) -> TerminalResult | None:
-    legal = _STAGE_LEGAL_TERMINALS[stage.value]
-    if token not in legal:
+def _terminal_result_for_request(
+    request: StageRunRequest,
+    token: str,
+) -> TerminalResult | None:
+    if f"### {token}" not in request.legal_terminal_markers:
         return None
+    return _terminal_result_for_plane(request.plane, token)
 
-    stage_plane = _STAGE_TO_PLANE[stage.value]
-    if stage_plane is Plane.EXECUTION:
-        return ExecutionTerminalResult(token)
-    if stage_plane is Plane.LEARNING:
-        return LearningTerminalResult(token)
-    return PlanningTerminalResult(token)
+
+def _terminal_result_for_plane(plane: Plane, token: str) -> TerminalResult | None:
+    try:
+        if plane is Plane.EXECUTION:
+            return ExecutionTerminalResult(token)
+        if plane is Plane.LEARNING:
+            return LearningTerminalResult(token)
+        return PlanningTerminalResult(token)
+    except ValueError:
+        return None
 
 
 def _resolve_result_class(
-    terminal_result: TerminalResult,
+    request: StageRunRequest,
+    terminal_token: str,
     raw_result_class: str | None,
 ) -> ResultClass | None:
+    allowed_result_classes = request.allowed_result_classes_by_outcome.get(terminal_token)
+    if not allowed_result_classes:
+        return None
     if raw_result_class is None:
-        if terminal_result.value == "BLOCKED":
+        if len(allowed_result_classes) == 1:
+            return allowed_result_classes[0]
+        if terminal_token == "BLOCKED" and ResultClass.BLOCKED in allowed_result_classes:
             return ResultClass.BLOCKED
-        return _RESULT_CLASS_BY_TERMINAL[terminal_result.value]
+        return None
 
     try:
         result_class = ResultClass(raw_result_class)
     except ValueError:
         return None
 
-    if terminal_result.value == "BLOCKED":
-        if result_class in {ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE}:
-            return result_class
-        return None
-
-    expected = _RESULT_CLASS_BY_TERMINAL.get(terminal_result.value)
-    if expected is None:
-        return None
-    if result_class is not expected:
+    if result_class not in allowed_result_classes:
         return None
     return result_class
 

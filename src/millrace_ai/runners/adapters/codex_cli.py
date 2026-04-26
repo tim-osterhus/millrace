@@ -10,10 +10,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
-from millrace_ai.contracts import (
-    StageName,
-    TokenUsage,
-)
+from millrace_ai.contracts import TokenUsage
 from millrace_ai.runners.adapters._prompting import build_stage_prompt, legal_terminal_markers
 from millrace_ai.runners.contracts import (
     completion_artifact_from_raw_result,
@@ -146,7 +143,7 @@ class CodexCliRunnerAdapter:
         )
 
         reconciled_timeout_marker = _reconciled_timeout_terminal_marker(
-            request.stage,
+            request,
             output_last_message_path=output_last_message_path,
         )
         observed_exit_kind = exit_kind if reconciled_timeout_marker is not None else None
@@ -289,7 +286,7 @@ _TERMINAL_MARKER_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
 
 
 def _reconciled_timeout_terminal_marker(
-    stage: StageName,
+    request: StageRunRequest,
     *,
     output_last_message_path: Path,
 ) -> str | None:
@@ -305,7 +302,10 @@ def _reconciled_timeout_terminal_marker(
     if not stripped_nonempty:
         return None
 
-    legal_markers = set(legal_terminal_markers(stage))
+    legal_markers = {
+        marker.removeprefix("### ").strip()
+        for marker in legal_terminal_markers(request)
+    }
     observed_markers: list[str] = []
     for line in lines:
         match = _TERMINAL_MARKER_PATTERN.match(line.strip())

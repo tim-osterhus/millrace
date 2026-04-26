@@ -2,106 +2,16 @@
 
 from __future__ import annotations
 
-from millrace_ai.contracts import (
-    ExecutionStageName,
-    ExecutionTerminalResult,
-    LearningStageName,
-    LearningTerminalResult,
-    PlanningStageName,
-    PlanningTerminalResult,
-    StageName,
-)
 from millrace_ai.runners.requests import StageRunRequest, render_stage_request_context_lines
 
 
-def legal_terminal_markers(stage: StageName) -> tuple[str, ...]:
-    if stage is ExecutionStageName.BUILDER:
-        return (
-            ExecutionTerminalResult.BUILDER_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.CHECKER:
-        return (
-            ExecutionTerminalResult.CHECKER_PASS.value,
-            ExecutionTerminalResult.FIX_NEEDED.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.FIXER:
-        return (
-            ExecutionTerminalResult.FIXER_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.DOUBLECHECKER:
-        return (
-            ExecutionTerminalResult.DOUBLECHECK_PASS.value,
-            ExecutionTerminalResult.FIX_NEEDED.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.UPDATER:
-        return (
-            ExecutionTerminalResult.UPDATE_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.TROUBLESHOOTER:
-        return (
-            ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is ExecutionStageName.CONSULTANT:
-        return (
-            ExecutionTerminalResult.CONSULT_COMPLETE.value,
-            ExecutionTerminalResult.NEEDS_PLANNING.value,
-            ExecutionTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.PLANNER:
-        return (
-            PlanningTerminalResult.PLANNER_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.MANAGER:
-        return (
-            PlanningTerminalResult.MANAGER_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.MECHANIC:
-        return (
-            PlanningTerminalResult.MECHANIC_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.AUDITOR:
-        return (
-            PlanningTerminalResult.AUDITOR_COMPLETE.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is PlanningStageName.ARBITER:
-        return (
-            PlanningTerminalResult.ARBITER_COMPLETE.value,
-            PlanningTerminalResult.REMEDIATION_NEEDED.value,
-            PlanningTerminalResult.BLOCKED.value,
-        )
-    if stage is LearningStageName.ANALYST:
-        return (
-            LearningTerminalResult.ANALYST_COMPLETE.value,
-            LearningTerminalResult.BLOCKED.value,
-        )
-    if stage is LearningStageName.PROFESSOR:
-        return (
-            LearningTerminalResult.PROFESSOR_COMPLETE.value,
-            LearningTerminalResult.BLOCKED.value,
-        )
-    if stage is LearningStageName.CURATOR:
-        return (
-            LearningTerminalResult.CURATOR_COMPLETE.value,
-            LearningTerminalResult.BLOCKED.value,
-        )
-    raise ValueError(f"unknown stage: {stage}")
+def legal_terminal_markers(request: StageRunRequest) -> tuple[str, ...]:
+    return request.legal_terminal_markers
 
 
 def build_stage_prompt(request: StageRunRequest) -> str:
     request_context = render_stage_request_context_lines(request)
-    legal_markers = ", ".join(
-        f"`### {marker}`" for marker in legal_terminal_markers(request.stage)
-    )
+    legal_markers = ", ".join(f"`{marker}`" for marker in legal_terminal_markers(request))
     return "\n".join(
         (
             "You are executing one Millrace runtime stage request.",
