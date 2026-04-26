@@ -15,6 +15,27 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 No unreleased changes recorded yet.
 
+## [0.15.3] - 2026-04-26
+
+`0.15.3` adds an opt-in live terminal monitor for daemon operators without
+changing the quiet default daemon behavior.
+
+### Added
+
+- Added `millrace run daemon --monitor basic` for concise live lifecycle,
+  status, stage, router, elapsed-time, and token-usage output.
+- Added a runtime monitor event contract so daemon progress is emitted from the
+  runtime path that owns lifecycle, status-marker, stage, and routing state.
+- Added learning-plane and compiled concurrency-policy visibility to daemon
+  monitor startup and stage output.
+
+### Changed
+
+- Centralized daemon-owned status marker updates so live monitor events and
+  persisted marker files stay aligned across execution, planning, and learning.
+- Documented the explicit `--monitor [none|basic]` daemon option in the CLI
+  reference, including the quiet default behavior.
+
 ## [0.15.2] - 2026-04-26
 
 `0.15.2` hardens compiled-plan authority and workspace lifecycle behavior while
@@ -239,7 +260,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.3...HEAD
+[0.15.3]: https://github.com/tim-osterhus/millrace/compare/v0.15.2...v0.15.3
 [0.15.2]: https://github.com/tim-osterhus/millrace/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/tim-osterhus/millrace/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/tim-osterhus/millrace/compare/v0.14.1...v0.15.0

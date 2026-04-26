@@ -362,7 +362,7 @@ def test_run_daemon_with_monitor_basic_installs_monitor_and_prints_output(
                         "compiled_plan_id": "plan-001",
                         "compiled_plan_currentness": "current",
                         "baseline_manifest_id": "baseline-001",
-                        "baseline_seed_package_version": "0.15.2",
+                        "baseline_seed_package_version": "0.15.3",
                         "loop_ids_by_plane": {
                             "execution": "execution.standard",
                             "planning": "planning.standard",
