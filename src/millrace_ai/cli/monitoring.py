@@ -26,6 +26,14 @@ def _render_event_lines(event: RuntimeMonitorEvent) -> tuple[str, ...]:
     prefix = f"[{event.occurred_at.strftime('%H:%M:%S')}] "
     if event.event_type == "runtime_started":
         return tuple(prefix + line for line in _render_runtime_started(event.payload))
+    if event.event_type == "runtime_resumed_active_run":
+        return (prefix + _render_resumed_active_run(event.payload),)
+    if event.event_type == "runtime_idle":
+        return (prefix + f"idle reason={_string(event.payload.get('reason'))}",)
+    if event.event_type == "runtime_paused":
+        return (prefix + f"paused reason={_string(event.payload.get('reason'))}",)
+    if event.event_type == "runtime_stopped":
+        return (prefix + f"stopped reason={_string(event.payload.get('reason'))}",)
     return ()
 
 
@@ -57,6 +65,18 @@ def _render_runtime_started(payload: Mapping[str, object]) -> tuple[str, ...]:
         snapshot_parts.extend(("queue", _format_plane_mapping(queue_depths)))
     lines.append(" ".join(part for part in snapshot_parts if part))
     return tuple(lines)
+
+
+def _render_resumed_active_run(payload: Mapping[str, object]) -> str:
+    return (
+        "resumed active "
+        f"plane={_string(payload.get('active_plane'))} "
+        f"stage={_string(payload.get('active_stage'))} "
+        f"node={_string(payload.get('active_node_id'))} "
+        f"stage_kind={_string(payload.get('active_stage_kind_id'))} "
+        f"run={_string(payload.get('active_run_id'))} "
+        f"status={_normalize_marker(_string(payload.get('status_marker')))}"
+    )
 
 
 def _format_concurrency_policy(policy: Mapping[object, object]) -> str:

@@ -43,11 +43,13 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         engine._close_watcher_session()
         engine._release_daemon_ownership_lock(force=False)
         write_runtime_event(engine.paths, event_type="runtime_tick_stopped")
+        engine._emit_monitor_event("runtime_stopped", reason="stop_requested")
         return engine._idle_tick_outcome(reason="stop_requested")
 
     if engine.snapshot.paused:
         save_snapshot(engine.paths, engine.snapshot)
         write_runtime_event(engine.paths, event_type="runtime_tick_paused")
+        engine._emit_monitor_event("runtime_paused", reason="paused")
         return engine._idle_tick_outcome(reason="paused")
 
     engine._run_reconciliation_if_needed()
@@ -80,6 +82,7 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
     if engine.snapshot.active_stage is None or engine.snapshot.active_plane is None:
         save_snapshot(engine.paths, engine.snapshot)
         write_runtime_event(engine.paths, event_type="runtime_tick_idle")
+        engine._emit_monitor_event("runtime_idle", reason="no_work")
         return engine._idle_tick_outcome(reason="no_work")
 
     stage_plan = engine._stage_plan_for(

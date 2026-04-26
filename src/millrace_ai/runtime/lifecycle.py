@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_workspace_plan_currentness
 from millrace_ai.config import fingerprint_runtime_config, load_runtime_config
 from millrace_ai.contracts import Plane
 from millrace_ai.errors import RuntimeLifecycleError
@@ -16,6 +16,7 @@ from millrace_ai.runtime_lock import (
     release_runtime_ownership_lock,
 )
 from millrace_ai.state_store import load_recovery_counters, load_snapshot, save_snapshot
+from millrace_ai.workspace.baseline import load_baseline_manifest
 
 if TYPE_CHECKING:
     from millrace_ai.contracts import RuntimeSnapshot
@@ -99,12 +100,64 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
                 "process_running": snapshot.process_running,
             },
         )
+        _emit_startup_monitor_events(engine, snapshot)
         return snapshot
     except Exception:
         engine._close_watcher_session()
         if lock_acquired:
             engine._release_daemon_ownership_lock(force=True)
-        raise
+    raise
+
+
+def _emit_startup_monitor_events(engine: RuntimeEngine, snapshot: RuntimeSnapshot) -> None:
+    assert engine.config is not None
+    assert engine.compiled_plan is not None
+    compiled_plan = engine.compiled_plan
+    currentness = inspect_workspace_plan_currentness(
+        engine.paths,
+        config=engine.config,
+        requested_mode_id=engine.mode_id,
+        assets_root=engine.assets_root,
+    )
+    baseline_manifest = load_baseline_manifest(engine.paths)
+
+    engine._emit_monitor_event(
+        "runtime_started",
+        mode_id=snapshot.active_mode_id,
+        compiled_plan_id=snapshot.compiled_plan_id,
+        compiled_plan_currentness=currentness.state,
+        baseline_manifest_id=baseline_manifest.manifest_id,
+        baseline_seed_package_version=baseline_manifest.seed_package_version,
+        loop_ids_by_plane={
+            plane.value: loop_id for plane, loop_id in compiled_plan.loop_ids_by_plane.items()
+        },
+        concurrency_policy=(
+            compiled_plan.concurrency_policy.model_dump(mode="json")
+            if compiled_plan.concurrency_policy is not None
+            else None
+        ),
+        status_markers_by_plane={
+            plane.value: marker for plane, marker in snapshot.status_markers_by_plane.items()
+        },
+        queue_depths_by_plane={
+            plane.value: depth for plane, depth in snapshot.queue_depths_by_plane.items()
+        },
+    )
+
+    if (
+        snapshot.active_plane is not None
+        and snapshot.active_stage is not None
+        and snapshot.active_run_id is not None
+    ):
+        engine._emit_monitor_event(
+            "runtime_resumed_active_run",
+            active_plane=snapshot.active_plane.value,
+            active_stage=snapshot.active_stage.value,
+            active_node_id=snapshot.active_node_id,
+            active_stage_kind_id=snapshot.active_stage_kind_id,
+            active_run_id=snapshot.active_run_id,
+            status_marker=snapshot.status_markers_by_plane.get(snapshot.active_plane),
+        )
 
 
 def requires_daemon_ownership_lock(engine: RuntimeEngine) -> bool:
