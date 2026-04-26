@@ -44,6 +44,8 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
             config=engine.config,
             requested_mode_id=engine.mode_id,
             assets_root=engine.assets_root,
+            compile_if_needed=True,
+            refuse_stale_last_known_good=True,
         )
         compiled_plan = compile_outcome.active_plan
         if compiled_plan is None:

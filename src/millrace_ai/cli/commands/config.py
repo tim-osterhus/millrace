@@ -43,6 +43,7 @@ def config_validate(
             paths,
             config=config,
             requested_mode_id=mode,
+            assets_root=paths.runtime_root,
         )
     except (OSError, ValidationError, ValueError) as exc:
         raise typer.Exit(code=_print_error(str(exc))) from exc

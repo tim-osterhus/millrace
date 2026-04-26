@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
@@ -27,3 +29,27 @@ def test_runtime_startup_uses_single_compiled_plan_object(tmp_path: Path) -> Non
     assert engine.compiled_plan.execution_graph.loop_id == "execution.standard"
     assert engine.compiled_plan.planning_graph.loop_id == "planning.standard"
     assert not hasattr(engine, "compiled_graph_plan")
+
+
+def test_runtime_startup_reuses_current_compiled_plan_without_recompiling(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=paths.runtime_root,
+    )
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = paths.state_dir / "compiled_plan.json"
+    diagnostics_path = paths.state_dir / "compile_diagnostics.json"
+    compiled_before = compiled_plan_path.read_bytes()
+    diagnostics_before = diagnostics_path.read_bytes()
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert compiled_plan_path.read_bytes() == compiled_before
+    assert diagnostics_path.read_bytes() == diagnostics_before
+    assert engine.compiled_plan is not None
+    assert engine.compiled_plan.compiled_plan_id == outcome.active_plan.compiled_plan_id

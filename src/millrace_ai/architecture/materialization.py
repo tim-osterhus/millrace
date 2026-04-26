@@ -150,11 +150,18 @@ class FrozenGraphPlanePlan(ArchitectureContractModel):
         return self
 
 
+class CompileInputFingerprint(ArchitectureContractModel):
+    mode_id: str
+    config_fingerprint: str
+    assets_fingerprint: str
+
+
 class CompiledRunPlan(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["compiled_run_plan"] = "compiled_run_plan"
 
     compiled_plan_id: str
+    compile_input_fingerprint: CompileInputFingerprint
     mode_id: str
     loop_ids_by_plane: dict[Plane, str]
     execution_loop_id: str
@@ -213,6 +220,7 @@ __all__ = [
     "CompiledGraphResumePolicyPlan",
     "CompiledGraphThresholdPolicyPlan",
     "CompiledGraphTransitionPlan",
+    "CompileInputFingerprint",
     "CompiledRunPlan",
     "FrozenGraphPlanePlan",
     "MaterializedGraphNodePlan",

@@ -2375,7 +2375,7 @@ def test_runtime_mailbox_reload_config_applies_updated_runtime_mode(tmp_path: Pa
     assert snapshot.last_reload_error is None
 
 
-def test_runtime_mailbox_reload_config_retains_previous_plan_on_compile_failure(
+def test_runtime_mailbox_reload_config_rejects_stale_previous_plan_on_compile_failure(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -2396,6 +2396,8 @@ def test_runtime_mailbox_reload_config_retains_previous_plan_on_compile_failure(
     reloaded_snapshot = load_snapshot(paths)
     assert reloaded_snapshot.compiled_plan_id == original_compiled_plan_id
     assert reloaded_snapshot.active_mode_id == "default_codex"
+    assert reloaded_snapshot.process_running is False
+    assert reloaded_snapshot.stop_requested is True
     assert reloaded_snapshot.last_reload_outcome == "failed_retained_previous_plan"
     assert reloaded_snapshot.last_reload_error is not None
     assert "missing_mode" in reloaded_snapshot.last_reload_error
@@ -2449,6 +2451,29 @@ def test_runtime_startup_compile_failure_raises_typed_runtime_error(tmp_path: Pa
 
     with pytest.raises(RuntimeLifecycleError, match="missing_mode"):
         engine.startup()
+
+
+def test_runtime_startup_rejects_stale_existing_plan_after_input_change(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    initial_engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    initial_engine.startup()
+    initial_engine.close()
+
+    compiled_plan_path = paths.state_dir / "compiled_plan.json"
+    compiled_before = compiled_plan_path.read_bytes()
+
+    config_path.write_text("[runtime]\ndefault_mode = 'missing_mode'\n", encoding="utf-8")
+    stale_engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+
+    with pytest.raises(RuntimeLifecycleError, match="missing_mode"):
+        stale_engine.startup()
+
+    assert compiled_plan_path.read_bytes() == compiled_before
 
 
 def test_runtime_startup_rejects_second_daemon_for_same_workspace(tmp_path: Path) -> None:

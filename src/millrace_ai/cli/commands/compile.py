@@ -25,6 +25,7 @@ def compile_validate(
         paths,
         config=config,
         requested_mode_id=mode,
+        assets_root=paths.runtime_root,
     )
     raise typer.Exit(code=_render_compile_diagnostics(outcome))
 
@@ -41,6 +42,7 @@ def compile_show(
         paths,
         config=config,
         requested_mode_id=mode,
+        assets_root=paths.runtime_root,
     )
     exit_code = _render_compile_diagnostics(outcome)
 

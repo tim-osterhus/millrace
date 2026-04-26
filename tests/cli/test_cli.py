@@ -1298,6 +1298,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
+    observed: dict[str, object] = {}
 
     def fake_load_runtime_config(config_path=None, *, mailbox_overrides=None, cli_overrides=None):
         del config_path, mailbox_overrides, cli_overrides
@@ -1311,7 +1312,8 @@ def test_compile_show_surfaces_compiled_plan_summary(
         assets_root=None,
         now=None,
     ):
-        del target, config, requested_mode_id, assets_root, now
+        del target, config, requested_mode_id, now
+        observed["assets_root"] = assets_root
         diagnostics = CompileDiagnostics(
             ok=True,
             mode_id="standard_plain",
@@ -1403,6 +1405,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
     )
 
     assert result.exit_code == 0
+    assert observed["assets_root"] == paths.runtime_root
     assert "graph_authoritative_for_runtime_execution:" not in result.output
     assert "graph_legacy_equivalence_ready_for_cutover:" not in result.output
     assert "graph_legacy_equivalence_issues:" not in result.output

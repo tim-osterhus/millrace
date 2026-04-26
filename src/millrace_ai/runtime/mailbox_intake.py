@@ -14,7 +14,7 @@ from millrace_ai.contracts import (
     Plane,
     ReloadOutcome,
 )
-from millrace_ai.errors import ControlRoutingError, WorkspaceStateError
+from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.mailbox import drain_incoming_mailbox_commands
 from millrace_ai.queue_store import QueueStore
@@ -80,6 +80,8 @@ def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
         config=reloaded_config,
         requested_mode_id=engine.mode_id,
         assets_root=engine.assets_root,
+        compile_if_needed=True,
+        refuse_stale_last_known_good=True,
     )
     active_plan = compile_outcome.active_plan
     if active_plan is None:
@@ -88,6 +90,8 @@ def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
             update={
                 "last_reload_outcome": ReloadOutcome.FAILED_RETAINED_PREVIOUS_PLAN,
                 "last_reload_error": errors,
+                "process_running": False,
+                "stop_requested": True,
                 "updated_at": engine._now(),
             }
         )
@@ -100,7 +104,7 @@ def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
                 "retained_previous_plan": False,
             },
         )
-        return
+        raise RuntimeLifecycleError(errors)
 
     if not compile_outcome.diagnostics.ok:
         errors = ", ".join(compile_outcome.diagnostics.errors) or "compile failed"

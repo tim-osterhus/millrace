@@ -32,6 +32,9 @@ def test_compile_persists_single_canonical_compiled_plan_artifact(tmp_path: Path
     )
 
     assert persisted_plan.mode_id == "default_codex"
+    assert persisted_plan.compile_input_fingerprint.mode_id == "default_codex"
+    assert persisted_plan.compile_input_fingerprint.config_fingerprint.startswith("cfg-")
+    assert persisted_plan.compile_input_fingerprint.assets_fingerprint.startswith("assets-")
     assert persisted_plan.execution_loop_id == "execution.standard"
     assert persisted_plan.planning_loop_id == "planning.standard"
     assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.execution_graph.compiled_entries} == {

@@ -13,6 +13,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from millrace_ai.architecture import (
+    CompileInputFingerprint,
     CompiledGraphCompletionEntryPlan,
     CompiledGraphEntryPlan,
     CompiledGraphResumePolicyPlan,
@@ -38,7 +39,7 @@ from millrace_ai.assets import (
     load_graph_loop_definition,
     resolve_builtin_mode_id,
 )
-from millrace_ai.config import RuntimeConfig
+from millrace_ai.config import RuntimeConfig, fingerprint_runtime_config
 from millrace_ai.contracts import (
     CompileDiagnostics,
     ExecutionStageName,
@@ -54,6 +55,7 @@ from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 _DEFAULT_MODE_ID = "default_codex"
 _DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
+_COMPILE_INPUT_ASSET_DIRS: tuple[str, ...] = ("modes", "graphs", "registry")
 _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     ExecutionStageName.BUILDER: ("skills/stage/execution/builder-core/SKILL.md",),
     ExecutionStageName.CHECKER: ("skills/stage/execution/checker-core/SKILL.md",),
@@ -118,6 +120,8 @@ def compile_and_persist_workspace_plan(
     requested_mode_id: str | None = None,
     assets_root: Path | None = None,
     now: datetime | None = None,
+    compile_if_needed: bool = False,
+    refuse_stale_last_known_good: bool = False,
 ) -> CompileOutcome:
     """Compile one mode into a frozen plan and persist canonical artifacts.
 
@@ -134,6 +138,28 @@ def compile_and_persist_workspace_plan(
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
 
     last_known_good = _load_existing_plan(compiled_plan_path)
+    compile_input_fingerprint = _build_compile_input_fingerprint(
+        config=config,
+        mode_id=mode_id,
+        assets_root=_resolve_compile_assets_root(paths, assets_root),
+    )
+
+    if (
+        compile_if_needed
+        and last_known_good is not None
+        and last_known_good.compile_input_fingerprint == compile_input_fingerprint
+    ):
+        diagnostics = CompileDiagnostics(
+            ok=True,
+            mode_id=mode_id,
+            warnings=(),
+            emitted_at=compile_time,
+        )
+        return CompileOutcome(
+            active_plan=last_known_good,
+            diagnostics=diagnostics,
+            used_last_known_good=False,
+        )
 
     try:
         plan = _compile_compiled_run_plan(
@@ -141,6 +167,7 @@ def compile_and_persist_workspace_plan(
             mode_id=mode_id,
             assets_root=assets_root,
             compile_time=compile_time,
+            compile_input_fingerprint=compile_input_fingerprint,
         )
         diagnostics = CompileDiagnostics(
             ok=True,
@@ -165,10 +192,19 @@ def compile_and_persist_workspace_plan(
             emitted_at=compile_time,
         )
         _atomic_write_json(diagnostics_path, diagnostics.model_dump(mode="json"))
+        active_plan = last_known_good
+        used_last_known_good = last_known_good is not None
+        if (
+            refuse_stale_last_known_good
+            and last_known_good is not None
+            and last_known_good.compile_input_fingerprint != compile_input_fingerprint
+        ):
+            active_plan = None
+            used_last_known_good = False
         return CompileOutcome(
-            active_plan=last_known_good,
+            active_plan=active_plan,
             diagnostics=diagnostics,
-            used_last_known_good=last_known_good is not None,
+            used_last_known_good=used_last_known_good,
         )
 
 def _compile_compiled_run_plan(
@@ -177,6 +213,7 @@ def _compile_compiled_run_plan(
     mode_id: str,
     assets_root: Path | None,
     compile_time: datetime,
+    compile_input_fingerprint: CompileInputFingerprint,
 ) -> CompiledRunPlan:
     mode = load_builtin_mode_definition(mode_id, assets_root=assets_root)
     graph_loops = {
@@ -216,6 +253,7 @@ def _compile_compiled_run_plan(
             concurrency_policy=mode.concurrency_policy,
             learning_trigger_rules=mode.learning_trigger_rules,
         ),
+        compile_input_fingerprint=compile_input_fingerprint,
         mode_id=mode.mode_id,
         loop_ids_by_plane=mode.loop_ids_by_plane,
         execution_loop_id=execution_graph.loop_id,
@@ -614,6 +652,45 @@ def _resolve_mode_id(requested_mode_id: str | None, config: RuntimeConfig) -> st
 
 def _resolve_paths(target: WorkspacePaths | Path | str) -> WorkspacePaths:
     return target if isinstance(target, WorkspacePaths) else workspace_paths(target)
+
+
+def _resolve_compile_assets_root(paths: WorkspacePaths, assets_root: Path | None) -> Path:
+    if assets_root is not None:
+        return assets_root
+    from millrace_ai.modes import ASSETS_ROOT
+
+    return ASSETS_ROOT
+
+
+def _build_compile_input_fingerprint(
+    *,
+    config: RuntimeConfig,
+    mode_id: str,
+    assets_root: Path,
+) -> CompileInputFingerprint:
+    return CompileInputFingerprint(
+        mode_id=mode_id,
+        config_fingerprint=fingerprint_runtime_config(config),
+        assets_fingerprint=_fingerprint_compile_assets(assets_root),
+    )
+
+
+def _fingerprint_compile_assets(assets_root: Path) -> str:
+    digest = hashlib.sha256()
+    for directory_name in _COMPILE_INPUT_ASSET_DIRS:
+        directory = assets_root / directory_name
+        if not directory.exists():
+            digest.update(f"{directory_name}:missing\n".encode("utf-8"))
+            continue
+        for file_path in sorted(path for path in directory.rglob("*") if path.is_file()):
+            relative_path = file_path.relative_to(assets_root).as_posix()
+            if any(part.startswith(".") for part in file_path.relative_to(directory).parts):
+                continue
+            digest.update(relative_path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(file_path.read_bytes())
+            digest.update(b"\0")
+    return f"assets-{digest.hexdigest()[:12]}"
 
 
 def _utc_now(now: datetime | None) -> datetime:

@@ -16,6 +16,7 @@ from millrace_ai.architecture.loop_graphs import (
     GraphLoopThresholdPolicyDefinition,
 )
 from millrace_ai.architecture.materialization import (
+    CompileInputFingerprint,
     CompiledGraphCompletionEntryPlan,
     CompiledGraphEntryPlan,
     CompiledGraphResumePolicyPlan,
@@ -34,6 +35,7 @@ from millrace_ai.architecture.stage_kinds import (
 
 __all__ = [
     "ArchitectureContractModel",
+    "CompileInputFingerprint",
     "CompiledRunPlan",
     "CompiledGraphCompletionEntryPlan",
     "CompiledGraphEntryPlan",
