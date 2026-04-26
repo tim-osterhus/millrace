@@ -30,6 +30,57 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     return copied_root
 
 
+def _write_workspace_local_mode_assets(assets_root: Path) -> None:
+    execution_loop_path = assets_root / "loops" / "execution" / "local_review.json"
+    execution_loop = json.loads(
+        (assets_root / "loops" / "execution" / "default.json").read_text(encoding="utf-8")
+    )
+    execution_loop["loop_id"] = "execution.local_review"
+    execution_loop_path.write_text(json.dumps(execution_loop, indent=2) + "\n", encoding="utf-8")
+
+    planning_loop_path = assets_root / "loops" / "planning" / "local_review.json"
+    planning_loop = json.loads(
+        (assets_root / "loops" / "planning" / "default.json").read_text(encoding="utf-8")
+    )
+    planning_loop["loop_id"] = "planning.local_review"
+    planning_loop_path.write_text(json.dumps(planning_loop, indent=2) + "\n", encoding="utf-8")
+
+    mode_path = assets_root / "modes" / "local_review_codex.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "mode",
+                "mode_id": "local_review_codex",
+                "loop_ids_by_plane": {
+                    "execution": "execution.local_review",
+                    "planning": "planning.local_review",
+                },
+                "stage_entrypoint_overrides": {},
+                "stage_skill_additions": {},
+                "stage_model_bindings": {"checker": "gpt-5.4"},
+                "stage_runner_bindings": {
+                    "builder": "codex_cli",
+                    "checker": "codex_cli",
+                    "fixer": "codex_cli",
+                    "doublechecker": "codex_cli",
+                    "updater": "codex_cli",
+                    "troubleshooter": "codex_cli",
+                    "consultant": "codex_cli",
+                    "planner": "codex_cli",
+                    "manager": "codex_cli",
+                    "mechanic": "codex_cli",
+                    "auditor": "codex_cli",
+                    "arbiter": "codex_cli",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_modes_module_is_assets_facade() -> None:
     modes_facade = importlib.import_module("millrace_ai.modes")
     modes_module = importlib.import_module("millrace_ai.assets.modes")
@@ -101,17 +152,16 @@ def test_learning_modes_load_learning_plane_without_changing_default_modes() -> 
     assert set(learning_bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
 
 
-def test_skills_pipeline_codex_mode_loads_pipeline_loops_and_stage_bindings() -> None:
-    bundle = load_builtin_mode_bundle("skills_pipeline_codex")
+def test_workspace_local_mode_loads_discovered_loops_and_stage_bindings(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    _write_workspace_local_mode_assets(assets_root)
 
-    assert bundle.mode.mode_id == "skills_pipeline_codex"
-    assert bundle.execution_loop.loop_id == "execution.skills_pipeline"
-    assert bundle.planning_loop.loop_id == "planning.skills_pipeline"
-    assert bundle.mode.stage_entrypoint_overrides["checker"] == (
-        "entrypoints/execution/skills-pipeline-checker.md"
-    )
+    bundle = load_builtin_mode_bundle("local_review_codex", assets_root=assets_root)
+
+    assert bundle.mode.mode_id == "local_review_codex"
+    assert bundle.execution_loop.loop_id == "execution.local_review"
+    assert bundle.planning_loop.loop_id == "planning.local_review"
     assert bundle.mode.stage_model_bindings["checker"] == "gpt-5.4"
-    assert bundle.mode.stage_model_bindings["builder"] == "gpt-5.4-mini"
     assert set(bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
 
 
@@ -121,7 +171,7 @@ def test_mode_asset_errors_use_project_error_hierarchy() -> None:
 
 
 def test_unknown_mode_fails_deterministically() -> None:
-    with pytest.raises(ModeAssetError, match=r"^Unknown built-in mode id: no_such_mode$"):
+    with pytest.raises(ModeAssetError, match=r"^Unknown mode id: no_such_mode$"):
         load_builtin_mode_definition("no_such_mode")
 
 
@@ -142,7 +192,7 @@ def test_unknown_loop_reference_in_mode_bundle_fails_deterministically(tmp_path:
     payload["planning_loop_id"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    with pytest.raises(ModeAssetError, match=r"^Unknown built-in loop id: planning\.unknown$"):
+    with pytest.raises(ModeAssetError, match=r"^Unknown loop id: planning\.unknown$"):
         load_builtin_mode_bundle("standard_plain", assets_root=assets_root)
 
 
@@ -156,7 +206,7 @@ def test_shipped_mode_ids_are_stable() -> None:
 
 
 def test_removed_role_augmented_mode_is_unknown() -> None:
-    with pytest.raises(ModeAssetError, match=r"^Unknown built-in mode id: standard_role_augmented$"):
+    with pytest.raises(ModeAssetError, match=r"^Unknown mode id: standard_role_augmented$"):
         load_builtin_mode_definition("standard_role_augmented")
 
 

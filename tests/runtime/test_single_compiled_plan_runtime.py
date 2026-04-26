@@ -75,5 +75,5 @@ def test_runtime_startup_refuses_stale_last_known_good_plan_when_inputs_drift(tm
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
-    with pytest.raises(RuntimeLifecycleError, match="Unknown built-in graph loop id: planning.unknown"):
+    with pytest.raises(RuntimeLifecycleError, match="Unknown graph loop id: planning.unknown"):
         engine.startup()

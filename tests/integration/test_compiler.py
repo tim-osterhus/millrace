@@ -34,6 +34,57 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     return copied_root
 
 
+def _write_workspace_local_graph_mode_assets(assets_root: Path) -> None:
+    execution_graph_path = assets_root / "graphs" / "execution" / "local_review.json"
+    execution_graph = json.loads(
+        (assets_root / "graphs" / "execution" / "standard.json").read_text(encoding="utf-8")
+    )
+    execution_graph["loop_id"] = "execution.local_review"
+    execution_graph_path.write_text(json.dumps(execution_graph, indent=2) + "\n", encoding="utf-8")
+
+    planning_graph_path = assets_root / "graphs" / "planning" / "local_review.json"
+    planning_graph = json.loads(
+        (assets_root / "graphs" / "planning" / "standard.json").read_text(encoding="utf-8")
+    )
+    planning_graph["loop_id"] = "planning.local_review"
+    planning_graph_path.write_text(json.dumps(planning_graph, indent=2) + "\n", encoding="utf-8")
+
+    mode_path = assets_root / "modes" / "local_review_codex.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "mode",
+                "mode_id": "local_review_codex",
+                "loop_ids_by_plane": {
+                    "execution": "execution.local_review",
+                    "planning": "planning.local_review",
+                },
+                "stage_entrypoint_overrides": {},
+                "stage_skill_additions": {},
+                "stage_model_bindings": {"checker": "gpt-5.4"},
+                "stage_runner_bindings": {
+                    "builder": "codex_cli",
+                    "checker": "codex_cli",
+                    "fixer": "codex_cli",
+                    "doublechecker": "codex_cli",
+                    "updater": "codex_cli",
+                    "troubleshooter": "codex_cli",
+                    "consultant": "codex_cli",
+                    "planner": "codex_cli",
+                    "manager": "codex_cli",
+                    "mechanic": "codex_cli",
+                    "auditor": "codex_cli",
+                    "arbiter": "codex_cli",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
     stage_kind_path = (
         assets_root / "registry" / "stage_kinds" / "execution" / "synthetic_worker.json"
@@ -311,39 +362,47 @@ def test_compile_materializes_configured_recovery_thresholds_into_compiled_plan(
     }
 
 
-def test_compile_materializes_skills_pipeline_mode_contract(tmp_path: Path) -> None:
+def test_compile_materializes_workspace_local_mode_contract(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    _write_workspace_local_graph_mode_assets(assets_root)
     workspace_root = tmp_path / "workspace"
-    bootstrap_workspace(workspace_root)
+    bootstrap_workspace(workspace_root, assets_root=assets_root)
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(recovery={"max_fix_cycles": 5}),
-        requested_mode_id="skills_pipeline_codex",
+        requested_mode_id="local_review_codex",
+        assets_root=workspace_root / "millrace-agents",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "skills_pipeline_codex"
-    assert outcome.active_plan.execution_loop_id == "execution.skills_pipeline"
-    assert outcome.active_plan.planning_loop_id == "planning.skills_pipeline"
+    assert outcome.active_plan.mode_id == "local_review_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.local_review"
+    assert outcome.active_plan.planning_loop_id == "planning.local_review"
 
     execution_nodes = {node.node_id: node for node in outcome.active_plan.execution_graph.nodes}
-    planning_nodes = {node.node_id: node for node in outcome.active_plan.planning_graph.nodes}
     fix_threshold = next(
         policy
         for policy in outcome.active_plan.execution_graph.compiled_threshold_policies
-        if policy.policy_id == "execution.skills-pipeline.fix-needed.exhaustion"
+        if policy.policy_id == "execution.fix-needed.exhaustion"
     )
 
-    assert execution_nodes["checker"].entrypoint_path == (
-        "entrypoints/execution/skills-pipeline-checker.md"
-    )
     assert execution_nodes["checker"].model_name == "gpt-5.4"
-    assert execution_nodes["builder"].model_name == "gpt-5.4-mini"
-    assert planning_nodes["planner"].entrypoint_path == (
-        "entrypoints/planning/skills-pipeline-planner.md"
-    )
     assert fix_threshold.threshold == 5
+    assert {
+        (asset.asset_family, asset.logical_id, asset.compile_time_path)
+        for asset in outcome.active_plan.resolved_assets
+        if asset.logical_id in {
+            "mode:local_review_codex",
+            "graph_loop:execution.local_review",
+            "graph_loop:planning.local_review",
+        }
+    } == {
+        ("mode", "mode:local_review_codex", "modes/local_review_codex.json"),
+        ("graph_loop", "graph_loop:execution.local_review", "graphs/execution/local_review.json"),
+        ("graph_loop", "graph_loop:planning.local_review", "graphs/planning/local_review.json"),
+    }
 
 
 def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: Path) -> None:
@@ -673,7 +732,7 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     diagnostics = CompileDiagnostics.model_validate_json(diagnostics_path.read_text(encoding="utf-8"))
     assert diagnostics.ok is False
     assert diagnostics.mode_id == "default_codex"
-    assert diagnostics.errors[0] == "Unknown built-in graph loop id: planning.unknown"
+    assert diagnostics.errors[0] == "Unknown graph loop id: planning.unknown"
 
 
 def test_inspect_workspace_plan_currentness_detects_current_and_stale_inputs(tmp_path: Path) -> None:

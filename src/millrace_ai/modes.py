@@ -14,6 +14,8 @@ from millrace_ai.assets.modes import (
     load_builtin_loop_definition,
     load_builtin_mode_bundle,
     load_builtin_mode_definition,
+    loop_config_relative_path,
+    mode_asset_relative_path,
     resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "load_builtin_loop_definition",
     "load_builtin_mode_bundle",
     "load_builtin_mode_definition",
+    "loop_config_relative_path",
+    "mode_asset_relative_path",
     "resolve_builtin_mode_id",
     "validate_shipped_mode_same_graph",
 ]

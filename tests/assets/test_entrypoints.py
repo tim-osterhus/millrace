@@ -646,7 +646,7 @@ def test_parse_markdown_asset_accepts_metadata_free_entrypoint_only(tmp_path: Pa
 
 
 def test_parse_markdown_asset_accepts_stage_suffixed_entrypoint_filename(tmp_path: Path) -> None:
-    entrypoint_path = tmp_path / "entrypoints" / "execution" / "skills-pipeline-builder.md"
+    entrypoint_path = tmp_path / "entrypoints" / "execution" / "custom-builder.md"
     entrypoint_path.parent.mkdir(parents=True, exist_ok=True)
     entrypoint_path.write_text("# Builder\n\nInstruction body.\n", encoding="utf-8")
 
@@ -659,7 +659,7 @@ def test_parse_markdown_asset_accepts_stage_suffixed_entrypoint_filename(tmp_pat
 
 def test_lint_accepts_stage_suffixed_entrypoint_filename(tmp_path: Path) -> None:
     assets_dir = tmp_path / "assets"
-    entrypoint_path = assets_dir / "entrypoints" / "planning" / "skills-pipeline-planner.md"
+    entrypoint_path = assets_dir / "entrypoints" / "planning" / "custom-planner.md"
     _write_entrypoint_doc(
         entrypoint_path,
         body=(
@@ -856,7 +856,7 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     for runtime_path in runtime_paths:
         body = parse_markdown_asset(runtime_path).body
         entrypoint_id = runtime_path.stem
-        stage = entrypoint_id.removeprefix("skills-pipeline-")
+        stage = entrypoint_id
         entrypoint_bodies.append((entrypoint_id, stage, body))
         stage_to_body[entrypoint_id] = body
         for token in LEGACY_ENTRYPOINT_TOKENS:

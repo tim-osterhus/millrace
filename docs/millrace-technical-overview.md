@@ -152,14 +152,12 @@ recovery policies, and explicit terminal semantics. The live runtime executes
 stage-request construction, claim activation, closure-target activation,
 recovery, and post-stage routing from that compiled plan.
 
-The compiler currently ships with two canonical built-in modes, one specialized
-optional-skills pipeline mode, and baseline built-in loops per plane:
+The compiler currently ships with two canonical built-in modes and baseline
+built-in loops per plane:
 
 - modes: `default_codex`, `default_pi`
-- specialized mode: `skills_pipeline_codex`
 - execution loop: `execution.standard`
 - planning loop: `planning.standard`
-- specialized loops: `execution.skills_pipeline`, `planning.skills_pipeline`
 
 `standard_plain` remains accepted as a compatibility alias that canonicalizes to
 `default_codex` before compile diagnostics, frozen-plan ids, and runtime

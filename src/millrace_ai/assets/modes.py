@@ -13,13 +13,13 @@ from millrace_ai.contracts import LoopConfigDefinition, ModeDefinition, Plane
 from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent
+LOOPS_ROOT = Path("loops")
+MODES_ROOT = Path("modes")
 
 BUILTIN_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("loops/execution/default.json"),
-    "execution.skills_pipeline": Path("loops/execution/skills_pipeline.json"),
     "learning.standard": Path("loops/learning/default.json"),
     "planning.standard": Path("loops/planning/default.json"),
-    "planning.skills_pipeline": Path("loops/planning/skills_pipeline.json"),
 }
 
 BUILTIN_MODE_PATHS: dict[str, Path] = {
@@ -27,7 +27,6 @@ BUILTIN_MODE_PATHS: dict[str, Path] = {
     "default_pi": Path("modes/default_pi.json"),
     "learning_codex": Path("modes/learning_codex.json"),
     "learning_pi": Path("modes/learning_pi.json"),
-    "skills_pipeline_codex": Path("modes/skills_pipeline_codex.json"),
 }
 
 BUILTIN_MODE_ALIASES: dict[str, str] = {
@@ -138,6 +137,16 @@ def load_builtin_loop_definition(
     return loop
 
 
+def mode_asset_relative_path(mode_id: str, *, assets_root: Path | None = None) -> Path:
+    root = _resolve_assets_root(assets_root)
+    return _resolve_mode_path(resolve_builtin_mode_id(mode_id), root).relative_to(root)
+
+
+def loop_config_relative_path(loop_id: str, *, assets_root: Path | None = None) -> Path:
+    root = _resolve_assets_root(assets_root)
+    return _resolve_loop_path(loop_id, root).relative_to(root)
+
+
 def validate_shipped_mode_same_graph(*, assets_root: Path | None = None) -> tuple[str, str]:
     root = _resolve_assets_root(assets_root)
     selected_graph: tuple[str, str] | None = None
@@ -177,16 +186,58 @@ def _resolve_assets_root(assets_root: Path | None) -> Path:
 
 def _resolve_mode_path(mode_id: str, assets_root: Path) -> Path:
     relative_path = BUILTIN_MODE_PATHS.get(mode_id)
-    if relative_path is None:
-        raise ModeAssetError(f"Unknown built-in mode id: {mode_id}")
-    return assets_root / relative_path
+    if relative_path is not None:
+        return assets_root / relative_path
+    discovered_path = _find_asset_by_declared_id(
+        assets_root,
+        root_relative_dir=MODES_ROOT,
+        id_field="mode_id",
+        expected_id=mode_id,
+        asset_kind="mode",
+    )
+    if discovered_path is None:
+        raise ModeAssetError(f"Unknown mode id: {mode_id}")
+    return discovered_path
 
 
 def _resolve_loop_path(loop_id: str, assets_root: Path) -> Path:
     relative_path = BUILTIN_LOOP_PATHS.get(loop_id)
-    if relative_path is None:
-        raise ModeAssetError(f"Unknown built-in loop id: {loop_id}")
-    return assets_root / relative_path
+    if relative_path is not None:
+        return assets_root / relative_path
+    discovered_path = _find_asset_by_declared_id(
+        assets_root,
+        root_relative_dir=LOOPS_ROOT,
+        id_field="loop_id",
+        expected_id=loop_id,
+        asset_kind="loop",
+    )
+    if discovered_path is None:
+        raise ModeAssetError(f"Unknown loop id: {loop_id}")
+    return discovered_path
+
+
+def _find_asset_by_declared_id(
+    assets_root: Path,
+    *,
+    root_relative_dir: Path,
+    id_field: str,
+    expected_id: str,
+    asset_kind: str,
+) -> Path | None:
+    root = assets_root / root_relative_dir
+    if not root.is_dir():
+        return None
+
+    matches: list[Path] = []
+    for path in sorted(candidate for candidate in root.rglob("*.json") if candidate.is_file()):
+        payload = _load_json_asset(path, asset_kind=asset_kind)
+        if payload.get(id_field) == expected_id:
+            matches.append(path)
+
+    if len(matches) > 1:
+        joined = ", ".join(str(path) for path in matches)
+        raise ModeAssetError(f"Duplicate {asset_kind} id {expected_id}: {joined}")
+    return matches[0] if matches else None
 
 
 def _load_json_asset(path: Path, *, asset_kind: str) -> dict[str, Any]:
@@ -218,6 +269,8 @@ __all__ = [
     "load_builtin_loop_definition",
     "load_builtin_mode_bundle",
     "load_builtin_mode_definition",
+    "loop_config_relative_path",
+    "mode_asset_relative_path",
     "resolve_builtin_mode_id",
     "validate_shipped_mode_same_graph",
 ]

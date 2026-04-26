@@ -148,10 +148,8 @@ def test_builtin_graph_loops_load_and_validate() -> None:
 def test_shipped_graph_loop_ids_are_stable() -> None:
     assert SHIPPED_GRAPH_LOOP_IDS == (
         "execution.standard",
-        "execution.skills_pipeline",
         "learning.standard",
         "planning.standard",
-        "planning.skills_pipeline",
     )
 
 
@@ -233,8 +231,19 @@ def test_graph_loop_asset_errors_use_project_error_hierarchy() -> None:
 
 
 def test_unknown_graph_loop_fails_deterministically() -> None:
-    with pytest.raises(GraphLoopAssetError, match=r"^Unknown built-in graph loop id: execution\.custom$"):
+    with pytest.raises(GraphLoopAssetError, match=r"^Unknown graph loop id: execution\.custom$"):
         load_builtin_graph_loop_definition("execution.custom")
+
+
+def test_builtin_graph_loop_loader_accepts_workspace_local_graph(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    _write_synthetic_stage_kind_asset(assets_root)
+    _write_synthetic_graph_loop_asset(assets_root)
+
+    synthetic = load_builtin_graph_loop_definition("execution.synthetic", assets_root=assets_root)
+
+    assert synthetic.loop_id == "execution.synthetic"
+    assert synthetic.nodes[0].stage_kind_id == "synthetic_worker"
 
 
 def test_invalid_graph_loop_json_fails_deterministically(tmp_path: Path) -> None:

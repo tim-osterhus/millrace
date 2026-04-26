@@ -15,6 +15,43 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 No unreleased changes recorded yet.
 
+## [0.15.2] - 2026-04-26
+
+`0.15.2` hardens compiled-plan authority and workspace lifecycle behavior while
+moving repository-local skills-pipeline infrastructure out of the core Millrace
+package.
+
+### Added
+
+- Added explicit workspace initialization and baseline manifest tracking for
+  deployed runtime assets.
+- Added workspace baseline upgrade preview/apply support through the CLI.
+- Added compile-input fingerprinting and currentness reporting so operators can
+  see whether a persisted compiled plan still matches current config and assets.
+- Added richer compiled node contracts, including allowed result classes by
+  outcome and frozen skill/entrypoint asset references.
+- Added generic workspace-local mode and graph discovery so specialized
+  workflows can provide their own assets without shipping them in the Millrace
+  package.
+
+### Changed
+
+- Runtime consumers now drive stage requests, routing, recovery, and result
+  validation from the compiled plan instead of reconstructing authority from
+  mutable source assets.
+- `millrace status` now surfaces compile currentness and baseline lifecycle
+  metadata.
+- Repository-local skills-pipeline mode, loop, graph, and entrypoint assets are
+  no longer packaged with Millrace; they belong in their owning workspace or
+  lab overlay.
+
+### Fixed
+
+- Fixed stage-result normalization and validation so runner outputs must match
+  the compiled stage request contract.
+- Fixed baseline manifest seeding and stale compile handling so a failed
+  recompile preserves the last known-good plan.
+
 ## [0.15.1] - 2026-04-25
 
 `0.15.1` completes the Learning plane control surface by making runtime
@@ -202,7 +239,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/tim-osterhus/millrace/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/tim-osterhus/millrace/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/tim-osterhus/millrace/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/tim-osterhus/millrace/compare/v0.14.0...v0.14.1

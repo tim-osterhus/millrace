@@ -33,14 +33,14 @@ from millrace_ai.architecture import (
 from millrace_ai.architecture.common import dedupe_preserve_order
 from millrace_ai.architecture.materialization import ResolvedAssetRef
 from millrace_ai.assets import (
-    BUILTIN_GRAPH_LOOP_PATHS,
-    BUILTIN_MODE_PATHS,
     BUILTIN_STAGE_KIND_PATHS,
     discover_stage_kind_definitions,
+    graph_loop_asset_relative_path,
     load_builtin_graph_loop_definition,
     load_builtin_mode_definition,
     load_builtin_stage_kind_definitions,
     load_graph_loop_definition,
+    mode_asset_relative_path,
     resolve_builtin_mode_id,
 )
 from millrace_ai.config import RuntimeConfig, fingerprint_runtime_config
@@ -723,14 +723,17 @@ def _build_resolved_asset_refs(
         _resolved_packaged_asset_ref(
             asset_family="mode",
             logical_id=f"mode:{mode.mode_id}",
-            relative_path=BUILTIN_MODE_PATHS[mode.mode_id],
+            relative_path=mode_asset_relative_path(mode.mode_id, assets_root=assets_root),
             assets_root=assets_root,
         ),
         *[
             _resolved_packaged_asset_ref(
                 asset_family="graph_loop",
                 logical_id=f"graph_loop:{graph_loop.loop_id}",
-                relative_path=BUILTIN_GRAPH_LOOP_PATHS[graph_loop.loop_id],
+                relative_path=graph_loop_asset_relative_path(
+                    graph_loop.loop_id,
+                    assets_root=assets_root,
+                ),
                 assets_root=assets_root,
             )
             for _plane, graph_loop in sorted(graph_loops.items(), key=lambda item: item[0].value)

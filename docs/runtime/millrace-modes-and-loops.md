@@ -194,17 +194,10 @@ Entrypoint, skill-addition, and model maps otherwise remain empty in the
 baseline, which means loop topology and stage semantics stay identical across
 the two harness presets.
 
-Millrace also ships a specialized `skills_pipeline_codex` mode for the
-repository-local optional-skills production pipeline. It points at:
-
-- `execution_loop_id = execution.skills_pipeline`
-- `planning_loop_id = planning.skills_pipeline`
-
-This mode reuses the same typed stage kinds but binds pipeline-specific
-entrypoints for `planner`, `manager`, `builder`, `checker`, `fixer`,
-`doublechecker`, `updater`, and `arbiter`. The dedicated pipeline workspace is
-expected to set `recovery.max_fix_cycles = 5` so valid QA quality failures can
-route through up to five fixer/doublechecker repair attempts before archive.
+Specialized repository-local workflows should provide their own workspace-local
+mode, loop, graph, and entrypoint assets under their owning project area, then
+compile with the workspace runtime asset root. Those workflow assets are not
+part of the core Millrace package.
 
 ## Stage Maps And What They Do
 

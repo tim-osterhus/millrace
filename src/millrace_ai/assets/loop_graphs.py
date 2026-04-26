@@ -20,10 +20,8 @@ GRAPH_LOOPS_ROOT = Path("graphs")
 
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("graphs/execution/standard.json"),
-    "execution.skills_pipeline": Path("graphs/execution/skills_pipeline.json"),
     "learning.standard": Path("graphs/learning/standard.json"),
     "planning.standard": Path("graphs/planning/standard.json"),
-    "planning.skills_pipeline": Path("graphs/planning/skills_pipeline.json"),
 }
 
 SHIPPED_GRAPH_LOOP_IDS: tuple[str, ...] = tuple(BUILTIN_GRAPH_LOOP_PATHS)
@@ -80,6 +78,11 @@ def load_graph_loop_definition(
     if graph_loop is None:
         raise GraphLoopAssetError(f"Unknown discovered graph loop id: {loop_id}")
     return graph_loop
+
+
+def graph_loop_asset_relative_path(loop_id: str, *, assets_root: Path | None = None) -> Path:
+    root = _resolve_assets_root(assets_root)
+    return _resolve_graph_loop_path(loop_id, root).relative_to(root)
 
 
 def discover_graph_loop_definitions(
@@ -194,9 +197,21 @@ def _discover_graph_loop_paths(assets_root: Path) -> tuple[Path, ...]:
 
 def _resolve_graph_loop_path(loop_id: str, assets_root: Path) -> Path:
     relative_path = BUILTIN_GRAPH_LOOP_PATHS.get(loop_id)
-    if relative_path is None:
-        raise GraphLoopAssetError(f"Unknown built-in graph loop id: {loop_id}")
-    return assets_root / relative_path
+    if relative_path is not None:
+        return assets_root / relative_path
+
+    matches: list[Path] = []
+    for path in _discover_graph_loop_paths(assets_root):
+        payload = _load_json_asset(path, asset_kind="graph loop")
+        if payload.get("loop_id") == loop_id:
+            matches.append(path)
+
+    if len(matches) > 1:
+        joined = ", ".join(str(path) for path in matches)
+        raise GraphLoopAssetError(f"Duplicate graph loop id {loop_id}: {joined}")
+    if not matches:
+        raise GraphLoopAssetError(f"Unknown graph loop id: {loop_id}")
+    return matches[0]
 
 
 def _load_json_asset(path: Path, *, asset_kind: str) -> dict[str, Any]:
@@ -235,6 +250,7 @@ __all__ = [
     "GraphLoopAssetError",
     "SHIPPED_GRAPH_LOOP_IDS",
     "discover_graph_loop_definitions",
+    "graph_loop_asset_relative_path",
     "load_graph_loop_definition",
     "load_builtin_graph_loop_definition",
     "load_builtin_graph_loop_definitions",
