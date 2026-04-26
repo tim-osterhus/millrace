@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from millrace_ai.workspace.baseline import build_baseline_manifest, write_baseline_manifest
 from millrace_ai.workspace.paths import (
     WorkspacePaths,
     _default_file_payloads,
@@ -52,6 +53,8 @@ def initialize_workspace(
             file_path.write_text(payload, encoding="utf-8")
 
     _deploy_runtime_assets(paths, assets_root=assets_root)
+    if not paths.baseline_manifest_file.exists():
+        write_baseline_manifest(paths, build_baseline_manifest(paths))
     return paths
 
 

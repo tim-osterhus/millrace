@@ -127,6 +127,7 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.execution_status_file == root / "millrace-agents" / "state" / "execution_status.md"
     assert paths.planning_status_file == root / "millrace-agents" / "state" / "planning_status.md"
     assert paths.learning_status_file == root / "millrace-agents" / "state" / "learning_status.md"
+    assert paths.baseline_manifest_file == root / "millrace-agents" / "state" / "baseline_manifest.json"
     assert not hasattr(paths, "roles_dir")
 
 
@@ -237,6 +238,18 @@ def test_ensure_runtime_state_surfaces_restores_missing_runtime_state_defaults(t
     assert json.loads(paths.runtime_snapshot_file.read_text(encoding="utf-8"))["compiled_plan_id"] == "bootstrap"
     assert json.loads(paths.recovery_counters_file.read_text(encoding="utf-8"))["entries"] == []
     assert paths.learning_events_file.read_text(encoding="utf-8") == ""
+
+
+def test_ensure_runtime_state_surfaces_does_not_seed_baseline_manifest(tmp_path: Path) -> None:
+    paths_module = importlib.import_module("millrace_ai.paths")
+    paths = paths_module.initialize_workspace(tmp_path / "workspace")
+
+    paths.baseline_manifest_file.unlink()
+
+    ensured = paths_module.ensure_runtime_state_surfaces(paths)
+
+    assert ensured == paths
+    assert not paths.baseline_manifest_file.exists()
 
 
 def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None:

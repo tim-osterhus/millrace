@@ -98,6 +98,7 @@ class WorkspacePaths:
     execution_status_file: Path
     planning_status_file: Path
     learning_status_file: Path
+    baseline_manifest_file: Path
     runtime_snapshot_file: Path
     recovery_counters_file: Path
     runtime_error_context_file: Path
@@ -249,6 +250,7 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         execution_status_file=state_dir / "execution_status.md",
         planning_status_file=state_dir / "planning_status.md",
         learning_status_file=state_dir / "learning_status.md",
+        baseline_manifest_file=state_dir / "baseline_manifest.json",
         runtime_snapshot_file=state_dir / "runtime_snapshot.json",
         recovery_counters_file=state_dir / "recovery_counters.json",
         runtime_error_context_file=state_dir / "runtime_error_context.json",
