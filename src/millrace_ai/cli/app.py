@@ -24,6 +24,7 @@ from millrace_ai.cli.commands.run import run_app
 from millrace_ai.cli.commands.runs import runs_app
 from millrace_ai.cli.commands.skills import skills_app
 from millrace_ai.cli.commands.status import status_app
+from millrace_ai.cli.commands.upgrade import upgrade
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
 
@@ -49,5 +50,6 @@ app.command("retry-active")(retry_active)
 app.command("clear-stale-state")(clear_stale_state)
 app.command("reload-config")(reload_config)
 app.command("doctor")(doctor)
+app.command("upgrade")(upgrade)
 
 __all__ = ["app"]

@@ -195,3 +195,44 @@ def test_doctor_flags_invalid_runtime_ownership_lock_payload(tmp_path: Path) -> 
 
     assert report.ok is False
     assert any(item.code == "runtime_ownership_lock_invalid" for item in report.errors)
+
+
+def test_doctor_flags_missing_baseline_manifest(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    paths.baseline_manifest_file.unlink()
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == "baseline_manifest_missing" for item in report.errors)
+
+
+def test_doctor_flags_invalid_baseline_manifest_schema(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    paths.baseline_manifest_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "2.0",
+                "manifest_id": "bad",
+                "seed_package_version": "0.0.0",
+                "entries": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == "baseline_manifest_invalid" for item in report.errors)
+
+
+def test_doctor_flags_missing_manifest_tracked_managed_file(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    (paths.runtime_root / "entrypoints" / "execution" / "builder.md").unlink()
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == "baseline_manifest_managed_file_missing" for item in report.errors)

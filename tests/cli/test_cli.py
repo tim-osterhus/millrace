@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +39,13 @@ NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def _copy_assets(tmp_path: Path) -> Path:
+    source_assets = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
+    destination = tmp_path / "assets"
+    shutil.copytree(source_assets, destination)
+    return destination
 
 
 def test_init_command_creates_workspace_baseline(tmp_path: Path) -> None:
@@ -1425,6 +1433,56 @@ def test_doctor_command_surfaces_workspace_diagnostics(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "ok: true" in result.output
+
+
+def test_upgrade_command_previews_three_way_classification(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    assets_root = _copy_assets(tmp_path)
+    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+        "candidate builder update\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "millrace_ai.workspace.baseline._resolve_asset_source_root",
+        lambda _: assets_root,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["upgrade", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "applied: false" in result.output
+    assert "entry: entrypoints/execution/builder.md safe_package_update" in result.output
+
+
+def test_upgrade_command_apply_refreshes_managed_assets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    assets_root = _copy_assets(tmp_path)
+    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+        "candidate builder update\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "millrace_ai.workspace.baseline._resolve_asset_source_root",
+        lambda _: assets_root,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["upgrade", "--apply", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "applied: true" in result.output
+    assert (
+        paths.runtime_root / "entrypoints" / "execution" / "builder.md"
+    ).read_text(encoding="utf-8") == "candidate builder update\n"
 
 
 def test_status_watch_outputs_multiple_updates_with_bound(tmp_path: Path) -> None:

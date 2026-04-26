@@ -45,6 +45,7 @@ from millrace_ai.state_store import (
     load_recovery_counters,
     load_snapshot,
 )
+from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
 from millrace_ai.work_documents import read_work_document_as
 
 DoctorModel: TypeAlias = type[TaskDocument] | type[SpecDocument] | type[IncidentDocument]
@@ -82,6 +83,7 @@ def run_workspace_doctor(
     warnings: list[DoctorIssue] = []
 
     _validate_workspace_layout(paths, errors)
+    baseline_manifest = _validate_baseline_manifest(paths, errors)
 
     execution_marker = _validate_execution_status(paths, errors)
     planning_marker = _validate_planning_status(paths, errors)
@@ -104,6 +106,8 @@ def run_workspace_doctor(
 
     _validate_runtime_ownership_lock(paths, errors, warnings)
     _validate_queue_parseability(paths, errors)
+    if baseline_manifest is not None:
+        _validate_manifest_tracked_managed_files(paths, baseline_manifest, errors)
 
     resolved_assets_root = ASSETS_ROOT if assets_root is None else Path(assets_root)
     _validate_mode_and_loop_assets(resolved_assets_root, errors)
@@ -168,6 +172,51 @@ def _validate_workspace_layout(paths: WorkspacePaths, errors: list[DoctorIssue])
                 code="missing_file",
                 message="required workspace file is missing",
                 path=file_path,
+            )
+        )
+
+
+def _validate_baseline_manifest(
+    paths: WorkspacePaths,
+    errors: list[DoctorIssue],
+) -> BaselineManifest | None:
+    if not paths.baseline_manifest_file.is_file():
+        errors.append(
+            DoctorIssue(
+                code="baseline_manifest_missing",
+                message="baseline manifest is missing",
+                path=paths.baseline_manifest_file,
+            )
+        )
+        return None
+
+    try:
+        return load_baseline_manifest(paths)
+    except (OSError, ValidationError, json.JSONDecodeError) as exc:
+        errors.append(
+            DoctorIssue(
+                code="baseline_manifest_invalid",
+                message=str(exc),
+                path=paths.baseline_manifest_file,
+            )
+        )
+        return None
+
+
+def _validate_manifest_tracked_managed_files(
+    paths: WorkspacePaths,
+    manifest: BaselineManifest,
+    errors: list[DoctorIssue],
+) -> None:
+    for entry in manifest.entries:
+        candidate = paths.runtime_root / entry.relative_path
+        if candidate.is_file():
+            continue
+        errors.append(
+            DoctorIssue(
+                code="baseline_manifest_managed_file_missing",
+                message="manifest-tracked managed file is missing",
+                path=candidate,
             )
         )
 

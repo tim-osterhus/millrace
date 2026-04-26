@@ -5,7 +5,14 @@ import shutil
 from pathlib import Path
 
 import millrace_ai
-from millrace_ai.workspace.baseline import load_baseline_manifest
+import pytest
+
+from millrace_ai.workspace.baseline import (
+    UpgradeDisposition,
+    apply_baseline_upgrade,
+    load_baseline_manifest,
+    preview_baseline_upgrade,
+)
 from millrace_ai.workspace.initialization import initialize_workspace
 
 
@@ -64,3 +71,109 @@ def test_rerun_rebuilds_missing_manifest_from_seed_asset_hashes(tmp_path: Path) 
 
     assert manifest_entry.original_sha256 == seeded_hash
     assert manifest_entry.original_sha256 != edited_hash
+
+
+def test_upgrade_preview_distinguishes_three_way_dispositions(tmp_path: Path) -> None:
+    paths = initialize_workspace(tmp_path / "workspace")
+    assets_root = _copy_assets(tmp_path)
+
+    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+        "candidate builder update\n",
+        encoding="utf-8",
+    )
+    (paths.runtime_root / "entrypoints" / "planning" / "planner.md").write_text(
+        "local planner edit\n",
+        encoding="utf-8",
+    )
+    shared_checker = "shared checker update\n"
+    (assets_root / "entrypoints" / "execution" / "checker.md").write_text(shared_checker, encoding="utf-8")
+    (paths.runtime_root / "entrypoints" / "execution" / "checker.md").write_text(
+        shared_checker,
+        encoding="utf-8",
+    )
+    (assets_root / "entrypoints" / "planning" / "auditor.md").write_text(
+        "candidate auditor update\n",
+        encoding="utf-8",
+    )
+    (paths.runtime_root / "entrypoints" / "planning" / "auditor.md").write_text(
+        "local auditor edit\n",
+        encoding="utf-8",
+    )
+    (paths.runtime_root / "entrypoints" / "planning" / "arbiter.md").unlink()
+
+    preview = preview_baseline_upgrade(paths, candidate_assets_root=assets_root)
+
+    assert preview.classifications_by_path["graphs/planning/standard.json"] is UpgradeDisposition.UNCHANGED
+    assert (
+        preview.classifications_by_path["entrypoints/execution/builder.md"]
+        is UpgradeDisposition.SAFE_PACKAGE_UPDATE
+    )
+    assert (
+        preview.classifications_by_path["entrypoints/planning/planner.md"]
+        is UpgradeDisposition.LOCAL_ONLY_MODIFICATION
+    )
+    assert (
+        preview.classifications_by_path["entrypoints/execution/checker.md"]
+        is UpgradeDisposition.ALREADY_CONVERGED
+    )
+    assert (
+        preview.classifications_by_path["entrypoints/planning/auditor.md"]
+        is UpgradeDisposition.CONFLICT
+    )
+    assert (
+        preview.classifications_by_path["entrypoints/planning/arbiter.md"]
+        is UpgradeDisposition.MISSING
+    )
+
+
+def test_upgrade_apply_preserves_runtime_state_and_operator_docs(tmp_path: Path) -> None:
+    paths = initialize_workspace(tmp_path / "workspace")
+    assets_root = _copy_assets(tmp_path)
+    runtime_snapshot_before = paths.runtime_snapshot_file.read_text(encoding="utf-8")
+    notes_path = paths.runtime_root / "notes.md"
+    notes_path.write_text("keep operator notes\n", encoding="utf-8")
+
+    source_builder_path = assets_root / "entrypoints" / "execution" / "builder.md"
+    source_builder_path.write_text("candidate builder apply\n", encoding="utf-8")
+    missing_path = paths.runtime_root / "entrypoints" / "execution" / "checker.md"
+    missing_path.unlink()
+
+    outcome = apply_baseline_upgrade(paths, candidate_assets_root=assets_root)
+    manifest = load_baseline_manifest(paths)
+
+    assert outcome.applied is True
+    assert (paths.runtime_root / "entrypoints" / "execution" / "builder.md").read_text(
+        encoding="utf-8"
+    ) == "candidate builder apply\n"
+    assert missing_path.is_file()
+    assert paths.runtime_snapshot_file.read_text(encoding="utf-8") == runtime_snapshot_before
+    assert notes_path.read_text(encoding="utf-8") == "keep operator notes\n"
+    assert (
+        manifest.entry_for("entrypoints/execution/builder.md").original_sha256
+        == hashlib.sha256(source_builder_path.read_bytes()).hexdigest()
+    )
+
+
+def test_upgrade_apply_aborts_before_mutation_on_conflict(tmp_path: Path) -> None:
+    paths = initialize_workspace(tmp_path / "workspace")
+    assets_root = _copy_assets(tmp_path)
+    builder_path = paths.runtime_root / "entrypoints" / "execution" / "builder.md"
+    builder_before = builder_path.read_text(encoding="utf-8")
+
+    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+        "candidate builder update\n",
+        encoding="utf-8",
+    )
+    (assets_root / "entrypoints" / "planning" / "auditor.md").write_text(
+        "candidate auditor update\n",
+        encoding="utf-8",
+    )
+    (paths.runtime_root / "entrypoints" / "planning" / "auditor.md").write_text(
+        "local auditor edit\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="conflict"):
+        apply_baseline_upgrade(paths, candidate_assets_root=assets_root)
+
+    assert builder_path.read_text(encoding="utf-8") == builder_before
