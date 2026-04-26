@@ -144,6 +144,7 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
         root / "millrace-agents" / "outline.md",
         root / "millrace-agents" / "historylog.md",
         root / "millrace-agents" / "millrace.toml",
+        root / "millrace-agents" / "state" / "baseline_manifest.json",
         root / "millrace-agents" / "state" / "execution_status.md",
         root / "millrace-agents" / "state" / "planning_status.md",
         root / "millrace-agents" / "state" / "learning_status.md",
@@ -207,6 +208,7 @@ def test_initialize_workspace_creates_canonical_workspace_surfaces(tmp_path: Pat
         root / "millrace-agents" / "outline.md",
         root / "millrace-agents" / "historylog.md",
         root / "millrace-agents" / "millrace.toml",
+        root / "millrace-agents" / "state" / "baseline_manifest.json",
         root / "millrace-agents" / "state" / "execution_status.md",
         root / "millrace-agents" / "state" / "planning_status.md",
         root / "millrace-agents" / "state" / "learning_status.md",
@@ -246,10 +248,20 @@ def test_ensure_runtime_state_surfaces_does_not_seed_baseline_manifest(tmp_path:
 
     paths.baseline_manifest_file.unlink()
 
-    ensured = paths_module.ensure_runtime_state_surfaces(paths)
+    with pytest.raises(ValueError, match="workspace is not initialized"):
+        paths_module.ensure_runtime_state_surfaces(paths)
 
-    assert ensured == paths
     assert not paths.baseline_manifest_file.exists()
+
+
+def test_require_initialized_workspace_rejects_missing_baseline_manifest(tmp_path: Path) -> None:
+    paths_module = importlib.import_module("millrace_ai.paths")
+    paths = paths_module.initialize_workspace(tmp_path / "workspace")
+
+    paths.baseline_manifest_file.unlink()
+
+    with pytest.raises(ValueError, match="workspace is not initialized"):
+        paths_module.require_initialized_workspace(paths)
 
 
 def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None:

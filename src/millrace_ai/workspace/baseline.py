@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 import millrace_ai
 
-from .paths import WorkspacePaths, _RUNTIME_ASSET_DIRS, workspace_paths
+from .paths import WorkspacePaths, _RUNTIME_ASSET_DIRS, _resolve_asset_source_root, workspace_paths
 
 
 class _BaselineModel(BaseModel):
@@ -24,7 +25,7 @@ class BaselineManifestEntry(_BaselineModel):
 
 
 class BaselineManifest(_BaselineModel):
-    schema_version: str = "1.0"
+    schema_version: Literal["1.0"] = "1.0"
     manifest_id: str
     seed_package_version: str
     entries: tuple[BaselineManifestEntry, ...]
@@ -36,11 +37,17 @@ class BaselineManifest(_BaselineModel):
         raise KeyError(relative_path)
 
 
-def build_baseline_manifest(target: WorkspacePaths | Path | str) -> BaselineManifest:
-    """Build a manifest from the currently deployed managed runtime assets."""
+def build_baseline_manifest(
+    target: WorkspacePaths | Path | str,
+    *,
+    assets_root: Path | str | None = None,
+) -> BaselineManifest:
+    """Build a manifest from the managed runtime asset seed source."""
 
-    paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
-    entries = tuple(_iter_manifest_entries(paths))
+    # Keep the target parameter for symmetry with other workspace helpers.
+    _ = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
+    source_root = _resolve_asset_source_root(assets_root)
+    entries = tuple(_iter_manifest_entries(source_root))
     manifest_id = _manifest_id_for_entries(
         schema_version="1.0",
         seed_package_version=millrace_ai.__version__,
@@ -68,10 +75,10 @@ def write_baseline_manifest(
     return paths.baseline_manifest_file
 
 
-def _iter_manifest_entries(paths: WorkspacePaths) -> tuple[BaselineManifestEntry, ...]:
+def _iter_manifest_entries(source_root: Path) -> tuple[BaselineManifestEntry, ...]:
     entries: list[BaselineManifestEntry] = []
     for asset_family in _RUNTIME_ASSET_DIRS:
-        family_root = paths.runtime_root / asset_family
+        family_root = source_root / asset_family
         if not family_root.exists():
             continue
         for file_path in sorted(path for path in family_root.rglob("*") if path.is_file()):

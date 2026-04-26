@@ -31,6 +31,7 @@ _BASELINE_PATHS = (
     "skills_dir",
     "outline_file",
     "historylog_file",
+    "baseline_manifest_file",
 )
 
 
@@ -54,7 +55,7 @@ def initialize_workspace(
 
     _deploy_runtime_assets(paths, assets_root=assets_root)
     if not paths.baseline_manifest_file.exists():
-        write_baseline_manifest(paths, build_baseline_manifest(paths))
+        write_baseline_manifest(paths, build_baseline_manifest(paths, assets_root=assets_root))
     return paths
 
 
