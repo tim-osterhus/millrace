@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,6 +126,8 @@ _LEARNING_REQUEST_SCHEMA = _DocumentSchema(
         ("Summary", "summary"),
         ("Requested-Action", "requested_action"),
         ("Target-Skill-ID", "target_skill_id"),
+        ("Target-Stage", "target_stage"),
+        ("Trigger-Metadata", "trigger_metadata"),
         ("Created-At", "created_at"),
         ("Created-By", "created_by"),
         ("Updated-At", "updated_at"),
@@ -212,6 +215,8 @@ def render_work_document(document: WorkDocument, *, body: str | None = None) -> 
         if value is None:
             continue
         if field_name == "summary" and value == "":
+            continue
+        if field_name == "trigger_metadata" and value == {}:
             continue
         if field_name == "severity" and value == "medium":
             continue
@@ -352,6 +357,9 @@ def _validate_document(
     field_payload: dict[str, object],
 ) -> _DocT:
     payload = dict(field_payload)
+    trigger_metadata = payload.get("trigger_metadata")
+    if isinstance(trigger_metadata, str):
+        payload["trigger_metadata"] = json.loads(trigger_metadata)
     title_value = payload.get("title")
     if title_value is None:
         payload["title"] = heading_title
@@ -363,6 +371,8 @@ def _validate_document(
 def _render_scalar(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return str(value)
 
 

@@ -57,6 +57,15 @@ def work_item_activation_for_graph(
     return _activation_from_entry(graph, entry_key)
 
 
+def learning_stage_activation_for_graph(
+    graph_plan: CompiledRunPlan,
+    target_stage: LearningStageName,
+) -> GraphActivationDecision:
+    if graph_plan.learning_graph is None:
+        raise ValueError("compiled graph is missing learning plane")
+    return _activation_from_node(graph_plan.learning_graph, target_stage.value, entry_key="learning_request")
+
+
 def completion_activation_for_graph(graph_plan: CompiledRunPlan) -> GraphActivationDecision:
     completion_entry = graph_plan.planning_graph.compiled_completion_entry
     if completion_entry is None:
@@ -120,6 +129,24 @@ def _activation_from_entry(
                 entry_key=entry.entry_key.value,
             )
     raise ValueError(f"compiled graph is missing `{entry_key}` activation entry")
+
+
+def _activation_from_node(
+    graph: FrozenGraphPlanePlan,
+    node_id: str,
+    *,
+    entry_key: str,
+) -> GraphActivationDecision:
+    for node in graph.nodes:
+        if node.node_id == node_id:
+            return GraphActivationDecision(
+                plane=graph.plane,
+                stage=_stage_for_node(graph.plane, node.node_id),
+                node_id=node.node_id,
+                stage_kind_id=node.stage_kind_id,
+                entry_key=entry_key,
+            )
+    raise ValueError(f"compiled graph is missing `{node_id}` node")
 
 
 def _activation_from_completion_entry(
@@ -717,6 +744,7 @@ def _normalize_failure_class(failure_class: str) -> str:
 __all__ = [
     "GraphActivationDecision",
     "completion_activation_for_graph",
+    "learning_stage_activation_for_graph",
     "route_stage_result_from_graph",
     "work_item_activation_for_graph",
 ]

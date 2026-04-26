@@ -438,6 +438,7 @@ class LearningRequestDocument(ContractModel):
 
     requested_action: LearningRequestAction
     target_skill_id: str | None = None
+    target_stage: LearningStageName | None = None
     source_refs: tuple[str, ...] = ()
     preferred_output_paths: tuple[str, ...] = ()
     trigger_metadata: dict[str, JsonValue] = Field(default_factory=dict)

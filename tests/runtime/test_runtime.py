@@ -13,6 +13,9 @@ from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
     IncidentDocument,
+    LearningRequestDocument,
+    LearningStageName,
+    LearningTerminalResult,
     MailboxCommandEnvelope,
     Plane,
     PlanningStageName,
@@ -277,6 +280,131 @@ def test_learning_mode_stage_requests_persist_skill_revision_evidence(tmp_path: 
         captured_request.required_skill_paths
     )
     assert all(skill["sha256"] for skill in evidence["skills"])
+
+
+def test_learning_stage_request_uses_learning_request_kind_and_per_request_evidence(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(
+        LearningRequestDocument(
+            learning_request_id="learn-001",
+            title="Improve checker skill",
+            requested_action="improve",
+            target_skill_id="checker-core",
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+    captured_requests: list[StageRunRequest] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        captured_requests.append(request)
+        terminal_by_stage = {
+            LearningStageName.ANALYST: LearningTerminalResult.ANALYST_COMPLETE.value,
+            LearningStageName.PROFESSOR: LearningTerminalResult.PROFESSOR_COMPLETE.value,
+        }
+        return _runner_result(
+            request,
+            terminal=terminal_by_stage[request.stage],
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine.startup()
+    first = engine.tick()
+    second = engine.tick()
+
+    assert first.stage is LearningStageName.ANALYST
+    assert second.stage is LearningStageName.PROFESSOR
+    assert [request.request_kind for request in captured_requests] == [
+        "learning_request",
+        "learning_request",
+    ]
+    evidence_paths = [Path(request.skill_revision_evidence_path) for request in captured_requests]
+    assert len(set(evidence_paths)) == 2
+    assert all(path.is_file() for path in evidence_paths)
+    for request, evidence_path in zip(captured_requests, evidence_paths, strict=True):
+        assert request.request_id in evidence_path.name
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        assert evidence["request_id"] == request.request_id
+
+
+def test_learning_mode_execution_trigger_enqueues_targeted_learning_request(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    seen_stages: list[str] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        seen_stages.append(request.stage.value)
+        terminal_by_stage = {
+            ExecutionStageName.BUILDER: ExecutionTerminalResult.BUILDER_COMPLETE.value,
+            ExecutionStageName.CHECKER: ExecutionTerminalResult.FIX_NEEDED.value,
+            ExecutionStageName.FIXER: ExecutionTerminalResult.FIXER_COMPLETE.value,
+            ExecutionStageName.DOUBLECHECKER: ExecutionTerminalResult.DOUBLECHECK_PASS.value,
+        }
+        return _runner_result(
+            request,
+            terminal=terminal_by_stage[request.stage],
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine.startup()
+
+    for _ in range(4):
+        engine.tick()
+
+    queued_requests = tuple(paths.learning_requests_queue_dir.glob("*.md"))
+    assert seen_stages == ["builder", "checker", "fixer", "doublechecker"]
+    assert len(queued_requests) == 1
+    doc = read_work_document_as(queued_requests[0], model=LearningRequestDocument)
+    assert doc.requested_action == "improve"
+    assert doc.target_stage is LearningStageName.CURATOR
+    assert doc.originating_run_ids == (engine.snapshot.active_run_id,)
+    assert doc.trigger_metadata["rule_id"] == "execution.doublechecker.success-to-curator"
+    assert doc.trigger_metadata["source_stage"] == "doublechecker"
+    assert doc.trigger_metadata["terminal_result"] == "DOUBLECHECK_PASS"
+
+
+def test_targeted_learning_request_activates_requested_stage(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(
+        LearningRequestDocument(
+            learning_request_id="learn-001",
+            title="Curate checker skill",
+            requested_action="improve",
+            target_skill_id="checker-core",
+            target_stage="curator",
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        return _runner_result(
+            request,
+            terminal=LearningTerminalResult.CURATOR_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine.startup()
+    outcome = engine.tick()
+
+    assert captured_request is not None
+    assert captured_request.stage is LearningStageName.CURATOR
+    assert captured_request.request_kind == "learning_request"
+    assert outcome.router_decision.reason == "curator:CURATOR_COMPLETE"
+    assert (paths.learning_requests_done_dir / "learn-001.md").is_file()
 
 
 def test_runtime_tick_completion_activation_uses_compiled_plan_authority(

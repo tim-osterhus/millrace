@@ -61,6 +61,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     planning_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md"))) + len(
         tuple(paths.incidents_incoming_dir.glob("*.md"))
     )
+    learning_queue_depth = len(tuple(paths.learning_requests_queue_dir.glob("*.md")))
 
     lines = [
         f"workspace: {paths.root}",
@@ -76,8 +77,10 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"active_work_item_id: {_value(snapshot.active_work_item_id)}",
         f"execution_queue_depth: {execution_queue_depth}",
         f"planning_queue_depth: {planning_queue_depth}",
+        f"learning_queue_depth: {learning_queue_depth}",
         f"execution_status_marker: {snapshot.execution_status_marker}",
         f"planning_status_marker: {snapshot.planning_status_marker}",
+        f"learning_status_marker: {snapshot.learning_status_marker}",
     ]
     lines.extend(_render_closure_target_status_lines(paths))
     if snapshot.current_failure_class:

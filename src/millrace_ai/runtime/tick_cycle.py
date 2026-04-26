@@ -12,6 +12,7 @@ from millrace_ai.runners import normalize_stage_result
 from millrace_ai.state_store import save_snapshot
 
 from .error_recovery import schedule_post_stage_exception_recovery
+from .learning_triggers import enqueue_learning_requests_for_stage_result
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine, RuntimeTickOutcome
@@ -116,6 +117,11 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
     router_decision: RouterDecision | None = None
     try:
         stage_result_path = engine._write_stage_result(request, stage_result)
+        enqueue_learning_requests_for_stage_result(
+            engine,
+            stage_result=stage_result,
+            stage_result_path=stage_result_path,
+        )
         router_decision = engine._route_stage_result(stage_result)
         engine._write_plane_status(stage_result)
         engine._apply_router_decision(router_decision, stage_result)

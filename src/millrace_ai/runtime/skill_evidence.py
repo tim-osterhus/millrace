@@ -19,7 +19,7 @@ def write_skill_revision_evidence(
 ) -> Path:
     """Persist content hashes for the skill files referenced by a stage request."""
 
-    evidence_path = run_dir / "skill_revision_evidence.json"
+    evidence_path = run_dir / f"skill_revision_evidence.{request_id}.json"
     payload = {
         "schema_version": "1.0",
         "kind": "skill_revision_evidence",

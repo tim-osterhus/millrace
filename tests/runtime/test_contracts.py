@@ -85,6 +85,7 @@ def test_learning_request_document_valid_payload() -> None:
         summary="Use observed run evidence to improve checker guidance",
         requested_action="improve",
         target_skill_id="checker-core",
+        target_stage="curator",
         source_refs=["run:run-001"],
         preferred_output_paths=["millrace-agents/skills/stage/execution/checker-core/SKILL.md"],
         trigger_metadata={"source_stage": "doublechecker", "terminal_result": "DOUBLECHECK_PASS"},
@@ -97,6 +98,7 @@ def test_learning_request_document_valid_payload() -> None:
     assert doc.kind == "learning_request"
     assert doc.requested_action == "improve"
     assert doc.target_skill_id == "checker-core"
+    assert doc.target_stage is LearningStageName.CURATOR
 
 
 def test_learning_stage_result_envelope_valid_payload() -> None:

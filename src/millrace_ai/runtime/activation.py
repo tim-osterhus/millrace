@@ -4,15 +4,26 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ExecutionStageName, PlanningStageName, StageName, WorkItemKind
+from millrace_ai.contracts import (
+    ExecutionStageName,
+    LearningRequestDocument,
+    PlanningStageName,
+    StageName,
+    WorkItemKind,
+)
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.state_store import save_snapshot
+from millrace_ai.work_documents import read_work_document_as
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 from . import completion_behavior
-from .graph_authority import work_item_activation_for_graph
+from .graph_authority import (
+    GraphActivationDecision,
+    learning_stage_activation_for_graph,
+    work_item_activation_for_graph,
+)
 
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
@@ -36,7 +47,7 @@ def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
     assert engine.snapshot is not None
     assert engine.compiled_plan is not None
 
-    activation = work_item_activation_for_graph(engine.compiled_plan, claim.work_item_kind)
+    activation = _activation_for_claim(engine, claim)
     engine.snapshot = engine.snapshot.model_copy(
         update={
             "active_plane": activation.plane,
@@ -63,6 +74,17 @@ def entry_stage_for_kind(work_item_kind: WorkItemKind) -> StageName:
 
         return LearningStageName.ANALYST
     return PlanningStageName.AUDITOR
+
+
+def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActivationDecision:
+    assert engine.compiled_plan is not None
+    if claim.work_item_kind is not WorkItemKind.LEARNING_REQUEST:
+        return work_item_activation_for_graph(engine.compiled_plan, claim.work_item_kind)
+
+    document = read_work_document_as(claim.path, model=LearningRequestDocument)
+    if document.target_stage is None:
+        return work_item_activation_for_graph(engine.compiled_plan, claim.work_item_kind)
+    return learning_stage_activation_for_graph(engine.compiled_plan, document.target_stage)
 
 
 __all__ = ["activate_claim", "claim_next_work_item", "entry_stage_for_kind"]

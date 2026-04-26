@@ -15,6 +15,51 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 No unreleased changes recorded yet.
 
+## [0.15.1] - 2026-04-25
+
+`0.15.1` completes the Learning plane control surface by making runtime
+learning requests fully distinguishable, targetable, auditable, and visible from
+operator status output.
+
+### Added
+
+- Added `Target-Stage` and `Trigger-Metadata` fields to learning request
+  documents so runtime-generated learning work can target a specific learning
+  stage with durable trigger context.
+- Added runtime evaluation of compiler-frozen learning trigger rules, including
+  automatic enqueueing of targeted learning requests after matching execution
+  stage outcomes.
+- Added direct activation for targeted learning requests, allowing a generated
+  Curator request to start at Curator instead of replaying the full learning
+  loop.
+- Added learning queue depth and learning status marker output to
+  `millrace status show`.
+
+### Fixed
+
+- Fixed learning stage runner requests so they use
+  `request_kind = "learning_request"` instead of the generic active-work-item
+  request kind.
+- Fixed skill revision evidence persistence so each stage request writes a
+  request-specific evidence file instead of overwriting a single run-level file.
+
+## [0.15.0] - 2026-04-25
+
+`0.15.0` introduces the Learning plane with Analyst, Professor, and Curator
+stages, packaged learning modes, and the `millrace skills` operator commands.
+
+### Added
+
+- Added the learning queue, learning status, and learning request document
+  surfaces.
+- Added learning graph, loop, stage-kind, entrypoint, and stage-core skill
+  assets.
+- Added `learning_codex` and `learning_pi` built-in modes.
+- Added `millrace skills` commands for install, create, improve, promote,
+  export, list, show, and search workflows.
+- Added skill revision evidence snapshots for stage requests when a compiled
+  learning graph is active.
+
 ## [0.14.1] - 2026-04-25
 
 `0.14.1` packages the repository-local skills pipeline mode alongside a smaller,
@@ -157,7 +202,9 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/tim-osterhus/millrace/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/tim-osterhus/millrace/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/tim-osterhus/millrace/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/tim-osterhus/millrace/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/tim-osterhus/millrace/compare/v0.12.5...v0.13.0

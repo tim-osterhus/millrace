@@ -22,6 +22,7 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
+from millrace_ai.runners.requests import RequestKind
 from millrace_ai.state_store import save_snapshot
 
 if TYPE_CHECKING:
@@ -69,6 +70,7 @@ def build_stage_run_request(
         stage=stage_name,
         mode_id=engine.snapshot.active_mode_id,
         compiled_plan_id=engine.snapshot.compiled_plan_id,
+        request_kind=_request_kind_for_active_kind(engine.snapshot.active_work_item_kind),
         entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
@@ -315,6 +317,12 @@ def _write_skill_revision_evidence_if_enabled(
         compiled_plan_id=engine.snapshot.compiled_plan_id,
         skill_paths=skill_paths,
     )
+
+
+def _request_kind_for_active_kind(work_item_kind: WorkItemKind | None) -> RequestKind:
+    if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+        return "learning_request"
+    return "active_work_item"
 
 
 __all__ = [

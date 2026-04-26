@@ -16,6 +16,7 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ClosureTargetState,
     CompileDiagnostics,
+    LearningRequestDocument,
     MailboxCommand,
     Plane,
     ReloadOutcome,
@@ -26,6 +27,7 @@ from millrace_ai.contracts import (
 from millrace_ai.control import ControlActionResult
 from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
+from millrace_ai.queue_store import QueueStore
 from millrace_ai.run_inspection import InspectedRunSummary, InspectedStageResult
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
@@ -516,6 +518,34 @@ def test_status_surfaces_active_mode_and_compiled_plan_id(tmp_path: Path) -> Non
     assert result.exit_code == 0
     assert "active_mode_id: default_codex" in result.output
     assert "compiled_plan_id: plan-status-123" in result.output
+
+
+def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_learning_request(
+        LearningRequestDocument(
+            learning_request_id="learn-001",
+            title="Learn from checker",
+            requested_action="improve",
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "active_mode_id": "learning_codex",
+            "learning_loop_id": "learning.standard",
+            "learning_status_marker": "### ANALYST_COMPLETE",
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "learning_queue_depth: 1" in result.output
+    assert "learning_status_marker: ### ANALYST_COMPLETE" in result.output
 
 
 def test_status_surfaces_failure_class_and_retry_counters(tmp_path: Path) -> None:
