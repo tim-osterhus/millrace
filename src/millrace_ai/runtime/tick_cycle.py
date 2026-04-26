@@ -101,6 +101,20 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         plane=request.plane,
         stage=request.stage,
         running_status_marker=request.running_status_marker,
+        run_id=request.run_id,
+    )
+    engine._emit_monitor_event(
+        "stage_started",
+        plane=request.plane.value,
+        stage=request.stage.value,
+        node_id=request.node_id,
+        stage_kind_id=request.stage_kind_id,
+        run_id=request.run_id,
+        work_item_kind=(
+            request.active_work_item_kind.value if request.active_work_item_kind else None
+        ),
+        work_item_id=request.active_work_item_id,
+        status_marker=request.running_status_marker,
     )
     write_runtime_event(
         engine.paths,
@@ -186,6 +200,26 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             ),
         },
     )
+    engine._emit_monitor_event(
+        "stage_completed",
+        plane=stage_result.plane.value,
+        stage=stage_result.stage.value,
+        node_id=stage_result.node_id,
+        stage_kind_id=stage_result.stage_kind_id,
+        run_id=stage_result.run_id,
+        work_item_kind=stage_result.work_item_kind.value,
+        work_item_id=stage_result.work_item_id,
+        terminal_result=stage_result.terminal_result.value,
+        summary_status_marker=stage_result.summary_status_marker,
+        started_at=stage_result.started_at.isoformat(),
+        completed_at=stage_result.completed_at.isoformat(),
+        duration_seconds=stage_result.duration_seconds,
+        token_usage=(
+            stage_result.token_usage.model_dump(mode="json")
+            if stage_result.token_usage is not None
+            else None
+        ),
+    )
     write_runtime_event(
         engine.paths,
         event_type="router_decision",
@@ -208,6 +242,23 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             "next_stage_kind_id": router_decision.next_stage_kind_id,
             "reason": router_decision.reason,
         },
+    )
+    engine._emit_monitor_event(
+        "router_decision",
+        action=router_decision.action.value,
+        plane=stage_result.plane.value,
+        run_id=stage_result.run_id,
+        work_item_kind=stage_result.work_item_kind.value,
+        work_item_id=stage_result.work_item_id,
+        stage=stage_result.stage.value,
+        node_id=stage_result.node_id,
+        stage_kind_id=stage_result.stage_kind_id,
+        terminal_result=stage_result.terminal_result.value,
+        failure_class=stage_result.metadata.get("failure_class"),
+        next_stage=router_decision.next_stage.value if router_decision.next_stage else None,
+        next_node_id=router_decision.next_node_id,
+        next_stage_kind_id=router_decision.next_stage_kind_id,
+        reason=router_decision.reason,
     )
 
     return RuntimeTickOutcome(

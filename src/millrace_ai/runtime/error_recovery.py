@@ -19,7 +19,7 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
-from millrace_ai.state_store import save_snapshot, set_execution_status, set_planning_status
+from millrace_ai.state_store import save_snapshot
 from millrace_ai.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
@@ -130,10 +130,20 @@ def schedule_post_stage_exception_recovery(
     _save_runtime_error_context(engine.paths, context)
 
     if stage_result.plane is Plane.EXECUTION:
-        execution_marker = set_execution_status(engine.paths, _BLOCKED_MARKER)
+        execution_marker = engine._set_plane_status_marker(
+            plane=Plane.EXECUTION,
+            marker=_BLOCKED_MARKER,
+            run_id=stage_result.run_id,
+            source="runtime_recovery_blocked",
+        )
         planning_marker = engine.snapshot.planning_status_marker
     else:
-        planning_marker = set_planning_status(engine.paths, _BLOCKED_MARKER)
+        planning_marker = engine._set_plane_status_marker(
+            plane=Plane.PLANNING,
+            marker=_BLOCKED_MARKER,
+            run_id=stage_result.run_id,
+            source="runtime_recovery_blocked",
+        )
         execution_marker = engine.snapshot.execution_status_marker
 
     engine.snapshot = engine.snapshot.model_copy(

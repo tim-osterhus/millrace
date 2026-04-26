@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from millrace_ai.contracts import TaskDocument
+from millrace_ai.contracts import ExecutionStageName, TaskDocument
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
+from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent, RuntimeMonitorSink
@@ -50,6 +51,27 @@ def _no_op_stage_runner(request: StageRunRequest) -> RunnerRawResult:
     raise AssertionError("stage_runner should not be called")
 
 
+def _builder_complete_runner(request: StageRunRequest) -> RunnerRawResult:
+    stdout_path = Path(request.run_dir) / "runner_stdout.txt"
+    stdout_path.write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+    return RunnerRawResult(
+        request_id=request.request_id,
+        run_id=request.run_id,
+        stage=request.stage,
+        runner_name="test-runner",
+        model_name=request.model_name,
+        exit_kind="completed",
+        exit_code=0,
+        stdout_path=str(stdout_path),
+        stderr_path=None,
+        terminal_result_path=None,
+        observed_exit_kind=None,
+        observed_exit_code=None,
+        started_at=NOW,
+        ended_at=NOW + timedelta(seconds=1),
+    )
+
+
 class CaptureMonitor(RuntimeMonitorSink):
     def __init__(self) -> None:
         self.events: list[RuntimeMonitorEvent] = []
@@ -92,3 +114,28 @@ def test_runtime_tick_emits_idle_paused_and_stopped_monitor_events(tmp_path: Pat
     stopped = engine.tick()
     assert stopped.router_decision.reason == "stop_requested"
     assert any(event.event_type == "runtime_stopped" for event in monitor.events)
+
+
+def test_runtime_tick_emits_stage_router_and_status_events(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    monitor = CaptureMonitor()
+    engine = RuntimeEngine(paths, stage_runner=_builder_complete_runner, monitor=monitor)
+    engine.startup()
+
+    outcome = engine.tick()
+    event_types = [event.event_type for event in monitor.events]
+
+    assert outcome.stage is ExecutionStageName.BUILDER
+    assert "status_marker_changed" in event_types
+    assert "stage_started" in event_types
+    assert "stage_completed" in event_types
+    assert "router_decision" in event_types
+
+    completed = next(event for event in monitor.events if event.event_type == "stage_completed")
+    assert completed.payload["plane"] == "execution"
+    assert completed.payload["stage"] == "builder"
+    assert completed.payload["run_id"]
+    assert completed.payload["duration_seconds"] == 1.0
+    assert completed.payload["summary_status_marker"] == "### BUILDER_COMPLETE"

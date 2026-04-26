@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.architecture import GraphLoopCompletionBehaviorDefinition
-from millrace_ai.contracts import ClosureTargetState, SpecDocument, WorkItemKind
+from millrace_ai.contracts import ClosureTargetState, Plane, SpecDocument, WorkItemKind
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueClaim
-from millrace_ai.state_store import save_snapshot, set_planning_status
+from millrace_ai.state_store import save_snapshot
 from millrace_ai.workspace.arbiter_state import (
     list_open_closure_target_states,
     load_closure_target_state,
@@ -295,13 +295,16 @@ def _mark_completion_behavior_blocked(
 
     engine.snapshot = engine.snapshot.model_copy(
         update={
-            "planning_status_marker": "### BLOCKED",
             "current_failure_class": failure_class,
             "updated_at": engine._now(),
         }
     )
-    save_snapshot(engine.paths, engine.snapshot)
-    set_planning_status(engine.paths, "### BLOCKED")
+    engine._set_plane_status_marker(
+        plane=Plane.PLANNING,
+        marker="### BLOCKED",
+        run_id=None,
+        source="completion_behavior_blocked",
+    )
     write_runtime_event(
         engine.paths,
         event_type="completion_behavior_blocked",

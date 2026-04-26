@@ -6,14 +6,12 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ClosureTargetState, StageResultEnvelope
+from millrace_ai.contracts import ClosureTargetState, Plane, StageResultEnvelope
 from millrace_ai.errors import QueueStateError
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import (
     load_recovery_counters,
     save_snapshot,
-    set_execution_status,
-    set_planning_status,
 )
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
@@ -71,8 +69,18 @@ def apply_closure_target_router_decision(
             }
         )
         save_snapshot(engine.paths, engine.snapshot)
-        set_execution_status(engine.paths, "### IDLE")
-        set_planning_status(engine.paths, "### IDLE")
+        engine._set_plane_status_marker(
+            plane=Plane.EXECUTION,
+            marker="### IDLE",
+            run_id=None,
+            source="closure_idle",
+        )
+        engine._set_plane_status_marker(
+            plane=Plane.PLANNING,
+            marker="### IDLE",
+            run_id=stage_result.run_id,
+            source="closure_idle",
+        )
         engine.counters = load_recovery_counters(engine.paths)
         return
 

@@ -452,10 +452,24 @@ class RuntimeEngine:
             clear_paused=clear_paused,
         )
         self.snapshot = self.snapshot.model_copy(update=update)
-        save_snapshot(self.paths, self.snapshot)
-        set_execution_status(self.paths, IDLE_STATUS_MARKER)
-        set_planning_status(self.paths, IDLE_STATUS_MARKER)
-        set_learning_status(self.paths, IDLE_STATUS_MARKER)
+        self._set_plane_status_marker(
+            plane=Plane.EXECUTION,
+            marker=IDLE_STATUS_MARKER,
+            run_id=None,
+            source="runtime_idle_reset",
+        )
+        self._set_plane_status_marker(
+            plane=Plane.PLANNING,
+            marker=IDLE_STATUS_MARKER,
+            run_id=None,
+            source="runtime_idle_reset",
+        )
+        self._set_plane_status_marker(
+            plane=Plane.LEARNING,
+            marker=IDLE_STATUS_MARKER,
+            run_id=None,
+            source="runtime_idle_reset",
+        )
 
     def _mark_active_stage_running(
         self,
@@ -463,29 +477,62 @@ class RuntimeEngine:
         plane: Plane,
         stage: StageName,
         running_status_marker: str,
+        run_id: str | None,
     ) -> None:
         assert self.snapshot is not None
+        del stage
         marker = (
             running_status_marker
             if running_status_marker.startswith("### ")
             else f"### {running_status_marker}"
         )
+        self._set_plane_status_marker(
+            plane=plane,
+            marker=marker,
+            run_id=run_id,
+            source="stage_started",
+        )
+
+    def _set_plane_status_marker(
+        self,
+        *,
+        plane: Plane,
+        marker: str,
+        run_id: str | None,
+        source: str,
+        snapshot_field_only: bool = False,
+    ) -> str:
+        assert self.snapshot is not None
+        previous = self.snapshot.status_markers_by_plane.get(plane)
         if plane is Plane.EXECUTION:
-            set_execution_status(self.paths, marker)
+            normalized = marker if snapshot_field_only else set_execution_status(self.paths, marker)
             self.snapshot = self.snapshot.model_copy(
-                update={"execution_status_marker": marker, "updated_at": self._now()}
+                update={"execution_status_marker": normalized, "updated_at": self._now()}
             )
         elif plane is Plane.LEARNING:
-            set_learning_status(self.paths, marker)
+            normalized = marker if snapshot_field_only else set_learning_status(self.paths, marker)
             self.snapshot = self.snapshot.model_copy(
-                update={"learning_status_marker": marker, "updated_at": self._now()}
+                update={"learning_status_marker": normalized, "updated_at": self._now()}
             )
         else:
-            set_planning_status(self.paths, marker)
+            normalized = marker if snapshot_field_only else set_planning_status(self.paths, marker)
             self.snapshot = self.snapshot.model_copy(
-                update={"planning_status_marker": marker, "updated_at": self._now()}
+                update={"planning_status_marker": normalized, "updated_at": self._now()}
             )
+        status_markers = dict(self.snapshot.status_markers_by_plane)
+        status_markers[plane] = normalized
+        self.snapshot = self.snapshot.model_copy(update={"status_markers_by_plane": status_markers})
         save_snapshot(self.paths, self.snapshot)
+        if previous != normalized:
+            self._emit_monitor_event(
+                "status_marker_changed",
+                plane=plane.value,
+                run_id=run_id,
+                previous_marker=previous,
+                current_marker=normalized,
+                source=source,
+            )
+        return normalized
 
     @staticmethod
     def _mailbox_reason(envelope: MailboxCommandEnvelope, *, default: str) -> str:

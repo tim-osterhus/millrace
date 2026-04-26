@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import Plane, StageResultEnvelope
+from millrace_ai.contracts import StageResultEnvelope
 from millrace_ai.runners import StageRunRequest
-from millrace_ai.state_store import set_execution_status, set_learning_status, set_planning_status
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -29,21 +28,11 @@ def write_stage_result(
 
 def write_plane_status(engine: RuntimeEngine, stage_result: StageResultEnvelope) -> None:
     assert engine.snapshot is not None
-    if stage_result.plane is Plane.EXECUTION:
-        set_execution_status(engine.paths, stage_result.summary_status_marker)
-        engine.snapshot = engine.snapshot.model_copy(
-            update={"execution_status_marker": stage_result.summary_status_marker}
-        )
-        return
-    if stage_result.plane is Plane.LEARNING:
-        set_learning_status(engine.paths, stage_result.summary_status_marker)
-        engine.snapshot = engine.snapshot.model_copy(
-            update={"learning_status_marker": stage_result.summary_status_marker}
-        )
-        return
-    set_planning_status(engine.paths, stage_result.summary_status_marker)
-    engine.snapshot = engine.snapshot.model_copy(
-        update={"planning_status_marker": stage_result.summary_status_marker}
+    engine._set_plane_status_marker(
+        plane=stage_result.plane,
+        marker=stage_result.summary_status_marker,
+        run_id=stage_result.run_id,
+        source="stage_completed",
     )
 
 

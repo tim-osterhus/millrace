@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
+from millrace_ai.contracts import Plane, StageResultEnvelope, WorkItemKind
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
@@ -13,9 +13,6 @@ from millrace_ai.state_store import (
     load_recovery_counters,
     reset_forward_progress_counters,
     save_snapshot,
-    set_execution_status,
-    set_learning_status,
-    set_planning_status,
 )
 
 from .handoff_incidents import enqueue_handoff_incident
@@ -86,9 +83,13 @@ def apply_idle_router_decision(engine: RuntimeEngine, stage_result: StageResultE
         learning_status_marker="### IDLE",
     )
     save_snapshot(engine.paths, engine.snapshot)
-    set_execution_status(engine.paths, "### IDLE")
-    set_planning_status(engine.paths, "### IDLE")
-    set_learning_status(engine.paths, "### IDLE")
+    for plane in (Plane.EXECUTION, Plane.PLANNING, Plane.LEARNING):
+        engine._set_plane_status_marker(
+            plane=plane,
+            marker="### IDLE",
+            run_id=stage_result.run_id if plane is stage_result.plane else None,
+            source="router_idle",
+        )
     reset_forward_progress_counters(
         engine.paths,
         work_item_kind=stage_result.work_item_kind,
