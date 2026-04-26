@@ -26,6 +26,7 @@ from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_pat
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
+from millrace_ai.runtime.monitoring import NullRuntimeMonitorSink, RuntimeMonitorEvent, RuntimeMonitorSink
 from millrace_ai.state_store import (
     ReconciliationSignal,
     load_recovery_counters,
@@ -76,6 +77,7 @@ class RuntimeEngine:
         config_path: Path | str | None = None,
         mode_id: str | None = None,
         assets_root: Path | None = None,
+        monitor: RuntimeMonitorSink | None = None,
     ) -> None:
         self.paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
         bootstrap_source = Path(assets_root).expanduser().resolve() if assets_root is not None else None
@@ -87,6 +89,7 @@ class RuntimeEngine:
             else self.paths.runtime_root / "millrace.toml"
         )
         self.mode_id = mode_id
+        self.monitor = monitor or NullRuntimeMonitorSink()
         # Compile from workspace-local deployed assets so request paths and mode sources stay aligned.
         self.assets_root = self.paths.runtime_root
 
@@ -531,6 +534,15 @@ class RuntimeEngine:
 
     def _now(self) -> datetime:
         return stage_requests.now()
+
+    def _emit_monitor_event(self, event_type: str, **payload: object) -> None:
+        self.monitor.emit(
+            RuntimeMonitorEvent(
+                event_type=event_type,
+                occurred_at=self._now(),
+                payload=payload,
+            )
+        )
 
 
 __all__ = ["RuntimeEngine", "RuntimeTickOutcome"]

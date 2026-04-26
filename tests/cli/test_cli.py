@@ -30,6 +30,7 @@ from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.run_inspection import InspectedRunSummary, InspectedStageResult
+from millrace_ai.runtime.monitoring import RuntimeMonitorEvent
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
 from millrace_ai.workspace.arbiter_state import save_closure_target_state
@@ -297,8 +298,9 @@ def test_run_daemon_respects_max_ticks(monkeypatch: pytest.MonkeyPatch, tmp_path
             config_path=None,
             mode_id=None,
             assets_root=None,
+            monitor=None,
         ) -> None:
-            del target, config_path, mode_id, assets_root
+            del target, config_path, mode_id, assets_root, monitor
             calls["stage_runner"] = stage_runner
             self.snapshot = SimpleNamespace(stop_requested=False, process_running=True)
 
@@ -326,6 +328,72 @@ def test_run_daemon_respects_max_ticks(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert calls["stage_runner"] is sentinel_runner
     assert "run_mode: daemon" in result.output
     assert "ticks: 3" in result.output
+
+
+def test_run_daemon_with_monitor_basic_installs_monitor_and_prints_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    class FakeRuntimeEngine:
+        def __init__(
+            self,
+            target,
+            *,
+            stage_runner,
+            config_path=None,
+            mode_id=None,
+            assets_root=None,
+            monitor=None,
+        ) -> None:
+            del target, stage_runner, config_path, mode_id, assets_root
+            self.monitor = monitor
+            self.snapshot = SimpleNamespace(stop_requested=False, process_running=False)
+
+        def startup(self):
+            assert self.monitor is not None
+            self.monitor.emit(
+                RuntimeMonitorEvent(
+                    event_type="runtime_started",
+                    occurred_at=NOW,
+                    payload={
+                        "mode_id": "standard_plain",
+                        "compiled_plan_id": "plan-001",
+                        "compiled_plan_currentness": "current",
+                        "baseline_manifest_id": "baseline-001",
+                        "baseline_seed_package_version": "0.15.2",
+                        "loop_ids_by_plane": {
+                            "execution": "execution.standard",
+                            "planning": "planning.standard",
+                        },
+                        "concurrency_policy": None,
+                        "status_markers_by_plane": {
+                            "execution": "### IDLE",
+                            "planning": "### IDLE",
+                            "learning": "### IDLE",
+                        },
+                        "queue_depths_by_plane": {
+                            "execution": 0,
+                            "planning": 0,
+                            "learning": 0,
+                        },
+                    },
+                )
+            )
+            return SimpleNamespace(active_mode_id="standard_plain", compiled_plan_id="plan-001")
+
+        def tick(self):
+            return SimpleNamespace(router_decision=SimpleNamespace(reason="loop"))
+
+    monkeypatch.setattr(cli, "RuntimeEngine", FakeRuntimeEngine)
+    result = CliRunner().invoke(
+        cli.app,
+        ["run", "daemon", "--workspace", str(paths.root), "--monitor", "basic", "--max-ticks", "1"],
+    )
+
+    assert result.exit_code == 0
+    assert "runtime started mode=standard_plain" in result.output
 
 
 def test_skills_install_copies_local_skill_and_updates_workspace_index(tmp_path: Path) -> None:
@@ -408,8 +476,9 @@ def test_run_daemon_sleeps_between_ticks_when_unbounded(
             config_path=None,
             mode_id=None,
             assets_root=None,
+            monitor=None,
         ) -> None:
-            del target, config_path, mode_id, assets_root, stage_runner
+            del target, config_path, mode_id, assets_root, stage_runner, monitor
             self.snapshot = SimpleNamespace(stop_requested=False, process_running=True)
 
         def startup(self):
@@ -1730,8 +1799,9 @@ def test_run_daemon_defaults_config_to_workspace_toml(
             config_path=None,
             mode_id=None,
             assets_root=None,
+            monitor=None,
         ) -> None:
-            del target, stage_runner, mode_id, assets_root
+            del target, stage_runner, mode_id, assets_root, monitor
             observed["config_path"] = config_path
             self.snapshot = SimpleNamespace(stop_requested=False, process_running=True)
 

@@ -30,8 +30,10 @@ from millrace_ai.run_inspection import (
     select_primary_run_artifact,
 )
 from millrace_ai.runtime import RuntimeEngine, RuntimeTickOutcome
+from millrace_ai.runtime.monitoring import NullRuntimeMonitorSink
 
 from .app import app
+from .monitoring import BasicTerminalMonitor
 from .shared import _build_stage_runner
 
 
@@ -54,9 +56,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "BUILTIN_MODE_PATHS",
     "BUILTIN_MODE_ALIASES",
+    "BasicTerminalMonitor",
     "CompileOutcome",
     "ControlActionResult",
     "InspectedRunSummary",
+    "NullRuntimeMonitorSink",
     "RuntimeConfig",
     "RuntimeControl",
     "RuntimeEngine",

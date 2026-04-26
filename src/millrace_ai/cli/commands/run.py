@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -52,6 +53,14 @@ def run_daemon(
     workspace: WorkspaceOption = Path("."),
     mode: Annotated[str | None, typer.Option("--mode", help="Override mode id.")] = None,
     config_path: ConfigOption = None,
+    monitor_mode: Annotated[
+        str,
+        typer.Option(
+            "--monitor",
+            help="Optional terminal monitor mode: none or basic.",
+            case_sensitive=False,
+        ),
+    ] = "none",
     max_ticks: Annotated[
         int | None,
         typer.Option("--max-ticks", min=1, help="Stop after this many ticks."),
@@ -65,11 +74,19 @@ def run_daemon(
         stage_runner = cli_api._build_stage_runner(config=runtime_config, workspace_root=paths.root)
     except ValueError as exc:
         raise typer.Exit(code=_print_error(str(exc))) from exc
+    normalized_monitor_mode = monitor_mode.lower()
+    if normalized_monitor_mode == "basic":
+        monitor = cli_api.BasicTerminalMonitor(stream=sys.stdout)
+    elif normalized_monitor_mode == "none":
+        monitor = cli_api.NullRuntimeMonitorSink()
+    else:
+        raise typer.Exit(code=_print_error(f"unknown monitor mode: {monitor_mode}"))
     engine = cli_api.RuntimeEngine(
         paths,
         stage_runner=stage_runner,
         config_path=resolved_config_path,
         mode_id=mode,
+        monitor=monitor,
     )
     try:
         snapshot = engine.startup()
