@@ -18,6 +18,7 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
+from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.state_store import (
     ReconciliationSignal,
     collect_reconciliation_signals,
@@ -170,30 +171,30 @@ def test_save_recovery_counters_and_load_round_trip(tmp_path: Path) -> None:
     assert loaded.entries[0].failure_class == "missing_terminal_result"
 
 
-def test_set_execution_status_enforces_terminal_only_marker_rules(tmp_path: Path) -> None:
+def test_set_execution_status_accepts_any_single_line_status_marker_shape(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
 
     set_execution_status(paths, "### CHECKER_PASS")
-    set_execution_status(paths, "### CHECKER_RUNNING")
+    set_execution_status(paths, "### CUSTOM_EXECUTION_RUNNING")
 
-    assert load_execution_status(paths) == "### CHECKER_RUNNING"
-    assert paths.execution_status_file.read_text(encoding="utf-8") == "### CHECKER_RUNNING\n"
+    assert load_execution_status(paths) == "### CUSTOM_EXECUTION_RUNNING"
+    assert paths.execution_status_file.read_text(encoding="utf-8") == "### CUSTOM_EXECUTION_RUNNING\n"
 
     with pytest.raises(WorkspaceStateError, match="single line"):
         set_execution_status(paths, "### CHECKER_PASS\n### FIX_NEEDED")
 
-    with pytest.raises(WorkspaceStateError, match="Unknown execution status marker"):
-        set_execution_status(paths, "### RUNNING")
+    with pytest.raises(WorkspaceStateError, match="must start with '### '"):
+        set_execution_status(paths, "RUNNING")
 
 
-def test_set_planning_status_rejects_execution_marker(tmp_path: Path) -> None:
+def test_set_planning_status_accepts_any_single_line_status_marker_shape(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
 
-    set_planning_status(paths, "### ARBITER_RUNNING")
-    assert load_planning_status(paths) == "### ARBITER_RUNNING"
+    set_planning_status(paths, "### CHECKER_PASS")
+    assert load_planning_status(paths) == "### CHECKER_PASS"
 
-    with pytest.raises(WorkspaceStateError, match="Unknown planning status marker"):
-        set_planning_status(paths, "### CHECKER_PASS")
+    with pytest.raises(WorkspaceStateError, match="must start with '### '"):
+        set_planning_status(paths, "CHECKER_PASS")
 
 
 def test_collect_reconciliation_signals_detects_stale_execution_ownership(
@@ -421,6 +422,45 @@ def test_collect_reconciliation_signals_allows_current_execution_running_marker(
     )
 
     assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
+
+
+def test_collect_reconciliation_signals_flags_unknown_active_node_id_with_compiled_plan(
+    tmp_path: Path,
+) -> None:
+    paths = _bootstrap(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=lambda request: None)
+    engine.startup()
+    assert engine.compiled_plan is not None
+
+    snapshot = RuntimeSnapshot.model_validate(
+        {
+            **load_snapshot(paths).model_dump(mode="python"),
+            "process_running": True,
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.CHECKER,
+            "active_node_id": "ghost.execution.node",
+            "active_stage_kind_id": ExecutionStageName.CHECKER.value,
+            "active_run_id": "run-001",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    signals = collect_reconciliation_signals(
+        snapshot=snapshot,
+        counters=RecoveryCounters(),
+        execution_status_marker="### CHECKER_RUNNING",
+        planning_status_marker="### IDLE",
+        compiled_plan=engine.compiled_plan,
+    )
+
+    impossible = next(
+        signal for signal in signals if signal.code == "impossible_execution_status_marker"
+    )
+    assert impossible.failure_class == "impossible_status_marker"
+    assert impossible.recommended_stage == "troubleshooter"
 
 
 def test_collect_reconciliation_signals_flags_orphaned_recovery_counters(

@@ -62,6 +62,8 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
         update={
             "active_plane": activation.plane,
             "active_stage": activation.stage,
+            "active_node_id": activation.node_id,
+            "active_stage_kind_id": activation.stage_kind_id,
             "active_run_id": engine._new_run_id(),
             "active_work_item_kind": None,
             "active_work_item_id": None,

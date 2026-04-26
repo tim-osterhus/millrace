@@ -55,7 +55,10 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
     assert engine.snapshot is not None
     assert engine.counters is not None
 
-    if stage_result.stage in {ExecutionStageName.TROUBLESHOOTER, PlanningStageName.MECHANIC}:
+    if stage_result.stage_kind_id in {
+        ExecutionStageName.TROUBLESHOOTER.value,
+        PlanningStageName.MECHANIC.value,
+    }:
         clear_runtime_error_context(engine.paths)
 
     if _is_closure_target_result(stage_result):
@@ -69,6 +72,8 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
             update={
                 "active_plane": _plane_for_stage(next_stage),
                 "active_stage": next_stage,
+                "active_node_id": decision.next_node_id,
+                "active_stage_kind_id": decision.next_stage_kind_id,
                 "active_since": engine._now(),
                 "current_failure_class": decision.failure_class,
                 "updated_at": engine._now(),

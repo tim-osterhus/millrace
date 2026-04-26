@@ -169,7 +169,13 @@ def build_closure_target_stage_run_request(
     return request
 
 
-def stage_plan_for(engine: RuntimeEngine, plane: Plane, stage: StageName) -> MaterializedGraphNodePlan:
+def stage_plan_for(
+    engine: RuntimeEngine,
+    plane: Plane,
+    stage: StageName,
+    *,
+    node_id: str | None = None,
+) -> MaterializedGraphNodePlan:
     assert engine.compiled_plan is not None
     graph = (
         engine.compiled_plan.execution_graph
@@ -180,8 +186,12 @@ def stage_plan_for(engine: RuntimeEngine, plane: Plane, stage: StageName) -> Mat
     )
     if graph is None:
         raise KeyError(f"No compiled graph for plane {plane.value}")
+    if node_id is not None:
+        for node in graph.nodes:
+            if node.plane is plane and node.node_id == node_id:
+                return node
     for node in graph.nodes:
-        if node.plane is plane and node.node_id == stage.value:
+        if node.plane is plane and node.stage_kind_id == stage.value:
             return node
     raise KeyError(f"No compiled graph node plan for {plane.value}:{stage.value}")
 
@@ -293,10 +303,10 @@ def now() -> datetime:
 
 def _stage_name_for_node_plan(stage_plan: MaterializedGraphNodePlan) -> StageName:
     if stage_plan.plane is Plane.EXECUTION:
-        return ExecutionStageName(stage_plan.node_id)
+        return ExecutionStageName(stage_plan.stage_kind_id)
     if stage_plan.plane is Plane.LEARNING:
-        return LearningStageName(stage_plan.node_id)
-    return PlanningStageName(stage_plan.node_id)
+        return LearningStageName(stage_plan.stage_kind_id)
+    return PlanningStageName(stage_plan.stage_kind_id)
 
 
 def _status_file_for_plane(engine: RuntimeEngine, plane: Plane) -> Path:

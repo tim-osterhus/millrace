@@ -155,6 +155,95 @@ def _runner_result(
     )
 
 
+def _renamed_compiled_node(
+    compiled_plan,
+    *,
+    plane: Plane,
+    old_node_id: str,
+    new_node_id: str,
+):
+    graph_attr = (
+        "execution_graph"
+        if plane is Plane.EXECUTION
+        else "learning_graph"
+        if plane is Plane.LEARNING
+        else "planning_graph"
+    )
+    graph = getattr(compiled_plan, graph_attr)
+    assert graph is not None
+
+    def rename(node_id: str | None) -> str | None:
+        if node_id == old_node_id:
+            return new_node_id
+        return node_id
+
+    updated_graph = graph.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"node_id": new_node_id})
+                if node.node_id == old_node_id
+                else node
+                for node in graph.nodes
+            ),
+            "compiled_entries": tuple(
+                entry.model_copy(update={"node_id": new_node_id})
+                if entry.node_id == old_node_id
+                else entry
+                for entry in graph.compiled_entries
+            ),
+            "compiled_completion_entry": (
+                graph.compiled_completion_entry.model_copy(update={"node_id": new_node_id})
+                if graph.compiled_completion_entry is not None
+                and graph.compiled_completion_entry.node_id == old_node_id
+                else graph.compiled_completion_entry
+            ),
+            "compiled_transitions": tuple(
+                transition.model_copy(
+                    update={
+                        "source_node_id": rename(transition.source_node_id),
+                        "target_node_id": rename(transition.target_node_id),
+                    }
+                )
+                if transition.source_node_id == old_node_id or transition.target_node_id == old_node_id
+                else transition
+                for transition in graph.compiled_transitions
+            ),
+            "compiled_resume_policies": tuple(
+                policy.model_copy(
+                    update={
+                        "source_node_id": rename(policy.source_node_id),
+                        "default_target_node_id": rename(policy.default_target_node_id),
+                        "disallowed_target_node_ids": tuple(
+                            rename(node_id) or node_id for node_id in policy.disallowed_target_node_ids
+                        ),
+                    }
+                )
+                if (
+                    policy.source_node_id == old_node_id
+                    or policy.default_target_node_id == old_node_id
+                    or old_node_id in policy.disallowed_target_node_ids
+                )
+                else policy
+                for policy in graph.compiled_resume_policies
+            ),
+            "compiled_threshold_policies": tuple(
+                policy.model_copy(
+                    update={
+                        "source_node_ids": tuple(rename(node_id) or node_id for node_id in policy.source_node_ids),
+                        "exhausted_target_node_id": rename(policy.exhausted_target_node_id),
+                    }
+                )
+                if old_node_id in policy.source_node_ids or policy.exhausted_target_node_id == old_node_id
+                else policy
+                for policy in graph.compiled_threshold_policies
+            ),
+        }
+    )
+    graphs_by_plane = dict(compiled_plan.graphs_by_plane)
+    graphs_by_plane[plane] = updated_graph
+    return compiled_plan.model_copy(update={graph_attr: updated_graph, "graphs_by_plane": graphs_by_plane})
+
+
 def test_runtime_tick_prioritizes_planning_before_execution(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -243,9 +332,15 @@ def test_runtime_tick_claim_activation_uses_compiled_plan_authority(
 
     assert captured_request is not None
     assert captured_request.stage is ExecutionStageName.CHECKER
+    assert captured_request.node_id == "checker"
+    assert captured_request.stage_kind_id == "checker"
     assert outcome.stage is ExecutionStageName.CHECKER
     assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
+    assert outcome.router_decision.next_node_id == "updater"
+    assert outcome.router_decision.next_stage_kind_id == "updater"
     assert snapshot.active_stage is ExecutionStageName.UPDATER
+    assert snapshot.active_node_id == "updater"
+    assert snapshot.active_stage_kind_id == "updater"
 
 
 def test_learning_mode_stage_requests_persist_skill_revision_evidence(tmp_path: Path) -> None:
@@ -1160,6 +1255,14 @@ def test_runtime_routes_post_stage_execution_completion_conflict_into_troublesho
 
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
+    assert engine.compiled_plan is not None
+    custom_troubleshooter_node_id = "recovery.execution.troubleshooter"
+    engine.compiled_plan = _renamed_compiled_node(
+        engine.compiled_plan,
+        plane=Plane.EXECUTION,
+        old_node_id="troubleshooter",
+        new_node_id=custom_troubleshooter_node_id,
+    )
 
     first = engine.tick()
     second = engine.tick()
@@ -1172,6 +1275,8 @@ def test_runtime_routes_post_stage_execution_completion_conflict_into_troublesho
 
     snapshot = load_snapshot(paths)
     assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
+    assert snapshot.active_node_id == custom_troubleshooter_node_id
+    assert snapshot.active_stage_kind_id == ExecutionStageName.TROUBLESHOOTER.value
     assert snapshot.current_failure_class == "execution_work_item_completion_conflict"
     assert load_execution_status(paths) == "### BLOCKED"
     assert (paths.tasks_done_dir / "task-001.md").is_file()
@@ -1181,6 +1286,8 @@ def test_runtime_routes_post_stage_execution_completion_conflict_into_troublesho
 
     assert fourth.stage is ExecutionStageName.TROUBLESHOOTER
     assert captured_troubleshooter_request is not None
+    assert captured_troubleshooter_request.node_id == custom_troubleshooter_node_id
+    assert captured_troubleshooter_request.stage_kind_id == ExecutionStageName.TROUBLESHOOTER.value
     assert captured_troubleshooter_request.runtime_error_code == "execution_work_item_completion_conflict"
     assert captured_troubleshooter_request.runtime_error_catalog_path == str(catalog_path)
     assert captured_troubleshooter_request.runtime_error_report_path is not None
@@ -1395,9 +1502,12 @@ def test_runtime_tick_reconciles_execution_anomaly_before_stage_execution(
     assert claimed is not None
 
     seen_stages: list[ExecutionStageName] = []
+    captured_request: StageRunRequest | None = None
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
         assert isinstance(request.stage, ExecutionStageName)
+        captured_request = request
         seen_stages.append(request.stage)
         return _runner_result(
             request,
@@ -1407,6 +1517,14 @@ def test_runtime_tick_reconciles_execution_anomaly_before_stage_execution(
 
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
+    assert engine.compiled_plan is not None
+    custom_troubleshooter_node_id = "recovery.execution.troubleshooter"
+    engine.compiled_plan = _renamed_compiled_node(
+        engine.compiled_plan,
+        plane=Plane.EXECUTION,
+        old_node_id="troubleshooter",
+        new_node_id=custom_troubleshooter_node_id,
+    )
 
     stale_snapshot = RuntimeSnapshot.model_validate(
         {
@@ -1429,6 +1547,9 @@ def test_runtime_tick_reconciles_execution_anomaly_before_stage_execution(
 
     assert outcome.stage is ExecutionStageName.TROUBLESHOOTER
     assert seen_stages == [ExecutionStageName.TROUBLESHOOTER]
+    assert captured_request is not None
+    assert captured_request.node_id == custom_troubleshooter_node_id
+    assert captured_request.stage_kind_id == ExecutionStageName.TROUBLESHOOTER.value
     counters = load_recovery_counters(paths)
     assert len(counters.entries) == 1
     assert counters.entries[0].failure_class == "stale_active_ownership"

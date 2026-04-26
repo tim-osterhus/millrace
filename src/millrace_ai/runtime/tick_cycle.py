@@ -82,7 +82,11 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         write_runtime_event(engine.paths, event_type="runtime_tick_idle")
         return engine._idle_tick_outcome(reason="no_work")
 
-    stage_plan = engine._stage_plan_for(engine.snapshot.active_plane, engine.snapshot.active_stage)
+    stage_plan = engine._stage_plan_for(
+        engine.snapshot.active_plane,
+        engine.snapshot.active_stage,
+        node_id=engine.snapshot.active_node_id,
+    )
     if engine._is_completion_stage_active():
         closure_target = engine._active_closure_target()
         if closure_target is None:
@@ -90,13 +94,19 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         request = engine._build_closure_target_stage_run_request(stage_plan, closure_target)
     else:
         request = engine._build_stage_run_request(stage_plan)
-    engine._mark_active_stage_running(plane=request.plane, stage=request.stage)
+    engine._mark_active_stage_running(
+        plane=request.plane,
+        stage=request.stage,
+        running_status_marker=request.running_status_marker,
+    )
     write_runtime_event(
         engine.paths,
         event_type="stage_started",
         data={
             "request_id": request.request_id,
             "stage": request.stage.value,
+            "node_id": request.node_id,
+            "stage_kind_id": request.stage_kind_id,
             "plane": request.plane.value,
             "run_id": request.run_id,
             "work_item_kind": (
@@ -160,6 +170,8 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         data={
             "request_id": request.request_id,
             "stage": stage_result.stage.value,
+            "node_id": stage_result.node_id,
+            "stage_kind_id": stage_result.stage_kind_id,
             "plane": stage_result.plane.value,
             "run_id": request.run_id,
             "work_item_kind": stage_result.work_item_kind.value,
@@ -181,12 +193,16 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             "work_item_kind": stage_result.work_item_kind.value,
             "work_item_id": stage_result.work_item_id,
             "stage": stage_result.stage.value,
+            "node_id": stage_result.node_id,
+            "stage_kind_id": stage_result.stage_kind_id,
             "terminal_result": stage_result.terminal_result.value,
             "failure_class": stage_result.metadata.get("failure_class"),
             "troubleshoot_report_path": (
                 stage_result.report_artifact or request.preferred_troubleshoot_report_path
             ),
             "next_stage": router_decision.next_stage.value if router_decision.next_stage else None,
+            "next_node_id": router_decision.next_node_id,
+            "next_stage_kind_id": router_decision.next_stage_kind_id,
             "reason": router_decision.reason,
         },
     )

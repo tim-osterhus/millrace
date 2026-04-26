@@ -19,7 +19,10 @@ RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
 @dataclass(frozen=True, slots=True)
 class InspectedStageResult:
     stage_result_path: str
+    request_id: str | None
     stage: str
+    node_id: str
+    stage_kind_id: str
     request_kind: str | None
     closure_target_root_spec_id: str | None
     terminal_result: str
@@ -124,7 +127,10 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         inspected_stage_results.append(
             InspectedStageResult(
                 stage_result_path=_normalize_run_relative_path(resolved_run_dir, stage_result_path),
+                request_id=_string_metadata(stage_result, "request_id"),
                 stage=stage_result.stage.value,
+                node_id=stage_result.node_id,
+                stage_kind_id=stage_result.stage_kind_id,
                 request_kind=_string_metadata(stage_result, "request_kind"),
                 closure_target_root_spec_id=_string_metadata(
                     stage_result,

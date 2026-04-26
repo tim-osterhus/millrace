@@ -52,6 +52,8 @@ def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
         update={
             "active_plane": activation.plane,
             "active_stage": activation.stage,
+            "active_node_id": activation.node_id,
+            "active_stage_kind_id": activation.stage_kind_id,
             "active_run_id": engine._new_run_id(),
             "active_work_item_kind": claim.work_item_kind,
             "active_work_item_id": claim.work_item_id,

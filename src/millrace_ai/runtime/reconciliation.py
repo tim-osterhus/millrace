@@ -41,6 +41,7 @@ def run_reconciliation_if_needed(engine: RuntimeEngine) -> tuple[ReconciliationS
         counters=engine.counters,
         execution_status_marker=status_marker_for_reconciliation(engine.paths.execution_status_file),
         planning_status_marker=status_marker_for_reconciliation(engine.paths.planning_status_file),
+        compiled_plan=engine.compiled_plan,
     )
     if not signals:
         return signals
@@ -89,10 +90,13 @@ def apply_reconciliation_signals(
     stage = signal.recommended_stage
     if stage is None:
         return snapshot
+    node_id, stage_kind_id = _compiled_identity_for_stage(engine, plane=plane, stage=stage)
     updated = snapshot.model_copy(
         update={
             "active_plane": plane,
             "active_stage": stage,
+            "active_node_id": node_id,
+            "active_stage_kind_id": stage_kind_id,
             "active_run_id": engine._new_run_id(),
             "active_since": engine._now(),
             "current_failure_class": signal.failure_class,
@@ -129,6 +133,19 @@ def set_recovery_counters(
             field="mechanic_attempt_count",
         )
     return snapshot
+
+
+def _compiled_identity_for_stage(
+    engine: RuntimeEngine,
+    *,
+    plane: Plane,
+    stage: StageName,
+) -> tuple[str, str]:
+    try:
+        stage_plan = engine._stage_plan_for(plane, stage)
+    except KeyError:
+        return stage.value, stage.value
+    return stage_plan.node_id, stage_plan.stage_kind_id
 
 
 __all__ = [

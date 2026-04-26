@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
@@ -119,15 +120,15 @@ class ReconciliationSignal:
 
 
 def normalize_execution_status_marker(marker: str) -> str:
-    return _validate_marker(marker, _EXECUTION_STATUS_MARKERS, label="execution status")
+    return _validate_status_marker_shape(marker, label="execution status")
 
 
 def normalize_planning_status_marker(marker: str) -> str:
-    return _validate_marker(marker, _PLANNING_STATUS_MARKERS, label="planning status")
+    return _validate_status_marker_shape(marker, label="planning status")
 
 
 def normalize_learning_status_marker(marker: str) -> str:
-    return _validate_marker(marker, _LEARNING_STATUS_MARKERS, label="learning status")
+    return _validate_status_marker_shape(marker, label="learning status")
 
 
 def running_status_marker_for_stage(stage: StageName) -> str:
@@ -140,9 +141,12 @@ def collect_reconciliation_signals(
     counters: RecoveryCounters,
     execution_status_marker: str,
     planning_status_marker: str,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> tuple[ReconciliationSignal, ...]:
     execution_marker = _normalize_marker_or_invalid(execution_status_marker, label="execution status")
     planning_marker = _normalize_marker_or_invalid(planning_status_marker, label="planning status")
+    execution_allowed_markers = _allowed_markers_for_plane(Plane.EXECUTION, compiled_plan=compiled_plan)
+    planning_allowed_markers = _allowed_markers_for_plane(Plane.PLANNING, compiled_plan=compiled_plan)
 
     signals: list[ReconciliationSignal] = []
 
@@ -158,9 +162,10 @@ def collect_reconciliation_signals(
         )
 
     if snapshot.active_stage is not None and snapshot.active_plane == Plane.EXECUTION:
-        if execution_marker not in _EXECUTION_STATUS_MARKERS or _has_impossible_marker_for_active_stage(
+        if execution_marker not in execution_allowed_markers or _has_impossible_marker_for_active_stage(
             snapshot,
             execution_marker,
+            compiled_plan=compiled_plan,
         ):
             signals.append(
                 ReconciliationSignal(
@@ -173,9 +178,10 @@ def collect_reconciliation_signals(
             )
 
     if snapshot.active_stage is not None and snapshot.active_plane == Plane.PLANNING:
-        if planning_marker not in _PLANNING_STATUS_MARKERS or _has_impossible_marker_for_active_stage(
+        if planning_marker not in planning_allowed_markers or _has_impossible_marker_for_active_stage(
             snapshot,
             planning_marker,
+            compiled_plan=compiled_plan,
         ):
             signals.append(
                 ReconciliationSignal(
@@ -212,9 +218,38 @@ def _validate_marker(marker: str, allowed: frozenset[str], *, label: str) -> str
     return normalized
 
 
-def _has_impossible_marker_for_active_stage(snapshot: RuntimeSnapshot, marker: str) -> bool:
+def _validate_status_marker_shape(marker: str, *, label: str) -> str:
+    normalized = _normalize_marker(marker, label=label)
+    if not normalized.startswith("### ") or not normalized[4:].strip():
+        raise WorkspaceStateError(f"{label} marker must start with '### '")
+    return normalized
+
+
+def _has_impossible_marker_for_active_stage(
+    snapshot: RuntimeSnapshot,
+    marker: str,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> bool:
     if snapshot.active_stage is None:
         return False
+    if compiled_plan is not None and snapshot.active_plane is not None:
+        graph = _graph_for_plane(compiled_plan, snapshot.active_plane)
+        if graph is not None:
+            node_id = snapshot.active_node_id or snapshot.active_stage.value
+            node = _compiled_node_for_id(graph, node_id)
+            if node is None:
+                return True
+            allowed = frozenset(
+                f"### {outcome}" for outcome in node.allowed_result_classes_by_outcome
+            )
+            inbound = _compiled_inbound_markers(graph, node.node_id)
+            running_marker = f"### {node.running_status_marker}"
+            if marker == _IDLE_MARKER:
+                return False
+            if marker == running_marker:
+                return False
+            return marker not in allowed and marker not in inbound
     allowed = _STAGE_ALLOWED_MARKERS[snapshot.active_stage.value]
     inbound = _STAGE_INBOUND_MARKERS[snapshot.active_stage.value]
     if marker == _IDLE_MARKER:
@@ -279,6 +314,64 @@ def _normalize_marker_or_invalid(marker: str, *, label: str) -> str:
         return _normalize_marker(marker, label=label)
     except WorkspaceStateError:
         return _INVALID_MARKER
+
+
+def _allowed_markers_for_plane(
+    plane: Plane,
+    *,
+    compiled_plan: CompiledRunPlan | None,
+) -> frozenset[str]:
+    if compiled_plan is None:
+        if plane is Plane.EXECUTION:
+            return _EXECUTION_STATUS_MARKERS
+        if plane is Plane.LEARNING:
+            return _LEARNING_STATUS_MARKERS
+        return _PLANNING_STATUS_MARKERS
+
+    graph = _graph_for_plane(compiled_plan, plane)
+    if graph is None:
+        return frozenset({_IDLE_MARKER})
+    markers = {_IDLE_MARKER}
+    markers.update(f"### {node.running_status_marker}" for node in graph.nodes)
+    for node in graph.nodes:
+        markers.update(
+            f"### {outcome}" for outcome in node.allowed_result_classes_by_outcome
+        )
+    markers.update(f"### {terminal_state.writes_status}" for terminal_state in graph.terminal_states)
+    return frozenset(markers)
+
+
+def _graph_for_plane(
+    compiled_plan: CompiledRunPlan,
+    plane: Plane,
+) -> FrozenGraphPlanePlan | None:
+    if plane is Plane.EXECUTION:
+        return compiled_plan.execution_graph
+    if plane is Plane.LEARNING:
+        return compiled_plan.learning_graph
+    return compiled_plan.planning_graph
+
+
+def _compiled_node_for_id(
+    graph: FrozenGraphPlanePlan,
+    node_id: str,
+):
+    for node in graph.nodes:
+        if node.node_id == node_id:
+            return node
+    return None
+
+
+def _compiled_inbound_markers(
+    graph: FrozenGraphPlanePlan,
+    node_id: str,
+) -> frozenset[str]:
+    markers = {
+        f"### {transition.outcome}"
+        for transition in graph.compiled_transitions
+        if transition.target_node_id == node_id
+    }
+    return frozenset(markers)
 
 
 __all__ = [

@@ -817,6 +817,8 @@ class RuntimeSnapshot(ContractModel):
 
     active_plane: Plane | None = None
     active_stage: StageName | None = None
+    active_node_id: str | None = None
+    active_stage_kind_id: str | None = None
     active_run_id: str | None = None
     active_work_item_kind: WorkItemKind | None = None
     active_work_item_id: str | None = None
@@ -885,6 +887,14 @@ class RuntimeSnapshot(ContractModel):
             queue_depths.setdefault(Plane.LEARNING.value, payload["queue_depth_learning"])
         if queue_depths:
             payload["queue_depths_by_plane"] = queue_depths
+
+        if payload.get("active_stage") is None:
+            payload["active_node_id"] = None
+            payload["active_stage_kind_id"] = None
+        else:
+            active_stage = payload["active_stage"]
+            payload.setdefault("active_node_id", active_stage)
+            payload.setdefault("active_stage_kind_id", active_stage)
         return payload
 
     @model_validator(mode="after")
@@ -897,6 +907,18 @@ class RuntimeSnapshot(ContractModel):
                 raise ValueError("active_plane is required when active_stage is set")
             if _STAGE_TO_PLANE[self.active_stage.value] != self.active_plane:
                 raise ValueError("active_stage must belong to active_plane")
+            if self.active_node_id is None:
+                self.active_node_id = self.active_stage.value
+            if self.active_stage_kind_id is None:
+                self.active_stage_kind_id = self.active_stage.value
+        else:
+            self.active_node_id = None
+            self.active_stage_kind_id = None
+
+        if self.active_stage is not None and not self.active_node_id:
+            raise ValueError("active_stage requires active_node_id")
+        if self.active_stage is not None and not self.active_stage_kind_id:
+            raise ValueError("active_stage requires active_stage_kind_id")
 
         has_kind = self.active_work_item_kind is not None
         has_id = self.active_work_item_id is not None

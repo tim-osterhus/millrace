@@ -25,6 +25,8 @@ def idle_snapshot_update(
         "process_running": process_running,
         "active_plane": None,
         "active_stage": None,
+        "active_node_id": None,
+        "active_stage_kind_id": None,
         "active_run_id": None,
         "active_work_item_kind": None,
         "active_work_item_id": None,

@@ -32,6 +32,8 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
         run_id="run-001",
         plane="execution",
         stage="checker",
+        node_id="execution.checker.primary",
+        stage_kind_id="checker",
         work_item_kind="task",
         work_item_id="task-001",
         terminal_result="CHECKER_PASS",
@@ -41,7 +43,7 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
         artifact_paths=(str(report_path),),
         stdout_path=str(stdout_path),
         report_artifact=str(report_path),
-        metadata={"failure_class": None},
+        metadata={"failure_class": None, "request_id": "request-001"},
         started_at=NOW,
         completed_at=NOW,
     )
@@ -54,6 +56,9 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
 
     assert summary.run_id == "run-001"
     assert summary.status == "valid"
+    assert summary.stage_results[0].request_id == "request-001"
+    assert summary.stage_results[0].node_id == "execution.checker.primary"
+    assert summary.stage_results[0].stage_kind_id == "checker"
     assert summary.stage_results[0].terminal_result == "CHECKER_PASS"
     assert summary.primary_stdout_path == "runner_stdout.txt"
     assert summary.troubleshoot_report_path == "troubleshoot_report.md"

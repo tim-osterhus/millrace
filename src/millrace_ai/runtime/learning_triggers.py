@@ -40,7 +40,7 @@ def enqueue_learning_requests_for_stage_result(
 
         document = LearningRequestDocument(
             learning_request_id=f"learn-{uuid4().hex[:12]}",
-            title=f"Learn from {stage_result.stage.value} {stage_result.terminal_result.value}",
+            title=f"Learn from {stage_result.node_id} {stage_result.terminal_result.value}",
             summary=(
                 "Runtime-generated learning request from a compiler-frozen "
                 f"trigger rule: {rule.rule_id}"
@@ -49,6 +49,9 @@ def enqueue_learning_requests_for_stage_result(
             target_stage=rule.target_stage,
             source_refs=(
                 f"run:{stage_result.run_id}",
+                f"request:{_string_metadata(stage_result, 'request_id') or 'unknown'}",
+                f"node:{stage_result.node_id}",
+                f"stage_kind:{stage_result.stage_kind_id}",
                 f"stage:{stage_result.stage.value}",
                 f"terminal:{stage_result.terminal_result.value}",
             ),
@@ -68,6 +71,8 @@ def enqueue_learning_requests_for_stage_result(
                 "rule_id": rule.rule_id,
                 "source_plane": stage_result.plane.value,
                 "source_stage": stage_result.stage.value,
+                "source_node_id": stage_result.node_id,
+                "source_stage_kind_id": stage_result.stage_kind_id,
                 "terminal_result": stage_result.terminal_result.value,
                 "target_stage": rule.target_stage.value,
                 "path": str(queued_path),
@@ -85,11 +90,18 @@ def _trigger_metadata(
         "rule_id": rule_id,
         "source_plane": stage_result.plane.value,
         "source_stage": stage_result.stage.value,
+        "source_node_id": stage_result.node_id,
+        "source_stage_kind_id": stage_result.stage_kind_id,
         "terminal_result": stage_result.terminal_result.value,
         "run_id": stage_result.run_id,
         "work_item_kind": stage_result.work_item_kind.value,
         "work_item_id": stage_result.work_item_id,
     }
+
+
+def _string_metadata(stage_result: StageResultEnvelope, key: str) -> str | None:
+    value = stage_result.metadata.get(key)
+    return value if isinstance(value, str) else None
 
 
 __all__ = ["enqueue_learning_requests_for_stage_result"]

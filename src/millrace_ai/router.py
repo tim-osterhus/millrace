@@ -38,6 +38,8 @@ class RouterDecision:
     next_plane: Plane | None
     next_stage: StageName | None
     reason: str
+    next_node_id: str | None = None
+    next_stage_kind_id: str | None = None
     failure_class: str | None = None
     counter_key: str | None = None
     create_incident: bool = False
@@ -329,6 +331,8 @@ def _run_stage(
         next_plane=plane,
         next_stage=stage,
         reason=reason,
+        next_node_id=stage.value,
+        next_stage_kind_id=stage.value,
         failure_class=failure_class,
         counter_key=counter_key,
     )

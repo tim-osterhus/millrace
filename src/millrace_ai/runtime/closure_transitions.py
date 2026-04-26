@@ -54,6 +54,8 @@ def apply_closure_target_router_decision(
             update={
                 "active_plane": None,
                 "active_stage": None,
+                "active_node_id": None,
+                "active_stage_kind_id": None,
                 "active_run_id": None,
                 "active_work_item_kind": None,
                 "active_work_item_id": None,
@@ -89,6 +91,8 @@ def apply_closure_target_router_decision(
             update={
                 "active_plane": None,
                 "active_stage": None,
+                "active_node_id": None,
+                "active_stage_kind_id": None,
                 "active_run_id": None,
                 "active_work_item_kind": None,
                 "active_work_item_id": None,
@@ -118,6 +122,8 @@ def apply_closure_target_router_decision(
             update={
                 "active_plane": None,
                 "active_stage": None,
+                "active_node_id": None,
+                "active_stage_kind_id": None,
                 "active_run_id": None,
                 "active_work_item_kind": None,
                 "active_work_item_id": None,

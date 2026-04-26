@@ -30,7 +30,6 @@ from millrace_ai.state_store import (
     ReconciliationSignal,
     load_recovery_counters,
     reset_forward_progress_counters,
-    running_status_marker_for_stage,
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
@@ -194,7 +193,8 @@ class RuntimeEngine:
             return False
         if self.snapshot.active_plane is not completion.plane:
             return False
-        if self.snapshot.active_stage.value != completion.node_id:
+        active_node_id = self.snapshot.active_node_id or self.snapshot.active_stage.value
+        if active_node_id != completion.node_id:
             return False
         return self.snapshot.active_work_item_kind is None and self.snapshot.active_work_item_id is None
 
@@ -302,8 +302,14 @@ class RuntimeEngine:
     ) -> StageRunRequest:
         return stage_requests.build_closure_target_stage_run_request(self, stage_plan, target_state)
 
-    def _stage_plan_for(self, plane: Plane, stage: StageName) -> MaterializedGraphNodePlan:
-        return stage_requests.stage_plan_for(self, plane, stage)
+    def _stage_plan_for(
+        self,
+        plane: Plane,
+        stage: StageName,
+        *,
+        node_id: str | None = None,
+    ) -> MaterializedGraphNodePlan:
+        return stage_requests.stage_plan_for(self, plane, stage, node_id=node_id)
 
     def _entry_stage_for_kind(self, work_item_kind: WorkItemKind) -> StageName:
         return activation.entry_stage_for_kind(work_item_kind)
@@ -448,9 +454,19 @@ class RuntimeEngine:
         set_planning_status(self.paths, IDLE_STATUS_MARKER)
         set_learning_status(self.paths, IDLE_STATUS_MARKER)
 
-    def _mark_active_stage_running(self, *, plane: Plane, stage: StageName) -> None:
+    def _mark_active_stage_running(
+        self,
+        *,
+        plane: Plane,
+        stage: StageName,
+        running_status_marker: str,
+    ) -> None:
         assert self.snapshot is not None
-        marker = running_status_marker_for_stage(stage)
+        marker = (
+            running_status_marker
+            if running_status_marker.startswith("### ")
+            else f"### {running_status_marker}"
+        )
         if plane is Plane.EXECUTION:
             set_execution_status(self.paths, marker)
             self.snapshot = self.snapshot.model_copy(

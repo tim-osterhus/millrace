@@ -105,6 +105,11 @@ def schedule_post_stage_exception_recovery(
         router_decision=router_decision,
     )
     report_path = _report_path_for(paths=engine.paths, run_id=stage_result.run_id)
+    repair_node_id, repair_stage_kind_id = _compiled_identity_for_stage(
+        engine,
+        plane=stage_result.plane,
+        stage=repair_stage,
+    )
     context = RuntimeErrorContext(
         error_code=error_code,
         plane=stage_result.plane,
@@ -135,6 +140,8 @@ def schedule_post_stage_exception_recovery(
         update={
             "active_plane": stage_result.plane,
             "active_stage": repair_stage,
+            "active_node_id": repair_node_id,
+            "active_stage_kind_id": repair_stage_kind_id,
             "active_run_id": stage_result.run_id,
             "active_work_item_kind": stage_result.work_item_kind,
             "active_work_item_id": stage_result.work_item_id,
@@ -158,6 +165,8 @@ def schedule_post_stage_exception_recovery(
             "plane": stage_result.plane.value,
             "failed_stage": stage_result.stage.value,
             "repair_stage": repair_stage.value,
+            "repair_node_id": repair_node_id,
+            "repair_stage_kind_id": repair_stage_kind_id,
             "router_action": router_decision.action.value if router_decision is not None else None,
             "terminal_result": stage_result.terminal_result.value,
             "work_item_kind": stage_result.work_item_kind.value,
@@ -171,6 +180,8 @@ def schedule_post_stage_exception_recovery(
         action=RouterAction.RUN_STAGE,
         next_plane=stage_result.plane,
         next_stage=repair_stage,
+        next_node_id=repair_node_id,
+        next_stage_kind_id=repair_stage_kind_id,
         reason=f"runtime_exception:{error_code.value}",
         failure_class=error_code.value,
     )
@@ -198,6 +209,19 @@ def _repair_stage_for_plane(plane: Plane) -> PlanningStageName | ExecutionStageN
     if plane is Plane.PLANNING:
         return PlanningStageName.MECHANIC
     return ExecutionStageName.TROUBLESHOOTER
+
+
+def _compiled_identity_for_stage(
+    engine: RuntimeEngine,
+    *,
+    plane: Plane,
+    stage: PlanningStageName | ExecutionStageName,
+) -> tuple[str, str]:
+    try:
+        stage_plan = engine._stage_plan_for(plane, stage)
+    except KeyError:
+        return stage.value, stage.value
+    return stage_plan.node_id, stage_plan.stage_kind_id
 
 
 def _save_runtime_error_context(paths: WorkspacePaths, context: RuntimeErrorContext) -> None:

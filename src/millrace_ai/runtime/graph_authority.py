@@ -63,7 +63,10 @@ def learning_stage_activation_for_graph(
 ) -> GraphActivationDecision:
     if graph_plan.learning_graph is None:
         raise ValueError("compiled graph is missing learning plane")
-    return _activation_from_node(graph_plan.learning_graph, target_stage.value, entry_key="learning_request")
+    for node in graph_plan.learning_graph.nodes:
+        if node.stage_kind_id == target_stage.value:
+            return _activation_from_node(graph_plan.learning_graph, node.node_id, entry_key="learning_request")
+    raise ValueError(f"compiled graph is missing learning stage kind `{target_stage.value}`")
 
 
 def completion_activation_for_graph(graph_plan: CompiledRunPlan) -> GraphActivationDecision:
@@ -123,7 +126,7 @@ def _activation_from_entry(
         if entry.entry_key.value == entry_key:
             return GraphActivationDecision(
                 plane=graph.plane,
-                stage=_stage_for_node(graph.plane, entry.node_id),
+                stage=_stage_for_stage_kind(graph.plane, entry.stage_kind_id),
                 node_id=entry.node_id,
                 stage_kind_id=entry.stage_kind_id,
                 entry_key=entry.entry_key.value,
@@ -141,7 +144,7 @@ def _activation_from_node(
         if node.node_id == node_id:
             return GraphActivationDecision(
                 plane=graph.plane,
-                stage=_stage_for_node(graph.plane, node.node_id),
+                stage=_stage_for_stage_kind(graph.plane, node.stage_kind_id),
                 node_id=node.node_id,
                 stage_kind_id=node.stage_kind_id,
                 entry_key=entry_key,
@@ -155,7 +158,7 @@ def _activation_from_completion_entry(
 ) -> GraphActivationDecision:
     return GraphActivationDecision(
         plane=graph.plane,
-        stage=_stage_for_node(graph.plane, completion_entry.node_id),
+        stage=_stage_for_stage_kind(graph.plane, completion_entry.stage_kind_id),
         node_id=completion_entry.node_id,
         stage_kind_id=completion_entry.stage_kind_id,
         entry_key=completion_entry.entry_key.value,
@@ -184,9 +187,9 @@ def _route_execution_stage_result_from_graph(
     max_troubleshoot_attempts_before_consult: int,
 ) -> RouterDecision:
     _validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.EXECUTION)
-    source_stage = ExecutionStageName(stage_result.stage)
+    source_stage = ExecutionStageName(stage_result.stage_kind_id)
     outcome = ExecutionTerminalResult(stage_result.terminal_result)
-    source_node_id = source_stage.value
+    source_node_id = stage_result.node_id
 
     if outcome is ExecutionTerminalResult.FIX_NEEDED and snapshot.fix_cycle_count >= max_fix_cycles:
         policy = _threshold_policy_for_source(
@@ -265,9 +268,9 @@ def _route_planning_stage_result_from_graph(
     max_mechanic_attempts: int,
 ) -> RouterDecision:
     _validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.PLANNING)
-    source_stage = PlanningStageName(stage_result.stage)
+    source_stage = PlanningStageName(stage_result.stage_kind_id)
     outcome = PlanningTerminalResult(stage_result.terminal_result)
-    source_node_id = source_stage.value
+    source_node_id = stage_result.node_id
 
     if outcome is PlanningTerminalResult.BLOCKED:
         failure_class = _resolve_failure_class(
@@ -324,15 +327,17 @@ def _route_learning_stage_result_from_graph(
     stage_result: StageResultEnvelope,
 ) -> RouterDecision:
     _validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.LEARNING)
-    source_stage = LearningStageName(stage_result.stage)
+    source_stage = LearningStageName(stage_result.stage_kind_id)
     outcome = LearningTerminalResult(stage_result.terminal_result)
-    transition = _transition_for_source(graph, source_node_id=source_stage.value, outcome=outcome.value)
+    transition = _transition_for_source(graph, source_node_id=stage_result.node_id, outcome=outcome.value)
 
     if transition.target_node_id is not None:
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=Plane.LEARNING,
-            next_stage=_stage_for_node(Plane.LEARNING, transition.target_node_id),
+            next_stage=_stage_for_node(graph, transition.target_node_id),
+            next_node_id=transition.target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
             reason=f"{source_stage.value}:{outcome.value}",
         )
 
@@ -376,21 +381,27 @@ def _decision_from_resume_policy(
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=graph.plane,
-            next_stage=_stage_for_node(graph.plane, target_node_id),
+            next_stage=_stage_for_node(graph, target_node_id),
+            next_node_id=target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, target_node_id).stage_kind_id,
             reason="troubleshoot_complete",
         )
     if source_stage is ExecutionStageName.CONSULTANT:
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=graph.plane,
-            next_stage=_stage_for_node(graph.plane, target_node_id),
+            next_stage=_stage_for_node(graph, target_node_id),
+            next_node_id=target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, target_node_id).stage_kind_id,
             reason="consultant_local_recovery",
         )
     if source_stage is PlanningStageName.MECHANIC:
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=graph.plane,
-            next_stage=_stage_for_node(graph.plane, target_node_id),
+            next_stage=_stage_for_node(graph, target_node_id),
+            next_node_id=target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, target_node_id).stage_kind_id,
             reason="mechanic_complete",
         )
     raise ValueError(f"unsupported resume-policy source stage: {source_stage.value}")
@@ -412,7 +423,9 @@ def _decision_from_execution_transition(
             return RouterDecision(
                 action=RouterAction.RUN_STAGE,
                 next_plane=graph.plane,
-                next_stage=_stage_for_node(graph.plane, transition.target_node_id),
+                next_stage=_stage_for_node(graph, transition.target_node_id),
+                next_node_id=transition.target_node_id,
+                next_stage_kind_id=_node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
                 reason="fix_needed",
             )
         if terminal_result is ExecutionTerminalResult.BLOCKED:
@@ -424,7 +437,9 @@ def _decision_from_execution_transition(
             return RouterDecision(
                 action=RouterAction.RUN_STAGE,
                 next_plane=graph.plane,
-                next_stage=_stage_for_node(graph.plane, transition.target_node_id),
+                next_stage=_stage_for_node(graph, transition.target_node_id),
+                next_node_id=transition.target_node_id,
+                next_stage_kind_id=_node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
                 reason=f"{source_stage.value}_blocked",
                 failure_class=failure_class,
                 counter_key=_counter_key_from_snapshot(snapshot, failure_class),
@@ -432,7 +447,9 @@ def _decision_from_execution_transition(
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=graph.plane,
-            next_stage=_stage_for_node(graph.plane, transition.target_node_id),
+            next_stage=_stage_for_node(graph, transition.target_node_id),
+            next_node_id=transition.target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
             reason=f"{source_stage.value}:{terminal_result.value}",
         )
 
@@ -488,7 +505,9 @@ def _decision_from_planning_transition(
             return RouterDecision(
                 action=RouterAction.RUN_STAGE,
                 next_plane=graph.plane,
-                next_stage=_stage_for_node(graph.plane, transition.target_node_id),
+                next_stage=_stage_for_node(graph, transition.target_node_id),
+                next_node_id=transition.target_node_id,
+                next_stage_kind_id=_node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
                 reason=f"{source_stage.value}_blocked",
                 failure_class=failure_class,
                 counter_key=_counter_key_from_snapshot(snapshot, failure_class),
@@ -496,7 +515,9 @@ def _decision_from_planning_transition(
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=graph.plane,
-            next_stage=_stage_for_node(graph.plane, transition.target_node_id),
+            next_stage=_stage_for_node(graph, transition.target_node_id),
+            next_node_id=transition.target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
             reason=f"{source_stage.value}:{terminal_result.value}",
         )
 
@@ -560,7 +581,9 @@ def _decision_from_threshold_resolution(
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
             next_plane=graph.plane,
-            next_stage=_stage_for_node(graph.plane, policy.exhausted_target_node_id),
+            next_stage=_stage_for_node(graph, policy.exhausted_target_node_id),
+            next_node_id=policy.exhausted_target_node_id,
+            next_stage_kind_id=_node_plan_by_id(graph, policy.exhausted_target_node_id).stage_kind_id,
             reason=reason,
             failure_class=failure_class,
             counter_key=counter_key,
@@ -638,12 +661,24 @@ def _terminal_state_by_id(
     raise ValueError(f"compiled graph is missing terminal state `{terminal_state_id}`")
 
 
-def _stage_for_node(plane: Plane, node_id: str) -> StageName:
+def _stage_for_node(graph: FrozenGraphPlanePlan, node_id: str) -> StageName:
+    node = _node_plan_by_id(graph, node_id)
+    return _stage_for_stage_kind(graph.plane, node.stage_kind_id)
+
+
+def _stage_for_stage_kind(plane: Plane, stage_kind_id: str) -> StageName:
     if plane is Plane.EXECUTION:
-        return ExecutionStageName(node_id)
+        return ExecutionStageName(stage_kind_id)
     if plane is Plane.LEARNING:
-        return LearningStageName(node_id)
-    return PlanningStageName(node_id)
+        return LearningStageName(stage_kind_id)
+    return PlanningStageName(stage_kind_id)
+
+
+def _node_plan_by_id(graph: FrozenGraphPlanePlan, node_id: str):
+    for node in graph.nodes:
+        if node.node_id == node_id:
+            return node
+    raise ValueError(f"compiled graph is missing node `{node_id}`")
 
 
 def _validate_stage_result_matches_snapshot(
@@ -656,6 +691,15 @@ def _validate_stage_result_matches_snapshot(
         raise ValueError("runtime snapshot active_plane does not match router plane")
     if snapshot.active_stage is None or snapshot.active_stage != stage_result.stage:
         raise ValueError("stage_result stage does not match runtime snapshot active_stage")
+    if snapshot.active_node_id is not None and snapshot.active_node_id != stage_result.node_id:
+        raise ValueError("stage_result node_id does not match runtime snapshot active_node_id")
+    if (
+        snapshot.active_stage_kind_id is not None
+        and snapshot.active_stage_kind_id != stage_result.stage_kind_id
+    ):
+        raise ValueError(
+            "stage_result stage_kind_id does not match runtime snapshot active_stage_kind_id"
+        )
     if snapshot.active_run_id is None or snapshot.active_run_id != stage_result.run_id:
         raise ValueError("stage_result run_id does not match runtime snapshot active_run_id")
     if stage_result.metadata.get("request_kind") == "closure_target":
