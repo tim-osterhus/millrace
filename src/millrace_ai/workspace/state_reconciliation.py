@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan
+from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan, MaterializedGraphNodePlan
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
@@ -355,7 +355,7 @@ def _graph_for_plane(
 def _compiled_node_for_id(
     graph: FrozenGraphPlanePlan,
     node_id: str,
-):
+) -> MaterializedGraphNodePlan | None:
     for node in graph.nodes:
         if node.node_id == node_id:
             return node

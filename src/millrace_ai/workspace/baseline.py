@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 import millrace_ai
 
-from .paths import WorkspacePaths, _RUNTIME_ASSET_DIRS, _resolve_asset_source_root, workspace_paths
+from .paths import _RUNTIME_ASSET_DIRS, WorkspacePaths, _resolve_asset_source_root, workspace_paths
 
 
 class _BaselineModel(BaseModel):
@@ -58,6 +58,8 @@ class BaselineUpgradeEntry(_BaselineModel):
 
 class BaselineUpgradePreview(_BaselineModel):
     applied: bool = False
+    baseline_manifest_id: str
+    candidate_manifest_id: str
     entries: tuple[BaselineUpgradeEntry, ...]
 
     @property
@@ -172,7 +174,11 @@ def preview_baseline_upgrade(
             )
         )
 
-    return BaselineUpgradePreview(entries=tuple(entries))
+    return BaselineUpgradePreview(
+        baseline_manifest_id=baseline_manifest.manifest_id,
+        candidate_manifest_id=candidate_manifest.manifest_id,
+        entries=tuple(entries),
+    )
 
 
 def apply_baseline_upgrade(
@@ -199,7 +205,12 @@ def apply_baseline_upgrade(
         destination.write_bytes(source_file.read_bytes())
 
     write_baseline_manifest(paths, build_baseline_manifest(paths, assets_root=candidate_assets_root))
-    return BaselineUpgradePreview(applied=True, entries=preview.entries)
+    return BaselineUpgradePreview(
+        applied=True,
+        baseline_manifest_id=preview.baseline_manifest_id,
+        candidate_manifest_id=preview.candidate_manifest_id,
+        entries=preview.entries,
+    )
 
 
 def _iter_manifest_entries(source_root: Path) -> tuple[BaselineManifestEntry, ...]:

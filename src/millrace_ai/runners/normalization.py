@@ -572,6 +572,8 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
     return {
         "request_id": request.request_id,
         "request_kind": request.request_kind,
+        "mode_id": request.mode_id,
+        "compiled_plan_id": request.compiled_plan_id,
         "closure_target_root_spec_id": request.closure_target_root_spec_id,
         "closure_target_root_idea_id": request.closure_target_root_idea_id,
         "preferred_rubric_path": request.preferred_rubric_path,

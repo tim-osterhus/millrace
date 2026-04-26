@@ -155,6 +155,8 @@ def _inspected_run_summary(
     status: str = "valid",
     failure_class: str | None = None,
     report_artifact: str | None = "troubleshoot_report.md",
+    compiled_plan_id: str | None = "plan-001",
+    mode_id: str | None = "default_codex",
     request_kind: str | None = None,
     closure_target_root_spec_id: str | None = None,
 ) -> InspectedRunSummary:
@@ -163,7 +165,12 @@ def _inspected_run_summary(
     )
     stage_result = InspectedStageResult(
         stage_result_path="stage_results/request-001.json",
+        request_id="request-001",
+        compiled_plan_id=compiled_plan_id,
+        mode_id=mode_id,
         stage="checker",
+        node_id="execution.checker.primary",
+        stage_kind_id="checker",
         request_kind=request_kind,
         closure_target_root_spec_id=closure_target_root_spec_id,
         terminal_result="CHECKER_PASS",
@@ -192,6 +199,8 @@ def _inspected_run_summary(
         run_id=run_id,
         run_dir=run_dir or f"/tmp/{run_id}",
         status=status,
+        compiled_plan_id=compiled_plan_id,
+        mode_id=mode_id,
         request_kind=request_kind,
         closure_target_root_spec_id=closure_target_root_spec_id,
         work_item_kind="task",
@@ -572,6 +581,32 @@ def test_status_surfaces_active_mode_and_compiled_plan_id(tmp_path: Path) -> Non
     assert "compiled_plan_id: plan-status-123" in result.output
 
 
+def test_status_surfaces_baseline_manifest_identity_and_compile_currentness(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    cli.compile_and_persist_workspace_plan(
+        paths,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+
+    runner = CliRunner()
+    current = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert current.exit_code == 0
+    assert "baseline_manifest_id:" in current.output
+    assert "compiled_plan_currentness: current" in current.output
+
+    (paths.runtime_root / "entrypoints" / "execution" / "builder.md").write_text(
+        "stale builder override\n",
+        encoding="utf-8",
+    )
+    stale = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert stale.exit_code == 0
+    assert "compiled_plan_currentness: stale" in stale.output
+
+
 def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     QueueStore(paths).enqueue_learning_request(
@@ -687,7 +722,12 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
 
     assert result.exit_code == 0
     assert "run_id: run-001" in result.output
+    assert "compiled_plan_id: plan-001" in result.output
+    assert "mode_id: default_codex" in result.output
+    assert "request_id: request-001" in result.output
     assert "stage: checker" in result.output
+    assert "node_id: execution.checker.primary" in result.output
+    assert "stage_kind_id: checker" in result.output
     assert "terminal_result: CHECKER_PASS" in result.output
     assert "runner_name: codex-cli" in result.output
     assert "model_name: gpt-5.4" in result.output
@@ -1323,6 +1363,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
         active_plan = SimpleNamespace(
             compiled_plan_id="plan-001",
             mode_id="standard_plain",
+            learning_graph=None,
             execution_loop_id="execution.standard",
             planning_loop_id="planning.standard",
             execution_graph=SimpleNamespace(
@@ -1330,6 +1371,8 @@ def test_compile_show_surfaces_compiled_plan_summary(
                     SimpleNamespace(
                         plane=Plane.EXECUTION,
                         node_id="builder",
+                        stage_kind_id="builder",
+                        running_status_marker="BUILDER_RUNNING",
                         entrypoint_path="entrypoints/execution/builder.md",
                         entrypoint_contract_id="builder.contract.v1",
                         required_skill_paths=("skills/stage/execution/builder-core/SKILL.md",),
@@ -1352,6 +1395,8 @@ def test_compile_show_surfaces_compiled_plan_summary(
                     SimpleNamespace(
                         plane=Plane.PLANNING,
                         node_id="arbiter",
+                        stage_kind_id="arbiter",
+                        running_status_marker="ARBITER_RUNNING",
                         entrypoint_path="entrypoints/planning/arbiter.md",
                         entrypoint_contract_id="arbiter.contract.v1",
                         required_skill_paths=("skills/stage/planning/arbiter-core/SKILL.md",),
@@ -1393,6 +1438,11 @@ def test_compile_show_surfaces_compiled_plan_summary(
             active_plan=active_plan,
             diagnostics=diagnostics,
             used_last_known_good=False,
+            compile_input_fingerprint=SimpleNamespace(
+                mode_id="standard_plain",
+                config_fingerprint="cfg-001",
+                assets_fingerprint="assets-001",
+            ),
         )
 
     monkeypatch.setattr(cli, "load_runtime_config", fake_load_runtime_config)
@@ -1413,8 +1463,15 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "entry: planning.spec -> planner" in result.output
     assert "entry: planning.incident -> auditor" in result.output
     assert "completion: closure_target -> arbiter" in result.output
+    assert "baseline_manifest_id:" in result.output
+    assert "compiled_plan_currentness: current" in result.output
+    assert "compile_input.mode_id: standard_plain" in result.output
+    assert "compile_input.config_fingerprint: cfg-001" in result.output
+    assert "compile_input.assets_fingerprint: assets-001" in result.output
     assert "compiled_plan_id: plan-001" in result.output
     assert "stage: execution.builder" in result.output
+    assert "stage_kind_id: builder" in result.output
+    assert "running_status_marker: BUILDER_RUNNING" in result.output
     assert "entrypoint_path: entrypoints/execution/builder.md" in result.output
     assert "entrypoint_contract_id: builder.contract.v1" in result.output
     assert "required_skills: skills/stage/execution/builder-core/SKILL.md" in result.output
@@ -1459,6 +1516,8 @@ def test_upgrade_command_previews_three_way_classification(
 
     assert result.exit_code == 0
     assert "applied: false" in result.output
+    assert "baseline_manifest_id:" in result.output
+    assert "candidate_manifest_id:" in result.output
     assert "entry: entrypoints/execution/builder.md safe_package_update" in result.output
 
 
@@ -1483,6 +1542,7 @@ def test_upgrade_command_apply_refreshes_managed_assets(
 
     assert result.exit_code == 0
     assert "applied: true" in result.output
+    assert "result_manifest_id:" in result.output
     assert (
         paths.runtime_root / "entrypoints" / "execution" / "builder.md"
     ).read_text(encoding="utf-8") == "candidate builder update\n"

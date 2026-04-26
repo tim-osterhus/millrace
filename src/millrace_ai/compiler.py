@@ -13,13 +13,13 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from millrace_ai.architecture import (
-    CompileInputFingerprint,
     CompiledGraphCompletionEntryPlan,
     CompiledGraphEntryPlan,
     CompiledGraphResumePolicyPlan,
     CompiledGraphThresholdPolicyPlan,
     CompiledGraphTransitionPlan,
     CompiledRunPlan,
+    CompileInputFingerprint,
     FrozenGraphPlanePlan,
     GraphLoopCounterName,
     GraphLoopDefinition,
@@ -30,8 +30,8 @@ from millrace_ai.architecture import (
     MaterializedGraphNodePlan,
     RegisteredStageKindDefinition,
 )
-from millrace_ai.architecture.materialization import ResolvedAssetRef
 from millrace_ai.architecture.common import dedupe_preserve_order
+from millrace_ai.architecture.materialization import ResolvedAssetRef
 from millrace_ai.assets import (
     BUILTIN_GRAPH_LOOP_PATHS,
     BUILTIN_MODE_PATHS,
@@ -59,7 +59,7 @@ from millrace_ai.paths import WorkspacePaths, workspace_paths
 
 _DEFAULT_MODE_ID = "default_codex"
 _DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
-_COMPILE_INPUT_ASSET_DIRS: tuple[str, ...] = ("modes", "graphs", "registry")
+_MISSING_ASSET_TOKEN = "missing"
 _REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     ExecutionStageName.BUILDER: ("skills/stage/execution/builder-core/SKILL.md",),
     ExecutionStageName.CHECKER: ("skills/stage/execution/checker-core/SKILL.md",),
@@ -94,6 +94,17 @@ class CompileOutcome:
     active_plan: CompiledRunPlan | None
     diagnostics: CompileDiagnostics
     used_last_known_good: bool
+    compile_input_fingerprint: CompileInputFingerprint | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledPlanCurrentness:
+    """Read-only comparison between persisted compiled plan and current compile inputs."""
+
+    state: str
+    expected_fingerprint: CompileInputFingerprint
+    persisted_plan_id: str | None
+    persisted_fingerprint: CompileInputFingerprint | None
 
 
 def preview_graph_loop_plan(
@@ -140,17 +151,26 @@ def compile_and_persist_workspace_plan(
     mode_id = _resolve_mode_id(requested_mode_id, config)
     compiled_plan_path = paths.state_dir / "compiled_plan.json"
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
+    compile_assets_root = _resolve_compile_assets_root(paths, assets_root)
 
     last_known_good = _load_existing_plan(compiled_plan_path)
-    compile_input_fingerprint = _build_compile_input_fingerprint(
-        config=config,
-        mode_id=mode_id,
-        assets_root=_resolve_compile_assets_root(paths, assets_root),
-    )
+    compile_input_fingerprint = None
+    if last_known_good is not None:
+        try:
+            compile_input_fingerprint = _build_existing_plan_input_fingerprint(
+                config=config,
+                mode_id=mode_id,
+                plan=last_known_good,
+                paths=paths,
+                assets_root=compile_assets_root,
+            )
+        except CompilerValidationError:
+            compile_input_fingerprint = None
 
     if (
         compile_if_needed
         and last_known_good is not None
+        and compile_input_fingerprint is not None
         and last_known_good.compile_input_fingerprint == compile_input_fingerprint
     ):
         diagnostics = CompileDiagnostics(
@@ -163,6 +183,7 @@ def compile_and_persist_workspace_plan(
             active_plan=last_known_good,
             diagnostics=diagnostics,
             used_last_known_good=False,
+            compile_input_fingerprint=compile_input_fingerprint,
         )
 
     try:
@@ -170,9 +191,8 @@ def compile_and_persist_workspace_plan(
             paths=paths,
             config=config,
             mode_id=mode_id,
-            assets_root=assets_root,
+            assets_root=compile_assets_root,
             compile_time=compile_time,
-            compile_input_fingerprint=compile_input_fingerprint,
         )
         diagnostics = CompileDiagnostics(
             ok=True,
@@ -186,6 +206,7 @@ def compile_and_persist_workspace_plan(
             active_plan=plan,
             diagnostics=diagnostics,
             used_last_known_good=False,
+            compile_input_fingerprint=plan.compile_input_fingerprint,
         )
 
     except (AssetValidationError, CompilerValidationError, ValidationError, ValueError) as exc:
@@ -210,7 +231,52 @@ def compile_and_persist_workspace_plan(
             active_plan=active_plan,
             diagnostics=diagnostics,
             used_last_known_good=used_last_known_good,
+            compile_input_fingerprint=compile_input_fingerprint,
         )
+
+
+def inspect_workspace_plan_currentness(
+    target: WorkspacePaths | Path | str,
+    *,
+    config: RuntimeConfig,
+    requested_mode_id: str | None = None,
+    assets_root: Path | None = None,
+) -> CompiledPlanCurrentness:
+    """Compare current compile inputs against the persisted compiled plan without recompiling."""
+
+    paths = _resolve_paths(target)
+    mode_id = _resolve_mode_id(requested_mode_id, config)
+    persisted_plan = _load_existing_plan(paths.state_dir / "compiled_plan.json")
+    if persisted_plan is None:
+        expected_fingerprint = CompileInputFingerprint(
+            mode_id=mode_id,
+            config_fingerprint=fingerprint_runtime_config(config),
+            assets_fingerprint="assets-missing",
+        )
+        return CompiledPlanCurrentness(
+            state="missing",
+            expected_fingerprint=expected_fingerprint,
+            persisted_plan_id=None,
+            persisted_fingerprint=None,
+        )
+    expected_fingerprint = _build_existing_plan_input_fingerprint(
+        config=config,
+        mode_id=mode_id,
+        plan=persisted_plan,
+        paths=paths,
+        assets_root=_resolve_compile_assets_root(paths, assets_root),
+    )
+    state = (
+        "current"
+        if persisted_plan.compile_input_fingerprint == expected_fingerprint
+        else "stale"
+    )
+    return CompiledPlanCurrentness(
+        state=state,
+        expected_fingerprint=expected_fingerprint,
+        persisted_plan_id=persisted_plan.compiled_plan_id,
+        persisted_fingerprint=persisted_plan.compile_input_fingerprint,
+    )
 
 def _compile_compiled_run_plan(
     *,
@@ -219,7 +285,6 @@ def _compile_compiled_run_plan(
     mode_id: str,
     assets_root: Path | None,
     compile_time: datetime,
-    compile_input_fingerprint: CompileInputFingerprint,
 ) -> CompiledRunPlan:
     mode = load_builtin_mode_definition(mode_id, assets_root=assets_root)
     graph_loops = {
@@ -251,6 +316,21 @@ def _compile_compiled_run_plan(
     planning_graph = graphs_by_plane[Plane.PLANNING]
     learning_graph = graphs_by_plane.get(Plane.LEARNING)
 
+    resolved_assets = _build_resolved_asset_refs(
+        paths=paths,
+        mode=mode,
+        graph_loops=graph_loops,
+        node_plans=tuple(node for graph in graphs_by_plane.values() for node in graph.nodes),
+        assets_root=_resolve_compile_assets_root(paths, assets_root),
+    )
+    compile_input_fingerprint = _build_compile_input_fingerprint(
+        config=config,
+        mode_id=mode.mode_id,
+        resolved_assets=resolved_assets,
+        paths=paths,
+        assets_root=_resolve_compile_assets_root(paths, assets_root),
+    )
+
     return CompiledRunPlan(
         compiled_plan_id=_build_compiled_plan_id(
             mode_id=mode.mode_id,
@@ -272,13 +352,7 @@ def _compile_compiled_run_plan(
         concurrency_policy=mode.concurrency_policy,
         learning_trigger_rules=mode.learning_trigger_rules,
         compiled_at=compile_time,
-        resolved_assets=_build_resolved_asset_refs(
-            paths=paths,
-            mode=mode,
-            graph_loops=graph_loops,
-            node_plans=tuple(node for graph in graphs_by_plane.values() for node in graph.nodes),
-            assets_root=_resolve_compile_assets_root(paths, assets_root),
-        ),
+        resolved_assets=resolved_assets,
         source_refs=_build_graph_source_refs(
             mode.mode_id,
             graphs_by_plane,
@@ -663,7 +737,7 @@ def _build_resolved_asset_refs(
         ],
     ]
 
-    used_stage_kind_ids = dedupe_preserve_order(node.stage_kind_id for node in node_plans)
+    used_stage_kind_ids = dedupe_preserve_order([node.stage_kind_id for node in node_plans])
     refs.extend(
         _resolved_packaged_asset_ref(
             asset_family="stage_kind",
@@ -674,7 +748,7 @@ def _build_resolved_asset_refs(
         for stage_kind_id in used_stage_kind_ids
     )
 
-    entrypoint_paths = dedupe_preserve_order(node.entrypoint_path for node in node_plans)
+    entrypoint_paths = dedupe_preserve_order([node.entrypoint_path for node in node_plans])
     refs.extend(
         _resolved_workspace_asset_ref(
             asset_family="entrypoint",
@@ -685,10 +759,19 @@ def _build_resolved_asset_refs(
         for entrypoint_path in entrypoint_paths
     )
 
-    skill_paths = dedupe_preserve_order(
-        skill_path
-        for node in node_plans
-        for skill_path in node.required_skill_paths
+    required_skill_paths = dedupe_preserve_order(
+        [
+            skill_path
+            for node in node_plans
+            for skill_path in node.required_skill_paths
+        ]
+    )
+    attached_skill_paths = dedupe_preserve_order(
+        [
+            skill_path
+            for node in node_plans
+            for skill_path in node.attached_skill_additions
+        ]
     )
     refs.extend(
         _resolved_workspace_asset_ref(
@@ -697,7 +780,16 @@ def _build_resolved_asset_refs(
             relative_path=skill_path,
             paths=paths,
         )
-        for skill_path in skill_paths
+        for skill_path in required_skill_paths
+    )
+    refs.extend(
+        _maybe_resolved_workspace_asset_ref(
+            asset_family="skill",
+            logical_id=f"skill:{skill_path}",
+            relative_path=skill_path,
+            paths=paths,
+        )
+        for skill_path in attached_skill_paths
     )
 
     return tuple(refs)
@@ -732,6 +824,22 @@ def _resolved_workspace_asset_ref(
         logical_id=logical_id,
         compile_time_path=compile_path.relative_to(paths.root).as_posix(),
         content_sha256=_sha256_file(compile_path),
+    )
+
+
+def _maybe_resolved_workspace_asset_ref(
+    *,
+    asset_family: str,
+    logical_id: str,
+    relative_path: str,
+    paths: WorkspacePaths,
+) -> ResolvedAssetRef:
+    compile_path = paths.runtime_root / relative_path
+    return ResolvedAssetRef(
+        asset_family=asset_family,
+        logical_id=logical_id,
+        compile_time_path=compile_path.relative_to(paths.root).as_posix(),
+        content_sha256=_sha256_file(compile_path) if compile_path.is_file() else _MISSING_ASSET_TOKEN,
     )
 
 
@@ -788,31 +896,77 @@ def _build_compile_input_fingerprint(
     *,
     config: RuntimeConfig,
     mode_id: str,
+    resolved_assets: tuple[ResolvedAssetRef, ...],
+    paths: WorkspacePaths,
     assets_root: Path,
 ) -> CompileInputFingerprint:
     return CompileInputFingerprint(
         mode_id=mode_id,
         config_fingerprint=fingerprint_runtime_config(config),
-        assets_fingerprint=_fingerprint_compile_assets(assets_root),
+        assets_fingerprint=_fingerprint_resolved_assets(
+            resolved_assets=resolved_assets,
+            paths=paths,
+            assets_root=assets_root,
+        ),
     )
 
 
-def _fingerprint_compile_assets(assets_root: Path) -> str:
+def _build_existing_plan_input_fingerprint(
+    *,
+    config: RuntimeConfig,
+    mode_id: str,
+    plan: CompiledRunPlan,
+    paths: WorkspacePaths,
+    assets_root: Path,
+) -> CompileInputFingerprint:
+    return _build_compile_input_fingerprint(
+        config=config,
+        mode_id=mode_id,
+        resolved_assets=plan.resolved_assets,
+        paths=paths,
+        assets_root=assets_root,
+    )
+
+
+def _fingerprint_resolved_assets(
+    *,
+    resolved_assets: tuple[ResolvedAssetRef, ...],
+    paths: WorkspacePaths,
+    assets_root: Path,
+) -> str:
     digest = hashlib.sha256()
-    for directory_name in _COMPILE_INPUT_ASSET_DIRS:
-        directory = assets_root / directory_name
-        if not directory.exists():
-            digest.update(f"{directory_name}:missing\n".encode("utf-8"))
-            continue
-        for file_path in sorted(path for path in directory.rglob("*") if path.is_file()):
-            relative_path = file_path.relative_to(assets_root).as_posix()
-            if any(part.startswith(".") for part in file_path.relative_to(directory).parts):
-                continue
-            digest.update(relative_path.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(file_path.read_bytes())
-            digest.update(b"\0")
+    for asset_ref in sorted(
+        resolved_assets,
+        key=lambda ref: (ref.asset_family, ref.logical_id, ref.compile_time_path),
+    ):
+        file_path = _path_for_resolved_asset_ref(asset_ref, paths=paths, assets_root=assets_root)
+        digest.update(asset_ref.asset_family.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(asset_ref.logical_id.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(asset_ref.compile_time_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_current_asset_content_token(file_path).encode("utf-8"))
+        digest.update(b"\0")
     return f"assets-{digest.hexdigest()[:12]}"
+
+
+def _path_for_resolved_asset_ref(
+    asset_ref: ResolvedAssetRef,
+    *,
+    paths: WorkspacePaths,
+    assets_root: Path,
+) -> Path:
+    compile_path = Path(asset_ref.compile_time_path)
+    if compile_path.parts[:1] == ("millrace-agents",):
+        return paths.root / compile_path
+    return assets_root / compile_path
+
+
+def _current_asset_content_token(path: Path) -> str:
+    if not path.is_file():
+        return _MISSING_ASSET_TOKEN
+    return _sha256_file(path)
 
 
 def _utc_now(now: datetime | None) -> datetime:
@@ -855,8 +1009,10 @@ def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 __all__ = [
+    "CompiledPlanCurrentness",
     "CompileOutcome",
     "CompilerValidationError",
     "compile_and_persist_workspace_plan",
+    "inspect_workspace_plan_currentness",
     "preview_graph_loop_plan",
 ]

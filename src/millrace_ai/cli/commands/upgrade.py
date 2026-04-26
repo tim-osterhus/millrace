@@ -26,8 +26,11 @@ def upgrade(
         raise typer.Exit(code=_print_error(str(exc))) from exc
 
     typer.echo(f"applied: {'true' if outcome.applied else 'false'}")
+    typer.echo(f"baseline_manifest_id: {outcome.baseline_manifest_id}")
+    typer.echo(f"candidate_manifest_id: {outcome.candidate_manifest_id}")
+    if outcome.applied:
+        typer.echo(f"result_manifest_id: {outcome.candidate_manifest_id}")
     for disposition, count in outcome.counts_by_disposition.items():
         typer.echo(f"{disposition.value}: {count}")
     for entry in outcome.entries:
         typer.echo(f"entry: {entry.relative_path} {entry.disposition.value}")
-

@@ -52,7 +52,7 @@ See [the standalone lifecycle chart](docs/runtime/millrace-runtime-lifecycle-dia
 
 ```mermaid
 flowchart TD
-    A["Bootstrap workspace and compile the frozen plan"] --> B{"Deterministic tick loop"}
+    A["Initialize workspace, then compile the frozen plan"] --> B{"Deterministic tick loop"}
     B --> C["Process control inputs:<br/>mailbox commands, watcher intake, reconciliation"]
     C --> D{"Scheduler claim decision"}
     D -- planning incident or spec --> E["Planning loop:<br/>interpret specs and incidents,<br/>govern remediation, emit executable work"]
@@ -70,13 +70,18 @@ flowchart TD
 Millrace does not try to replace raw harness reasoning with a thicker prompt.
 It wraps long-horizon work in a real runtime:
 
+- workspace bootstrap is explicit: run `millrace init` before operator commands
+- managed baseline refresh is explicit: run `millrace upgrade` to preview or apply packaged workspace asset updates
 - compile happens at startup and again only on explicit config reload
+- compile tracks input fingerprints so operators can see whether the persisted compiled plan is current or stale
 - planning and execution are claim domains inside one deterministic scheduler,
   not two concurrent lanes
 - stage results are routed by the runtime, not by direct stage-to-stage
   handoffs
 - Arbiter activates only when the scheduler finds no lineage work left and
   closure behavior is actually ready
+- runtime startup and config reload refuse to keep running on a stale
+  last-known-good plan when current compile inputs no longer match
 
 The shipped core already includes separate planning and execution loops, typed
 terminal results, compiler-governed completion behavior, and persisted run
@@ -166,18 +171,31 @@ Then point Millrace at a workspace:
 ```bash
 export WORKSPACE=/absolute/path/to/your/workspace
 
+millrace init --workspace "$WORKSPACE"
 millrace compile validate --workspace "$WORKSPACE"
 millrace run once --workspace "$WORKSPACE"
 millrace status --workspace "$WORKSPACE"
 ```
 
-That flow proves five things quickly:
+That flow proves seven things quickly:
 
-- Millrace can bootstrap its workspace contract under `millrace-agents/`
+- workspace bootstrap is explicit and creates the managed baseline under
+  `millrace-agents/`
 - the selected mode compiles into one persisted `compiled_plan.json` before execution
+- compile output fingerprints the selected mode, runtime config, and packaged
+  assets so `compile show` / `status` can report whether the plan is current
+  or stale
 - that compiled plan carries node bindings, intake entries, recovery policies, closure-target activation, and post-stage routing
 - the shipped `default_codex` mode freezes closure behavior directly into that single compiled artifact
+- status and run inspection carry compiled-plan identity so operators can tie
+  runtime activity back to the frozen plan that produced it
 - the runtime can execute a deterministic tick and report persisted status
+
+When the packaged workspace baseline changes, use `millrace upgrade` first to
+preview the managed-file classifications, then `millrace upgrade --apply` to
+apply safe baseline updates. If compile inputs drift and the persisted plan is
+stale, runtime startup and config reload refuse to keep running on the stale
+plan.
 
 Canonical shipped modes today:
 

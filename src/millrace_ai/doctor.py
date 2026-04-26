@@ -45,8 +45,8 @@ from millrace_ai.state_store import (
     load_recovery_counters,
     load_snapshot,
 )
-from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
 from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
 
 DoctorModel: TypeAlias = type[TaskDocument] | type[SpecDocument] | type[IncidentDocument]
 WorkDocument: TypeAlias = TaskDocument | SpecDocument | IncidentDocument

@@ -9,6 +9,7 @@ from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.compiler import (
     CompilerValidationError,
     compile_and_persist_workspace_plan,
+    inspect_workspace_plan_currentness,
     preview_graph_loop_plan,
 )
 from millrace_ai.config import RuntimeConfig
@@ -528,6 +529,9 @@ def test_compile_uses_one_hour_default_stage_timeout_when_stage_config_omits_it(
 def test_compile_surfaces_stage_skill_attachments_without_role_overlays(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
+    workspace_skill = workspace_paths(workspace_root).runtime_root / "skills" / "execution" / "builder.md"
+    workspace_skill.parent.mkdir(parents=True, exist_ok=True)
+    workspace_skill.write_text("builder attached skill\n", encoding="utf-8")
 
     assets_root = _copy_builtin_assets(tmp_path)
     mode_path = assets_root / "modes" / "default_codex.json"
@@ -670,3 +674,190 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     assert diagnostics.ok is False
     assert diagnostics.mode_id == "default_codex"
     assert diagnostics.errors[0] == "Unknown built-in graph loop id: planning.unknown"
+
+
+def test_inspect_workspace_plan_currentness_detects_current_and_stale_inputs(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+
+    compiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+    assert compiled.active_plan is not None
+
+    current = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+    assert current.state == "current"
+    assert current.persisted_plan_id == compiled.active_plan.compiled_plan_id
+
+    (paths.runtime_root / "entrypoints" / "execution" / "builder.md").write_text(
+        "stale builder entrypoint\n",
+        encoding="utf-8",
+    )
+    stale = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+
+    assert stale.state == "stale"
+    assert stale.persisted_plan_id == compiled.active_plan.compiled_plan_id
+
+
+def test_inspect_workspace_plan_currentness_ignores_unreferenced_asset_changes(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+
+    compiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+    assert compiled.active_plan is not None
+
+    (paths.runtime_root / "skills" / "unused-skill.md").write_text(
+        "unused skill drift\n",
+        encoding="utf-8",
+    )
+    (paths.runtime_root / "entrypoints" / "execution" / "unused.md").write_text(
+        "unused entrypoint drift\n",
+        encoding="utf-8",
+    )
+
+    current = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+
+    assert current.state == "current"
+    assert current.persisted_plan_id == compiled.active_plan.compiled_plan_id
+
+
+def test_inspect_workspace_plan_currentness_detects_attached_skill_drift(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+    workspace_skill = paths.runtime_root / "skills" / "execution" / "builder.md"
+    workspace_skill.parent.mkdir(parents=True, exist_ok=True)
+    workspace_skill.write_text("builder attached skill\n", encoding="utf-8")
+
+    assets_root = _copy_builtin_assets(tmp_path)
+    mode_path = assets_root / "modes" / "default_codex.json"
+    payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    payload["stage_skill_additions"] = {
+        "builder": ["skills/execution/builder.md"],
+    }
+    mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    compiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+    assert compiled.active_plan is not None
+
+    workspace_skill.write_text("attached skill drift\n", encoding="utf-8")
+
+    stale = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+
+    assert stale.state == "stale"
+    assert stale.persisted_plan_id == compiled.active_plan.compiled_plan_id
+
+
+def test_inspect_workspace_plan_currentness_detects_missing_attached_skill_becoming_present(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+
+    assets_root = _copy_builtin_assets(tmp_path)
+    mode_path = assets_root / "modes" / "default_codex.json"
+    payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    payload["stage_skill_additions"] = {
+        "builder": ["skills/execution/builder.md"],
+    }
+    mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    compiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+    assert compiled.active_plan is not None
+
+    current = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+    assert current.state == "current"
+
+    workspace_skill = paths.runtime_root / "skills" / "execution" / "builder.md"
+    workspace_skill.parent.mkdir(parents=True, exist_ok=True)
+    workspace_skill.write_text("late attached skill\n", encoding="utf-8")
+
+    stale = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+
+    assert stale.state == "stale"
+    assert stale.persisted_plan_id == compiled.active_plan.compiled_plan_id
+
+
+def test_compile_refuses_stale_last_known_good_when_requested(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+
+    initial = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+    )
+    assert initial.diagnostics.ok is True
+    assert initial.active_plan is not None
+
+    mode_path = paths.runtime_root / "modes" / "default_codex.json"
+    payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    payload["loop_ids_by_plane"]["planning"] = "planning.unknown"
+    mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    failed = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=paths.runtime_root,
+        refuse_stale_last_known_good=True,
+    )
+
+    assert failed.diagnostics.ok is False
+    assert failed.active_plan is None
+    assert failed.used_last_known_good is False

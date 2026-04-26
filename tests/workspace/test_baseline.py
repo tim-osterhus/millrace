@@ -4,9 +4,9 @@ import hashlib
 import shutil
 from pathlib import Path
 
-import millrace_ai
 import pytest
 
+import millrace_ai
 from millrace_ai.workspace.baseline import (
     UpgradeDisposition,
     apply_baseline_upgrade,

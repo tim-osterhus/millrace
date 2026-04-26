@@ -13,6 +13,7 @@ from millrace_ai.architecture import (
     CompiledRunPlan,
     FrozenGraphPlanePlan,
     GraphLoopTerminalStateDefinition,
+    MaterializedGraphNodePlan,
 )
 from millrace_ai.contracts import (
     ExecutionStageName,
@@ -674,7 +675,7 @@ def _stage_for_stage_kind(plane: Plane, stage_kind_id: str) -> StageName:
     return PlanningStageName(stage_kind_id)
 
 
-def _node_plan_by_id(graph: FrozenGraphPlanePlan, node_id: str):
+def _node_plan_by_id(graph: FrozenGraphPlanePlan, node_id: str) -> MaterializedGraphNodePlan:
     for node in graph.nodes:
         if node.node_id == node_id:
             return node

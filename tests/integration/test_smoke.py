@@ -104,6 +104,13 @@ def _exercise_minimum_functionality_workspace(
     workspace: Path,
     cwd: Path | None = None,
 ) -> None:
+    init = _run_cli(
+        command_prefix,
+        "init",
+        "--workspace",
+        str(workspace),
+        cwd=cwd,
+    )
     compile_validate = _run_cli(
         command_prefix,
         "compile",
@@ -136,6 +143,7 @@ def _exercise_minimum_functionality_workspace(
         cwd=cwd,
     )
 
+    assert init.returncode == 0, init.stderr or init.stdout
     assert compile_validate.returncode == 0, compile_validate.stderr or compile_validate.stdout
     assert compile_show.returncode == 0, compile_show.stderr or compile_show.stdout
     assert no_work_run_once.returncode == 0, no_work_run_once.stderr or no_work_run_once.stdout

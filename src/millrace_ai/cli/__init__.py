@@ -9,7 +9,11 @@ import typer
 from click.exceptions import ClickException
 from click.exceptions import Exit as ClickExit
 
-from millrace_ai.compiler import CompileOutcome, compile_and_persist_workspace_plan
+from millrace_ai.compiler import (
+    CompileOutcome,
+    compile_and_persist_workspace_plan,
+    inspect_workspace_plan_currentness,
+)
 from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.control import ControlActionResult, RuntimeControl
 from millrace_ai.doctor import run_workspace_doctor
@@ -60,6 +64,7 @@ __all__ = [
     "_build_stage_runner",
     "app",
     "compile_and_persist_workspace_plan",
+    "inspect_workspace_plan_currentness",
     "inspect_run_id",
     "list_runs",
     "builtin_mode_alias_target",

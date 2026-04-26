@@ -16,13 +16,13 @@ from millrace_ai.architecture.loop_graphs import (
     GraphLoopThresholdPolicyDefinition,
 )
 from millrace_ai.architecture.materialization import (
-    CompileInputFingerprint,
     CompiledGraphCompletionEntryPlan,
     CompiledGraphEntryPlan,
     CompiledGraphResumePolicyPlan,
     CompiledGraphThresholdPolicyPlan,
     CompiledGraphTransitionPlan,
     CompiledRunPlan,
+    CompileInputFingerprint,
     FrozenGraphPlanePlan,
     MaterializedGraphNodePlan,
     ResolvedAssetRef,

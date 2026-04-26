@@ -20,6 +20,8 @@ RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
 class InspectedStageResult:
     stage_result_path: str
     request_id: str | None
+    compiled_plan_id: str | None
+    mode_id: str | None
     stage: str
     node_id: str
     stage_kind_id: str
@@ -47,6 +49,8 @@ class InspectedRunSummary:
     run_id: str
     run_dir: str
     status: RunInspectionStatus
+    compiled_plan_id: str | None
+    mode_id: str | None
     request_kind: str | None
     closure_target_root_spec_id: str | None
     work_item_kind: WorkItemKind | None
@@ -77,6 +81,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             run_id=resolved_run_dir.name,
             run_dir=str(resolved_run_dir),
             status="incomplete",
+            compiled_plan_id=None,
+            mode_id=None,
             request_kind=None,
             closure_target_root_spec_id=None,
             work_item_kind=None,
@@ -97,6 +103,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             run_id=resolved_run_dir.name,
             run_dir=str(resolved_run_dir),
             status="incomplete",
+            compiled_plan_id=None,
+            mode_id=None,
             request_kind=None,
             closure_target_root_spec_id=None,
             work_item_kind=None,
@@ -128,6 +136,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             InspectedStageResult(
                 stage_result_path=_normalize_run_relative_path(resolved_run_dir, stage_result_path),
                 request_id=_string_metadata(stage_result, "request_id"),
+                compiled_plan_id=_string_metadata(stage_result, "compiled_plan_id"),
+                mode_id=_string_metadata(stage_result, "mode_id"),
                 stage=stage_result.stage.value,
                 node_id=stage_result.node_id,
                 stage_kind_id=stage_result.stage_kind_id,
@@ -177,6 +187,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         run_id=resolved_run_dir.name,
         run_dir=str(resolved_run_dir),
         status=status,
+        compiled_plan_id=latest_stage_result.compiled_plan_id if latest_stage_result else None,
+        mode_id=latest_stage_result.mode_id if latest_stage_result else None,
         request_kind=latest_stage_result.request_kind if latest_stage_result else None,
         closure_target_root_spec_id=(
             latest_stage_result.closure_target_root_spec_id if latest_stage_result else None

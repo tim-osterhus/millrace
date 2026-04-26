@@ -12,6 +12,9 @@ Use `docs/runtime/millrace-compiler-and-frozen-plans.md` and
 `docs/runtime/millrace-modes-and-loops.md` for the compile-time surfaces that
 freeze `runner_name`, `model_name`, and other stage-plan fields before runner
 dispatch happens.
+Those compile-time surfaces now also define the identity that runtime requests
+and run inspection carry forward: `mode_id`, `compiled_plan_id`, `node_id`, and
+`stage_kind_id`.
 
 ## Components
 
@@ -55,12 +58,41 @@ In practice, that means there are two distinct moments:
 1. compile decides what runner name is attached to a frozen stage-plan
 2. dispatch decides which adapter to execute from the resolved request
 
+The same split applies to runtime identity:
+
+1. compile freezes node/stage-kind identity into the compiled graph
+2. runtime stage-request construction copies that identity into every
+   `StageRunRequest`
+
 The shipped canonical modes make that explicit:
 
 - `default_codex` binds every shipped stage to `codex_cli`
 - `default_pi` binds every shipped stage to `pi_rpc`
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
+
+## Compiled Identity In Requests And Inspection
+
+Runner dispatch is no longer just "run stage X." The runtime carries compiled
+identity through the request and result path so operators can inspect exactly
+which frozen node contract produced a run.
+
+`StageRunRequest` now carries compiled identity such as:
+
+- `compiled_plan_id`
+- `mode_id`
+- `node_id`
+- `stage_kind_id`
+
+Normalization preserves that identity into the persisted stage-result metadata,
+and `millrace runs show` surfaces it at both the run level and the per-stage
+level.
+
+That gives operators a direct line from:
+
+- the persisted compiled plan
+- to the runtime request that executed
+- to the normalized stage result inspected after the run
 
 ## Artifacts
 
@@ -73,6 +105,20 @@ Each stage run writes adapter artifacts into `run_dir`:
 - `runner_completion.<request_id>.json`
 
 This keeps execution diagnosable and preserves contracts for Phase 2 external shim migration.
+
+Run inspection also reads compiled identity back out of stage-result artifacts.
+Operator-facing `runs show` output now carries:
+
+- run-level `compiled_plan_id`
+- run-level `mode_id`
+- per-stage `compiled_plan_id`
+- per-stage `mode_id`
+- per-stage `node_id`
+- per-stage `stage_kind_id`
+- per-stage `request_kind`
+
+That makes run inspection line up with the compiled plan and the runtime status
+surface instead of only showing stage names.
 
 ## Codex Adapter Behavior
 

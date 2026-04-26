@@ -52,7 +52,7 @@ def test_doctor_passes_for_bootstrapped_workspace(tmp_path: Path) -> None:
 
 def test_doctor_flags_invalid_status_and_unparseable_queue_artifact(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
-    paths.execution_status_file.write_text("### RUNNING\n", encoding="utf-8")
+    paths.execution_status_file.write_text("RUNNING\n", encoding="utf-8")
     (paths.tasks_queue_dir / "bad.md").write_text("# Bad task\nnot a valid task document\n", encoding="utf-8")
 
     report = run_workspace_doctor(paths)
