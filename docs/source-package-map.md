@@ -16,6 +16,7 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/runtime.py` | `src/millrace_ai/runtime/engine.py` plus `lifecycle.py`, `tick_cycle.py`, `activation.py`, `mailbox_intake.py`, `reconciliation.py`, `result_application.py`, `result_counters.py`, `work_item_transitions.py`, `handoff_incidents.py`, `stage_result_persistence.py`, `learning_triggers.py`, `skill_evidence.py`, `snapshot_state.py`, `outcomes.py`, `monitoring.py`, `pause_state.py`, `usage_governance/`, `graph_authority/`, `closure_transitions.py`, `stage_requests.py`, `watcher_intake.py`, and `inspection.py` | `millrace_ai.runtime` is now a package that re-exports `RuntimeEngine` and `RuntimeTickOutcome`; `engine.py` remains the stable façade while owned collaborators hold lifecycle, tick, outcome contracts, learning-trigger, monitor, pause-source, usage-governance, compiled-graph authority, and routed-mutation details. |
 | `millrace_ai/control.py` | `src/millrace_ai/runtime/control.py`, `src/millrace_ai/runtime/control_mailbox.py`, `src/millrace_ai/runtime/control_mutations.py` | Root `control.py` remains a thin compatibility facade. |
 | `millrace_ai/config.py` | `src/millrace_ai/config/models.py`, `src/millrace_ai/config/loading.py`, `src/millrace_ai/config/boundaries.py` | `millrace_ai.config` is now a package surface; usage-governance config models live in `models.py` and apply on next-tick boundaries. |
+| `millrace_ai/compiler.py` | `src/millrace_ai/compiler.py`, `src/millrace_ai/compilation/` | `millrace_ai.compiler` remains the public facade; compiler outcomes, workspace compile orchestration, graph preview, mode/path resolution, graph and node materialization, policy compilation, asset resolution, fingerprints, persistence, and currentness inspection live in `compilation/`. |
 | `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints.py` | Root `entrypoints.py` remains a thin compatibility facade. |
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
 | `millrace_ai/stage_kinds.py` | `src/millrace_ai/assets/architecture.py`, `src/millrace_ai/architecture/stage_kinds.py` | Root `stage_kinds.py` is the thin public facade for stage-kind registry loading. |
@@ -59,15 +60,14 @@ inspection surfaces.
 These modules remain at the package root because they still have one coherent reason to change or they define foundational contracts used across the package:
 
 - `src/millrace_ai/contracts.py`
-- `src/millrace_ai/compiler.py`
 - `src/millrace_ai/doctor.py`
 - `src/millrace_ai/router.py`
 - `src/millrace_ai/watchers.py`
 - `src/millrace_ai/errors.py`
 
-Additional thin compatibility facades also exist at the root for the new
-phase-1 architecture surfaces:
+Additional thin compatibility or public API facades also exist at the root:
 
+- `src/millrace_ai/compiler.py`
 - `src/millrace_ai/stage_kinds.py`
 - `src/millrace_ai/loop_graphs.py`
 
@@ -103,6 +103,10 @@ cycles:
   preserves the previous `millrace_ai.runtime.graph_authority` imports while
   activation, validation, policy lookup, counters, stage mapping, and
   plane-specific routing live in named modules.
+- `compilation/` is the compiler-internals package behind the stable
+  `millrace_ai.compiler` facade. Workspace compile orchestration, graph preview,
+  materialization, validation, policy compilation, asset/fingerprint handling,
+  persistence, and currentness inspection now have separate module ownership.
 
 ## Runner Package Notes
 

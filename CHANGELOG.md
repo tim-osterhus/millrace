@@ -34,6 +34,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Converted `runtime/graph_authority.py` into a package facade with separate
   ownership for activation, validation, policy lookup, recovery counters, stage
   mapping, and execution/planning/learning routing.
+- Split compiler internals into the `compilation/` package while keeping
+  `millrace_ai.compiler` as the stable public facade for compile, preview, and
+  currentness APIs.
 
 ## [0.15.6] - 2026-04-27
 

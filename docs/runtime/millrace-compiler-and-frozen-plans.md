@@ -9,10 +9,20 @@ This document describes the compiler-owned authority model for Millrace:
 - compile-input fingerprints and current-vs-stale status
 - the persisted `compiled_plan.json` artifact
 - stale-plan refusal when compile inputs drift
+- the `millrace_ai.compiler` public facade over `src/millrace_ai/compilation/`
+  internals
 
 Use `docs/runtime/millrace-cli-reference.md` for command syntax and
 `docs/runtime/millrace-modes-and-loops.md` for the shipped mode and graph
 surfaces that feed the compiler.
+
+The stable import surface is `millrace_ai.compiler`. Internally, compiler
+ownership is split under `src/millrace_ai/compilation/`: workspace-plan
+orchestration, preview materialization, mode/path resolution, node and graph
+materialization, transition/completion/policy compilation, entrypoint override
+validation, learning-trigger validation, asset resolution, fingerprints,
+persistence, and currentness inspection live in named modules behind that
+facade.
 
 ## What The Compiler Freezes
 

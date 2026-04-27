@@ -175,6 +175,12 @@ snapshot state are written.
 Compile output is operator-visible through `millrace compile validate` and
 `millrace compile show`. Failed recompiles preserve the last known good plan.
 
+The public Python surface remains `millrace_ai.compiler`. Its implementation is
+split under `src/millrace_ai/compilation/` so workspace compile orchestration,
+graph preview, materialization, validation, policy compilation, asset
+fingerprinting, persistence, and currentness inspection can evolve without
+turning the public facade back into a multi-purpose implementation module.
+
 For compile-time proof work, the package also exposes a graph preview surface
 that can materialize a discovered graph loop without adding it to the shipped
 compiled plan contract.

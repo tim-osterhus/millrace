@@ -77,7 +77,8 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
-- `src/millrace_ai/compiler.py`: mode+graph-loop compile into one runtime plan + diagnostics.
+- `src/millrace_ai/compiler.py`: stable public facade for mode+graph-loop compile, graph preview, currentness inspection, and diagnostics.
+- `src/millrace_ai/compilation/`: compiler internals for workspace compile orchestration, mode/path resolution, graph and node materialization, transition/completion/policy compilation, learning-trigger validation, entrypoint override validation, asset resolution, fingerprints, persistence, and currentness inspection.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex/Pi adapters.
 - `src/millrace_ai/cli/monitoring.py`: formatting for opt-in daemon monitor output.
 - `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
@@ -178,6 +179,8 @@ Usage governance notes:
 Compile notes:
 
 - startup compiles the active mode into `compiled_plan.json`
+- `millrace_ai.compiler` is a public facade; the implementation lives under
+  `src/millrace_ai/compilation/`
 - that compiled plan carries materialized node plans plus compiled entry,
   transition, recovery, learning-trigger, concurrency-policy, and
   closure-activation surfaces
