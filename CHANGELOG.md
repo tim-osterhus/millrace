@@ -18,6 +18,13 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Clarified usage-governance documentation now that the auto-pause/resume
   feature has shipped, including the next-tick status/monitor visibility model
   for governance changes after `config reload`.
+- Split workspace bootstrap payloads and asset deployment out of
+  `workspace.paths`, and split CLI status/run/config/compile views out of
+  `cli.formatting`, preserving public imports while removing the real workspace
+  and CLI import cycles that blocked later cleanup work.
+- Moved the shared `RuntimeTickOutcome` contract behind
+  `runtime/outcomes.py`, keeping the public runtime facade stable while
+  removing the remaining concrete runtime submodule cycle.
 
 ## [0.15.6] - 2026-04-27
 

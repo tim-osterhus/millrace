@@ -8,7 +8,8 @@ from typing import Annotated
 
 import typer
 
-from millrace_ai.cli.formatting import _print_error, _run_once_exit_code, _value
+from millrace_ai.cli.errors import _print_error
+from millrace_ai.cli.formatting import _run_once_exit_code, _value
 from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _require_paths, _resolve_config_path
 
 run_app = typer.Typer(add_completion=False, no_args_is_help=True)

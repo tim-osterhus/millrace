@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import millrace_ai.runtime.activation as activation
+import millrace_ai.runtime.completion_behavior as completion_behavior
+import millrace_ai.runtime.lifecycle as lifecycle
+import millrace_ai.runtime.mailbox_intake as mailbox_intake
+import millrace_ai.runtime.reconciliation as reconciliation
+import millrace_ai.runtime.result_application as result_application
+import millrace_ai.runtime.stage_requests as stage_requests
+import millrace_ai.runtime.tick_cycle as tick_cycle
+import millrace_ai.runtime.usage_governance as usage_governance
+import millrace_ai.runtime.watcher_intake as watcher_intake
 from millrace_ai.architecture import CompiledRunPlan, MaterializedGraphNodePlan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -27,6 +36,7 @@ from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime.monitoring import NullRuntimeMonitorSink, RuntimeMonitorEvent, RuntimeMonitorSink
+from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import (
     ReconciliationSignal,
     load_recovery_counters,
@@ -39,32 +49,9 @@ from millrace_ai.state_store import (
 )
 from millrace_ai.watchers import WatcherSession, WatchEvent
 
-from . import (
-    activation,
-    completion_behavior,
-    lifecycle,
-    mailbox_intake,
-    reconciliation,
-    result_application,
-    stage_requests,
-    tick_cycle,
-    usage_governance,
-    watcher_intake,
-)
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeTickOutcome:
-    """Outcome from one runtime tick."""
-
-    stage: StageName
-    stage_result: StageResultEnvelope
-    stage_result_path: Path
-    router_decision: RouterDecision
-    snapshot: RuntimeSnapshot
 
 
 class RuntimeEngine:

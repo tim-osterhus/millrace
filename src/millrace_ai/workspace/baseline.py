@@ -11,8 +11,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 import millrace_ai
+import millrace_ai.workspace.asset_deployment as asset_deployment
 
-from .paths import _RUNTIME_ASSET_DIRS, WorkspacePaths, _resolve_asset_source_root, workspace_paths
+from .paths import WorkspacePaths, workspace_paths
 
 
 class _BaselineModel(BaseModel):
@@ -83,7 +84,7 @@ def build_baseline_manifest(
 
     # Keep the target parameter for symmetry with other workspace helpers.
     _ = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
-    source_root = _resolve_asset_source_root(assets_root)
+    source_root = asset_deployment.resolve_asset_source_root(assets_root)
     entries = tuple(_iter_manifest_entries(source_root))
     manifest_id = _manifest_id_for_entries(
         schema_version="1.0",
@@ -193,7 +194,7 @@ def apply_baseline_upgrade(
         joined = ", ".join(conflicts)
         raise ValueError(f"upgrade conflict(s) detected: {joined}")
 
-    source_root = _resolve_asset_source_root(candidate_assets_root)
+    source_root = asset_deployment.resolve_asset_source_root(candidate_assets_root)
     for entry in preview.entries:
         if entry.disposition not in {UpgradeDisposition.SAFE_PACKAGE_UPDATE, UpgradeDisposition.MISSING}:
             continue
@@ -215,7 +216,7 @@ def apply_baseline_upgrade(
 
 def _iter_manifest_entries(source_root: Path) -> tuple[BaselineManifestEntry, ...]:
     entries: list[BaselineManifestEntry] = []
-    for asset_family in _RUNTIME_ASSET_DIRS:
+    for asset_family in asset_deployment.RUNTIME_ASSET_DIRS:
         family_root = source_root / asset_family
         if not family_root.exists():
             continue

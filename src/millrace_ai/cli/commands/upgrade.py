@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from millrace_ai.cli.formatting import _print_error
+from millrace_ai.cli.errors import _print_error
 from millrace_ai.cli.shared import WorkspaceOption, _require_paths
 from millrace_ai.workspace.baseline import apply_baseline_upgrade, preview_baseline_upgrade
 

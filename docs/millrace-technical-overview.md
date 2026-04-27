@@ -629,16 +629,26 @@ integrity problems.
 The source tree under `src/millrace_ai/` is deliberately split by ownership:
 
 - `assets/` for packaged entrypoints and skill assets
-- `cli/` for operator command surfaces and formatting
+- `cli/` for operator command surfaces, command-specific view assembly, and
+  formatting of already-collected values
 - `config/` for runtime config loading and boundary semantics
 - `runners/` for adapter dispatch and normalization
 - `runtime/` for orchestration logic, pause-source handling, and usage-governance accounting
-- `workspace/` for filesystem-backed state and queue primitives
+- `workspace/` for filesystem-backed path models, initialization/bootstrap,
+  asset deployment, state, and queue primitives
 
 Recent runtime modules include the daemon monitor event surface, learning
 trigger evaluation, skill revision evidence snapshots, active snapshot reset
 helpers, usage-governance pause/accounting helpers, and explicit workspace
 baseline initialization/upgrade support.
+
+The current cleanup path keeps compatibility facades stable while narrowing
+mixed-ownership files. `workspace/paths.py` is now path-only; default bootstrap
+payloads live in `workspace/bootstrap_files.py`, and runtime asset deployment
+lives in `workspace/asset_deployment.py`. On the CLI side, status, runs,
+config, and compile views own their state-loading concerns in dedicated modules
+so `cli/shared.py` can stay focused on command wiring and `cli/formatting.py`
+can stay focused on rendering already-collected values.
 
 A set of thin root-module facades is intentionally preserved so older import
 surfaces still work while the package is internally modularized. That is why

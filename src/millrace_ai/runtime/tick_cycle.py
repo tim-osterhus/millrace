@@ -9,19 +9,18 @@ from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import normalize_stage_result
+from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
 
 from .error_recovery import schedule_post_stage_exception_recovery
 from .learning_triggers import enqueue_learning_requests_for_stage_result
 
 if TYPE_CHECKING:
-    from millrace_ai.runtime.engine import RuntimeEngine, RuntimeTickOutcome
+    from millrace_ai.runtime.engine import RuntimeEngine
 
 
 def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
     """Run one deterministic runtime tick."""
-
-    from .engine import RuntimeTickOutcome
 
     if engine.snapshot is None or engine.counters is None or engine.compiled_plan is None:
         engine.startup()

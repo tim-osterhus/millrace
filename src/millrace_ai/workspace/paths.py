@@ -1,24 +1,10 @@
-"""Canonical workspace path model and bootstrap helpers."""
+"""Canonical workspace path model."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
-
-from millrace_ai.config import render_bootstrap_runtime_config
-from millrace_ai.contracts import Plane, RecoveryCounters, RuntimeMode, RuntimeSnapshot, WatcherMode
-
-_IDLE_MARKER = "### IDLE\n"
-_RUNTIME_ASSET_DIRS: tuple[str, ...] = (
-    "entrypoints",
-    "skills",
-    "modes",
-    "loops",
-    "graphs",
-    "registry",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,102 +248,4 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
     )
 
 
-def bootstrap_workspace(
-    target: WorkspacePaths | Path | str,
-    *,
-    assets_root: Path | str | None = None,
-) -> WorkspacePaths:
-    """Create canonical workspace directories and default files if missing."""
-    from millrace_ai.workspace.initialization import initialize_workspace
-
-    return initialize_workspace(target, assets_root=assets_root)
-
-
-def _deploy_runtime_assets(paths: WorkspacePaths, *, assets_root: Path | str | None) -> None:
-    source_root = _resolve_asset_source_root(assets_root)
-
-    for directory_name in _RUNTIME_ASSET_DIRS:
-        source_dir = source_root / directory_name
-        if not source_dir.exists():
-            continue
-
-        destination_dir = paths.runtime_root / directory_name
-        for source_file in source_dir.rglob("*"):
-            if source_file.is_dir():
-                continue
-
-            if any(part.startswith(".") for part in source_file.relative_to(source_dir).parts):
-                continue
-
-            relative_path = source_file.relative_to(source_dir)
-            destination = destination_dir / relative_path
-            if destination.exists():
-                continue
-
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(source_file.read_bytes())
-
-
-def _resolve_asset_source_root(assets_root: Path | str | None) -> Path:
-    if assets_root is not None:
-        return Path(assets_root).expanduser().resolve()
-
-    from millrace_ai.modes import ASSETS_ROOT
-
-    return ASSETS_ROOT
-
-
-def _default_file_payloads(paths: WorkspacePaths) -> dict[Path, str]:
-    return {
-        paths.outline_file: "",
-        paths.historylog_file: "",
-        paths.runtime_root / "millrace.toml": render_bootstrap_runtime_config(),
-        paths.execution_status_file: _IDLE_MARKER,
-        paths.planning_status_file: _IDLE_MARKER,
-        paths.learning_status_file: _IDLE_MARKER,
-        paths.learning_events_file: "",
-        paths.runtime_snapshot_file: _default_runtime_snapshot_payload(paths),
-        paths.recovery_counters_file: _default_recovery_counters_payload(),
-    }
-
-
-def _default_runtime_snapshot_payload(paths: WorkspacePaths) -> str:
-    snapshot = RuntimeSnapshot(
-        runtime_mode=RuntimeMode.DAEMON,
-        process_running=False,
-        paused=False,
-        active_mode_id="default_codex",
-        execution_loop_id="execution.standard",
-        planning_loop_id="planning.standard",
-        loop_ids_by_plane={
-            Plane.EXECUTION: "execution.standard",
-            Plane.PLANNING: "planning.standard",
-        },
-        compiled_plan_id="bootstrap",
-        compiled_plan_path=str((paths.state_dir / "compiled_plan.json").relative_to(paths.root)),
-        execution_status_marker=_IDLE_MARKER.strip(),
-        planning_status_marker=_IDLE_MARKER.strip(),
-        learning_status_marker=_IDLE_MARKER.strip(),
-        status_markers_by_plane={
-            Plane.EXECUTION: _IDLE_MARKER.strip(),
-            Plane.PLANNING: _IDLE_MARKER.strip(),
-            Plane.LEARNING: _IDLE_MARKER.strip(),
-        },
-        queue_depths_by_plane={
-            Plane.EXECUTION: 0,
-            Plane.PLANNING: 0,
-            Plane.LEARNING: 0,
-        },
-        config_version="bootstrap",
-        watcher_mode=WatcherMode.OFF,
-        updated_at=datetime.now(timezone.utc),
-    )
-    return snapshot.model_dump_json(indent=2) + "\n"
-
-
-def _default_recovery_counters_payload() -> str:
-    counters = RecoveryCounters()
-    return counters.model_dump_json(indent=2) + "\n"
-
-
-__all__ = ["WorkspacePaths", "bootstrap_workspace", "workspace_paths"]
+__all__ = ["WorkspacePaths", "workspace_paths"]

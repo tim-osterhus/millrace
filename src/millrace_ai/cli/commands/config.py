@@ -8,7 +8,10 @@ from typing import Annotated
 import typer
 from pydantic import ValidationError
 
-from millrace_ai.cli.formatting import _print_control_result, _print_error, _render_compile_diagnostics, _render_config_show_lines
+from millrace_ai.cli.compile_view import _render_compile_diagnostics
+from millrace_ai.cli.config_view import _render_config_show_lines
+from millrace_ai.cli.errors import _print_error
+from millrace_ai.cli.formatting import _print_control_result
 from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _ensure_paths, _resolve_config_path
 
 config_app = typer.Typer(add_completion=False, no_args_is_help=True)

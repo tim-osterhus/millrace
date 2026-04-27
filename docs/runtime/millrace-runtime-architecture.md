@@ -69,7 +69,9 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 ## Module Topology
 
 - `src/millrace_ai/workspace/paths.py`: workspace path contract for the `millrace-agents` tree.
-- `src/millrace_ai/workspace/initialization.py`: explicit `millrace init` workspace baseline creation.
+- `src/millrace_ai/workspace/bootstrap_files.py`: default bootstrap payload construction for state, status, config, and recovery-counter files.
+- `src/millrace_ai/workspace/asset_deployment.py`: packaged runtime asset source resolution and deployment into initialized workspaces.
+- `src/millrace_ai/workspace/initialization.py`: explicit `millrace init` workspace baseline orchestration and the `bootstrap_workspace` compatibility alias.
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
 - `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/spec/incident/learning-request documents.
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
@@ -80,6 +82,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/cli/monitoring.py`: formatting for opt-in daemon monitor output.
 - `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
 - `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
+- `src/millrace_ai/runtime/outcomes.py`: runtime tick outcome contract shared by the engine and tick/request helpers without creating an engine import cycle.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
 - `src/millrace_ai/runtime/monitoring.py`: runtime monitor event protocol and null/basic monitor adapter.
 - `src/millrace_ai/runtime/tick_cycle.py`: deterministic one-tick orchestration from mailbox intake through stage execution and router-decision finalization.
@@ -108,7 +111,13 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, pause/resume source handling, requeue/reset helpers, and stale-state clearing behavior.
 - `src/millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
 - `src/millrace_ai/doctor.py`: workspace integrity + lock health checks.
-- `src/millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, formatting, and command groups.
+- `src/millrace_ai/cli/errors.py`: operator error output helper used by command modules and shared workspace resolution.
+- `src/millrace_ai/cli/status_view.py`: status state loading and line rendering.
+- `src/millrace_ai/cli/runs_view.py`: persisted run-list loading and line rendering.
+- `src/millrace_ai/cli/config_view.py`: config-show state loading and line rendering.
+- `src/millrace_ai/cli/compile_view.py`: compile diagnostics and compile-show line rendering.
+- `src/millrace_ai/cli/formatting.py`: pure rendering helpers for already-collected run/control values.
+- `src/millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, command-specific views, monitor formatting, and command groups.
 
 ## Stage Runner Stack
 

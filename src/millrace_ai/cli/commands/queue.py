@@ -8,7 +8,8 @@ from typing import Annotated
 import typer
 from pydantic import ValidationError
 
-from millrace_ai.cli.formatting import _print_control_result, _print_error
+from millrace_ai.cli.errors import _print_error
+from millrace_ai.cli.formatting import _print_control_result
 from millrace_ai.cli.shared import (
     WorkspaceOption,
     _cli_api,

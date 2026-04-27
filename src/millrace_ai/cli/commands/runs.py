@@ -7,12 +7,9 @@ from typing import Annotated
 
 import typer
 
-from millrace_ai.cli.formatting import (
-    _print_error,
-    _render_run_show_lines,
-    _render_runs_ls_lines,
-    _resolve_run_artifact_path,
-)
+from millrace_ai.cli.errors import _print_error
+from millrace_ai.cli.formatting import _render_run_show_lines, _resolve_run_artifact_path
+from millrace_ai.cli.runs_view import _render_runs_ls_lines
 from millrace_ai.cli.shared import WorkspaceOption, _cli_api, _require_paths
 
 runs_app = typer.Typer(add_completion=False, no_args_is_help=True)

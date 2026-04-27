@@ -12,8 +12,8 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 
 | Legacy surface | Current source home | Notes |
 | --- | --- | --- |
-| `millrace_ai/cli.py` | `src/millrace_ai/cli/app.py`, `src/millrace_ai/cli/shared.py`, `src/millrace_ai/cli/formatting.py`, `src/millrace_ai/cli/monitoring.py`, `src/millrace_ai/cli/commands/*` | `millrace_ai.cli` is now a package surface; command groups live in dedicated modules and daemon monitor formatting is isolated. |
-| `millrace_ai/runtime.py` | `src/millrace_ai/runtime/engine.py` plus `lifecycle.py`, `tick_cycle.py`, `activation.py`, `mailbox_intake.py`, `reconciliation.py`, `result_application.py`, `result_counters.py`, `work_item_transitions.py`, `handoff_incidents.py`, `stage_result_persistence.py`, `learning_triggers.py`, `skill_evidence.py`, `snapshot_state.py`, `monitoring.py`, `pause_state.py`, `usage_governance.py`, `closure_transitions.py`, `stage_requests.py`, `watcher_intake.py`, and `inspection.py` | `millrace_ai.runtime` is now a package that re-exports `RuntimeEngine` and `RuntimeTickOutcome`; `engine.py` remains the stable façade while owned collaborators hold lifecycle, tick, learning-trigger, monitor, pause-source, usage-governance, and routed-mutation details. |
+| `millrace_ai/cli.py` | `src/millrace_ai/cli/app.py`, `src/millrace_ai/cli/shared.py`, `src/millrace_ai/cli/errors.py`, `src/millrace_ai/cli/status_view.py`, `src/millrace_ai/cli/runs_view.py`, `src/millrace_ai/cli/config_view.py`, `src/millrace_ai/cli/compile_view.py`, `src/millrace_ai/cli/formatting.py`, `src/millrace_ai/cli/monitoring.py`, `src/millrace_ai/cli/commands/*` | `millrace_ai.cli` is now a package surface; command groups live in dedicated modules, daemon monitor formatting is isolated, and status/run/config/compile views own their filesystem-backed data loading instead of feeding back through shared command helpers. |
+| `millrace_ai/runtime.py` | `src/millrace_ai/runtime/engine.py` plus `lifecycle.py`, `tick_cycle.py`, `activation.py`, `mailbox_intake.py`, `reconciliation.py`, `result_application.py`, `result_counters.py`, `work_item_transitions.py`, `handoff_incidents.py`, `stage_result_persistence.py`, `learning_triggers.py`, `skill_evidence.py`, `snapshot_state.py`, `outcomes.py`, `monitoring.py`, `pause_state.py`, `usage_governance.py`, `closure_transitions.py`, `stage_requests.py`, `watcher_intake.py`, and `inspection.py` | `millrace_ai.runtime` is now a package that re-exports `RuntimeEngine` and `RuntimeTickOutcome`; `engine.py` remains the stable façade while owned collaborators hold lifecycle, tick, outcome contracts, learning-trigger, monitor, pause-source, usage-governance, and routed-mutation details. |
 | `millrace_ai/control.py` | `src/millrace_ai/runtime/control.py`, `src/millrace_ai/runtime/control_mailbox.py`, `src/millrace_ai/runtime/control_mutations.py` | Root `control.py` remains a thin compatibility facade. |
 | `millrace_ai/config.py` | `src/millrace_ai/config/models.py`, `src/millrace_ai/config/loading.py`, `src/millrace_ai/config/boundaries.py` | `millrace_ai.config` is now a package surface; usage-governance config models live in `models.py` and apply on next-tick boundaries. |
 | `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints.py` | Root `entrypoints.py` remains a thin compatibility facade. |
@@ -22,8 +22,8 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/loop_graphs.py` | `src/millrace_ai/assets/loop_graphs.py`, `src/millrace_ai/architecture/loop_graphs.py` | Root `loop_graphs.py` is the thin public facade for graph-loop loading. |
 | `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package. |
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
-| `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py` | Root `paths.py` remains a thin compatibility facade. |
-| workspace initialization/baseline | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/baseline.py` | Explicit `millrace init` and managed baseline upgrade classification live in workspace-owned modules. |
+| `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py`, `src/millrace_ai/workspace/initialization.py` | Root `paths.py` remains a thin compatibility facade for `WorkspacePaths`, `workspace_paths`, and workspace initialization helpers. |
+| workspace initialization/baseline | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/bootstrap_files.py`, `src/millrace_ai/workspace/asset_deployment.py`, `src/millrace_ai/workspace/baseline.py` | Explicit `millrace init`, default runtime file payloads, runtime asset deployment, and managed baseline upgrade classification live in workspace-owned modules with path modeling kept separate from bootstrap behavior. |
 | `millrace_ai/runtime_lock.py` | `src/millrace_ai/workspace/runtime_lock.py` | Root `runtime_lock.py` remains a thin compatibility facade. |
 | `millrace_ai/mailbox.py` | `src/millrace_ai/workspace/mailbox.py` | Root `mailbox.py` remains a thin compatibility facade. |
 | `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. |
@@ -70,6 +70,30 @@ phase-1 architecture surfaces:
 
 - `src/millrace_ai/stage_kinds.py`
 - `src/millrace_ai/loop_graphs.py`
+
+## Current Cleanliness Refactor Notes
+
+The current cleanup sequence preserves public imports while reducing ownership
+cycles:
+
+- `workspace/paths.py` now owns only the workspace path model and resolution.
+- `workspace/bootstrap_files.py` owns default state/status/config payload
+  construction for newly initialized workspaces.
+- `workspace/asset_deployment.py` owns packaged runtime asset source resolution
+  and deployment.
+- `workspace/initialization.py` orchestrates initialization and keeps
+  `bootstrap_workspace` as the compatibility alias used by older callers.
+- `cli/errors.py` owns operator error output.
+- `cli/status_view.py`, `cli/runs_view.py`, `cli/config_view.py`, and
+  `cli/compile_view.py` own command-specific view assembly that reads workspace
+  state.
+- `cli/formatting.py` is limited to rendering already-collected run/control
+  values and small shared value formatting.
+- Runtime submodules import concrete sibling modules directly, and
+  `runtime/outcomes.py` holds `RuntimeTickOutcome` so tick/request helpers do
+  not depend back on `runtime/engine.py`; the public `millrace_ai.runtime`
+  package facade remains the stable `RuntimeEngine` / `RuntimeTickOutcome`
+  import surface.
 
 ## Runner Package Notes
 

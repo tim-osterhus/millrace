@@ -1691,7 +1691,7 @@ def test_upgrade_command_previews_three_way_classification(
     )
 
     monkeypatch.setattr(
-        "millrace_ai.workspace.baseline._resolve_asset_source_root",
+        "millrace_ai.workspace.asset_deployment.resolve_asset_source_root",
         lambda _: assets_root,
     )
 
@@ -1717,7 +1717,7 @@ def test_upgrade_command_apply_refreshes_managed_assets(
     )
 
     monkeypatch.setattr(
-        "millrace_ai.workspace.baseline._resolve_asset_source_root",
+        "millrace_ai.workspace.asset_deployment.resolve_asset_source_root",
         lambda _: assets_root,
     )
 

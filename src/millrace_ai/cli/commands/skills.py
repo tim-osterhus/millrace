@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import typer
 
-from millrace_ai.cli.formatting import _print_error
+from millrace_ai.cli.errors import _print_error
 from millrace_ai.cli.shared import WorkspaceOption, _require_paths
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import LearningRequestAction, LearningRequestDocument

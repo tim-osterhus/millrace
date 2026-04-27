@@ -81,8 +81,8 @@ def test_paths_module_is_workspace_facade() -> None:
     assert Path(paths_module.__file__).as_posix().endswith("/paths.py")
     assert paths_module.WorkspacePaths.__module__ == "millrace_ai.workspace.paths"
     assert paths_module.workspace_paths is workspace_paths_module.workspace_paths
-    assert paths_module.bootstrap_workspace is workspace_paths_module.bootstrap_workspace
     assert paths_module.initialize_workspace is initialization_module.initialize_workspace
+    assert paths_module.bootstrap_workspace is initialization_module.bootstrap_workspace
     assert paths_module.require_initialized_workspace is initialization_module.require_initialized_workspace
     assert paths_module.ensure_runtime_state_surfaces is initialization_module.ensure_runtime_state_surfaces
 

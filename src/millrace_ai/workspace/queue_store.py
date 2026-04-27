@@ -6,7 +6,8 @@ from pathlib import Path
 
 from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
 
-from .paths import WorkspacePaths, bootstrap_workspace, workspace_paths
+from .initialization import bootstrap_workspace
+from .paths import WorkspacePaths, workspace_paths
 from .queue_reconciliation import (
     StaleActiveState,
     detect_execution_stale_state,

@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from millrace_ai.cli.formatting import _render_compile_diagnostics, _render_compile_show_lines
+from millrace_ai.cli.compile_view import _render_compile_diagnostics, _render_compile_show_lines
 from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _require_paths, _resolve_config_path
 
 compile_app = typer.Typer(add_completion=False, no_args_is_help=True)

@@ -9,7 +9,8 @@ from .baseline import (
     load_baseline_manifest,
     write_baseline_manifest,
 )
-from .paths import WorkspacePaths, bootstrap_workspace, workspace_paths
+from .initialization import bootstrap_workspace
+from .paths import WorkspacePaths, workspace_paths
 
 __all__ = [
     "BaselineManifest",

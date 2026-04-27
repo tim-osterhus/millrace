@@ -18,7 +18,8 @@ from millrace_ai.work_documents import read_work_document_as
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
-from . import completion_behavior
+import millrace_ai.runtime.completion_behavior as completion_behavior
+
 from .graph_authority import (
     GraphActivationDecision,
     learning_stage_activation_for_graph,

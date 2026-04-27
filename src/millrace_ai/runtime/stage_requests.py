@@ -23,10 +23,11 @@ from millrace_ai.contracts import (
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.requests import RequestKind
+from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
 
 if TYPE_CHECKING:
-    from millrace_ai.runtime.engine import RuntimeEngine, RuntimeTickOutcome
+    from millrace_ai.runtime.engine import RuntimeEngine
 
 from .error_recovery import build_runtime_error_request_fields
 from .skill_evidence import write_skill_revision_evidence
@@ -201,8 +202,6 @@ def idle_stage_for_no_work() -> StageName:
 
 
 def idle_tick_outcome(engine: RuntimeEngine, *, reason: str) -> RuntimeTickOutcome:
-    from millrace_ai.runtime.engine import RuntimeTickOutcome
-
     assert engine.snapshot is not None
     idle_stage = idle_stage_for_no_work()
     stage_result = StageResultEnvelope(

@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import typer
 
-from millrace_ai.cli.formatting import _print_error
+from millrace_ai.cli.errors import _print_error
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import SpecDocument, TaskDocument
 from millrace_ai.paths import WorkspacePaths, initialize_workspace, require_initialized_workspace, workspace_paths

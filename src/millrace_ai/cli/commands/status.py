@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
-from millrace_ai.cli.formatting import _print_status, _print_statuses
 from millrace_ai.cli.shared import WorkspaceOption, _require_paths
+from millrace_ai.cli.status_view import _print_status, _print_statuses
 
 status_app = typer.Typer(add_completion=False, no_args_is_help=False)
 

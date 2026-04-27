@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from millrace_ai.workspace.asset_deployment import deploy_runtime_assets
 from millrace_ai.workspace.baseline import build_baseline_manifest, write_baseline_manifest
-from millrace_ai.workspace.paths import (
-    WorkspacePaths,
-    _default_file_payloads,
-    _deploy_runtime_assets,
-    workspace_paths,
-)
+from millrace_ai.workspace.bootstrap_files import default_file_payloads
+from millrace_ai.workspace.paths import WorkspacePaths, workspace_paths
 
 _RUNTIME_STATE_FILES = (
     "execution_status_file",
@@ -47,16 +44,26 @@ def initialize_workspace(
     for directory in paths.directories():
         directory.mkdir(parents=True, exist_ok=True)
 
-    defaults = _default_file_payloads(paths)
+    defaults = default_file_payloads(paths)
     for file_path, payload in defaults.items():
         if not file_path.exists():
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(payload, encoding="utf-8")
 
-    _deploy_runtime_assets(paths, assets_root=assets_root)
+    deploy_runtime_assets(paths, assets_root=assets_root)
     if not paths.baseline_manifest_file.exists():
         write_baseline_manifest(paths, build_baseline_manifest(paths, assets_root=assets_root))
     return paths
+
+
+def bootstrap_workspace(
+    target: WorkspacePaths | Path | str,
+    *,
+    assets_root: Path | str | None = None,
+) -> WorkspacePaths:
+    """Compatibility alias for creating a canonical workspace baseline."""
+
+    return initialize_workspace(target, assets_root=assets_root)
 
 
 def require_initialized_workspace(target: WorkspacePaths | Path | str) -> WorkspacePaths:
@@ -79,7 +86,7 @@ def ensure_runtime_state_surfaces(target: WorkspacePaths | Path | str) -> Worksp
     """Create missing runtime state files for an initialized workspace."""
 
     paths = require_initialized_workspace(target)
-    defaults = _default_file_payloads(paths)
+    defaults = default_file_payloads(paths)
     for attribute_name in _RUNTIME_STATE_FILES:
         file_path = getattr(paths, attribute_name)
         if file_path.exists():
@@ -90,6 +97,7 @@ def ensure_runtime_state_surfaces(target: WorkspacePaths | Path | str) -> Worksp
 
 
 __all__ = [
+    "bootstrap_workspace",
     "ensure_runtime_state_surfaces",
     "initialize_workspace",
     "require_initialized_workspace",
