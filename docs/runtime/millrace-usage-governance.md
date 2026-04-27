@@ -5,6 +5,18 @@ agent usage while long-running work continues across ticks. It is intentionally
 default-off: existing workspaces keep the same execution behavior unless an
 operator enables `[usage_governance]` in `millrace-agents/millrace.toml`.
 
+## Implementation Status
+
+The v1 usage-governance surface is implemented and shipped. The core runtime
+feature landed in `0.15.4`; the follow-on documentation, entrypoint,
+asset-policy, and typing coverage landed in `0.15.5`.
+
+This implementation targets Millrace's current one-stage-at-a-time scheduler.
+Governance is still written as a workspace-global runtime gate: it checks before
+stage dispatch and after stage-result persistence, lets an already-running
+stage finish, and prevents later stage launches after a governance pause has
+been durably recorded.
+
 ## Runtime Contract
 
 Usage governance evaluates only at runtime-owned boundaries. The shipped
@@ -159,3 +171,16 @@ Some blockers are not auto-resumable. For example, `daemon_session` and
 `per_run` runtime windows do not have a natural future clearing time, and
 subscription telemetry degradation with `fail_closed` is treated as manually
 actionable until telemetry recovers or config changes.
+
+## Config Reload Behavior
+
+Usage-governance config changes apply through the normal config reload path and
+are evaluated on the next runtime tick. `millrace config reload` and
+`millrace control reload-config` report reload routing and compile status; they
+do not print a dedicated governance-cleared/governance-still-blocked summary.
+
+After reload, use `millrace status` or the basic daemon monitor to see whether
+governance is enabled, whether `usage_governance` still owns a pause source,
+which blockers remain active, and whether auto-resume is possible. Disabling
+governance clears a governance-owned pause on the next tick. Loosening or
+tightening thresholds takes effect at the same next-tick evaluation boundary.

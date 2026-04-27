@@ -341,6 +341,10 @@ Use intervention commands only when the runtime state actually justifies them:
 - Usage governance is disabled by default. When enabled, it evaluates between
   stages, can pause via the `usage_governance` pause source, and can auto-resume
   only when active governance blockers clear.
+- Governance config changes apply through `config reload`, then become visible
+  on the next runtime tick through `millrace status` and basic-monitor
+  governance lines. Do not expect `config reload` itself to summarize whether a
+  governance pause cleared or remained.
 - New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
   `runners.default_runner = "codex_cli"`.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.

@@ -13,7 +13,11 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
-No unreleased changes recorded yet.
+### Changed
+
+- Clarified usage-governance documentation now that the auto-pause/resume
+  feature has shipped, including the next-tick status/monitor visibility model
+  for governance changes after `config reload`.
 
 ## [0.15.6] - 2026-04-27
 

@@ -104,9 +104,11 @@ Expected user impact:
 
 Millrace now has an opt-in usage-governance surface for between-stage runtime
 token accounting, subscription-quota checks, governance-owned pause sources, and
-auto-resume when all active blockers clear. Active work is focused on hardening
-those rules, keeping the status/monitor output understandable, and validating
-real runner telemetry across longer daemon sessions.
+auto-resume when all active blockers clear. The v1 surface shipped in
+`0.15.4`, with follow-on documentation and asset coverage in `0.15.5`. Ongoing
+work is focused on hardening real-runner telemetry across longer daemon
+sessions and keeping the status/monitor output understandable as the runtime
+stabilizes.
 
 Expected user impact:
 

@@ -246,6 +246,9 @@ Pause/resume behavior:
 - `resume` does not bypass an active `usage_governance` pause source; the
   command reports that resume is blocked by usage governance until the active
   blocker clears or governance config changes.
+- `reload-config` does not print a governance-specific cleared/remained
+  summary. Governance changes are evaluated on the next runtime tick and are
+  visible through `millrace status` and the basic daemon monitor.
 
 ## Planning Commands
 
@@ -278,6 +281,11 @@ snapshot state and runtime events. If recompile fails but the last-known-good
 plan still matches current compile inputs, Millrace keeps that plan active. If
 current compile inputs have drifted and the last-known-good plan is stale, the
 reload is refused instead of continuing on the stale plan.
+
+Usage-governance config is next-tick runtime state. A successful reload makes
+new governance settings available to the next tick; `millrace status` and the
+basic daemon monitor show whether a governance-owned pause cleared, remained,
+or was newly applied.
 
 ## Compile + Modes Commands
 

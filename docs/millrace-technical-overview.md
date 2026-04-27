@@ -578,6 +578,12 @@ token rules, and can optionally consult Codex ChatGPT OAuth subscription quota
 telemetry. Status and monitor surfaces expose the active blockers and whether
 auto-resume is possible.
 
+Usage-governance config changes are next-tick runtime changes. `config reload`
+reports reload routing and compile status; the following tick evaluates the new
+governance settings. Operators should use `millrace status` or the basic daemon
+monitor to see whether a governance-owned pause cleared, remained, or was newly
+applied.
+
 ## Watchers, Intake, And Queue Entry
 
 Millrace can intake work through queue-import surfaces and watcher-driven idea

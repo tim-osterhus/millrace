@@ -84,12 +84,14 @@ It wraps long-horizon work in a real runtime:
   handoffs
 - Arbiter activates only when the scheduler finds no lineage work left and
   closure behavior is actually ready
-- optional usage governance can pause and auto-resume between stages when
-  configured token or subscription quota rules are reached
+- the shipped v1 usage-governance surface can pause and auto-resume between
+  stages when configured token or subscription quota rules are reached
 - runtime startup and config reload refuse to keep running on a stale
   last-known-good plan when current compile inputs no longer match
 - opt-in usage governance can pause between stages from token or subscription
   quota rules without clearing operator-owned pauses
+  and applies config-reload changes at the next runtime tick with status/monitor
+  visibility
 
 The shipped core already includes separate planning and execution loops, typed
 terminal results, compiler-governed completion behavior, and persisted run
