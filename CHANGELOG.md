@@ -13,6 +13,14 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+No unreleased changes recorded yet.
+
+## [0.15.5] - 2026-04-27
+
+`0.15.5` carries forward the runtime docs, entrypoint assets, and asset-policy
+coverage that were intended to ship with the usage-governance release, and fixes
+the type annotations caught by the main-branch guardrails.
+
 ### Added
 
 - Added opt-in usage governance configuration and runtime evaluation for
@@ -41,6 +49,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 - Tightened entrypoint asset lint so unknown optional secondary skill
   references fail instead of being accepted as placeholders.
+- Fixed usage-governance pause-source type annotations so the package passes
+  the repository MyPy guardrail on Python 3.11 and 3.12.
 
 ## [0.15.4] - 2026-04-27
 
@@ -315,7 +325,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.4...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.5...HEAD
+[0.15.5]: https://github.com/tim-osterhus/millrace/compare/v0.15.4...v0.15.5
 [0.15.4]: https://github.com/tim-osterhus/millrace/compare/v0.15.3...v0.15.4
 [0.15.3]: https://github.com/tim-osterhus/millrace/compare/v0.15.2...v0.15.3
 [0.15.2]: https://github.com/tim-osterhus/millrace/compare/v0.15.1...v0.15.2

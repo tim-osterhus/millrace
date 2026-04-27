@@ -110,7 +110,7 @@ def test_runtime_startup_emits_lifecycle_context(tmp_path: Path) -> None:
     started = next(event for event in monitor.events if event.event_type == "runtime_started")
     assert started.payload["compiled_plan_currentness"] == "current"
     assert started.payload["baseline_manifest_id"]
-    assert started.payload["baseline_seed_package_version"] == "0.15.4"
+    assert started.payload["baseline_seed_package_version"] == "0.15.5"
     assert "execution" in started.payload["loop_ids_by_plane"]
     assert "status_markers_by_plane" in started.payload
     assert "queue_depths_by_plane" in started.payload

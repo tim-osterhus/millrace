@@ -21,7 +21,7 @@ def test_basic_terminal_monitor_renders_startup_context_lines() -> None:
                 "compiled_plan_id": "plan-123",
                 "compiled_plan_currentness": "current",
                 "baseline_manifest_id": "baseline-abc",
-                "baseline_seed_package_version": "0.15.4",
+                "baseline_seed_package_version": "0.15.5",
                 "loop_ids_by_plane": {
                     "execution": "execution.standard",
                     "planning": "planning.standard",
@@ -47,7 +47,7 @@ def test_basic_terminal_monitor_renders_startup_context_lines() -> None:
 
     output = stream.getvalue()
     assert "runtime started mode=learning_codex plan=plan-123 currentness=current" in output
-    assert "baseline manifest=baseline-abc seed_package=0.15.4" in output
+    assert "baseline manifest=baseline-abc seed_package=0.15.5" in output
     assert "concurrency" in output
     assert "snapshot status execution=IDLE planning=IDLE learning=IDLE" in output
 
