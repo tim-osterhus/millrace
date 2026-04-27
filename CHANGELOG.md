@@ -45,6 +45,10 @@ This file starts at `0.13.0`, the current documented public baseline.
   result-class policy truth in `contracts/stage_metadata.py`; runner requests,
   normalization helpers, entrypoint linting, graph stage lookup, and built-in
   stage-kind asset validation now derive from that registry.
+- Converted `assets/entrypoints.py` into the `assets/entrypoints/` package,
+  preserving the public facade while separating manifest models, path
+  discovery, markdown parsing, advisory skill-reference checks, lint policy,
+  and diagnostic rendering.
 
 ## [0.15.6] - 2026-04-27
 

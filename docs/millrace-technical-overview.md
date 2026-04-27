@@ -125,6 +125,12 @@ and result-class policy derive from there for contracts, runner prompts,
 normalization, graph lookup, entrypoint linting, and built-in stage-kind asset
 validation.
 
+Entrypoint assets live under `src/millrace_ai/assets/entrypoints/`, which is
+also the Python package that parses and lints those markdown manifests. Parsing,
+asset path inference, advisory skill-reference checks, lint policy, and
+diagnostic rendering are split into named modules behind the
+`millrace_ai.assets.entrypoints` facade.
+
 ### 2. Runtime/state artifacts
 
 These are machine-owned, typed state and runtime outputs such as:

@@ -18,7 +18,7 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/config.py` | `src/millrace_ai/config/models.py`, `src/millrace_ai/config/loading.py`, `src/millrace_ai/config/boundaries.py` | `millrace_ai.config` is now a package surface; usage-governance config models live in `models.py` and apply on next-tick boundaries. |
 | `millrace_ai/contracts.py` | `src/millrace_ai/contracts/__init__.py`, `base.py`, `enums.py`, `stage_metadata.py`, `token_usage.py`, `work_documents.py`, `stage_results.py`, `loop_config.py`, `modes.py`, `compile_diagnostics.py`, `runtime_snapshot.py`, `runtime_errors.py`, `mailbox.py`, `recovery.py` | `millrace_ai.contracts` remains the public facade for canonical typed contracts; named submodules own contract families, and `stage_metadata.py` is the single typed registry for stage plane membership, legal terminal results, runner prompt markers, and result-class policy. |
 | `millrace_ai/compiler.py` | `src/millrace_ai/compiler.py`, `src/millrace_ai/compilation/` | `millrace_ai.compiler` remains the public facade; compiler outcomes, workspace compile orchestration, graph preview, mode/path resolution, graph and node materialization, policy compilation, asset resolution, fingerprints, persistence, and currentness inspection live in `compilation/`. |
-| `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints.py` | Root `entrypoints.py` remains a thin compatibility facade. |
+| `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints/__init__.py`, `models.py`, `discovery.py`, `parsing.py`, `advisory.py`, `linting.py`, `rendering.py` | Root `entrypoints.py` remains a thin compatibility facade; packaged markdown entrypoint assets live in the same `assets/entrypoints/` directory under `execution/`, `planning/`, and `learning/`. |
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
 | `millrace_ai/stage_kinds.py` | `src/millrace_ai/assets/architecture.py`, `src/millrace_ai/architecture/stage_kinds.py` | Root `stage_kinds.py` is the thin public facade for stage-kind registry loading. |
 | `millrace_ai/loop_graphs.py` | `src/millrace_ai/assets/loop_graphs.py`, `src/millrace_ai/architecture/loop_graphs.py` | Root `loop_graphs.py` is the thin public facade for graph-loop loading. |
@@ -116,6 +116,11 @@ cycles:
   Runner request defaults, terminal-result normalization, entrypoint stage
   linting, graph stage lookup, and built-in stage-kind asset validation derive
   plane, marker, and result-class truth from that registry.
+- `assets/entrypoints/` is both the packaged entrypoint asset directory and the
+  entrypoint asset parsing package. Models, path discovery, markdown
+  frontmatter parsing, advisory skill-reference checks, lint policy, and
+  diagnostic rendering now have separate module ownership behind the stable
+  `millrace_ai.assets.entrypoints` facade.
 
 ## Runner Package Notes
 
