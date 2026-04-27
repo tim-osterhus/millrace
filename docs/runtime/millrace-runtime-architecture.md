@@ -14,6 +14,9 @@ for the shipped mode and loop topology the compiler resolves.
 - importable package code lives under `src/millrace_ai/`
 - runtime-facing domains are split across `assets/`, `cli/`, `config/`, `runners/`, `runtime/`, and `workspace/`
 - tests mirror those ownership boundaries under `tests/assets/`, `tests/cli/`, `tests/config/`, `tests/runners/`, `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
+- cross-cutting source guardrails live in `tests/test_import_cycles.py` and
+  `tests/test_source_hygiene.py` so import cycles and ownership-boundary drift
+  fail in the normal pytest suite
 - `docs/source-package-map.md` records the old-to-new module mapping and the root facades intentionally preserved for compatibility
 
 ## Workspace Ownership Model

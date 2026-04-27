@@ -13,6 +13,14 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added ADR-0007, ADR-0008, and ADR-0009 to record the runtime authority
+  package, contract facade, and stage metadata decisions behind the cleanup.
+- Added source hygiene guardrails for dependency direction, contract-layer
+  imports, path-only workspace modeling, generic helper modules, and wildcard
+  imports.
+
 ### Changed
 
 - Clarified usage-governance documentation now that the auto-pause/resume

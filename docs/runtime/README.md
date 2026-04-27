@@ -23,6 +23,9 @@ runtime references, start with `../millrace-technical-overview.md`.
 - `millrace-entrypoint-mapping.md`: packaged-source-to-deployed-workspace entrypoint mapping and skill-only advisory expectations.
 - `millrace-runtime-error-codes.md`: runtime-owned post-stage failure codes consumed by repair-oriented stages.
 - `../source-package-map.md`: old-to-new module mapping and intentionally preserved compatibility facades for maintainers.
+- `../adr/`: accepted architecture decisions, including the compiled-plan,
+  workspace-baseline, runtime-authority-package, contract-facade, and
+  stage-metadata decisions.
 
 ## Suggested Reading Order
 
@@ -43,4 +46,10 @@ runtime references, start with `../millrace-technical-overview.md`.
 uv run --extra dev python -m pytest -q
 uv run --with ruff ruff check src/millrace_ai tests
 uv run --with mypy mypy src/millrace_ai
+```
+
+During package-boundary refactors, also run the focused guardrail suite:
+
+```bash
+uv run --extra dev python -m pytest tests/test_import_cycles.py tests/test_source_hygiene.py -q
 ```

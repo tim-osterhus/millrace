@@ -695,6 +695,12 @@ there are still top-level modules such as `millrace_ai.paths`,
 `millrace_ai.state_store`, `millrace_ai.runner`, and `millrace_ai.runtime_lock`
 that re-export newer package-local implementations.
 
+Source-layout guardrails now live in `tests/test_import_cycles.py` and
+`tests/test_source_hygiene.py`. They are intentionally narrow: no concrete
+local import cycles, no lower-level imports from `cli`, no contract imports from
+higher-level domains, path-only workspace modeling, no new generic helper
+modules, and no wildcard imports.
+
 ## Where To Go Next
 
 Use this document as the front door, then drop into the narrower references when

@@ -161,6 +161,7 @@ layer, not as a third duplicated mode asset file.
 | `src/millrace_ai/workspace/` | `tests/workspace/` |
 | Cross-cutting operator/runtime flows | `tests/integration/` |
 | Import graph hygiene | `tests/test_import_cycles.py` |
+| Source ownership hygiene | `tests/test_source_hygiene.py` |
 
 ## Verification Commands
 
@@ -170,4 +171,10 @@ Use the same commands locally, in review artifacts, and in CI:
 uv run --extra dev python -m pytest -q
 uv run --with ruff ruff check src/millrace_ai tests
 uv run --with mypy mypy src/millrace_ai
+```
+
+For fast architecture-guardrail checks during source-layout refactors, run:
+
+```bash
+uv run --extra dev python -m pytest tests/test_import_cycles.py tests/test_source_hygiene.py -q
 ```
