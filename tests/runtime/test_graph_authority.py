@@ -31,6 +31,13 @@ from millrace_ai.runtime.graph_authority import (
 NOW = datetime(2026, 4, 23, tzinfo=timezone.utc)
 
 
+def test_graph_authority_public_exports_remain_importable() -> None:
+    import millrace_ai.runtime.graph_authority as graph_authority
+
+    for name in graph_authority.__all__:
+        assert hasattr(graph_authority, name), name
+
+
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
 
