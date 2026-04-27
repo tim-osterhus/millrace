@@ -37,6 +37,10 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Split compiler internals into the `compilation/` package while keeping
   `millrace_ai.compiler` as the stable public facade for compile, preview, and
   currentness APIs.
+- Converted `contracts.py` into the `contracts/` package facade, preserving
+  `millrace_ai.contracts` imports while separating enums, stage metadata,
+  work documents, stage results, loop/mode contracts, runtime snapshots,
+  mailbox envelopes, compiler diagnostics, and recovery counters.
 
 ## [0.15.6] - 2026-04-27
 

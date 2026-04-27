@@ -49,7 +49,9 @@ Compatibility alias:
 
 ## What A Legacy Loop Defines
 
-Loop assets validate as `LoopConfigDefinition` in `src/millrace_ai/contracts.py`.
+Loop assets validate as `LoopConfigDefinition` through the
+`millrace_ai.contracts` facade; the implementation lives under
+`src/millrace_ai/contracts/loop_config.py`.
 
 Each loop defines:
 

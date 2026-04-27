@@ -114,6 +114,12 @@ canonical long-lived queue artifact is markdown.
 The runtime is therefore built around operator-facing documents that also
 satisfy typed contracts.
 
+The public Python contract surface is `millrace_ai.contracts`. Internally, that
+surface is a package under `src/millrace_ai/contracts/` so foundational enums,
+stage metadata, work documents, stage results, loop/mode definitions, runtime
+snapshots, mailbox envelopes, compiler diagnostics, and recovery counters can be
+reviewed independently while preserving the root import contract.
+
 ### 2. Runtime/state artifacts
 
 These are machine-owned, typed state and runtime outputs such as:

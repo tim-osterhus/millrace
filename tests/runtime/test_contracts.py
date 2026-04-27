@@ -41,7 +41,7 @@ def test_task_document_valid_minimal_payload() -> None:
     doc = TaskDocument(
         task_id="task-001",
         title="Implement contracts",
-        target_paths=["millrace/contracts.py"],
+        target_paths=["src/millrace_ai/contracts/"],
         acceptance=["contracts validate"],
         required_checks=["pytest tests/runtime/test_contracts.py -q"],
         references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],
@@ -134,7 +134,7 @@ def test_work_documents_accept_root_lineage_fields() -> None:
         title="Implement contracts",
         root_idea_id="idea-001",
         root_spec_id="spec-root-001",
-        target_paths=["millrace/contracts.py"],
+        target_paths=["src/millrace_ai/contracts/"],
         acceptance=["contracts validate"],
         required_checks=["pytest tests/runtime/test_contracts.py -q"],
         references=["lab/specs/drafts/millrace-typed-artifact-schemas.md"],

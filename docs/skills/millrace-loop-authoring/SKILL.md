@@ -33,7 +33,7 @@ it, inspect it, and test it.
 
 Before changing anything, load the relevant source-of-truth files:
 
-- `src/millrace_ai/contracts.py`
+- `src/millrace_ai/contracts/`
 - `src/millrace_ai/architecture/stage_kinds.py`
 - `src/millrace_ai/architecture/loop_graphs.py`
 - `src/millrace_ai/architecture/materialization.py`

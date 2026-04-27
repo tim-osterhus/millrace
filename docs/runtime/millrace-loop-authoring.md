@@ -18,7 +18,7 @@ Do not author loops from memory or from prompt prose.
 
 The authoritative sources are:
 
-- `src/millrace_ai/contracts.py`
+- `src/millrace_ai/contracts/`
 - `src/millrace_ai/architecture/stage_kinds.py`
 - `src/millrace_ai/architecture/loop_graphs.py`
 - `src/millrace_ai/architecture/materialization.py`
@@ -64,7 +64,8 @@ the graph surface is the canonical runtime source of truth.
 
 ## Legacy Loop JSON Rules
 
-A legacy loop must validate as `LoopConfigDefinition`.
+A legacy loop must validate as `LoopConfigDefinition` from the
+`millrace_ai.contracts` facade.
 
 That means:
 
@@ -85,7 +86,8 @@ it must point at another stage.
 
 ## Mode JSON Rules
 
-A mode must validate as `ModeDefinition`.
+A mode must validate as `ModeDefinition` from the `millrace_ai.contracts`
+facade.
 
 Today the important authoring rule is scope:
 

@@ -16,6 +16,7 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/runtime.py` | `src/millrace_ai/runtime/engine.py` plus `lifecycle.py`, `tick_cycle.py`, `activation.py`, `mailbox_intake.py`, `reconciliation.py`, `result_application.py`, `result_counters.py`, `work_item_transitions.py`, `handoff_incidents.py`, `stage_result_persistence.py`, `learning_triggers.py`, `skill_evidence.py`, `snapshot_state.py`, `outcomes.py`, `monitoring.py`, `pause_state.py`, `usage_governance/`, `graph_authority/`, `closure_transitions.py`, `stage_requests.py`, `watcher_intake.py`, and `inspection.py` | `millrace_ai.runtime` is now a package that re-exports `RuntimeEngine` and `RuntimeTickOutcome`; `engine.py` remains the stable façade while owned collaborators hold lifecycle, tick, outcome contracts, learning-trigger, monitor, pause-source, usage-governance, compiled-graph authority, and routed-mutation details. |
 | `millrace_ai/control.py` | `src/millrace_ai/runtime/control.py`, `src/millrace_ai/runtime/control_mailbox.py`, `src/millrace_ai/runtime/control_mutations.py` | Root `control.py` remains a thin compatibility facade. |
 | `millrace_ai/config.py` | `src/millrace_ai/config/models.py`, `src/millrace_ai/config/loading.py`, `src/millrace_ai/config/boundaries.py` | `millrace_ai.config` is now a package surface; usage-governance config models live in `models.py` and apply on next-tick boundaries. |
+| `millrace_ai/contracts.py` | `src/millrace_ai/contracts/__init__.py`, `base.py`, `enums.py`, `stage_metadata.py`, `token_usage.py`, `work_documents.py`, `stage_results.py`, `loop_config.py`, `modes.py`, `compile_diagnostics.py`, `runtime_snapshot.py`, `runtime_errors.py`, `mailbox.py`, `recovery.py` | `millrace_ai.contracts` remains the public facade for canonical typed contracts; named submodules own contract families and shared stage metadata. |
 | `millrace_ai/compiler.py` | `src/millrace_ai/compiler.py`, `src/millrace_ai/compilation/` | `millrace_ai.compiler` remains the public facade; compiler outcomes, workspace compile orchestration, graph preview, mode/path resolution, graph and node materialization, policy compilation, asset resolution, fingerprints, persistence, and currentness inspection live in `compilation/`. |
 | `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints.py` | Root `entrypoints.py` remains a thin compatibility facade. |
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
@@ -57,9 +58,8 @@ inspection surfaces.
 
 ## Intentionally Preserved Root Modules
 
-These modules remain at the package root because they still have one coherent reason to change or they define foundational contracts used across the package:
+These modules remain at the package root because they still have one coherent reason to change or they define foundational errors/adapters used across the package:
 
-- `src/millrace_ai/contracts.py`
 - `src/millrace_ai/doctor.py`
 - `src/millrace_ai/router.py`
 - `src/millrace_ai/watchers.py`
@@ -107,6 +107,11 @@ cycles:
   `millrace_ai.compiler` facade. Workspace compile orchestration, graph preview,
   materialization, validation, policy compilation, asset/fingerprint handling,
   persistence, and currentness inspection now have separate module ownership.
+- `contracts/` is the typed contract package behind the stable
+  `millrace_ai.contracts` facade. Enums, stage metadata, work documents,
+  stage-result envelopes, loop/mode definitions, compiler diagnostics, runtime
+  snapshots, runtime error contexts, mailbox payloads, and recovery counters
+  live in named modules with shared validators kept at the contract layer.
 
 ## Runner Package Notes
 
@@ -138,6 +143,7 @@ layer, not as a third duplicated mode asset file.
 | `src/millrace_ai/assets/` | `tests/assets/` |
 | `src/millrace_ai/cli/` | `tests/cli/` |
 | `src/millrace_ai/config/` | `tests/config/` |
+| `src/millrace_ai/contracts/` | `tests/runtime/test_contracts.py` |
 | `src/millrace_ai/runners/` | `tests/runners/` |
 | `src/millrace_ai/runtime/` | `tests/runtime/` |
 | `src/millrace_ai/workspace/` | `tests/workspace/` |
