@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from datetime import datetime, timezone
 
 import pytest
@@ -27,6 +28,13 @@ from millrace_ai.contracts import (
 )
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
+
+
+def test_contracts_public_exports_remain_importable() -> None:
+    contracts_module = importlib.import_module("millrace_ai.contracts")
+
+    for name in contracts_module.__all__:
+        assert hasattr(contracts_module, name), name
 
 
 def test_task_document_valid_minimal_payload() -> None:
