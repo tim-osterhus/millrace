@@ -22,6 +22,7 @@ Module entrypoint: `python -m millrace_ai`
 - `millrace control ...`
 - `millrace compile ...`
 - `millrace modes ...`
+- `millrace skills ...`
 - `millrace doctor`
 
 Compatibility aliases remain for top-level operator commands:
@@ -106,9 +107,9 @@ daemon summary output remains unchanged.
 `--monitor basic` prints a compact terminal stream for visible daemon sessions:
 startup lifecycle context, baseline/currentness identity, loop and concurrency
 policy, status/queue snapshots, stage start and completion lines, router
-decisions, run elapsed time, token usage, and usage-governance pause/resume or
-degraded-telemetry events. Monitor output is live-only and does not replace
-persisted runtime events or run artifacts.
+decisions, usage-governance pause/resume/degraded events, run elapsed time, and
+token usage. Monitor output is live-only and does not replace persisted runtime
+events or run artifacts.
 
 ## Status Commands
 
@@ -122,6 +123,8 @@ When a failure class is active, status also shows the current failure class plus
 The `execution_status_marker` and `planning_status_marker` fields show the
 currently running stage marker while a stage is executing, then fall back to
 the latest terminal marker or `### IDLE` when no stage is active on that plane.
+When a learning-enabled mode is active, status also includes
+`learning_status_marker` and `queue_depth_learning`.
 Status now also surfaces compiled-plan and managed-baseline identity:
 
 - `compiled_plan_id`
@@ -133,7 +136,7 @@ Status now also surfaces compiled-plan and managed-baseline identity:
 - `compile_input.*`
 - `persisted_compile_input.*`
 
-Status also surfaces usage-governance state:
+Status also surfaces pause and usage-governance context:
 
 - `pause_sources`
 - `usage_governance_enabled`
@@ -195,7 +198,7 @@ Prints the primary tailable artifact for one run. Millrace prefers the troublesh
 
 ### `millrace queue ls`
 
-Prints queue/active counts for execution and planning surfaces.
+Prints queue/active counts for execution, planning, and learning surfaces.
 
 ### `millrace queue show <WORK_ITEM_ID>`
 
@@ -230,7 +233,6 @@ Control routing behavior:
 
 - If daemon owns the workspace: command is mailbox-routed.
 - If no daemon owns the workspace: command applies directly.
-
 Pause/resume behavior:
 
 - `pause` adds the operator pause source.
@@ -290,7 +292,7 @@ Compiles and prints operator inspectability surface:
 - graph authority flags and graph entry surfaces
 - graph node request-binding surfaces
 - `compiled_plan_id`
-- execution/planning loop IDs
+- loop IDs by plane
 - `baseline_manifest_id`
 - `baseline_seed_package_version`
 - `compile_input.*`
@@ -320,6 +322,45 @@ Currentness interpretation:
 - `millrace compile validate` and `millrace compile show` both persist fresh compile diagnostics.
 - `compile_if_needed` style runtime paths reuse the persisted compiled plan only when its compile-input fingerprint still matches current inputs.
 - Runtime startup and `config reload` refuse to continue on a stale last-known-good plan when compile inputs have changed and recompilation fails.
+- `usage_governance.*` config fields apply on the next tick and do not require
+  a recompile.
+
+## Usage Governance Config
+
+Usage governance is disabled by default. When enabled, Millrace evaluates usage
+rules between stages and can pause the runtime with the `usage_governance`
+pause source.
+
+Top-level fields:
+
+- `usage_governance.enabled`
+- `usage_governance.auto_resume`
+- `usage_governance.evaluation_boundary` (`between_stages`)
+- `usage_governance.calendar_timezone`
+
+Runtime token rules:
+
+- `usage_governance.runtime_token_rules.enabled`
+- `usage_governance.runtime_token_rules.rules`
+
+Supported runtime token windows are `rolling_5h`, `calendar_week`,
+`daemon_session`, and `per_run`. The supported metric is `total_tokens`.
+Default enabled rules pause at `750000` total tokens over the rolling five-hour
+window and `5000000` total tokens over the configured calendar week.
+
+Subscription quota rules:
+
+- `usage_governance.subscription_quota_rules.enabled`
+- `usage_governance.subscription_quota_rules.provider`
+- `usage_governance.subscription_quota_rules.degraded_policy`
+- `usage_governance.subscription_quota_rules.refresh_interval_seconds`
+- `usage_governance.subscription_quota_rules.rules`
+
+The current subscription provider is `codex_chatgpt_oauth`, which reads
+best-effort local Codex token-count telemetry. Subscription quota checks are
+disabled by default and fail open by default when telemetry is unavailable.
+Default subscription rules, when enabled, pause at 95 percent usage for the
+`five_hour` and `weekly` windows.
 
 ### `millrace modes list`
 
@@ -328,6 +369,27 @@ Lists built-in modes and loop references.
 ### `millrace modes show MODE_ID`
 
 Prints one mode definition summary.
+
+## Skills Commands
+
+The `millrace skills` command group manages the optional skill workflow and the
+learning-plane skill-improvement surface.
+
+Common commands:
+
+- `millrace skills ls`
+- `millrace skills show <SKILL_ID>`
+- `millrace skills search <QUERY>`
+- `millrace skills install <SOURCE>`
+- `millrace skills create ...`
+- `millrace skills improve ...`
+- `millrace skills promote ...`
+- `millrace skills export ...`
+
+Create/improve workflows require a learning-enabled mode such as
+`learning_codex` or `learning_pi` because they enqueue learning requests for the
+Analyst/Professor/Curator loop. Install/list/show/search can be used for the
+deployed skill surface without changing the active runtime mode.
 
 ## Doctor Command
 

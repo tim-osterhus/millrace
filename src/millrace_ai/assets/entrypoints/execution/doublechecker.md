@@ -42,7 +42,7 @@ Before expectations are written:
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -51,10 +51,8 @@ Before expectations are written:
 
 ## Optional Secondary Skills
 
-- `playwright-ui-verification` (deferred; not shipped in runtime assets) when deterministic UI verification is required
-- `frontend-review` (deferred; not shipped in runtime assets) when the task is frontend-heavy and visual/design correctness matters
-- `codebase-audit-doc` (deferred; not shipped in runtime assets) when the fix path requires unusually deep correctness review
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise doublecheck summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 

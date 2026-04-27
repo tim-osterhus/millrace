@@ -18,6 +18,9 @@ recommended_for_stages:
   - mechanic
   - auditor
   - arbiter
+  - analyst
+  - professor
+  - curator
 forbidden_claims:
   - queue_selection
   - routing
@@ -45,8 +48,8 @@ Runtime shipping notes:
 - Shipped shared reusable skills live under `skills/shared/<skill-id>/SKILL.md`.
 - `marathon-qa-audit` is the shipped shared deep-audit skill currently used by `checker` and `arbiter` when a normal narrow pass is not enough.
 - Shipped stage-core skills use the hybrid format with thin manifest frontmatter for identity and structured markdown sections in the body for the actual guidance.
-- Deferred skill assets remain metadata-light until they are shipped into the same hybrid contract.
 - Stage-core skills live under `skills/stage/<plane>/<stage>-core/SKILL.md`.
 - Each stage-core skill should stay narrow: posture, heuristics, traps, evidence discipline, and optional-skill triggers only.
-- Additional optional skill references in entrypoints should be marked as deferred until shipped.
+- Additional optional skills should be referenced only after they are shipped in the runtime package or installed into the active workspace.
+- Supported downloadable optional skills are listed at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
 - Arbiter stage-core guidance should stay focused on rubric discipline, parity judgment, and remediation handoff posture rather than runtime authority.

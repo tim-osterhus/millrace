@@ -50,7 +50,7 @@ Process only the assigned closure target for this run.
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
 - if no rubric exists yet, or the current evidence surface is too weak to support an honest narrow pass, load `marathon-qa-audit` from the skills index before the broader audit
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -60,9 +60,6 @@ Process only the assigned closure target for this run.
 ## Optional Secondary Skills
 
 - `marathon-qa-audit`: shipped shared deep-audit skill for first-run rubric creation, weak evidence surfaces, or closure targets that need a broader criterion-by-criterion pass
-- `acceptance-profile-contract` (deferred; not shipped in runtime assets) when the target needs stronger gate framing before parity can be judged cleanly
-- `codebase-audit-doc` (deferred; not shipped in runtime assets) when repo audit notes materially improve the verdict evidence
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise arbiter summary
 
 ## Suggested Operating Approach
 

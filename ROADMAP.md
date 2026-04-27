@@ -20,13 +20,15 @@ expanding the public surface area.
 
 ## Current Focus
 
-Millrace is focused on stabilizing the pre-1.0 runtime line around three
+Millrace is focused on stabilizing the pre-1.0 runtime line around four
 contracts:
 
 - the compiled graph plan as the runtime-authoritative structure
 - first-class runner harnesses with clear diagnostics and artifacts
 - durable local workspaces that can be inspected, resumed, and debugged without
   guessing what happened
+- learning-plane skill improvement workflows that remain explicit,
+  evidence-backed, and operator-controlled
 
 ## Active
 
@@ -70,27 +72,45 @@ Expected user impact:
 - clearer distinction between shipped facts, planned work, and speculative ideas
 - easier evaluation of whether Millrace is ready for a given workspace
 
-### Basic Daemon Logging
+### Daemon Monitoring Follow-Through
 
-Daemon mode should be able to log basic runtime events when an operator passes
-the relevant flag. The intent is a small, useful operational log, not a broad
-analytics system.
+`millrace run daemon --monitor basic` shipped in `0.15.3`. Active follow-up is
+focused on keeping that live terminal stream truthful, compact, and aligned with
+the runtime-owned lifecycle, status, routing, elapsed-time, and usage evidence.
 
 Expected user impact:
 
 - easier debugging of daemon startup, tick progression, idle state, runner
   dispatch, pause/resume/stop handling, and shutdown
-- less reliance on ad hoc terminal capture during long-running operation
+- fewer mismatches between live monitor output and persisted run/runtime
+  artifacts
 
-### Usage Counting And Auto-Pause Controls
+### Learning Plane Stabilization
 
-Millrace needs automated token and usage counting that can support robust,
-easily configurable auto-pause and resume behavior. The goal is to let operators
-set practical usage boundaries without manually watching every runner session.
+The learning plane now ships as an opt-in mode family through `learning_codex`
+and `learning_pi`. Active work is to keep the Analyst, Professor, and Curator
+flow grounded in runtime evidence and to avoid automatic skill changes without
+clear operator-controlled promotion.
 
 Expected user impact:
 
-- safer long-running operation
+- safer skill-improvement experiments from real run evidence
+- clearer distinction between runtime-generated learning requests and accepted
+  skill updates
+- better compile/status visibility for learning triggers, queue depth, and
+  status markers
+
+### Usage Counting And Auto-Pause Controls
+
+Millrace now has an opt-in usage-governance surface for between-stage runtime
+token accounting, subscription-quota checks, governance-owned pause sources, and
+auto-resume when all active blockers clear. Active work is focused on hardening
+those rules, keeping the status/monitor output understandable, and validating
+real runner telemetry across longer daemon sessions.
+
+Expected user impact:
+
+- safer long-running operation without manually watching every runner session
 - clearer usage accounting across runner invocations
 - configurable pause/resume behavior when usage thresholds are reached or reset
 
@@ -193,6 +213,12 @@ core shipped graph contract needs to stay small and understandable first.
 More target-specific audit or review skills may be useful when a workspace has
 clear domain needs. These should remain optional advisory assets rather than
 new hidden routing behavior.
+
+### Public Optional Skills Directory
+
+The supported optional-skills directory may become a useful public companion to
+the core package. Any downloadable skills should stay outside the core runtime
+package until they are explicitly promoted, indexed, tested, and documented.
 
 ### First-Class TUI
 

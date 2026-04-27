@@ -10,7 +10,7 @@ The runtime contract stays:
 
 Use `docs/runtime/millrace-compiler-and-frozen-plans.md` and
 `docs/runtime/millrace-modes-and-loops.md` for the compile-time surfaces that
-freeze `runner_name`, `model_name`, and other stage-plan fields before runner
+freeze `runner_name`, `model_name`, and other compiled node fields before runner
 dispatch happens.
 Those compile-time surfaces now also define the identity that runtime requests
 and run inspection carry forward: `mode_id`, `compiled_plan_id`, `node_id`, and
@@ -55,7 +55,7 @@ Unknown names fail fast via `UnknownRunnerError`.
 
 In practice, that means there are two distinct moments:
 
-1. compile decides what runner name is attached to a frozen stage-plan
+1. compile decides what runner name is attached to a compiled node binding
 2. dispatch decides which adapter to execute from the resolved request
 
 The same split applies to runtime identity:
@@ -68,6 +68,9 @@ The shipped canonical modes make that explicit:
 
 - `default_codex` binds every shipped stage to `codex_cli`
 - `default_pi` binds every shipped stage to `pi_rpc`
+- `learning_codex` binds execution, planning, and learning stages to
+  `codex_cli`
+- `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 

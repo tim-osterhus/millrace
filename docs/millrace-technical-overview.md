@@ -55,11 +55,12 @@ Millrace has five layers:
 In practice:
 
 - the operator points Millrace at a workspace
-- Millrace bootstraps `millrace-agents/` under that workspace
+- `millrace init` creates the managed `millrace-agents/` baseline under that
+  workspace
 - config, modes, loops, entrypoints, and skills are compiled into one frozen
   run plan
 - each tick processes control input, intake, reconciliation, claim or
-  activation, at most one stage run, and authoritative result application
+  activation, a governed stage run, and authoritative result application
 - all meaningful artifacts are persisted so later ticks and later operators can
   inspect real state instead of reconstructing it
 
@@ -104,6 +105,7 @@ These are the queue-facing markdown documents that represent managed work:
 - `millrace-agents/tasks/{queue,active,done,blocked}/*.md`
 - `millrace-agents/specs/{queue,active,done,blocked}/*.md`
 - `millrace-agents/incidents/{incoming,active,resolved,blocked}/*.md`
+- `millrace-agents/learning/requests/{queue,active,done,blocked}/*.md`
 
 They are human-readable markdown documents with headed sections, not raw JSON
 blobs. JSON remains acceptable as an import format for intake, but the
@@ -122,6 +124,8 @@ These are machine-owned, typed state and runtime outputs such as:
 - `millrace-agents/state/compile_diagnostics.json`
 - `millrace-agents/state/execution_status.md`
 - `millrace-agents/state/planning_status.md`
+- `millrace-agents/state/learning_status.md`
+- `millrace-agents/state/baseline_manifest.json`
 - `millrace-agents/state/usage_governance_state.json`
 - `millrace-agents/state/usage_governance_ledger.jsonl`
 - mailbox command envelopes and archives
@@ -139,13 +143,13 @@ every handoff. It compiles those inputs into one frozen, inspectable plan first.
 The compiler resolves:
 
 - which mode is active
-- which execution loop is active
-- which planning loop is active
+- which loop is active for each selected plane
 - which entrypoint path each stage uses
 - which required stage-core skills attach to each stage
 - which optional attached skills were added at compile time
 - which runner/model/timeout each stage will use
 - whether a completion behavior exists and what it freezes
+- whether learning trigger rules or plane-concurrency policy exist
 - which shipped stage-kind and graph-loop assets materialize into the graph
   control-flow plan
 
@@ -156,15 +160,16 @@ recovery policies, and explicit terminal semantics. The live runtime executes
 stage-request construction, claim activation, closure-target activation,
 recovery, and post-stage routing from that compiled plan.
 
-The compiler currently ships with two canonical built-in modes and baseline
-built-in loops per plane:
+The compiler currently ships with baseline and learning-enabled built-in modes:
 
-- modes: `default_codex`, `default_pi`
+- baseline modes: `default_codex`, `default_pi`
+- learning-enabled modes: `learning_codex`, `learning_pi`
 - execution loop: `execution.standard`
 - planning loop: `planning.standard`
+- learning loop: `learning.standard`
 
 `standard_plain` remains accepted as a compatibility alias that canonicalizes to
-`default_codex` before compile diagnostics, frozen-plan ids, and runtime
+`default_codex` before compile diagnostics, compiled-plan ids, and runtime
 snapshot state are written.
 
 Compile output is operator-visible through `millrace compile validate` and
@@ -172,14 +177,18 @@ Compile output is operator-visible through `millrace compile validate` and
 
 For compile-time proof work, the package also exposes a graph preview surface
 that can materialize a discovered graph loop without adding it to the shipped
-frozen stage-plan tables.
+compiled plan contract.
 
-## Modes, Loops, And Frozen Stage Plans
+## Modes, Loops, And Compiled Plans
 
-The runtime has two planes:
+The baseline runtime modes have two planes:
 
 - execution
 - planning
+
+Learning-enabled modes add a third plane:
+
+- learning
 
 Each plane is currently described in two parallel ways:
 
@@ -187,7 +196,7 @@ Each plane is currently described in two parallel ways:
 2. graph-loop assets in `src/millrace_ai/assets/graphs/` over stage
    kinds declared in `src/millrace_ai/assets/registry/stage_kinds/`
 
-The legacy loop assets still define the frozen stage-plan surface. They declare:
+The legacy loop assets remain packaged inspection surfaces. They declare:
 
 - the stages present in that plane
 - the plane entry stage
@@ -205,23 +214,35 @@ The graph-loop assets describe the same shipped topology in a richer node model:
 The compiler now materializes one `CompiledRunPlan` in `compiled_plan.json` for
 both runtime request binding and control flow.
 
-The selected mode connects the two loops and can add compile-time overrides such
-as:
+The selected mode connects the active loops through `loop_ids_by_plane` and can
+add compile-time overrides such as:
 
 - stage entrypoint overrides
 - stage skill additions
 - stage model bindings
 - stage runner bindings
+- plane concurrency policy
+- learning trigger rules
 
 In the shipped baseline, that runner binding map is how harness choice is
 expressed:
 
 - `default_codex` binds all shipped stages to `codex_cli`
 - `default_pi` binds all shipped stages to `pi_rpc`
+- `learning_codex` binds execution, planning, and learning stages to
+  `codex_cli`
+- `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 
 The loop topology does not fork just because the harness changes.
 
-The compiler then materializes one `CompiledRunPlan`, whose graph nodes record
+The learning modes preserve execution/planning mutual exclusion and freeze a
+plane concurrency policy into the compiled plan for operator visibility and
+future scheduler authority. The current tick executor still owns one active
+stage at a time. Learning trigger rules can enqueue targeted learning requests
+from runtime evidence, for example a Curator request after a successful
+Doublechecker pass or an Analyst request after troubleshooting/consultation.
+
+The compiler materializes one `CompiledRunPlan`, whose graph nodes record
 the exact runtime execution contract the engine will use later:
 
 - node id
@@ -282,11 +303,25 @@ is part of the planning loop topology but is not a normal queued successor. It
 is activated by completion behavior when backlog drain makes closure evaluation
 possible.
 
+The current learning loop is:
+
+- `analyst`
+- `professor`
+- `curator`
+
+Learning is opt-in through `learning_codex` or `learning_pi`. Its normal path is
+Analyst evidence analysis, Professor synthesis, then Curator acceptance and
+skill-update curation. It can terminate with `CURATOR_COMPLETE` or `BLOCKED`.
+Learning requests live under `millrace-agents/learning/requests/`, and targeted
+requests can start at a specific learning stage when a compiler-frozen trigger
+rule says that stage is the right entry point.
+
 The phase-1 graph loops make the shipped intake mapping explicit:
 
 - execution graph: `task -> builder`
 - planning graph: `spec -> planner`
 - planning graph: `incident -> auditor`
+- learning graph: `learning_request -> analyst`
 
 ## Runner Baselines
 
@@ -313,14 +348,17 @@ A tick follows this broad order:
 1. drain mailbox commands
 2. consume watcher or polling intake events
 3. refresh queue depths
-4. evaluate usage governance and respect stop/pause control gates
-5. run stale/impossible-state reconciliation
-6. claim or continue active work
-7. if nothing is claimable, evaluate completion behavior
-8. re-check usage governance at the stage dispatch boundary
-9. execute at most one stage through the configured runner
-10. normalize the result and apply the router decision
-11. persist snapshot, status markers, counters, events, and usage accounting
+4. respect stop control gates
+5. evaluate usage governance before paused work can continue
+6. respect pause control gates
+7. run stale/impossible-state reconciliation
+8. claim or continue active work
+9. if nothing is claimable, evaluate completion behavior
+10. return idle if no stage is active
+11. evaluate usage governance again before dispatching a stage
+12. execute at most one stage through the configured runner
+13. normalize the result and apply the router decision
+14. record post-stage usage and persist snapshot, status markers, counters, and events
 
 In code, that is no longer implemented as one monolithic runtime script.
 `RuntimeEngine` remains the stable stateful façade, while internal collaborators
@@ -347,14 +385,16 @@ snapshot:
 
 Those fields are authoritative for in-flight ownership.
 
-Millrace also maintains two text status markers:
+Millrace also maintains plane status markers:
 
 - `millrace-agents/state/execution_status.md`
 - `millrace-agents/state/planning_status.md`
+- `millrace-agents/state/learning_status.md` when learning assets are active
 
 These are active-stage-aware surfaces, not just idle-or-terminal markers. While
 a stage is executing on a plane, that plane's marker reflects the current
-running stage, for example `### BUILDER_RUNNING` or `### ARBITER_RUNNING`. When
+running stage, for example `### BUILDER_RUNNING`, `### ARBITER_RUNNING`, or
+`### ANALYST_RUNNING`. When
 no stage is active on that plane, the marker falls back to the latest terminal
 marker or `### IDLE`.
 
@@ -366,8 +406,8 @@ agents.
 Millrace separates runtime ownership from stage reasoning by using typed stage
 requests plus advisory entrypoint and skill assets.
 
-At execution time the runtime builds a `StageRunRequest` from the active frozen
-stage plan and the current active work item or closure target. That request
+At execution time the runtime builds a `StageRunRequest` from the active
+compiled node plan and the current active work item or closure target. That request
 includes the deployed entrypoint path, required and attached skill paths, work
 item identity and path when applicable, run directory, status and snapshot
 paths, runtime-error context when present, and runner/model/timeout fields.
@@ -376,11 +416,15 @@ Entrypoints are plain markdown files under:
 
 - `millrace-agents/entrypoints/execution/*.md`
 - `millrace-agents/entrypoints/planning/*.md`
+- `millrace-agents/entrypoints/learning/*.md`
 
 Skills are advisory assets under `millrace-agents/skills/`. The shipped model is
 skill-only, not role-plus-skill. Each stage has one required stage-core skill,
-and entrypoints may direct agents to load additional optional skills from the
-shipped `skills_index.md` when relevant.
+and entrypoints may direct agents to load additional optional skills only when
+those skills are packaged or installed into the deployed skills surface.
+`millrace-agents/skills/skills_index.md` lists packaged skills and points to the
+supported downloadable optional-skills directory at
+`https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
 
 The runtime controls which advisory assets are available and attached, but the
 stage still does the substantive reasoning work inside its own contract.
@@ -393,9 +437,9 @@ adapter. The runtime boundary is intentionally narrow:
 - input: `StageRunRequest`
 - output: `RunnerRawResult`
 
-The built-in shipped adapter is the Codex CLI adapter, but the architecture is
-set up so alternative adapters can be added later without rewriting
-orchestration.
+The built-in shipped adapters are the Codex CLI adapter and the Pi RPC adapter,
+and the architecture is set up so additional adapters can be added later without
+rewriting orchestration.
 
 Each stage run produces a run directory under
 `millrace-agents/runs/<run-id>/`. It can contain:
@@ -521,15 +565,18 @@ workspace, the control layer can apply the action directly.
 This avoids making operators or ops agents manually edit runtime-owned state to
 recover a deployed instance.
 
-Usage governance is a runtime control surface, not a compiler feature. It is
-default-off, configured under `[usage_governance]`, and evaluated between
-stages. Runtime token rules count persisted stage-result token usage into
-`usage_governance_ledger.jsonl`; optional subscription quota rules read
-best-effort local Codex quota telemetry. When a rule blocks execution, the
-runtime adds a `usage_governance` pause source. Operator pause and governance
-pause are separate sources, so `resume` clears only operator intent and cannot
-bypass an active quota blocker. Status and the basic daemon monitor both expose
-the active blockers and degraded telemetry state.
+Pauses now carry sources. Operator pause/resume controls own the `operator`
+pause source. Opt-in usage governance owns the `usage_governance` pause source.
+That split lets a governance pause block execution without erasing an operator
+pause, and lets auto-resume clear only governance-owned pauses when the active
+usage blockers have expired.
+
+Usage governance is disabled by default. When enabled, it evaluates between
+stages, records token usage from stage-result artifacts into a durable ledger,
+can apply rolling five-hour, calendar-week, daemon-session, and per-run runtime
+token rules, and can optionally consult Codex ChatGPT OAuth subscription quota
+telemetry. Status and monitor surfaces expose the active blockers and whether
+auto-resume is possible.
 
 ## Watchers, Intake, And Queue Entry
 
@@ -563,11 +610,13 @@ first. The main operator surfaces are:
 - `millrace runs tail <RUN_ID>`
 - `millrace compile validate`
 - `millrace compile show`
+- `millrace skills ...`
 - `millrace doctor`
 
 Use `status` for current runtime snapshot and closure visibility, `queue` for
 managed work documents, `runs` for post-run artifacts, `compile` for frozen
-structure, and `doctor` for integrity problems.
+structure, `skills` for installed/downloadable skill workflows, and `doctor` for
+integrity problems.
 
 ## Source Layout And Compatibility Facades
 
@@ -579,6 +628,11 @@ The source tree under `src/millrace_ai/` is deliberately split by ownership:
 - `runners/` for adapter dispatch and normalization
 - `runtime/` for orchestration logic, pause-source handling, and usage-governance accounting
 - `workspace/` for filesystem-backed state and queue primitives
+
+Recent runtime modules include the daemon monitor event surface, learning
+trigger evaluation, skill revision evidence snapshots, active snapshot reset
+helpers, usage-governance pause/accounting helpers, and explicit workspace
+baseline initialization/upgrade support.
 
 A set of thin root-module facades is intentionally preserved so older import
 surfaces still work while the package is internally modularized. That is why

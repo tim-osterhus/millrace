@@ -52,16 +52,18 @@ See [the standalone lifecycle chart](docs/runtime/millrace-runtime-lifecycle-dia
 
 ```mermaid
 flowchart TD
-    A["Initialize workspace, then compile the frozen plan"] --> B{"Deterministic tick loop"}
+    A["Initialize workspace, then compile the plan"] --> B{"Deterministic tick loop"}
     B --> C["Process control inputs:<br/>mailbox commands, watcher intake, reconciliation"]
     C --> D{"Scheduler claim decision"}
     D -- planning incident or spec --> E["Planning loop:<br/>interpret specs and incidents,<br/>govern remediation, emit executable work"]
     D -- execution task --> F["Execution loop:<br/>build, verify, repair, recover, update"]
+    D -- learning request --> K["Learning loop:<br/>analyze runtime evidence,<br/>propose skill improvements,<br/>curate accepted updates"]
     D -- nothing claimable --> G{"Completion behavior eligible?"}
     G -- yes --> H["Arbiter closure pass"]
     G -- no --> I["Idle until the next tick"]
     E --> J["Runtime applies results,<br/>persists state, and routes the next action"]
     F --> J
+    K --> J
     H --> J
     J --> B
     I --> B
@@ -76,6 +78,8 @@ It wraps long-horizon work in a real runtime:
 - compile tracks input fingerprints so operators can see whether the persisted compiled plan is current or stale
 - planning and execution are claim domains inside one deterministic scheduler,
   not two concurrent lanes
+- learning-enabled modes add a separate learning plane for skill-improvement
+  requests, with execution/planning mutual exclusion still preserved
 - stage results are routed by the runtime, not by direct stage-to-stage
   handoffs
 - Arbiter activates only when the scheduler finds no lineage work left and
@@ -84,10 +88,14 @@ It wraps long-horizon work in a real runtime:
   configured token or subscription quota rules are reached
 - runtime startup and config reload refuse to keep running on a stale
   last-known-good plan when current compile inputs no longer match
+- opt-in usage governance can pause between stages from token or subscription
+  quota rules without clearing operator-owned pauses
 
 The shipped core already includes separate planning and execution loops, typed
 terminal results, compiler-governed completion behavior, and persisted run
-artifacts for post-run inspection.
+artifacts for post-run inspection. Learning-enabled modes also ship the
+Analyst, Professor, and Curator stages for evidence-backed skill improvement
+flows.
 
 ## Early Proof
 
@@ -190,8 +198,11 @@ That flow proves seven things quickly:
 - that compiled plan carries node bindings, intake entries, recovery policies, closure-target activation, and post-stage routing
 - the shipped `default_codex` mode freezes closure behavior directly into that single compiled artifact
 - status and run inspection carry compiled-plan identity so operators can tie
-  runtime activity back to the frozen plan that produced it
+  runtime activity back to the compiled plan that produced it
 - the runtime can execute a deterministic tick and report persisted status
+
+For a visible long-running session, use `millrace run daemon --monitor basic`.
+The default daemon remains quiet unless that monitor is requested explicitly.
 
 When the packaged workspace baseline changes, use `millrace upgrade` first to
 preview the managed-file classifications, then `millrace upgrade --apply` to
@@ -203,6 +214,15 @@ Canonical shipped modes today:
 
 - `default_codex`
 - `default_pi`
+
+Learning-enabled shipped modes:
+
+- `learning_codex`
+- `learning_pi`
+
+The learning modes use the same execution and planning topology as the default
+modes, add `learning.standard`, and freeze learning trigger rules into the
+compiled plan.
 
 Compatibility alias:
 

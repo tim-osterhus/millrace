@@ -90,7 +90,7 @@ Do not stop merely because:
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -99,11 +99,8 @@ Do not stop merely because:
 
 ## Optional Secondary Skills
 
-- `compose-stack-change-protocol` (deferred; not shipped in runtime assets) when the repair is clearly infra or compose related
-- `playwright-ui-verification` (deferred; not shipped in runtime assets) when the fix contract includes deterministic UI verification
-- `frontend-review` (deferred; not shipped in runtime assets) when the repair is frontend-heavy and regression risk is material
-- `small-diff-discipline` (deferred; not shipped in runtime assets) when the repair must stay unusually narrow
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise fix summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 

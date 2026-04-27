@@ -367,6 +367,53 @@ def test_entrypoint_lint_requires_required_stage_core_skill_section(tmp_path: Pa
     )
 
 
+def test_entrypoint_lint_rejects_unknown_optional_secondary_skill(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "assets"
+    _write_asset(
+        assets_dir / "skills" / "builder-core.md",
+        frontmatter={
+            "asset_type": "skill",
+            "asset_id": "builder-core",
+            "version": 1,
+            "description": "Builder stage core skill",
+            "advisory_only": True,
+            "capability_type": "stage_core",
+            "recommended_for_stages": ["builder"],
+            "forbidden_claims": [
+                "queue_selection",
+                "routing",
+                "retry_thresholds",
+                "escalation_policy",
+                "status_persistence",
+                "terminal_results",
+                "required_artifacts",
+            ],
+        },
+        body="Builder posture and evidence habits.",
+    )
+
+    entrypoint_path = assets_dir / "entrypoints" / "execution" / "builder.md"
+    _write_entrypoint_doc(
+        entrypoint_path,
+        body=(
+            "# Builder Entry Instructions\n\n"
+            "## Required Stage-Core Skill\n"
+            "- `builder-core`\n\n"
+            "## Optional Secondary Skills\n"
+            "- `missing-optional-skill`\n"
+        ),
+    )
+
+    diagnostics = lint_asset_manifests(assets_root=assets_dir)
+
+    assert any(
+        diag.path == entrypoint_path
+        and diag.lint_level is LintLevel.STRUCTURAL
+        and "unknown skill `missing-optional-skill`" in diag.reason
+        for diag in diagnostics
+    )
+
+
 def test_policy_lint_ignores_negated_escalate_phrase(tmp_path: Path) -> None:
     assets_dir = tmp_path / "assets"
     entrypoint_path = assets_dir / "entrypoints" / "planning" / "mechanic.md"
@@ -759,7 +806,6 @@ def test_runtime_skills_index_stub_has_minimal_shape() -> None:
     assert asset.manifest["asset_type"] == "skill"
     assert text.startswith("# Skills Index")
     assert "| Skill | Description | Tags | Path | Status |" in text
-    assert "deferred" in text.lower()
     for skill_id in _expected_stage_core_skill_ids().values():
         assert skill_id in text
     for skill_path in _expected_stage_core_skill_paths().values():
@@ -777,8 +823,10 @@ def test_runtime_skills_index_stub_has_minimal_shape() -> None:
     assert MARATHON_QA_PACKAGE_PATH.is_dir()
     assert MARATHON_QA_SKILL_PATH.is_file()
     assert "Stage-Core Skills" in text
-    assert "Shared And Deferred Skills" in text
-    assert "deferred" in text.lower()
+    assert "Shared Runtime Skills" in text
+    assert "Supported Downloadable Skills" in text
+    assert "https://github.com/tim-osterhus/millrace-skills/blob/main/index.md" in text
+    assert "deferred" not in text.lower()
 
 
 def test_stage_core_skill_docs_use_hybrid_section_contract_and_shipped_semantics() -> None:
@@ -810,11 +858,12 @@ def test_runtime_skills_readme_describes_creator_package_and_selection_contract(
 
     assert "entrypoints" in body.lower()
     assert "skills_index.md" in body
-    assert "deferred" in body.lower()
     assert "millrace-skill-creator" in body
     assert "skills/stage/<plane>/<stage>-core/SKILL.md" in body
     assert "skills/shared/<skill-id>/SKILL.md" in body
     assert "marathon-qa-audit" in body
+    assert "https://github.com/tim-osterhus/millrace-skills/blob/main/index.md" in body
+    assert "deferred" not in body.lower()
     assert CREATOR_PACKAGE_PATH.is_dir()
     assert CREATOR_SKILL_PATH.is_file()
     creator_asset = parse_markdown_asset(CREATOR_SKILL_PATH)
@@ -899,21 +948,20 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     for entrypoint_id, stage, body in entrypoint_bodies:
         assert stage in expected_stage_core_ids, f"entrypoint `{entrypoint_id}` does not map to a known stage"
         assert "millrace-agents/skills/skills_index.md" in body
-        assert "up to two additional relevant skills" in body
+        assert "up to two additional relevant installed skills" in body
         assert "required_skill_paths" in body
         assert "## Required Stage-Core Skill" in body
         assert "## Optional Secondary Skills" in body
         assert "Optional Role Overlays" not in body
         assert f"`{expected_stage_core_ids[stage]}`" in body
+        assert "deferred" not in body.lower()
 
         declared_skill_lines = _extract_declared_skill_lines(body)
         assert declared_skill_lines
 
         for skill_id, skill_line in declared_skill_lines:
-            if skill_id in shipped_skill_ids:
-                continue
-            assert "deferred" in skill_line.lower(), (
-                f"stage `{stage}` references skill `{skill_id}` without shipped asset or deferred marker"
+            assert skill_id in shipped_skill_ids, (
+                f"stage `{stage}` references skill `{skill_id}` without a shipped asset"
             )
 
 

@@ -1,10 +1,12 @@
 # Millrace Arbiter And Completion Behavior
 
-This document describes the shipped completion model for `default_codex`.
+This document describes the shipped completion model for modes that select
+`planning.standard`, including `default_codex`, `default_pi`, `learning_codex`,
+and `learning_pi`.
 
 Millrace no longer treats backlog drain as automatic completion. When a root
 lineage has an open closure target and no queued, active, or blocked work
-remains for that lineage, the frozen planning-loop `completion_behavior`
+remains for that lineage, the compiled planning-loop `completion_behavior`
 dispatches the `arbiter` stage through the normal runner contract.
 
 ## Root Lineage Model
@@ -53,7 +55,7 @@ records:
 
 ## Backlog-Drain Behavior
 
-The frozen planning-loop `completion_behavior` for `default_codex` is:
+The compiled planning-loop `completion_behavior` for `planning.standard` is:
 
 - trigger: `backlog_drained`
 - readiness rule: `no_open_lineage_work`
@@ -66,7 +68,7 @@ Runtime behavior is:
 
 1. claim planning work if available
 2. claim execution work if available
-3. if no claimable work remains, inspect the frozen completion behavior
+3. if no claimable work remains, inspect the compiled completion behavior
 4. locate the single open closure target
 5. if no open target exists, try to backfill one from the latest root spec that
    already carries root-lineage ids

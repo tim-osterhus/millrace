@@ -19,8 +19,11 @@ Before changing anything, load these source-of-truth files:
 - `src/millrace_ai/assets/modes.py`
 - `src/millrace_ai/assets/loops/execution/default.json`
 - `src/millrace_ai/assets/loops/planning/default.json`
+- `src/millrace_ai/assets/loops/learning/default.json`
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
+- `src/millrace_ai/assets/modes/learning_codex.json`
+- `src/millrace_ai/assets/modes/learning_pi.json`
 
 If you are writing docs as part of the change, also read:
 
@@ -41,8 +44,9 @@ Think in this order:
 Not the other way around.
 
 Loops define stage topology and `terminal_results`.
-Modes choose which loops are active and what stage maps apply.
-The compiler freezes that into a stage-plan the runtime can execute.
+Modes choose which plane loops are active through `loop_ids_by_plane` and what
+stage maps, concurrency policy, and learning trigger rules apply.
+The compiler freezes that into a compiled plan the runtime can execute.
 
 ## Non-Negotiable Guardrails
 
@@ -70,11 +74,14 @@ When changing a loop, confirm all of the following:
 
 When changing a mode, confirm all of the following:
 
-- `execution_loop_id` and `planning_loop_id` exist
+- every loop id in `loop_ids_by_plane` exists
+- execution and planning loop ids are present
+- learning loop id is present only when the mode intentionally enables learning
 - `stage_entrypoint_overrides` only references selected stages
 - `stage_skill_additions` only references selected stages
 - `stage_model_bindings` only references selected stages
 - `stage_runner_bindings` only references selected stages
+- `learning_trigger_rules` are present only when a learning loop is selected
 
 ## Runtime-Owned Vs Advisory
 

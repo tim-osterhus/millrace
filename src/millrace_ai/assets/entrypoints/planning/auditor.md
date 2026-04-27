@@ -39,7 +39,7 @@ Process only the incident artifact assigned for this run.
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -48,10 +48,8 @@ Process only the incident artifact assigned for this run.
 
 ## Optional Secondary Skills
 
-- `codebase-audit-doc` (deferred; not shipped in runtime assets) when the incident touches broad contract or documentation drift
-- `acceptance-profile-contract` (deferred; not shipped in runtime assets) when the remediation path needs stronger milestone or gate framing
-- `spec-writing-research-core` (deferred; not shipped in runtime assets) when the incident needs stronger assumption-aware normalization
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise incident-intake summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 

@@ -9,7 +9,7 @@ materials.
 
 - open `millrace-agents/skills/skills_index.md`
 - load the required stage-core skill from request-provided `required_skill_paths`
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 
 ## Required Stage-Core Skill
 

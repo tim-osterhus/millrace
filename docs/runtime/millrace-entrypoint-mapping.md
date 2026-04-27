@@ -55,12 +55,16 @@ pre-packaging draft tree for entrypoints.
 
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and per-stage core skills.
 - Each entrypoint includes `Required Stage-Core Skill`, `Optional Secondary Skills`, and `Suggested Operating Approach` sections.
-- Entrypoints should direct stage agents to consult the skills index first, then load only relevant optional skills.
+- Required stage-core skills are runtime-assigned by compiled stage requests; they are not discretionary operator choices.
+- Optional secondary skills are advisory additions and must exist in the packaged or installed skills surface before an entrypoint can reference them.
+- `millrace-agents/skills/skills_index.md` lists packaged skills and points to the supported downloadable optional-skills directory at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
+- Entrypoints should direct stage agents to consult the deployed skills index first, then load only relevant optional skills that are actually present.
 - Required stage-core skills and optional attached skills are compile-time
   surfaces and can be inspected via `millrace compile show` as
   `required_skills` and `attached_skills`.
 
 ## Bootstrap Behavior
 
-During workspace bootstrap, packaged entrypoints are copied to `<workspace>/millrace-agents/entrypoints/`.
+During `millrace init`, packaged entrypoints are copied to `<workspace>/millrace-agents/entrypoints/`.
+During `millrace upgrade --apply`, safe managed entrypoint updates are applied according to the workspace baseline manifest.
 Compiled stage requests always reference deployed workspace entrypoint paths so invoked agents can be told to open files from the workspace runtime tree directly.

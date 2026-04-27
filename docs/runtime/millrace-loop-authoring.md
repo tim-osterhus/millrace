@@ -26,11 +26,15 @@ The authoritative sources are:
 - `src/millrace_ai/assets/modes.py`
 - `src/millrace_ai/assets/loops/execution/default.json`
 - `src/millrace_ai/assets/loops/planning/default.json`
+- `src/millrace_ai/assets/loops/learning/default.json`
 - `src/millrace_ai/assets/graphs/execution/standard.json`
 - `src/millrace_ai/assets/graphs/planning/standard.json`
+- `src/millrace_ai/assets/graphs/learning/standard.json`
 - `src/millrace_ai/assets/registry/stage_kinds/`
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
+- `src/millrace_ai/assets/modes/learning_codex.json`
+- `src/millrace_ai/assets/modes/learning_pi.json`
 
 Loop and mode docs should describe those contracts, not override them.
 
@@ -51,7 +55,7 @@ The graph-loop path exists to:
 - prove the shipped topology can be represented as typed node graphs over stage kinds
 - emit `compiled_plan.json` during compile
 - drive runtime request binding, intake, recovery, closure-target activation,
-  and post-stage routing
+  learning-trigger activation, and post-stage routing
 - support preview materialization of discovered graph loops without modifying
   the shipped runtime plan contract
 
@@ -85,16 +89,22 @@ A mode must validate as `ModeDefinition`.
 
 Today the important authoring rule is scope:
 
+- `loop_ids_by_plane`
 - `stage_entrypoint_overrides`
 - `stage_skill_additions`
 - `stage_model_bindings`
 - `stage_runner_bindings`
+- `concurrency_policy`
+- `learning_trigger_rules`
 
-may only reference stages that exist in the selected execution and planning
+may only reference planes, loops, or stages that exist in the selected plane
 loops.
 
 The compiler enforces that by building the set of selected stages first and then
 rejecting mode maps that refer outside that set.
+
+Legacy `execution_loop_id` and `planning_loop_id` fields are still accepted for
+compatibility, but new mode assets should use `loop_ids_by_plane`.
 
 ## Stage-Kind And Graph-Loop Rules
 
@@ -114,6 +124,7 @@ That means:
 - every edge references a valid source node and a valid target node or terminal state
 - every edge outcome is legal for the source node's stage kind
 - planning intake can be modeled through multiple `entry_nodes`
+- learning intake is modeled through `learning_request`
 - completion behavior may target only a closure-role stage kind
 
 ## Entrypoint Override Rules
@@ -132,7 +143,7 @@ outside the entrypoint asset tree.
 
 ## Stage Bindings And Recompile Behavior
 
-Authoring decisions that change the frozen stage-plan contract require recompile.
+Authoring decisions that change the compiled plan contract require recompile.
 
 That includes:
 
@@ -146,7 +157,7 @@ That includes:
 - changing mode stage maps
 
 The runtime may apply some other config changes on the next tick, but anything
-that changes the frozen stage-plan should be treated as a compile concern.
+that changes the compiled plan should be treated as a compile concern.
 
 ## Runtime-Owned Vs Advisory Content
 
@@ -180,8 +191,8 @@ When you change loops or modes:
 3. run `millrace compile show`
 4. check that the compiled plan reflects the intended entrypoints, skills,
    runner names, model names, and loop ids
-5. inspect `compiled_plan.json` when the change also touches stage kinds
-   or graph loops
+5. inspect `compiled_plan.json` when the change also touches stage kinds or
+   graph loops
 6. update docs that describe the changed contract
 
 If the new structure changes what operators or stage agents need to know, update
@@ -212,7 +223,7 @@ Good loop and mode authoring is:
 - compiler-valid
 - explicit about `terminal_results`
 - explicit about stage topology
-- explicit about whether you changed the frozen stage-plan legacy loop surface,
+- explicit about whether you changed the legacy loop inspection surface,
   the runtime-authoritative graph/stage-kind surface, or both
 - explicit about what is runtime-owned and what is advisory
 
@@ -226,5 +237,5 @@ Bad authoring:
 - blurs runtime-owned routing with agent-authored reasoning
 
 If a loop or mode change cannot be explained cleanly in terms of contracts,
-stage-plan freezing, and runtime-owned boundaries, it is probably not ready to
+compiled-plan freezing, and runtime-owned boundaries, it is probably not ready to
 ship.

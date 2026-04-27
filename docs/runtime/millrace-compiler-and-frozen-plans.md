@@ -25,13 +25,16 @@ That compiled plan freezes:
 - one deterministic `compiled_plan_id`
 - one selected `mode_id`
 - graph authority for execution, planning, and optional learning
+- selected loop ids by plane
 - per-node `node_id` and `stage_kind_id`
 - per-node entrypoint path, skill bindings, runner, model, and timeout
 - compiled transitions, resume policies, threshold policies, and completion
   behavior
+- learning trigger rules and plane concurrency policy when the selected mode
+  declares them
 - resolved asset references and content hashes
 
-The runtime then consumes that frozen authority during startup, routing,
+The runtime then consumes that compiled authority during startup, routing,
 reconciliation, and run inspection.
 
 ## Authoritative Asset Surfaces
@@ -67,6 +70,9 @@ Runtime-owned compile-if-needed surfaces:
 
 Read-only commands such as `status`, `runs`, and queue inspection do not
 compile implicitly.
+
+Next-tick runtime config such as `usage_governance.*` does not change the
+compiled plan and does not require recompile.
 
 At runtime startup, Millrace invokes the same compiler path used by explicit
 compile commands with `compile_if_needed=True`. If the persisted compiled plan
@@ -166,6 +172,8 @@ mismatched plan is still authoritative.
 - `compiled_plan_id`
 - loop and graph identity
 - stage/node request-binding details
+- loop ids by plane
+- concurrency policy and learning trigger rules when present
 - `baseline_manifest_id`
 - `compiled_plan_currentness`
 - `completion_behavior.*` when present
@@ -187,7 +195,7 @@ exist right now."
 The product contract is:
 
 - workspace assets form the mutable deployed baseline
-- the compiler decides whether that baseline and config produce a valid frozen
-  plan
-- the runtime executes from that frozen plan
+- the compiler decides whether that baseline and config produce a valid
+  compiled plan
+- the runtime executes from that compiled plan
 - stale compile authority is refused instead of being treated as good enough

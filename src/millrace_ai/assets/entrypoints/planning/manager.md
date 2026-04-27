@@ -156,7 +156,7 @@ Do not switch decomposition target to a different queued spec file, even if one 
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -165,10 +165,8 @@ Do not switch decomposition target to a different queued spec file, even if one 
 
 ## Optional Secondary Skills
 
-- `small-diff-discipline` (deferred; not shipped in runtime assets) when deciding task boundaries and avoiding oversized scopes
-- `acceptance-profile-contract` (deferred; not shipped in runtime assets) when acceptance criteria need stronger milestone or gate mapping
-- `task-card-authoring-repo-exact` (deferred; not shipped in runtime assets) when the decomposition needs more exact artifact output
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise management summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 

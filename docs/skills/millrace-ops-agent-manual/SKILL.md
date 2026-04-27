@@ -84,7 +84,13 @@ After the user answers:
 2. If no Millrace delegation policy is on record, ask the autonomy handshake.
 3. Read `docs/runtime/millrace-cli-reference.md` and
    `docs/runtime/millrace-runtime-architecture.md`.
-4. Validate the workspace:
+4. Initialize the workspace if the managed baseline is missing:
+
+```bash
+millrace init --workspace <workspace>
+```
+
+5. Validate the workspace:
 
 ```bash
 millrace compile validate --workspace <workspace>
@@ -97,16 +103,20 @@ Know which shipped harness posture you are validating:
 - `default_codex` is the canonical bootstrap baseline
 - `default_pi` keeps the same loops and stage semantics, but swaps every stage
   to the Pi RPC adapter
+- `learning_codex` and `learning_pi` add the Analyst/Professor/Curator learning
+  plane for runtime learning requests and skill-improvement workflows
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 
-5. Intake work only after the workspace is healthy and Millrace use is allowed.
-6. Run `millrace run once --workspace <workspace>` when you want one safe tick,
+6. Intake work only after the workspace is healthy and Millrace use is allowed.
+7. Run `millrace run once --workspace <workspace>` when you want one safe tick,
    or `millrace run daemon --workspace <workspace>` when long-running operation
    is actually intended.
+   Use `millrace run daemon --monitor basic --workspace <workspace>` when you
+   need live terminal visibility from the daemon itself.
    If you need the daemon to persist beyond the current harness process, spawn
    it inside a `tmux` pane rather than as an ordinary shell background process.
-7. Monitor with `millrace status watch`, `millrace runs ls`, and
+8. Monitor with `millrace status watch`, `millrace runs ls`, and
    `millrace runs show <run_id>`.
 
 ## Millrace Fit Test
@@ -229,14 +239,20 @@ millrace <command>
 Canonical baseline commands:
 
 ```bash
+millrace init --workspace <workspace>
+millrace upgrade --workspace <workspace>
+millrace upgrade --apply --workspace <workspace>
 millrace compile validate --workspace <workspace>
 millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 millrace run once --workspace <workspace>
+millrace run daemon --monitor basic --workspace <workspace>
 millrace status watch --workspace <workspace>
 millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
 millrace runs tail <run_id> --workspace <workspace>
+millrace skills ls --workspace <workspace>
+millrace skills search <query> --workspace <workspace>
 millrace queue add-task <task.md|task.json> --workspace <workspace>
 millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
 millrace queue add-idea <idea.md> --workspace <workspace>
@@ -256,6 +272,8 @@ Important monitoring note:
   ownership locks
 - `millrace doctor` is the quick integrity check for mode assets and resolved
   runner posture, including missing harness binaries
+- `millrace status` exposes `pause_sources` and usage-governance blockers when
+  usage governance is enabled or has persisted state
 
 ## Monitoring And Intervention
 
@@ -275,11 +293,17 @@ Interpret status markers literally:
   example `### CHECKER_RUNNING`
 - when no stage is active on a plane, the marker falls back to the latest
   terminal marker or `### IDLE`
+- learning-enabled workspaces also expose learning queue depth and
+  `learning_status_marker`
+- `pause_sources: operator` means an operator pause is still in force
+- `pause_sources: usage_governance` means an opt-in usage rule is blocking
+  further stage dispatch
 
 Use intervention commands only when the runtime state actually justifies them:
 
 - `control pause` to stop further ticks cleanly
-- `control resume` to continue a paused daemon
+- `control resume` to clear the operator pause source; it does not override an
+  active usage-governance blocker
 - `control stop` to request daemon shutdown
 - `planning retry-active` only for planning-plane retry intent
 - `config reload` when config changed and daemon-safe recompile is desired
@@ -290,6 +314,9 @@ Use intervention commands only when the runtime state actually justifies them:
 - Treat `<workspace>/millrace-agents/millrace.toml` as the supported operator
   configuration surface.
 - Configure runner behavior there rather than inventing side channels.
+- Usage governance is disabled by default. When enabled, it evaluates between
+  stages, can pause via the `usage_governance` pause source, and can auto-resume
+  only when active governance blockers clear.
 - New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
   `runners.default_runner = "codex_cli"`.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.

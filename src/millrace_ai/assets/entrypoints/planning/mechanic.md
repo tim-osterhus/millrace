@@ -100,7 +100,7 @@ Do not stop merely because:
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -109,11 +109,8 @@ Do not stop merely because:
 
 ## Optional Secondary Skills
 
-- `spec-writing-research-core` (deferred; not shipped in runtime assets) when fixing spec or incident contract drift
-- `task-card-authoring-repo-exact` (deferred; not shipped in runtime assets) when the repair touches decomposition or task artifact shape
-- `codebase-audit-doc` (deferred; not shipped in runtime assets) when the failure appears to be broader contract or documentation drift
-- `small-diff-discipline` (deferred; not shipped in runtime assets) when the repair must stay unusually narrow
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise planning recovery summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 

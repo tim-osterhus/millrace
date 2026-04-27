@@ -13,7 +13,34 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
-No unreleased changes recorded yet.
+### Added
+
+- Added opt-in usage governance configuration and runtime evaluation for
+  between-stage token and subscription-quota pause rules.
+- Added `pause_sources` so operator pauses and usage-governance pauses can
+  coexist without one clearing the other accidentally.
+- Added `usage_governance_state.json` and `usage_governance_ledger.jsonl` state
+  artifacts for durable usage-governance status and token accounting.
+- Added usage-governance fields to `millrace status`, `millrace config show`,
+  and the basic daemon monitor.
+
+### Changed
+
+- Updated shipped entrypoint advisory text so it no longer references unshipped
+  optional skills.
+- Updated the runtime skills index to list only packaged skills and to point
+  operators at the supported downloadable optional-skills directory:
+  `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
+- Clarified that stage-core skills are runtime-assigned by their compiled
+  entrypoints, while optional secondary skills must be present in the packaged
+  or installed skills surface before entrypoints can reference them.
+- Refreshed public docs for learning modes, explicit workspace init/upgrade,
+  daemon monitoring, `millrace skills`, and the optional skills directory.
+
+### Fixed
+
+- Tightened entrypoint asset lint so unknown optional secondary skill
+  references fail instead of being accepted as placeholders.
 
 ## [0.15.4] - 2026-04-27
 

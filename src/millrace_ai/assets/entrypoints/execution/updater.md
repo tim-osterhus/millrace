@@ -42,7 +42,7 @@ Additional informational docs may be inspected when present:
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -51,9 +51,8 @@ Additional informational docs may be inspected when present:
 
 ## Optional Secondary Skills
 
-- `codebase-audit-doc` (deferred; not shipped in runtime assets) when repo-map drift or documentation drift is broad enough to need a more careful audit pass
-- `small-diff-discipline` (deferred; not shipped in runtime assets) when the updater needs to touch multiple docs and should stay narrow
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise update summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 

@@ -2,7 +2,7 @@
 asset_type: skill
 asset_id: skills-index
 version: 1
-description: Runtime-shipped index of available and deferred skills.
+description: Runtime-shipped index of available skills and supported optional skill sources.
 advisory_only: true
 capability_type: documentation
 recommended_for_stages:
@@ -34,17 +34,22 @@ forbidden_claims:
 # Skills Index
 
 This is the runtime-shipped skills index for stage entrypoints.
-Entrypoints select skills from this index; they do not infer runtime behavior from arbitrary skill metadata.
-Shipped stage-core skills use the hybrid contract with thin manifest frontmatter for identity and structured markdown bodies for the actual guidance.
-Deferred skill assets remain metadata-light until they are shipped into the same hybrid contract.
+Entrypoints select discretionary skills from this index; they do not infer runtime behavior from arbitrary skill metadata.
+Stage-core skills are runtime-assigned by entrypoints or `required_skill_paths`, not selected as discretionary add-ons.
+Shipped skills use the hybrid contract with thin manifest frontmatter for identity and structured markdown bodies for the actual guidance.
 
 Usage contract:
 - open this index before selecting discretionary skills
 - prefer `required_skill_paths` supplied by the runtime when present
-- if no fixed required skills are supplied, choose up to three relevant skills
+- if no fixed required skills are supplied, choose up to three relevant non-core skills
 - avoid loading irrelevant skills
+- do not claim an optional skill is available unless it is installed locally or listed in the supported downloadable skills directory
 
 ## Stage-Core Skills
+
+These skills are listed for package inventory and auditability. They are not a
+general-purpose skill menu; use them only when the runtime or the stage
+entrypoint explicitly assigns them.
 
 | Skill | Description | Tags | Path | Status |
 | --- | --- | --- | --- | --- |
@@ -64,19 +69,20 @@ Usage contract:
 | `professor-core` | Professor authoring posture for skill candidates from research packets. | `learning`, `stage-core` | `skills/stage/learning/professor-core/SKILL.md` | shipped |
 | `curator-core` | Curator improvement posture for workspace-installed skill updates. | `learning`, `stage-core` | `skills/stage/learning/curator-core/SKILL.md` | shipped |
 
-## Shared And Deferred Skills
+## Shared Runtime Skills
 
 | Skill | Description | Tags | Path | Status |
 | --- | --- | --- | --- | --- |
 | `millrace-skill-creator` | Shipped package for authoring new skill assets in the same hybrid format used by runtime skills. | `documentation`, `authoring` | `skills/millrace-skill-creator/SKILL.md` | shipped |
 | `marathon-qa-audit` | Shared deep-audit method for broad end-to-end QA, first-run closure audits, and evidence-depth handling. | `verification`, `audit` | `skills/shared/marathon-qa-audit/SKILL.md` | shipped |
 | `skills-readme` | Runtime skill-pack rules and constraints. | `documentation`, `runtime` | `skills/README.md` | shipped |
-| `small-diff-discipline` | Keep implementation changes narrow and auditable. | `implementation`, `scope` | `deferred/small-diff-discipline.md` | deferred (not shipped) |
-| `historylog-entry-high-signal` | Write concise, evidence-first history entries. | `reporting`, `evidence` | `deferred/historylog-entry-high-signal.md` | deferred (not shipped) |
-| `compose-stack-change-protocol` | Guard compose and topology edits. | `infra`, `compose` | `deferred/compose-stack-change-protocol.md` | deferred (not shipped) |
-| `playwright-ui-verification` | Deterministic browser/UI verification pattern. | `qa`, `ui` | `deferred/playwright-ui-verification.md` | deferred (not shipped) |
-| `frontend-review` | Frontend correctness and design review guidance. | `frontend`, `review` | `deferred/frontend-review.md` | deferred (not shipped) |
-| `codebase-audit-doc` | Structured repo-audit notes and findings. | `audit`, `docs` | `deferred/codebase-audit-doc.md` | deferred (not shipped) |
-| `spec-writing-research-core` | Spec authoring with assumptions and evidence links. | `planning`, `specs` | `deferred/spec-writing-research-core.md` | deferred (not shipped) |
-| `acceptance-profile-contract` | Acceptance gate and milestone structuring. | `planning`, `acceptance` | `deferred/acceptance-profile-contract.md` | deferred (not shipped) |
-| `task-card-authoring-repo-exact` | Deterministic task card output tied to repo paths. | `planning`, `tasks` | `deferred/task-card-authoring-repo-exact.md` | deferred (not shipped) |
+
+## Supported Downloadable Skills
+
+Optional non-core skills live outside the Millrace runtime package. The supported
+downloadable skills directory is:
+`https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`
+
+Use that public index to discover optional skills before installing them into a
+workspace. Once installed, rely on the workspace-local `skills_index.md` and the
+installed `SKILL.md` files as the source of availability truth.

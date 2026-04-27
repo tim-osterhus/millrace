@@ -7,6 +7,10 @@ default runtime configuration:
 - planning loop: `planning.standard`
 - execution loop: `execution.standard`
 
+Learning-enabled modes (`learning_codex`, `learning_pi`) use the same planning
+and execution topology and add `learning.standard`; this default-mode chart
+omits that optional claim path except where noted.
+
 The README embeds a simplified version. This file keeps the fuller chart that
 tracks startup, scheduling, result application, recovery routing, and Arbiter
 activation more faithfully.
@@ -16,11 +20,11 @@ activation more faithfully.
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 30, "curve": "linear"}} }%%
 flowchart TB
-    S1["Bootstrap workspace contract"] --> S2["Load runtime config"] --> S3["Acquire workspace lock"] --> S4["Build watcher session"] --> S5["Compile active mode + loops into frozen plan"] --> S6["Load snapshot + recovery counters"] --> S7["Reconcile stale or impossible state"] --> S8["Persist running snapshot + startup events"]
+    S1["Require initialized workspace baseline"] --> S2["Load runtime config"] --> S3["Acquire workspace lock"] --> S4["Build watcher session"] --> S5["Compile active mode + loops into compiled plan"] --> S6["Load snapshot + recovery counters"] --> S7["Reconcile stale or impossible state"] --> S8["Persist running snapshot + startup events"]
 
     S8 --> T1["Drain mailbox commands"] --> T2["Consume watcher events"] --> T3["Refresh queue depths"] --> T4{"Stop requested?"}
     T4 -- yes --> TStop["Release lock + stop"]
-    T4 -- no --> TG1["Evaluate usage governance"] --> T5{"Paused?"}
+    T4 -- no --> TGov1["Evaluate usage governance"] --> T5{"Paused?"}
     T5 -- yes --> TPaused["Paused idle outcome"]
     T5 -- no --> T6["Run reconciliation"] --> T7["Refresh queue depths again"] --> T8{"Select next work"}
 
@@ -28,38 +32,45 @@ flowchart TB
     T8 -- spec claim --> TRoot{"Root spec with lineage?"}
     TRoot -- yes --> TOpen["Open closure target + snapshot contracts"] --> PSpec["Planning entry:<br/>planner"]
     TRoot -- no --> PSpec
-    T8 -- active planning stage --> PActive["Planning dispatch"]
+    T8 -- active planning stage --> TGov2
 
     T8 -- task claim --> ETask["Execution entry:<br/>builder"]
-    T8 -- active execution stage --> EActive["Execution dispatch"]
+    T8 -- active execution stage --> TGov2
 
+    T8 -- learning request claim<br/>(learning modes) --> LEntry["Learning entry:<br/>analyst or targeted stage"]
+    T8 -- active learning stage<br/>(learning modes) --> TGov2
     T8 -- nothing claimable --> T9{"Arbiter ready?"}
-    T9 -- yes --> AEntry["Arbiter entry:<br/>closure_target"]
+    T9 -- yes --> TGov2
     T9 -- no --> T10{"Active state invalid?"}
     T10 -- yes --> TClear["Clear stale active state"] --> T11{"Still active?"}
     T10 -- no --> T11
-    T11 -- planning --> TG2P["Re-check usage governance"] --> TGPausedP{"Paused?"}
-    TGPausedP -- yes --> TPaused
-    TGPausedP -- no --> PActive
-    T11 -- execution --> TG2E["Re-check usage governance"] --> TGPausedE{"Paused?"}
-    TGPausedE -- yes --> TPaused
-    TGPausedE -- no --> EActive
-    T11 -- arbiter --> TG2A["Re-check usage governance"] --> TGPausedA{"Paused?"}
-    TGPausedA -- yes --> TPaused
-    TGPausedA -- no --> AEntry
+    T11 -- planning --> TGov2["Evaluate usage governance before dispatch"]
+    T11 -- execution --> TGov2
+    T11 -- arbiter --> TGov2
+    T11 -- learning --> TGov2
     T11 -- none --> TIdle["no_work idle outcome"]
+    TGov2 --> T12{"Paused?"}
+    T12 -- yes --> TPaused
+    T12 -- no, planning --> PActive
+    T12 -- no, execution --> EActive
+    T12 -- no, learning --> LActive
+    T12 -- no, arbiter --> AEntry["Arbiter entry:<br/>closure_target"]
 
-    PIncident --> PApply["Apply planning result"]
-    PSpec --> PApply
-    PActive --> PApply
+    PIncident --> TGov2
+    PSpec --> TGov2
+    PActive --> PApply["Apply planning result"]
 
-    ETask --> EApply["Apply execution result"]
-    EActive --> EApply
+    ETask --> TGov2
+    EActive --> EApply["Apply execution result"]
+
+    LEntry --> TGov2
+    LActive --> LApply["Apply learning result"]
 
     AEntry --> AApply["Apply arbiter result"]
 
     PApply --> R1["Write stage-result artifacts"] --> R2["Route terminal result + apply router decision"] --> RUsage["Record usage + apply governance"] --> R3["Persist snapshot / status / counters / events"]
     EApply --> R1
+    LApply --> R1
     AApply --> R1
     TPaused --> R3
     TIdle --> R3
@@ -163,24 +174,28 @@ flowchart LR
 
 ## Notes
 
-1. Bootstrap workspace contract.
+1. Require an initialized workspace baseline; create it with `millrace init`.
 2. Load runtime config.
 3. Acquire workspace lock.
 4. Build watcher session.
-5. Compile active mode and loops into a frozen plan.
+5. Compile active mode and loops into a compiled plan.
 6. Load snapshot and recovery counters.
 7. Reconcile stale or impossible state.
 8. Persist running snapshot and startup events.
 
 - Drain mailbox commands first on every tick.
-- Explicit config reload is what recompiles the frozen plan.
+- Explicit config reload is what recompiles the compiled plan.
 - Consume watcher events and normalize ideas into queued specs.
-- Refresh queue depths, run stop and usage-governance pause checks, then reconcile.
+- Refresh queue depths, run stop and usage-governance pause checks, then
+  reconcile.
 - Refresh queue depths again before claim or activation.
 - Re-check usage governance immediately before stage dispatch.
 - Exactly one stage runs per tick at most.
+- Usage governance can pause before claim/dispatch and records stage-result
+  token usage after routing.
 - Active stages can bypass fresh claim and go straight to request build.
-- Planning claim precedence is incident -> spec -> task.
+- Claim precedence is planning incident -> planning spec -> execution task,
+  then learning request when a learning loop is active.
 - Root-spec claim opens the closure target and snapshots contracts.
 - Arbiter activates only when no lineage work remains and closure is ready.
 - Invalid active state is cleared before the runtime settles on `no_work`.
@@ -188,6 +203,7 @@ flowchart LR
 - Write stage-result artifacts.
 - Route terminal status.
 - Mark tasks, specs, or incidents done or blocked.
+- Mark learning requests done or blocked when the learning plane is active.
 - Update recovery counters and closure-target state.
 - Record stage token usage into the governance ledger and apply any resulting
   between-stage pause.
@@ -198,6 +214,8 @@ Key invariants preserved by this chart:
 - compile happens at startup and again only on explicit config reload
 - planning and execution are separate claim domains inside one scheduler, not
   concurrent lanes
+- learning-enabled modes add learning requests and status markers, while the
+  current tick executor still runs at most one active stage per tick
 - the runtime applies stage results and mutates authoritative state after each
   execution; stages do not own queue mutation directly
 - `manager`, `updater`, and successful Arbiter outcomes return the runtime to

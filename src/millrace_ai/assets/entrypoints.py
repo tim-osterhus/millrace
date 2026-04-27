@@ -447,15 +447,15 @@ def _lint_entrypoint_references(
             )
         )
 
-    for skill_id, line in optional_secondary_ids:
-        if skill_id in skill_ids or "deferred" in line.lower():
+    for skill_id, _line in optional_secondary_ids:
+        if skill_id in skill_ids:
             continue
         diagnostics.append(
             _diag(
                 asset,
                 LintLevel.STRUCTURAL,
                 reason=f"entrypoint references unknown skill `{skill_id}` in `Optional Secondary Skills`",
-                suggested_fix=f"add skill `{skill_id}` or mark it deferred in `Optional Secondary Skills`",
+                suggested_fix=f"add skill `{skill_id}` or remove it from `Optional Secondary Skills`",
             )
         )
 

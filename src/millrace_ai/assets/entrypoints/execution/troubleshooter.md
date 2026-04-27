@@ -102,7 +102,7 @@ Do not stop merely because:
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant skills from the index
+- after that, choose up to two additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
@@ -111,11 +111,8 @@ Do not stop merely because:
 
 ## Optional Secondary Skills
 
-- `compose-stack-change-protocol` (deferred; not shipped in runtime assets) when the blocker is clearly compose or service-topology related
-- `playwright-ui-verification` (deferred; not shipped in runtime assets) when the blocker involves deterministic UI verification or browser automation
-- `codebase-audit-doc` (deferred; not shipped in runtime assets) when the issue appears to be contract or documentation drift rather than execution failure
-- `small-diff-discipline` (deferred; not shipped in runtime assets) when the recovery must stay unusually narrow
-- `historylog-entry-high-signal` (deferred; not shipped in runtime assets) when the run needs a concise recovery summary
+- No default optional skill; choose only installed skills from the skills index
+  when they materially improve this run.
 
 ## Suggested Operating Approach
 
