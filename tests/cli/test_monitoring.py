@@ -125,6 +125,64 @@ def test_basic_terminal_monitor_renders_independent_status_lines() -> None:
     assert "status plane=planning run=run-456 from=MANAGER_RUNNING to=NEEDS_EXECUTION" in stream.getvalue()
 
 
+def test_basic_terminal_monitor_throttles_repeated_no_work_idle_heartbeat() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+
+    for offset_seconds in (0, 1, 119, 120):
+        monitor.emit(
+            RuntimeMonitorEvent(
+                event_type="runtime_idle",
+                occurred_at=NOW + timedelta(seconds=offset_seconds),
+                payload={"reason": "no_work"},
+            )
+        )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] idle reason=no_work",
+        "[12:16:03] idle reason=no_work",
+    ]
+
+
+def test_basic_terminal_monitor_prints_idle_again_after_activity() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="runtime_idle",
+            occurred_at=NOW,
+            payload={"reason": "no_work"},
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="runtime_idle",
+            occurred_at=NOW + timedelta(seconds=1),
+            payload={"reason": "no_work"},
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="runtime_paused",
+            occurred_at=NOW + timedelta(seconds=2),
+            payload={"reason": "operator"},
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="runtime_idle",
+            occurred_at=NOW + timedelta(seconds=3),
+            payload={"reason": "no_work"},
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] idle reason=no_work",
+        "[12:14:05] paused reason=operator",
+        "[12:14:06] idle reason=no_work",
+    ]
+
+
 def test_basic_terminal_monitor_renders_unknown_tokens_when_usage_missing() -> None:
     stream = StringIO()
     monitor = BasicTerminalMonitor(stream=stream)

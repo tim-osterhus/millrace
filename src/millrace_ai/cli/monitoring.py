@@ -9,6 +9,8 @@ from typing import Mapping, TextIO
 
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent, RuntimeMonitorSink
 
+_IDLE_HEARTBEAT_SECONDS = 120.0
+
 
 class BasicTerminalMonitor(RuntimeMonitorSink):
     """Concise line-oriented terminal renderer for daemon progress."""
@@ -17,12 +19,23 @@ class BasicTerminalMonitor(RuntimeMonitorSink):
         self._stream = stream
         self._lock = Lock()
         self._run_state: dict[tuple[str, str], _RunAggregate] = {}
+        self._idle_state = _IdleRenderState()
 
     def emit(self, event: RuntimeMonitorEvent) -> None:
         with self._lock:
-            for line in _render_event_lines(event, self._run_state):
+            for line in _render_event_lines(event, self._run_state, self._idle_state):
                 self._stream.write(line + "\n")
             self._stream.flush()
+
+
+@dataclass(slots=True)
+class _IdleRenderState:
+    reason: str | None = None
+    last_emitted_at: datetime | None = None
+
+    def reset(self) -> None:
+        self.reason = None
+        self.last_emitted_at = None
 
 
 @dataclass(slots=True)
@@ -41,8 +54,11 @@ class _RunAggregate:
 def _render_event_lines(
     event: RuntimeMonitorEvent,
     run_state: dict[tuple[str, str], _RunAggregate],
+    idle_state: _IdleRenderState,
 ) -> tuple[str, ...]:
     prefix = f"[{event.occurred_at.strftime('%H:%M:%S')}] "
+    if event.event_type != "runtime_idle":
+        idle_state.reset()
     if event.event_type == "runtime_started":
         return tuple(prefix + line for line in _render_runtime_started(event.payload))
     if event.event_type == "runtime_resumed_active_run":
@@ -62,7 +78,12 @@ def _render_event_lines(
         status_line = _render_status_marker_changed(event.payload)
         return () if status_line is None else (prefix + status_line,)
     if event.event_type == "runtime_idle":
-        return (prefix + f"idle reason={_string(event.payload.get('reason'))}",)
+        reason = _string(event.payload.get("reason"))
+        if not _should_render_idle(reason, event.occurred_at, idle_state):
+            return ()
+        idle_state.reason = reason
+        idle_state.last_emitted_at = event.occurred_at
+        return (prefix + f"idle reason={reason}",)
     if event.event_type == "runtime_paused":
         return (prefix + f"paused reason={_string(event.payload.get('reason'))}",)
     if event.event_type == "runtime_stopped":
@@ -74,6 +95,13 @@ def _render_event_lines(
     if event.event_type == "usage_governance_degraded":
         return (prefix + _render_usage_governance_degraded(event.payload),)
     return ()
+
+
+def _should_render_idle(reason: str, occurred_at: datetime, idle_state: _IdleRenderState) -> bool:
+    if idle_state.reason != reason or idle_state.last_emitted_at is None:
+        return True
+    elapsed_seconds = (occurred_at - idle_state.last_emitted_at).total_seconds()
+    return elapsed_seconds >= _IDLE_HEARTBEAT_SECONDS
 
 
 def _render_runtime_started(payload: Mapping[str, object]) -> tuple[str, ...]:

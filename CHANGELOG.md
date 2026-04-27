@@ -15,6 +15,28 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 No unreleased changes recorded yet.
 
+## [0.15.6] - 2026-04-27
+
+`0.15.6` tightens daemon monitor idle output and adds architecture records for
+the compiled-plan and workspace-baseline decisions that now govern the runtime.
+
+### Added
+
+- Added ADR-0005 for `compiled_plan.json` as the runtime-authoritative graph
+  plan.
+- Added ADR-0006 for explicit workspace baselines and managed upgrade
+  behavior.
+
+### Changed
+
+- Throttled repeated `runtime_idle reason=no_work` basic monitor lines into a
+  120-second heartbeat while preserving the first idle line and resetting after
+  runtime activity or a different idle reason.
+- Expanded CLI reference coverage for every `millrace skills` subcommand and
+  its core options.
+- Updated the operator manual with `compile show`, queue inspection, modes,
+  skills commands, and basic-monitor idle-heartbeat guidance.
+
 ## [0.15.5] - 2026-04-27
 
 `0.15.5` carries forward the runtime docs, entrypoint assets, and asset-policy
@@ -325,7 +347,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.5...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.6...HEAD
+[0.15.6]: https://github.com/tim-osterhus/millrace/compare/v0.15.5...v0.15.6
 [0.15.5]: https://github.com/tim-osterhus/millrace/compare/v0.15.4...v0.15.5
 [0.15.4]: https://github.com/tim-osterhus/millrace/compare/v0.15.3...v0.15.4
 [0.15.3]: https://github.com/tim-osterhus/millrace/compare/v0.15.2...v0.15.3

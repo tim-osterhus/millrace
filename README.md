@@ -203,6 +203,9 @@ That flow proves seven things quickly:
 
 For a visible long-running session, use `millrace run daemon --monitor basic`.
 The default daemon remains quiet unless that monitor is requested explicitly.
+The basic monitor prints the first `idle reason=no_work` line immediately, then
+throttles repeated `no_work` idles to a 120-second heartbeat until runtime
+activity or a different idle reason appears.
 
 When the packaged workspace baseline changes, use `millrace upgrade` first to
 preview the managed-file classifications, then `millrace upgrade --apply` to

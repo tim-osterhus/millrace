@@ -94,6 +94,7 @@ millrace init --workspace <workspace>
 
 ```bash
 millrace compile validate --workspace <workspace>
+millrace compile show --workspace <workspace>
 millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 ```
@@ -114,10 +115,16 @@ Know which shipped harness posture you are validating:
    is actually intended.
    Use `millrace run daemon --monitor basic --workspace <workspace>` when you
    need live terminal visibility from the daemon itself.
+   The basic monitor prints the first `idle reason=no_work` line immediately,
+   then treats repeated `no_work` idles as a 120-second heartbeat until runtime
+   activity or a different idle reason appears.
    If you need the daemon to persist beyond the current harness process, spawn
    it inside a `tmux` pane rather than as an ordinary shell background process.
 8. Monitor with `millrace status watch`, `millrace runs ls`, and
    `millrace runs show <run_id>`.
+9. Use `millrace skills ...` commands only for the optional skills workflow and
+   learning-plane skill requests; ordinary task intake still belongs in
+   `millrace queue ...`.
 
 ## Millrace Fit Test
 
@@ -243,16 +250,26 @@ millrace init --workspace <workspace>
 millrace upgrade --workspace <workspace>
 millrace upgrade --apply --workspace <workspace>
 millrace compile validate --workspace <workspace>
+millrace compile show --workspace <workspace>
 millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
+millrace queue show <work_item_id> --workspace <workspace>
 millrace run once --workspace <workspace>
 millrace run daemon --monitor basic --workspace <workspace>
 millrace status watch --workspace <workspace>
 millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
 millrace runs tail <run_id> --workspace <workspace>
+millrace modes list
+millrace modes show <mode_id>
 millrace skills ls --workspace <workspace>
+millrace skills show <skill_id> --workspace <workspace>
 millrace skills search <query> --workspace <workspace>
+millrace skills install <skill_ref> --workspace <workspace>
+millrace skills create "<prompt>" --mode learning_codex --workspace <workspace>
+millrace skills improve <skill_id> --mode learning_codex --workspace <workspace>
+millrace skills promote <skill_id> --workspace <workspace>
+millrace skills export <skill_id> --workspace <workspace>
 millrace queue add-task <task.md|task.json> --workspace <workspace>
 millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
 millrace queue add-idea <idea.md> --workspace <workspace>
@@ -270,10 +287,15 @@ Important monitoring note:
 
 - `millrace status watch` is monitor-only and does not acquire runtime
   ownership locks
+- `millrace run daemon --monitor basic` is live-only output; repeated
+  `idle reason=no_work` lines are throttled to one heartbeat every 120 seconds
+  until runtime activity or a different idle reason resets the heartbeat
 - `millrace doctor` is the quick integrity check for mode assets and resolved
   runner posture, including missing harness binaries
 - `millrace status` exposes `pause_sources` and usage-governance blockers when
   usage governance is enabled or has persisted state
+- `millrace skills create` and `millrace skills improve` require a
+  learning-enabled mode such as `learning_codex` or `learning_pi`
 
 ## Monitoring And Intervention
 
@@ -281,10 +303,12 @@ Use this rhythm:
 
 1. `millrace status --workspace <workspace>` for current snapshot state.
 2. `millrace queue ls --workspace <workspace>` for queue shape.
-3. `millrace runs ls --workspace <workspace>` to find the recent run.
-4. `millrace runs show <run_id> --workspace <workspace>` for one run's
+3. `millrace queue show <work_item_id> --workspace <workspace>` when one queued
+   item needs inspection.
+4. `millrace runs ls --workspace <workspace>` to find the recent run.
+5. `millrace runs show <run_id> --workspace <workspace>` for one run's
    evidence.
-5. `millrace runs tail <run_id> --workspace <workspace>` when the primary run
+6. `millrace runs tail <run_id> --workspace <workspace>` when the primary run
    artifact matters more than the summary.
 
 Interpret status markers literally:

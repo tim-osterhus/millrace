@@ -111,6 +111,12 @@ decisions, usage-governance pause/resume/degraded events, run elapsed time, and
 token usage. Monitor output is live-only and does not replace persisted runtime
 events or run artifacts.
 
+When the daemon is idle with `reason=no_work`, the basic monitor prints the
+first idle line immediately and then treats repeated `no_work` idles as a
+heartbeat. It emits that heartbeat at most once every 120 seconds while the
+same idle condition continues. Any non-idle monitor event, or an idle event
+with a different reason, resets the heartbeat.
+
 ## Status Commands
 
 Canonical operator form: `millrace status`  
@@ -375,16 +381,93 @@ Prints one mode definition summary.
 The `millrace skills` command group manages the optional skill workflow and the
 learning-plane skill-improvement surface.
 
-Common commands:
+### `millrace skills ls`
+
+Lists installed workspace skills.
+
+Options:
+
+- `--workspace PATH`
+
+### `millrace skills show <SKILL_ID>`
+
+Prints one installed workspace skill's identity, path, and first markdown
+heading when present.
+
+Options:
+
+- `--workspace PATH`
+
+### `millrace skills search <QUERY>`
+
+Searches installed workspace skill ids and skill markdown text.
+
+Options:
+
+- `--workspace PATH`
+
+### `millrace skills install <SKILL_REF>`
+
+Installs a local skill directory or `SKILL.md` file into the selected skill
+target.
+
+Options:
+
+- `--workspace PATH`
+- `--target [workspace|source]`
+- `--force`
+- `--update`
+
+### `millrace skills create <PROMPT>`
+
+Queues a learning-plane request to create a new skill. The selected mode must
+support the learning plane.
+
+Options:
+
+- `--workspace PATH`
+- `--mode MODE_ID`
+- `--foreground`
+
+### `millrace skills improve <SKILL_ID>`
+
+Queues a learning-plane request to improve an installed skill. The selected
+mode must support the learning plane.
+
+Options:
+
+- `--workspace PATH`
+- `--mode MODE_ID`
+- `--foreground`
+
+### `millrace skills promote <SKILL_ID>`
+
+Copies a workspace skill into the source skill asset surface when running from
+a source checkout.
+
+Options:
+
+- `--workspace PATH`
+
+### `millrace skills export <SKILL_ID>`
+
+Exports one installed workspace skill as a zip archive.
+
+Options:
+
+- `--workspace PATH`
+- `--output PATH`
+
+Command summary:
 
 - `millrace skills ls`
 - `millrace skills show <SKILL_ID>`
 - `millrace skills search <QUERY>`
-- `millrace skills install <SOURCE>`
-- `millrace skills create ...`
-- `millrace skills improve ...`
-- `millrace skills promote ...`
-- `millrace skills export ...`
+- `millrace skills install <SKILL_REF>`
+- `millrace skills create <PROMPT>`
+- `millrace skills improve <SKILL_ID>`
+- `millrace skills promote <SKILL_ID>`
+- `millrace skills export <SKILL_ID>`
 
 Create/improve workflows require a learning-enabled mode such as
 `learning_codex` or `learning_pi` because they enqueue learning requests for the
