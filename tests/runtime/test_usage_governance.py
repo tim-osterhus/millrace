@@ -26,6 +26,13 @@ from millrace_ai.state_store import load_snapshot
 NOW = datetime(2026, 4, 26, 12, 0, 0, tzinfo=timezone.utc)
 
 
+def test_usage_governance_public_exports_remain_importable() -> None:
+    import millrace_ai.runtime.usage_governance as usage_governance
+
+    for name in usage_governance.__all__:
+        assert hasattr(usage_governance, name), name
+
+
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
 
