@@ -25,6 +25,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Moved the shared `RuntimeTickOutcome` contract behind
   `runtime/outcomes.py`, keeping the public runtime facade stable while
   removing the remaining concrete runtime submodule cycle.
+- Added an import-cycle guardrail test so future concrete `millrace_ai.*`
+  module cycles are caught by the normal pytest suite.
 
 ## [0.15.6] - 2026-04-27
 

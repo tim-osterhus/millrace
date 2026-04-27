@@ -129,6 +129,7 @@ layer, not as a third duplicated mode asset file.
 | `src/millrace_ai/runtime/` | `tests/runtime/` |
 | `src/millrace_ai/workspace/` | `tests/workspace/` |
 | Cross-cutting operator/runtime flows | `tests/integration/` |
+| Import graph hygiene | `tests/test_import_cycles.py` |
 
 ## Verification Commands
 
