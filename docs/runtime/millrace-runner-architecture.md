@@ -87,6 +87,12 @@ which frozen node contract produced a run.
 - `node_id`
 - `stage_kind_id`
 
+Default running markers, legal terminal markers, and fallback
+`allowed_result_classes_by_outcome` values are derived from
+`src/millrace_ai/contracts/stage_metadata.py`. Compiled node plans can still
+provide explicit values, but runner prompts and normalization no longer carry a
+separate hard-coded copy of stage legality.
+
 Normalization preserves that identity into the persisted stage-result metadata,
 and `millrace runs show` surfaces it at both the run level and the per-stage
 level.

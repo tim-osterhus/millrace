@@ -8,7 +8,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
-from millrace_ai.contracts import ExecutionStageName, LearningStageName, PlanningStageName
+from millrace_ai.contracts import Plane
+from millrace_ai.contracts.stage_metadata import known_stage_values, known_stage_values_for_plane
 
 
 class LintLevel(str, Enum):
@@ -39,11 +40,11 @@ class ParsedMarkdownAsset:
     body: str
 
 
-KNOWN_EXECUTION_STAGES = {stage.value for stage in ExecutionStageName}
-KNOWN_PLANNING_STAGES = {stage.value for stage in PlanningStageName}
-KNOWN_LEARNING_STAGES = {stage.value for stage in LearningStageName}
-KNOWN_STAGES = KNOWN_EXECUTION_STAGES | KNOWN_PLANNING_STAGES | KNOWN_LEARNING_STAGES
-KNOWN_PLANES = {"execution", "planning", "learning"}
+KNOWN_EXECUTION_STAGES = known_stage_values_for_plane(Plane.EXECUTION)
+KNOWN_PLANNING_STAGES = known_stage_values_for_plane(Plane.PLANNING)
+KNOWN_LEARNING_STAGES = known_stage_values_for_plane(Plane.LEARNING)
+KNOWN_STAGES = known_stage_values()
+KNOWN_PLANES = {plane.value for plane in Plane}
 KNOWN_ASSET_TYPES = {"entrypoint", "skill"}
 
 CORE_FORBIDDEN_CLAIMS = {

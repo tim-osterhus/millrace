@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
     ExecutionStageName,
-    LearningStageName,
     Plane,
     PlanningStageName,
+    StageName,
     StageResultEnvelope,
 )
+from millrace_ai.contracts.stage_metadata import stage_plane
 from millrace_ai.router import RouterAction, RouterDecision
 
 from .closure_transitions import apply_closure_target_router_decision
@@ -101,12 +102,8 @@ def _is_closure_target_result(stage_result: StageResultEnvelope) -> bool:
     return stage_result.metadata.get("request_kind") == "closure_target"
 
 
-def _plane_for_stage(stage: object) -> Plane:
-    if isinstance(stage, ExecutionStageName):
-        return Plane.EXECUTION
-    if isinstance(stage, LearningStageName):
-        return Plane.LEARNING
-    return Plane.PLANNING
+def _plane_for_stage(stage: StageName) -> Plane:
+    return stage_plane(stage)
 
 
 __all__ = [

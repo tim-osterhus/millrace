@@ -119,6 +119,11 @@ surface is a package under `src/millrace_ai/contracts/` so foundational enums,
 stage metadata, work documents, stage results, loop/mode definitions, runtime
 snapshots, mailbox envelopes, compiler diagnostics, and recovery counters can be
 reviewed independently while preserving the root import contract.
+`contracts/stage_metadata.py` is the stage legality registry: stage plane
+membership, running markers, legal terminal markers, blocked terminal results,
+and result-class policy derive from there for contracts, runner prompts,
+normalization, graph lookup, entrypoint linting, and built-in stage-kind asset
+validation.
 
 ### 2. Runtime/state artifacts
 

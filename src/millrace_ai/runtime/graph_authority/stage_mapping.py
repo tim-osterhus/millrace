@@ -3,14 +3,8 @@
 from __future__ import annotations
 
 from millrace_ai.architecture import FrozenGraphPlanePlan, MaterializedGraphNodePlan
-from millrace_ai.contracts import (
-    ExecutionStageName,
-    LearningStageName,
-    Plane,
-    PlanningStageName,
-    StageName,
-    WorkItemKind,
-)
+from millrace_ai.contracts import Plane, StageName, WorkItemKind
+from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 
 
 def entry_key_for_work_item_kind(work_item_kind: WorkItemKind) -> str:
@@ -31,11 +25,7 @@ def stage_for_node(graph: FrozenGraphPlanePlan, node_id: str) -> StageName:
 
 
 def stage_for_stage_kind(plane: Plane, stage_kind_id: str) -> StageName:
-    if plane is Plane.EXECUTION:
-        return ExecutionStageName(stage_kind_id)
-    if plane is Plane.LEARNING:
-        return LearningStageName(stage_kind_id)
-    return PlanningStageName(stage_kind_id)
+    return stage_name_for_plane(plane, stage_kind_id)
 
 
 def node_plan_by_id(graph: FrozenGraphPlanePlan, node_id: str) -> MaterializedGraphNodePlan:

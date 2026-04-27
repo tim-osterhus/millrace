@@ -11,12 +11,15 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from millrace_ai.contracts import (
     ExecutionTerminalResult,
     LearningTerminalResult,
-    Plane,
     PlanningTerminalResult,
     ResultClass,
     StageResultEnvelope,
     TerminalResult,
     WorkItemKind,
+)
+from millrace_ai.contracts.stage_metadata import (
+    blocked_terminal_for_plane,
+    terminal_result_for_plane,
 )
 
 from .requests import (
@@ -391,7 +394,7 @@ def _failure_envelope(
     detected_marker: str | None = None,
     artifact_paths: tuple[str, ...] = (),
 ) -> StageResultEnvelope:
-    blocked_terminal = _blocked_terminal_for_plane(request.plane)
+    blocked_terminal = blocked_terminal_for_plane(request.plane)
     work_item_kind, work_item_id = _request_result_identity(request)
     report_artifact = _resolved_report_artifact(request)
 
@@ -443,18 +446,7 @@ def _terminal_result_for_request(
 ) -> TerminalResult | None:
     if f"### {token}" not in request.legal_terminal_markers:
         return None
-    return _terminal_result_for_plane(request.plane, token)
-
-
-def _terminal_result_for_plane(plane: Plane, token: str) -> TerminalResult | None:
-    try:
-        if plane is Plane.EXECUTION:
-            return ExecutionTerminalResult(token)
-        if plane is Plane.LEARNING:
-            return LearningTerminalResult(token)
-        return PlanningTerminalResult(token)
-    except ValueError:
-        return None
+    return terminal_result_for_plane(request.plane, token)
 
 
 def _resolve_result_class(
@@ -480,14 +472,6 @@ def _resolve_result_class(
     if result_class not in allowed_result_classes:
         return None
     return result_class
-
-
-def _blocked_terminal_for_plane(plane: Plane) -> TerminalResult:
-    if plane is Plane.EXECUTION:
-        return ExecutionTerminalResult.BLOCKED
-    if plane is Plane.LEARNING:
-        return LearningTerminalResult.BLOCKED
-    return PlanningTerminalResult.BLOCKED
 
 
 def _raw_exit_kind(raw_result: RunnerRawResult) -> str:

@@ -12,14 +12,13 @@ from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
-    LearningStageName,
     Plane,
-    PlanningStageName,
     ResultClass,
     StageName,
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.requests import RequestKind
@@ -301,11 +300,7 @@ def now() -> datetime:
 
 
 def _stage_name_for_node_plan(stage_plan: MaterializedGraphNodePlan) -> StageName:
-    if stage_plan.plane is Plane.EXECUTION:
-        return ExecutionStageName(stage_plan.stage_kind_id)
-    if stage_plan.plane is Plane.LEARNING:
-        return LearningStageName(stage_plan.stage_kind_id)
-    return PlanningStageName(stage_plan.stage_kind_id)
+    return stage_name_for_plane(stage_plan.plane, stage_plan.stage_kind_id)
 
 
 def _status_file_for_plane(engine: RuntimeEngine, plane: Plane) -> Path:

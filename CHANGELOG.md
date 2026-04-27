@@ -41,6 +41,10 @@ This file starts at `0.13.0`, the current documented public baseline.
   `millrace_ai.contracts` imports while separating enums, stage metadata,
   work documents, stage results, loop/mode contracts, runtime snapshots,
   mailbox envelopes, compiler diagnostics, and recovery counters.
+- Centralized stage plane, legal terminal marker, running marker, and
+  result-class policy truth in `contracts/stage_metadata.py`; runner requests,
+  normalization helpers, entrypoint linting, graph stage lookup, and built-in
+  stage-kind asset validation now derive from that registry.
 
 ## [0.15.6] - 2026-04-27
 

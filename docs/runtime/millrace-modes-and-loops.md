@@ -86,6 +86,11 @@ These assets validate as:
 - `RegisteredStageKindDefinition`
 - `GraphLoopDefinition`
 
+Built-in stage-kind assets are also checked against
+`src/millrace_ai/contracts/stage_metadata.py`, which owns the canonical plane,
+running-marker, legal-terminal-result, and result-class policy for shipped
+stage identities.
+
 The graph-loop surface does two things today:
 
 - it proves the shipped execution, planning, and learning topology can be

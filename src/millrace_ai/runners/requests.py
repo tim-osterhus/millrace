@@ -9,14 +9,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from millrace_ai.contracts import (
-    ExecutionStageName,
-    LearningStageName,
     Plane,
-    PlanningStageName,
     ResultClass,
     StageName,
     TokenUsage,
     WorkItemKind,
+)
+from millrace_ai.contracts.stage_metadata import (
+    allowed_result_classes_by_outcome,
+    legal_terminal_markers,
+    running_status_marker,
+    stage_plane,
 )
 
 RunnerExitKind = Literal[
@@ -27,92 +30,6 @@ RunnerExitKind = Literal[
     "interrupted",
 ]
 RequestKind = Literal["active_work_item", "closure_target", "learning_request"]
-
-_STAGE_TO_PLANE: dict[str, Plane] = {
-    ExecutionStageName.BUILDER.value: Plane.EXECUTION,
-    ExecutionStageName.CHECKER.value: Plane.EXECUTION,
-    ExecutionStageName.FIXER.value: Plane.EXECUTION,
-    ExecutionStageName.DOUBLECHECKER.value: Plane.EXECUTION,
-    ExecutionStageName.UPDATER.value: Plane.EXECUTION,
-    ExecutionStageName.TROUBLESHOOTER.value: Plane.EXECUTION,
-    ExecutionStageName.CONSULTANT.value: Plane.EXECUTION,
-    PlanningStageName.PLANNER.value: Plane.PLANNING,
-    PlanningStageName.MANAGER.value: Plane.PLANNING,
-    PlanningStageName.MECHANIC.value: Plane.PLANNING,
-    PlanningStageName.AUDITOR.value: Plane.PLANNING,
-    PlanningStageName.ARBITER.value: Plane.PLANNING,
-    LearningStageName.ANALYST.value: Plane.LEARNING,
-    LearningStageName.PROFESSOR.value: Plane.LEARNING,
-    LearningStageName.CURATOR.value: Plane.LEARNING,
-}
-
-_LEGACY_ALLOWED_RESULT_CLASSES_BY_STAGE: dict[str, dict[str, tuple[ResultClass, ...]]] = {
-    ExecutionStageName.BUILDER.value: {
-        "BUILDER_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    ExecutionStageName.CHECKER.value: {
-        "CHECKER_PASS": (ResultClass.SUCCESS,),
-        "FIX_NEEDED": (ResultClass.FOLLOWUP_NEEDED,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    ExecutionStageName.FIXER.value: {
-        "FIXER_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    ExecutionStageName.DOUBLECHECKER.value: {
-        "DOUBLECHECK_PASS": (ResultClass.SUCCESS,),
-        "FIX_NEEDED": (ResultClass.FOLLOWUP_NEEDED,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    ExecutionStageName.UPDATER.value: {
-        "UPDATE_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    ExecutionStageName.TROUBLESHOOTER.value: {
-        "TROUBLESHOOT_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    ExecutionStageName.CONSULTANT.value: {
-        "CONSULT_COMPLETE": (ResultClass.SUCCESS,),
-        "NEEDS_PLANNING": (ResultClass.ESCALATE_PLANNING,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    PlanningStageName.PLANNER.value: {
-        "PLANNER_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    PlanningStageName.MANAGER.value: {
-        "MANAGER_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    PlanningStageName.MECHANIC.value: {
-        "MECHANIC_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    PlanningStageName.AUDITOR.value: {
-        "AUDITOR_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    PlanningStageName.ARBITER.value: {
-        "ARBITER_COMPLETE": (ResultClass.SUCCESS,),
-        "REMEDIATION_NEEDED": (ResultClass.FOLLOWUP_NEEDED,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    LearningStageName.ANALYST.value: {
-        "ANALYST_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    LearningStageName.PROFESSOR.value: {
-        "PROFESSOR_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-    LearningStageName.CURATOR.value: {
-        "CURATOR_COMPLETE": (ResultClass.SUCCESS,),
-        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
-    },
-}
-
 
 class StageRunRequest(BaseModel):
     """Machine-readable request payload for one stage run."""
@@ -166,23 +83,18 @@ class StageRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request_shape(self) -> "StageRunRequest":
-        if _STAGE_TO_PLANE[self.stage.value] != self.plane:
+        if stage_plane(self.stage) != self.plane:
             raise ValueError("stage must belong to plane")
         if not self.node_id:
             self.node_id = self.stage.value
         if not self.stage_kind_id:
             self.stage_kind_id = self.stage.value
         if not self.running_status_marker:
-            self.running_status_marker = _legacy_running_status_marker(self.stage)
+            self.running_status_marker = running_status_marker(self.stage)
         if not self.allowed_result_classes_by_outcome:
-            self.allowed_result_classes_by_outcome = {
-                outcome: tuple(result_classes)
-                for outcome, result_classes in _LEGACY_ALLOWED_RESULT_CLASSES_BY_STAGE[self.stage.value].items()
-            }
+            self.allowed_result_classes_by_outcome = allowed_result_classes_by_outcome(self.stage)
         if not self.legal_terminal_markers:
-            self.legal_terminal_markers = _legal_terminal_markers_from_outcomes(
-                tuple(self.allowed_result_classes_by_outcome)
-            )
+            self.legal_terminal_markers = legal_terminal_markers(self.stage)
         expected_markers = _legal_terminal_markers_from_outcomes(
             tuple(self.allowed_result_classes_by_outcome)
         )
@@ -385,10 +297,6 @@ def _render_result_class_policy(
 
 def _legal_terminal_markers_from_outcomes(outcomes: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(f"### {outcome}" for outcome in outcomes)
-
-
-def _legacy_running_status_marker(stage: StageName) -> str:
-    return f"{stage.value.upper()}_RUNNING"
 
 
 __all__ = [

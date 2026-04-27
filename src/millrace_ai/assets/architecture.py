@@ -9,27 +9,15 @@ from typing import Any
 from pydantic import ValidationError
 
 from millrace_ai.architecture import RegisteredStageKindDefinition
+from millrace_ai.contracts.stage_metadata import STAGE_METADATA_BY_VALUE
 from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent
 STAGE_KIND_REGISTRY_ROOT = Path("registry/stage_kinds")
 
 BUILTIN_STAGE_KIND_PATHS: dict[str, Path] = {
-    "builder": Path("registry/stage_kinds/execution/builder.json"),
-    "checker": Path("registry/stage_kinds/execution/checker.json"),
-    "fixer": Path("registry/stage_kinds/execution/fixer.json"),
-    "doublechecker": Path("registry/stage_kinds/execution/doublechecker.json"),
-    "updater": Path("registry/stage_kinds/execution/updater.json"),
-    "troubleshooter": Path("registry/stage_kinds/execution/troubleshooter.json"),
-    "consultant": Path("registry/stage_kinds/execution/consultant.json"),
-    "planner": Path("registry/stage_kinds/planning/planner.json"),
-    "manager": Path("registry/stage_kinds/planning/manager.json"),
-    "mechanic": Path("registry/stage_kinds/planning/mechanic.json"),
-    "auditor": Path("registry/stage_kinds/planning/auditor.json"),
-    "arbiter": Path("registry/stage_kinds/planning/arbiter.json"),
-    "analyst": Path("registry/stage_kinds/learning/analyst.json"),
-    "professor": Path("registry/stage_kinds/learning/professor.json"),
-    "curator": Path("registry/stage_kinds/learning/curator.json"),
+    stage_id: Path(f"registry/stage_kinds/{metadata.plane.value}/{stage_id}.json")
+    for stage_id, metadata in STAGE_METADATA_BY_VALUE.items()
 }
 
 SHIPPED_STAGE_KIND_IDS: tuple[str, ...] = tuple(BUILTIN_STAGE_KIND_PATHS)
@@ -57,6 +45,7 @@ def load_builtin_stage_kind_definition(
         raise ArchitectureAssetError(
             f"Stage kind asset id mismatch: expected {stage_kind_id}, found {stage_kind.stage_kind_id}"
         )
+    _validate_builtin_stage_kind_matches_metadata(stage_kind)
 
     return stage_kind
 
@@ -153,6 +142,30 @@ def _load_stage_kind_definition_at_path(path: Path) -> RegisteredStageKindDefini
         raise ArchitectureAssetError(f"Invalid stage kind definition in asset: {path}") from exc
 
     return stage_kind
+
+
+def _validate_builtin_stage_kind_matches_metadata(
+    stage_kind: RegisteredStageKindDefinition,
+) -> None:
+    metadata = STAGE_METADATA_BY_VALUE[stage_kind.stage_kind_id]
+    if stage_kind.plane is not metadata.plane:
+        raise ArchitectureAssetError(
+            f"Stage kind {stage_kind.stage_kind_id} plane does not match stage metadata"
+        )
+    if stage_kind.running_status_marker != metadata.running_status_marker:
+        raise ArchitectureAssetError(
+            f"Stage kind {stage_kind.stage_kind_id} running marker does not match stage metadata"
+        )
+    if stage_kind.legal_outcomes != metadata.legal_terminal_results:
+        raise ArchitectureAssetError(
+            f"Stage kind {stage_kind.stage_kind_id} legal outcomes do not match stage metadata"
+        )
+    if stage_kind.allowed_result_classes_by_outcome != dict(
+        metadata.allowed_result_classes_by_outcome
+    ):
+        raise ArchitectureAssetError(
+            f"Stage kind {stage_kind.stage_kind_id} result-class policy does not match stage metadata"
+        )
 
 
 __all__ = [

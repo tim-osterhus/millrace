@@ -13,6 +13,7 @@ from millrace_ai.contracts import (
     PlanningStageName,
     StageName,
 )
+from millrace_ai.contracts.stage_metadata import STAGE_NAME_BY_VALUE, stage_name_for_value
 
 from .entrypoint_overrides import validate_entrypoint_override
 
@@ -35,13 +36,6 @@ REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     LearningStageName.PROFESSOR: ("skills/stage/learning/professor-core/SKILL.md",),
     LearningStageName.CURATOR: ("skills/stage/learning/curator-core/SKILL.md",),
 }
-
-STAGE_NAME_BY_VALUE: dict[str, StageName] = {
-    **{stage.value: stage for stage in ExecutionStageName},
-    **{stage.value: stage for stage in PlanningStageName},
-    **{stage.value: stage for stage in LearningStageName},
-}
-
 
 def required_skills_for_stage(stage: StageName) -> tuple[str, ...]:
     return REQUIRED_SKILLS_BY_STAGE.get(stage, ())
@@ -115,7 +109,10 @@ def materialize_graph_node_plan(
 
 
 def stage_name_for_identifier(identifier: str) -> StageName | None:
-    return STAGE_NAME_BY_VALUE.get(identifier)
+    try:
+        return stage_name_for_value(identifier)
+    except ValueError:
+        return None
 
 
 __all__ = [

@@ -77,7 +77,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
-- `src/millrace_ai/contracts/`: public typed contract facade plus owned contract families for enums, stage metadata, work documents, stage results, loop/mode definitions, compiler diagnostics, runtime snapshots, runtime error contexts, mailbox payloads, and recovery counters.
+- `src/millrace_ai/contracts/`: public typed contract facade plus owned contract families for enums, stage metadata, work documents, stage results, loop/mode definitions, compiler diagnostics, runtime snapshots, runtime error contexts, mailbox payloads, and recovery counters. `contracts/stage_metadata.py` is the single registry for stage plane membership, legal terminal results, running markers, prompt markers, and result-class policy.
 - `src/millrace_ai/compiler.py`: stable public facade for mode+graph-loop compile, graph preview, currentness inspection, and diagnostics.
 - `src/millrace_ai/compilation/`: compiler internals for workspace compile orchestration, mode/path resolution, graph and node materialization, transition/completion/policy compilation, learning-trigger validation, entrypoint override validation, asset resolution, fingerprints, persistence, and currentness inspection.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex/Pi adapters.
