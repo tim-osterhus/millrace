@@ -51,6 +51,7 @@ def idle_snapshot_update(
     }
     if clear_paused:
         update["paused"] = False
+        update["pause_sources"] = ()
     if clear_stop_requested:
         update["stop_requested"] = False
     return update

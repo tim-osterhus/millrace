@@ -80,6 +80,8 @@ It wraps long-horizon work in a real runtime:
   handoffs
 - Arbiter activates only when the scheduler finds no lineage work left and
   closure behavior is actually ready
+- optional usage governance can pause and auto-resume between stages when
+  configured token or subscription quota rules are reached
 - runtime startup and config reload refuse to keep running on a stale
   last-known-good plan when current compile inputs no longer match
 
@@ -221,6 +223,7 @@ Start with `docs/millrace-technical-overview.md`.
 
 - `docs/runtime/millrace-cli-reference.md`
 - `docs/runtime/millrace-runtime-architecture.md`
+- `docs/runtime/millrace-usage-governance.md`
 
 ### Understand It
 

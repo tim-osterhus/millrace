@@ -67,6 +67,12 @@ def _render_event_lines(
         return (prefix + f"paused reason={_string(event.payload.get('reason'))}",)
     if event.event_type == "runtime_stopped":
         return (prefix + f"stopped reason={_string(event.payload.get('reason'))}",)
+    if event.event_type == "usage_governance_paused":
+        return (prefix + _render_usage_governance_paused(event.payload),)
+    if event.event_type == "usage_governance_resumed":
+        return (prefix + _render_usage_governance_resumed(event.payload),)
+    if event.event_type == "usage_governance_degraded":
+        return (prefix + _render_usage_governance_degraded(event.payload),)
     return ()
 
 
@@ -163,6 +169,32 @@ def _render_status_marker_changed(payload: Mapping[str, object]) -> str | None:
         f"run={_string(payload.get('run_id'))} "
         f"from={_normalize_marker(_string(payload.get('previous_marker')))} "
         f"to={_normalize_marker(_string(payload.get('current_marker')))}"
+    )
+
+
+def _render_usage_governance_paused(payload: Mapping[str, object]) -> str:
+    next_resume = _string(payload.get("next_auto_resume_at"))
+    return (
+        "governance pause "
+        f"source={_string(payload.get('source'))} "
+        f"rule={_string(payload.get('rule_id'))} "
+        f"window={_string(payload.get('window'))} "
+        f"observed={_number_string(payload.get('observed'))} "
+        f"threshold={_number_string(payload.get('threshold'))} "
+        f"next_resume={next_resume}"
+    )
+
+
+def _render_usage_governance_resumed(payload: Mapping[str, object]) -> str:
+    return f"governance resume cleared_rules={_string(payload.get('cleared_rules'))}"
+
+
+def _render_usage_governance_degraded(payload: Mapping[str, object]) -> str:
+    return (
+        "governance degraded "
+        f"source={_string(payload.get('source'))} "
+        f"policy={_string(payload.get('policy'))} "
+        f"detail={_string(payload.get('detail'))}"
     )
 
 
@@ -333,6 +365,14 @@ def _int_value(value: object) -> int:
     if isinstance(value, int):
         return value
     return 0
+
+
+def _number_string(value: object) -> str:
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:g}"
+    return _string(value)
 
 
 def _string(value: object) -> str:

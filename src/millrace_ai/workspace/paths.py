@@ -102,6 +102,8 @@ class WorkspacePaths:
     runtime_snapshot_file: Path
     recovery_counters_file: Path
     runtime_error_context_file: Path
+    usage_governance_state_file: Path
+    usage_governance_ledger_file: Path
     runtime_lock_file: Path
 
     def directories(self) -> tuple[Path, ...]:
@@ -254,6 +256,8 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         runtime_snapshot_file=state_dir / "runtime_snapshot.json",
         recovery_counters_file=state_dir / "recovery_counters.json",
         runtime_error_context_file=state_dir / "runtime_error_context.json",
+        usage_governance_state_file=state_dir / "usage_governance_state.json",
+        usage_governance_ledger_file=state_dir / "usage_governance_ledger.jsonl",
         runtime_lock_file=state_dir / "runtime_daemon.lock.json",
     )
 

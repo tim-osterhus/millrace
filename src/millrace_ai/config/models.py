@@ -38,6 +38,108 @@ class PiEventLogPolicy(str, Enum):
     FULL = "full"
 
 
+class UsageGovernanceEvaluationBoundary(str, Enum):
+    BETWEEN_STAGES = "between_stages"
+
+
+class UsageGovernanceRuntimeTokenWindow(str, Enum):
+    ROLLING_5H = "rolling_5h"
+    CALENDAR_WEEK = "calendar_week"
+    DAEMON_SESSION = "daemon_session"
+    PER_RUN = "per_run"
+
+
+class UsageGovernanceRuntimeTokenMetric(str, Enum):
+    TOTAL_TOKENS = "total_tokens"
+
+
+class UsageGovernanceSubscriptionWindow(str, Enum):
+    FIVE_HOUR = "five_hour"
+    WEEKLY = "weekly"
+
+
+class UsageGovernanceSubscriptionProvider(str, Enum):
+    CODEX_CHATGPT_OAUTH = "codex_chatgpt_oauth"
+
+
+class UsageGovernanceDegradedPolicy(str, Enum):
+    FAIL_OPEN = "fail_open"
+    FAIL_CLOSED = "fail_closed"
+
+
+def _default_runtime_token_rules() -> tuple["RuntimeTokenRule", ...]:
+    return (
+        RuntimeTokenRule(
+            rule_id="rolling-5h-default",
+            window=UsageGovernanceRuntimeTokenWindow.ROLLING_5H,
+            threshold=750_000,
+        ),
+        RuntimeTokenRule(
+            rule_id="calendar-week-default",
+            window=UsageGovernanceRuntimeTokenWindow.CALENDAR_WEEK,
+            threshold=5_000_000,
+        ),
+    )
+
+
+def _default_subscription_quota_rules() -> tuple["SubscriptionQuotaRule", ...]:
+    return (
+        SubscriptionQuotaRule(
+            rule_id="codex-five-hour-default",
+            window=UsageGovernanceSubscriptionWindow.FIVE_HOUR,
+            pause_at_percent_used=95,
+        ),
+        SubscriptionQuotaRule(
+            rule_id="codex-weekly-default",
+            window=UsageGovernanceSubscriptionWindow.WEEKLY,
+            pause_at_percent_used=95,
+        ),
+    )
+
+
+class RuntimeTokenRule(ConfigModel):
+    rule_id: str
+    window: UsageGovernanceRuntimeTokenWindow
+    metric: UsageGovernanceRuntimeTokenMetric = UsageGovernanceRuntimeTokenMetric.TOTAL_TOKENS
+    threshold: int = Field(gt=0)
+
+
+class RuntimeTokenRulesSection(ConfigModel):
+    enabled: bool = True
+    rules: tuple[RuntimeTokenRule, ...] = Field(default_factory=_default_runtime_token_rules)
+
+
+class SubscriptionQuotaRule(ConfigModel):
+    rule_id: str
+    window: UsageGovernanceSubscriptionWindow
+    pause_at_percent_used: float = Field(gt=0, le=100)
+
+
+class SubscriptionQuotaRulesSection(ConfigModel):
+    enabled: bool = False
+    provider: UsageGovernanceSubscriptionProvider = (
+        UsageGovernanceSubscriptionProvider.CODEX_CHATGPT_OAUTH
+    )
+    degraded_policy: UsageGovernanceDegradedPolicy = UsageGovernanceDegradedPolicy.FAIL_OPEN
+    refresh_interval_seconds: int = Field(default=60, gt=0)
+    rules: tuple[SubscriptionQuotaRule, ...] = Field(
+        default_factory=_default_subscription_quota_rules
+    )
+
+
+class UsageGovernanceSection(ConfigModel):
+    enabled: bool = False
+    auto_resume: bool = True
+    evaluation_boundary: UsageGovernanceEvaluationBoundary = (
+        UsageGovernanceEvaluationBoundary.BETWEEN_STAGES
+    )
+    calendar_timezone: str = "UTC"
+    runtime_token_rules: RuntimeTokenRulesSection = Field(default_factory=RuntimeTokenRulesSection)
+    subscription_quota_rules: SubscriptionQuotaRulesSection = Field(
+        default_factory=SubscriptionQuotaRulesSection
+    )
+
+
 class CodexRunnerSection(ConfigModel):
     command: str = "codex"
     args: tuple[str, ...] = ("exec",)
@@ -133,6 +235,7 @@ class RuntimeConfig(ConfigModel):
     runners: RunnersSection = Field(default_factory=RunnersSection)
     recovery: RecoverySection = Field(default_factory=RecoverySection)
     watchers: WatchersSection = Field(default_factory=WatchersSection)
+    usage_governance: UsageGovernanceSection = Field(default_factory=UsageGovernanceSection)
     stages: dict[str, StageConfig] = Field(default_factory=dict)
 
     @field_validator("stages")
@@ -157,6 +260,17 @@ __all__ = [
     "RunnersSection",
     "RuntimeConfig",
     "RuntimeSection",
+    "RuntimeTokenRule",
+    "RuntimeTokenRulesSection",
     "StageConfig",
+    "SubscriptionQuotaRule",
+    "SubscriptionQuotaRulesSection",
+    "UsageGovernanceDegradedPolicy",
+    "UsageGovernanceEvaluationBoundary",
+    "UsageGovernanceRuntimeTokenMetric",
+    "UsageGovernanceRuntimeTokenWindow",
+    "UsageGovernanceSection",
+    "UsageGovernanceSubscriptionProvider",
+    "UsageGovernanceSubscriptionWindow",
     "WatchersSection",
 ]

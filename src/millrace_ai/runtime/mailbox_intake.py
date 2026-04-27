@@ -18,6 +18,11 @@ from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError, Works
 from millrace_ai.events import write_runtime_event
 from millrace_ai.mailbox import drain_incoming_mailbox_commands
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.runtime.pause_state import (
+    OPERATOR_PAUSE_SOURCE,
+    add_pause_source,
+    remove_pause_source,
+)
 from millrace_ai.state_store import save_snapshot
 
 if TYPE_CHECKING:
@@ -35,11 +40,19 @@ def handle_mailbox_command(
     assert engine.snapshot is not None
     command = envelope.command.value
     if command == "pause":
-        engine.snapshot = engine.snapshot.model_copy(update={"paused": True, "updated_at": engine._now()})
+        engine.snapshot = add_pause_source(
+            engine.snapshot,
+            source=OPERATOR_PAUSE_SOURCE,
+            now=engine._now(),
+        )
         save_snapshot(engine.paths, engine.snapshot)
         return
     if command == "resume":
-        engine.snapshot = engine.snapshot.model_copy(update={"paused": False, "updated_at": engine._now()})
+        engine.snapshot = remove_pause_source(
+            engine.snapshot,
+            source=OPERATOR_PAUSE_SOURCE,
+            now=engine._now(),
+        )
         save_snapshot(engine.paths, engine.snapshot)
         return
     if command == "stop":

@@ -13,6 +13,8 @@ from millrace_ai.config import (
     PiRunnerSection,
     RuntimeConfig,
     StageConfig,
+    UsageGovernanceDegradedPolicy,
+    UsageGovernanceSubscriptionProvider,
     apply_boundary_for_field,
     iter_config_field_paths,
     load_runtime_config,
@@ -41,6 +43,7 @@ def test_runtime_config_schema_uses_draft_categories() -> None:
         "runners",
         "recovery",
         "watchers",
+        "usage_governance",
         "stages",
     }
 
@@ -78,6 +81,50 @@ def test_runtime_config_enables_watchers_and_seeded_idea_intake_by_default() -> 
 
     assert config.watchers.enabled is True
     assert config.watchers.watch_ideas_inbox is True
+
+
+def test_usage_governance_is_inert_by_default() -> None:
+    config = RuntimeConfig()
+
+    assert config.usage_governance.enabled is False
+    assert config.usage_governance.auto_resume is True
+    assert config.usage_governance.runtime_token_rules.enabled is True
+    assert config.usage_governance.subscription_quota_rules.enabled is False
+
+
+def test_usage_governance_installs_documented_default_rules_when_enabled() -> None:
+    config = RuntimeConfig(usage_governance={"enabled": True})
+
+    runtime_rules = config.usage_governance.runtime_token_rules.rules
+    assert [rule.rule_id for rule in runtime_rules] == [
+        "rolling-5h-default",
+        "calendar-week-default",
+    ]
+    assert runtime_rules[0].window.value == "rolling_5h"
+    assert runtime_rules[0].metric.value == "total_tokens"
+    assert runtime_rules[0].threshold == 750_000
+    assert runtime_rules[1].window.value == "calendar_week"
+    assert runtime_rules[1].threshold == 5_000_000
+
+
+def test_subscription_quota_defaults_are_codex_specific_and_fail_open() -> None:
+    config = RuntimeConfig(
+        usage_governance={
+            "enabled": True,
+            "subscription_quota_rules": {"enabled": True},
+        }
+    )
+
+    quota = config.usage_governance.subscription_quota_rules
+    assert quota.provider is UsageGovernanceSubscriptionProvider.CODEX_CHATGPT_OAUTH
+    assert quota.degraded_policy is UsageGovernanceDegradedPolicy.FAIL_OPEN
+    assert quota.refresh_interval_seconds == 60
+    assert [rule.rule_id for rule in quota.rules] == [
+        "codex-five-hour-default",
+        "codex-weekly-default",
+    ]
+    assert quota.rules[0].window.value == "five_hour"
+    assert quota.rules[0].pause_at_percent_used == 95
 
 
 def test_runtime_config_rejects_unknown_stage_name() -> None:
@@ -156,6 +203,11 @@ def test_each_config_field_has_an_apply_boundary() -> None:
     assert missing == []
     assert apply_boundary_for_field("runtime.idle_sleep_seconds") is ApplyBoundary.NEXT_TICK
     assert apply_boundary_for_field("watchers.enabled") is ApplyBoundary.NEXT_TICK
+    assert apply_boundary_for_field("usage_governance.enabled") is ApplyBoundary.NEXT_TICK
+    assert (
+        apply_boundary_for_field("usage_governance.runtime_token_rules")
+        is ApplyBoundary.NEXT_TICK
+    )
     assert apply_boundary_for_field("runtime.default_mode") is ApplyBoundary.RECOMPILE
     assert apply_boundary_for_field("stages.builder.model") is ApplyBoundary.RECOMPILE
 

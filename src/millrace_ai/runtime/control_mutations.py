@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Generic, TypeVar
 
+from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import (
     MailboxAddIdeaPayload,
     MailboxCommand,
@@ -20,7 +21,18 @@ from millrace_ai.errors import QueueStateError, WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
+from millrace_ai.runtime.pause_state import (
+    OPERATOR_PAUSE_SOURCE,
+    USAGE_GOVERNANCE_PAUSE_SOURCE,
+    add_pause_source,
+    has_pause_source,
+    remove_pause_source,
+)
 from millrace_ai.runtime.snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
+from millrace_ai.runtime.usage_governance import (
+    evaluate_usage_governance,
+    load_usage_governance_state,
+)
 from millrace_ai.runtime_lock import clear_stale_runtime_ownership_lock
 from millrace_ai.state_store import (
     load_recovery_counters,
@@ -112,8 +124,8 @@ class DirectControlMutations(Generic[ResultT]):
         )
 
     def pause(self, snapshot: RuntimeSnapshot) -> ResultT:
-        changed = not snapshot.paused
-        updated = snapshot.model_copy(update={"paused": True, "updated_at": self._now()})
+        changed = not has_pause_source(snapshot, OPERATOR_PAUSE_SOURCE)
+        updated = add_pause_source(snapshot, source=OPERATOR_PAUSE_SOURCE, now=self._now())
         save_snapshot(self.paths, updated)
         return self._result_factory(
             action=MailboxCommand.PAUSE,
@@ -123,15 +135,46 @@ class DirectControlMutations(Generic[ResultT]):
         )
 
     def resume(self, snapshot: RuntimeSnapshot) -> ResultT:
-        changed = snapshot.paused
-        updated = snapshot.model_copy(update={"paused": False, "updated_at": self._now()})
+        state = self._current_usage_governance_state(snapshot)
+        governance_blocked = bool(state.active_blockers)
+        if governance_blocked and not has_pause_source(snapshot, USAGE_GOVERNANCE_PAUSE_SOURCE):
+            snapshot = add_pause_source(
+                snapshot,
+                source=USAGE_GOVERNANCE_PAUSE_SOURCE,
+                now=self._now(),
+            )
+        changed = has_pause_source(snapshot, OPERATOR_PAUSE_SOURCE)
+        updated = remove_pause_source(snapshot, source=OPERATOR_PAUSE_SOURCE, now=self._now())
         save_snapshot(self.paths, updated)
+        if governance_blocked:
+            return self._result_factory(
+                action=MailboxCommand.RESUME,
+                mode="direct",
+                applied=False,
+                detail="runtime resume blocked by usage governance",
+            )
         return self._result_factory(
             action=MailboxCommand.RESUME,
             mode="direct",
             applied=changed,
             detail="runtime resumed directly",
         )
+
+    def _current_usage_governance_state(self, snapshot: RuntimeSnapshot):
+        try:
+            config = load_runtime_config(self.paths.runtime_root / "millrace.toml")
+            return evaluate_usage_governance(
+                self.paths,
+                config=config,
+                now=self._now(),
+                daemon_session_id=None,
+                paused_by_governance=has_pause_source(
+                    snapshot,
+                    USAGE_GOVERNANCE_PAUSE_SOURCE,
+                ),
+            )
+        except Exception:
+            return load_usage_governance_state(self.paths)
 
     def stop(self, snapshot: RuntimeSnapshot) -> ResultT:
         changed = snapshot.process_running or not snapshot.stop_requested

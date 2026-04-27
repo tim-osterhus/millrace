@@ -20,7 +20,7 @@ flowchart TB
 
     S8 --> T1["Drain mailbox commands"] --> T2["Consume watcher events"] --> T3["Refresh queue depths"] --> T4{"Stop requested?"}
     T4 -- yes --> TStop["Release lock + stop"]
-    T4 -- no --> T5{"Paused?"}
+    T4 -- no --> TG1["Evaluate usage governance"] --> T5{"Paused?"}
     T5 -- yes --> TPaused["Paused idle outcome"]
     T5 -- no --> T6["Run reconciliation"] --> T7["Refresh queue depths again"] --> T8{"Select next work"}
 
@@ -38,9 +38,15 @@ flowchart TB
     T9 -- no --> T10{"Active state invalid?"}
     T10 -- yes --> TClear["Clear stale active state"] --> T11{"Still active?"}
     T10 -- no --> T11
-    T11 -- planning --> PActive
-    T11 -- execution --> EActive
-    T11 -- arbiter --> AEntry
+    T11 -- planning --> TG2P["Re-check usage governance"] --> TGPausedP{"Paused?"}
+    TGPausedP -- yes --> TPaused
+    TGPausedP -- no --> PActive
+    T11 -- execution --> TG2E["Re-check usage governance"] --> TGPausedE{"Paused?"}
+    TGPausedE -- yes --> TPaused
+    TGPausedE -- no --> EActive
+    T11 -- arbiter --> TG2A["Re-check usage governance"] --> TGPausedA{"Paused?"}
+    TGPausedA -- yes --> TPaused
+    TGPausedA -- no --> AEntry
     T11 -- none --> TIdle["no_work idle outcome"]
 
     PIncident --> PApply["Apply planning result"]
@@ -52,7 +58,7 @@ flowchart TB
 
     AEntry --> AApply["Apply arbiter result"]
 
-    PApply --> R1["Write stage-result artifacts"] --> R2["Route terminal result + apply router decision"] --> R3["Persist snapshot / status / counters / events"]
+    PApply --> R1["Write stage-result artifacts"] --> R2["Route terminal result + apply router decision"] --> RUsage["Record usage + apply governance"] --> R3["Persist snapshot / status / counters / events"]
     EApply --> R1
     AApply --> R1
     TPaused --> R3
@@ -169,8 +175,9 @@ flowchart LR
 - Drain mailbox commands first on every tick.
 - Explicit config reload is what recompiles the frozen plan.
 - Consume watcher events and normalize ideas into queued specs.
-- Refresh queue depths, run stop and pause checks, then reconcile.
+- Refresh queue depths, run stop and usage-governance pause checks, then reconcile.
 - Refresh queue depths again before claim or activation.
+- Re-check usage governance immediately before stage dispatch.
 - Exactly one stage runs per tick at most.
 - Active stages can bypass fresh claim and go straight to request build.
 - Planning claim precedence is incident -> spec -> task.
@@ -182,6 +189,8 @@ flowchart LR
 - Route terminal status.
 - Mark tasks, specs, or incidents done or blocked.
 - Update recovery counters and closure-target state.
+- Record stage token usage into the governance ledger and apply any resulting
+  between-stage pause.
 - The runtime, not the stage, owns authoritative state mutation.
 
 Key invariants preserved by this chart:

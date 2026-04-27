@@ -14,6 +14,7 @@ from .models import (
     RuntimeConfig,
     RuntimeSection,
     StageConfig,
+    UsageGovernanceSection,
     WatchersSection,
 )
 
@@ -47,6 +48,12 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "watchers.debounce_ms": ApplyBoundary.NEXT_TICK,
     "watchers.watch_ideas_inbox": ApplyBoundary.NEXT_TICK,
     "watchers.watch_specs_queue": ApplyBoundary.NEXT_TICK,
+    "usage_governance.enabled": ApplyBoundary.NEXT_TICK,
+    "usage_governance.auto_resume": ApplyBoundary.NEXT_TICK,
+    "usage_governance.evaluation_boundary": ApplyBoundary.NEXT_TICK,
+    "usage_governance.calendar_timezone": ApplyBoundary.NEXT_TICK,
+    "usage_governance.runtime_token_rules": ApplyBoundary.NEXT_TICK,
+    "usage_governance.subscription_quota_rules": ApplyBoundary.NEXT_TICK,
 }
 
 _STAGE_FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
@@ -60,6 +67,7 @@ _SECTIONS: tuple[tuple[str, type[ConfigModel]], ...] = (
     ("runners", RunnersSection),
     ("recovery", RecoverySection),
     ("watchers", WatchersSection),
+    ("usage_governance", UsageGovernanceSection),
 )
 
 _MISSING = object()

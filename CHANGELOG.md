@@ -15,6 +15,34 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 No unreleased changes recorded yet.
 
+## [0.15.4] - 2026-04-27
+
+`0.15.4` adds default-off runtime-owned usage governance so operators can let
+Millrace automatically pause between stages when configured token or subscription
+quota limits are reached.
+
+### Added
+
+- Added `[usage_governance]` config with runtime token rules, optional
+  subscription quota rules, auto-resume behavior, and next-tick apply
+  boundaries.
+- Added durable usage governance state and ledger artifacts under
+  `millrace-agents/state/`.
+- Added runtime-owned pause source tracking so operator pauses and governance
+  pauses can coexist without overwriting each other.
+- Added status and live daemon monitor output for active usage blockers,
+  subscription telemetry degradation, governance pause, and governance resume
+  events.
+
+### Changed
+
+- Runtime ticks now evaluate usage governance before launching a stage and after
+  persisting a stage result, preserving the between-stage execution boundary.
+- `millrace control resume` now clears operator pause intent without bypassing an
+  active usage-governance blocker.
+- Stage-result token usage can be reconciled back into the governance ledger
+  after restart if a ledger write was missing.
+
 ## [0.15.3] - 2026-04-26
 
 `0.15.3` adds an opt-in live terminal monitor for daemon operators without
@@ -260,7 +288,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.3...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.4...HEAD
+[0.15.4]: https://github.com/tim-osterhus/millrace/compare/v0.15.3...v0.15.4
 [0.15.3]: https://github.com/tim-osterhus/millrace/compare/v0.15.2...v0.15.3
 [0.15.2]: https://github.com/tim-osterhus/millrace/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/tim-osterhus/millrace/compare/v0.15.0...v0.15.1

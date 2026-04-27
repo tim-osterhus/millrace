@@ -48,6 +48,8 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `millrace-agents/state/recovery_counters.json`
 - `millrace-agents/state/compiled_plan.json`
 - `millrace-agents/state/compile_diagnostics.json`
+- `millrace-agents/state/usage_governance_state.json`
+- `millrace-agents/state/usage_governance_ledger.jsonl`
 - mailbox envelopes/archives and run-scoped runner artifacts
 
 ### Arbiter-owned completion artifacts
@@ -89,7 +91,9 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/control.py`: thin public facade that preserves the stable operator control import surface.
 - `src/millrace_ai/runtime/control.py`: public runtime control abstraction that coordinates routing vs direct mutation ownership.
 - `src/millrace_ai/runtime/control_mailbox.py`: mailbox-safe daemon routing, command envelope creation, and control enqueue failure boundaries.
-- `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, requeue/reset helpers, and stale-state clearing behavior.
+- `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, pause/resume source handling, requeue/reset helpers, and stale-state clearing behavior.
+- `src/millrace_ai/runtime/pause_state.py`: shared operator/governance pause-source helpers for snapshot mutation.
+- `src/millrace_ai/runtime/usage_governance.py`: runtime-owned usage accounting, rule evaluation, subscription telemetry adapter, durable ledger/state persistence, and monitor event emission.
 - `src/millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
 - `src/millrace_ai/doctor.py`: workspace integrity + lock health checks.
 - `src/millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, formatting, and command groups.
@@ -117,13 +121,15 @@ Startup:
 Per tick:
 
 1. Process mailbox commands (`pause/resume/stop/retry-active/reload-config/intake`, including planning-scoped retry requests).
-2. Run stale-state reconciliation and recovery routing.
-3. Consume watcher/poll intake events (including idea normalization to planning specs).
-4. Respect pause/stop control gates.
+2. Consume watcher/poll intake events (including idea normalization to planning specs).
+3. Respect stop and usage-governance pause gates.
+4. Run stale-state reconciliation and recovery routing.
 5. Claim planning or execution work item.
 6. If no claimable work remains, consult frozen `completion_behavior` and activate `arbiter` when an open closure target is eligible.
-7. Execute one stage through the configured runner adapter.
-8. Route result markers and persist snapshot/status/counters/events.
+7. Re-check usage governance at the stage-dispatch boundary.
+8. Execute one stage through the configured runner adapter.
+9. Route result markers and persist snapshot/status/counters/events.
+10. Record stage token usage into the governance ledger and apply any resulting between-stage pause.
 
 The implementation mirrors that ordering directly:
 
@@ -134,6 +140,16 @@ The implementation mirrors that ordering directly:
 Idle:
 
 - If no claimable work exists and no eligible completion audit exists, runtime emits `no_work` and keeps the daemon loop alive unless stop requested.
+
+Usage governance notes:
+
+- governance is default-off and applies at runtime boundaries, not compile time
+- runtime token rules count persisted stage-result token usage once by
+  stage-result artifact path
+- `usage_governance` is a separate pause source from `operator`, so manual
+  resume cannot clear an active governance blocker
+- optional Codex subscription quota checks read local Codex session telemetry
+  and report degraded status when telemetry is unavailable
 
 Compile notes:
 

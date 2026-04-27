@@ -806,6 +806,7 @@ class RuntimeSnapshot(ContractModel):
     runtime_mode: RuntimeMode
     process_running: bool
     paused: bool
+    pause_sources: tuple[Literal["operator", "usage_governance"], ...] = ()
     stop_requested: bool = False
     active_mode_id: str
     execution_loop_id: str
@@ -858,6 +859,15 @@ class RuntimeSnapshot(ContractModel):
             return value
 
         payload = dict(value)
+        pause_sources = tuple(dict.fromkeys(payload.get("pause_sources") or ()))
+        if payload.get("paused") and not pause_sources:
+            pause_sources = ("operator",)
+        if pause_sources:
+            payload["pause_sources"] = pause_sources
+            payload["paused"] = True
+        else:
+            payload["pause_sources"] = ()
+
         loop_ids = dict(payload.get("loop_ids_by_plane") or {})
         if "execution_loop_id" in payload:
             loop_ids.setdefault(Plane.EXECUTION.value, payload["execution_loop_id"])
@@ -940,6 +950,13 @@ class RuntimeSnapshot(ContractModel):
             raise ValueError("queue depth values must be >= 0")
         if any(depth < 0 for depth in self.queue_depths_by_plane.values()):
             raise ValueError("plane-indexed queue depth values must be >= 0")
+
+        if self.pause_sources:
+            self.paused = True
+        elif not self.paused:
+            self.pause_sources = ()
+        elif self.paused and not self.pause_sources:
+            self.pause_sources = ("operator",)
 
         return self
 

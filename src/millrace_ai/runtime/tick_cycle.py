@@ -46,6 +46,8 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         engine._emit_monitor_event("runtime_stopped", reason="stop_requested")
         return engine._idle_tick_outcome(reason="stop_requested")
 
+    engine._evaluate_usage_governance()
+
     if engine.snapshot.paused:
         save_snapshot(engine.paths, engine.snapshot)
         write_runtime_event(engine.paths, event_type="runtime_tick_paused")
@@ -84,6 +86,13 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         write_runtime_event(engine.paths, event_type="runtime_tick_idle")
         engine._emit_monitor_event("runtime_idle", reason="no_work")
         return engine._idle_tick_outcome(reason="no_work")
+
+    engine._evaluate_usage_governance()
+    if engine.snapshot.paused:
+        save_snapshot(engine.paths, engine.snapshot)
+        write_runtime_event(engine.paths, event_type="runtime_tick_paused")
+        engine._emit_monitor_event("runtime_paused", reason="paused")
+        return engine._idle_tick_outcome(reason="paused")
 
     stage_plan = engine._stage_plan_for(
         engine.snapshot.active_plane,
@@ -259,6 +268,10 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         next_node_id=router_decision.next_node_id,
         next_stage_kind_id=router_decision.next_stage_kind_id,
         reason=router_decision.reason,
+    )
+    engine._evaluate_usage_governance(
+        stage_result=stage_result,
+        stage_result_path=stage_result_path,
     )
 
     return RuntimeTickOutcome(

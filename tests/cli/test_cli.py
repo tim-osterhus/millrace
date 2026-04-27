@@ -31,6 +31,12 @@ from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.run_inspection import InspectedRunSummary, InspectedStageResult
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent
+from millrace_ai.runtime.usage_governance import (
+    SubscriptionQuotaStatus,
+    UsageGovernanceBlocker,
+    UsageGovernanceState,
+    save_usage_governance_state,
+)
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
 from millrace_ai.workspace.arbiter_state import save_closure_target_state
@@ -362,7 +368,7 @@ def test_run_daemon_with_monitor_basic_installs_monitor_and_prints_output(
                         "compiled_plan_id": "plan-001",
                         "compiled_plan_currentness": "current",
                         "baseline_manifest_id": "baseline-001",
-                        "baseline_seed_package_version": "0.15.3",
+                        "baseline_seed_package_version": "0.15.4",
                         "loop_ids_by_plane": {
                             "execution": "execution.standard",
                             "planning": "planning.standard",
@@ -747,6 +753,70 @@ def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "learning_queue_depth: 1" in result.output
     assert "learning_status_marker: ### ANALYST_COMPLETE" in result.output
+
+
+def test_status_surfaces_usage_governance_pause_context(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    (paths.runtime_root / "millrace.toml").write_text(
+        "\n".join(
+            [
+                "[runtime]",
+                'default_mode = "default_codex"',
+                "",
+                "[usage_governance]",
+                "enabled = true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "paused": True,
+            "pause_sources": ("usage_governance",),
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+    save_usage_governance_state(
+        paths,
+        UsageGovernanceState(
+            enabled=True,
+            auto_resume=True,
+            auto_resume_possible=True,
+            last_evaluated_at=NOW,
+            active_blockers=(
+                UsageGovernanceBlocker(
+                    source="runtime_token",
+                    rule_id="test-rolling",
+                    window="rolling_5h",
+                    metric="total_tokens",
+                    observed=125,
+                    threshold=100,
+                    next_auto_resume_at=NOW,
+                ),
+            ),
+            paused_by_governance=True,
+            next_auto_resume_at=NOW,
+            subscription_quota_status=SubscriptionQuotaStatus(
+                enabled=True,
+                provider="codex_chatgpt_oauth",
+                state="degraded",
+                degraded_policy="fail_open",
+                detail="quota_telemetry_unavailable",
+                last_refreshed_at=NOW,
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "pause_sources: usage_governance" in result.output
+    assert "usage_governance_enabled: true" in result.output
+    assert "usage_governance_paused: true" in result.output
+    assert "usage_governance_blocker_count: 1" in result.output
+    assert "usage_governance_subscription_status: degraded" in result.output
+    assert "usage_governance_blocker: source=runtime_token rule=test-rolling" in result.output
 
 
 def test_status_surfaces_failure_class_and_retry_counters(tmp_path: Path) -> None:

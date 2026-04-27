@@ -106,8 +106,9 @@ daemon summary output remains unchanged.
 `--monitor basic` prints a compact terminal stream for visible daemon sessions:
 startup lifecycle context, baseline/currentness identity, loop and concurrency
 policy, status/queue snapshots, stage start and completion lines, router
-decisions, run elapsed time, and token usage. Monitor output is live-only and
-does not replace persisted runtime events or run artifacts.
+decisions, run elapsed time, token usage, and usage-governance pause/resume or
+degraded-telemetry events. Monitor output is live-only and does not replace
+persisted runtime events or run artifacts.
 
 ## Status Commands
 
@@ -131,6 +132,18 @@ Status now also surfaces compiled-plan and managed-baseline identity:
 - `baseline_seed_package_version`
 - `compile_input.*`
 - `persisted_compile_input.*`
+
+Status also surfaces usage-governance state:
+
+- `pause_sources`
+- `usage_governance_enabled`
+- `usage_governance_paused`
+- `usage_governance_blocker_count`
+- `usage_governance_auto_resume_possible`
+- `usage_governance_next_auto_resume_at`
+- `usage_governance_subscription_status`
+- `usage_governance_subscription_detail` when present
+- `usage_governance_blocker: source=... rule=... window=... observed=... threshold=...`
 
 `millrace status show` is an explicit alias for the same output.
 
@@ -218,6 +231,14 @@ Control routing behavior:
 - If daemon owns the workspace: command is mailbox-routed.
 - If no daemon owns the workspace: command applies directly.
 
+Pause/resume behavior:
+
+- `pause` adds the operator pause source.
+- `resume` clears the operator pause source.
+- `resume` does not bypass an active `usage_governance` pause source; the
+  command reports that resume is blocked by usage governance until the active
+  blocker clears or governance config changes.
+
 ## Planning Commands
 
 ### `millrace planning retry-active --reason "..."`
@@ -229,6 +250,14 @@ Requests a retry only when the active work is on the planning plane. If executio
 ### `millrace config show`
 
 Prints the effective runtime defaults plus the snapshot-exposed config version and last reload outcome/error state.
+The output includes `usage_governance.enabled`.
+
+Usage governance is configured under `[usage_governance]` in
+`millrace-agents/millrace.toml`. It is default-off. When enabled, runtime token
+rules are evaluated between stages and can automatically pause/resume the
+workspace without changing the compiled plan. See
+`docs/runtime/millrace-usage-governance.md` for the full config shape and
+state artifacts.
 
 ### `millrace config validate [--mode MODE_ID]`
 

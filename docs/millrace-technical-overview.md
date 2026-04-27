@@ -86,6 +86,8 @@ Runtime-owned surfaces include:
 - compiled plan persistence
 - run directories and stage-result artifacts
 - closure-target state for Arbiter-driven completion
+- usage-governance state and token accounting when automatic pause/resume is
+  enabled
 
 This distinction is one of the most important design rules in Millrace. Stages
 are not allowed to mutate authoritative queue or status state directly. The
@@ -120,6 +122,8 @@ These are machine-owned, typed state and runtime outputs such as:
 - `millrace-agents/state/compile_diagnostics.json`
 - `millrace-agents/state/execution_status.md`
 - `millrace-agents/state/planning_status.md`
+- `millrace-agents/state/usage_governance_state.json`
+- `millrace-agents/state/usage_governance_ledger.jsonl`
 - mailbox command envelopes and archives
 - run-scoped runner artifacts and stage results
 
@@ -309,13 +313,14 @@ A tick follows this broad order:
 1. drain mailbox commands
 2. consume watcher or polling intake events
 3. refresh queue depths
-4. respect stop/pause control gates
+4. evaluate usage governance and respect stop/pause control gates
 5. run stale/impossible-state reconciliation
 6. claim or continue active work
 7. if nothing is claimable, evaluate completion behavior
-8. execute at most one stage through the configured runner
-9. normalize the result and apply the router decision
-10. persist snapshot, status markers, counters, and events
+8. re-check usage governance at the stage dispatch boundary
+9. execute at most one stage through the configured runner
+10. normalize the result and apply the router decision
+11. persist snapshot, status markers, counters, events, and usage accounting
 
 In code, that is no longer implemented as one monolithic runtime script.
 `RuntimeEngine` remains the stable stateful façade, while internal collaborators
@@ -516,6 +521,16 @@ workspace, the control layer can apply the action directly.
 This avoids making operators or ops agents manually edit runtime-owned state to
 recover a deployed instance.
 
+Usage governance is a runtime control surface, not a compiler feature. It is
+default-off, configured under `[usage_governance]`, and evaluated between
+stages. Runtime token rules count persisted stage-result token usage into
+`usage_governance_ledger.jsonl`; optional subscription quota rules read
+best-effort local Codex quota telemetry. When a rule blocks execution, the
+runtime adds a `usage_governance` pause source. Operator pause and governance
+pause are separate sources, so `resume` clears only operator intent and cannot
+bypass an active quota blocker. Status and the basic daemon monitor both expose
+the active blockers and degraded telemetry state.
+
 ## Watchers, Intake, And Queue Entry
 
 Millrace can intake work through queue-import surfaces and watcher-driven idea
@@ -562,7 +577,7 @@ The source tree under `src/millrace_ai/` is deliberately split by ownership:
 - `cli/` for operator command surfaces and formatting
 - `config/` for runtime config loading and boundary semantics
 - `runners/` for adapter dispatch and normalization
-- `runtime/` for orchestration logic
+- `runtime/` for orchestration logic, pause-source handling, and usage-governance accounting
 - `workspace/` for filesystem-backed state and queue primitives
 
 A set of thin root-module facades is intentionally preserved so older import

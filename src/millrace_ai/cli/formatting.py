@@ -14,6 +14,8 @@ from millrace_ai.control import ControlActionResult
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.run_inspection import InspectedRunSummary
 from millrace_ai.runtime import RuntimeTickOutcome
+from millrace_ai.runtime.pause_state import pause_sources_label
+from millrace_ai.runtime.usage_governance import load_usage_governance_state
 from millrace_ai.state_store import load_snapshot
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
@@ -71,6 +73,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"runtime_mode: {snapshot.runtime_mode.value}",
         f"process_running: {'true' if snapshot.process_running else 'false'}",
         f"paused: {'true' if snapshot.paused else 'false'}",
+        f"pause_sources: {pause_sources_label(snapshot)}",
         f"stop_requested: {'true' if snapshot.stop_requested else 'false'}",
         f"active_mode_id: {snapshot.active_mode_id}",
         f"compiled_plan_id: {snapshot.compiled_plan_id}",
@@ -90,6 +93,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     ]
     lines.extend(_render_baseline_manifest_lines(baseline_manifest))
     lines.extend(_render_compile_currentness_lines(currentness, currentness_error))
+    lines.extend(_render_usage_governance_status_lines(paths))
     lines.extend(_render_closure_target_status_lines(paths))
     if snapshot.current_failure_class:
         lines.append(f"current_failure_class: {snapshot.current_failure_class}")
@@ -226,6 +230,38 @@ def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...
     )
 
 
+def _render_usage_governance_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
+    state = load_usage_governance_state(paths)
+    try:
+        config_enabled = load_runtime_config(paths.runtime_root / "millrace.toml").usage_governance.enabled
+    except Exception:
+        config_enabled = state.enabled
+
+    lines = [
+        f"usage_governance_enabled: {'true' if config_enabled else 'false'}",
+        f"usage_governance_paused: {'true' if state.paused_by_governance else 'false'}",
+        f"usage_governance_blocker_count: {len(state.active_blockers)}",
+        (
+            "usage_governance_auto_resume_possible: "
+            f"{'true' if state.auto_resume_possible else 'false'}"
+        ),
+        f"usage_governance_next_auto_resume_at: {_value(state.next_auto_resume_at)}",
+        f"usage_governance_subscription_status: {state.subscription_quota_status.state}",
+    ]
+    if state.subscription_quota_status.detail:
+        lines.append(f"usage_governance_subscription_detail: {state.subscription_quota_status.detail}")
+    for blocker in state.active_blockers:
+        lines.append(
+            "usage_governance_blocker: "
+            f"source={blocker.source} "
+            f"rule={blocker.rule_id} "
+            f"window={blocker.window} "
+            f"observed={blocker.observed:g} "
+            f"threshold={blocker.threshold:g}"
+        )
+    return tuple(lines)
+
+
 def _render_config_show_lines(paths: WorkspacePaths, config: RuntimeConfig) -> tuple[str, ...]:
     snapshot = load_snapshot(paths)
     return (
@@ -233,6 +269,7 @@ def _render_config_show_lines(paths: WorkspacePaths, config: RuntimeConfig) -> t
         f"run_style: {config.runtime.run_style.value}",
         f"idle_sleep_seconds: {config.runtime.idle_sleep_seconds}",
         f"watchers.enabled: {'true' if config.watchers.enabled else 'false'}",
+        f"usage_governance.enabled: {'true' if config.usage_governance.enabled else 'false'}",
         f"config_version: {snapshot.config_version}",
         f"last_reload_outcome: {_value(snapshot.last_reload_outcome)}",
         f"last_reload_error: {_value(snapshot.last_reload_error)}",

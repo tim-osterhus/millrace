@@ -21,7 +21,7 @@ def test_basic_terminal_monitor_renders_startup_context_lines() -> None:
                 "compiled_plan_id": "plan-123",
                 "compiled_plan_currentness": "current",
                 "baseline_manifest_id": "baseline-abc",
-                "baseline_seed_package_version": "0.15.3",
+                "baseline_seed_package_version": "0.15.4",
                 "loop_ids_by_plane": {
                     "execution": "execution.standard",
                     "planning": "planning.standard",
@@ -47,7 +47,7 @@ def test_basic_terminal_monitor_renders_startup_context_lines() -> None:
 
     output = stream.getvalue()
     assert "runtime started mode=learning_codex plan=plan-123 currentness=current" in output
-    assert "baseline manifest=baseline-abc seed_package=0.15.3" in output
+    assert "baseline manifest=baseline-abc seed_package=0.15.4" in output
     assert "concurrency" in output
     assert "snapshot status execution=IDLE planning=IDLE learning=IDLE" in output
 
@@ -148,6 +148,49 @@ def test_basic_terminal_monitor_renders_unknown_tokens_when_usage_missing() -> N
         )
     )
     assert "tokens=unknown" in stream.getvalue()
+
+
+def test_basic_terminal_monitor_renders_usage_governance_events() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="usage_governance_paused",
+            occurred_at=NOW,
+            payload={
+                "source": "runtime_token",
+                "rule_id": "rolling-5h-default",
+                "window": "rolling_5h",
+                "observed": 752340,
+                "threshold": 750000,
+                "next_auto_resume_at": "2026-04-26T17:55:12Z",
+            },
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="usage_governance_degraded",
+            occurred_at=NOW,
+            payload={
+                "source": "codex_chatgpt_oauth",
+                "policy": "fail_open",
+                "detail": "quota_telemetry_unavailable",
+            },
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="usage_governance_resumed",
+            occurred_at=NOW,
+            payload={"cleared_rules": "rolling-5h-default"},
+        )
+    )
+
+    output = stream.getvalue()
+    assert "governance pause source=runtime_token rule=rolling-5h-default" in output
+    assert "observed=752340 threshold=750000" in output
+    assert "governance degraded source=codex_chatgpt_oauth policy=fail_open" in output
+    assert "governance resume cleared_rules=rolling-5h-default" in output
 
 
 def test_basic_terminal_monitor_keys_aggregates_by_plane_and_run() -> None:

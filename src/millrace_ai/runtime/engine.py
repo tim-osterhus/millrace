@@ -48,6 +48,7 @@ from . import (
     result_application,
     stage_requests,
     tick_cycle,
+    usage_governance,
     watcher_intake,
 )
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
@@ -294,6 +295,18 @@ class RuntimeEngine:
 
     def _write_plane_status(self, stage_result: StageResultEnvelope) -> None:
         result_application.write_plane_status(self, stage_result)
+
+    def _evaluate_usage_governance(
+        self,
+        *,
+        stage_result: StageResultEnvelope | None = None,
+        stage_result_path: Path | None = None,
+    ):
+        return usage_governance.evaluate_and_apply_usage_governance(
+            self,
+            stage_result=stage_result,
+            stage_result_path=stage_result_path,
+        )
 
     def _build_stage_run_request(self, stage_plan: MaterializedGraphNodePlan) -> StageRunRequest:
         return stage_requests.build_stage_run_request(self, stage_plan)
