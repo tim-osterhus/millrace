@@ -13,6 +13,12 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.15.7] - 2026-04-27
+
+`0.15.7` completes the post-usage-governance package-boundary cleanup, keeping
+public imports stable while splitting high-risk runtime, compiler, contract,
+entrypoint, and runner internals into focused owners.
+
 ### Added
 
 - Added ADR-0007, ADR-0008, and ADR-0009 to record the runtime authority
@@ -393,7 +399,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.6...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.7...HEAD
+[0.15.7]: https://github.com/tim-osterhus/millrace/compare/v0.15.6...v0.15.7
 [0.15.6]: https://github.com/tim-osterhus/millrace/compare/v0.15.5...v0.15.6
 [0.15.5]: https://github.com/tim-osterhus/millrace/compare/v0.15.4...v0.15.5
 [0.15.4]: https://github.com/tim-osterhus/millrace/compare/v0.15.3...v0.15.4

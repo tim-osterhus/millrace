@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import millrace_ai
 from millrace_ai.contracts import ExecutionStageName, LearningRequestDocument, TaskDocument
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -110,7 +111,7 @@ def test_runtime_startup_emits_lifecycle_context(tmp_path: Path) -> None:
     started = next(event for event in monitor.events if event.event_type == "runtime_started")
     assert started.payload["compiled_plan_currentness"] == "current"
     assert started.payload["baseline_manifest_id"]
-    assert started.payload["baseline_seed_package_version"] == "0.15.6"
+    assert started.payload["baseline_seed_package_version"] == millrace_ai.__version__
     assert "execution" in started.payload["loop_ids_by_plane"]
     assert "status_markers_by_plane" in started.payload
     assert "queue_depths_by_plane" in started.payload
