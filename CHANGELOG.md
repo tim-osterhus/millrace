@@ -27,6 +27,10 @@ This file starts at `0.13.0`, the current documented public baseline.
   removing the remaining concrete runtime submodule cycle.
 - Added an import-cycle guardrail test so future concrete `millrace_ai.*`
   module cycles are caught by the normal pytest suite.
+- Converted `runtime/usage_governance.py` into a package facade with separate
+  ownership for models, state persistence, ledger repair, runtime-token window
+  evaluation, subscription quota telemetry, monitor events, and engine-facing
+  pause application.
 
 ## [0.15.6] - 2026-04-27
 

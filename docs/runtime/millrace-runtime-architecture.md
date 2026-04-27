@@ -90,7 +90,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
 - `src/millrace_ai/runtime/pause_state.py`: pause-source mutation helpers for operator and usage-governance pauses.
-- `src/millrace_ai/runtime/usage_governance.py`: opt-in usage ledger, runtime-token rule checks, subscription-quota checks, and governance pause application.
+- `src/millrace_ai/runtime/usage_governance/`: opt-in usage-governance authority package, with state/ledger models, durable state persistence, runtime-token window evaluation, subscription-quota telemetry, monitor event emission, and engine-facing pause-source application split behind the stable package facade.
 - `src/millrace_ai/runtime/completion_behavior.py`: closure-target activation, lineage readiness checks, and compiler-driven backlog-drain dispatch.
 - `src/millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
 - `src/millrace_ai/runtime/result_application.py`: stable façade over routed post-stage mutation helpers.

@@ -650,6 +650,12 @@ config, and compile views own their state-loading concerns in dedicated modules
 so `cli/shared.py` can stay focused on command wiring and `cli/formatting.py`
 can stay focused on rendering already-collected values.
 
+Usage governance is now a runtime authority package rather than one large
+module. `runtime/usage_governance/__init__.py` preserves the existing public
+imports, while the package-local modules separate Pydantic state/ledger models,
+state-file persistence, ledger repair, runtime-token windows, subscription
+quota telemetry, monitor events, and the engine-facing evaluation boundary.
+
 A set of thin root-module facades is intentionally preserved so older import
 surfaces still work while the package is internally modularized. That is why
 there are still top-level modules such as `millrace_ai.paths`,

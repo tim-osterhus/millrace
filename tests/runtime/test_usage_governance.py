@@ -42,7 +42,7 @@ def _task_doc(task_id: str) -> TaskDocument:
         task_id=task_id,
         title=f"Task {task_id}",
         summary="usage governance runtime task",
-        target_paths=["src/millrace_ai/runtime/usage_governance.py"],
+        target_paths=["src/millrace_ai/runtime/usage_governance/"],
         acceptance=["usage governance enforces between-stage pauses"],
         required_checks=["uv run --extra dev python -m pytest tests/runtime/test_usage_governance.py -q"],
         references=[
