@@ -70,6 +70,13 @@ def test_entrypoints_module_is_assets_facade() -> None:
     assert entrypoints_facade.LintLevel.__module__ == "millrace_ai.assets.entrypoints"
 
 
+def test_assets_entrypoints_public_exports_remain_importable() -> None:
+    entrypoints_module = importlib.import_module("millrace_ai.assets.entrypoints")
+
+    for name in entrypoints_module.__all__:
+        assert hasattr(entrypoints_module, name), name
+
+
 def _write_asset(path: Path, *, frontmatter: dict[str, object], body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
