@@ -131,6 +131,12 @@ asset path inference, advisory skill-reference checks, lint policy, and
 diagnostic rendering are split into named modules behind the
 `millrace_ai.assets.entrypoints` facade.
 
+Runner adapters remain behind the public `millrace_ai.runners` and
+`millrace_ai.runner` surfaces. The Codex CLI adapter keeps one public adapter
+class while command construction, permission flags, artifact materialization,
+timeout-marker reconciliation, and token extraction live in focused
+`runners/adapters/codex_cli_*` modules.
+
 ### 2. Runtime/state artifacts
 
 These are machine-owned, typed state and runtime outputs such as:

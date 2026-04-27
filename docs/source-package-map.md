@@ -22,7 +22,7 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
 | `millrace_ai/stage_kinds.py` | `src/millrace_ai/assets/architecture.py`, `src/millrace_ai/architecture/stage_kinds.py` | Root `stage_kinds.py` is the thin public facade for stage-kind registry loading. |
 | `millrace_ai/loop_graphs.py` | `src/millrace_ai/assets/loop_graphs.py`, `src/millrace_ai/architecture/loop_graphs.py` | Root `loop_graphs.py` is the thin public facade for graph-loop loading. |
-| `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package. |
+| `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py`, `src/millrace_ai/runners/adapters/codex_cli.py`, `codex_cli_command.py`, `codex_cli_artifacts.py`, `codex_cli_tokens.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package; Codex adapter command construction, artifact handling, and token extraction have focused modules behind the public adapter class. |
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
 | `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py`, `src/millrace_ai/workspace/initialization.py` | Root `paths.py` remains a thin compatibility facade for `WorkspacePaths`, `workspace_paths`, and workspace initialization helpers. |
 | workspace initialization/baseline | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/bootstrap_files.py`, `src/millrace_ai/workspace/asset_deployment.py`, `src/millrace_ai/workspace/baseline.py` | Explicit `millrace init`, default runtime file payloads, runtime asset deployment, and managed baseline upgrade classification live in workspace-owned modules with path modeling kept separate from bootstrap behavior. |
@@ -132,6 +132,9 @@ The built-in runner package now contains two first-class adapter paths:
 Shared runner-owned helpers live alongside them:
 
 - `src/millrace_ai/runners/adapters/_prompting.py`
+- `src/millrace_ai/runners/adapters/codex_cli_command.py`
+- `src/millrace_ai/runners/adapters/codex_cli_artifacts.py`
+- `src/millrace_ai/runners/adapters/codex_cli_tokens.py`
 - `src/millrace_ai/runners/adapters/pi_rpc_client.py`
 
 Mode assets in `src/millrace_ai/assets/modes/` freeze those built-in harness

@@ -49,6 +49,9 @@ This file starts at `0.13.0`, the current documented public baseline.
   preserving the public facade while separating manifest models, path
   discovery, markdown parsing, advisory skill-reference checks, lint policy,
   and diagnostic rendering.
+- Split Codex CLI runner internals so the public `CodexCliRunnerAdapter`
+  delegates command construction, artifact materialization/timeout
+  reconciliation, and token-usage extraction to focused adapter modules.
 
 ## [0.15.6] - 2026-04-27
 

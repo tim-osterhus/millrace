@@ -35,7 +35,13 @@ and run inspection carry forward: `mode_id`, `compiled_plan_id`, `node_id`, and
 - `src/millrace_ai/runners/adapters/_prompting.py`
   - shared Millrace-owned stage prompt construction
 - `src/millrace_ai/runners/adapters/codex_cli.py`
-  - built-in Codex CLI adapter
+  - public built-in Codex CLI adapter class and run orchestration
+- `src/millrace_ai/runners/adapters/codex_cli_command.py`
+  - Codex CLI command construction, permission flag resolution, and model/profile flags
+- `src/millrace_ai/runners/adapters/codex_cli_artifacts.py`
+  - Codex runner artifact paths, event-log persistence, last-message stdout materialization, and timeout-marker reconciliation
+- `src/millrace_ai/runners/adapters/codex_cli_tokens.py`
+  - token usage extraction from Codex JSONL event payloads
 - `src/millrace_ai/runners/adapters/pi_rpc.py`
   - built-in Pi RPC adapter
 - `src/millrace_ai/runners/adapters/pi_rpc_client.py`
@@ -134,8 +140,11 @@ surface instead of only showing stage names.
 Codex adapter:
 
 - builds a deterministic stage prompt from `StageRunRequest`
+- builds command/permission flags through `codex_cli_command.py`
 - shells out to configured Codex command/args
 - captures stdout/stderr
+- persists invocation/completion/event-log artifacts through runner-owned artifact helpers
+- extracts token usage from Codex event payloads through `codex_cli_tokens.py`
 - maps subprocess outcomes to `RunnerRawResult.exit_kind`:
   - `completed`
   - `timeout`
