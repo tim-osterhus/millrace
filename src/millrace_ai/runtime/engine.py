@@ -301,7 +301,7 @@ class RuntimeEngine:
         *,
         stage_result: StageResultEnvelope | None = None,
         stage_result_path: Path | None = None,
-    ):
+    ) -> usage_governance.UsageGovernanceState | None:
         return usage_governance.evaluate_and_apply_usage_governance(
             self,
             stage_result=stage_result,

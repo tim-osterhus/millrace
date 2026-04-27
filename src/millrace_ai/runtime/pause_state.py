@@ -23,7 +23,7 @@ def add_pause_source(
     source: PauseSource,
     now: datetime,
 ) -> RuntimeSnapshot:
-    sources = set(snapshot.pause_sources)
+    sources: set[PauseSource] = set(snapshot.pause_sources)
     sources.add(source)
     return snapshot.model_copy(
         update={
@@ -40,7 +40,7 @@ def remove_pause_source(
     source: PauseSource,
     now: datetime,
 ) -> RuntimeSnapshot:
-    sources = set(snapshot.pause_sources)
+    sources: set[PauseSource] = set(snapshot.pause_sources)
     sources.discard(source)
     ordered = _ordered_sources(sources)
     return snapshot.model_copy(
@@ -74,7 +74,7 @@ def pause_sources_label(snapshot: RuntimeSnapshot) -> str:
     return "none"
 
 
-def _ordered_sources(sources: set[str]) -> tuple[PauseSource, ...]:
+def _ordered_sources(sources: set[PauseSource]) -> tuple[PauseSource, ...]:
     return tuple(source for source in _SOURCE_ORDER if source in sources)
 
 

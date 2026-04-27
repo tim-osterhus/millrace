@@ -30,6 +30,7 @@ from millrace_ai.runtime.pause_state import (
 )
 from millrace_ai.runtime.snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 from millrace_ai.runtime.usage_governance import (
+    UsageGovernanceState,
     evaluate_usage_governance,
     load_usage_governance_state,
 )
@@ -160,7 +161,7 @@ class DirectControlMutations(Generic[ResultT]):
             detail="runtime resumed directly",
         )
 
-    def _current_usage_governance_state(self, snapshot: RuntimeSnapshot):
+    def _current_usage_governance_state(self, snapshot: RuntimeSnapshot) -> UsageGovernanceState:
         try:
             config = load_runtime_config(self.paths.runtime_root / "millrace.toml")
             return evaluate_usage_governance(
