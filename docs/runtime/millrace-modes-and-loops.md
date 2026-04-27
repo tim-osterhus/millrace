@@ -289,6 +289,24 @@ This map sets a mode-level runner name for a stage.
 
 If present, it wins over stage-level config for that stage during compile.
 
+## Stage Config Overlays
+
+Runtime config may define `stages.<stage>` entries for execution, planning, and
+learning stages. Learning stages such as `analyst`, `professor`, and `curator`
+use the same supported config surface as execution and planning stages.
+
+Supported stage config fields are:
+
+- `runner`
+- `model`
+- `model_reasoning_effort`
+- `timeout_seconds`
+
+`model_reasoning_effort` is Codex-specific. It is copied into the compiled node
+binding and the stage request, then passed to Codex CLI as
+`model_reasoning_effort="<value>"`. It is also visible in `compile show`,
+runner invocation artifacts, persisted stage results, and `runs show`.
+
 ## What The Compiler Freezes From Modes And Loops
 
 During compile, the runtime converts the selected mode plus the selected graph
@@ -303,6 +321,7 @@ Each materialized node binding records:
 - `attached_skill_additions`
 - `runner_name`
 - `model_name`
+- `model_reasoning_effort`
 - `timeout_seconds`
 
 This matters because the runtime executes the compiled node bindings later. It
@@ -324,6 +343,7 @@ Relevant examples:
 - `runtime.default_mode`
 - `stages.<stage>.runner`
 - `stages.<stage>.model`
+- `stages.<stage>.model_reasoning_effort`
 - `stages.<stage>.timeout_seconds`
 
 New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.

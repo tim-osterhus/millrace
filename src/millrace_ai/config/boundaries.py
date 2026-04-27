@@ -59,6 +59,7 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
 _STAGE_FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "runner": ApplyBoundary.RECOMPILE,
     "model": ApplyBoundary.RECOMPILE,
+    "model_reasoning_effort": ApplyBoundary.RECOMPILE,
     "timeout_seconds": ApplyBoundary.RECOMPILE,
 }
 

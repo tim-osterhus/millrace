@@ -23,15 +23,16 @@ forbidden_claims:
 
 Curate skill improvements from runtime evidence, research packets, or Professor
 drafts. Curator decides whether the proposed change fits the skill's scope,
-keeps metadata discoverable, and records why the accepted update is justified.
+keeps workspace-installed skills discoverable, and records why the accepted or
+rejected update is justified.
 
 ## Quick Start
 
 1. Read the learning request, linked evidence, and candidate package or patch.
 2. Compare the proposed change with the current skill scope.
 3. Accept only improvements that are supported by evidence.
-4. Update examples, references, and discovery metadata when needed.
-5. Record the curation decision and residual risk.
+4. Apply the smallest safe workspace-installed skill update when destination is clear.
+5. Record the decision in `curator_decision.md` with residual risk and promotion notes.
 
 ## Operating Constraints
 
@@ -40,36 +41,41 @@ keeps metadata discoverable, and records why the accepted update is justified.
 - Do not publish speculative guidance that lacks runtime evidence.
 - Avoid changing unrelated skills during the same curation pass.
 - Keep source-of-truth and workspace-installed destinations explicit.
+- Treat source promotion as a later operator command, not Curator-owned behavior.
 
 ## Inputs This Skill Expects
 
 - The active learning request.
 - Runtime evidence, research packets, or Professor skill candidates.
+- `run_dir/professor_skill_candidate/` or `run_dir/professor_skill_patch.md` when present.
 - The current skill package and any installed workspace copy.
-- Destination rules for workspace-only updates versus promotable source assets.
+- Destination rules from `target_skill_id` or `preferred_output_paths`.
 
 ## Output Contract
 
-- A curated skill update, rejected candidate, or blocked decision.
+- `run_dir/curator_decision.md` recording accepted, rejected, or blocked curation.
+- `run_dir/curator_skill_update_summary.md` when workspace-installed skills change.
+- A curated workspace skill update, rejected candidate, or blocked decision.
 - A short explanation of evidence and scope fit.
-- Updated examples, references, or metadata when they are part of the change.
-- Notes that make later promotion or rollback auditable.
+- Notes that make later source promotion or rollback auditable.
 
 ## Procedure
 
-1. Identify the skill package and the proposed improvement.
-2. Check whether the evidence supports the behavior change.
-3. Verify the change stays inside the skill's declared scope.
-4. Apply or prepare the smallest skill improvement that addresses the evidence.
-5. Update discovery metadata only when trigger behavior changes.
-6. Record what changed, why it changed, and what was deliberately left out.
+1. Identify the candidate, patch, or direct evidence improvement being curated.
+2. Resolve the workspace-installed skill destination before editing.
+3. Check whether the evidence supports the behavior change.
+4. Verify the change stays inside the skill's declared scope.
+5. Apply or prepare the smallest skill improvement that addresses the evidence.
+6. Update discovery metadata only when trigger behavior changes.
+7. Record what changed, why it changed, and what was deliberately left out.
 
 ## Pitfalls And Gotchas
 
 - Accepting a skill candidate because it is polished rather than evidenced.
 - Widening scope until the skill becomes hard to trigger correctly.
 - Losing the audit trail between evidence and edits.
-- Mixing workspace experiments with source-of-truth promotion.
+- Mixing workspace experiments with source promotion.
+- Editing source-packaged skills directly from a Curator pass.
 
 ## Progressive Disclosure
 
@@ -80,5 +86,6 @@ boundary is ambiguous.
 ## Verification Pattern
 
 Check that every accepted skill improvement points back to evidence, stays inside
-scope, updates metadata only when justified, and records enough context for a
-future operator to understand the curation decision.
+scope, updates metadata only when justified, records the workspace-installed
+skill destination, and leaves enough context for future source promotion or
+rollback.

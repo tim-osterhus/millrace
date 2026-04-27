@@ -470,6 +470,14 @@ The built-in shipped adapters are the Codex CLI adapter and the Pi RPC adapter,
 and the architecture is set up so additional adapters can be added later without
 rewriting orchestration.
 
+Codex-backed stages support explicit model and reasoning-effort selection
+through runtime config. `stages.<stage>.model` sets the model, and
+`stages.<stage>.model_reasoning_effort` sets the Codex
+`model_reasoning_effort` value for execution, planning, and learning stages
+including `professor`. The compiled plan, stage request, runner invocation
+artifact, persisted stage result, and `runs show` output all carry the selected
+reasoning effort when it is configured.
+
 Each stage run produces a run directory under
 `millrace-agents/runs/<run-id>/`. It can contain:
 
@@ -495,6 +503,7 @@ That envelope contains:
 - terminal result
 - summary status marker
 - result class
+- runner/model identity
 - timestamps and duration
 - artifact paths
 - metadata and notes
@@ -590,6 +599,11 @@ Control actions such as pause, resume, stop, retry-active, clear-stale-state,
 and reload-config are exposed through supported CLI commands. If a daemon owns
 the workspace, those commands are mailbox-routed. If no daemon owns the
 workspace, the control layer can apply the action directly.
+
+`process_running` is a runtime truth claim, not a durable wish. Runtime close
+clears it, status reports it as true only while an ownership lock is active,
+and `clear-stale-state` treats clearing a stale process-running bit as an
+applied repair.
 
 This avoids making operators or ops agents manually edit runtime-owned state to
 recover a deployed instance.

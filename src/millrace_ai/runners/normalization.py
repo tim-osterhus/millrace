@@ -120,6 +120,7 @@ def normalize_stage_result(
         stderr_path=raw_result.stderr_path,
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
+        model_reasoning_effort=raw_result.model_reasoning_effort or request.model_reasoning_effort,
         token_usage=raw_result.token_usage,
         notes=extraction.notes + _transport_reconciliation_notes(raw_result),
         metadata={
@@ -424,6 +425,7 @@ def _failure_envelope(
         stderr_path=raw_result.stderr_path,
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
+        model_reasoning_effort=raw_result.model_reasoning_effort or request.model_reasoning_effort,
         token_usage=raw_result.token_usage,
         notes=notes,
         metadata={
@@ -564,6 +566,7 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,
         "skill_revision_evidence_path": request.skill_revision_evidence_path,
+        "model_reasoning_effort": request.model_reasoning_effort,
     }
 
 

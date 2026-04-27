@@ -96,6 +96,7 @@ def build_stage_run_request(
         else None,
         runner_name=stage_plan.runner_name,
         model_name=stage_plan.model_name,
+        model_reasoning_effort=stage_plan.model_reasoning_effort,
         timeout_seconds=stage_plan.timeout_seconds,
     )
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
@@ -162,6 +163,7 @@ def build_closure_target_stage_run_request(
         else None,
         runner_name=stage_plan.runner_name,
         model_name=stage_plan.model_name,
+        model_reasoning_effort=stage_plan.model_reasoning_effort,
         timeout_seconds=stage_plan.timeout_seconds,
     )
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
@@ -277,6 +279,7 @@ def runner_failure_result(
         stage=request.stage,
         runner_name=request.runner_name or "runtime",
         model_name=request.model_name,
+        model_reasoning_effort=request.model_reasoning_effort,
         exit_kind="runner_error",
         exit_code=1,
         stdout_path=None,

@@ -159,6 +159,40 @@ def test_doctor_warns_when_resolved_runner_binary_is_unavailable(
     assert any("pi_rpc" in item.message for item in report.warnings)
 
 
+def test_doctor_validates_resolved_learning_stage_runner_posture(tmp_path: Path) -> None:
+    assets_root = _copy_assets(tmp_path)
+    local_mode_path = assets_root / "modes" / "learning_local.json"
+    payload = json.loads((assets_root / "modes" / "learning_codex.json").read_text(encoding="utf-8"))
+    payload["mode_id"] = "learning_local"
+    for learning_stage in ("analyst", "professor", "curator"):
+        payload["stage_runner_bindings"].pop(learning_stage)
+    local_mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    paths = _bootstrap(tmp_path)
+    shutil.copytree(assets_root, paths.runtime_root, dirs_exist_ok=True)
+    paths.runtime_root.joinpath("millrace.toml").write_text(
+        "\n".join(
+            [
+                "[runtime]",
+                'default_mode = "learning_local"',
+                "",
+                "[runners]",
+                'default_runner = "unknown_learning_runner"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(
+        item.code == "configured_runner_unknown" and "unknown_learning_runner" in item.message
+        for item in report.errors
+    )
+
+
 def test_doctor_reports_active_runtime_ownership_lock_health(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
     acquire_runtime_ownership_lock(

@@ -28,6 +28,7 @@ class RunnerInvocationArtifact(_ArtifactModel):
     closure_target_root_spec_id: str | None = None
     runner_name: str
     model_name: str | None = None
+    model_reasoning_effort: str | None = None
     command: tuple[str, ...]
     prompt_path: str
     emitted_at: datetime
@@ -44,6 +45,7 @@ class RunnerCompletionArtifact(_ArtifactModel):
     active_work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
     runner_name: str
+    model_reasoning_effort: str | None = None
     exit_kind: str
     exit_code: int | None = None
     observed_exit_kind: str | None = None
@@ -86,6 +88,7 @@ def invocation_artifact_from_request(
         closure_target_root_spec_id=request.closure_target_root_spec_id,
         runner_name=runner_name,
         model_name=request.model_name,
+        model_reasoning_effort=request.model_reasoning_effort,
         command=command,
         prompt_path=prompt_path,
         emitted_at=emitted_at,
@@ -110,6 +113,7 @@ def completion_artifact_from_raw_result(
         active_work_item_id=request.active_work_item_id,
         closure_target_root_spec_id=request.closure_target_root_spec_id,
         runner_name=runner_name,
+        model_reasoning_effort=raw_result.model_reasoning_effort,
         exit_kind=raw_result.exit_kind,
         exit_code=raw_result.exit_code,
         observed_exit_kind=raw_result.observed_exit_kind,

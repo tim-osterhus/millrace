@@ -86,6 +86,7 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
                 f"result_class: {stage_result.result_class}",
                 f"runner_name: {_value(stage_result.runner_name)}",
                 f"model_name: {_value(stage_result.model_name)}",
+                f"model_reasoning_effort: {_value(stage_result.model_reasoning_effort)}",
                 f"started_at: {stage_result.started_at}",
                 f"completed_at: {stage_result.completed_at}",
                 f"duration_seconds: {stage_result.duration_seconds}",

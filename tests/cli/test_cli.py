@@ -121,6 +121,17 @@ def test_cli_package_consumes_public_runtime_control_facade() -> None:
     assert cli.RuntimeControl.__module__ == "millrace_ai.runtime.control"
 
 
+def test_cli_version_surfaces_package_version() -> None:
+    top_level = CliRunner().invoke(cli.app, ["--version"])
+    command = CliRunner().invoke(cli.app, ["version"])
+
+    assert top_level.exit_code == 0
+    assert command.exit_code == 0
+    assert "millrace" in top_level.output
+    assert cli.__version__ in top_level.output
+    assert cli.__version__ in command.output
+
+
 def _task_payload(task_id: str) -> dict[str, object]:
     return {
         "task_id": task_id,
@@ -166,6 +177,7 @@ def _inspected_run_summary(
     mode_id: str | None = "default_codex",
     request_kind: str | None = None,
     closure_target_root_spec_id: str | None = None,
+    model_reasoning_effort: str | None = None,
 ) -> InspectedRunSummary:
     artifact_paths = tuple(
         path for path in (report_artifact, "runner_stdout.txt") if path is not None
@@ -191,6 +203,7 @@ def _inspected_run_summary(
         artifact_paths=artifact_paths,
         runner_name="codex-cli",
         model_name="gpt-5.4",
+        model_reasoning_effort=model_reasoning_effort,
         started_at=NOW.isoformat(),
         completed_at=NOW.isoformat(),
         duration_seconds=3.0,
@@ -445,6 +458,68 @@ def test_run_daemon_without_monitor_stays_quiet(
 
     assert result.exit_code == 0
     assert "runtime started" not in result.output
+
+
+def test_run_daemon_can_write_basic_monitor_log_without_stdout_monitor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    monitor_log = tmp_path / "monitor.log"
+
+    class FakeRuntimeEngine:
+        def __init__(
+            self,
+            target,
+            *,
+            stage_runner,
+            config_path=None,
+            mode_id=None,
+            assets_root=None,
+            monitor=None,
+        ) -> None:
+            del target, stage_runner, config_path, mode_id, assets_root
+            self.monitor = monitor
+            self.snapshot = SimpleNamespace(stop_requested=False, process_running=False)
+
+        def startup(self):
+            assert self.monitor is not None
+            self.monitor.emit(
+                RuntimeMonitorEvent(
+                    event_type="runtime_started",
+                    occurred_at=NOW,
+                    payload={
+                        "mode_id": "standard_plain",
+                        "compiled_plan_id": "plan-001",
+                        "compiled_plan_currentness": "current",
+                        "baseline_manifest_id": "baseline-001",
+                        "baseline_seed_package_version": "0.15.7",
+                    },
+                )
+            )
+            return SimpleNamespace(active_mode_id="standard_plain", compiled_plan_id="plan-001")
+
+        def tick(self):
+            return SimpleNamespace(router_decision=SimpleNamespace(reason="loop"))
+
+    monkeypatch.setattr(cli, "RuntimeEngine", FakeRuntimeEngine)
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "run",
+            "daemon",
+            "--workspace",
+            str(paths.root),
+            "--monitor-log",
+            str(monitor_log),
+            "--max-ticks",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "runtime started mode=standard_plain" not in result.output
+    assert "runtime started mode=standard_plain" in monitor_log.read_text(encoding="utf-8")
 
 
 def test_skills_install_copies_local_skill_and_updates_workspace_index(tmp_path: Path) -> None:
@@ -899,7 +974,11 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
 ) -> None:
     paths = _workspace(tmp_path)
 
-    monkeypatch.setattr(cli, "inspect_run_id", lambda target, run_id: _inspected_run_summary(run_id))
+    monkeypatch.setattr(
+        cli,
+        "inspect_run_id",
+        lambda target, run_id: _inspected_run_summary(run_id, model_reasoning_effort="high"),
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli.app, ["runs", "show", "run-001", "--workspace", str(paths.root)])
@@ -915,6 +994,7 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     assert "terminal_result: CHECKER_PASS" in result.output
     assert "runner_name: codex-cli" in result.output
     assert "model_name: gpt-5.4" in result.output
+    assert "model_reasoning_effort: high" in result.output
     assert "duration_seconds: 3.0" in result.output
     assert "input_tokens: 100" in result.output
     assert "cached_input_tokens: 30" in result.output
@@ -1563,6 +1643,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         attached_skill_additions=(),
                         runner_name="codex_cli",
                         model_name=None,
+                        model_reasoning_effort="high",
                         timeout_seconds=3600,
                     ),
                 ),
@@ -1587,6 +1668,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         attached_skill_additions=(),
                         runner_name="codex_cli",
                         model_name=None,
+                        model_reasoning_effort=None,
                         timeout_seconds=3600,
                     ),
                 ),
@@ -1662,6 +1744,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "attached_skills: none" in result.output
     assert "runner_name: codex_cli" in result.output
     assert "model_name: none" in result.output
+    assert "model_reasoning_effort: high" in result.output
     assert "timeout_seconds: 3600" in result.output
     assert "completion_behavior.trigger: backlog_drained" in result.output
     assert "completion_behavior.request_kind: closure_target" in result.output
@@ -1730,6 +1813,37 @@ def test_upgrade_command_apply_refreshes_managed_assets(
     assert (
         paths.runtime_root / "entrypoints" / "execution" / "builder.md"
     ).read_text(encoding="utf-8") == "candidate builder update\n"
+
+
+def test_upgrade_command_localizes_removed_managed_asset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    assets_root = _copy_assets(tmp_path)
+    removed_relative_path = "entrypoints/execution/builder.md"
+    (assets_root / removed_relative_path).unlink()
+
+    monkeypatch.setattr(
+        "millrace_ai.workspace.asset_deployment.resolve_asset_source_root",
+        lambda _: assets_root,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "upgrade",
+            "--workspace",
+            str(paths.root),
+            "--localize-removed",
+            removed_relative_path,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "localized_removed: 1" in result.output
+    assert f"entry: {removed_relative_path} localized_removed" in result.output
 
 
 def test_status_watch_outputs_multiple_updates_with_bound(tmp_path: Path) -> None:

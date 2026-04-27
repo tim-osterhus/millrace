@@ -7,12 +7,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from millrace_ai.contracts import ExecutionStageName, PlanningStageName, RuntimeMode
+from millrace_ai.contracts import ExecutionStageName, LearningStageName, PlanningStageName, RuntimeMode
 
 DEFAULT_CONFIG_PATH = Path("millrace-agents") / "millrace.toml"
 
 KNOWN_STAGE_NAMES = {
     *(stage.value for stage in ExecutionStageName),
+    *(stage.value for stage in LearningStageName),
     *(stage.value for stage in PlanningStageName),
 }
 
@@ -31,6 +32,13 @@ class CodexPermissionLevel(str, Enum):
     BASIC = "basic"
     ELEVATED = "elevated"
     MAXIMUM = "maximum"
+
+
+class CodexReasoningEffort(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
 
 
 class PiEventLogPolicy(str, Enum):
@@ -147,6 +155,7 @@ class CodexRunnerSection(ConfigModel):
     permission_default: CodexPermissionLevel = CodexPermissionLevel.MAXIMUM
     permission_by_stage: dict[str, CodexPermissionLevel] = Field(default_factory=dict)
     permission_by_model: dict[str, CodexPermissionLevel] = Field(default_factory=dict)
+    model_reasoning_effort: CodexReasoningEffort | None = None
     skip_git_repo_check: bool = True
     extra_config: tuple[str, ...] = ()
     env: dict[str, str] = Field(default_factory=dict)
@@ -227,6 +236,7 @@ class WatchersSection(ConfigModel):
 class StageConfig(ConfigModel):
     runner: str | None = None
     model: str | None = None
+    model_reasoning_effort: CodexReasoningEffort | None = None
     timeout_seconds: int = Field(default=3600, gt=0)
 
 
@@ -250,6 +260,7 @@ class RuntimeConfig(ConfigModel):
 
 __all__ = [
     "CodexPermissionLevel",
+    "CodexReasoningEffort",
     "CodexRunnerSection",
     "ConfigModel",
     "DEFAULT_CONFIG_PATH",

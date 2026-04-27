@@ -8,6 +8,8 @@ Module entrypoint: `python -m millrace_ai`
 - `--workspace` points to the operator workspace root.
 - Runtime config defaults to `<workspace>/millrace-agents/millrace.toml`.
 - Runtime bootstrap/output stays under `<workspace>/millrace-agents/`.
+- Use `millrace --version` or `millrace version` to print the installed
+  package version.
 
 ## Primary Command Groups
 
@@ -24,6 +26,7 @@ Module entrypoint: `python -m millrace_ai`
 - `millrace modes ...`
 - `millrace skills ...`
 - `millrace doctor`
+- `millrace version`
 
 Compatibility aliases remain for top-level operator commands:
 
@@ -65,16 +68,23 @@ Dispositions currently exposed by the command:
 - `safe_package_update`
 - `local_only_modification`
 - `already_converged`
+- `localized_removed`
 - `conflict`
 - `missing`
 
 Use `millrace upgrade --apply` to apply only safe managed baseline updates.
-Conflicts fail the apply and leave the workspace baseline unchanged.
+Conflicts fail the apply and leave the workspace baseline unchanged. If a
+package release removes a managed asset that you intentionally want to keep as
+workspace-local content, preview and apply with `--localize-removed PATH`.
+For multiple paths, repeat the flag or use `--localize-removed-from FILE` with
+one workspace-relative managed asset path per line.
 
 Options:
 
 - `--workspace PATH`
 - `--apply`
+- `--localize-removed PATH`
+- `--localize-removed-from FILE`
 
 ## Run Commands
 
@@ -99,6 +109,7 @@ Options:
 - `--config PATH`
 - `--max-ticks N`
 - `--monitor [none|basic]`
+- `--monitor-log PATH`
 
 The default monitor mode is `none`; `millrace run daemon` does not print live
 monitor lines unless `--monitor basic` is passed explicitly. The existing
@@ -117,6 +128,11 @@ heartbeat. It emits that heartbeat at most once every 120 seconds while the
 same idle condition continues. Any non-idle monitor event, or an idle event
 with a different reason, resets the heartbeat.
 
+`--monitor-log PATH` writes the same basic monitor format to a file. It can be
+used with `--monitor none` for a quiet foreground daemon that still leaves a
+clean monitor trail, or with `--monitor basic` to mirror the same live stream
+to both stdout and a file.
+
 ## Status Commands
 
 Canonical operator form: `millrace status`  
@@ -126,6 +142,9 @@ Explicit subcommand form: `millrace status show`
 
 Prints runtime snapshot and queue depth for one workspace.
 When a failure class is active, status also shows the current failure class plus non-zero retry counters.
+`process_running` is reported as true only when the snapshot says the runtime
+is running and the workspace ownership lock is currently active. The
+`runtime_ownership_lock` line reports the lock state separately.
 The `execution_status_marker` and `planning_status_marker` fields show the
 currently running stage marker while a stage is executing, then fall back to
 the latest terminal marker or `### IDLE` when no stage is active on that plane.
@@ -287,6 +306,14 @@ new governance settings available to the next tick; `millrace status` and the
 basic daemon monitor show whether a governance-owned pause cleared, remained,
 or was newly applied.
 
+Config changes that affect compile inputs, including `runtime.default_mode`
+and `stages.<stage>.*`, are recompile changes. When a daemon owns the
+workspace, `millrace config reload` is mailbox-routed and the daemon applies
+the new compiled plan on the next tick. If the daemon was started with an
+explicit `--mode`, that mode override remains pinned across reloads; start
+without `--mode`, or with the intended mode, when config-driven mode selection
+should take effect.
+
 ## Compile + Modes Commands
 
 ### `millrace compile validate [--mode MODE_ID]`
@@ -313,6 +340,7 @@ Compiles and prints operator inspectability surface:
 - `persisted_compile_input.*`
 - frozen `completion_behavior.*` fields when the selected planning loop defines one
 - stage ordering
+- per-stage `model_reasoning_effort` when configured
 - entrypoint path per stage
 - `stage_kind_id`
 - `running_status_marker`

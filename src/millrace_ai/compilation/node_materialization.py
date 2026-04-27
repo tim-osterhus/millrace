@@ -83,6 +83,10 @@ def materialize_graph_node_plan(
         if mode_model is not None:
             model_name = mode_model
 
+    model_reasoning_effort = config.runners.codex.model_reasoning_effort
+    if stage_config is not None and stage_config.model_reasoning_effort is not None:
+        model_reasoning_effort = stage_config.model_reasoning_effort
+
     timeout_seconds = (
         node.timeout_seconds
         if node.timeout_seconds is not None
@@ -104,6 +108,9 @@ def materialize_graph_node_plan(
         attached_skill_additions=attached_skill_additions,
         runner_name=runner_name,
         model_name=model_name,
+        model_reasoning_effort=(
+            model_reasoning_effort.value if model_reasoning_effort is not None else None
+        ),
         timeout_seconds=timeout_seconds,
     )
 

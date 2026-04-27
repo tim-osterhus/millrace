@@ -9,6 +9,7 @@ import typer
 from click.exceptions import ClickException
 from click.exceptions import Exit as ClickExit
 
+from millrace_ai import __version__
 from millrace_ai.compiler import (
     CompileOutcome,
     compile_and_persist_workspace_plan,
@@ -66,6 +67,7 @@ __all__ = [
     "RuntimeEngine",
     "RuntimeTickOutcome",
     "_build_stage_runner",
+    "__version__",
     "app",
     "compile_and_persist_workspace_plan",
     "inspect_workspace_plan_currentness",

@@ -32,6 +32,12 @@ def build_codex_cli_command(
     for item in codex.extra_config:
         command.extend(["-c", item])
 
+    model_reasoning_effort = request.model_reasoning_effort
+    if model_reasoning_effort is None and codex.model_reasoning_effort is not None:
+        model_reasoning_effort = codex.model_reasoning_effort.value
+    if model_reasoning_effort is not None:
+        command.extend(["-c", f'model_reasoning_effort="{model_reasoning_effort}"'])
+
     command.extend(["--cd", str(workspace_root)])
     command.append("--json")
     command.extend(["--output-last-message", str(output_last_message_path)])

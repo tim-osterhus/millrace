@@ -11,6 +11,7 @@ from millrace_ai.config import load_runtime_config
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.runtime.pause_state import pause_sources_label
 from millrace_ai.runtime.usage_governance import load_usage_governance_state
+from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
@@ -20,6 +21,8 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     snapshot = load_snapshot(paths)
     baseline_manifest = _load_baseline_manifest_safe(paths)
     currentness, currentness_error = _load_compile_currentness(paths)
+    lock_status = inspect_runtime_ownership_lock(paths)
+    process_running = snapshot.process_running and lock_status.state == "active"
 
     execution_queue_depth = len(tuple(paths.tasks_queue_dir.glob("*.md")))
     planning_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md"))) + len(
@@ -30,7 +33,8 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     lines = [
         f"workspace: {paths.root}",
         f"runtime_mode: {snapshot.runtime_mode.value}",
-        f"process_running: {'true' if snapshot.process_running else 'false'}",
+        f"process_running: {'true' if process_running else 'false'}",
+        f"runtime_ownership_lock: {lock_status.state}",
         f"paused: {'true' if snapshot.paused else 'false'}",
         f"pause_sources: {pause_sources_label(snapshot)}",
         f"stop_requested: {'true' if snapshot.stop_requested else 'false'}",

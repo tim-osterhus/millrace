@@ -37,7 +37,7 @@ and run inspection carry forward: `mode_id`, `compiled_plan_id`, `node_id`, and
 - `src/millrace_ai/runners/adapters/codex_cli.py`
   - public built-in Codex CLI adapter class and run orchestration
 - `src/millrace_ai/runners/adapters/codex_cli_command.py`
-  - Codex CLI command construction, permission flag resolution, and model/profile flags
+  - Codex CLI command construction, permission flag resolution, model/profile flags, and model reasoning-effort config
 - `src/millrace_ai/runners/adapters/codex_cli_artifacts.py`
   - Codex runner artifact paths, event-log persistence, last-message stdout materialization, and timeout-marker reconciliation
 - `src/millrace_ai/runners/adapters/codex_cli_tokens.py`
@@ -69,6 +69,12 @@ The same split applies to runtime identity:
 1. compile freezes node/stage-kind identity into the compiled graph
 2. runtime stage-request construction copies that identity into every
    `StageRunRequest`
+
+For Codex stages, compile also freezes `model_reasoning_effort` from either
+`runners.codex.model_reasoning_effort` or the more specific
+`stages.<stage>.model_reasoning_effort`. The Codex adapter passes that value as
+`-c model_reasoning_effort="<value>"` after generic `runners.codex.extra_config`
+so per-stage config can override a global extra-config default.
 
 The shipped canonical modes make that explicit:
 

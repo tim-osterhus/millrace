@@ -16,6 +16,18 @@ RUNTIME_ASSET_DIRS: tuple[str, ...] = (
 )
 
 
+def should_skip_runtime_asset_path(relative_path: Path) -> bool:
+    """Return true for local/cache files that must never be deployed as assets."""
+
+    if any(part.startswith(".") for part in relative_path.parts):
+        return True
+    if "__pycache__" in relative_path.parts:
+        return True
+    if relative_path.suffix in {".pyc", ".pyo"}:
+        return True
+    return False
+
+
 def deploy_runtime_assets(paths: WorkspacePaths, *, assets_root: Path | str | None) -> None:
     """Copy missing packaged runtime assets into an initialized workspace."""
 
@@ -31,10 +43,10 @@ def deploy_runtime_assets(paths: WorkspacePaths, *, assets_root: Path | str | No
             if source_file.is_dir():
                 continue
 
-            if any(part.startswith(".") for part in source_file.relative_to(source_dir).parts):
+            relative_path = source_file.relative_to(source_dir)
+            if should_skip_runtime_asset_path(relative_path):
                 continue
 
-            relative_path = source_file.relative_to(source_dir)
             destination = destination_dir / relative_path
             if destination.exists():
                 continue
@@ -54,4 +66,9 @@ def resolve_asset_source_root(assets_root: Path | str | None) -> Path:
     return ASSETS_ROOT
 
 
-__all__ = ["RUNTIME_ASSET_DIRS", "deploy_runtime_assets", "resolve_asset_source_root"]
+__all__ = [
+    "RUNTIME_ASSET_DIRS",
+    "deploy_runtime_assets",
+    "resolve_asset_source_root",
+    "should_skip_runtime_asset_path",
+]

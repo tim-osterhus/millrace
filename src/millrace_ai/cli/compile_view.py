@@ -125,6 +125,8 @@ def _render_compile_show_lines(paths: WorkspacePaths, outcome: CompileOutcome) -
                 f"{', '.join(stage_plan.attached_skill_additions) if stage_plan.attached_skill_additions else 'none'}",
                 f"runner_name: {stage_plan.runner_name or 'none'}",
                 f"model_name: {stage_plan.model_name or 'none'}",
+                "model_reasoning_effort: "
+                f"{getattr(stage_plan, 'model_reasoning_effort', None) or 'none'}",
                 f"timeout_seconds: {stage_plan.timeout_seconds}",
             )
         )

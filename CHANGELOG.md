@@ -13,6 +13,30 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added `millrace --version` and `millrace version` for package-version
+  visibility in installed and module-entrypoint environments.
+- Added `millrace run daemon --monitor-log PATH` to write basic monitor output
+  to a file while keeping stdout monitor mode independently selectable.
+- Added first-class Codex `model_reasoning_effort` config on
+  `runners.codex` and per-stage `stages.<stage>.model_reasoning_effort`, with
+  compile, request, runner artifact, and run-inspection visibility.
+
+### Changed
+
+- `stages.<stage>` and `runners.codex.permission_by_stage` now accept learning
+  stages such as `professor`.
+- Workspace doctor now resolves the selected mode against workspace-local
+  deployed assets, matching runtime compile/startup behavior for custom modes.
+- `millrace upgrade` can intentionally localize removed managed assets through
+  `--localize-removed` or `--localize-removed-from`, and runtime asset
+  manifests now ignore cache artifacts such as `__pycache__` and `*.pyc`.
+- Runtime shutdown now clears `process_running`, `status` suppresses stale
+  `process_running` truth when no active ownership lock exists, and
+  `clear-stale-state` reports applied when it only clears that stale process
+  bit.
+
 ## [0.15.7] - 2026-04-27
 
 `0.15.7` completes the post-usage-governance package-boundary cleanup, keeping

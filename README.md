@@ -74,6 +74,8 @@ It wraps long-horizon work in a real runtime:
 
 - workspace bootstrap is explicit: run `millrace init` before operator commands
 - managed baseline refresh is explicit: run `millrace upgrade` to preview or apply packaged workspace asset updates
+- removed managed assets can be explicitly localized during upgrade when an
+  operator wants the workspace copy to become local content
 - compile happens at startup and again only on explicit config reload
 - compile tracks input fingerprints so operators can see whether the persisted compiled plan is current or stale
 - planning and execution are claim domains inside one deterministic scheduler,
@@ -208,12 +210,19 @@ The default daemon remains quiet unless that monitor is requested explicitly.
 The basic monitor prints the first `idle reason=no_work` line immediately, then
 throttles repeated `no_work` idles to a 120-second heartbeat until runtime
 activity or a different idle reason appears.
+Use `--monitor-log <path>` when you want the same clean monitor stream written
+to a file without necessarily printing live monitor lines to stdout.
 
 When the packaged workspace baseline changes, use `millrace upgrade` first to
 preview the managed-file classifications, then `millrace upgrade --apply` to
 apply safe baseline updates. If compile inputs drift and the persisted plan is
 stale, runtime startup and config reload refuse to keep running on the stale
 plan.
+
+Stage config supports all execution, planning, and learning stage names. For
+Codex-backed stages, `stages.<stage>.model_reasoning_effort` sets the
+per-stage Codex reasoning effort that compile, runner invocation artifacts, and
+run inspection will surface.
 
 Canonical shipped modes today:
 

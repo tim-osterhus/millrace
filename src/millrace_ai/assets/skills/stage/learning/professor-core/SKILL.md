@@ -21,23 +21,25 @@ forbidden_claims:
 
 ## Purpose
 
-Author skill candidates from learning requests and research packets. Professor
-turns researched operator behavior into reusable skill packages while keeping the
-package narrow, testable, and compatible with the packaged skill-creator
-expectations.
+Author skill candidates or draft patches from learning requests and research
+packets. Professor turns researched operator behavior into reusable skill
+packages while keeping the package narrow, testable, and ready for Curator
+review rather than publication.
 
 ## Quick Start
 
-1. Read the learning request and the accepted research packet.
+1. Read the learning request and accepted research packet when present.
 2. Identify the exact operator behavior the skill candidate should improve.
-3. Use skill-creator guidance for package shape and validation expectations.
-4. Draft the smallest useful skill candidate with justified references only.
-5. Record the checks Curator should run before adoption.
+3. Load `millrace-skill-creator` guidance for package shape and validation.
+4. Draft `professor_skill_candidate/` for new skills or `professor_skill_patch.md`
+   for existing-skill improvements.
+5. Run or record `lint_skill.py` and `evaluate_skill.py` validation when available.
 
 ## Operating Constraints
 
 - Author skill candidates, not runtime policy or queue behavior.
-- Keep the trigger conditions explicit and narrow enough to be discoverable.
+- Professor approval is not publication; Curator owns acceptance.
+- Keep trigger conditions explicit and narrow enough to be discoverable.
 - Do not copy broad research packets into the skill body.
 - Prefer references only when they reduce skill-body bloat.
 - Preserve uncertainty as review notes for Curator instead of hiding it.
@@ -45,16 +47,20 @@ expectations.
 ## Inputs This Skill Expects
 
 - The active learning request.
-- One or more research packets from Analyst.
+- One or more research packets from Analyst when available.
 - Existing skill packages that may be candidates for reuse or revamp.
-- Any package-shape or validation rules supplied by skill-creator.
+- Request fields such as `requested_action`, `target_skill_id`, `target_stage`,
+  `artifact_paths`, `source_refs`, and `preferred_output_paths`.
+- Package-shape and validation rules supplied by `millrace-skill-creator`.
 
 ## Output Contract
 
-- A skill candidate package or draft update ready for curation.
+- `run_dir/professor_skill_candidate/` for a new skill candidate.
+- `run_dir/professor_skill_patch.md` for a draft update to an existing skill.
+- `run_dir/professor_notes.md` with evidence used, assumptions, validation, and
+  Curator review points.
 - Clear trigger language and operator workflow guidance.
-- Validation notes, examples, or scripts when practical.
-- A summary of evidence used and assumptions left for Curator.
+- Validation notes from `lint_skill.py` and `evaluate_skill.py` when practical.
 
 ## Procedure
 
@@ -62,15 +68,17 @@ expectations.
 2. Decide whether the output should be a new skill candidate or a draft update.
 3. Use skill-creator conventions for `SKILL.md`, references, scripts, and assets.
 4. Write operational guidance that changes agent behavior in the target task.
-5. Keep examples tied to the evidence from the research packets.
-6. Leave curation notes for unresolved scope, quality, or packaging concerns.
+5. Keep examples tied to evidence from research packets or request artifacts.
+6. Run local skill validation when practical and record skipped checks honestly.
+7. Leave curation notes for unresolved scope, quality, or packaging concerns.
 
 ## Pitfalls And Gotchas
 
 - Writing a general essay instead of an actionable skill candidate.
 - Overfitting the skill to a single run artifact without naming the limit.
 - Adding references that are not used by the workflow.
-- Treating Professor approval as publication.
+- Treating Professor output as an installed or published skill.
+- Skipping validation notes because the candidate looks plausible.
 
 ## Progressive Disclosure
 
@@ -80,6 +88,7 @@ depends on them.
 
 ## Verification Pattern
 
-Check that the draft is a coherent skill candidate, names its trigger conditions,
-uses evidence from research packets, follows skill-creator package discipline,
-and leaves Curator with concrete review points.
+Check that the draft is a coherent skill candidate or patch, names trigger
+conditions, uses evidence from research packets or artifacts, follows
+skill-creator package discipline, records `lint_skill.py` and `evaluate_skill.py`
+outcomes when available, and leaves Curator with concrete review points.

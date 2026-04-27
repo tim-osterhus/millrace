@@ -66,6 +66,8 @@ def lint_asset_manifests(
     assets: list[ParsedMarkdownAsset] = []
 
     for path in sorted(root.rglob("*.md")):
+        if not _is_lintable_asset_markdown(root, path):
+            continue
         try:
             assets.append(parse_markdown_asset(path))
         except ValueError as exc:
@@ -97,6 +99,14 @@ def lint_asset_manifests(
         diagnostics.extend(_lint_policy(asset))
 
     return sort_diagnostics(diagnostics)
+
+
+def _is_lintable_asset_markdown(root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] in {"entrypoints", "skills", "roles"}
 
 
 def _lint_duplicate_asset_ids(assets: list[ParsedMarkdownAsset]) -> list[AssetLintDiagnostic]:

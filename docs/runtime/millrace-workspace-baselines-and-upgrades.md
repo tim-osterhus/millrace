@@ -97,8 +97,13 @@ Current dispositions:
 - `safe_package_update`
 - `local_only_modification`
 - `already_converged`
+- `localized_removed`
 - `conflict`
 - `missing`
+
+Runtime asset manifests ignore cache artifacts such as `__pycache__`, `*.pyc`,
+`*.pyo`, hidden files, and `.DS_Store`; those files are not treated as managed
+baseline assets.
 
 ## How Classification Works
 
@@ -113,7 +118,21 @@ That distinction matters because it lets Millrace separate:
 - package drift with no local edits
 - local edits with no package drift
 - already-converged files
+- removed package assets that were explicitly localized
 - real conflicts
+
+When a package release removes a managed asset, Millrace normally classifies
+that removed path as a conflict so an operator must make the ownership decision
+explicitly. To preserve the current workspace copy as local, untracked content,
+use:
+
+```bash
+millrace upgrade --workspace /absolute/path/to/workspace \
+  --localize-removed entrypoints/execution/example.md
+```
+
+For multiple removed paths, repeat `--localize-removed` or provide a
+newline-delimited file with `--localize-removed-from`.
 
 ## Upgrade Apply
 
@@ -129,6 +148,8 @@ Current apply behavior:
 - restores `missing` managed files from the candidate baseline
 - preserves `local_only_modification`
 - preserves `already_converged`
+- preserves `localized_removed` files in place while removing them from the
+  refreshed managed baseline manifest
 - refuses to apply when any `conflict` remains
 
 On success, Millrace writes a refreshed baseline manifest for the new deployed

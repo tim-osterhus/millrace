@@ -27,6 +27,7 @@ def close_engine(engine: RuntimeEngine) -> None:
     """Release any runtime-owned resources held by the engine session."""
 
     engine._close_watcher_session()
+    _mark_engine_process_closed(engine)
     engine._release_daemon_ownership_lock(force=False)
 
 
@@ -107,6 +108,27 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
         if lock_acquired:
             engine._release_daemon_ownership_lock(force=True)
         raise
+
+
+def _mark_engine_process_closed(engine: RuntimeEngine) -> None:
+    if engine.snapshot is None or not engine.snapshot.process_running:
+        return
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "process_running": False,
+            "updated_at": engine._now(),
+        }
+    )
+    save_snapshot(engine.paths, engine.snapshot)
+    write_runtime_event(
+        engine.paths,
+        event_type="runtime_closed",
+        data={
+            "mode_id": engine.snapshot.active_mode_id,
+            "compiled_plan_id": engine.snapshot.compiled_plan_id,
+            "process_running": engine.snapshot.process_running,
+        },
+    )
 
 
 def _emit_startup_monitor_events(engine: RuntimeEngine, snapshot: RuntimeSnapshot) -> None:

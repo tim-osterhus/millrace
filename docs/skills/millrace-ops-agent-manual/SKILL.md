@@ -118,6 +118,8 @@ Know which shipped harness posture you are validating:
    The basic monitor prints the first `idle reason=no_work` line immediately,
    then treats repeated `no_work` idles as a 120-second heartbeat until runtime
    activity or a different idle reason appears.
+   Use `--monitor-log <path>` when you need the same clean monitor stream
+   persisted to a file without necessarily printing it to stdout.
    If you need the daemon to persist beyond the current harness process, spawn
    it inside a `tmux` pane rather than as an ordinary shell background process.
 8. Monitor with `millrace status watch`, `millrace runs ls`, and
@@ -247,8 +249,10 @@ Canonical baseline commands:
 
 ```bash
 millrace init --workspace <workspace>
+millrace version
 millrace upgrade --workspace <workspace>
 millrace upgrade --apply --workspace <workspace>
+millrace upgrade --localize-removed <managed/path> --workspace <workspace>
 millrace compile validate --workspace <workspace>
 millrace compile show --workspace <workspace>
 millrace status --workspace <workspace>
@@ -256,6 +260,7 @@ millrace queue ls --workspace <workspace>
 millrace queue show <work_item_id> --workspace <workspace>
 millrace run once --workspace <workspace>
 millrace run daemon --monitor basic --workspace <workspace>
+millrace run daemon --monitor none --monitor-log <path> --workspace <workspace>
 millrace status watch --workspace <workspace>
 millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
@@ -290,6 +295,8 @@ Important monitoring note:
 - `millrace run daemon --monitor basic` is live-only output; repeated
   `idle reason=no_work` lines are throttled to one heartbeat every 120 seconds
   until runtime activity or a different idle reason resets the heartbeat
+- `millrace run daemon --monitor-log <path>` writes basic monitor output to a
+  file; combine it with `--monitor none` for quiet foreground operation
 - `millrace doctor` is the quick integrity check for mode assets and resolved
   runner posture, including missing harness binaries
 - `millrace status` exposes `pause_sources` and usage-governance blockers when
@@ -345,6 +352,12 @@ Use intervention commands only when the runtime state actually justifies them:
   on the next runtime tick through `millrace status` and basic-monitor
   governance lines. Do not expect `config reload` itself to summarize whether a
   governance pause cleared or remained.
+- Config reload recompiles changes such as `runtime.default_mode` and
+  `stages.<stage>.*` on the daemon's next tick when a daemon owns the
+  workspace. If the daemon was started with an explicit `--mode`, that override
+  remains pinned across reloads.
+- Stage config supports learning stages such as `professor`, including
+  `model`, `timeout_seconds`, and Codex `model_reasoning_effort`.
 - New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
   `runners.default_runner = "codex_cli"`.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+import millrace_ai
 from millrace_ai.cli.commands.compile import compile_app
 from millrace_ai.cli.commands.config import config_app
 from millrace_ai.cli.commands.control import (
@@ -28,6 +29,23 @@ from millrace_ai.cli.commands.upgrade import upgrade
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
 
+
+@app.callback(invoke_without_command=True)
+def root(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Print the Millrace package version and exit.",
+    ),
+) -> None:
+    if version:
+        typer.echo(f"millrace {millrace_ai.__version__}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        typer.echo("Missing command")
+        raise typer.Exit(code=2)
+
 app.add_typer(run_app, name="run")
 app.add_typer(queue_app, name="queue")
 app.add_typer(control_app, name="control")
@@ -51,5 +69,10 @@ app.command("clear-stale-state")(clear_stale_state)
 app.command("reload-config")(reload_config)
 app.command("doctor")(doctor)
 app.command("upgrade")(upgrade)
+
+
+@app.command("version")
+def version() -> None:
+    typer.echo(f"millrace {millrace_ai.__version__}")
 
 __all__ = ["app"]

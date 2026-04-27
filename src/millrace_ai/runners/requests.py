@@ -79,6 +79,7 @@ class StageRunRequest(BaseModel):
 
     runner_name: str | None = None
     model_name: str | None = None
+    model_reasoning_effort: str | None = None
     timeout_seconds: int = 0
 
     @model_validator(mode="after")
@@ -210,6 +211,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
             f"Skill Revision Evidence Path: {request.skill_revision_evidence_path or 'none'}",
             f"Runner Name: {request.runner_name or 'none'}",
             f"Model Name: {request.model_name or 'none'}",
+            f"Model Reasoning Effort: {request.model_reasoning_effort or 'none'}",
             f"Timeout Seconds: {request.timeout_seconds}",
         ]
     )
@@ -226,6 +228,7 @@ class RunnerRawResult(BaseModel):
     stage: StageName
     runner_name: str
     model_name: str | None = None
+    model_reasoning_effort: str | None = None
 
     exit_kind: RunnerExitKind
     exit_code: int | None = None

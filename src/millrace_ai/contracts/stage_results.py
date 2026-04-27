@@ -43,6 +43,7 @@ class StageResultEnvelope(ContractModel):
     stderr_path: str | None = None
     runner_name: str | None = None
     model_name: str | None = None
+    model_reasoning_effort: str | None = None
     token_usage: TokenUsage | None = None
 
     notes: tuple[str, ...] = ()

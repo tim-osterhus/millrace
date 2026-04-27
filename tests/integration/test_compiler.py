@@ -418,7 +418,14 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
-        config=RuntimeConfig(),
+        config=RuntimeConfig(
+            stages={
+                "professor": {
+                    "model": "gpt-5.4",
+                    "model_reasoning_effort": "high",
+                },
+            }
+        ),
         requested_mode_id="learning_codex",
     )
 
@@ -436,6 +443,9 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
         "professor",
         "curator",
     ]
+    learning_nodes = {node.node_id: node for node in outcome.active_plan.learning_graph.nodes}
+    assert learning_nodes["professor"].model_name == "gpt-5.4"
+    assert learning_nodes["professor"].model_reasoning_effort == "high"
     assert {node.runner_name for node in _all_nodes(outcome.active_plan)} == {"codex_cli"}
     assert {
         (

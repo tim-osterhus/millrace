@@ -12,19 +12,18 @@ from typing import TypeAlias
 from pydantic import ValidationError
 
 from millrace_ai.assets import (
-    ASSETS_ROOT,
     BUILTIN_LOOP_PATHS,
     BUILTIN_MODE_PATHS,
     LintLevel,
     ModeAssetError,
-    ModeBundle,
     lint_asset_manifests,
     load_builtin_loop_definition,
-    load_builtin_mode_bundle,
     load_builtin_mode_definition,
-    resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
+from millrace_ai.compilation.mode_resolution import resolve_mode_id
+from millrace_ai.compilation.outcomes import CompilerValidationError
+from millrace_ai.compilation.workspace_plan import compile_compiled_run_plan
 from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.contracts import (
     ExecutionStageName,
@@ -35,7 +34,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
 )
-from millrace_ai.errors import WorkspaceStateError
+from millrace_ai.errors import AssetValidationError, WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import (
@@ -109,7 +108,7 @@ def run_workspace_doctor(
     if baseline_manifest is not None:
         _validate_manifest_tracked_managed_files(paths, baseline_manifest, errors)
 
-    resolved_assets_root = ASSETS_ROOT if assets_root is None else Path(assets_root)
+    resolved_assets_root = paths.runtime_root if assets_root is None else Path(assets_root)
     _validate_mode_and_loop_assets(resolved_assets_root, errors)
     _validate_entrypoint_assets(resolved_assets_root, errors, warnings)
     _validate_resolved_runner_posture(
@@ -467,21 +466,30 @@ def _validate_resolved_runner_posture(
         )
         return
 
-    requested_mode_id = config.runtime.default_mode.strip() or "default_codex"
-    canonical_mode_id = resolve_builtin_mode_id(requested_mode_id)
     try:
-        bundle = load_builtin_mode_bundle(canonical_mode_id, assets_root=assets_root)
-    except ModeAssetError as exc:
+        mode_id = resolve_mode_id(None, config)
+        compiled_plan = compile_compiled_run_plan(
+            paths=paths,
+            config=config,
+            mode_id=mode_id,
+            assets_root=assets_root,
+            compile_time=datetime.now(timezone.utc),
+        )
+    except (AssetValidationError, CompilerValidationError, ValidationError, ValueError) as exc:
         errors.append(
             DoctorIssue(
                 code="resolved_mode_invalid",
-                message=f"{canonical_mode_id}: {exc}",
+                message=str(exc),
                 path=config_path,
             )
         )
         return
 
-    resolved_runners = _resolved_runner_names_for_bundle(config=config, bundle=bundle)
+    resolved_runners = {
+        node.runner_name or config.runners.default_runner.strip() or "codex_cli"
+        for graph in compiled_plan.graphs_by_plane.values()
+        for node in graph.nodes
+    }
     for runner_name in sorted(resolved_runners):
         command = _runner_command_for_name(config=config, runner_name=runner_name)
         if command is None:
@@ -490,7 +498,7 @@ def _validate_resolved_runner_posture(
                     code="configured_runner_unknown",
                     message=(
                         f"resolved runner `{runner_name}` is not a built-in configured runner "
-                        f"for mode `{canonical_mode_id}`"
+                        f"for mode `{compiled_plan.mode_id}`"
                     ),
                     path=config_path,
                 )
@@ -502,32 +510,12 @@ def _validate_resolved_runner_posture(
             DoctorIssue(
                 code="runner_binary_unavailable",
                 message=(
-                    f"resolved runner `{runner_name}` for mode `{canonical_mode_id}` "
+                    f"resolved runner `{runner_name}` for mode `{compiled_plan.mode_id}` "
                     f"uses command `{command}`, which is not available"
                 ),
                 path=config_path,
             )
         )
-
-
-def _resolved_runner_names_for_bundle(
-    *,
-    config: RuntimeConfig,
-    bundle: ModeBundle,
-) -> set[str]:
-    selected_stages = (*bundle.execution_loop.stages, *bundle.planning_loop.stages)
-    resolved: set[str] = set()
-    for stage in selected_stages:
-        stage_config = config.stages.get(stage.value)
-        runner_name = bundle.mode.stage_runner_bindings.get(stage)
-        if runner_name is None and stage_config is not None and stage_config.runner is not None:
-            candidate = stage_config.runner.strip()
-            runner_name = candidate or None
-        if runner_name is None:
-            candidate = config.runners.default_runner.strip()
-            runner_name = candidate or "codex_cli"
-        resolved.add(runner_name)
-    return resolved
 
 
 def _runner_command_for_name(*, config: RuntimeConfig, runner_name: str) -> str | None:

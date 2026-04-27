@@ -43,6 +43,9 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
         artifact_paths=(str(report_path),),
         stdout_path=str(stdout_path),
         report_artifact=str(report_path),
+        runner_name="codex_cli",
+        model_name="gpt-5.4",
+        model_reasoning_effort="high",
         metadata={"failure_class": None, "request_id": "request-001"},
         started_at=NOW,
         completed_at=NOW,
@@ -60,6 +63,7 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
     assert summary.stage_results[0].node_id == "execution.checker.primary"
     assert summary.stage_results[0].stage_kind_id == "checker"
     assert summary.stage_results[0].terminal_result == "CHECKER_PASS"
+    assert summary.stage_results[0].model_reasoning_effort == "high"
     assert summary.primary_stdout_path == "runner_stdout.txt"
     assert summary.troubleshoot_report_path == "troubleshoot_report.md"
 

@@ -480,6 +480,27 @@ def test_clear_stale_state_marks_applied_when_only_pause_or_stop_bits_are_reset(
     assert after.stop_requested is False
 
 
+def test_clear_stale_state_marks_applied_when_only_process_running_bit_is_reset(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        snapshot.model_copy(
+            update={
+                "process_running": True,
+                "updated_at": NOW,
+            }
+        ),
+    )
+    control = RuntimeControl(paths)
+
+    result = control.clear_stale_state(reason="reset stale process bit")
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert load_snapshot(paths).process_running is False
+
+
 def test_add_task_spec_and_idea_are_direct_without_daemon_owner(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     control = RuntimeControl(paths)

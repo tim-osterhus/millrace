@@ -44,6 +44,7 @@ class UpgradeDisposition(str, Enum):
     SAFE_PACKAGE_UPDATE = "safe_package_update"
     LOCAL_ONLY_MODIFICATION = "local_only_modification"
     ALREADY_CONVERGED = "already_converged"
+    LOCALIZED_REMOVED = "localized_removed"
     CONFLICT = "conflict"
     MISSING = "missing"
 
@@ -117,13 +118,16 @@ def preview_baseline_upgrade(
     target: WorkspacePaths | Path | str,
     *,
     candidate_assets_root: Path | str | None = None,
+    localize_removed_paths: tuple[str, ...] = (),
 ) -> BaselineUpgradePreview:
     paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
     baseline_manifest = load_baseline_manifest(paths)
     candidate_manifest = build_baseline_manifest(paths, assets_root=candidate_assets_root)
     original_by_path = {entry.relative_path: entry for entry in baseline_manifest.entries}
     candidate_by_path = {entry.relative_path: entry for entry in candidate_manifest.entries}
+    localize_removed_set = _normalize_localize_removed_paths(localize_removed_paths)
     entries: list[BaselineUpgradeEntry] = []
+    removed_original_paths: set[str] = set()
 
     for relative_path in sorted(set(original_by_path) | set(candidate_by_path)):
         original_entry = original_by_path.get(relative_path)
@@ -142,7 +146,11 @@ def preview_baseline_upgrade(
             else:
                 disposition = UpgradeDisposition.CONFLICT
         elif candidate_entry is None:
-            disposition = UpgradeDisposition.CONFLICT
+            removed_original_paths.add(relative_path)
+            if relative_path in localize_removed_set:
+                disposition = UpgradeDisposition.LOCALIZED_REMOVED
+            else:
+                disposition = UpgradeDisposition.CONFLICT
         elif current_sha256 is None:
             disposition = UpgradeDisposition.MISSING
         else:
@@ -175,6 +183,11 @@ def preview_baseline_upgrade(
             )
         )
 
+    invalid_localize_paths = sorted(localize_removed_set - removed_original_paths)
+    if invalid_localize_paths:
+        joined = ", ".join(invalid_localize_paths)
+        raise ValueError(f"localize-removed path is not a removed managed asset: {joined}")
+
     return BaselineUpgradePreview(
         baseline_manifest_id=baseline_manifest.manifest_id,
         candidate_manifest_id=candidate_manifest.manifest_id,
@@ -186,9 +199,14 @@ def apply_baseline_upgrade(
     target: WorkspacePaths | Path | str,
     *,
     candidate_assets_root: Path | str | None = None,
+    localize_removed_paths: tuple[str, ...] = (),
 ) -> BaselineUpgradePreview:
     paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
-    preview = preview_baseline_upgrade(paths, candidate_assets_root=candidate_assets_root)
+    preview = preview_baseline_upgrade(
+        paths,
+        candidate_assets_root=candidate_assets_root,
+        localize_removed_paths=localize_removed_paths,
+    )
     conflicts = tuple(entry.relative_path for entry in preview.entries if entry.disposition is UpgradeDisposition.CONFLICT)
     if conflicts:
         joined = ", ".join(conflicts)
@@ -222,7 +240,7 @@ def _iter_manifest_entries(source_root: Path) -> tuple[BaselineManifestEntry, ..
             continue
         for file_path in sorted(path for path in family_root.rglob("*") if path.is_file()):
             relative_within_family = file_path.relative_to(family_root)
-            if any(part.startswith(".") for part in relative_within_family.parts):
+            if asset_deployment.should_skip_runtime_asset_path(relative_within_family):
                 continue
             relative_path = Path(asset_family, relative_within_family).as_posix()
             entries.append(
@@ -258,6 +276,19 @@ def _current_file_sha256(path: Path) -> str | None:
     if not path.is_file():
         return None
     return _sha256_file(path)
+
+
+def _normalize_localize_removed_paths(paths: tuple[str, ...]) -> set[str]:
+    normalized: set[str] = set()
+    for value in paths:
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        candidate = Path(cleaned)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError(f"localize-removed path must be workspace-relative: {value}")
+        normalized.add(candidate.as_posix())
+    return normalized
 
 
 __all__ = [

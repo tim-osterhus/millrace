@@ -38,6 +38,7 @@ class InspectedStageResult:
     artifact_paths: tuple[str, ...]
     runner_name: str | None
     model_name: str | None
+    model_reasoning_effort: str | None
     started_at: str
     completed_at: str
     duration_seconds: float = 0.0
@@ -167,6 +168,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 ),
                 runner_name=stage_result.runner_name,
                 model_name=stage_result.model_name,
+                model_reasoning_effort=stage_result.model_reasoning_effort,
                 started_at=stage_result.started_at.isoformat(),
                 completed_at=stage_result.completed_at.isoformat(),
                 duration_seconds=stage_result.duration_seconds,

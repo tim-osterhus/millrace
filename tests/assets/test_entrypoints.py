@@ -972,6 +972,57 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
             )
 
 
+def test_learning_entrypoints_define_durable_handoff_artifacts() -> None:
+    learning_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "learning"
+    analyst = (learning_dir / "analyst.md").read_text(encoding="utf-8")
+    professor = (learning_dir / "professor.md").read_text(encoding="utf-8")
+    curator = (learning_dir / "curator.md").read_text(encoding="utf-8")
+
+    for body in (analyst, professor, curator):
+        assert "active_work_item_path" in body
+        assert "run_dir" in body
+        assert "summary_status_path" in body
+        assert "stop immediately" in body.lower()
+        assert "target_stage" in body
+        assert "requested_action" in body
+        assert "artifact_paths" in body
+        assert "preferred_output_paths" in body
+
+    assert "run_dir/analyst_research_packet.md" in analyst
+    assert "source_refs" in analyst
+    assert "Do not author or modify skills" in analyst
+
+    assert "run_dir/professor_skill_candidate/" in professor
+    assert "run_dir/professor_skill_patch.md" in professor
+    assert "millrace-skill-creator" in professor
+    assert "Professor approval is not publication" in professor
+
+    assert "run_dir/curator_decision.md" in curator
+    assert "workspace-installed skills" in curator
+    assert "source promotion" in curator
+    assert "promotion remains an operator command" in curator.lower()
+
+
+def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
+    learning_skills_dir = SKILLS_DIR / "stage" / "learning"
+    analyst = (learning_skills_dir / "analyst-core" / "SKILL.md").read_text(encoding="utf-8")
+    professor = (learning_skills_dir / "professor-core" / "SKILL.md").read_text(encoding="utf-8")
+    curator = (learning_skills_dir / "curator-core" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "analyst_research_packet.md" in analyst
+    assert "requested_action" in analyst
+    assert "target_stage" in analyst
+
+    assert "professor_skill_candidate" in professor
+    assert "professor_skill_patch.md" in professor
+    assert "lint_skill.py" in professor
+    assert "evaluate_skill.py" in professor
+
+    assert "curator_decision.md" in curator
+    assert "workspace-installed skills" in curator
+    assert "source promotion" in curator
+
+
 def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> None:
     manager_body = (
         REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "manager.md"

@@ -113,6 +113,7 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     attached_skill_additions: tuple[str, ...] = ()
     runner_name: str | None = None
     model_name: str | None = None
+    model_reasoning_effort: str | None = None
     timeout_seconds: int = 0
 
     @model_validator(mode="after")

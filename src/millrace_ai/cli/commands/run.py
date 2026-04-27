@@ -44,6 +44,7 @@ def run_once(
         engine.close()
     typer.echo("run_mode: once")
     typer.echo(f"active_mode_id: {snapshot.active_mode_id}")
+    typer.echo(f"mode_override: {mode or 'none'}")
     typer.echo(f"compiled_plan_id: {snapshot.compiled_plan_id}")
     typer.echo(f"tick_reason: {_value(outcome.router_decision.reason)}")
     raise typer.Exit(code=_run_once_exit_code(outcome))
@@ -66,6 +67,15 @@ def run_daemon(
         int | None,
         typer.Option("--max-ticks", min=1, help="Stop after this many ticks."),
     ] = None,
+    monitor_log: Annotated[
+        Path | None,
+        typer.Option(
+            "--monitor-log",
+            help="Write basic monitor output to this file without changing stdout monitor mode.",
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
 ) -> None:
     cli_api = _cli_api()
     paths = _require_paths(workspace)
@@ -76,12 +86,24 @@ def run_daemon(
     except ValueError as exc:
         raise typer.Exit(code=_print_error(str(exc))) from exc
     normalized_monitor_mode = monitor_mode.lower()
-    if normalized_monitor_mode == "basic":
-        monitor = cli_api.BasicTerminalMonitor(stream=sys.stdout)
-    elif normalized_monitor_mode == "none":
-        monitor = cli_api.NullRuntimeMonitorSink()
-    else:
+    if normalized_monitor_mode not in {"basic", "none"}:
         raise typer.Exit(code=_print_error(f"unknown monitor mode: {monitor_mode}"))
+
+    monitor_log_handle = None
+    monitor_sinks = []
+    if normalized_monitor_mode == "basic":
+        monitor_sinks.append(cli_api.BasicTerminalMonitor(stream=sys.stdout))
+    if monitor_log is not None:
+        monitor_log.parent.mkdir(parents=True, exist_ok=True)
+        monitor_log_handle = monitor_log.open("a", encoding="utf-8", buffering=1)
+        monitor_sinks.append(cli_api.BasicTerminalMonitor(stream=monitor_log_handle))
+    if not monitor_sinks:
+        monitor = cli_api.NullRuntimeMonitorSink()
+    elif len(monitor_sinks) == 1:
+        monitor = monitor_sinks[0]
+    else:
+        monitor = _FanoutRuntimeMonitorSink(tuple(monitor_sinks))
+
     engine = cli_api.RuntimeEngine(
         paths,
         stage_runner=stage_runner,
@@ -90,31 +112,52 @@ def run_daemon(
         monitor=monitor,
     )
     try:
-        snapshot = engine.startup()
-    except Exception as exc:
-        raise typer.Exit(code=_print_error(str(exc))) from exc
+        try:
+            snapshot = engine.startup()
+        except Exception as exc:
+            raise typer.Exit(code=_print_error(str(exc))) from exc
 
-    ticks = 0
-    try:
-        while True:
-            if max_ticks is not None and ticks >= max_ticks:
-                break
+        ticks = 0
+        try:
+            while True:
+                if max_ticks is not None and ticks >= max_ticks:
+                    break
+                try:
+                    engine.tick()
+                except Exception as exc:
+                    raise typer.Exit(code=_print_error(str(exc))) from exc
+                ticks += 1
+                runtime_snapshot = engine.snapshot
+                if runtime_snapshot is not None and (
+                    runtime_snapshot.stop_requested or not runtime_snapshot.process_running
+                ):
+                    break
+                if max_ticks is None:
+                    cli_api.time.sleep(runtime_config.runtime.idle_sleep_seconds)
+        except KeyboardInterrupt:
+            typer.echo("interrupted: true")
+    finally:
+        close = getattr(engine, "close", None)
+        if callable(close):
             try:
-                engine.tick()
-            except Exception as exc:
-                raise typer.Exit(code=_print_error(str(exc))) from exc
-            ticks += 1
-            runtime_snapshot = engine.snapshot
-            if runtime_snapshot is not None and (
-                runtime_snapshot.stop_requested or not runtime_snapshot.process_running
-            ):
-                break
-            if max_ticks is None:
-                cli_api.time.sleep(runtime_config.runtime.idle_sleep_seconds)
-    except KeyboardInterrupt:
-        typer.echo("interrupted: true")
+                close()
+            finally:
+                if monitor_log_handle is not None:
+                    monitor_log_handle.close()
+        elif monitor_log_handle is not None:
+            monitor_log_handle.close()
 
     typer.echo("run_mode: daemon")
     typer.echo(f"active_mode_id: {snapshot.active_mode_id}")
+    typer.echo(f"mode_override: {mode or 'none'}")
     typer.echo(f"compiled_plan_id: {snapshot.compiled_plan_id}")
     typer.echo(f"ticks: {ticks}")
+
+
+class _FanoutRuntimeMonitorSink:
+    def __init__(self, sinks: tuple[object, ...]) -> None:
+        self._sinks = sinks
+
+    def emit(self, event: object) -> None:
+        for sink in self._sinks:
+            sink.emit(event)

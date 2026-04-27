@@ -99,7 +99,7 @@ class MailboxControlRouter(Generic[ResultT]):
             action=command,
             mode="mailbox",
             applied=False,
-            detail="queued for daemon processing",
+            detail=_mailbox_detail(command),
             command_id=command_id,
             mailbox_path=mailbox_path,
         )
@@ -111,6 +111,12 @@ class MailboxControlRouter(Generic[ResultT]):
     def _command_id(self, command: MailboxCommand) -> str:
         timestamp_ms = int(self._now().timestamp() * 1000)
         return f"{command.value}-{timestamp_ms}-{uuid4().hex[:8]}"
+
+
+def _mailbox_detail(command: MailboxCommand) -> str:
+    if command is MailboxCommand.RELOAD_CONFIG:
+        return "queued for daemon processing on the next runtime tick"
+    return "queued for daemon processing"
 
 
 __all__ = ["ControlActionResultFactory", "DirectControlHandler", "MailboxControlRouter"]

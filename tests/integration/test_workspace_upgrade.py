@@ -8,6 +8,7 @@ from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_wor
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
+from millrace_ai.state_store import load_snapshot
 from millrace_ai.workspace.baseline import apply_baseline_upgrade, preview_baseline_upgrade
 from millrace_ai.workspace.initialization import initialize_workspace
 
@@ -49,6 +50,7 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     outcome = engine.tick()
     engine.close()
     assert outcome.router_decision.reason == "no_work"
+    assert load_snapshot(paths).process_running is False
 
     candidate_assets_root = _copy_builtin_assets(tmp_path)
     (candidate_assets_root / "entrypoints" / "execution" / "builder.md").write_text(

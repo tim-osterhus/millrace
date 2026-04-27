@@ -10,6 +10,7 @@ import millrace_ai
 from millrace_ai.workspace.baseline import (
     UpgradeDisposition,
     apply_baseline_upgrade,
+    build_baseline_manifest,
     load_baseline_manifest,
     preview_baseline_upgrade,
 )
@@ -50,6 +51,21 @@ def test_manifest_records_original_hashes_for_managed_assets(tmp_path: Path) -> 
 
     assert entry.asset_family == "entrypoints"
     assert entry.original_sha256 == expected_hash
+
+
+def test_manifest_ignores_runtime_cache_artifacts(tmp_path: Path) -> None:
+    assets_root = _copy_assets(tmp_path)
+    cache_dir = assets_root / "skills" / "stage" / "execution" / "builder-core" / "__pycache__"
+    cache_dir.mkdir(parents=True)
+    cache_dir.joinpath("helper.cpython-311.pyc").write_bytes(b"cache")
+    assets_root.joinpath("modes", ".DS_Store").write_text("metadata\n", encoding="utf-8")
+
+    manifest = build_baseline_manifest(tmp_path / "workspace", assets_root=assets_root)
+
+    relative_paths = {entry.relative_path for entry in manifest.entries}
+    assert not any("__pycache__" in path for path in relative_paths)
+    assert not any(path.endswith(".pyc") for path in relative_paths)
+    assert "modes/.DS_Store" not in relative_paths
 
 
 def test_rerun_rebuilds_missing_manifest_from_seed_asset_hashes(tmp_path: Path) -> None:
@@ -152,6 +168,34 @@ def test_upgrade_apply_preserves_runtime_state_and_operator_docs(tmp_path: Path)
         manifest.entry_for("entrypoints/execution/builder.md").original_sha256
         == hashlib.sha256(source_builder_path.read_bytes()).hexdigest()
     )
+
+
+def test_upgrade_can_localize_removed_managed_asset(tmp_path: Path) -> None:
+    paths = initialize_workspace(tmp_path / "workspace")
+    assets_root = _copy_assets(tmp_path)
+    removed_relative_path = "entrypoints/execution/builder.md"
+    localized_path = paths.runtime_root / removed_relative_path
+    localized_path.write_text("local replacement kept outside package ownership\n", encoding="utf-8")
+    (assets_root / removed_relative_path).unlink()
+
+    preview = preview_baseline_upgrade(
+        paths,
+        candidate_assets_root=assets_root,
+        localize_removed_paths=(removed_relative_path,),
+    )
+
+    assert preview.classifications_by_path[removed_relative_path] is UpgradeDisposition.LOCALIZED_REMOVED
+
+    outcome = apply_baseline_upgrade(
+        paths,
+        candidate_assets_root=assets_root,
+        localize_removed_paths=(removed_relative_path,),
+    )
+    manifest = load_baseline_manifest(paths)
+
+    assert outcome.applied is True
+    assert localized_path.read_text(encoding="utf-8") == "local replacement kept outside package ownership\n"
+    assert removed_relative_path not in {entry.relative_path for entry in manifest.entries}
 
 
 def test_upgrade_apply_aborts_before_mutation_on_conflict(tmp_path: Path) -> None:

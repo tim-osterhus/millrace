@@ -339,6 +339,43 @@ def test_codex_adapter_resolves_permission_precedence_and_command_mapping(
     assert "--dangerously-bypass-approvals-and-sandbox" not in updater_command
 
 
+def test_codex_adapter_passes_request_reasoning_effort_after_extra_config(tmp_path: Path) -> None:
+    request = _request(tmp_path).model_copy(update={"model_reasoning_effort": "high"})
+    seen_command: dict[str, tuple[str, ...]] = {}
+
+    def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
+        del cwd, env, timeout_seconds
+        seen_command["value"] = tuple(command)
+        Path(stdout_path).write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+        Path(stderr_path).write_text("", encoding="utf-8")
+        now = datetime.now(timezone.utc)
+        return ProcessExecutionResult(
+            exit_code=0,
+            timed_out=False,
+            started_at=now,
+            ended_at=now,
+            error=None,
+        )
+
+    adapter = CodexCliRunnerAdapter(
+        config=RuntimeConfig(runners={"codex": {"extra_config": ('model_reasoning_effort="xhigh"',)}}),
+        workspace_root=tmp_path,
+        process_executor=fake_execute,
+    )
+
+    adapter.run(request)
+
+    c_values = [
+        seen_command["value"][index + 1]
+        for index, value in enumerate(seen_command["value"])
+        if value == "-c"
+    ]
+    assert c_values[-2:] == [
+        'model_reasoning_effort="xhigh"',
+        'model_reasoning_effort="high"',
+    ]
+
+
 @pytest.mark.parametrize(
     ("permission_level", "expected_flag_checks", "unexpected_flag_checks"),
     [

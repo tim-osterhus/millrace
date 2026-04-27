@@ -273,6 +273,7 @@ class DirectControlMutations(Generic[ResultT]):
             requeued_count > 0
             or had_counters
             or snapshot.active_stage is not None
+            or snapshot.process_running
             or snapshot.paused
             or snapshot.stop_requested
             or lock_clear_result.cleared
@@ -313,6 +314,12 @@ class DirectControlMutations(Generic[ResultT]):
         for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
             try:
                 queue.requeue_incident(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
+        for path in sorted(self.paths.learning_requests_active_dir.glob("*.md")):
+            try:
+                queue.requeue_learning_request(path.stem, reason=reason)
             except QueueStateError:
                 continue
             requeued_count += 1
