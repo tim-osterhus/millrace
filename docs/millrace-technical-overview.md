@@ -655,6 +655,10 @@ module. `runtime/usage_governance/__init__.py` preserves the existing public
 imports, while the package-local modules separate Pydantic state/ledger models,
 state-file persistence, ledger repair, runtime-token windows, subscription
 quota telemetry, monitor events, and the engine-facing evaluation boundary.
+Compiled graph authority follows the same pattern: the
+`runtime/graph_authority/` facade preserves activation and routing imports,
+while activation, validation, policy lookup, recovery counters, stage mapping,
+and plane-specific routing live in separate package modules.
 
 A set of thin root-module facades is intentionally preserved so older import
 surfaces still work while the package is internally modularized. That is why
