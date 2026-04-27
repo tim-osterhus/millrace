@@ -27,6 +27,13 @@ def test_compiler_consumes_config_and_assets_package_surfaces() -> None:
     assert compiler_module.load_builtin_mode_definition is assets_package.load_builtin_mode_definition
 
 
+def test_compiler_public_exports_remain_importable() -> None:
+    compiler_module = importlib.import_module("millrace_ai.compiler")
+
+    for name in compiler_module.__all__:
+        assert hasattr(compiler_module, name), name
+
+
 def _copy_builtin_assets(tmp_path: Path) -> Path:
     assets_root = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"
