@@ -125,6 +125,8 @@ def safe_spec_id_from_idea_path(path: Path) -> str:
     normalized = _IDEA_ID_SANITIZER.sub("-", path.stem).strip("-.")
     if not normalized:
         normalized = "idea"
+    if normalized.startswith("idea-"):
+        return normalized
     return f"idea-{normalized}"
 
 

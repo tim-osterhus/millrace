@@ -56,6 +56,7 @@ Required format:
 6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
 7. `Status-Hint` must be one of exactly: `queued`, `active`, `blocked`, `done` (use `queued` for newly emitted manager tasks). Do **not** use `queue`.
 8. Copy the active spec's root lineage ids onto every emitted task. Every manager task must preserve `Root-Idea-ID` and `Root-Spec-ID` from the active spec instead of dropping them.
+9. Never derive root lineage from `Source-ID`, filenames, references, task names, or prior stale queue artifacts. If the active spec's root lineage is missing or contradictory, emit `### BLOCKED` instead of producing tasks.
 
 Template (adapt values):
 

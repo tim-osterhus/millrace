@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import ClosureTargetState, Plane, StageResultEnvelope
 from millrace_ai.errors import QueueStateError
+from millrace_ai.events import read_runtime_events, write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import (
     load_recovery_counters,
@@ -93,6 +94,13 @@ def apply_closure_target_router_decision(
             }
         )
         save_closure_target_state(engine.paths, updated_target)
+        if _is_repeated_remediation_without_execution(engine, target):
+            _block_repeated_remediation_without_execution(
+                engine,
+                stage_result=stage_result,
+                root_spec_id=target.root_spec_id,
+            )
+            return
         if decision.create_incident:
             enqueue_handoff_incident(engine, decision=decision, stage_result=stage_result)
         engine.snapshot = engine.snapshot.model_copy(
@@ -149,6 +157,73 @@ def apply_closure_target_router_decision(
         return
 
     raise ValueError(f"Unsupported closure-target router action: {decision.action.value}")
+
+
+def _is_repeated_remediation_without_execution(
+    engine: RuntimeEngine,
+    target: ClosureTargetState,
+) -> bool:
+    if target.last_arbiter_run_id is None:
+        return False
+
+    seen_previous_arbiter = False
+    for event in read_runtime_events(engine.paths):
+        run_id = event.data.get("run_id")
+        if run_id == target.last_arbiter_run_id:
+            seen_previous_arbiter = True
+            continue
+        if not seen_previous_arbiter:
+            continue
+        if event.event_type != "stage_completed":
+            continue
+        if event.data.get("plane") == Plane.EXECUTION.value:
+            return False
+    return True
+
+
+def _block_repeated_remediation_without_execution(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    root_spec_id: str,
+) -> None:
+    assert engine.snapshot is not None
+    failure_class = "closure_repeated_remediation_without_execution"
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_plane": None,
+            "active_stage": None,
+            "active_node_id": None,
+            "active_stage_kind_id": None,
+            "active_run_id": None,
+            "active_work_item_kind": None,
+            "active_work_item_id": None,
+            "active_since": None,
+            "current_failure_class": failure_class,
+            "troubleshoot_attempt_count": 0,
+            "mechanic_attempt_count": 0,
+            "fix_cycle_count": 0,
+            "consultant_invocations": 0,
+            "planning_status_marker": "### BLOCKED",
+            "updated_at": engine._now(),
+        }
+    )
+    save_snapshot(engine.paths, engine.snapshot)
+    engine._set_plane_status_marker(
+        plane=Plane.PLANNING,
+        marker="### BLOCKED",
+        run_id=stage_result.run_id,
+        source="closure_repeated_remediation_guard",
+    )
+    write_runtime_event(
+        engine.paths,
+        event_type="closure_repeated_remediation_blocked",
+        data={
+            "root_spec_id": root_spec_id,
+            "failure_class": failure_class,
+            "run_id": stage_result.run_id,
+        },
+    )
 
 
 def _metadata_string(stage_result: StageResultEnvelope, key: str) -> str | None:

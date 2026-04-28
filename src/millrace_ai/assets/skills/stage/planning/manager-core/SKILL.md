@@ -36,6 +36,7 @@ Choose the decomposition shape before writing tasks. This skill keeps manager po
 - Stay advisory-only; do not imply queue ownership, routing, persistence, or other runtime behavior.
 - Treat the active spec as the decomposition target and do not borrow structure from unrelated items.
 - Preserve root lineage ids on every emitted task so downstream closure and remediation logic stay attached to the active spec family.
+- Copy root lineage from the active spec exactly. Do not infer it from filenames, `Source-ID`, references, task ids, or older queued artifacts.
 - Keep decomposition honest. If task boundaries would require invention, say so and block rather than fabricating detail.
 - Keep the task set lean. Extra tasks are only justified when they improve verifiability or ordering.
 - Make dependencies visible in the task shape itself instead of hiding them in prose.

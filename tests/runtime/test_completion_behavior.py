@@ -315,6 +315,53 @@ def test_maybe_activate_completion_stage_marks_target_blocked_when_lineage_work_
     assert engine.snapshot.active_stage is None
 
 
+def test_maybe_activate_completion_stage_blocks_on_closure_lineage_drift(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    canonical_root = "idea-idea-2026-04-27-browser-local-qa"
+    stale_root = "idea-2026-04-27-browser-local-qa"
+    save_closure_target_state(
+        paths,
+        _target_state(root_spec_id=canonical_root, root_idea_id=canonical_root),
+    )
+    QueueStore(paths).enqueue_task(
+        _task_doc(
+            "task-browser-local-qa",
+            root_spec_id=stale_root,
+            root_idea_id=canonical_root,
+            created_at=NOW,
+        )
+    )
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    snapshot = load_snapshot(paths)
+    target = load_closure_target_state(paths, root_spec_id=canonical_root)
+    events = read_runtime_events(paths)
+    diagnostic_path = (
+        paths.arbiter_dir
+        / "diagnostics"
+        / "lineage-drift"
+        / f"{canonical_root}.json"
+    )
+
+    assert activated is None
+    assert snapshot.active_stage is None
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "closure_lineage_drift"
+    assert target.closure_blocked_by_lineage_work is True
+    assert target.blocking_work_ids == ("task-browser-local-qa",)
+    assert diagnostic_path.is_file()
+    assert any(
+        event.event_type == "closure_lineage_drift_detected"
+        and event.data.get("root_spec_id") == canonical_root
+        for event in events
+    )
+
+
 def test_maybe_activate_completion_stage_sets_snapshot_to_arbiter_when_target_is_eligible(
     tmp_path: Path,
 ) -> None:

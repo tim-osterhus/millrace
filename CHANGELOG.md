@@ -13,6 +13,17 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.15.9] - 2026-04-28
+
+`0.15.9` adds closure lineage drift diagnostics and repair, and improves the
+daemon monitor's human-readable output.
+
+### Added
+
+- Added closure lineage drift diagnostics and `millrace queue repair-lineage`
+  so mismatched root-spec queue artifacts block clearly instead of sending
+  Arbiter through repeated planning-only remediation.
+
 ### Changed
 
 - Clarified `millrace upgrade` documentation and the shipped ops skill so
@@ -442,7 +453,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.8...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.9...HEAD
+[0.15.9]: https://github.com/tim-osterhus/millrace/compare/v0.15.8...v0.15.9
 [0.15.8]: https://github.com/tim-osterhus/millrace/compare/v0.15.7...v0.15.8
 [0.15.7]: https://github.com/tim-osterhus/millrace/compare/v0.15.6...v0.15.7
 [0.15.6]: https://github.com/tim-osterhus/millrace/compare/v0.15.5...v0.15.6

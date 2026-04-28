@@ -15,6 +15,7 @@ from millrace_ai.contracts.stage_metadata import stage_plane
 from millrace_ai.router import RouterAction, RouterDecision
 
 from .closure_transitions import apply_closure_target_router_decision
+from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
 from .error_recovery import clear_runtime_error_context
 from .graph_authority import route_stage_result_from_graph
 from .handoff_incidents import enqueue_handoff_incident
@@ -85,6 +86,10 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
 
     if decision.action is RouterAction.IDLE:
         apply_idle_router_decision(engine, stage_result)
+        if stage_result.stage is PlanningStageName.MANAGER:
+            target = active_closure_target(engine)
+            if target is not None:
+                block_on_closure_lineage_drift_if_present(engine, target)
         return
 
     if decision.action is RouterAction.HANDOFF:

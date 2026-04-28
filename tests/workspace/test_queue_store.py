@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import pytest
 
 from millrace_ai.contracts import (
+    ClosureTargetState,
     ExecutionStageName,
     IncidentDecision,
     IncidentDocument,
@@ -21,6 +22,7 @@ from millrace_ai.errors import QueueStateError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import parse_work_document, parse_work_document_as, render_work_document
+from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 
@@ -218,6 +220,49 @@ def test_task_lifecycle_claim_done_blocked_is_deterministic(tmp_path: Path) -> N
 
     store.mark_task_blocked("task-002")
     assert (paths.tasks_blocked_dir / "task-002.md").is_file()
+
+
+def test_lineage_drift_scanner_reports_same_root_idea_with_mismatched_root_spec(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+    canonical_root = "idea-idea-2026-04-27-browser-local-qa"
+    stale_root = "idea-2026-04-27-browser-local-qa"
+    target = ClosureTargetState(
+        root_spec_id=canonical_root,
+        root_idea_id=canonical_root,
+        root_spec_path=f"millrace-agents/arbiter/contracts/root-specs/{canonical_root}.md",
+        root_idea_path=f"millrace-agents/arbiter/contracts/ideas/{canonical_root}.md",
+        rubric_path=f"millrace-agents/arbiter/rubrics/{canonical_root}.md",
+        closure_open=True,
+        closure_blocked_by_lineage_work=False,
+        blocking_work_ids=(),
+        opened_at=NOW,
+    )
+    drifted_task = _task_doc("task-browser-local-qa", created_at=NOW).model_copy(
+        update={
+            "root_idea_id": canonical_root,
+            "root_spec_id": stale_root,
+            "spec_id": stale_root,
+        }
+    )
+    store.enqueue_task(drifted_task)
+
+    assert store.claim_next_execution_task(root_spec_id=canonical_root) is None
+
+    diagnostic = scan_closure_lineage_drift(paths, target, detected_at=NOW)
+
+    assert diagnostic is not None
+    assert diagnostic.root_spec_id == canonical_root
+    assert len(diagnostic.findings) == 1
+    finding = diagnostic.findings[0]
+    assert finding.work_item_kind is WorkItemKind.TASK
+    assert finding.work_item_id == "task-browser-local-qa"
+    assert finding.state == "queue"
+    assert finding.expected_root_spec_id == canonical_root
+    assert finding.actual_root_spec_id == stale_root
+    assert finding.diagnostic_reason == "same_root_idea_different_root_spec"
 
 
 def test_claim_next_execution_task_skips_unmet_dependencies_and_claims_oldest_eligible(

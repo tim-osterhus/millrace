@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
 from millrace_ai.errors import QueueStateError
 
+from .lineage_integrity import effective_root_spec_id
 from .paths import WorkspacePaths
 from .work_documents import parse_work_document_as
 
@@ -157,7 +158,7 @@ def _select_oldest_eligible_task(
                 f"filename stem does not match task_id: expected {task_id}, found {path.stem}",
             )
             continue
-        if root_spec_id is not None and _effective_root_spec_id(document) != root_spec_id:
+        if root_spec_id is not None and effective_root_spec_id(document) != root_spec_id:
             continue
         if not _task_dependencies_satisfied(document, completed_task_ids):
             continue
@@ -240,7 +241,7 @@ def _select_oldest_document(
         if (
             root_spec_id is not None
             and isinstance(document, (TaskDocument, SpecDocument, IncidentDocument))
-            and _effective_root_spec_id(document) != root_spec_id
+            and effective_root_spec_id(document) != root_spec_id
         ):
             continue
         timestamp = getattr(document, timestamp_attr)
@@ -284,7 +285,7 @@ def list_open_lineage_work_ids(
                 continue
             except (ValidationError, ValueError):
                 continue
-            if _effective_root_spec_id(document) != root_spec_id:
+            if effective_root_spec_id(document) != root_spec_id:
                 continue
             work_item_id = str(getattr(document, id_attr))
             if work_item_id in seen:
@@ -315,27 +316,13 @@ def list_deferred_root_spec_ids(
             continue
         if not _is_root_spec_document(document):
             continue
-        effective_root_spec_id = _effective_root_spec_id(document)
-        if effective_root_spec_id is None or effective_root_spec_id == open_root_spec_id:
+        document_root_spec_id = effective_root_spec_id(document)
+        if document_root_spec_id is None or document_root_spec_id == open_root_spec_id:
             continue
         deferred.append((document.created_at, document.spec_id))
 
     deferred.sort(key=lambda item: (item[0], item[1]))
     return tuple(spec_id for _created_at, spec_id in deferred)
-
-
-def _effective_root_spec_id(
-    document: TaskDocument | SpecDocument | IncidentDocument,
-) -> str | None:
-    if document.root_spec_id is not None:
-        return document.root_spec_id
-    if isinstance(document, TaskDocument):
-        return document.spec_id
-    if isinstance(document, IncidentDocument):
-        return document.source_spec_id
-    if document.source_type in {"idea", "manual"}:
-        return document.spec_id
-    return None
 
 
 def _is_root_spec_document(document: SpecDocument) -> bool:

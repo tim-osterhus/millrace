@@ -161,10 +161,14 @@ Per tick:
 8. Claim planning, execution, or learning work item. When a closure target is
    already open, the runtime claims only same-lineage execution/planning work
    and leaves unrelated queued root specs behind the closure target.
-9. If no same-lineage work remains, consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
-10. Re-evaluate usage governance before dispatching an active stage.
-11. Execute one stage through the configured runner adapter.
-12. Route result markers, record post-stage usage, and persist snapshot/status/counters/events.
+9. If no same-lineage work remains, check closure lineage integrity before
+   Arbiter activation. Same-root work with a mismatched effective root spec
+   blocks as `closure_lineage_drift` instead of letting Arbiter re-enter a
+   planning-only remediation loop.
+10. Consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
+11. Re-evaluate usage governance before dispatching an active stage.
+12. Execute one stage through the configured runner adapter.
+13. Route result markers, record post-stage usage, and persist snapshot/status/counters/events.
 
 The implementation mirrors that ordering directly:
 
@@ -178,6 +182,15 @@ Idle:
 - If unrelated root specs are queued while a closure target is open, runtime
   emits `closure_target_backpressure`, keeps the daemon alive, and reports
   `planning_root_specs_deferred_by_closure_target` through `millrace status`.
+- If queued/active/blocked work shares the open target's root idea but carries
+  another effective `Root-Spec-ID`, runtime emits
+  `closure_lineage_drift_detected`, writes a diagnostic under
+  `millrace-agents/arbiter/diagnostics/lineage-drift/`, marks planning
+  `### BLOCKED`, and leaves the strict queue selector unchanged.
+- If Arbiter asks for remediation more than once without any intervening
+  execution-stage completion, runtime blocks with
+  `closure_repeated_remediation_without_execution` instead of opening another
+  planning incident.
 
 Usage governance notes:
 

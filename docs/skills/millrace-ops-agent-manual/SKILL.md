@@ -317,7 +317,7 @@ Important monitoring note:
 - `millrace run daemon --monitor-log <path>` writes basic monitor output to a
   file; combine it with `--monitor none` for quiet foreground operation
 - `millrace doctor` is the quick integrity check for mode assets and resolved
-  runner posture, including missing harness binaries
+  runner posture, including missing harness binaries and closure lineage drift
 - `millrace status` exposes `pause_sources` and usage-governance blockers when
   usage governance is enabled or has persisted state
 - `millrace status` exposes the open closure target and
@@ -362,6 +362,9 @@ Use intervention commands only when the runtime state actually justifies them:
 - `clear-stale-state` to recover stale active files, including older
   closure-target invariant failures that left an unrelated root spec
   half-claimed; preserve the open closure target and avoid manual file moves
+- `queue repair-lineage --root-spec-id <ROOT_SPEC_ID>` to preview a stopped-daemon
+  repair when doctor reports `closure_lineage_drift`; add `--apply` only after
+  confirming there is no live ownership lock or active stage
 - `config reload` when config changed and daemon-safe recompile is desired
 - `doctor` when workspace integrity or ownership state is in doubt
 

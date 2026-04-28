@@ -70,6 +70,7 @@ Required format:
    - If the active planning item is a spec, emitted child specs should use `Source-Type: derived_spec` and set `Source-ID` to the active spec id.
    - If the active planning item is an incident, use `Source-Type: incident` and set `Source-ID` to the active incident id.
    - Preserve or repair the active root lineage ids on every refined or emitted spec. Root specs must carry both `Root-Idea-ID` and `Root-Spec-ID`; child specs must copy them from the active planning item instead of inventing new lineage.
+   - Never derive root lineage from `Source-ID`, filenames, references, or task naming. If active root lineage is missing or contradictory, emit `### BLOCKED` instead of guessing.
 6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
 
 Template (adapt values):

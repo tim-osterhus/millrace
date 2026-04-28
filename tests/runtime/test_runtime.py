@@ -38,6 +38,7 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.router import RouterAction
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
+from millrace_ai.runtime.watcher_intake import safe_spec_id_from_idea_path
 from millrace_ai.runtime_lock import (
     RuntimeOwnershipLockError,
     acquire_runtime_ownership_lock,
@@ -2057,6 +2058,15 @@ def test_runtime_normalize_idea_watch_event_writes_root_lineage_fields(tmp_path:
     assert f"Root-Spec-ID: {spec_path.stem}" in spec_text
 
 
+def test_watcher_idea_spec_ids_are_idempotent_for_prefixed_filenames() -> None:
+    assert safe_spec_id_from_idea_path(Path("seed-idea.md")) == "idea-seed-idea"
+    assert (
+        safe_spec_id_from_idea_path(Path("idea-2026-04-27-browser-local-qa.md"))
+        == "idea-2026-04-27-browser-local-qa"
+    )
+    assert safe_spec_id_from_idea_path(Path("Feature idea!.md")) == "idea-Feature-idea"
+
+
 def test_runtime_tick_handles_active_stage_without_work_item_identity(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
 
@@ -2280,6 +2290,59 @@ def test_runtime_tick_enqueues_remediation_incident_for_arbiter_gap(tmp_path: Pa
     assert "Root-Idea-ID: idea-001" in incident_text
     assert "Source-Stage: arbiter" in incident_text
     assert "Trigger-Reason: arbiter_remediation_needed" in incident_text
+
+
+def test_runtime_tick_blocks_repeated_arbiter_remediation_without_execution(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+            last_arbiter_run_id="run-previous-arbiter",
+        ),
+    )
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"gap"}\n', encoding="utf-8")
+        report_path = Path(request.preferred_report_path)
+        report_path.write_text("# Arbiter Report\n\nParity gaps still remain.\n", encoding="utf-8")
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.REMEDIATION_NEEDED.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    incident_paths = tuple(paths.incidents_incoming_dir.glob("*.md"))
+
+    assert outcome.stage is PlanningStageName.ARBITER
+    assert incident_paths == ()
+    assert snapshot.active_stage is None
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "closure_repeated_remediation_without_execution"
+    assert any(
+        event.event_type == "closure_repeated_remediation_blocked"
+        and event.data.get("root_spec_id") == "spec-root-001"
+        for event in read_runtime_events(paths)
+    )
 
 
 def test_runtime_mailbox_retry_active_requeues_active_item_and_resets_counters(tmp_path: Path) -> None:

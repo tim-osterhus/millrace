@@ -45,7 +45,9 @@ from millrace_ai.state_store import (
     load_snapshot,
 )
 from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
+from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
 
 DoctorModel: TypeAlias = type[TaskDocument] | type[SpecDocument] | type[IncidentDocument]
 WorkDocument: TypeAlias = TaskDocument | SpecDocument | IncidentDocument
@@ -105,6 +107,7 @@ def run_workspace_doctor(
 
     _validate_runtime_ownership_lock(paths, errors, warnings)
     _validate_queue_parseability(paths, errors)
+    _validate_closure_lineage_integrity(paths, errors)
     if baseline_manifest is not None:
         _validate_manifest_tracked_managed_files(paths, baseline_manifest, errors)
 
@@ -218,6 +221,39 @@ def _validate_manifest_tracked_managed_files(
                 path=candidate,
             )
         )
+
+
+def _validate_closure_lineage_integrity(
+    paths: WorkspacePaths,
+    errors: list[DoctorIssue],
+) -> None:
+    try:
+        targets = list_open_closure_target_states(paths)
+    except (OSError, ValidationError, json.JSONDecodeError, WorkspaceStateError) as exc:
+        errors.append(
+            DoctorIssue(
+                code="closure_target_state_invalid",
+                message=str(exc),
+                path=paths.arbiter_targets_dir,
+            )
+        )
+        return
+
+    for target in targets:
+        diagnostic = scan_closure_lineage_drift(paths, target)
+        if diagnostic is None:
+            continue
+        for finding in diagnostic.findings:
+            errors.append(
+                DoctorIssue(
+                    code="closure_lineage_drift",
+                    message=(
+                        f"{finding.work_item_kind.value} {finding.work_item_id} has root "
+                        f"{finding.actual_root_spec_id}; expected {finding.expected_root_spec_id}"
+                    ),
+                    path=paths.root / finding.path,
+                )
+            )
 
 
 def _validate_execution_status(paths: WorkspacePaths, errors: list[DoctorIssue]) -> str | None:

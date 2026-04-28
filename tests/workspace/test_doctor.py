@@ -7,11 +7,13 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from millrace_ai.contracts import TaskDocument
+from millrace_ai.contracts import ClosureTargetState, TaskDocument
 from millrace_ai.doctor import run_workspace_doctor
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
+from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.work_documents import render_work_document
+from millrace_ai.workspace.arbiter_state import save_closure_target_state
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 
@@ -88,6 +90,51 @@ def test_doctor_flags_queue_filename_and_document_id_mismatch(tmp_path: Path) ->
     mismatch_errors = [item for item in report.errors if item.code == "queue_artifact_invalid"]
     assert mismatch_errors
     assert any("filename stem does not match task_id" in item.message for item in mismatch_errors)
+
+
+def test_doctor_flags_closure_lineage_drift(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    canonical_root = "idea-idea-2026-04-27-browser-local-qa"
+    stale_root = "idea-2026-04-27-browser-local-qa"
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id=canonical_root,
+            root_idea_id=canonical_root,
+            root_spec_path=f"millrace-agents/arbiter/contracts/root-specs/{canonical_root}.md",
+            root_idea_path=f"millrace-agents/arbiter/contracts/ideas/{canonical_root}.md",
+            rubric_path=f"millrace-agents/arbiter/rubrics/{canonical_root}.md",
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+    QueueStore(paths).enqueue_task(
+        TaskDocument(
+            task_id="task-browser-local-qa",
+            title="Task browser local qa",
+            summary="drifted task",
+            root_idea_id=canonical_root,
+            root_spec_id=stale_root,
+            spec_id=stale_root,
+            target_paths=["src/millrace_ai/runtime.py"],
+            acceptance=["doctor flags drift"],
+            required_checks=["uv run --extra dev python -m pytest tests/workspace/test_doctor.py -q"],
+            references=["lab/misc/millrace-failure-mode.md"],
+            risk=["closure loop"],
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    drift_errors = [item for item in report.errors if item.code == "closure_lineage_drift"]
+    assert drift_errors
+    assert any("task-browser-local-qa" in item.message for item in drift_errors)
+    assert any(stale_root in item.message and canonical_root in item.message for item in drift_errors)
 
 
 def test_doctor_flags_snapshot_reconciliation_problems(tmp_path: Path) -> None:

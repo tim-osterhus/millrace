@@ -263,6 +263,25 @@ Top-level convenience alias:
 
 - `millrace add-idea <idea.md>`
 
+### `millrace queue repair-lineage --root-spec-id <ROOT_SPEC_ID>`
+
+Previews safe queued/blocked work-document repairs when an open Arbiter closure
+target has closure lineage drift. This is the supported recovery path when a
+task/spec/incident is tied to the same root idea but has a mismatched
+`Root-Spec-ID`.
+
+Use `--apply` only while the daemon is stopped:
+
+```bash
+millrace queue repair-lineage --workspace <workspace> --root-spec-id <ROOT_SPEC_ID>
+millrace queue repair-lineage --workspace <workspace> --root-spec-id <ROOT_SPEC_ID> --apply
+```
+
+Apply mode refuses a live daemon ownership lock or an active stage. It repairs
+safe queued/blocked task lineage fields, writes a repair report under
+`millrace-agents/arbiter/diagnostics/lineage-repairs/`, and emits a runtime
+event.
+
 ## Control Commands
 
 - `millrace control pause`
@@ -536,3 +555,5 @@ deployed skill surface without changing the active runtime mode.
 ### `millrace doctor`
 
 Runs workspace integrity diagnostics, including stale lock/ownership checks.
+Doctor also reports `closure_lineage_drift` when an open closure target has
+same-root queued/active/blocked work under a different effective root spec.

@@ -19,6 +19,11 @@ from millrace_ai.workspace.arbiter_state import (
     write_canonical_idea_contract,
     write_canonical_root_spec_contract,
 )
+from millrace_ai.workspace.lineage_integrity import (
+    LineageDriftDiagnostic,
+    scan_closure_lineage_drift,
+    write_lineage_drift_diagnostic,
+)
 from millrace_ai.workspace.queue_selection import list_open_lineage_work_ids
 from millrace_ai.workspace.work_documents import parse_work_document_as
 
@@ -79,6 +84,8 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
     target = refresh_closure_target_readiness(engine, target)
     if target.closure_blocked_by_lineage_work:
         return None
+    if block_on_closure_lineage_drift_if_present(engine, target):
+        return None
 
     activation = completion_activation_for_graph(engine.compiled_plan)
     engine.snapshot = engine.snapshot.model_copy(
@@ -124,6 +131,30 @@ def refresh_closure_target_readiness(
     )
     save_closure_target_state(engine.paths, updated)
     return updated
+
+
+def block_on_closure_lineage_drift_if_present(
+    engine: RuntimeEngine,
+    target: ClosureTargetState,
+) -> bool:
+    """Block closure activation when same-lineage work has drifted to another root id."""
+
+    diagnostic = scan_closure_lineage_drift(
+        engine.paths,
+        target,
+        detected_at=engine._now(),
+    )
+    if diagnostic is None:
+        return False
+
+    diagnostic_path = write_lineage_drift_diagnostic(engine.paths, diagnostic)
+    _mark_lineage_drift_blocked(
+        engine,
+        target=target,
+        diagnostic=diagnostic,
+        diagnostic_path=diagnostic_path,
+    )
+    return True
 
 
 def _completion_behavior_for(engine: RuntimeEngine) -> GraphLoopCompletionBehaviorDefinition | None:
@@ -373,9 +404,43 @@ def _mark_completion_behavior_blocked(
     )
 
 
+def _mark_lineage_drift_blocked(
+    engine: RuntimeEngine,
+    *,
+    target: ClosureTargetState,
+    diagnostic: LineageDriftDiagnostic,
+    diagnostic_path: Path,
+) -> None:
+    blocking_work_ids = tuple(finding.work_item_id for finding in diagnostic.findings)
+    updated_target = target.model_copy(
+        update={
+            "closure_blocked_by_lineage_work": True,
+            "blocking_work_ids": blocking_work_ids,
+        }
+    )
+    save_closure_target_state(engine.paths, updated_target)
+    _mark_completion_behavior_blocked(
+        engine,
+        failure_class="closure_lineage_drift",
+        spec_id=target.root_spec_id,
+        spec_path=diagnostic_path,
+    )
+    write_runtime_event(
+        engine.paths,
+        event_type="closure_lineage_drift_detected",
+        data={
+            "root_spec_id": diagnostic.root_spec_id,
+            "root_idea_id": diagnostic.root_idea_id,
+            "finding_count": len(diagnostic.findings),
+            "diagnostic_path": str(diagnostic_path.relative_to(engine.paths.root)),
+        },
+    )
+
+
 __all__ = [
     "ClosureTargetPreparation",
     "active_closure_target",
+    "block_on_closure_lineage_drift_if_present",
     "maybe_activate_completion_stage",
     "maybe_open_closure_target_for_claim",
     "prepare_closure_target_for_claim",

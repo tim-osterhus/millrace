@@ -24,6 +24,7 @@ from millrace_ai.contracts import (
     ResultClass,
     RuntimeMode,
     SpecDocument,
+    TaskDocument,
     TokenUsage,
 )
 from millrace_ai.control import ControlActionResult
@@ -1229,6 +1230,122 @@ def test_queue_show_rejects_unsafe_work_item_id(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "invalid work item id" in result.output
+
+
+def test_queue_repair_lineage_previews_and_applies_safe_task_drift(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    canonical_root = "idea-idea-2026-04-27-browser-local-qa"
+    stale_root = "idea-2026-04-27-browser-local-qa"
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id=canonical_root,
+            root_idea_id=canonical_root,
+            root_spec_path=f"millrace-agents/arbiter/contracts/root-specs/{canonical_root}.md",
+            root_idea_path=f"millrace-agents/arbiter/contracts/ideas/{canonical_root}.md",
+            rubric_path=f"millrace-agents/arbiter/rubrics/{canonical_root}.md",
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+    QueueStore(paths).enqueue_task(
+        TaskDocument(
+            task_id="task-browser-local-qa",
+            title="Task browser local qa",
+            summary="drifted task",
+            root_idea_id=canonical_root,
+            root_spec_id=stale_root,
+            spec_id=stale_root,
+            target_paths=["src/millrace_ai/runtime.py"],
+            acceptance=["repair drift"],
+            required_checks=["uv run --extra dev python -m pytest tests/cli/test_cli.py -q"],
+            references=["lab/misc/millrace-failure-mode.md"],
+            risk=["closure loop"],
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+
+    runner = CliRunner()
+    preview = runner.invoke(
+        cli.app,
+        [
+            "queue",
+            "repair-lineage",
+            "--workspace",
+            str(paths.root),
+            "--root-spec-id",
+            canonical_root,
+        ],
+    )
+    queued_path = paths.tasks_queue_dir / "task-browser-local-qa.md"
+    assert preview.exit_code == 0
+    assert "apply: false" in preview.output
+    assert "repair_count: 1" in preview.output
+    assert "task-browser-local-qa" in preview.output
+    assert f"Root-Spec-ID: {stale_root}" in queued_path.read_text(encoding="utf-8")
+
+    applied = runner.invoke(
+        cli.app,
+        [
+            "queue",
+            "repair-lineage",
+            "--workspace",
+            str(paths.root),
+            "--root-spec-id",
+            canonical_root,
+            "--apply",
+        ],
+    )
+
+    repaired_text = queued_path.read_text(encoding="utf-8")
+    assert applied.exit_code == 0
+    assert "apply: true" in applied.output
+    assert "repaired_count: 1" in applied.output
+    assert f"Root-Spec-ID: {canonical_root}" in repaired_text
+    assert f"Spec-ID: {canonical_root}" in repaired_text
+
+
+def test_queue_repair_lineage_refuses_live_daemon_lock(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    canonical_root = "idea-idea-2026-04-27-browser-local-qa"
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id=canonical_root,
+            root_idea_id=canonical_root,
+            root_spec_path=f"millrace-agents/arbiter/contracts/root-specs/{canonical_root}.md",
+            root_idea_path=f"millrace-agents/arbiter/contracts/ideas/{canonical_root}.md",
+            rubric_path=f"millrace-agents/arbiter/rubrics/{canonical_root}.md",
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="lineage-repair-lock",
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "repair-lineage",
+            "--workspace",
+            str(paths.root),
+            "--root-spec-id",
+            canonical_root,
+            "--apply",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "active runtime ownership lock" in result.output
 
 
 @pytest.mark.parametrize(
