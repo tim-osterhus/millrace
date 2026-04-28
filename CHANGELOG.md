@@ -13,6 +13,16 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Changed
+
+- Clarified `millrace upgrade` documentation and the shipped ops skill so
+  operators do not confuse workspace baseline refreshes with installed
+  `millrace-ai` package updates.
+- Made the basic daemon monitor more human-readable by compacting redundant
+  stage identity, shortening long live run ids, rendering route transitions
+  directly, suppressing routine terminal-to-idle status noise, and omitting
+  unknown token filler.
+
 ## [0.15.8] - 2026-04-27
 
 `0.15.8` hardens upgrade/config surfaces and serializes bulk watcher root-spec

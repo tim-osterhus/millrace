@@ -7,9 +7,11 @@ from datetime import datetime
 from threading import Lock
 from typing import Mapping, TextIO
 
+from millrace_ai.contracts.stage_metadata import STAGE_METADATA_BY_VALUE
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent, RuntimeMonitorSink
 
 _IDLE_HEARTBEAT_SECONDS = 120.0
+_RUN_HANDLE_LENGTHS = (8, 12, 16)
 
 
 class BasicTerminalMonitor(RuntimeMonitorSink):
@@ -20,10 +22,16 @@ class BasicTerminalMonitor(RuntimeMonitorSink):
         self._lock = Lock()
         self._run_state: dict[tuple[str, str], _RunAggregate] = {}
         self._idle_state = _IdleRenderState()
+        self._display_ids = _DisplayIdRegistry()
 
     def emit(self, event: RuntimeMonitorEvent) -> None:
         with self._lock:
-            for line in _render_event_lines(event, self._run_state, self._idle_state):
+            for line in _render_event_lines(
+                event,
+                self._run_state,
+                self._idle_state,
+                self._display_ids,
+            ):
                 self._stream.write(line + "\n")
             self._stream.flush()
 
@@ -51,10 +59,35 @@ class _RunAggregate:
     has_known_tokens: bool = False
 
 
+class _DisplayIdRegistry:
+    """Stable short handles for long live-monitor ids."""
+
+    def __init__(self) -> None:
+        self._handles_by_run_id: dict[str, str] = {}
+        self._run_id_by_handle: dict[str, str] = {}
+
+    def run(self, run_id: object) -> str:
+        raw = _string(run_id)
+        if raw in self._handles_by_run_id:
+            return self._handles_by_run_id[raw]
+
+        for candidate in _run_handle_candidates(raw):
+            existing = self._run_id_by_handle.get(candidate)
+            if existing is None or existing == raw:
+                self._handles_by_run_id[raw] = candidate
+                self._run_id_by_handle[candidate] = raw
+                return candidate
+
+        self._handles_by_run_id[raw] = raw
+        self._run_id_by_handle[raw] = raw
+        return raw
+
+
 def _render_event_lines(
     event: RuntimeMonitorEvent,
     run_state: dict[tuple[str, str], _RunAggregate],
     idle_state: _IdleRenderState,
+    display_ids: _DisplayIdRegistry,
 ) -> tuple[str, ...]:
     prefix = f"[{event.occurred_at.strftime('%H:%M:%S')}] "
     if event.event_type != "runtime_idle":
@@ -62,20 +95,20 @@ def _render_event_lines(
     if event.event_type == "runtime_started":
         return tuple(prefix + line for line in _render_runtime_started(event.payload))
     if event.event_type == "runtime_resumed_active_run":
-        return (prefix + _render_resumed_active_run(event.payload),)
+        return (prefix + _render_resumed_active_run(event.payload, display_ids),)
     if event.event_type == "stage_started":
         _seed_stage_started(event.payload, event.occurred_at, run_state)
-        return (prefix + _render_stage_started(event.payload),)
+        return (prefix + _render_stage_started(event.payload, display_ids),)
     if event.event_type == "stage_completed":
-        run_update = _record_stage_completed(event.payload, run_state)
+        run_update = _record_stage_completed(event.payload, run_state, display_ids)
         return (
-            prefix + _render_stage_completed(event.payload),
+            prefix + _render_stage_completed(event.payload, display_ids),
             prefix + run_update,
         )
     if event.event_type == "router_decision":
         return (prefix + _render_router_decision(event.payload),)
     if event.event_type == "status_marker_changed":
-        status_line = _render_status_marker_changed(event.payload)
+        status_line = _render_status_marker_changed(event.payload, display_ids)
         return () if status_line is None else (prefix + status_line,)
     if event.event_type == "runtime_idle":
         reason = _string(event.payload.get("reason"))
@@ -134,69 +167,108 @@ def _render_runtime_started(payload: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _render_resumed_active_run(payload: Mapping[str, object]) -> str:
-    return (
-        "resumed active "
-        f"plane={_string(payload.get('active_plane'))} "
-        f"stage={_string(payload.get('active_stage'))} "
-        f"node={_string(payload.get('active_node_id'))} "
-        f"stage_kind={_string(payload.get('active_stage_kind_id'))} "
-        f"run={_string(payload.get('active_run_id'))} "
-        f"status={_normalize_marker(_string(payload.get('status_marker')))}"
-    )
+def _render_resumed_active_run(
+    payload: Mapping[str, object],
+    display_ids: _DisplayIdRegistry,
+) -> str:
+    parts = [
+        "resumed active",
+        _stage_ref(
+            plane=_string(payload.get("active_plane")),
+            stage=_string(payload.get("active_stage")),
+            node_id=_string(payload.get("active_node_id")),
+            stage_kind_id=_string(payload.get("active_stage_kind_id")),
+        ),
+        f"run={display_ids.run(payload.get('active_run_id'))}",
+    ]
+    marker = _normalize_marker(_string(payload.get("status_marker")))
+    if marker != "unknown":
+        parts.append(f"status={marker}")
+    return " ".join(parts)
 
 
-def _render_stage_started(payload: Mapping[str, object]) -> str:
-    return (
-        "stage start "
-        f"plane={_string(payload.get('plane'))} "
-        f"stage={_string(payload.get('stage'))} "
-        f"node={_string(payload.get('node_id'))} "
-        f"stage_kind={_string(payload.get('stage_kind_id'))} "
-        f"run={_string(payload.get('run_id'))} "
-        f"work={_string(payload.get('work_item_kind'))} {_string(payload.get('work_item_id'))} "
-        f"status={_normalize_marker(_string(payload.get('status_marker')))}"
-    )
+def _render_stage_started(
+    payload: Mapping[str, object],
+    display_ids: _DisplayIdRegistry,
+) -> str:
+    parts = [
+        "stage start",
+        _stage_ref_from_payload(payload),
+        f"run={display_ids.run(payload.get('run_id'))}",
+    ]
+    work_ref = _work_ref(payload)
+    if work_ref is not None:
+        parts.append(f"work={work_ref}")
+    status = _nonredundant_running_status(payload)
+    if status is not None:
+        parts.append(f"status={status}")
+    return " ".join(parts)
 
 
-def _render_stage_completed(payload: Mapping[str, object]) -> str:
+def _render_stage_completed(
+    payload: Mapping[str, object],
+    display_ids: _DisplayIdRegistry,
+) -> str:
     duration = _float_value(payload.get("duration_seconds"))
-    return (
-        "stage done "
-        f"plane={_string(payload.get('plane'))} "
-        f"stage={_string(payload.get('stage'))} "
-        f"node={_string(payload.get('node_id'))} "
-        f"stage_kind={_string(payload.get('stage_kind_id'))} "
-        f"run={_string(payload.get('run_id'))} "
-        f"result={_string(payload.get('terminal_result'))} "
-        f"status={_normalize_marker(_string(payload.get('summary_status_marker')))} "
-        f"dur={_format_seconds(duration)} "
-        f"tokens={_format_token_usage(payload.get('token_usage'))}"
-    )
+    parts = [
+        "stage done",
+        _stage_ref_from_payload(payload),
+        f"run={display_ids.run(payload.get('run_id'))}",
+        f"result={_string(payload.get('terminal_result'))}",
+    ]
+    status = _nonredundant_terminal_status(payload)
+    if status is not None:
+        parts.append(f"status={status}")
+    parts.append(f"dur={_format_seconds(duration)}")
+    token_usage = _format_token_usage(payload.get("token_usage"))
+    if token_usage is not None:
+        parts.append(f"tokens={token_usage}")
+    return " ".join(parts)
 
 
 def _render_router_decision(payload: Mapping[str, object]) -> str:
-    return (
-        "route "
-        f"plane={_string(payload.get('plane'))} "
-        f"action={_string(payload.get('action'))} "
-        f"next={_string(payload.get('next_stage'))} "
-        f"next_node={_string(payload.get('next_node_id'))} "
-        f"next_stage_kind={_string(payload.get('next_stage_kind_id'))} "
-        f"reason={_string(payload.get('reason'))}"
-    )
+    action = _string(payload.get("action"))
+    plane = _string(payload.get("plane"))
+    next_stage = _optional_string(payload.get("next_stage"))
+    if action == "idle":
+        parts = ["route", plane, "done"]
+    elif action == "blocked":
+        parts = ["route", plane, "blocked"]
+    elif next_stage is not None:
+        parts = ["route", plane, "->", _route_target(payload)]
+        if action not in {"run_stage", "unknown"}:
+            parts.append(f"action={action}")
+    else:
+        parts = ["route", plane, f"action={action}"]
+
+    reason = _optional_string(payload.get("reason"))
+    if reason is not None:
+        parts.append(f"reason={reason}")
+    return " ".join(parts)
 
 
-def _render_status_marker_changed(payload: Mapping[str, object]) -> str | None:
+def _render_status_marker_changed(
+    payload: Mapping[str, object],
+    display_ids: _DisplayIdRegistry,
+) -> str | None:
     source = _string(payload.get("source"))
     if source in {"stage_started", "stage_completed"}:
         return None
+    previous_marker = _normalize_marker(_string(payload.get("previous_marker")))
+    current_marker = _normalize_marker(_string(payload.get("current_marker")))
+    if (
+        source == "router_idle"
+        and current_marker == "IDLE"
+        and previous_marker != "IDLE"
+        and not previous_marker.endswith("_RUNNING")
+    ):
+        return None
     return (
         "status "
-        f"plane={_string(payload.get('plane'))} "
-        f"run={_string(payload.get('run_id'))} "
-        f"from={_normalize_marker(_string(payload.get('previous_marker')))} "
-        f"to={_normalize_marker(_string(payload.get('current_marker')))}"
+        f"{_string(payload.get('plane'))} "
+        f"run={display_ids.run(payload.get('run_id'))} "
+        f"from={previous_marker} "
+        f"to={current_marker}"
     )
 
 
@@ -241,6 +313,7 @@ def _seed_stage_started(
 def _record_stage_completed(
     payload: Mapping[str, object],
     run_state: dict[tuple[str, str], _RunAggregate],
+    display_ids: _DisplayIdRegistry,
 ) -> str:
     plane = _string(payload.get("plane"))
     run_id = _string(payload.get("run_id"))
@@ -260,10 +333,16 @@ def _record_stage_completed(
 
     _add_token_usage(aggregate, payload.get("token_usage"))
     elapsed = _aggregate_elapsed_seconds(aggregate)
-    return (
-        f"run update plane={plane} run={run_id} "
-        f"elapsed={_format_seconds(elapsed)} tokens={_format_aggregate_tokens(aggregate)}"
-    )
+    parts = [
+        "run",
+        plane,
+        f"run={display_ids.run(run_id)}",
+        f"elapsed={_format_seconds(elapsed)}",
+    ]
+    tokens = _format_aggregate_tokens(aggregate)
+    if tokens is not None:
+        parts.append(f"tokens={tokens}")
+    return " ".join(parts)
 
 
 def _add_token_usage(aggregate: _RunAggregate, token_usage: object) -> None:
@@ -283,9 +362,9 @@ def _aggregate_elapsed_seconds(aggregate: _RunAggregate) -> float:
     return aggregate.fallback_elapsed_seconds
 
 
-def _format_aggregate_tokens(aggregate: _RunAggregate) -> str:
+def _format_aggregate_tokens(aggregate: _RunAggregate) -> str | None:
     if not aggregate.has_known_tokens:
-        return "unknown"
+        return None
     return (
         f"in={aggregate.input_tokens} "
         f"cached={aggregate.cached_input_tokens} "
@@ -295,9 +374,9 @@ def _format_aggregate_tokens(aggregate: _RunAggregate) -> str:
     )
 
 
-def _format_token_usage(token_usage: object) -> str:
+def _format_token_usage(token_usage: object) -> str | None:
     if not isinstance(token_usage, Mapping):
-        return "unknown"
+        return None
     return (
         f"in={_int_value(token_usage.get('input_tokens'))} "
         f"cached={_int_value(token_usage.get('cached_input_tokens'))} "
@@ -305,6 +384,102 @@ def _format_token_usage(token_usage: object) -> str:
         f"think={_int_value(token_usage.get('thinking_tokens'))} "
         f"total={_int_value(token_usage.get('total_tokens'))}"
     )
+
+
+def _stage_ref_from_payload(payload: Mapping[str, object]) -> str:
+    return _stage_ref(
+        plane=_string(payload.get("plane")),
+        stage=_string(payload.get("stage")),
+        node_id=_string(payload.get("node_id")),
+        stage_kind_id=_string(payload.get("stage_kind_id")),
+    )
+
+
+def _stage_ref(
+    *,
+    plane: str,
+    stage: str,
+    node_id: str,
+    stage_kind_id: str,
+) -> str:
+    parts = [f"{plane}/{stage}"]
+    if node_id not in {"unknown", stage}:
+        parts.append(f"node={node_id}")
+    if stage_kind_id not in {"unknown", stage, node_id}:
+        parts.append(f"kind={stage_kind_id}")
+    return " ".join(parts)
+
+
+def _route_target(payload: Mapping[str, object]) -> str:
+    next_stage = _string(payload.get("next_stage"))
+    next_node = _string(payload.get("next_node_id"))
+    next_kind = _string(payload.get("next_stage_kind_id"))
+    current_plane = _string(payload.get("plane"))
+    target_plane = _plane_for_stage(next_stage)
+    target = next_stage if target_plane in {None, current_plane} else f"{target_plane}/{next_stage}"
+    extras: list[str] = []
+    if next_node not in {"unknown", next_stage}:
+        extras.append(f"node={next_node}")
+    if next_kind not in {"unknown", next_stage, next_node}:
+        extras.append(f"kind={next_kind}")
+    return " ".join((target, *extras))
+
+
+def _plane_for_stage(stage: str) -> str | None:
+    metadata = STAGE_METADATA_BY_VALUE.get(stage)
+    if metadata is None:
+        return None
+    return metadata.plane.value
+
+
+def _work_ref(payload: Mapping[str, object]) -> str | None:
+    work_kind = _optional_string(payload.get("work_item_kind"))
+    work_id = _optional_string(payload.get("work_item_id"))
+    if work_kind is None and work_id is None:
+        return None
+    if work_kind is None:
+        return work_id
+    if work_id is None:
+        return work_kind
+    return f"{work_kind}:{work_id}"
+
+
+def _nonredundant_running_status(payload: Mapping[str, object]) -> str | None:
+    status = _normalize_marker(_string(payload.get("status_marker")))
+    stage = _string(payload.get("stage"))
+    if status in {"unknown", f"{stage.upper()}_RUNNING"}:
+        return None
+    return status
+
+
+def _nonredundant_terminal_status(payload: Mapping[str, object]) -> str | None:
+    status = _normalize_marker(_string(payload.get("summary_status_marker")))
+    terminal_result = _string(payload.get("terminal_result"))
+    if status in {"unknown", terminal_result}:
+        return None
+    return status
+
+
+def _run_handle_candidates(run_id: str) -> tuple[str, ...]:
+    if not run_id.startswith("run-"):
+        return (run_id,)
+    suffix = run_id.removeprefix("run-")
+    if len(suffix) <= _RUN_HANDLE_LENGTHS[0] or not _is_hex_string(suffix):
+        return (run_id,)
+    handles = [suffix[:length] for length in _RUN_HANDLE_LENGTHS if length < len(suffix)]
+    handles.append(run_id)
+    return tuple(handles)
+
+
+def _is_hex_string(value: str) -> bool:
+    return bool(value) and all(char in "0123456789abcdefABCDEF" for char in value)
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
 
 
 def _format_concurrency_policy(policy: Mapping[object, object]) -> str:

@@ -89,7 +89,10 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
 - `src/millrace_ai/runtime/outcomes.py`: runtime tick outcome contract shared by the engine and tick/request helpers without creating an engine import cycle.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
-- `src/millrace_ai/runtime/monitoring.py`: runtime monitor event protocol and null/basic monitor adapter.
+- `src/millrace_ai/runtime/monitoring.py`: runtime monitor event protocol and null monitor sink.
+- `src/millrace_ai/cli/monitoring.py`: basic terminal monitor renderer for the
+  concise human-facing daemon stream; full ids and details stay in persisted
+  runtime events and run artifacts.
 - `src/millrace_ai/runtime/tick_cycle.py`: deterministic one-tick orchestration from mailbox intake through stage execution and router-decision finalization.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.

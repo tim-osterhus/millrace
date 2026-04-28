@@ -82,9 +82,60 @@ def test_basic_terminal_monitor_renders_stage_done_and_run_update_lines() -> Non
     monitor.emit(event)
 
     output = stream.getvalue()
-    assert "stage done plane=execution stage=builder" in output
+    assert "stage done execution/builder run=run-123 result=BUILDER_COMPLETE dur=39.2s" in output
     assert "tokens=in=1200 cached=300 out=410 think=900 total=2810" in output
-    assert "run update plane=execution run=run-123 elapsed=39.2s" in output
+    assert "run execution run=run-123 elapsed=39.2s" in output
+
+
+def test_basic_terminal_monitor_compacts_stage_start_identity_and_run_id() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_started",
+            occurred_at=NOW,
+            payload={
+                "plane": "planning",
+                "stage": "planner",
+                "node_id": "planner",
+                "stage_kind_id": "planner",
+                "run_id": "run-b27cb14119bf410ab390a0ad124d309d",
+                "work_item_kind": "spec",
+                "work_item_id": "idea-corebound-north-star-spec",
+                "status_marker": "### PLANNER_RUNNING",
+            },
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] stage start planning/planner run=b27cb141 work=spec:idea-corebound-north-star-spec"
+    ]
+
+
+def test_basic_terminal_monitor_keeps_nonredundant_stage_identity() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_started",
+            occurred_at=NOW,
+            payload={
+                "plane": "planning",
+                "stage": "planner",
+                "node_id": "planner-v2",
+                "stage_kind_id": "planner",
+                "run_id": "run-b27cb14119bf410ab390a0ad124d309d",
+                "work_item_kind": "spec",
+                "work_item_id": "idea-corebound-north-star-spec",
+                "status_marker": "### PLANNER_RUNNING",
+            },
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] stage start planning/planner node=planner-v2 run=b27cb141 "
+        "work=spec:idea-corebound-north-star-spec"
+    ]
 
 
 def test_basic_terminal_monitor_suppresses_redundant_stage_status_lines() -> None:
@@ -122,7 +173,26 @@ def test_basic_terminal_monitor_renders_independent_status_lines() -> None:
             },
         )
     )
-    assert "status plane=planning run=run-456 from=MANAGER_RUNNING to=NEEDS_EXECUTION" in stream.getvalue()
+    assert "status planning run=run-456 from=MANAGER_RUNNING to=NEEDS_EXECUTION" in stream.getvalue()
+
+
+def test_basic_terminal_monitor_suppresses_router_idle_terminal_to_idle_status() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="status_marker_changed",
+            occurred_at=NOW,
+            payload={
+                "plane": "planning",
+                "run_id": "run-b27cb14119bf410ab390a0ad124d309d",
+                "previous_marker": "### MANAGER_COMPLETE",
+                "current_marker": "### IDLE",
+                "source": "router_idle",
+            },
+        )
+    )
+    assert stream.getvalue() == ""
 
 
 def test_basic_terminal_monitor_throttles_repeated_no_work_idle_heartbeat() -> None:
@@ -183,7 +253,7 @@ def test_basic_terminal_monitor_prints_idle_again_after_activity() -> None:
     ]
 
 
-def test_basic_terminal_monitor_renders_unknown_tokens_when_usage_missing() -> None:
+def test_basic_terminal_monitor_omits_unknown_tokens_when_usage_missing() -> None:
     stream = StringIO()
     monitor = BasicTerminalMonitor(stream=stream)
     monitor.emit(
@@ -205,7 +275,94 @@ def test_basic_terminal_monitor_renders_unknown_tokens_when_usage_missing() -> N
             },
         )
     )
-    assert "tokens=unknown" in stream.getvalue()
+    output = stream.getvalue()
+    assert "tokens=" not in output
+    assert output.splitlines() == [
+        "[12:14:03] stage done learning/analyst run=run-learning-1 result=ANALYST_COMPLETE dur=5.0s",
+        "[12:14:03] run learning run=run-learning-1 elapsed=5.0s",
+    ]
+
+
+def test_basic_terminal_monitor_renders_route_transitions_without_unknown_next_fields() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="router_decision",
+            occurred_at=NOW,
+            payload={
+                "action": "run_stage",
+                "plane": "planning",
+                "run_id": "run-b27cb14119bf410ab390a0ad124d309d",
+                "next_stage": "manager",
+                "next_node_id": "manager",
+                "next_stage_kind_id": "manager",
+                "reason": "planner:PLANNER_COMPLETE",
+            },
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="router_decision",
+            occurred_at=NOW + timedelta(seconds=1),
+            payload={
+                "action": "idle",
+                "plane": "planning",
+                "run_id": "run-b27cb14119bf410ab390a0ad124d309d",
+                "next_stage": None,
+                "next_node_id": None,
+                "next_stage_kind_id": None,
+                "reason": "manager_complete",
+            },
+        )
+    )
+
+    output = stream.getvalue()
+    assert output.splitlines() == [
+        "[12:14:03] route planning -> manager reason=planner:PLANNER_COMPLETE",
+        "[12:14:04] route planning done reason=manager_complete",
+    ]
+    assert "unknown" not in output
+
+
+def test_basic_terminal_monitor_widens_colliding_short_run_handles() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    first_payload = {
+        "plane": "execution",
+        "stage": "builder",
+        "node_id": "builder",
+        "stage_kind_id": "builder",
+        "work_item_kind": "task",
+        "work_item_id": "task-one",
+        "status_marker": "### BUILDER_RUNNING",
+    }
+    second_payload = {**first_payload, "work_item_id": "task-two"}
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_started",
+            occurred_at=NOW,
+            payload={
+                **first_payload,
+                "run_id": "run-abcdef00123456789000000000000000",
+            },
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_started",
+            occurred_at=NOW + timedelta(seconds=1),
+            payload={
+                **second_payload,
+                "run_id": "run-abcdef00ffff56789000000000000000",
+            },
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] stage start execution/builder run=abcdef00 work=task:task-one",
+        "[12:14:04] stage start execution/builder run=abcdef00ffff work=task:task-two",
+    ]
 
 
 def test_basic_terminal_monitor_renders_usage_governance_events() -> None:
@@ -306,10 +463,10 @@ def test_basic_terminal_monitor_keys_aggregates_by_plane_and_run() -> None:
     )
     output = stream.getvalue()
     assert (
-        "run update plane=execution run=run-shared elapsed=10.0s "
+        "run execution run=run-shared elapsed=10.0s "
         "tokens=in=100 cached=0 out=10 think=5 total=115"
     ) in output
     assert (
-        "run update plane=learning run=run-shared elapsed=5.0s "
+        "run learning run=run-shared elapsed=5.0s "
         "tokens=in=7 cached=0 out=3 think=2 total=12"
     ) in output

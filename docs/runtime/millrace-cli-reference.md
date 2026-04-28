@@ -52,6 +52,11 @@ Options:
 ### `millrace upgrade`
 
 Previews packaged managed-file updates against the workspace baseline manifest.
+This command refreshes managed workspace assets only; it does not install or
+upgrade the `millrace-ai` Python package that provides the runtime code. Update
+the installed package through the deployment environment first, then run
+`millrace upgrade` when the workspace baseline should be refreshed from that
+installed package.
 Default output is preview-only and prints:
 
 - `applied`
@@ -119,8 +124,12 @@ daemon summary output remains unchanged.
 startup lifecycle context, baseline/currentness identity, loop and concurrency
 policy, status/queue snapshots, stage start and completion lines, router
 decisions, usage-governance pause/resume/degraded events, run elapsed time, and
-token usage. Monitor output is live-only and does not replace persisted runtime
-events or run artifacts.
+known token usage. The basic monitor is optimized for human scanning: redundant
+stage/node/kind identity is collapsed, long run ids are shortened to stable
+display handles, intentionally absent route targets are not rendered as
+`unknown`, and unknown token usage is omitted. Monitor output is live-only and
+does not replace persisted runtime events, run artifacts, `millrace runs ls`,
+or `millrace runs show`.
 
 When the daemon is idle with `reason=no_work`, the basic monitor prints the
 first idle line immediately and then treats repeated `no_work` idles as a

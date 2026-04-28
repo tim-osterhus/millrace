@@ -114,7 +114,10 @@ Know which shipped harness posture you are validating:
    or `millrace run daemon --workspace <workspace>` when long-running operation
    is actually intended.
    Use `millrace run daemon --monitor basic --workspace <workspace>` when you
-   need live terminal visibility from the daemon itself.
+   need concise live terminal visibility from the daemon itself. The basic
+   monitor uses short run handles and compact stage labels for scanning; use
+   `millrace runs ls` and `millrace runs show <run_id>` for full run ids,
+   artifacts, and durable details.
    The basic monitor prints the first `idle reason=no_work` line immediately,
    then treats repeated `no_work` idles as a 120-second heartbeat until runtime
    activity or a different idle reason appears.
@@ -245,6 +248,18 @@ In an installed environment, use CLI form:
 millrace <command>
 ```
 
+Package updates and workspace baseline upgrades are separate:
+
+- update the installed Millrace package with the environment's package manager
+  first, for example `pip install -U millrace-ai==<version>`
+- verify the runtime package with `millrace --version` or `millrace version`
+- then use `millrace upgrade` to preview/apply managed workspace baseline asset
+  updates under `<workspace>/millrace-agents/`
+- `millrace upgrade --apply` does not install or update the Python package that
+  provides the runtime code
+- after applying workspace baseline updates, run `millrace compile validate`
+  before resuming runtime work
+
 Canonical baseline commands:
 
 ```bash
@@ -295,6 +310,10 @@ Important monitoring note:
 - `millrace run daemon --monitor basic` is live-only output; repeated
   `idle reason=no_work` lines are throttled to one heartbeat every 120 seconds
   until runtime activity or a different idle reason resets the heartbeat
+- the basic monitor is intentionally human-facing: stage labels are compact,
+  long run ids are shortened for display, unknown token usage is omitted, and
+  full details remain available through `millrace runs ...` commands and
+  persisted runtime artifacts
 - `millrace run daemon --monitor-log <path>` writes basic monitor output to a
   file; combine it with `--monitor none` for quiet foreground operation
 - `millrace doctor` is the quick integrity check for mode assets and resolved

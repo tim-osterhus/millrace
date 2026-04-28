@@ -76,6 +76,22 @@ That means:
 This is the core reason `init` and `upgrade` are separate explicit lifecycle
 steps rather than hidden bootstrap behavior.
 
+## Package Updates vs Workspace Baseline Upgrades
+
+Updating the deployed Millrace runtime is a two-step operator action:
+
+1. update the installed `millrace-ai` Python package with the deployment's
+   package manager, for example `pip install -U millrace-ai==<version>`
+2. refresh the workspace-managed baseline assets with `millrace upgrade` when
+   the workspace should adopt packaged asset changes from that installed
+   version
+
+`millrace upgrade --apply` only writes managed files under
+`<workspace>/millrace-agents/` and refreshes
+`millrace-agents/state/baseline_manifest.json`. It does not change the
+installed package version. Use `millrace --version` or `millrace version` to
+confirm which runtime package will execute future ticks.
+
 ## Upgrade Preview
 
 Use preview first:

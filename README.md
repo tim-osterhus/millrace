@@ -73,6 +73,9 @@ Millrace does not try to replace raw harness reasoning with a thicker prompt.
 It wraps long-horizon work in a real runtime:
 
 - workspace bootstrap is explicit: run `millrace init` before operator commands
+- runtime package updates are separate from workspace baseline refreshes: use
+  the deployment package manager to update `millrace-ai`, then run
+  `millrace upgrade` only when managed workspace assets should be refreshed
 - managed baseline refresh is explicit: run `millrace upgrade` to preview or apply packaged workspace asset updates
 - removed managed assets can be explicitly localized during upgrade when an
   operator wants the workspace copy to become local content
@@ -207,6 +210,9 @@ That flow proves seven things quickly:
 
 For a visible long-running session, use `millrace run daemon --monitor basic`.
 The default daemon remains quiet unless that monitor is requested explicitly.
+The basic monitor is a human-facing stream: it compacts stage labels, shortens
+long run ids for display, omits unknown token filler, and leaves full ids and
+artifacts to `millrace runs ...` inspection commands.
 The basic monitor prints the first `idle reason=no_work` line immediately, then
 throttles repeated `no_work` idles to a 120-second heartbeat until runtime
 activity or a different idle reason appears.
@@ -215,9 +221,11 @@ to a file without necessarily printing live monitor lines to stdout.
 
 When the packaged workspace baseline changes, use `millrace upgrade` first to
 preview the managed-file classifications, then `millrace upgrade --apply` to
-apply safe baseline updates. If compile inputs drift and the persisted plan is
-stale, runtime startup and config reload refuse to keep running on the stale
-plan.
+apply safe baseline updates. This does not update the installed Python package;
+for runtime-code fixes, update `millrace-ai` through the environment's package
+manager first and verify with `millrace --version` or `millrace version`. If
+compile inputs drift and the persisted plan is stale, runtime startup and
+config reload refuse to keep running on the stale plan.
 
 Stage config supports all execution, planning, and learning stage names. For
 Codex-backed stages, `stages.<stage>.model_reasoning_effort` sets the
