@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from millrace_ai import cli
+from millrace_ai.cli.commands import skills as skills_commands
 from millrace_ai.compiler import CompileOutcome
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -575,6 +576,68 @@ def test_skills_install_refuses_existing_skill_without_force(tmp_path: Path) -> 
     assert first.exit_code == 0
     assert second.exit_code == 1
     assert "skill already exists" in second.output
+
+
+def test_skills_install_resolves_remote_skill_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    def fake_install_remote_skill(*args, **kwargs):
+        skills_dir, skill_ref = args
+        assert skills_dir == paths.skills_dir
+        assert skill_ref == "browser-local-qa"
+        assert kwargs["force"] is False
+        assert kwargs["update"] is False
+        skill_dir = paths.skills_dir / skill_ref
+        skill_dir.mkdir()
+        skill_dir.joinpath("SKILL.md").write_text("# Browser Local QA\n", encoding="utf-8")
+        return SimpleNamespace(
+            skill_id=skill_ref,
+            destination=skill_dir,
+            installed_files=("SKILL.md",),
+            source_index_url="https://raw.githubusercontent.com/tim-osterhus/millrace-skills/main/index.md",
+        )
+
+    monkeypatch.setattr(skills_commands, "install_remote_skill", fake_install_remote_skill)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["skills", "install", "browser-local-qa", "--workspace", str(paths.root)],
+    )
+
+    assert result.exit_code == 0
+    assert "installed_skill: browser-local-qa" in result.output
+    assert "source: remote" in result.output
+
+
+def test_skills_refresh_remote_index_writes_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    def fake_refresh_remote_skill_index(skills_dir):
+        assert skills_dir == paths.skills_dir
+        destination = skills_dir / "remote_skills_index.md"
+        destination.write_text("# Remote Skills\n", encoding="utf-8")
+        return destination
+
+    monkeypatch.setattr(
+        skills_commands,
+        "refresh_remote_skill_index",
+        fake_refresh_remote_skill_index,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["skills", "refresh-remote-index", "--workspace", str(paths.root)],
+    )
+
+    assert result.exit_code == 0
+    assert "remote_skills_index:" in result.output
+    assert "remote_skills_index.md" in result.output
 
 
 def test_skills_create_refuses_when_learning_plane_is_not_enabled(tmp_path: Path) -> None:

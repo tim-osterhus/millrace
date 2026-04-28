@@ -71,7 +71,7 @@ The Professor output must include:
 - load the request-provided core skill from `required_skill_paths` first
 - load `millrace-skill-creator` by default after `professor-core`; package
   shape and validation discipline always matter for this stage
-- after that, choose up to two additional relevant installed skills from the index
+- after that, choose up to three additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill

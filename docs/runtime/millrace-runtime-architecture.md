@@ -255,6 +255,7 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and one required stage-core skill per stage.
 - Entrypoint advisory sections use `Required Stage-Core Skill` and `Optional Secondary Skills` as the only runtime-shipped advisory pattern.
 - Optional secondary skills must be present in the packaged or installed skills surface before entrypoints reference them. The packaged skills index points to the supported downloadable optional-skills directory at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
+- Analyst may refresh that remote index with `millrace skills refresh-remote-index` and install relevant listed remote skills with `millrace skills install <skill_id>` before loading them as workspace-local optional skills.
 - Compile output surfaces stage `required_skills` and `attached_skills` for operator inspection (`millrace compile show`).
 
 For maintainer authoring rules around loops, stage maps, and advisory-vs-runtime

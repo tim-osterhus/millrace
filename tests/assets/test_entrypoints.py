@@ -955,7 +955,7 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     for entrypoint_id, stage, body in entrypoint_bodies:
         assert stage in expected_stage_core_ids, f"entrypoint `{entrypoint_id}` does not map to a known stage"
         assert "millrace-agents/skills/skills_index.md" in body
-        assert "up to two additional relevant installed skills" in body
+        assert "up to three additional relevant installed skills" in body
         assert "required_skill_paths" in body
         assert "## Required Stage-Core Skill" in body
         assert "## Optional Secondary Skills" in body
@@ -987,6 +987,10 @@ def test_learning_entrypoints_define_durable_handoff_artifacts() -> None:
         assert "requested_action" in body
         assert "artifact_paths" in body
         assert "preferred_output_paths" in body
+
+    assert "millrace skills refresh-remote-index" in analyst
+    assert "millrace skills install <skill_id>" in analyst
+    assert "remote_skills_index.md" in analyst
 
     assert "run_dir/analyst_research_packet.md" in analyst
     assert "source_refs" in analyst

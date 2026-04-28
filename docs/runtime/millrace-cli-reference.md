@@ -504,8 +504,10 @@ Options:
 
 ### `millrace skills install <SKILL_REF>`
 
-Installs a local skill directory or `SKILL.md` file into the selected skill
-target.
+Installs a local skill directory, local `SKILL.md` file, or supported remote
+skill id into the selected skill target. Remote ids are resolved through the
+public `tim-osterhus/millrace-skills` index and installed into the workspace as
+normal local skills.
 
 Options:
 
@@ -513,6 +515,16 @@ Options:
 - `--target [workspace|source]`
 - `--force`
 - `--update`
+
+### `millrace skills refresh-remote-index`
+
+Fetches the supported optional skill index from
+`github.com/tim-osterhus/millrace-skills` and writes it to
+`millrace-agents/skills/remote_skills_index.md`.
+
+Options:
+
+- `--workspace PATH`
 
 ### `millrace skills create <PROMPT>`
 
@@ -560,6 +572,7 @@ Command summary:
 - `millrace skills show <SKILL_ID>`
 - `millrace skills search <QUERY>`
 - `millrace skills install <SKILL_REF>`
+- `millrace skills refresh-remote-index`
 - `millrace skills create <PROMPT>`
 - `millrace skills improve <SKILL_ID>`
 - `millrace skills promote <SKILL_ID>`
@@ -567,8 +580,8 @@ Command summary:
 
 Create/improve workflows require a learning-enabled mode such as
 `learning_codex` or `learning_pi` because they enqueue learning requests for the
-Analyst/Professor/Curator loop. Install/list/show/search can be used for the
-deployed skill surface without changing the active runtime mode.
+Analyst/Professor/Curator loop. Install/list/show/search/refresh can be used
+for the deployed skill surface without changing the active runtime mode.
 
 ## Doctor Command
 

@@ -59,6 +59,7 @@ pre-packaging draft tree for entrypoints.
 - Optional secondary skills are advisory additions and must exist in the packaged or installed skills surface before an entrypoint can reference them.
 - `millrace-agents/skills/skills_index.md` lists packaged skills and points to the supported downloadable optional-skills directory at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
 - Entrypoints should direct stage agents to consult the deployed skills index first, then load only relevant optional skills that are actually present.
+- Analyst is the Learning entrypoint responsible for refreshing `millrace-agents/skills/remote_skills_index.md` and installing relevant downloadable optional skills before using them.
 - Required stage-core skills and optional attached skills are compile-time
   surfaces and can be inspected via `millrace compile show` as
   `required_skills` and `attached_skills`.

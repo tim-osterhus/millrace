@@ -44,6 +44,8 @@ Usage contract:
 - if no fixed required skills are supplied, choose up to three relevant non-core skills
 - avoid loading irrelevant skills
 - do not claim an optional skill is available unless it is installed locally or listed in the supported downloadable skills directory
+- Learning Analyst may refresh the remote directory into `remote_skills_index.md`
+  and install relevant listed skills before loading them
 
 ## Stage-Core Skills
 
@@ -83,6 +85,8 @@ Optional non-core skills live outside the Millrace runtime package. The supporte
 downloadable skills directory is:
 `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`
 
-Use that public index to discover optional skills before installing them into a
+Use `millrace skills refresh-remote-index` to cache that public index at
+`millrace-agents/skills/remote_skills_index.md`, then
+`millrace skills install <skill_id>` to install an available remote skill into a
 workspace. Once installed, rely on the workspace-local `skills_index.md` and the
 installed `SKILL.md` files as the source of availability truth.

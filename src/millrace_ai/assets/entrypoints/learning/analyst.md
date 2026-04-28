@@ -62,15 +62,22 @@ The research packet must include:
 2. paths named by the learning request's `artifact_paths`
 3. paths or ids named by `source_refs`, `originating_run_ids`, and `references`
 4. `millrace-agents/skills/skills_index.md`
-5. the current `target_skill_id` package when the request names one
-6. request-provided `skill_revision_evidence_path` when present
-7. only the smallest broader reference set needed to make the recommendation honest
+5. `millrace-agents/skills/remote_skills_index.md` after refreshing it when
+   optional downloadable skills may be relevant
+6. the current `target_skill_id` package when the request names one
+7. request-provided `skill_revision_evidence_path` when present
+8. only the smallest broader reference set needed to make the recommendation honest
 
 ## Skills Index Selection
 
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
-- after that, choose up to two additional relevant installed skills from the index
+- when the request may benefit from optional downloadable skills, run
+  `millrace skills refresh-remote-index --workspace .` and inspect
+  `millrace-agents/skills/remote_skills_index.md`
+- install a relevant listed remote skill with
+  `millrace skills install <skill_id> --workspace .` before loading it
+- after that, choose up to three additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill

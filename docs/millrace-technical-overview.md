@@ -457,6 +457,9 @@ those skills are packaged or installed into the deployed skills surface.
 `millrace-agents/skills/skills_index.md` lists packaged skills and points to the
 supported downloadable optional-skills directory at
 `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
+Analyst can refresh that index into `millrace-agents/skills/remote_skills_index.md`
+and install relevant remote skill ids with `millrace skills install <skill_id>`
+before using them as normal workspace-local optional skills.
 
 The runtime controls which advisory assets are available and attached, but the
 stage still does the substantive reasoning work inside its own contract.

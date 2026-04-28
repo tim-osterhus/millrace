@@ -100,6 +100,24 @@ Expected user impact:
 - better compile/status visibility for learning triggers, queue depth, and
   status markers
 
+### Optional Skills Directory
+
+Millrace now has a supported public optional-skills directory outside the core
+runtime package. The active direction is to keep downloadable skills explicitly
+indexed, operator-auditable, and installed into workspaces before stages use
+them. Analyst owns remote optional-skill discovery during Learning, while
+installed `SKILL.md` files remain the workspace-local source of availability
+truth.
+
+Expected user impact:
+
+- Learning can pull in relevant optional guidance without bloating the core
+  runtime package
+- remote skill installs leave source URL, tree SHA, file list, and content-hash
+  evidence
+- operators can refresh the remote index and install remote skill ids through
+  normal `millrace skills` commands
+
 ### Usage Counting And Auto-Pause Controls
 
 Millrace now has an opt-in usage-governance surface for between-stage runtime
@@ -215,12 +233,6 @@ core shipped graph contract needs to stay small and understandable first.
 More target-specific audit or review skills may be useful when a workspace has
 clear domain needs. These should remain optional advisory assets rather than
 new hidden routing behavior.
-
-### Public Optional Skills Directory
-
-The supported optional-skills directory may become a useful public companion to
-the core package. Any downloadable skills should stay outside the core runtime
-package until they are explicitly promoted, indexed, tested, and documented.
 
 ### First-Class TUI
 

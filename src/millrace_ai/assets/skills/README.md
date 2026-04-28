@@ -52,4 +52,7 @@ Runtime shipping notes:
 - Each stage-core skill should stay narrow: posture, heuristics, traps, evidence discipline, and optional-skill triggers only.
 - Additional optional skills should be referenced only after they are shipped in the runtime package or installed into the active workspace.
 - Supported downloadable optional skills are listed at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
+- `millrace skills refresh-remote-index` writes the remote listing to
+  `millrace-agents/skills/remote_skills_index.md`; `millrace skills install
+  <skill_id>` installs an available remote skill as a workspace-local skill.
 - Arbiter stage-core guidance should stay focused on rubric discipline, parity judgment, and remediation handoff posture rather than runtime authority.

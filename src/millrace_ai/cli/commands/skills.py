@@ -17,6 +17,11 @@ from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import LearningRequestAction, LearningRequestDocument
 from millrace_ai.modes import ModeAssetError, load_builtin_mode_definition, resolve_builtin_mode_id
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.workspace.remote_skills import (
+    RemoteSkillError,
+    install_remote_skill,
+    refresh_remote_skill_index,
+)
 
 skills_app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -32,7 +37,21 @@ def skills_install(
     paths = _require_paths(workspace)
     source = _resolve_local_skill_source(skill_ref)
     if source is None:
-        raise typer.Exit(code=_print_error(f"cannot resolve skill ref: {skill_ref}"))
+        destination_root = _target_skills_dir(paths.root, target=target)
+        try:
+            result = install_remote_skill(
+                destination_root,
+                skill_ref,
+                force=force,
+                update=update,
+            )
+        except RemoteSkillError as exc:
+            raise typer.Exit(code=_print_error(str(exc))) from exc
+        typer.echo(f"installed_skill: {result.skill_id}")
+        typer.echo("source: remote")
+        typer.echo(f"source_index: {result.source_index_url}")
+        typer.echo(f"path: {result.destination}")
+        return
 
     skill_id = _skill_id_for_source(source)
     destination_root = _target_skills_dir(paths.root, target=target)
@@ -180,6 +199,18 @@ def skills_search(
         text = skill_path.read_text(encoding="utf-8", errors="replace").lower()
         if needle in skill_id.lower() or needle in text:
             typer.echo(skill_id)
+
+
+@skills_app.command("refresh-remote-index")
+def skills_refresh_remote_index(
+    workspace: WorkspaceOption = Path("."),
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        destination = refresh_remote_skill_index(paths.skills_dir)
+    except RemoteSkillError as exc:
+        raise typer.Exit(code=_print_error(str(exc))) from exc
+    typer.echo(f"remote_skills_index: {destination}")
 
 
 def _resolve_local_skill_source(skill_ref: str) -> Path | None:

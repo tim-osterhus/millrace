@@ -11,6 +11,27 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.16.1] - 2026-04-28
+
+### Added
+
+- Added supported remote optional-skill discovery through
+  `millrace skills refresh-remote-index`, which caches the public
+  `tim-osterhus/millrace-skills` index into
+  `millrace-agents/skills/remote_skills_index.md`.
+- Extended `millrace skills install <skill_ref>` so listed remote skill ids can
+  be installed into a workspace as normal local skills, including nested
+  `references/` and `scripts/` files plus `remote_source.json` audit metadata.
+
+### Changed
+
+- Analyst now refreshes and uses the supported remote skills index during
+  Learning when downloadable optional skills may improve the request.
+- Stage entrypoints may select up to three relevant installed optional skills
+  instead of two.
+- Updated runtime docs, CLI reference, packaged skills guidance, and the
+  shipped Millrace ops skill for the remote optional-skills workflow.
+
 ## [0.16.0] - 2026-04-28
 
 ### Added
@@ -471,7 +492,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/tim-osterhus/millrace/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/tim-osterhus/millrace/compare/v0.15.9...v0.16.0
 [0.15.9]: https://github.com/tim-osterhus/millrace/compare/v0.15.8...v0.15.9
 [0.15.8]: https://github.com/tim-osterhus/millrace/compare/v0.15.7...v0.15.8

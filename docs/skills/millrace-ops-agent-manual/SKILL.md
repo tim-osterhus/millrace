@@ -296,6 +296,7 @@ millrace skills ls --workspace <workspace>
 millrace skills show <skill_id> --workspace <workspace>
 millrace skills search <query> --workspace <workspace>
 millrace skills install <skill_ref> --workspace <workspace>
+millrace skills refresh-remote-index --workspace <workspace>
 millrace skills create "<prompt>" --mode learning_codex --workspace <workspace>
 millrace skills improve <skill_id> --mode learning_codex --workspace <workspace>
 millrace skills promote <skill_id> --workspace <workspace>

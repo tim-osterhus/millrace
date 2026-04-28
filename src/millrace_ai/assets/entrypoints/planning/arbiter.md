@@ -50,7 +50,7 @@ Process only the assigned closure target for this run.
 - open `millrace-agents/skills/skills_index.md`
 - load the request-provided core skill from `required_skill_paths` first
 - if no rubric exists yet, or the current evidence surface is too weak to support an honest narrow pass, load `marathon-qa-audit` from the skills index before the broader audit
-- after that, choose up to two additional relevant installed skills from the index
+- after that, choose up to three additional relevant installed skills from the index
 - do not spend tokens on irrelevant skills
 
 ## Required Stage-Core Skill
