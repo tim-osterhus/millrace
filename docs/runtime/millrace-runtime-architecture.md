@@ -44,6 +44,10 @@ Canonical task/spec/incident/learning-request documents use headed markdown:
 - scalar headings such as `Task-ID: ...` or `Spec-ID: ...`
 - list sections such as `Acceptance:` followed by `- ...` items
 
+Incident documents also accept `Status-Hint` values of `incoming`, `active`,
+`blocked`, or `resolved`. Task documents use their own queue-state hints:
+`queued`, `active`, `blocked`, and `done`.
+
 JSON imports are still accepted for queue intake, but canonical on-disk queue artifacts are markdown.
 
 ### JSON runtime/state artifacts
@@ -106,7 +110,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/runtime/result_application.py`: stable façade over routed post-stage mutation helpers.
 - `src/millrace_ai/runtime/result_counters.py`: recovery-counter entry mutation and snapshot counter increments.
 - `src/millrace_ai/runtime/work_item_transitions.py`: non-closure work-item completion, blocked transitions, and active-snapshot clearing.
-- `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and arbiter-gap incident materialization.
+- `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and arbiter-gap incident materialization, including source work-item lineage inheritance for runtime-created handoff incidents.
 - `src/millrace_ai/runtime/stage_result_persistence.py`: persisted stage-result JSON writes and plane status-marker updates.
 - `src/millrace_ai/runtime/learning_triggers.py`: compiler-frozen learning-trigger evaluation and learning-request enqueueing.
 - `src/millrace_ai/runtime/skill_evidence.py`: per-request skill revision evidence snapshots for learning-enabled runs.
@@ -193,6 +197,11 @@ Idle:
 - If unrelated root specs are queued while a closure target is open, runtime
   emits `closure_target_backpressure`, keeps the daemon alive, and reports
   `planning_root_specs_deferred_by_closure_target` through `millrace status`.
+- If Consultant or another routed stage escalates a same-lineage work item back
+  into planning while a closure target is open, the runtime-created handoff
+  incident inherits `Root-Idea-ID`, `Root-Spec-ID`, and `Source-Spec-ID` from
+  the source work document before it is enqueued. That keeps the incident
+  visible to the strict closure-scoped planning selector.
 - If queued/active/blocked work shares the open target's root idea but carries
   another effective `Root-Spec-ID`, runtime emits
   `closure_lineage_drift_detected`, writes a diagnostic under

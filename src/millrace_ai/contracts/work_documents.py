@@ -11,6 +11,7 @@ from .base import ContractModel
 from .enums import (
     IncidentDecision,
     IncidentSeverity,
+    IncidentStatusHint,
     LearningRequestAction,
     LearningStageName,
     Plane,
@@ -128,6 +129,7 @@ class IncidentDocument(ContractModel):
     source_plane: Plane
 
     failure_class: str
+    status_hint: IncidentStatusHint | None = None
     severity: IncidentSeverity = IncidentSeverity.MEDIUM
     needs_planning: bool = True
 

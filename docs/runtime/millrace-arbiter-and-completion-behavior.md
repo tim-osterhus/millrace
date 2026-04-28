@@ -92,6 +92,9 @@ When one closure target is open:
 
 - queued root specs for other lineages stay in `millrace-agents/specs/queue/`
 - same-lineage tasks and remediation planning items remain claimable
+- runtime-created execution-to-planning handoff incidents inherit root lineage
+  from their source work item before enqueue, so Consultant `NEEDS_PLANNING`
+  escalation stays visible to closure-scoped planning selection
 - Arbiter is activated before an unrelated root spec is claimed once same-lineage work drains
 - `closure_target_backpressure` events record the open root spec and deferred root specs
 - `millrace status` reports `planning_root_specs_deferred_by_closure_target`

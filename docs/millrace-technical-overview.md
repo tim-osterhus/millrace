@@ -526,7 +526,8 @@ For example:
 - a successful `checker` result does not itself move the task to done; the
   runtime may still route to `updater`
 - a `consultant` result of `NEEDS_PLANNING` does not directly rewrite queue
-  state; the runtime enqueues the appropriate planning incident
+  state; the runtime enqueues the appropriate planning incident and preserves
+  the source work item's root lineage on that incident
 - a successful `arbiter` result of `ARBITER_COMPLETE` does not directly close
   the closure target; runtime result application closes it authoritatively
 
@@ -567,6 +568,12 @@ Closure is rooted in explicit lineage metadata carried through work documents:
 
 - `root_spec_id`
 - `root_idea_id`
+
+Runtime-created handoff incidents participate in that same lineage contract.
+When an execution task escalates to planning, the runtime copies the source
+task's root lineage and source spec id onto the incident before queueing it.
+That keeps same-lineage remediation claimable while unrelated root specs remain
+backpressured behind the open closure target.
 
 When a root spec first enters the managed lineage, the runtime snapshots the
 canonical root spec and seed idea into the Arbiter subtree. Arbiter later judges

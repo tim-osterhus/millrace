@@ -11,6 +11,25 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.16.2] - 2026-04-28
+
+### Fixed
+
+- Runtime-created Consultant `NEEDS_PLANNING` handoff incidents now inherit
+  root lineage from their source work item. Under an open closure target, the
+  generated planning incident remains same-lineage claimable instead of being
+  filtered out while the source task sits blocked.
+- Incident markdown now accepts `Status-Hint: incoming|active|blocked|resolved`,
+  so Consultant-authored diagnostic incidents with explicit incident state are
+  not quarantined solely because they carry a status hint.
+
+### Changed
+
+- Runtime handoff events now include the resolved root/source lineage fields
+  used for the generated planning incident.
+- Updated runtime documentation, Consultant guidance, and the shipped
+  Millrace ops skill to describe closure-safe planning handoffs.
+
 ## [0.16.1] - 2026-04-28
 
 ### Added
@@ -492,7 +511,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/tim-osterhus/millrace/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/tim-osterhus/millrace/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/tim-osterhus/millrace/compare/v0.15.9...v0.16.0
 [0.15.9]: https://github.com/tim-osterhus/millrace/compare/v0.15.8...v0.15.9

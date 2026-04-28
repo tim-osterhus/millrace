@@ -101,6 +101,13 @@ class TaskStatusHint(str, Enum):
     DONE = "done"
 
 
+class IncidentStatusHint(str, Enum):
+    INCOMING = "incoming"
+    ACTIVE = "active"
+    BLOCKED = "blocked"
+    RESOLVED = "resolved"
+
+
 class IncidentSeverity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -161,6 +168,7 @@ __all__ = [
     "ExecutionTerminalResult",
     "IncidentDecision",
     "IncidentSeverity",
+    "IncidentStatusHint",
     "LearningRequestAction",
     "LearningStageName",
     "LearningTerminalResult",

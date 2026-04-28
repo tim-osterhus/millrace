@@ -153,6 +153,28 @@ def _task_markdown_with_none_dependency_placeholder() -> str:
     )
 
 
+def _incident_markdown_with_status_hint() -> str:
+    return (
+        "# Consultant handoff\n\n"
+        "Incident-ID: inc-status-hint\n"
+        "Title: Consultant handoff\n"
+        "Summary: Consultant requested planning remediation.\n"
+        "Root-Idea-ID: idea-001\n"
+        "Root-Spec-ID: spec-root-001\n"
+        "Source-Task-ID: task-001\n"
+        "Source-Spec-ID: spec-root-001\n"
+        "Source-Stage: consultant\n"
+        "Source-Plane: execution\n"
+        "Failure-Class: consultant_needs_planning\n"
+        "Status-Hint: incoming\n"
+        "Severity: high\n"
+        "Trigger-Reason: consultant_needs_planning\n"
+        "Consultant-Decision: needs_planning\n"
+        f"Opened-At: {NOW.isoformat()}\n"
+        "Opened-By: consultant\n"
+    )
+
+
 def _spec_markdown(payload: Mapping[str, object]) -> str:
     lines = [
         "# Invalid spec",
@@ -224,6 +246,18 @@ def test_parse_work_document_as_treats_blank_optional_scalar_fields_as_omitted()
     assert document.spec_id == "spec-001"
     assert document.parent_task_id is None
     assert document.incident_id is None
+
+
+def test_parse_incident_document_accepts_incoming_status_hint() -> None:
+    document = parse_work_document_as(
+        _incident_markdown_with_status_hint(),
+        model=IncidentDocument,
+        path=Path("inc-status-hint.md"),
+    )
+
+    assert document.incident_id == "inc-status-hint"
+    assert document.status_hint is not None
+    assert document.status_hint.value == "incoming"
 
 
 def test_queue_claim_treats_none_dependency_placeholders_as_empty_relationships(

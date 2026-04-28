@@ -88,6 +88,9 @@ It wraps long-horizon work in a real runtime:
   runner workers execute concurrently
 - stage results are routed by the runtime, not by direct stage-to-stage
   handoffs
+- runtime-generated planning handoff incidents preserve source work-item
+  lineage so closure-scoped remediation stays claimable while unrelated root
+  specs remain backpressured
 - Arbiter activates only when the scheduler finds no lineage work left and
   closure behavior is actually ready
 - the shipped v1 usage-governance surface can pause and auto-resume between

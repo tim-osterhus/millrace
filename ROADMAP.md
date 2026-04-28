@@ -85,6 +85,20 @@ Expected user impact:
 - fewer mismatches between live monitor output and persisted run/runtime
   artifacts
 
+### Closure-Safe Handoff Reliability
+
+Millrace now preserves root lineage on runtime-generated planning handoff
+incidents, including Consultant `NEEDS_PLANNING` handoffs that happen while a
+closure target is open. Active hardening is focused on keeping strict
+closure-target queue selection intact while making every runtime-generated
+same-lineage remediation item claimable and diagnosable.
+
+Expected user impact:
+
+- fewer daemon idle wedges when execution correctly escalates back into planning
+- clearer incident artifacts for root-cause and remediation handoffs
+- safer closure-target backpressure while unrelated queued root specs wait
+
 ### Learning Plane Stabilization
 
 The learning plane now ships as an opt-in mode family through `learning_codex`

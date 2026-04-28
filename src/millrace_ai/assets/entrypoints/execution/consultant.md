@@ -54,6 +54,21 @@ The consultant decision artifact should capture:
 - recommended next action
 - incident path when applicable
 
+When writing an incident markdown artifact:
+
+- use canonical incident scalar labels: `Incident-ID`, `Title`, `Summary`,
+  `Root-Idea-ID`, `Root-Spec-ID`, `Source-Task-ID`, `Source-Spec-ID`,
+  `Source-Stage`, `Source-Plane`, `Failure-Class`, `Status-Hint`, `Severity`,
+  `Needs-Planning`, `Trigger-Reason`, `Consultant-Decision`, `Opened-At`,
+  `Opened-By`, and `Updated-At`
+- `Status-Hint` is optional, but when present it must be one of exactly:
+  `incoming`, `active`, `blocked`, `resolved`; use `incoming` for a newly
+  emitted planning-escalation incident
+- copy root lineage from the request-provided active work item when it is
+  present; do not infer root lineage from filenames or task names
+- include `Source-Task-ID` for task escalations and `Source-Spec-ID` when the
+  source work item provides `Root-Spec-ID` or `Spec-ID`
+
 History requirements:
 - prepend a concise consultant summary entry to `millrace-agents/historylog.md`
 

@@ -109,6 +109,26 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
     )
 
 
+def _closure_target_state(
+    *,
+    root_spec_id: str = "spec-root-001",
+    root_idea_id: str = "idea-001",
+) -> ClosureTargetState:
+    return ClosureTargetState(
+        root_spec_id=root_spec_id,
+        root_idea_id=root_idea_id,
+        root_spec_path=f"millrace-agents/arbiter/contracts/root-specs/{root_spec_id}.md",
+        root_idea_path=f"millrace-agents/arbiter/contracts/ideas/{root_idea_id}.md",
+        rubric_path=f"millrace-agents/arbiter/rubrics/{root_spec_id}.md",
+        latest_verdict_path=None,
+        latest_report_path=None,
+        closure_open=True,
+        closure_blocked_by_lineage_work=False,
+        blocking_work_ids=(),
+        opened_at=NOW,
+    )
+
+
 def _mailbox_command(
     command_id: str,
     command: str,
@@ -1411,6 +1431,97 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
 
     fourth = engine.tick()
     assert fourth.stage is PlanningStageName.AUDITOR
+
+
+def test_runtime_handoff_incident_inherits_task_lineage_under_open_closure_target(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    root_spec_id = "spec-root-001"
+    root_idea_id = "idea-001"
+    queue = QueueStore(paths)
+    queue.enqueue_task(
+        _task_doc("task-001", created_at=NOW).model_copy(
+            update={
+                "root_idea_id": root_idea_id,
+                "root_spec_id": root_spec_id,
+                "spec_id": root_spec_id,
+            }
+        )
+    )
+    queue.enqueue_spec(
+        _spec_doc("spec-unrelated", created_at=NOW + timedelta(seconds=1)).model_copy(
+            update={
+                "root_idea_id": "idea-002",
+                "root_spec_id": "spec-unrelated",
+            }
+        )
+    )
+    save_closure_target_state(
+        paths,
+        _closure_target_state(root_spec_id=root_spec_id, root_idea_id=root_idea_id),
+    )
+
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text(
+        "[recovery]\nmax_troubleshoot_attempts_before_consult = 1\n",
+        encoding="utf-8",
+    )
+    captured_requests: list[StageRunRequest] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        captured_requests.append(request)
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.BLOCKED.value,
+                now=NOW,
+            )
+        if request.stage is ExecutionStageName.TROUBLESHOOTER:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.BLOCKED.value,
+                now=NOW,
+            )
+        if request.stage is ExecutionStageName.CONSULTANT:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.NEEDS_PLANNING.value,
+                now=NOW,
+            )
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.AUDITOR_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+
+    first = engine.tick()
+    second = engine.tick()
+    third = engine.tick()
+
+    assert first.stage is ExecutionStageName.BUILDER
+    assert second.stage is ExecutionStageName.TROUBLESHOOTER
+    assert third.stage is ExecutionStageName.CONSULTANT
+    assert third.router_decision.action is RouterAction.HANDOFF
+    assert (paths.tasks_blocked_dir / "task-001.md").is_file()
+    assert (paths.specs_queue_dir / "spec-unrelated.md").is_file()
+
+    incident_path = next(paths.incidents_incoming_dir.glob("*.md"))
+    incident = read_work_document_as(incident_path, model=IncidentDocument)
+    assert incident.root_idea_id == root_idea_id
+    assert incident.root_spec_id == root_spec_id
+    assert incident.source_spec_id == root_spec_id
+    assert incident.source_task_id == "task-001"
+
+    fourth = engine.tick()
+
+    assert fourth.stage is PlanningStageName.AUDITOR
+    assert captured_requests[-1].active_work_item_kind is WorkItemKind.INCIDENT
+    assert captured_requests[-1].active_work_item_id == incident.incident_id
+    assert (paths.specs_queue_dir / "spec-unrelated.md").is_file()
 
 
 def test_runtime_blocked_transition_recovers_when_active_artifact_missing(tmp_path: Path) -> None:

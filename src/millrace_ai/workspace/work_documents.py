@@ -100,6 +100,7 @@ _INCIDENT_SCHEMA = _DocumentSchema(
         ("Source-Stage", "source_stage"),
         ("Source-Plane", "source_plane"),
         ("Failure-Class", "failure_class"),
+        ("Status-Hint", "status_hint"),
         ("Severity", "severity"),
         ("Needs-Planning", "needs_planning"),
         ("Trigger-Reason", "trigger_reason"),
