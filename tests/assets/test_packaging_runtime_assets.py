@@ -80,11 +80,11 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
     assert all(not name.endswith(".DS_Store") for name in wheel_names)
 
 
-def test_wheel_metadata_declares_agpl_license(tmp_path: Path) -> None:
+def test_wheel_metadata_declares_apache_license(tmp_path: Path) -> None:
     wheel_path = _build_wheel(tmp_path)
     metadata = _read_wheel_metadata(wheel_path)
 
-    assert "License-Expression: AGPL-3.0-only" in metadata
+    assert "License-Expression: Apache-2.0" in metadata
 
 
 def test_readme_uses_repo_license_badge_instead_of_pypi_license_badge() -> None:
