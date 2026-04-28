@@ -15,6 +15,7 @@ from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
+from millrace_ai.workspace.queue_selection import list_deferred_root_spec_ids
 
 
 def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
@@ -90,6 +91,7 @@ def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...
             "closure_target_root_spec_id: invalid_multiple_open_targets",
             "closure_target_open: invalid",
             "closure_target_blocked_by_lineage_work: invalid",
+            "planning_root_specs_deferred_by_closure_target: invalid",
             "closure_target_latest_verdict_path: none",
             "closure_target_latest_report_path: none",
         )
@@ -98,11 +100,16 @@ def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...
             "closure_target_root_spec_id: none",
             "closure_target_open: none",
             "closure_target_blocked_by_lineage_work: none",
+            "planning_root_specs_deferred_by_closure_target: 0",
             "closure_target_latest_verdict_path: none",
             "closure_target_latest_report_path: none",
         )
 
     target = open_targets[0]
+    deferred_root_spec_ids = list_deferred_root_spec_ids(
+        paths,
+        open_root_spec_id=target.root_spec_id,
+    )
     return (
         f"closure_target_root_spec_id: {target.root_spec_id}",
         f"closure_target_open: {'true' if target.closure_open else 'false'}",
@@ -110,6 +117,7 @@ def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...
             "closure_target_blocked_by_lineage_work: "
             f"{'true' if target.closure_blocked_by_lineage_work else 'false'}"
         ),
+        f"planning_root_specs_deferred_by_closure_target: {len(deferred_root_spec_ids)}",
         f"closure_target_latest_verdict_path: {_status_value(target.latest_verdict_path)}",
         f"closure_target_latest_report_path: {_status_value(target.latest_report_path)}",
     )

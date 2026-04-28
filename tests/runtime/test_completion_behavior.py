@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-import pytest
 
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import (
     ClosureTargetState,
+    ExecutionStageName,
     Plane,
     PlanningStageName,
     SpecDocument,
     TaskDocument,
+    WorkItemKind,
 )
-from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import read_runtime_events
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
@@ -101,6 +100,33 @@ def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
     raise AssertionError(f"stage_runner should not be called during setup: {request.stage.value}")
 
 
+def _runner_result(request: StageRunRequest, *, terminal: str) -> RunnerRawResult:
+    stdout_path = Path(request.run_dir) / "runner_stdout.txt"
+    stdout_path.write_text(f"### {terminal}\n", encoding="utf-8")
+    return RunnerRawResult(
+        request_id=request.request_id,
+        run_id=request.run_id,
+        stage=request.stage,
+        runner_name=request.runner_name or "test-runner",
+        model_name=request.model_name,
+        exit_kind="completed",
+        exit_code=0,
+        stdout_path=str(stdout_path),
+        stderr_path=None,
+        terminal_result_path=None,
+        observed_exit_kind=None,
+        observed_exit_code=None,
+        started_at=NOW,
+        ended_at=NOW + timedelta(seconds=1),
+    )
+
+
+def _write_idea(paths, idea_id: str) -> None:
+    idea_path = paths.root / "ideas" / "inbox" / f"{idea_id}.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text(f"# {idea_id}\n\nSeed contract for {idea_id}.\n", encoding="utf-8")
+
+
 def test_activate_claim_opens_closure_target_and_snapshots_canonical_contracts(
     tmp_path: Path,
 ) -> None:
@@ -138,7 +164,9 @@ def test_activate_claim_opens_closure_target_and_snapshots_canonical_contracts(
     )
 
 
-def test_activate_claim_rejects_second_open_closure_target(tmp_path: Path) -> None:
+def test_activate_claim_backpressures_second_open_closure_target_without_half_claiming(
+    tmp_path: Path,
+) -> None:
     paths = _workspace(tmp_path)
     save_closure_target_state(paths, _target_state())
 
@@ -162,8 +190,100 @@ def test_activate_claim_rejects_second_open_closure_target(tmp_path: Path) -> No
 
     assert claim is not None
 
-    with pytest.raises(WorkspaceStateError, match="open closure target"):
-        engine._activate_claim(claim)
+    engine._activate_claim(claim)
+
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is None
+    assert snapshot.active_work_item_kind is None
+    assert snapshot.active_work_item_id is None
+    assert (paths.specs_queue_dir / "spec-root-002.md").is_file()
+    assert not (paths.specs_active_dir / "spec-root-002.md").exists()
+    assert load_closure_target_state(paths, root_spec_id="spec-root-001").closure_open is True
+
+
+def test_open_closure_target_backpressures_unrelated_root_spec_and_runs_lineage_task(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+    _write_idea(paths, "idea-002")
+
+    queue = QueueStore(paths)
+    queue.enqueue_task(
+        _task_doc(
+            "task-lineage-001",
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            created_at=NOW,
+        )
+    )
+    queue.enqueue_spec(
+        _root_spec_doc(
+            "spec-root-002",
+            root_idea_id="idea-002",
+            created_at=NOW,
+            idea_reference="ideas/inbox/idea-002.md",
+        )
+    )
+    captured_requests: list[StageRunRequest] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        captured_requests.append(request)
+        return _runner_result(request, terminal="BUILDER_COMPLETE")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+
+    engine.tick()
+
+    assert len(captured_requests) == 1
+    request = captured_requests[0]
+    assert request.stage is ExecutionStageName.BUILDER
+    assert request.active_work_item_kind is WorkItemKind.TASK
+    assert request.active_work_item_id == "task-lineage-001"
+    assert (paths.specs_queue_dir / "spec-root-002.md").is_file()
+    assert not (paths.specs_active_dir / "spec-root-002.md").exists()
+    assert load_closure_target_state(paths, root_spec_id="spec-root-001").closure_open is True
+    events = read_runtime_events(paths)
+    assert any(
+        event.event_type == "closure_target_backpressure"
+        and event.data.get("open_root_spec_id") == "spec-root-001"
+        and event.data.get("deferred_root_spec_ids") == ["spec-root-002"]
+        for event in events
+    )
+
+
+def test_open_closure_target_activates_arbiter_before_unrelated_root_spec(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+    _write_idea(paths, "idea-002")
+
+    QueueStore(paths).enqueue_spec(
+        _root_spec_doc(
+            "spec-root-002",
+            root_idea_id="idea-002",
+            created_at=NOW,
+            idea_reference="ideas/inbox/idea-002.md",
+        )
+    )
+    captured_requests: list[StageRunRequest] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        captured_requests.append(request)
+        return _runner_result(request, terminal="ARBITER_COMPLETE")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+
+    engine.tick()
+
+    assert len(captured_requests) == 1
+    request = captured_requests[0]
+    assert request.stage is PlanningStageName.ARBITER
+    assert request.request_kind == "closure_target"
+    assert request.closure_target_root_spec_id == "spec-root-001"
+    assert (paths.specs_queue_dir / "spec-root-002.md").is_file()
+    assert not (paths.specs_active_dir / "spec-root-002.md").exists()
 
 
 def test_maybe_activate_completion_stage_marks_target_blocked_when_lineage_work_remains(

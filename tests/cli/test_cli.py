@@ -23,6 +23,7 @@ from millrace_ai.contracts import (
     ReloadOutcome,
     ResultClass,
     RuntimeMode,
+    SpecDocument,
     TokenUsage,
 )
 from millrace_ai.control import ControlActionResult
@@ -918,6 +919,23 @@ def test_status_surfaces_failure_class_and_retry_counters(tmp_path: Path) -> Non
 
 def test_status_surfaces_closure_target_state(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_spec(
+        SpecDocument(
+            spec_id="spec-root-002",
+            title="Deferred root spec",
+            summary="deferred while another closure target is open",
+            source_type="idea",
+            source_id="idea-002",
+            root_idea_id="idea-002",
+            root_spec_id="spec-root-002",
+            goals=("verify deferred status count",),
+            constraints=("do not claim while spec-root-001 is open",),
+            acceptance=("status reports deferred root specs",),
+            references=("ideas/inbox/idea-002.md",),
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
     save_closure_target_state(
         paths,
         ClosureTargetState(
@@ -941,6 +959,7 @@ def test_status_surfaces_closure_target_state(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "closure_target_root_spec_id: spec-root-001" in result.output
     assert "closure_target_open: true" in result.output
+    assert "planning_root_specs_deferred_by_closure_target: 1" in result.output
     assert "closure_target_latest_verdict_path: millrace-agents/arbiter/verdicts/spec-root-001.json" in result.output
     assert "closure_target_latest_report_path: millrace-agents/arbiter/reports/run-001.md" in result.output
 

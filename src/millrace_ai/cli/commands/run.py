@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -155,7 +155,7 @@ def run_daemon(
 
 
 class _FanoutRuntimeMonitorSink:
-    def __init__(self, sinks: tuple[object, ...]) -> None:
+    def __init__(self, sinks: tuple[Any, ...]) -> None:
         self._sinks = sinks
 
     def emit(self, event: object) -> None:

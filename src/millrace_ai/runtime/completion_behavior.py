@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,15 +28,37 @@ if TYPE_CHECKING:
 from .graph_authority import completion_activation_for_graph
 
 
+@dataclass(frozen=True, slots=True)
+class ClosureTargetPreparation:
+    """Result of closure-target preflight for a queued work-item claim."""
+
+    allowed: bool
+    target: ClosureTargetState | None = None
+    open_root_spec_id: str | None = None
+    deferred_root_spec_id: str | None = None
+
+
 def maybe_open_closure_target_for_claim(
     engine: RuntimeEngine,
     claim: QueueClaim,
 ) -> ClosureTargetState | None:
+    preparation = prepare_closure_target_for_claim(engine, claim)
+    if not preparation.allowed:
+        raise WorkspaceStateError(
+            "cannot open closure target while another open closure target exists"
+        )
+    return preparation.target
+
+
+def prepare_closure_target_for_claim(
+    engine: RuntimeEngine,
+    claim: QueueClaim,
+) -> ClosureTargetPreparation:
     if claim.work_item_kind is not WorkItemKind.SPEC:
-        return None
+        return ClosureTargetPreparation(allowed=True)
 
     spec = _load_spec_document(claim.path)
-    return _open_closure_target_for_spec(engine, spec_path=claim.path, spec=spec)
+    return _prepare_closure_target_for_spec(engine, spec_path=claim.path, spec=spec)
 
 
 def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState | None:
@@ -156,37 +179,71 @@ def _open_closure_target_for_spec(
     spec_path: Path,
     spec: SpecDocument,
 ) -> ClosureTargetState | None:
+    preparation = _prepare_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
+    if not preparation.allowed:
+        raise WorkspaceStateError(
+            "cannot open closure target while another open closure target exists"
+        )
+    return preparation.target
+
+
+def _prepare_closure_target_for_spec(
+    engine: RuntimeEngine,
+    *,
+    spec_path: Path,
+    spec: SpecDocument,
+) -> ClosureTargetPreparation:
     if spec.root_spec_id is None or spec.root_idea_id is None:
-        return None
+        return ClosureTargetPreparation(allowed=True)
     if spec.spec_id != spec.root_spec_id:
-        return None
+        return ClosureTargetPreparation(allowed=True)
 
     existing_target = _existing_target_state(engine, root_spec_id=spec.root_spec_id)
     if existing_target is not None:
-        return existing_target
+        return ClosureTargetPreparation(allowed=True, target=existing_target)
 
     open_targets = list_open_closure_target_states(engine.paths)
+    if len(open_targets) > 1:
+        raise WorkspaceStateError("multiple open closure targets found")
     if open_targets:
-        raise WorkspaceStateError("cannot open closure target while another open closure target exists")
+        return ClosureTargetPreparation(
+            allowed=False,
+            open_root_spec_id=open_targets[0].root_spec_id,
+            deferred_root_spec_id=spec.root_spec_id,
+        )
 
+    target = _create_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
+    return ClosureTargetPreparation(allowed=True, target=target)
+
+
+def _create_closure_target_for_spec(
+    engine: RuntimeEngine,
+    *,
+    spec_path: Path,
+    spec: SpecDocument,
+) -> ClosureTargetState:
+    assert spec.root_idea_id is not None
+    assert spec.root_spec_id is not None
+    root_idea_id = spec.root_idea_id
+    root_spec_id = spec.root_spec_id
     idea_markdown = _load_root_idea_markdown(engine, spec)
     root_spec_markdown = spec_path.read_text(encoding="utf-8")
     idea_contract = write_canonical_idea_contract(
         engine.paths,
-        root_idea_id=spec.root_idea_id,
+        root_idea_id=root_idea_id,
         markdown=idea_markdown,
     )
     root_spec_contract = write_canonical_root_spec_contract(
         engine.paths,
-        root_spec_id=spec.root_spec_id,
+        root_spec_id=root_spec_id,
         markdown=root_spec_markdown,
     )
     target = ClosureTargetState(
-        root_spec_id=spec.root_spec_id,
-        root_idea_id=spec.root_idea_id,
+        root_spec_id=root_spec_id,
+        root_idea_id=root_idea_id,
         root_spec_path=_workspace_relative_path(engine, root_spec_contract),
         root_idea_path=_workspace_relative_path(engine, idea_contract),
-        rubric_path=f"millrace-agents/arbiter/rubrics/{spec.root_spec_id}.md",
+        rubric_path=f"millrace-agents/arbiter/rubrics/{root_spec_id}.md",
         latest_verdict_path=None,
         latest_report_path=None,
         closure_open=True,
@@ -317,8 +374,10 @@ def _mark_completion_behavior_blocked(
 
 
 __all__ = [
+    "ClosureTargetPreparation",
     "active_closure_target",
     "maybe_activate_completion_stage",
     "maybe_open_closure_target_for_claim",
+    "prepare_closure_target_for_claim",
     "refresh_closure_target_readiness",
 ]

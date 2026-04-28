@@ -173,6 +173,15 @@ Status also surfaces pause and usage-governance context:
 - `usage_governance_subscription_detail` when present
 - `usage_governance_blocker: source=... rule=... window=... observed=... threshold=...`
 
+When Arbiter closure is active, status surfaces closure-target backpressure:
+
+- `closure_target_root_spec_id`
+- `closure_target_open`
+- `closure_target_blocked_by_lineage_work`
+- `planning_root_specs_deferred_by_closure_target`
+- `closure_target_latest_verdict_path`
+- `closure_target_latest_report_path`
+
 `millrace status show` is an explicit alias for the same output.
 
 ### `millrace status watch`
@@ -268,6 +277,9 @@ Pause/resume behavior:
 - `reload-config` does not print a governance-specific cleared/remained
   summary. Governance changes are evaluated on the next runtime tick and are
   visible through `millrace status` and the basic daemon monitor.
+- `clear-stale-state` is the supported recovery command after an old
+  closure-target invariant failure leaves an unrelated root spec half-claimed.
+  It requeues active work items and preserves the open closure target.
 
 ## Planning Commands
 

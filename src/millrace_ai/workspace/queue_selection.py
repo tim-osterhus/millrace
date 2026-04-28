@@ -28,7 +28,11 @@ class QueueClaim:
     path: Path
 
 
-def claim_next_execution_task(paths: WorkspacePaths) -> QueueClaim | None:
+def claim_next_execution_task(
+    paths: WorkspacePaths,
+    *,
+    root_spec_id: str | None = None,
+) -> QueueClaim | None:
     active = _list_markdown_files(paths.tasks_active_dir)
     if len(active) > 1:
         raise QueueStateError("Multiple active execution tasks found")
@@ -36,7 +40,7 @@ def claim_next_execution_task(paths: WorkspacePaths) -> QueueClaim | None:
         return None
 
     while True:
-        candidate = _select_oldest_eligible_task(paths)
+        candidate = _select_oldest_eligible_task(paths, root_spec_id=root_spec_id)
         if candidate is None:
             return None
 
@@ -49,7 +53,11 @@ def claim_next_execution_task(paths: WorkspacePaths) -> QueueClaim | None:
         return QueueClaim(work_item_kind=WorkItemKind.TASK, work_item_id=task_id, path=destination)
 
 
-def claim_next_planning_item(paths: WorkspacePaths) -> QueueClaim | None:
+def claim_next_planning_item(
+    paths: WorkspacePaths,
+    *,
+    root_spec_id: str | None = None,
+) -> QueueClaim | None:
     active_specs = _list_markdown_files(paths.specs_active_dir)
     active_incidents = _list_markdown_files(paths.incidents_active_dir)
     if len(active_specs) + len(active_incidents) > 1:
@@ -58,7 +66,10 @@ def claim_next_planning_item(paths: WorkspacePaths) -> QueueClaim | None:
         return None
 
     while True:
-        incident_candidate = _select_oldest_incident(paths.incidents_incoming_dir)
+        incident_candidate = _select_oldest_incident(
+            paths.incidents_incoming_dir,
+            root_spec_id=root_spec_id,
+        )
         if incident_candidate is not None:
             incident_id, source = incident_candidate
             destination = paths.incidents_active_dir / source.name
@@ -72,7 +83,7 @@ def claim_next_planning_item(paths: WorkspacePaths) -> QueueClaim | None:
                 path=destination,
             )
 
-        spec_candidate = _select_oldest_spec(paths.specs_queue_dir)
+        spec_candidate = _select_oldest_spec(paths.specs_queue_dir, root_spec_id=root_spec_id)
         if spec_candidate is None:
             return None
 
@@ -119,7 +130,11 @@ def _select_oldest_task(directory: Path) -> tuple[str, Path] | None:
     )
 
 
-def _select_oldest_eligible_task(paths: WorkspacePaths) -> tuple[str, Path] | None:
+def _select_oldest_eligible_task(
+    paths: WorkspacePaths,
+    *,
+    root_spec_id: str | None = None,
+) -> tuple[str, Path] | None:
     completed_task_ids = {path.stem for path in _list_markdown_files(paths.tasks_done_dir)}
     candidates: list[tuple[datetime, str, Path]] = []
     for path in _list_markdown_files(paths.tasks_queue_dir):
@@ -142,6 +157,8 @@ def _select_oldest_eligible_task(paths: WorkspacePaths) -> tuple[str, Path] | No
                 f"filename stem does not match task_id: expected {task_id}, found {path.stem}",
             )
             continue
+        if root_spec_id is not None and _effective_root_spec_id(document) != root_spec_id:
+            continue
         if not _task_dependencies_satisfied(document, completed_task_ids):
             continue
         candidates.append((document.created_at, task_id, path))
@@ -154,21 +171,31 @@ def _select_oldest_eligible_task(paths: WorkspacePaths) -> tuple[str, Path] | No
     return task_id, path
 
 
-def _select_oldest_spec(directory: Path) -> tuple[str, Path] | None:
+def _select_oldest_spec(
+    directory: Path,
+    *,
+    root_spec_id: str | None = None,
+) -> tuple[str, Path] | None:
     return _select_oldest_document(
         directory=directory,
         model=SpecDocument,
         id_attr="spec_id",
         timestamp_attr="created_at",
+        root_spec_id=root_spec_id,
     )
 
 
-def _select_oldest_incident(directory: Path) -> tuple[str, Path] | None:
+def _select_oldest_incident(
+    directory: Path,
+    *,
+    root_spec_id: str | None = None,
+) -> tuple[str, Path] | None:
     return _select_oldest_document(
         directory=directory,
         model=IncidentDocument,
         id_attr="incident_id",
         timestamp_attr="opened_at",
+        root_spec_id=root_spec_id,
     )
 
 
@@ -187,6 +214,7 @@ def _select_oldest_document(
     model: type[_DocT],
     id_attr: str,
     timestamp_attr: str,
+    root_spec_id: str | None = None,
 ) -> tuple[str, Path] | None:
     candidates: list[tuple[datetime, str, Path]] = []
     for path in _list_markdown_files(directory):
@@ -208,6 +236,12 @@ def _select_oldest_document(
                 path,
                 f"filename stem does not match {id_attr}: expected {item_id}, found {path.stem}",
             )
+            continue
+        if (
+            root_spec_id is not None
+            and isinstance(document, (TaskDocument, SpecDocument, IncidentDocument))
+            and _effective_root_spec_id(document) != root_spec_id
+        ):
             continue
         timestamp = getattr(document, timestamp_attr)
         candidates.append((timestamp, item_id, path))
@@ -260,6 +294,36 @@ def list_open_lineage_work_ids(
     return tuple(work_item_ids)
 
 
+def list_deferred_root_spec_ids(
+    paths: WorkspacePaths,
+    *,
+    open_root_spec_id: str,
+) -> tuple[str, ...]:
+    """Return queued root specs deferred by the current workspace-global closure target."""
+
+    deferred: list[tuple[datetime, str]] = []
+    for path in _list_markdown_files(paths.specs_queue_dir):
+        try:
+            document = parse_work_document_as(
+                path.read_text(encoding="utf-8"),
+                model=SpecDocument,
+                path=path,
+            )
+        except FileNotFoundError:
+            continue
+        except (ValidationError, ValueError):
+            continue
+        if not _is_root_spec_document(document):
+            continue
+        effective_root_spec_id = _effective_root_spec_id(document)
+        if effective_root_spec_id is None or effective_root_spec_id == open_root_spec_id:
+            continue
+        deferred.append((document.created_at, document.spec_id))
+
+    deferred.sort(key=lambda item: (item[0], item[1]))
+    return tuple(spec_id for _created_at, spec_id in deferred)
+
+
 def _effective_root_spec_id(
     document: TaskDocument | SpecDocument | IncidentDocument,
 ) -> str | None:
@@ -272,6 +336,14 @@ def _effective_root_spec_id(
     if document.source_type in {"idea", "manual"}:
         return document.spec_id
     return None
+
+
+def _is_root_spec_document(document: SpecDocument) -> bool:
+    if document.root_spec_id is not None:
+        return document.spec_id == document.root_spec_id
+    if document.parent_spec_id is not None and document.parent_spec_id.strip().lower() != "none":
+        return False
+    return document.source_type in {"idea", "manual"}
 
 
 def _lineage_scan_specs(
@@ -329,5 +401,6 @@ __all__ = [
     "claim_next_execution_task",
     "claim_next_learning_request",
     "claim_next_planning_item",
+    "list_deferred_root_spec_ids",
     "list_open_lineage_work_ids",
 ]

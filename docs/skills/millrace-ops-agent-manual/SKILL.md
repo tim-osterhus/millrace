@@ -301,6 +301,9 @@ Important monitoring note:
   runner posture, including missing harness binaries
 - `millrace status` exposes `pause_sources` and usage-governance blockers when
   usage governance is enabled or has persisted state
+- `millrace status` exposes the open closure target and
+  `planning_root_specs_deferred_by_closure_target` when bulk root-spec intake
+  is backpressured behind the v1 one-open-target policy
 - `millrace skills create` and `millrace skills improve` require a
   learning-enabled mode such as `learning_codex` or `learning_pi`
 
@@ -337,6 +340,9 @@ Use intervention commands only when the runtime state actually justifies them:
   active usage-governance blocker
 - `control stop` to request daemon shutdown
 - `planning retry-active` only for planning-plane retry intent
+- `clear-stale-state` to recover stale active files, including older
+  closure-target invariant failures that left an unrelated root spec
+  half-claimed; preserve the open closure target and avoid manual file moves
 - `config reload` when config changed and daemon-safe recompile is desired
 - `doctor` when workspace integrity or ownership state is in doubt
 

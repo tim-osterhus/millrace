@@ -58,11 +58,11 @@ class QueueStore:
     def enqueue_learning_request(self, doc: LearningRequestDocument) -> Path:
         return enqueue_learning_request(self.paths, doc)
 
-    def claim_next_execution_task(self) -> QueueClaim | None:
-        return claim_next_execution_task(self.paths)
+    def claim_next_execution_task(self, *, root_spec_id: str | None = None) -> QueueClaim | None:
+        return claim_next_execution_task(self.paths, root_spec_id=root_spec_id)
 
-    def claim_next_planning_item(self) -> QueueClaim | None:
-        return claim_next_planning_item(self.paths)
+    def claim_next_planning_item(self, *, root_spec_id: str | None = None) -> QueueClaim | None:
+        return claim_next_planning_item(self.paths, root_spec_id=root_spec_id)
 
     def claim_next_learning_request(self) -> QueueClaim | None:
         return claim_next_learning_request(self.paths)

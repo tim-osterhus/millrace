@@ -155,8 +155,10 @@ Per tick:
 5. Evaluate opt-in usage governance and respect pause gates.
 6. Run stale-state reconciliation and recovery routing.
 7. Refresh queue depths again.
-8. Claim planning, execution, or learning work item.
-9. If no claimable work remains, consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
+8. Claim planning, execution, or learning work item. When a closure target is
+   already open, the runtime claims only same-lineage execution/planning work
+   and leaves unrelated queued root specs behind the closure target.
+9. If no same-lineage work remains, consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
 10. Re-evaluate usage governance before dispatching an active stage.
 11. Execute one stage through the configured runner adapter.
 12. Route result markers, record post-stage usage, and persist snapshot/status/counters/events.
@@ -170,6 +172,9 @@ The implementation mirrors that ordering directly:
 Idle:
 
 - If no claimable work exists and no eligible completion audit exists, runtime emits `no_work` and keeps the daemon loop alive unless stop requested.
+- If unrelated root specs are queued while a closure target is open, runtime
+  emits `closure_target_backpressure`, keeps the daemon alive, and reports
+  `planning_root_specs_deferred_by_closure_target` through `millrace status`.
 
 Usage governance notes:
 

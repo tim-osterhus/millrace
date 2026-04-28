@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from millrace_ai.contracts import (
+    ClosureTargetState,
     ExecutionStageName,
     MailboxCommand,
     Plane,
@@ -35,6 +36,7 @@ from millrace_ai.state_store import (
     save_snapshot,
     set_execution_status,
 )
+from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -431,6 +433,43 @@ def test_clear_stale_state_directly_resets_runtime_state(tmp_path: Path) -> None
     assert load_execution_status(paths) == "### IDLE"
     assert load_planning_status(paths) == "### IDLE"
     assert load_recovery_counters(paths).entries == ()
+
+
+def test_clear_stale_state_requeues_half_claimed_spec_and_preserves_open_closure_target(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+    _activate_spec(paths, "spec-root-002")
+    _save_active_spec_snapshot(paths, spec_id="spec-root-002", daemon_running=False)
+    control = RuntimeControl(paths)
+
+    result = control.clear_stale_state(reason="recover closure backpressure half claim")
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert (paths.specs_active_dir / "spec-root-002.md").exists() is False
+    assert (paths.specs_queue_dir / "spec-root-002.md").is_file()
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+    assert target.closure_open is True
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_plane is None
+    assert snapshot.active_work_item_id is None
 
 
 def test_clear_stale_state_uses_mailbox_when_daemon_is_running(tmp_path: Path) -> None:

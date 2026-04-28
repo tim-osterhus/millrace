@@ -66,9 +66,10 @@ The compiled planning-loop `completion_behavior` for `planning.standard` is:
 
 Runtime behavior is:
 
-1. claim planning work if available
-2. claim execution work if available
-3. if no claimable work remains, inspect the compiled completion behavior
+1. if no closure target is open, claim normal planning/execution/learning work
+2. if one closure target is open, defer unrelated queued root specs and claim
+   only same-lineage execution/planning work
+3. if no same-lineage work remains, inspect the compiled completion behavior
 4. locate the single open closure target
 5. if no open target exists, try to backfill one from the latest root spec that
    already carries root-lineage ids
@@ -79,6 +80,27 @@ Runtime behavior is:
 If no open target exists and the latest root spec is still missing root-lineage
 metadata, the runtime marks planning blocked and emits a diagnosable runtime
 event instead of silently idling through required closure behavior.
+
+## Bulk Root-Spec Intake Backpressure
+
+Watcher intake may enqueue several independent root specs at once. That is
+valid input pressure. While the v1 one-open-closure-target policy is active,
+Millrace serializes those independent root lineages instead of opening a second
+target.
+
+When one closure target is open:
+
+- queued root specs for other lineages stay in `millrace-agents/specs/queue/`
+- same-lineage tasks and remediation planning items remain claimable
+- Arbiter is activated before an unrelated root spec is claimed once same-lineage work drains
+- `closure_target_backpressure` events record the open root spec and deferred root specs
+- `millrace status` reports `planning_root_specs_deferred_by_closure_target`
+
+If an older workspace is already in a half-claimed state after a closure-target
+invariant failure, use `millrace control clear-stale-state --workspace <workspace>`
+while no daemon owns the workspace. The command requeues active work items and
+preserves the open closure target so the next daemon start can continue the
+current lineage.
 
 ## Arbiter Request Contract
 
@@ -142,7 +164,8 @@ change.
 The current operator-facing surfaces expose this behavior directly:
 
 - `millrace compile show` prints frozen `completion_behavior`
-- `millrace status` prints the active open closure target and latest verdict/report paths
+- `millrace status` prints the active open closure target, deferred-root count,
+  and latest verdict/report paths
 - `millrace runs show` prints request kind and closure-target lineage for Arbiter runs
 
 Use those surfaces before opening raw JSON files unless you need the full

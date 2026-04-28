@@ -13,6 +13,11 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.15.8] - 2026-04-27
+
+`0.15.8` hardens upgrade/config surfaces and serializes bulk watcher root-spec
+intake behind the v1 one-open-closure-target policy.
+
 ### Added
 
 - Added `millrace --version` and `millrace version` for package-version
@@ -25,6 +30,10 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Changed
 
+- Bulk watcher intake now respects the v1 one-open-closure-target policy as
+  queue backpressure: unrelated root specs remain queued while the active root
+  lineage runs or reaches Arbiter, status reports the deferred-root count, and
+  direct stale-state recovery preserves the open closure target.
 - `stages.<stage>` and `runners.codex.permission_by_stage` now accept learning
   stages such as `professor`.
 - Workspace doctor now resolves the selected mode against workspace-local
@@ -423,7 +432,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.7...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.8...HEAD
+[0.15.8]: https://github.com/tim-osterhus/millrace/compare/v0.15.7...v0.15.8
 [0.15.7]: https://github.com/tim-osterhus/millrace/compare/v0.15.6...v0.15.7
 [0.15.6]: https://github.com/tim-osterhus/millrace/compare/v0.15.5...v0.15.6
 [0.15.5]: https://github.com/tim-osterhus/millrace/compare/v0.15.4...v0.15.5
