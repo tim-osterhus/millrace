@@ -15,6 +15,7 @@ from millrace_ai.state_store import (
     save_snapshot,
 )
 
+from .active_runs import snapshot_without_active_plane
 from .handoff_incidents import enqueue_handoff_incident
 
 if TYPE_CHECKING:
@@ -77,13 +78,16 @@ def apply_idle_router_decision(engine: RuntimeEngine, stage_result: StageResultE
     mark_active_work_item_complete(engine, stage_result)
     engine.snapshot = _cleared_active_snapshot(
         engine,
+        plane=stage_result.plane,
         current_failure_class=None,
-        execution_status_marker="### IDLE",
-        planning_status_marker="### IDLE",
-        learning_status_marker="### IDLE",
     )
     save_snapshot(engine.paths, engine.snapshot)
-    for plane in (Plane.EXECUTION, Plane.PLANNING, Plane.LEARNING):
+    planes_to_idle = (
+        (stage_result.plane,)
+        if engine.snapshot.active_runs_by_plane
+        else (Plane.EXECUTION, Plane.PLANNING, Plane.LEARNING)
+    )
+    for plane in planes_to_idle:
         engine._set_plane_status_marker(
             plane=plane,
             marker="### IDLE",
@@ -112,6 +116,7 @@ def apply_handoff_router_decision(
     )
     engine.snapshot = _cleared_active_snapshot(
         engine,
+        plane=stage_result.plane,
         current_failure_class=decision.failure_class,
     )
     save_snapshot(engine.paths, engine.snapshot)
@@ -135,6 +140,7 @@ def apply_blocked_router_decision(
     )
     engine.snapshot = _cleared_active_snapshot(
         engine,
+        plane=stage_result.plane,
         current_failure_class=decision.failure_class,
     )
     save_snapshot(engine.paths, engine.snapshot)
@@ -149,22 +155,20 @@ def apply_blocked_router_decision(
 def _cleared_active_snapshot(
     engine: RuntimeEngine,
     *,
+    plane: Plane,
     current_failure_class: str | None,
     execution_status_marker: str | None = None,
     planning_status_marker: str | None = None,
     learning_status_marker: str | None = None,
 ) -> RuntimeSnapshot:
     assert engine.snapshot is not None
+    snapshot = snapshot_without_active_plane(
+        engine.snapshot,
+        plane=plane,
+        now=engine._now(),
+        current_failure_class=current_failure_class,
+    )
     update = {
-        "active_plane": None,
-        "active_stage": None,
-        "active_node_id": None,
-        "active_stage_kind_id": None,
-        "active_run_id": None,
-        "active_work_item_kind": None,
-        "active_work_item_id": None,
-        "active_since": None,
-        "current_failure_class": current_failure_class,
         "troubleshoot_attempt_count": 0,
         "mechanic_attempt_count": 0,
         "fix_cycle_count": 0,
@@ -177,7 +181,7 @@ def _cleared_active_snapshot(
         update["planning_status_marker"] = planning_status_marker
     if learning_status_marker is not None:
         update["learning_status_marker"] = learning_status_marker
-    return engine.snapshot.model_copy(update=update)
+    return snapshot.model_copy(update=update)
 
 
 __all__ = [

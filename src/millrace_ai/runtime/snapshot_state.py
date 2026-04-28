@@ -30,6 +30,7 @@ def idle_snapshot_update(
         "active_run_id": None,
         "active_work_item_kind": None,
         "active_work_item_id": None,
+        "active_runs_by_plane": {},
         "active_since": None,
         "current_failure_class": None,
         "troubleshoot_attempt_count": 0,

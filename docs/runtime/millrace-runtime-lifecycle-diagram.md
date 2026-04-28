@@ -190,7 +190,9 @@ flowchart LR
   reconcile.
 - Refresh queue depths again before claim or activation.
 - Re-check usage governance immediately before stage dispatch.
-- Exactly one stage runs per tick at most.
+- Daemon mode uses a compiled plane scheduler. Default modes remain serial.
+  Learning-enabled modes may run one Learning stage concurrently with one
+  permitted foreground Planning or Execution stage.
 - Usage governance can pause before claim/dispatch and records stage-result
   token usage after routing.
 - Active stages can bypass fresh claim and go straight to request build.
@@ -212,10 +214,12 @@ flowchart LR
 Key invariants preserved by this chart:
 
 - compile happens at startup and again only on explicit config reload
-- planning and execution are separate claim domains inside one scheduler, not
-  concurrent lanes
-- learning-enabled modes add learning requests and status markers, while the
-  current tick executor still runs at most one active stage per tick
+- planning and execution are separate foreground claim domains and remain
+  mutually exclusive in shipped modes
+- learning-enabled modes add learning requests and status markers, and may run
+  one Learning lane beside the permitted foreground lane
+- runtime-owned mutation remains single-writer and serialized even when daemon
+  workers run concurrently
 - the runtime applies stage results and mutates authoritative state after each
   execution; stages do not own queue mutation directly
 - `manager`, `updater`, and successful Arbiter outcomes return the runtime to

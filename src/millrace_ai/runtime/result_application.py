@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
 from millrace_ai.contracts.stage_metadata import stage_plane
 from millrace_ai.router import RouterAction, RouterDecision
 
+from .active_runs import snapshot_projected_to_plane, snapshot_with_next_stage_for_plane
 from .closure_transitions import apply_closure_target_router_decision
 from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
 from .error_recovery import clear_runtime_error_context
@@ -39,9 +40,10 @@ def route_stage_result(engine: RuntimeEngine, stage_result: StageResultEnvelope)
     assert engine.counters is not None
     assert engine.compiled_plan is not None
 
+    projected_snapshot = snapshot_projected_to_plane(engine.snapshot, stage_result.plane)
     decision = route_stage_result_from_graph(
         engine.compiled_plan,
-        engine.snapshot,
+        projected_snapshot,
         stage_result,
         engine.counters,
         max_fix_cycles=engine.config.recovery.max_fix_cycles if engine.config else 2,
@@ -70,16 +72,14 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
     if decision.action is RouterAction.RUN_STAGE:
         next_stage = decision.next_stage
         assert next_stage is not None
-        updated = engine.snapshot.model_copy(
-            update={
-                "active_plane": _plane_for_stage(next_stage),
-                "active_stage": next_stage,
-                "active_node_id": decision.next_node_id,
-                "active_stage_kind_id": decision.next_stage_kind_id,
-                "active_since": engine._now(),
-                "current_failure_class": decision.failure_class,
-                "updated_at": engine._now(),
-            }
+        updated = snapshot_with_next_stage_for_plane(
+            engine.snapshot,
+            plane=stage_result.plane,
+            stage=next_stage,
+            node_id=decision.next_node_id or next_stage.value,
+            stage_kind_id=decision.next_stage_kind_id or next_stage.value,
+            now=engine._now(),
+            current_failure_class=decision.failure_class,
         )
         engine.snapshot = increment_route_counters(engine, updated, decision, stage_result)
         return

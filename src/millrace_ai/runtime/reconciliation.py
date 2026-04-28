@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName, RecoveryCounters, RuntimeSnapshot, StageName
 from millrace_ai.state_store import ReconciliationSignal, collect_reconciliation_signals, load_recovery_counters, save_snapshot
 
+from .active_runs import active_run_for_plane, snapshot_with_active_run
+
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
@@ -91,16 +93,24 @@ def apply_reconciliation_signals(
     if stage is None:
         return snapshot
     node_id, stage_kind_id = _compiled_identity_for_stage(engine, plane=plane, stage=stage)
-    updated = snapshot.model_copy(
+    active_run = active_run_for_plane(snapshot, plane)
+    if active_run is None:
+        return snapshot
+    now = engine._now()
+    updated_active_run = active_run.model_copy(
         update={
-            "active_plane": plane,
-            "active_stage": stage,
-            "active_node_id": node_id,
-            "active_stage_kind_id": stage_kind_id,
-            "active_run_id": engine._new_run_id(),
-            "active_since": engine._now(),
-            "current_failure_class": signal.failure_class,
+            "stage": stage,
+            "node_id": node_id,
+            "stage_kind_id": stage_kind_id,
+            "run_id": engine._new_run_id(),
+            "active_since": now,
         }
+    )
+    updated = snapshot_with_active_run(
+        snapshot,
+        updated_active_run,
+        now=now,
+        current_failure_class=signal.failure_class,
     )
     return set_recovery_counters(engine, updated, counters, signal.failure_class, stage)
 

@@ -92,6 +92,12 @@ Updating the deployed Millrace runtime is a two-step operator action:
 installed package version. Use `millrace --version` or `millrace version` to
 confirm which runtime package will execute future ticks.
 
+Runtime scheduler behavior comes from the installed package. A package update
+to a version with plane-concurrent daemon scheduling changes future daemon
+execution after restart without requiring a baseline refresh. A baseline
+upgrade is still needed when the workspace should adopt packaged mode,
+entrypoint, or skill asset changes.
+
 ## Upgrade Preview
 
 Use preview first:

@@ -28,6 +28,7 @@ from millrace_ai.state_store import save_snapshot
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
+from .active_runs import active_run_for_plane
 from .error_recovery import build_runtime_error_request_fields
 from .skill_evidence import write_skill_revision_evidence
 
@@ -39,12 +40,24 @@ def build_stage_run_request(
     stage_plan: MaterializedGraphNodePlan,
 ) -> StageRunRequest:
     assert engine.snapshot is not None
+    active_run = active_run_for_plane(engine.snapshot, stage_plan.plane)
+    active_work_item_kind = (
+        active_run.work_item_kind if active_run is not None else engine.snapshot.active_work_item_kind
+    )
+    active_work_item_id = (
+        active_run.work_item_id if active_run is not None else engine.snapshot.active_work_item_id
+    )
+    request_kind = (
+        active_run.request_kind
+        if active_run is not None
+        else _request_kind_for_active_kind(engine.snapshot.active_work_item_kind)
+    )
     active_path = active_work_item_path(
         engine,
-        engine.snapshot.active_work_item_kind,
-        engine.snapshot.active_work_item_id,
+        active_work_item_kind,
+        active_work_item_id,
     )
-    run_id = engine.snapshot.active_run_id or new_run_id()
+    run_id = active_run.run_id if active_run is not None else engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     runtime_error_fields = build_runtime_error_request_fields(engine)
@@ -75,13 +88,13 @@ def build_stage_run_request(
         running_status_marker=stage_plan.running_status_marker,
         legal_terminal_markers=_legal_terminal_markers_for_stage_plan(stage_plan),
         allowed_result_classes_by_outcome=stage_plan.allowed_result_classes_by_outcome,
-        request_kind=_request_kind_for_active_kind(engine.snapshot.active_work_item_kind),
+        request_kind=request_kind,
         entrypoint_path=str(engine.paths.runtime_root / stage_plan.entrypoint_path),
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
         attached_skill_paths=attached_skill_paths,
-        active_work_item_kind=engine.snapshot.active_work_item_kind,
-        active_work_item_id=engine.snapshot.active_work_item_id,
+        active_work_item_kind=active_work_item_kind,
+        active_work_item_id=active_work_item_id,
         active_work_item_path=str(active_path) if active_path is not None else None,
         run_dir=str(run_dir),
         summary_status_path=str(_status_file_for_plane(engine, stage_plan.plane)),
@@ -110,7 +123,8 @@ def build_closure_target_stage_run_request(
     target_state: ClosureTargetState,
 ) -> StageRunRequest:
     assert engine.snapshot is not None
-    run_id = engine.snapshot.active_run_id or new_run_id()
+    active_run = active_run_for_plane(engine.snapshot, stage_plan.plane)
+    run_id = active_run.run_id if active_run is not None else engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     stage_name = _stage_name_for_node_plan(stage_plan)

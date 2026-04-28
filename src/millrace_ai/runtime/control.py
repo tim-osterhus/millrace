@@ -21,6 +21,7 @@ from millrace_ai.contracts import (
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.state_store import load_snapshot
 
+from .active_runs import active_run_for_plane
 from .control_mailbox import MailboxControlRouter
 from .control_mutations import DirectControlMutations
 
@@ -101,15 +102,15 @@ class RuntimeControl:
         issuer: str = "operator",
     ) -> ControlActionResult:
         snapshot = load_snapshot(self.paths)
-        if snapshot.active_plane is not Plane.PLANNING:
-            active_plane = snapshot.active_plane.value if snapshot.active_plane is not None else "none"
+        if active_run_for_plane(snapshot, Plane.PLANNING) is None:
+            active_planes = ", ".join(plane.value for plane in snapshot.active_runs_by_plane) or "none"
             return ControlActionResult(
                 action=MailboxCommand.RETRY_ACTIVE,
                 mode="direct",
                 applied=False,
                 detail=(
                     "planning retry requires active planning work; "
-                    f"current active plane is {active_plane}"
+                    f"current active planes are {active_planes}"
                 ),
             )
 

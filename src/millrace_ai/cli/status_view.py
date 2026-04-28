@@ -48,6 +48,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"active_stage_kind_id: {_status_value(snapshot.active_stage_kind_id)}",
         f"active_work_item_kind: {_status_value(snapshot.active_work_item_kind)}",
         f"active_work_item_id: {_status_value(snapshot.active_work_item_id)}",
+        f"active_run_count: {len(snapshot.active_runs_by_plane)}",
         f"execution_queue_depth: {execution_queue_depth}",
         f"planning_queue_depth: {planning_queue_depth}",
         f"learning_queue_depth: {learning_queue_depth}",
@@ -55,6 +56,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"planning_status_marker: {snapshot.planning_status_marker}",
         f"learning_status_marker: {snapshot.learning_status_marker}",
     ]
+    lines.extend(_render_active_run_lines(snapshot.active_runs_by_plane))
     lines.extend(_render_baseline_manifest_lines(baseline_manifest))
     lines.extend(_render_compile_currentness_lines(currentness, currentness_error))
     lines.extend(_render_usage_governance_status_lines(paths))
@@ -69,6 +71,30 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         ):
             if count > 0:
                 lines.append(f"{label}: {count}")
+    return tuple(lines)
+
+
+def _render_active_run_lines(active_runs_by_plane: object) -> tuple[str, ...]:
+    if not isinstance(active_runs_by_plane, dict) or not active_runs_by_plane:
+        return ()
+    lines: list[str] = []
+    for plane in ("planning", "execution", "learning"):
+        active_run = active_runs_by_plane.get(_plane_key(plane))
+        if active_run is None:
+            active_run = active_runs_by_plane.get(plane)
+        if active_run is None:
+            continue
+        lines.append(
+            "active_run: "
+            f"plane={_status_value(getattr(active_run, 'plane', plane))} "
+            f"stage={_status_value(getattr(active_run, 'stage', None))} "
+            f"node={_status_value(getattr(active_run, 'node_id', None))} "
+            f"stage_kind={_status_value(getattr(active_run, 'stage_kind_id', None))} "
+            f"request_kind={_status_value(getattr(active_run, 'request_kind', None))} "
+            f"work_item_kind={_status_value(getattr(active_run, 'work_item_kind', None))} "
+            f"work_item_id={_status_value(getattr(active_run, 'work_item_id', None))} "
+            f"run={_short_run_handle(getattr(active_run, 'run_id', None))}"
+        )
     return tuple(lines)
 
 
@@ -252,6 +278,22 @@ def _status_value(value: object) -> str:
     if isinstance(enum_value, str):
         return enum_value
     return str(value)
+
+
+def _plane_key(value: str) -> object:
+    from millrace_ai.contracts import Plane
+
+    return Plane(value)
+
+
+def _short_run_handle(run_id: object) -> str:
+    value = _status_value(run_id)
+    if not value.startswith("run-"):
+        return value
+    suffix = value.removeprefix("run-")
+    if len(suffix) >= 12 and all(char in "0123456789abcdefABCDEF" for char in suffix):
+        return suffix[:12]
+    return value
 
 
 __all__ = ["_print_status", "_print_statuses", "_render_status_lines"]

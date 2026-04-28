@@ -19,6 +19,7 @@ import millrace_ai.runtime.watcher_intake as watcher_intake
 from millrace_ai.architecture import CompiledRunPlan, MaterializedGraphNodePlan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
+    ActiveRunState,
     ClosureTargetState,
     MailboxCommandEnvelope,
     Plane,
@@ -35,6 +36,7 @@ from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_pat
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
+from millrace_ai.runtime.active_runs import active_run_for_plane, snapshot_without_active_plane
 from millrace_ai.runtime.monitoring import NullRuntimeMonitorSink, RuntimeMonitorEvent, RuntimeMonitorSink
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import (
@@ -343,28 +345,19 @@ class RuntimeEngine:
 
     def _retry_active(self, *, reason: str, scope: Plane | None = None) -> None:
         assert self.snapshot is not None
-        if self.snapshot.active_work_item_kind is None or self.snapshot.active_work_item_id is None:
+        active_run = self._active_run_for_retry(scope=scope)
+        if active_run is None:
             return
-        if scope is not None and self.snapshot.active_plane is not scope:
-            write_runtime_event(
-                self.paths,
-                event_type="retry_active_skipped",
-                data={
-                    "requested_scope": scope.value,
-                    "active_plane": self.snapshot.active_plane.value if self.snapshot.active_plane else None,
-                    "work_item_kind": (
-                        self.snapshot.active_work_item_kind.value
-                        if self.snapshot.active_work_item_kind
-                        else None
-                    ),
-                    "work_item_id": self.snapshot.active_work_item_id,
-                },
-            )
+        if scope is None and len(self.snapshot.active_runs_by_plane) > 1:
+            self._emit_retry_active_skipped(scope=scope, reason="multiple_active_planes")
+            return
+        if active_run.work_item_kind is None or active_run.work_item_id is None:
+            self._emit_retry_active_skipped(scope=scope, reason="non_retryable_active_run")
             return
 
         queue = QueueStore(self.paths)
-        work_item_kind = self.snapshot.active_work_item_kind
-        work_item_id = self.snapshot.active_work_item_id
+        work_item_kind = active_run.work_item_kind
+        work_item_id = active_run.work_item_id
         try:
             self._requeue_active_item(
                 queue,
@@ -375,17 +368,63 @@ class RuntimeEngine:
         except QueueStateError:
             return
 
-        self._reset_runtime_to_idle(
-            process_running=True,
-            clear_stop_requested=False,
-            clear_paused=False,
-        )
+        self._clear_retry_active_plane(active_run.plane)
         reset_forward_progress_counters(
             self.paths,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
         )
         self.counters = load_recovery_counters(self.paths)
+
+    def _active_run_for_retry(self, *, scope: Plane | None) -> ActiveRunState | None:
+        assert self.snapshot is not None
+        if scope is not None:
+            return active_run_for_plane(self.snapshot, scope)
+        if len(self.snapshot.active_runs_by_plane) == 1:
+            return next(iter(self.snapshot.active_runs_by_plane.values()))
+        if len(self.snapshot.active_runs_by_plane) > 1:
+            return next(iter(self.snapshot.active_runs_by_plane.values()))
+        if self.snapshot.active_plane is None:
+            return None
+        return active_run_for_plane(self.snapshot, self.snapshot.active_plane)
+
+    def _emit_retry_active_skipped(self, *, scope: Plane | None, reason: str) -> None:
+        assert self.snapshot is not None
+        write_runtime_event(
+            self.paths,
+            event_type="retry_active_skipped",
+            data={
+                "reason": reason,
+                "requested_scope": scope.value if scope is not None else None,
+                "active_planes": [plane.value for plane in self.snapshot.active_runs_by_plane],
+            },
+        )
+
+    def _clear_retry_active_plane(self, plane: Plane) -> None:
+        assert self.snapshot is not None
+        remaining = dict(self.snapshot.active_runs_by_plane)
+        remaining.pop(plane, None)
+        if not remaining:
+            self._reset_runtime_to_idle(
+                process_running=True,
+                clear_stop_requested=False,
+                clear_paused=False,
+            )
+            return
+
+        self.snapshot = snapshot_without_active_plane(
+            self.snapshot,
+            plane=plane,
+            now=self._now(),
+            current_failure_class=None,
+        )
+        save_snapshot(self.paths, self.snapshot)
+        self._set_plane_status_marker(
+            plane=plane,
+            marker=IDLE_STATUS_MARKER,
+            run_id=None,
+            source="retry_active",
+        )
 
     def _requeue_all_active_items(self, queue: QueueStore, *, reason: str) -> int:
         requeued_count = 0

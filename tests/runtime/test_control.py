@@ -9,14 +9,18 @@ import pytest
 from pydantic import ValidationError
 
 from millrace_ai.contracts import (
+    ActiveRunState,
     ClosureTargetState,
     ExecutionStageName,
+    LearningRequestDocument,
+    LearningStageName,
     MailboxCommand,
     Plane,
     PlanningStageName,
     RecoveryCounterEntry,
     RecoveryCounters,
     RuntimeMode,
+    RuntimeSnapshot,
     SpecDocument,
     TaskDocument,
     WorkItemKind,
@@ -29,12 +33,15 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import (
     load_execution_status,
+    load_learning_status,
     load_planning_status,
     load_recovery_counters,
     load_snapshot,
     save_recovery_counters,
     save_snapshot,
     set_execution_status,
+    set_learning_status,
+    set_planning_status,
 )
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
@@ -66,6 +73,26 @@ def _activate_task(paths, task_id: str) -> None:
     claim = queue.claim_next_execution_task()
     assert claim is not None
     assert claim.work_item_id == task_id
+
+
+def _learning_request_doc(learning_request_id: str) -> LearningRequestDocument:
+    return LearningRequestDocument(
+        learning_request_id=learning_request_id,
+        title=f"Learning {learning_request_id}",
+        requested_action="improve",
+        target_skill_id="checker-core",
+        target_stage="curator",
+        created_at=NOW,
+        created_by="tests",
+    )
+
+
+def _activate_learning_request(paths, learning_request_id: str) -> None:
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(_learning_request_doc(learning_request_id))
+    claim = queue.claim_next_learning_request()
+    assert claim is not None
+    assert claim.work_item_id == learning_request_id
 
 
 def _spec_doc(spec_id: str) -> SpecDocument:
@@ -147,6 +174,24 @@ def _save_active_spec_snapshot(
 
 def _pending_command_set(paths) -> set[MailboxCommand]:
     return {envelope.command for envelope in read_pending_mailbox_commands(paths)}
+
+
+def _save_multi_active_snapshot(paths, active_runs: dict[Plane, ActiveRunState]) -> None:
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        RuntimeSnapshot.model_validate(
+            {
+                **snapshot.model_dump(mode="python"),
+                "runtime_mode": RuntimeMode.DAEMON,
+                "process_running": False,
+                "paused": False,
+                "stop_requested": False,
+                "active_runs_by_plane": active_runs,
+                "updated_at": NOW,
+            }
+        ),
+    )
 
 
 def test_control_import_surface_is_a_runtime_facade() -> None:
@@ -341,6 +386,49 @@ def test_retry_active_uses_mailbox_when_daemon_is_running(tmp_path: Path) -> Non
     assert snapshot.active_work_item_id == "task-001"
 
 
+def test_retry_active_unscoped_rejects_multiple_active_planes(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    _activate_task(paths, "task-001")
+    _activate_learning_request(paths, "learn-001")
+    _save_multi_active_snapshot(
+        paths,
+        {
+            Plane.EXECUTION: ActiveRunState(
+                plane=Plane.EXECUTION,
+                stage=ExecutionStageName.BUILDER,
+                node_id="builder",
+                stage_kind_id="builder",
+                run_id="run-execution",
+                request_kind="active_work_item",
+                work_item_kind=WorkItemKind.TASK,
+                work_item_id="task-001",
+                active_since=NOW,
+            ),
+            Plane.LEARNING: ActiveRunState(
+                plane=Plane.LEARNING,
+                stage=LearningStageName.CURATOR,
+                node_id="curator",
+                stage_kind_id="curator",
+                run_id="run-learning",
+                request_kind="learning_request",
+                work_item_kind=WorkItemKind.LEARNING_REQUEST,
+                work_item_id="learn-001",
+                active_since=NOW,
+            ),
+        },
+    )
+    control = RuntimeControl(paths)
+
+    result = control.retry_active(reason="operator requested retry")
+
+    assert result.mode == "direct"
+    assert result.applied is False
+    assert "multiple active planes" in result.detail
+    assert (paths.tasks_active_dir / "task-001.md").is_file()
+    assert (paths.learning_requests_active_dir / "learn-001.md").is_file()
+    assert set(load_snapshot(paths).active_runs_by_plane) == {Plane.EXECUTION, Plane.LEARNING}
+
+
 def test_retry_active_planning_requeues_active_spec_when_daemon_is_not_running(
     tmp_path: Path,
 ) -> None:
@@ -355,6 +443,56 @@ def test_retry_active_planning_requeues_active_spec_when_daemon_is_not_running(
     assert result.applied is True
     assert (paths.specs_active_dir / "spec-001.md").exists() is False
     assert (paths.specs_queue_dir / "spec-001.md").is_file()
+
+
+def test_retry_active_planning_preserves_other_active_planes(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    _activate_spec(paths, "spec-001")
+    _activate_learning_request(paths, "learn-001")
+    set_planning_status(paths, "### PLANNER_RUNNING")
+    set_learning_status(paths, "### CURATOR_RUNNING")
+    _save_multi_active_snapshot(
+        paths,
+        {
+            Plane.PLANNING: ActiveRunState(
+                plane=Plane.PLANNING,
+                stage=PlanningStageName.PLANNER,
+                node_id="planner",
+                stage_kind_id="planner",
+                run_id="run-planning",
+                request_kind="active_work_item",
+                work_item_kind=WorkItemKind.SPEC,
+                work_item_id="spec-001",
+                active_since=NOW,
+            ),
+            Plane.LEARNING: ActiveRunState(
+                plane=Plane.LEARNING,
+                stage=LearningStageName.CURATOR,
+                node_id="curator",
+                stage_kind_id="curator",
+                run_id="run-learning",
+                request_kind="learning_request",
+                work_item_kind=WorkItemKind.LEARNING_REQUEST,
+                work_item_id="learn-001",
+                active_since=NOW,
+            ),
+        },
+    )
+    control = RuntimeControl(paths)
+
+    result = control.retry_active_planning(reason="operator requested planning retry")
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert (paths.specs_active_dir / "spec-001.md").exists() is False
+    assert (paths.specs_queue_dir / "spec-001.md").is_file()
+    assert (paths.learning_requests_active_dir / "learn-001.md").is_file()
+    snapshot = load_snapshot(paths)
+    assert set(snapshot.active_runs_by_plane) == {Plane.LEARNING}
+    assert snapshot.active_plane is Plane.LEARNING
+    assert snapshot.active_work_item_id == "learn-001"
+    assert load_planning_status(paths) == "### IDLE"
+    assert load_learning_status(paths) == "### CURATOR_RUNNING"
 
 
 def test_retry_active_planning_rejects_execution_active_work(tmp_path: Path) -> None:

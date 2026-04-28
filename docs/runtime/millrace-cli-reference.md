@@ -120,6 +120,12 @@ The default monitor mode is `none`; `millrace run daemon` does not print live
 monitor lines unless `--monitor basic` is passed explicitly. The existing
 daemon summary output remains unchanged.
 
+Daemon mode uses a compiled plane scheduler. Default modes remain serial.
+Learning-enabled modes may run one Learning stage concurrently with one
+permitted foreground Planning or Execution stage. Runtime-owned queue,
+snapshot, counter, status, and router mutation remains single-writer and
+serialized by the daemon supervisor.
+
 `--monitor basic` prints a compact terminal stream for visible daemon sessions:
 startup lifecycle context, baseline/currentness identity, loop and concurrency
 policy, status/queue snapshots, stage start and completion lines, router
@@ -148,6 +154,10 @@ Canonical operator form: `millrace status`
 Explicit subcommand form: `millrace status show`
 
 ### `millrace status`
+
+`millrace status` prints both the legacy foreground active projection and the
+canonical `active_run` lines for every active plane. When Learning is running
+beside a foreground lane, expect `active_run_count: 2` plus one line per plane.
 
 Prints runtime snapshot and queue depth for one workspace.
 When a failure class is active, status also shows the current failure class plus non-zero retry counters.
@@ -305,15 +315,25 @@ Pause/resume behavior:
 - `reload-config` does not print a governance-specific cleared/remained
   summary. Governance changes are evaluated on the next runtime tick and are
   visible through `millrace status` and the basic daemon monitor.
+- `reload-config` is deferred while active planes exist; the daemon requeues
+  the reload command and applies it at the next safe boundary after active
+  runs drain.
+- unscoped `retry-active` is valid only when exactly one retryable active work
+  item exists. If multiple planes are active, use a plane-scoped retry surface.
 - `clear-stale-state` is the supported recovery command after an old
   closure-target invariant failure leaves an unrelated root spec half-claimed.
-  It requeues active work items and preserves the open closure target.
+  It requeues active task, spec, incident, and learning-request artifacts,
+  clears `active_runs_by_plane`, and preserves the open closure target.
 
 ## Planning Commands
 
 ### `millrace planning retry-active --reason "..."`
 
-Requests a retry only when the active work is on the planning plane. If execution work is active instead, the runtime records a skipped retry action rather than mutating the wrong plane.
+Requests a retry only when the active work is on the planning plane. If
+execution or learning work is active instead, the runtime records a skipped
+retry action rather than mutating the wrong plane. If Planning and Learning are
+both active, the planning retry requeues only the Planning work item and leaves
+the Learning lane active.
 
 ## Config Commands
 

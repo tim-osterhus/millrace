@@ -16,9 +16,11 @@ from millrace_ai.state_store import (
 )
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
+from .active_runs import snapshot_without_active_plane
 from .handoff_incidents import enqueue_handoff_incident
 
 if TYPE_CHECKING:
+    from millrace_ai.contracts import RuntimeSnapshot
     from millrace_ai.runtime.engine import RuntimeEngine
 
 
@@ -49,25 +51,10 @@ def apply_closure_target_router_decision(
             }
         )
         save_closure_target_state(engine.paths, updated_target)
-        engine.snapshot = engine.snapshot.model_copy(
-            update={
-                "active_plane": None,
-                "active_stage": None,
-                "active_node_id": None,
-                "active_stage_kind_id": None,
-                "active_run_id": None,
-                "active_work_item_kind": None,
-                "active_work_item_id": None,
-                "active_since": None,
-                "current_failure_class": None,
-                "troubleshoot_attempt_count": 0,
-                "mechanic_attempt_count": 0,
-                "fix_cycle_count": 0,
-                "consultant_invocations": 0,
-                "execution_status_marker": "### IDLE",
-                "planning_status_marker": "### IDLE",
-                "updated_at": engine._now(),
-            }
+        engine.snapshot = _cleared_closure_active_snapshot(
+            engine,
+            current_failure_class=None,
+            planning_status_marker="### IDLE",
         )
         save_snapshot(engine.paths, engine.snapshot)
         engine._set_plane_status_marker(
@@ -103,23 +90,9 @@ def apply_closure_target_router_decision(
             return
         if decision.create_incident:
             enqueue_handoff_incident(engine, decision=decision, stage_result=stage_result)
-        engine.snapshot = engine.snapshot.model_copy(
-            update={
-                "active_plane": None,
-                "active_stage": None,
-                "active_node_id": None,
-                "active_stage_kind_id": None,
-                "active_run_id": None,
-                "active_work_item_kind": None,
-                "active_work_item_id": None,
-                "active_since": None,
-                "current_failure_class": decision.failure_class,
-                "troubleshoot_attempt_count": 0,
-                "mechanic_attempt_count": 0,
-                "fix_cycle_count": 0,
-                "consultant_invocations": 0,
-                "updated_at": engine._now(),
-            }
+        engine.snapshot = _cleared_closure_active_snapshot(
+            engine,
+            current_failure_class=decision.failure_class,
         )
         save_snapshot(engine.paths, engine.snapshot)
         engine.counters = load_recovery_counters(engine.paths)
@@ -134,23 +107,9 @@ def apply_closure_target_router_decision(
             }
         )
         save_closure_target_state(engine.paths, updated_target)
-        engine.snapshot = engine.snapshot.model_copy(
-            update={
-                "active_plane": None,
-                "active_stage": None,
-                "active_node_id": None,
-                "active_stage_kind_id": None,
-                "active_run_id": None,
-                "active_work_item_kind": None,
-                "active_work_item_id": None,
-                "active_since": None,
-                "current_failure_class": decision.failure_class,
-                "troubleshoot_attempt_count": 0,
-                "mechanic_attempt_count": 0,
-                "fix_cycle_count": 0,
-                "consultant_invocations": 0,
-                "updated_at": engine._now(),
-            }
+        engine.snapshot = _cleared_closure_active_snapshot(
+            engine,
+            current_failure_class=decision.failure_class,
         )
         save_snapshot(engine.paths, engine.snapshot)
         engine.counters = load_recovery_counters(engine.paths)
@@ -189,24 +148,10 @@ def _block_repeated_remediation_without_execution(
 ) -> None:
     assert engine.snapshot is not None
     failure_class = "closure_repeated_remediation_without_execution"
-    engine.snapshot = engine.snapshot.model_copy(
-        update={
-            "active_plane": None,
-            "active_stage": None,
-            "active_node_id": None,
-            "active_stage_kind_id": None,
-            "active_run_id": None,
-            "active_work_item_kind": None,
-            "active_work_item_id": None,
-            "active_since": None,
-            "current_failure_class": failure_class,
-            "troubleshoot_attempt_count": 0,
-            "mechanic_attempt_count": 0,
-            "fix_cycle_count": 0,
-            "consultant_invocations": 0,
-            "planning_status_marker": "### BLOCKED",
-            "updated_at": engine._now(),
-        }
+    engine.snapshot = _cleared_closure_active_snapshot(
+        engine,
+        current_failure_class=failure_class,
+        planning_status_marker="### BLOCKED",
     )
     save_snapshot(engine.paths, engine.snapshot)
     engine._set_plane_status_marker(
@@ -224,6 +169,31 @@ def _block_repeated_remediation_without_execution(
             "run_id": stage_result.run_id,
         },
     )
+
+
+def _cleared_closure_active_snapshot(
+    engine: RuntimeEngine,
+    *,
+    current_failure_class: str | None,
+    planning_status_marker: str | None = None,
+) -> RuntimeSnapshot:
+    assert engine.snapshot is not None
+    snapshot = snapshot_without_active_plane(
+        engine.snapshot,
+        plane=Plane.PLANNING,
+        now=engine._now(),
+        current_failure_class=current_failure_class,
+    )
+    update: dict[str, object] = {
+        "troubleshoot_attempt_count": 0,
+        "mechanic_attempt_count": 0,
+        "fix_cycle_count": 0,
+        "consultant_invocations": 0,
+        "updated_at": engine._now(),
+    }
+    if planning_status_marker is not None:
+        update["planning_status_marker"] = planning_status_marker
+    return snapshot.model_copy(update=update)
 
 
 def _metadata_string(stage_result: StageResultEnvelope, key: str) -> str | None:

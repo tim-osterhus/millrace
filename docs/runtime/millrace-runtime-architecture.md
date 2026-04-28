@@ -85,7 +85,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/compilation/`: compiler internals for workspace compile orchestration, mode/path resolution, graph and node materialization, transition/completion/policy compilation, learning-trigger validation, entrypoint override validation, asset resolution, fingerprints, persistence, and currentness inspection.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex/Pi adapters.
 - `src/millrace_ai/cli/monitoring.py`: formatting for opt-in daemon monitor output.
-- `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine` / `RuntimeTickOutcome` import surface.
+- `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine`, daemon supervisor, and runtime outcome import surface.
 - `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
 - `src/millrace_ai/runtime/outcomes.py`: runtime tick outcome contract shared by the engine and tick/request helpers without creating an engine import cycle.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
@@ -93,7 +93,8 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/cli/monitoring.py`: basic terminal monitor renderer for the
   concise human-facing daemon stream; full ids and details stay in persisted
   runtime events and run artifacts.
-- `src/millrace_ai/runtime/tick_cycle.py`: deterministic one-tick orchestration from mailbox intake through stage execution and router-decision finalization.
+- `src/millrace_ai/runtime/tick_cycle.py`: serial one-tick orchestration used by `millrace run once` and compatibility tests.
+- `src/millrace_ai/runtime/supervisor.py`: daemon-mode plane scheduler, worker registry, and serialized completion-application owner.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
@@ -149,7 +150,7 @@ Startup:
 3. Acquire daemon ownership lock (daemon mode).
 4. Reconcile stale/impossible runtime state.
 
-Per tick:
+Per daemon scheduler cycle:
 
 1. Process mailbox commands (`pause/resume/stop/retry-active/reload-config/intake`, including planning-scoped retry requests).
 2. Consume watcher/poll intake events (including idea normalization to planning specs).
@@ -166,14 +167,24 @@ Per tick:
    blocks as `closure_lineage_drift` instead of letting Arbiter re-enter a
    planning-only remediation loop.
 10. Consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
-11. Re-evaluate usage governance before dispatching an active stage.
-12. Execute one stage through the configured runner adapter.
-13. Route result markers, record post-stage usage, and persist snapshot/status/counters/events.
+11. Re-evaluate usage governance before dispatching active stages.
+12. Dispatch eligible lanes according to the compiled plane concurrency policy.
+    Default modes remain serial. Learning-enabled modes may run one Learning
+    stage concurrently with one permitted foreground Planning or Execution
+    stage. Execution and Planning remain mutually exclusive in shipped
+    learning modes.
+13. Worker tasks execute blocking runner adapters from immutable
+    `StageRunRequest` inputs and return typed outcomes only.
+14. The supervisor applies completed outcomes serially: normalize, persist,
+    route, update queue/snapshot/status/counters, emit monitor/runtime events,
+    and evaluate post-stage usage governance.
 
 The implementation mirrors that ordering directly:
 
 - `RuntimeEngine` holds state and exposes the stable methods
-- `runtime/tick_cycle.py` owns the one-tick orchestration block
+- `runtime/tick_cycle.py` owns the serial `run once` orchestration block
+- `runtime/supervisor.py` owns daemon dispatch, concurrent worker tracking, and
+  serialized result application
 - `runtime/result_application.py` delegates routed mutation into owned collaborators for counters, work-item movement, incident creation, persistence, and closure-target handling
 
 Idle:

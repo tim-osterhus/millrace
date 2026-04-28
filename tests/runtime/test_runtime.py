@@ -1950,6 +1950,49 @@ def test_runtime_tick_normalizes_idea_watch_event_before_execution(tmp_path: Pat
     assert any(paths.specs_active_dir.glob("idea-*.md"))
 
 
+def test_runtime_tick_normalizes_preexisting_idea_inbox_file_on_startup(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[watchers]",
+                "enabled = true",
+                "debounce_ms = 100",
+                "watch_ideas_inbox = true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ideas_inbox = paths.root / "ideas" / "inbox"
+    ideas_inbox.mkdir(parents=True, exist_ok=True)
+    (ideas_inbox / "startup-idea.md").write_text(
+        "# Startup Idea\n\nNormalize this idea on the first daemon tick.\n",
+        encoding="utf-8",
+    )
+
+    seen_stages: list[PlanningStageName | ExecutionStageName] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        seen_stages.append(request.stage)
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.PLANNER_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+
+    outcome = engine.tick()
+
+    assert outcome.stage is PlanningStageName.PLANNER
+    assert seen_stages == [PlanningStageName.PLANNER]
+    assert (paths.specs_active_dir / "idea-startup-idea.md").is_file()
+
+
 def test_runtime_tick_applies_mailbox_then_watcher_before_no_work_idle(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"

@@ -6,12 +6,15 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from millrace_ai.contracts import SpecDocument, WatcherMode
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.state_store import save_snapshot
 from millrace_ai.watchers import WatchEvent, build_watcher_session
+from millrace_ai.work_documents import read_work_document_as
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -93,6 +96,17 @@ def normalize_idea_watch_event(engine: RuntimeEngine, idea_path: Path) -> None:
         idea_reference = str(idea_path.relative_to(engine.paths.root))
     except ValueError:
         idea_reference = idea_path.as_posix()
+    if idea_already_represented(engine, spec_id=spec_id, idea_reference=idea_reference):
+        write_runtime_event(
+            engine.paths,
+            event_type="idea_normalization_skipped",
+            data={
+                "idea_path": idea_path.as_posix(),
+                "spec_id": spec_id,
+                "reason": "already_represented",
+            },
+        )
+        return
     spec_doc = SpecDocument(
         spec_id=spec_id,
         title=title,
@@ -153,11 +167,48 @@ def derive_idea_title_summary(content: str, *, fallback: str) -> tuple[str, str]
     return title, summary
 
 
+def idea_already_represented(
+    engine: RuntimeEngine,
+    *,
+    spec_id: str,
+    idea_reference: str,
+) -> bool:
+    for spec_path in _spec_document_paths(engine):
+        try:
+            document = read_work_document_as(spec_path, model=SpecDocument)
+        except (OSError, UnicodeDecodeError, ValueError, ValidationError):
+            continue
+        if document.spec_id == spec_id:
+            return True
+        if document.root_idea_id == spec_id:
+            return True
+        if idea_reference in document.references:
+            return True
+    return False
+
+
+def _spec_document_paths(engine: RuntimeEngine) -> tuple[Path, ...]:
+    paths = engine.paths
+    directories = (
+        paths.specs_queue_dir,
+        paths.specs_active_dir,
+        paths.specs_done_dir,
+        paths.specs_blocked_dir,
+    )
+    return tuple(
+        path
+        for directory in directories
+        for path in sorted(directory.glob("*.md"))
+        if path.is_file()
+    )
+
+
 __all__ = [
     "close_watcher_session",
     "consume_watcher_events",
     "derive_idea_title_summary",
     "handle_watch_event",
+    "idea_already_represented",
     "normalize_idea_watch_event",
     "rebuild_watcher_session",
     "safe_spec_id_from_idea_path",

@@ -31,6 +31,7 @@ def test_basic_terminal_monitor_renders_startup_context_lines() -> None:
                     "mutually_exclusive_planes": [["execution", "planning"]],
                     "may_run_concurrently": [["learning", "execution"]],
                 },
+                "scheduler_mode": "plane-concurrent",
                 "status_markers_by_plane": {
                     "execution": "### IDLE",
                     "planning": "### IDLE",
@@ -49,6 +50,7 @@ def test_basic_terminal_monitor_renders_startup_context_lines() -> None:
     assert "runtime started mode=learning_codex plan=plan-123 currentness=current" in output
     assert "baseline manifest=baseline-abc seed_package=0.15.5" in output
     assert "concurrency" in output
+    assert "scheduler mode=plane-concurrent" in output
     assert "snapshot status execution=IDLE planning=IDLE learning=IDLE" in output
 
 

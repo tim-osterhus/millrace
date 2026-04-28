@@ -30,6 +30,7 @@ from millrace_ai.workspace.work_documents import parse_work_document_as
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
+from .active_runs import active_run_from_closure_target, snapshot_with_active_run
 from .graph_authority import completion_activation_for_graph
 
 
@@ -88,19 +89,17 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
         return None
 
     activation = completion_activation_for_graph(engine.compiled_plan)
-    engine.snapshot = engine.snapshot.model_copy(
-        update={
-            "active_plane": activation.plane,
-            "active_stage": activation.stage,
-            "active_node_id": activation.node_id,
-            "active_stage_kind_id": activation.stage_kind_id,
-            "active_run_id": engine._new_run_id(),
-            "active_work_item_kind": None,
-            "active_work_item_id": None,
-            "active_since": engine._now(),
-            "current_failure_class": None,
-            "updated_at": engine._now(),
-        }
+    active_run = active_run_from_closure_target(
+        activation=activation,
+        target=target,
+        run_id=engine._new_run_id(),
+        now=engine._now(),
+    )
+    engine.snapshot = snapshot_with_active_run(
+        engine.snapshot,
+        active_run,
+        now=engine._now(),
+        current_failure_class=None,
     )
     save_snapshot(engine.paths, engine.snapshot)
     return target

@@ -22,6 +22,8 @@ from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import save_snapshot
 from millrace_ai.workspace.paths import WorkspacePaths
 
+from .active_runs import snapshot_with_next_stage_for_plane
+
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
@@ -146,17 +148,17 @@ def schedule_post_stage_exception_recovery(
         )
         execution_marker = engine.snapshot.execution_status_marker
 
-    engine.snapshot = engine.snapshot.model_copy(
+    updated_snapshot = snapshot_with_next_stage_for_plane(
+        engine.snapshot,
+        plane=stage_result.plane,
+        stage=repair_stage,
+        node_id=repair_node_id,
+        stage_kind_id=repair_stage_kind_id,
+        now=captured_at,
+        current_failure_class=error_code.value,
+    )
+    engine.snapshot = updated_snapshot.model_copy(
         update={
-            "active_plane": stage_result.plane,
-            "active_stage": repair_stage,
-            "active_node_id": repair_node_id,
-            "active_stage_kind_id": repair_stage_kind_id,
-            "active_run_id": stage_result.run_id,
-            "active_work_item_kind": stage_result.work_item_kind,
-            "active_work_item_id": stage_result.work_item_id,
-            "active_since": captured_at,
-            "current_failure_class": error_code.value,
             "execution_status_marker": execution_marker,
             "planning_status_marker": planning_marker,
             "queue_depth_execution": engine._execution_queue_depth(),

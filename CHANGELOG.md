@@ -11,7 +11,25 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
-## [Unreleased]
+## [0.16.0] - 2026-04-28
+
+### Added
+
+- Added daemon-mode plane-concurrent scheduling. Default modes remain serial,
+  while learning-enabled modes can run one Learning stage concurrently with one
+  permitted foreground Planning or Execution stage under the compiled
+  concurrency policy.
+- Added plane-indexed active-run status output and queue active counts for
+  learning requests.
+
+### Changed
+
+- Runtime active state is now canonicalized in `active_runs_by_plane`; legacy
+  `active_*` snapshot fields remain as a foreground compatibility projection.
+- Daemon result application remains single-writer even when stage runner
+  workers are running concurrently.
+- Config reloads are deferred while active planes exist and are applied after
+  active runs drain.
 
 ## [0.15.9] - 2026-04-28
 
@@ -453,7 +471,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.15.9...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/tim-osterhus/millrace/compare/v0.15.9...v0.16.0
 [0.15.9]: https://github.com/tim-osterhus/millrace/compare/v0.15.8...v0.15.9
 [0.15.8]: https://github.com/tim-osterhus/millrace/compare/v0.15.7...v0.15.8
 [0.15.7]: https://github.com/tim-osterhus/millrace/compare/v0.15.6...v0.15.7

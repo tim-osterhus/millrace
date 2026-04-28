@@ -19,6 +19,68 @@ from .enums import (
 )
 from .stage_metadata import stage_plane
 
+ActiveRunRequestKind = Literal["active_work_item", "closure_target", "learning_request"]
+
+
+class ActiveRunState(ContractModel):
+    plane: Plane
+    stage: StageName
+    node_id: str
+    stage_kind_id: str
+    run_id: str
+    request_kind: ActiveRunRequestKind
+    work_item_kind: WorkItemKind | None = None
+    work_item_id: str | None = None
+    closure_target_root_spec_id: str | None = None
+    closure_target_root_idea_id: str | None = None
+    active_since: datetime
+    running_status_marker: str | None = None
+
+    @model_validator(mode="after")
+    def validate_active_run_state(self) -> "ActiveRunState":
+        if stage_plane(self.stage) != self.plane:
+            raise ValueError("active run stage must belong to active run plane")
+        if not self.node_id.strip():
+            raise ValueError("active run requires node_id")
+        if not self.stage_kind_id.strip():
+            raise ValueError("active run requires stage_kind_id")
+        if not self.run_id.strip():
+            raise ValueError("active run requires run_id")
+
+        has_work_kind = self.work_item_kind is not None
+        has_work_id = self.work_item_id is not None
+        has_closure_root = self.closure_target_root_spec_id is not None
+        has_closure_idea = self.closure_target_root_idea_id is not None
+
+        if has_work_kind != has_work_id:
+            raise ValueError("active run work_item_kind and work_item_id must be set together")
+
+        if self.request_kind == "active_work_item":
+            if not has_work_kind or not has_work_id:
+                raise ValueError("active_work_item active runs require work item identity")
+            if self.work_item_kind is WorkItemKind.LEARNING_REQUEST:
+                raise ValueError("learning request active runs must use request_kind=learning_request")
+            if has_closure_root or has_closure_idea:
+                raise ValueError("active_work_item active runs cannot declare closure target fields")
+            return self
+
+        if self.request_kind == "learning_request":
+            if self.plane is not Plane.LEARNING:
+                raise ValueError("learning_request active runs must use plane=learning")
+            if self.work_item_kind is not WorkItemKind.LEARNING_REQUEST or not has_work_id:
+                raise ValueError("learning_request active runs require learning_request work item identity")
+            if has_closure_root or has_closure_idea:
+                raise ValueError("learning_request active runs cannot declare closure target fields")
+            return self
+
+        if self.plane is not Plane.PLANNING:
+            raise ValueError("closure_target active runs must use plane=planning")
+        if has_work_kind or has_work_id:
+            raise ValueError("closure_target active runs cannot declare work item identity")
+        if not has_closure_root:
+            raise ValueError("closure_target active runs require closure_target_root_spec_id")
+        return self
+
 
 class RuntimeSnapshot(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
@@ -44,6 +106,7 @@ class RuntimeSnapshot(ContractModel):
     active_run_id: str | None = None
     active_work_item_kind: WorkItemKind | None = None
     active_work_item_id: str | None = None
+    active_runs_by_plane: dict[Plane, ActiveRunState] = Field(default_factory=dict)
 
     execution_status_marker: str
     planning_status_marker: str
@@ -119,6 +182,42 @@ class RuntimeSnapshot(ContractModel):
         if queue_depths:
             payload["queue_depths_by_plane"] = queue_depths
 
+        active_runs = dict(payload.get("active_runs_by_plane") or {})
+        if not active_runs and payload.get("active_stage") is not None:
+            active_plane = payload.get("active_plane")
+            active_stage = payload.get("active_stage")
+            active_work_item_kind = payload.get("active_work_item_kind")
+            active_work_item_id = payload.get("active_work_item_id")
+            active_run_id = payload.get("active_run_id")
+            active_since = payload.get("active_since") or payload.get("updated_at")
+            if (
+                active_plane is not None
+                and active_stage is not None
+                and active_run_id is not None
+                and active_since is not None
+                and active_work_item_kind is not None
+                and active_work_item_id is not None
+            ):
+                request_kind: ActiveRunRequestKind = (
+                    "learning_request"
+                    if active_work_item_kind == WorkItemKind.LEARNING_REQUEST.value
+                    or active_work_item_kind is WorkItemKind.LEARNING_REQUEST
+                    else "active_work_item"
+                )
+                active_runs[active_plane] = {
+                    "plane": active_plane,
+                    "stage": active_stage,
+                    "node_id": payload.get("active_node_id") or active_stage,
+                    "stage_kind_id": payload.get("active_stage_kind_id") or active_stage,
+                    "run_id": active_run_id,
+                    "request_kind": request_kind,
+                    "work_item_kind": active_work_item_kind,
+                    "work_item_id": active_work_item_id,
+                    "active_since": active_since,
+                }
+        if active_runs:
+            payload["active_runs_by_plane"] = active_runs
+
         if payload.get("active_stage") is None:
             payload["active_node_id"] = None
             payload["active_stage_kind_id"] = None
@@ -130,6 +229,12 @@ class RuntimeSnapshot(ContractModel):
 
     @model_validator(mode="after")
     def validate_active_state(self) -> "RuntimeSnapshot":
+        self._project_active_runs_into_legacy_fields()
+
+        for plane, active_run in self.active_runs_by_plane.items():
+            if plane is not active_run.plane:
+                raise ValueError("active_runs_by_plane key must match active run plane")
+
         if self.active_stage is None and self.active_plane is not None:
             raise ValueError("active_plane cannot be set when active_stage is missing")
 
@@ -185,5 +290,27 @@ class RuntimeSnapshot(ContractModel):
 
         return self
 
+    def _project_active_runs_into_legacy_fields(self) -> None:
+        if not self.active_runs_by_plane:
+            return
 
-__all__ = ["RuntimeSnapshot"]
+        active_run = _foreground_active_run(self.active_runs_by_plane)
+        self.active_plane = active_run.plane
+        self.active_stage = active_run.stage
+        self.active_node_id = active_run.node_id
+        self.active_stage_kind_id = active_run.stage_kind_id
+        self.active_run_id = active_run.run_id
+        self.active_work_item_kind = active_run.work_item_kind
+        self.active_work_item_id = active_run.work_item_id
+        self.active_since = active_run.active_since
+
+
+def _foreground_active_run(active_runs_by_plane: dict[Plane, ActiveRunState]) -> ActiveRunState:
+    for plane in (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING):
+        active_run = active_runs_by_plane.get(plane)
+        if active_run is not None:
+            return active_run
+    raise ValueError("active_runs_by_plane cannot be empty")
+
+
+__all__ = ["ActiveRunRequestKind", "ActiveRunState", "RuntimeSnapshot"]

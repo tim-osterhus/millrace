@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import uuid4
+
+from pydantic import JsonValue
 
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import fingerprint_runtime_config, load_runtime_config
@@ -16,7 +19,7 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.mailbox import drain_incoming_mailbox_commands
+from millrace_ai.mailbox import drain_incoming_mailbox_commands, write_mailbox_command
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime.pause_state import (
     OPERATOR_PAUSE_SOURCE,
@@ -71,7 +74,7 @@ def handle_mailbox_command(
         )
         return
     if command == "reload_config":
-        reload_config_from_mailbox(engine)
+        reload_config_from_mailbox(engine, envelope)
         return
     if command == "add_task":
         enqueue_task_from_mailbox(engine, envelope)
@@ -85,8 +88,42 @@ def handle_mailbox_command(
     raise ControlRoutingError(f"Unsupported mailbox command: {command}")
 
 
-def reload_config_from_mailbox(engine: RuntimeEngine) -> None:
+def reload_config_from_mailbox(
+    engine: RuntimeEngine,
+    envelope: MailboxCommandEnvelope | None = None,
+) -> None:
     assert engine.snapshot is not None
+    if engine.snapshot.active_runs_by_plane:
+        if envelope is not None:
+            deferred = envelope.model_copy(
+                update={
+                    "command_id": f"{envelope.command.value}-deferred-{uuid4().hex[:8]}",
+                    "issued_at": engine._now(),
+                }
+            )
+            write_mailbox_command(engine.paths, deferred)
+        engine.snapshot = engine.snapshot.model_copy(
+            update={
+                "last_reload_error": "deferred until active planes drain",
+                "updated_at": engine._now(),
+            }
+        )
+        save_snapshot(engine.paths, engine.snapshot)
+        active_planes: list[JsonValue] = [plane.value for plane in engine.snapshot.active_runs_by_plane]
+        write_runtime_event(
+            engine.paths,
+            event_type="runtime_config_reload_deferred",
+            data={
+                "reason": "active_planes",
+                "active_planes": active_planes,
+            },
+        )
+        engine._emit_monitor_event(
+            "runtime_config_reload_deferred",
+            reason="active_planes",
+            active_planes=active_planes,
+        )
+        return
     reloaded_config = load_runtime_config(engine.config_path)
     compile_outcome = compile_and_persist_workspace_plan(
         engine.paths,

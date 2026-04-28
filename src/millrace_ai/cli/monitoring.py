@@ -121,6 +121,22 @@ def _render_event_lines(
         return (prefix + f"paused reason={_string(event.payload.get('reason'))}",)
     if event.event_type == "runtime_stopped":
         return (prefix + f"stopped reason={_string(event.payload.get('reason'))}",)
+    if event.event_type == "runtime_config_reload_deferred":
+        active_planes = event.payload.get("active_planes")
+        if isinstance(active_planes, (list, tuple)):
+            active = ",".join(str(plane) for plane in active_planes) or "none"
+        else:
+            active = "unknown"
+        return (prefix + f"reload deferred reason={_string(event.payload.get('reason'))} active={active}",)
+    if event.event_type == "learning_curator_promotion_deferred":
+        active_planes = event.payload.get("foreground_active_planes")
+        if isinstance(active_planes, (list, tuple)):
+            active = ",".join(str(plane) for plane in active_planes) or "none"
+        else:
+            active = "unknown"
+        return (prefix + f"curator promotion deferred active={active}",)
+    if event.event_type == "learning_curator_promotion_applied":
+        return (prefix + f"curator promotion applied source={_string(event.payload.get('source'))}",)
     if event.event_type == "usage_governance_paused":
         return (prefix + _render_usage_governance_paused(event.payload),)
     if event.event_type == "usage_governance_resumed":
@@ -157,6 +173,7 @@ def _render_runtime_started(payload: Mapping[str, object]) -> tuple[str, ...]:
         lines.append("concurrency " + _format_concurrency_policy(concurrency_policy))
     else:
         lines.append("concurrency none")
+    lines.append(f"scheduler mode={_string(payload.get('scheduler_mode'))}")
 
     status_markers = _string_mapping(payload.get("status_markers_by_plane"))
     queue_depths = _object_mapping(payload.get("queue_depths_by_plane"))

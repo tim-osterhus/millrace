@@ -109,6 +109,11 @@ Know which shipped harness posture you are validating:
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 
+Daemon mode uses a compiled plane scheduler. Default modes remain serial.
+Learning-enabled modes may run one Learning stage concurrently with one
+permitted foreground Planning or Execution stage. Runtime-owned mutation
+remains single-writer and serialized by the daemon supervisor.
+
 6. Intake work only after the workspace is healthy and Millrace use is allowed.
 7. Run `millrace run once --workspace <workspace>` when you want one safe tick,
    or `millrace run daemon --workspace <workspace>` when long-running operation
@@ -242,6 +247,11 @@ During source development, module form is acceptable:
 uv run --extra dev python -m millrace_ai <command>
 ```
 
+For workspace-local E2E deliverables, prefer the Python executable that exists
+in the target environment. If a generated README says `python` but the host
+only has `python3`, run the equivalent `python3 -m ...` command and report that
+portability mismatch as E2E evidence.
+
 In an installed environment, use CLI form:
 
 ```bash
@@ -348,6 +358,9 @@ Interpret status markers literally:
   terminal marker or `### IDLE`
 - learning-enabled workspaces also expose learning queue depth and
   `learning_status_marker`
+- `active_run_count` and `active_run: ...` lines show the canonical active
+  lanes; the older `active_plane`/`active_stage` fields are only the foreground
+  projection
 - `pause_sources: operator` means an operator pause is still in force
 - `pause_sources: usage_governance` means an opt-in usage rule is blocking
   further stage dispatch
@@ -358,6 +371,7 @@ Use intervention commands only when the runtime state actually justifies them:
 - `control resume` to clear the operator pause source; it does not override an
   active usage-governance blocker
 - `control stop` to request daemon shutdown
+- unscoped `control retry-active` only when exactly one active work item exists
 - `planning retry-active` only for planning-plane retry intent
 - `clear-stale-state` to recover stale active files, including older
   closure-target invariant failures that left an unrelated root spec
@@ -415,8 +429,9 @@ Do not invent semantics for runtime error codes from memory alone.
   governance.
 - Forgetting to ask the user which Millrace delegation authority you have.
 - Treating direct queue-folder mutation as equivalent to the CLI intake surface.
-- Acting as if planning and execution are concurrent independent lanes inside
-  one workspace owner.
+- Acting as if Planning and Execution can overlap in shipped modes; Learning is
+  the opportunistic concurrent lane, and only when the compiled policy permits
+  it.
 - Starting a daemon as a plain background job when you actually need it to keep
   running; use a `tmux` pane for persistent daemon operation.
 - Treating this repo-local operator skill as a runtime-shipped stage skill.

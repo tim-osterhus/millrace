@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Annotated, Any
@@ -11,6 +12,7 @@ import typer
 from millrace_ai.cli.errors import _print_error
 from millrace_ai.cli.formatting import _run_once_exit_code, _value
 from millrace_ai.cli.shared import ConfigOption, WorkspaceOption, _cli_api, _require_paths, _resolve_config_path
+from millrace_ai.runtime.engine import RuntimeEngine as RealRuntimeEngine
 
 run_app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -117,23 +119,26 @@ def run_daemon(
         except Exception as exc:
             raise typer.Exit(code=_print_error(str(exc))) from exc
 
-        ticks = 0
         try:
-            while True:
-                if max_ticks is not None and ticks >= max_ticks:
-                    break
+            if _uses_daemon_supervisor(engine, cli_api):
                 try:
-                    engine.tick()
+                    ticks = asyncio.run(
+                        _run_daemon_supervisor_loop(
+                            engine,
+                            supervisor_cls=cli_api.RuntimeDaemonSupervisor,
+                            idle_sleep_seconds=runtime_config.runtime.idle_sleep_seconds,
+                            max_ticks=max_ticks,
+                        )
+                    )
                 except Exception as exc:
                     raise typer.Exit(code=_print_error(str(exc))) from exc
-                ticks += 1
-                runtime_snapshot = engine.snapshot
-                if runtime_snapshot is not None and (
-                    runtime_snapshot.stop_requested or not runtime_snapshot.process_running
-                ):
-                    break
-                if max_ticks is None:
-                    cli_api.time.sleep(runtime_config.runtime.idle_sleep_seconds)
+            else:
+                ticks = _run_daemon_tick_loop(
+                    engine,
+                    cli_api=cli_api,
+                    idle_sleep_seconds=runtime_config.runtime.idle_sleep_seconds,
+                    max_ticks=max_ticks,
+                )
         except KeyboardInterrupt:
             typer.echo("interrupted: true")
     finally:
@@ -161,3 +166,61 @@ class _FanoutRuntimeMonitorSink:
     def emit(self, event: object) -> None:
         for sink in self._sinks:
             sink.emit(event)
+
+
+def _uses_daemon_supervisor(engine: object, cli_api: Any) -> bool:
+    return isinstance(engine, RealRuntimeEngine) and hasattr(cli_api, "RuntimeDaemonSupervisor")
+
+
+async def _run_daemon_supervisor_loop(
+    engine: Any,
+    *,
+    supervisor_cls: Any,
+    idle_sleep_seconds: float,
+    max_ticks: int | None,
+) -> int:
+    supervisor = supervisor_cls(engine)
+    ticks = 0
+    while True:
+        if max_ticks is not None and ticks >= max_ticks:
+            break
+        await supervisor.run_cycle()
+        await supervisor.drain_completed(wait=False)
+        ticks += 1
+        runtime_snapshot = engine.snapshot
+        if runtime_snapshot is not None and (
+            runtime_snapshot.stop_requested or not runtime_snapshot.process_running
+        ):
+            if not supervisor.active_worker_planes:
+                break
+        if max_ticks is None:
+            await supervisor.wait_for_next_completion_or_timeout(idle_sleep_seconds)
+    if max_ticks is not None:
+        await supervisor.drain_completed(wait=True)
+    return ticks
+
+
+def _run_daemon_tick_loop(
+    engine: Any,
+    *,
+    cli_api: Any,
+    idle_sleep_seconds: float,
+    max_ticks: int | None,
+) -> int:
+    ticks = 0
+    while True:
+        if max_ticks is not None and ticks >= max_ticks:
+            break
+        try:
+            engine.tick()
+        except Exception as exc:
+            raise typer.Exit(code=_print_error(str(exc))) from exc
+        ticks += 1
+        runtime_snapshot = engine.snapshot
+        if runtime_snapshot is not None and (
+            runtime_snapshot.stop_requested or not runtime_snapshot.process_running
+        ):
+            break
+        if max_ticks is None:
+            cli_api.time.sleep(idle_sleep_seconds)
+    return ticks

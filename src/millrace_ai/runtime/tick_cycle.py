@@ -13,6 +13,10 @@ from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
 
 from .error_recovery import schedule_post_stage_exception_recovery
+from .learning_promotions import (
+    apply_deferred_learning_promotions_if_safe,
+    handle_learning_curator_promotion_boundary,
+)
 from .learning_triggers import enqueue_learning_requests_for_stage_result
 
 if TYPE_CHECKING:
@@ -160,6 +164,8 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         router_decision = engine._route_stage_result(stage_result)
         engine._write_plane_status(stage_result)
         engine._apply_router_decision(router_decision, stage_result)
+        handle_learning_curator_promotion_boundary(engine, stage_result=stage_result)
+        apply_deferred_learning_promotions_if_safe(engine)
     except Exception as exc:
         recovery_decision = schedule_post_stage_exception_recovery(
             engine,

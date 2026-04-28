@@ -165,6 +165,9 @@ for _schema in _SCHEMA_BY_MODEL.values():
         if _existing != "list":
             raise RuntimeError(f"field label kind mismatch for {_label}")
 
+_EMPTY_RELATIONSHIP_PLACEHOLDERS = {"none", "n/a", "-"}
+_TASK_RELATIONSHIP_LIST_FIELDS = {"depends_on", "blocks"}
+
 
 def parse_work_document(raw: str, *, path: Path | None = None) -> WorkDocument:
     """Parse one human-facing markdown work document."""
@@ -288,6 +291,9 @@ def _parse_markdown_fields(raw: str, *, path: Path | None) -> tuple[str, dict[st
             raise ValueError(f"work document {source_name} repeats field `{label}`")
 
         if inline_value:
+            if field_kind == "list":
+                payload[field_name] = _normalize_list_items(field_name, [inline_value])
+                continue
             payload[field_name] = inline_value
             continue
         if field_kind == "scalar":
@@ -309,7 +315,7 @@ def _parse_markdown_fields(raw: str, *, path: Path | None) -> tuple[str, dict[st
                 raise ValueError(f"work document {source_name} has invalid list item under `{label}`")
             items.append(item_match.group("value").strip())
             index += 1
-        payload[field_name] = items
+        payload[field_name] = _normalize_list_items(field_name, items)
 
     return heading_title, payload
 
@@ -366,6 +372,16 @@ def _validate_document(
     elif str(title_value).strip() != heading_title:
         raise ValueError("markdown H1 title must match the `Title` field")
     return model.model_validate(payload)
+
+
+def _normalize_list_items(field_name: str, items: list[str]) -> list[str]:
+    if field_name not in _TASK_RELATIONSHIP_LIST_FIELDS:
+        return items
+    return [
+        item
+        for item in items
+        if item.strip().casefold() not in _EMPTY_RELATIONSHIP_PLACEHOLDERS
+    ]
 
 
 def _render_scalar(value: object) -> str:

@@ -7,9 +7,11 @@ import pytest
 from pydantic import ValidationError
 
 from millrace_ai.contracts import (
+    ActiveRunState,
     ClosureTargetState,
     CompileDiagnostics,
     CompletionBehaviorDefinition,
+    ExecutionStageName,
     IncidentDocument,
     LearningRequestDocument,
     LearningStageName,
@@ -25,6 +27,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     StageResultEnvelope,
     TaskDocument,
+    WorkItemKind,
 )
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
@@ -310,6 +313,156 @@ def test_runtime_snapshot_rejects_active_work_item_without_stage() -> None:
             config_version="cfg-001",
             watcher_mode="watch",
             updated_at=NOW,
+        )
+
+
+def test_runtime_snapshot_migrates_legacy_active_state_to_active_runs_by_plane() -> None:
+    snapshot = RuntimeSnapshot(
+        runtime_mode="daemon",
+        process_running=True,
+        paused=False,
+        active_mode_id="standard_plain",
+        execution_loop_id="execution.standard",
+        planning_loop_id="planning.standard",
+        compiled_plan_id="plan-001",
+        compiled_plan_path="state/compiled_plan.json",
+        active_plane="execution",
+        active_stage="builder",
+        active_node_id="builder",
+        active_stage_kind_id="builder",
+        active_run_id="run-001",
+        active_work_item_kind="task",
+        active_work_item_id="task-001",
+        active_since=NOW,
+        execution_status_marker="### BUILDER_RUNNING",
+        planning_status_marker="### IDLE",
+        config_version="cfg-001",
+        watcher_mode="watch",
+        updated_at=NOW,
+    )
+
+    active = snapshot.active_runs_by_plane[Plane.EXECUTION]
+    assert active.request_kind == "active_work_item"
+    assert active.stage is ExecutionStageName.BUILDER
+    assert active.work_item_kind is WorkItemKind.TASK
+    assert active.work_item_id == "task-001"
+    assert active.run_id == "run-001"
+
+
+def test_runtime_snapshot_projects_multiple_active_runs_into_legacy_foreground_fields() -> None:
+    snapshot = RuntimeSnapshot(
+        runtime_mode="daemon",
+        process_running=True,
+        paused=False,
+        active_mode_id="learning_codex",
+        execution_loop_id="execution.standard",
+        planning_loop_id="planning.standard",
+        learning_loop_id="learning.standard",
+        compiled_plan_id="plan-001",
+        compiled_plan_path="state/compiled_plan.json",
+        active_runs_by_plane={
+            "execution": {
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": "run-exec",
+                "request_kind": "active_work_item",
+                "work_item_kind": "task",
+                "work_item_id": "task-001",
+                "active_since": NOW,
+            },
+            "learning": {
+                "plane": "learning",
+                "stage": "analyst",
+                "node_id": "analyst",
+                "stage_kind_id": "analyst",
+                "run_id": "run-learn",
+                "request_kind": "learning_request",
+                "work_item_kind": "learning_request",
+                "work_item_id": "learn-001",
+                "active_since": NOW,
+            },
+        },
+        execution_status_marker="### BUILDER_RUNNING",
+        planning_status_marker="### IDLE",
+        learning_status_marker="### ANALYST_RUNNING",
+        config_version="cfg-001",
+        watcher_mode="watch",
+        updated_at=NOW,
+    )
+
+    assert set(snapshot.active_runs_by_plane) == {Plane.EXECUTION, Plane.LEARNING}
+    assert snapshot.active_plane is Plane.EXECUTION
+    assert snapshot.active_stage is ExecutionStageName.BUILDER
+    assert snapshot.active_run_id == "run-exec"
+
+
+def test_runtime_snapshot_rejects_active_run_key_plane_mismatch() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSnapshot(
+            runtime_mode="daemon",
+            process_running=True,
+            paused=False,
+            active_mode_id="learning_codex",
+            execution_loop_id="execution.standard",
+            planning_loop_id="planning.standard",
+            learning_loop_id="learning.standard",
+            compiled_plan_id="plan-001",
+            compiled_plan_path="state/compiled_plan.json",
+            active_runs_by_plane={
+                "execution": {
+                    "plane": "learning",
+                    "stage": "analyst",
+                    "node_id": "analyst",
+                    "stage_kind_id": "analyst",
+                    "run_id": "run-learn",
+                    "request_kind": "learning_request",
+                    "work_item_kind": "learning_request",
+                    "work_item_id": "learn-001",
+                    "active_since": NOW,
+                },
+            },
+            execution_status_marker="### IDLE",
+            planning_status_marker="### IDLE",
+            config_version="cfg-001",
+            watcher_mode="watch",
+            updated_at=NOW,
+        )
+
+
+def test_active_run_state_models_closure_target_identity() -> None:
+    active = ActiveRunState(
+        plane="planning",
+        stage="arbiter",
+        node_id="arbiter",
+        stage_kind_id="arbiter",
+        run_id="run-arbiter",
+        request_kind="closure_target",
+        closure_target_root_spec_id="spec-root-001",
+        closure_target_root_idea_id="idea-001",
+        active_since=NOW,
+    )
+
+    assert active.request_kind == "closure_target"
+    assert active.work_item_kind is None
+    assert active.work_item_id is None
+    assert active.closure_target_root_spec_id == "spec-root-001"
+
+
+def test_active_run_state_rejects_work_item_identity_for_closure_target() -> None:
+    with pytest.raises(ValidationError):
+        ActiveRunState(
+            plane="planning",
+            stage="arbiter",
+            node_id="arbiter",
+            stage_kind_id="arbiter",
+            run_id="run-arbiter",
+            request_kind="closure_target",
+            work_item_kind="spec",
+            work_item_id="spec-root-001",
+            closure_target_root_spec_id="spec-root-001",
+            active_since=NOW,
         )
 
 

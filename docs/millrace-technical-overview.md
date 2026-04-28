@@ -265,11 +265,14 @@ expressed:
 The loop topology does not fork just because the harness changes.
 
 The learning modes preserve execution/planning mutual exclusion and freeze a
-plane concurrency policy into the compiled plan for operator visibility and
-future scheduler authority. The current tick executor still owns one active
-stage at a time. Learning trigger rules can enqueue targeted learning requests
-from runtime evidence, for example a Curator request after a successful
-Doublechecker pass or an Analyst request after troubleshooting/consultation.
+plane concurrency policy into the compiled plan. Daemon mode enforces that
+policy through the plane scheduler: default modes remain serial, while
+learning-enabled modes may run one Learning stage concurrently with one
+permitted foreground Planning or Execution stage. Runtime-owned mutation stays
+single-writer and serialized by the supervisor. Learning trigger rules can
+enqueue targeted learning requests from runtime evidence, for example a Curator
+request after a successful Doublechecker pass or an Analyst request after
+troubleshooting/consultation.
 
 The compiler materializes one `CompiledRunPlan`, whose graph nodes record
 the exact runtime execution contract the engine will use later:

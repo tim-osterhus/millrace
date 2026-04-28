@@ -41,7 +41,7 @@ from .modes import (  # noqa: F401
 )
 from .recovery import RecoveryCounterEntry, RecoveryCounters
 from .runtime_errors import RuntimeErrorContext
-from .runtime_snapshot import RuntimeSnapshot
+from .runtime_snapshot import ActiveRunRequestKind, ActiveRunState, RuntimeSnapshot
 from .stage_results import StageResultEnvelope
 from .token_usage import TokenUsage
 from .work_documents import (  # noqa: F401
@@ -57,6 +57,8 @@ __all__ = [
     "CompileDiagnostics",
     "CompletionBehaviorDefinition",
     "ContractModel",
+    "ActiveRunRequestKind",
+    "ActiveRunState",
     "ExecutionStageName",
     "ExecutionTerminalResult",
     "IncidentDocument",

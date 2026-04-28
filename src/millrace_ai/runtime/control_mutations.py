@@ -8,6 +8,7 @@ from typing import Generic, TypeVar
 
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import (
+    ActiveRunState,
     MailboxAddIdeaPayload,
     MailboxCommand,
     Plane,
@@ -20,6 +21,7 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import QueueStateError, WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.runtime.active_runs import active_run_for_plane, snapshot_without_active_plane
 from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
 from millrace_ai.runtime.pause_state import (
     OPERATOR_PAUSE_SOURCE,
@@ -199,28 +201,32 @@ class DirectControlMutations(Generic[ResultT]):
         reason: str,
         scope: Plane | None,
     ) -> ResultT:
-        if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+        active_run = self._retry_active_run(snapshot, scope=scope)
+        if active_run is None:
             return self._result_factory(
                 action=MailboxCommand.RETRY_ACTIVE,
                 mode="direct",
                 applied=False,
-                detail="no active work item to retry",
+                detail=self._retry_active_missing_detail(snapshot, scope=scope),
             )
-        if scope is not None and snapshot.active_plane is not scope:
-            active_plane = snapshot.active_plane.value if snapshot.active_plane is not None else "none"
+        if scope is None and len(snapshot.active_runs_by_plane) > 1:
             return self._result_factory(
                 action=MailboxCommand.RETRY_ACTIVE,
                 mode="direct",
                 applied=False,
-                detail=(
-                    f"{scope.value} retry requires matching active plane; "
-                    f"current active plane is {active_plane}"
-                ),
+                detail="multiple active planes; retry-active requires a plane scope",
+            )
+        if active_run.work_item_kind is None or active_run.work_item_id is None:
+            return self._result_factory(
+                action=MailboxCommand.RETRY_ACTIVE,
+                mode="direct",
+                applied=False,
+                detail=f"active {active_run.plane.value} run is not a retryable work item",
             )
 
         queue = QueueStore(self.paths)
-        work_item_kind = snapshot.active_work_item_kind
-        work_item_id = snapshot.active_work_item_id
+        work_item_kind = active_run.work_item_kind
+        work_item_id = active_run.work_item_id
 
         try:
             self._requeue_active_item(
@@ -237,12 +243,7 @@ class DirectControlMutations(Generic[ResultT]):
                 detail=str(exc),
             )
 
-        self._reset_runtime_to_idle(
-            snapshot,
-            process_running=False,
-            clear_stop_requested=False,
-            clear_paused=False,
-        )
+        self._clear_retry_active_run(snapshot, active_run.plane)
         reset_forward_progress_counters(
             self.paths,
             work_item_kind=work_item_kind,
@@ -254,6 +255,64 @@ class DirectControlMutations(Generic[ResultT]):
             applied=True,
             detail=f"active {work_item_kind.value} {work_item_id} requeued",
         )
+
+    def _retry_active_run(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        scope: Plane | None,
+    ) -> ActiveRunState | None:
+        if scope is not None:
+            return active_run_for_plane(snapshot, scope)
+        if len(snapshot.active_runs_by_plane) == 1:
+            return next(iter(snapshot.active_runs_by_plane.values()))
+        if len(snapshot.active_runs_by_plane) > 1:
+            return next(iter(snapshot.active_runs_by_plane.values()))
+        if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+            return None
+        if snapshot.active_plane is None:
+            return None
+        return active_run_for_plane(snapshot, snapshot.active_plane)
+
+    def _retry_active_missing_detail(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        scope: Plane | None,
+    ) -> str:
+        if scope is None:
+            return "no active work item to retry"
+        active_planes = ", ".join(plane.value for plane in snapshot.active_runs_by_plane) or "none"
+        return (
+            f"{scope.value} retry requires matching active plane; "
+            f"current active planes are {active_planes}"
+        )
+
+    def _clear_retry_active_run(self, snapshot: RuntimeSnapshot, plane: Plane) -> None:
+        remaining = dict(snapshot.active_runs_by_plane)
+        remaining.pop(plane, None)
+        if not remaining:
+            self._reset_runtime_to_idle(
+                snapshot,
+                process_running=False,
+                clear_stop_requested=False,
+                clear_paused=False,
+            )
+            return
+
+        updated = snapshot_without_active_plane(
+            snapshot,
+            plane=plane,
+            now=self._now(),
+            current_failure_class=None,
+        )
+        save_snapshot(self.paths, updated)
+        if plane is Plane.EXECUTION:
+            set_execution_status(self.paths, IDLE_STATUS_MARKER)
+        elif plane is Plane.PLANNING:
+            set_planning_status(self.paths, IDLE_STATUS_MARKER)
+        else:
+            set_learning_status(self.paths, IDLE_STATUS_MARKER)
 
     def clear_stale(self, snapshot: RuntimeSnapshot, *, reason: str) -> ResultT:
         queue = QueueStore(self.paths)

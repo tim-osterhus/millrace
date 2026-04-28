@@ -158,6 +158,11 @@ def _emit_startup_monitor_events(engine: RuntimeEngine, snapshot: RuntimeSnapsho
             if compiled_plan.concurrency_policy is not None
             else None
         ),
+        scheduler_mode=(
+            "plane-concurrent"
+            if compiled_plan.concurrency_policy is not None
+            else "serial"
+        ),
         status_markers_by_plane={
             plane.value: marker for plane, marker in snapshot.status_markers_by_plane.items()
         },

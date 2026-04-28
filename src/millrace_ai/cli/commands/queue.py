@@ -45,11 +45,21 @@ def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     planning_active = len(tuple(paths.specs_active_dir.glob("*.md"))) + len(
         tuple(paths.incidents_active_dir.glob("*.md"))
     )
+    learning_active = len(tuple(paths.learning_requests_active_dir.glob("*.md")))
+    active_task_count = len(tuple(paths.tasks_active_dir.glob("*.md")))
+    active_spec_count = len(tuple(paths.specs_active_dir.glob("*.md")))
+    active_incident_count = len(tuple(paths.incidents_active_dir.glob("*.md")))
 
     typer.echo(f"execution_queue_depth: {execution_queue_depth}")
     typer.echo(f"planning_queue_depth: {planning_queue_depth}")
+    typer.echo(f"learning_queue_depth: {len(tuple(paths.learning_requests_queue_dir.glob('*.md')))}")
     typer.echo(f"execution_active: {execution_active}")
     typer.echo(f"planning_active: {planning_active}")
+    typer.echo(f"learning_active: {learning_active}")
+    typer.echo(f"active_task_count: {active_task_count}")
+    typer.echo(f"active_spec_count: {active_spec_count}")
+    typer.echo(f"active_incident_count: {active_incident_count}")
+    typer.echo(f"active_learning_request_count: {learning_active}")
 
 
 @queue_app.command("show")

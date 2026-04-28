@@ -19,6 +19,7 @@ class WatchTarget:
     target: str
     root: Path
     pattern: str
+    emit_existing_on_startup: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +97,8 @@ class PollWatcher:
     def _prime(self, *, now: datetime | None = None) -> None:
         _ = _coerce_time(now)
         for target in self.targets:
+            if target.emit_existing_on_startup:
+                continue
             for path, fingerprint in self._iter_target_files(target):
                 self._fingerprints[path.as_posix()] = fingerprint
 
@@ -185,6 +188,7 @@ def build_watch_targets(
                 target="ideas_inbox",
                 root=(paths.root / "ideas" / "inbox"),
                 pattern="*.md",
+                emit_existing_on_startup=True,
             )
         )
 

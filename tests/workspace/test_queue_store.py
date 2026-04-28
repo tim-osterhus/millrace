@@ -124,6 +124,35 @@ def _task_markdown_with_blank_optional_scalars() -> str:
     )
 
 
+def _task_markdown_with_none_dependency_placeholder() -> str:
+    return (
+        "# Queue task with placeholder dependency\n\n"
+        "Task-ID: queue-task-placeholder\n"
+        "Title: Queue task with placeholder dependency\n"
+        "Summary: queue test\n"
+        "Root-Idea-ID: idea-001\n"
+        "Root-Spec-ID: spec-root-001\n"
+        "Spec-ID: spec-root-001\n"
+        "Status-Hint: queued\n"
+        f"Created-At: {NOW.isoformat()}\n"
+        "Created-By: manager\n\n"
+        "Depends-On:\n"
+        "- none\n\n"
+        "Blocks:\n"
+        "- NONE\n\n"
+        "Target-Paths:\n"
+        "- millrace/queue_store.py\n\n"
+        "Acceptance:\n"
+        "- queue claim succeeds\n\n"
+        "Required-Checks:\n"
+        "- uv run --extra dev python -m pytest tests/workspace/test_queue_store.py -q\n\n"
+        "References:\n"
+        "- millrace-issue-1.md\n\n"
+        "Risk:\n"
+        "- none\n"
+    )
+
+
 def _spec_markdown(payload: Mapping[str, object]) -> str:
     lines = [
         "# Invalid spec",
@@ -195,6 +224,29 @@ def test_parse_work_document_as_treats_blank_optional_scalar_fields_as_omitted()
     assert document.spec_id == "spec-001"
     assert document.parent_task_id is None
     assert document.incident_id is None
+
+
+def test_queue_claim_treats_none_dependency_placeholders_as_empty_relationships(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    task_path = paths.tasks_queue_dir / "queue-task-placeholder.md"
+    task_path.write_text(_task_markdown_with_none_dependency_placeholder(), encoding="utf-8")
+
+    document = parse_work_document_as(
+        task_path.read_text(encoding="utf-8"),
+        model=TaskDocument,
+        path=task_path,
+    )
+
+    assert document.depends_on == ()
+    assert document.blocks == ()
+    assert document.risk == ("none",)
+
+    claim = QueueStore(paths).claim_next_execution_task()
+
+    assert claim is not None
+    assert claim.work_item_id == "queue-task-placeholder"
 
 
 def test_task_lifecycle_claim_done_blocked_is_deterministic(tmp_path: Path) -> None:

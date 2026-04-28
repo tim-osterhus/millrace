@@ -15,9 +15,12 @@ from millrace_ai import cli
 from millrace_ai.compiler import CompileOutcome
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
+    ActiveRunState,
     ClosureTargetState,
     CompileDiagnostics,
+    ExecutionStageName,
     LearningRequestDocument,
+    LearningStageName,
     MailboxCommand,
     Plane,
     ReloadOutcome,
@@ -26,6 +29,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
     TokenUsage,
+    WorkItemKind,
 )
 from millrace_ai.control import ControlActionResult
 from millrace_ai.mailbox import read_pending_mailbox_commands
@@ -832,6 +836,55 @@ def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None
     assert "learning_status_marker: ### ANALYST_COMPLETE" in result.output
 
 
+def test_status_surfaces_multiple_active_runs_by_plane(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.EXECUTION: ActiveRunState(
+                    plane=Plane.EXECUTION,
+                    stage=ExecutionStageName.BUILDER,
+                    node_id="builder",
+                    stage_kind_id="builder",
+                    run_id="run-abcdef0123456789",
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.TASK,
+                    work_item_id="task-001",
+                    active_since=NOW,
+                ),
+                Plane.LEARNING: ActiveRunState(
+                    plane=Plane.LEARNING,
+                    stage=LearningStageName.CURATOR,
+                    node_id="curator",
+                    stage_kind_id="curator",
+                    run_id="run-1234567890abcdef",
+                    request_kind="learning_request",
+                    work_item_kind=WorkItemKind.LEARNING_REQUEST,
+                    work_item_id="learn-001",
+                    active_since=NOW,
+                ),
+            },
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    result = CliRunner().invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "active_run_count: 2" in result.output
+    assert (
+        "active_run: plane=execution stage=builder node=builder stage_kind=builder "
+        "request_kind=active_work_item work_item_kind=task work_item_id=task-001 "
+        "run=abcdef012345"
+    ) in result.output
+    assert (
+        "active_run: plane=learning stage=curator node=curator stage_kind=curator "
+        "request_kind=learning_request work_item_kind=learning_request work_item_id=learn-001 "
+        "run=1234567890ab"
+    ) in result.output
+
+
 def test_status_surfaces_usage_governance_pause_context(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     (paths.runtime_root / "millrace.toml").write_text(
@@ -1098,6 +1151,37 @@ def test_add_task_add_spec_and_queue_ls(tmp_path: Path) -> None:
     assert (paths.specs_queue_dir / "spec-001.md").is_file()
     assert "execution_queue_depth: 1" in ls.output
     assert "planning_queue_depth: 1" in ls.output
+    assert "learning_queue_depth: 0" in ls.output
+
+
+def test_queue_ls_reports_active_counts_by_queue_family(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(TaskDocument.model_validate(_task_payload("task-active")))
+    queue.enqueue_spec(SpecDocument.model_validate(_spec_payload("spec-active")))
+    queue.enqueue_learning_request(
+        LearningRequestDocument(
+            learning_request_id="learn-active",
+            title="Learn active",
+            requested_action="improve",
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+    assert queue.claim_next_execution_task() is not None
+    assert queue.claim_next_planning_item() is not None
+    assert queue.claim_next_learning_request() is not None
+
+    result = CliRunner().invoke(cli.app, ["queue", "ls", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "execution_active: 1" in result.output
+    assert "planning_active: 1" in result.output
+    assert "learning_active: 1" in result.output
+    assert "active_task_count: 1" in result.output
+    assert "active_spec_count: 1" in result.output
+    assert "active_incident_count: 0" in result.output
+    assert "active_learning_request_count: 1" in result.output
 
 
 def test_queue_add_commands_and_show_are_available_under_namespaced_surface(tmp_path: Path) -> None:

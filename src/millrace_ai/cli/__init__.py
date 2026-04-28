@@ -30,7 +30,7 @@ from millrace_ai.run_inspection import (
     list_runs,
     select_primary_run_artifact,
 )
-from millrace_ai.runtime import RuntimeEngine, RuntimeTickOutcome
+from millrace_ai.runtime import RuntimeDaemonSupervisor, RuntimeEngine, RuntimeTickOutcome
 from millrace_ai.runtime.monitoring import NullRuntimeMonitorSink
 
 from .app import app
@@ -64,6 +64,7 @@ __all__ = [
     "NullRuntimeMonitorSink",
     "RuntimeConfig",
     "RuntimeControl",
+    "RuntimeDaemonSupervisor",
     "RuntimeEngine",
     "RuntimeTickOutcome",
     "_build_stage_runner",

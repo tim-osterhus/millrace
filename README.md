@@ -81,10 +81,11 @@ It wraps long-horizon work in a real runtime:
   operator wants the workspace copy to become local content
 - compile happens at startup and again only on explicit config reload
 - compile tracks input fingerprints so operators can see whether the persisted compiled plan is current or stale
-- planning and execution are claim domains inside one deterministic scheduler,
-  not two concurrent lanes
-- learning-enabled modes add a separate learning plane for skill-improvement
-  requests, with execution/planning mutual exclusion still preserved
+- daemon mode uses a compiled plane scheduler; default modes remain serial,
+  while learning-enabled modes may run one Learning stage concurrently with one
+  permitted foreground Planning or Execution stage
+- runtime-owned mutation remains single-writer and serialized even when stage
+  runner workers execute concurrently
 - stage results are routed by the runtime, not by direct stage-to-stage
   handoffs
 - Arbiter activates only when the scheduler finds no lineage work left and
