@@ -30,7 +30,7 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/mailbox.py` | `src/millrace_ai/workspace/mailbox.py` | Root `mailbox.py` remains a thin compatibility facade. |
 | `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. |
 | `millrace_ai/work_documents.py` | `src/millrace_ai/workspace/work_documents.py` | Root `work_documents.py` remains a thin compatibility facade. |
-| `millrace_ai/queue_store.py` | `src/millrace_ai/workspace/queue_store.py`, `queue_selection.py`, `queue_transitions.py`, `queue_reconciliation.py` | Root `queue_store.py` remains a thin compatibility facade over the workspace queue package. |
+| `millrace_ai/queue_store.py` | `src/millrace_ai/workspace/queue_store.py`, `queue_selection.py`, `queue_transitions.py`, `queue_reconciliation.py`, `task_lifecycle_integrity.py` | Root `queue_store.py` remains a thin compatibility facade over the workspace queue package. |
 | `millrace_ai/state_store.py` | `src/millrace_ai/workspace/state_store.py`, `state_reconciliation.py` | Root `state_store.py` remains a thin compatibility facade over the workspace state package. |
 
 ## Phase-1 And Phase-2 Architecture Scaffolding

@@ -11,6 +11,24 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.16.3] - 2026-04-29
+
+### Added
+
+- Added task lifecycle duplicate diagnostics to `millrace doctor`; workspaces
+  now report `duplicate_task_lifecycle_state` when the same task id appears in
+  more than one task lifecycle directory.
+
+### Fixed
+
+- Same-id execution continuations that reach `tasks/done/` now safely retire a
+  same-root stale predecessor from `tasks/blocked/` into
+  `tasks/blocked/superseded/`, preserving an audit record while unblocking
+  closure readiness.
+- Manager guidance now explicitly avoids writing a task card whose `Task-ID`
+  already exists in task lifecycle state unless the runtime has requeued the
+  original task.
+
 ## [0.16.2] - 2026-04-28
 
 ### Fixed
@@ -511,7 +529,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.3...HEAD
+[0.16.3]: https://github.com/tim-osterhus/millrace/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/tim-osterhus/millrace/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/tim-osterhus/millrace/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/tim-osterhus/millrace/compare/v0.15.9...v0.16.0

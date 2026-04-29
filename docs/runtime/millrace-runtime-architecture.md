@@ -82,6 +82,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
 - `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/spec/incident/learning-request documents.
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
+- `src/millrace_ai/workspace/task_lifecycle_integrity.py`: duplicate task lifecycle detection and safe stale-blocked predecessor retirement when a same-root continuation reaches `done`.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
 - `src/millrace_ai/contracts/`: public typed contract facade plus owned contract families for enums, stage metadata, work documents, stage results, loop/mode definitions, compiler diagnostics, runtime snapshots, runtime error contexts, mailbox payloads, and recovery counters. `contracts/stage_metadata.py` is the single registry for stage plane membership, legal terminal results, running markers, prompt markers, and result-class policy.
@@ -202,6 +203,11 @@ Idle:
   incident inherits `Root-Idea-ID`, `Root-Spec-ID`, and `Source-Spec-ID` from
   the source work document before it is enqueued. That keeps the incident
   visible to the strict closure-scoped planning selector.
+- If a stage-authored same-ID continuation bypassed queue API uniqueness and
+  later reaches `tasks/done/`, the task transition layer retires a same-root
+  stale predecessor from `tasks/blocked/` into
+  `tasks/blocked/superseded/`. The archived copy remains inspectable, but it no
+  longer appears in closure readiness scans.
 - If queued/active/blocked work shares the open target's root idea but carries
   another effective `Root-Spec-ID`, runtime emits
   `closure_lineage_drift_detected`, writes a diagnostic under

@@ -386,6 +386,10 @@ Use intervention commands only when the runtime state actually justifies them:
 - `queue repair-lineage --root-spec-id <ROOT_SPEC_ID>` to preview a stopped-daemon
   repair when doctor reports `closure_lineage_drift`; add `--apply` only after
   confirming there is no live ownership lock or active stage
+- if `doctor` reports `duplicate_task_lifecycle_state`, inspect the named task
+  across `tasks/queue/`, `tasks/active/`, `tasks/done/`, and `tasks/blocked/`;
+  same-root blocked predecessors are automatically retired only after a same-ID
+  continuation reaches `done`
 - `config reload` when config changed and daemon-safe recompile is desired
 - `doctor` when workspace integrity or ownership state is in doubt
 

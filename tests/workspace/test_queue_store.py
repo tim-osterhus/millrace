@@ -23,6 +23,7 @@ from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import parse_work_document, parse_work_document_as, render_work_document
 from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
+from millrace_ai.workspace.queue_selection import list_open_lineage_work_ids
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 
@@ -306,6 +307,47 @@ def test_task_lifecycle_claim_done_blocked_is_deterministic(tmp_path: Path) -> N
 
     store.mark_task_blocked("task-002")
     assert (paths.tasks_blocked_dir / "task-002.md").is_file()
+
+
+def test_mark_task_done_retires_same_root_blocked_duplicate_continuation(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+    source = _task_doc("task-duplicate", created_at=NOW)
+    continuation = source.model_copy(update={"summary": "same-id continuation"})
+    blocked_path = paths.tasks_blocked_dir / "task-duplicate.md"
+    active_path = paths.tasks_active_dir / "task-duplicate.md"
+    blocked_path.write_text(render_work_document(source), encoding="utf-8")
+    active_path.write_text(render_work_document(continuation), encoding="utf-8")
+
+    destination = store.mark_task_done("task-duplicate")
+
+    assert destination == paths.tasks_done_dir / "task-duplicate.md"
+    assert destination.is_file()
+    assert not blocked_path.exists()
+    superseded = sorted((paths.tasks_blocked_dir / "superseded").glob("task-duplicate.*.md"))
+    assert len(superseded) == 1
+    assert "same-id continuation" not in superseded[0].read_text(encoding="utf-8")
+    assert list_open_lineage_work_ids(paths, root_spec_id="spec-root-001") == ()
+
+
+def test_mark_task_done_keeps_blocked_duplicate_with_different_root(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    source = _task_doc("task-duplicate-root", created_at=NOW)
+    continuation = source.model_copy(update={"root_spec_id": "spec-root-002"})
+    blocked_path = paths.tasks_blocked_dir / "task-duplicate-root.md"
+    active_path = paths.tasks_active_dir / "task-duplicate-root.md"
+    blocked_path.write_text(render_work_document(source), encoding="utf-8")
+    active_path.write_text(render_work_document(continuation), encoding="utf-8")
+
+    QueueStore(paths).mark_task_done("task-duplicate-root")
+
+    assert (paths.tasks_done_dir / "task-duplicate-root.md").is_file()
+    assert blocked_path.is_file()
+    assert not (paths.tasks_blocked_dir / "superseded").exists()
 
 
 def test_lineage_drift_scanner_reports_same_root_idea_with_mismatched_root_spec(

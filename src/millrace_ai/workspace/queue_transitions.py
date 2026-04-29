@@ -11,6 +11,7 @@ from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, Spe
 from millrace_ai.errors import QueueStateError
 
 from .paths import WorkspacePaths
+from .task_lifecycle_integrity import retire_stale_blocked_task_duplicate_after_done
 from .work_documents import render_work_document
 
 _DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
@@ -45,12 +46,14 @@ def enqueue_learning_request(paths: WorkspacePaths, doc: LearningRequestDocument
 
 
 def mark_task_done(paths: WorkspacePaths, task_id: str) -> Path:
-    return _move_item(
+    destination = _move_item(
         source_dir=paths.tasks_active_dir,
         destination_dir=paths.tasks_done_dir,
         item_id=task_id,
         kind=WorkItemKind.TASK,
     )
+    retire_stale_blocked_task_duplicate_after_done(paths, task_id=task_id)
+    return destination
 
 
 def mark_task_blocked(paths: WorkspacePaths, task_id: str) -> Path:

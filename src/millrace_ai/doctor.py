@@ -48,6 +48,7 @@ from millrace_ai.work_documents import read_work_document_as
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
 from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
+from millrace_ai.workspace.task_lifecycle_integrity import find_duplicate_task_lifecycle_ids
 
 DoctorModel: TypeAlias = type[TaskDocument] | type[SpecDocument] | type[IncidentDocument]
 WorkDocument: TypeAlias = TaskDocument | SpecDocument | IncidentDocument
@@ -107,6 +108,7 @@ def run_workspace_doctor(
 
     _validate_runtime_ownership_lock(paths, errors, warnings)
     _validate_queue_parseability(paths, errors)
+    _validate_task_lifecycle_uniqueness(paths, errors)
     _validate_closure_lineage_integrity(paths, errors)
     if baseline_manifest is not None:
         _validate_manifest_tracked_managed_files(paths, baseline_manifest, errors)
@@ -407,6 +409,21 @@ def _validate_queue_parseability(paths: WorkspacePaths, errors: list[DoctorIssue
                 )
 
 
+def _validate_task_lifecycle_uniqueness(paths: WorkspacePaths, errors: list[DoctorIssue]) -> None:
+    for duplicate in find_duplicate_task_lifecycle_ids(paths):
+        state_summary = ", ".join(
+            f"{state}:{_workspace_relative_path(paths, path)}" for state, path in duplicate.state_paths
+        )
+        primary_path = duplicate.paths[0] if duplicate.paths else None
+        errors.append(
+            DoctorIssue(
+                code="duplicate_task_lifecycle_state",
+                message=f"task {duplicate.task_id} appears in multiple lifecycle states: {state_summary}",
+                path=primary_path,
+            )
+        )
+
+
 def _read_queue_document(*, path: Path, model: DoctorModel) -> WorkDocument:
     if model is TaskDocument:
         return read_work_document_as(path, model=TaskDocument)
@@ -421,6 +438,13 @@ def _work_document_id(document: WorkDocument) -> str:
     if isinstance(document, SpecDocument):
         return document.spec_id
     return document.incident_id
+
+
+def _workspace_relative_path(paths: WorkspacePaths, path: Path) -> str:
+    try:
+        return str(path.relative_to(paths.root))
+    except ValueError:
+        return str(path)
 
 
 def _validate_mode_and_loop_assets(assets_root: Path, errors: list[DoctorIssue]) -> None:

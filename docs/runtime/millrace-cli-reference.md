@@ -590,3 +590,6 @@ for the deployed skill surface without changing the active runtime mode.
 Runs workspace integrity diagnostics, including stale lock/ownership checks.
 Doctor also reports `closure_lineage_drift` when an open closure target has
 same-root queued/active/blocked work under a different effective root spec.
+Doctor reports `duplicate_task_lifecycle_state` when the same task ID appears
+in more than one task lifecycle directory (`queue`, `active`, `done`, or
+`blocked`).

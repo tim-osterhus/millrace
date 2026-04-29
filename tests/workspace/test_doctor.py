@@ -92,6 +92,40 @@ def test_doctor_flags_queue_filename_and_document_id_mismatch(tmp_path: Path) ->
     assert any("filename stem does not match task_id" in item.message for item in mismatch_errors)
 
 
+def test_doctor_flags_duplicate_task_lifecycle_state(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    document = TaskDocument(
+        task_id="task-duplicate",
+        title="Task duplicate",
+        summary="same logical task in two lifecycle states",
+        root_idea_id="idea-001",
+        root_spec_id="spec-root-001",
+        target_paths=["millrace/runtime.py"],
+        acceptance=["doctor flags duplicate lifecycle state"],
+        required_checks=["uv run --extra dev python -m pytest tests/workspace/test_doctor.py -q"],
+        references=["lab/specs/pending/2026-04-29-millrace-task-lifecycle-duplicate-reconciliation.md"],
+        risk=["closure readiness drift"],
+        created_at=NOW,
+        created_by="tests",
+    )
+    (paths.tasks_blocked_dir / "task-duplicate.md").write_text(
+        render_work_document(document),
+        encoding="utf-8",
+    )
+    (paths.tasks_done_dir / "task-duplicate.md").write_text(
+        render_work_document(document.model_copy(update={"summary": "completed continuation"})),
+        encoding="utf-8",
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    duplicate_errors = [item for item in report.errors if item.code == "duplicate_task_lifecycle_state"]
+    assert duplicate_errors
+    assert any("task-duplicate" in item.message for item in duplicate_errors)
+    assert any("blocked" in item.message and "done" in item.message for item in duplicate_errors)
+
+
 def test_doctor_flags_closure_lineage_drift(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
     canonical_root = "idea-idea-2026-04-27-browser-local-qa"
