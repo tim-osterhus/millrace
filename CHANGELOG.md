@@ -11,6 +11,25 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.17.2] - 2026-05-03
+
+### Fixed
+
+- Improved the optional `millrace-web` Flow view so graph polling no longer
+  rebuilds animated lane DOM on every one-second workspace summary refresh,
+  preventing visible animation resets during idle monitoring.
+- Reworked Flow view particle effects to use non-repeating, slow random-walk
+  scatter layers instead of visibly tiled linear background motion.
+
+### Changed
+
+- Polished the optional dashboard Detail and Flow views for cleaner dense
+  layouts, shorter long identifiers, better Flow lane wrapping, and more
+  legible read-only workspace inspection.
+- Updated the shipped Millrace ops skill and web package docs with the
+  `millrace-web serve` command surface, multi-workspace usage, Detail/Flow
+  roles, and read-only/no-lock safety boundary.
+
 ## [0.17.1] - 2026-05-03
 
 ### Changed
@@ -574,7 +593,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.2...HEAD
+[0.17.2]: https://github.com/tim-osterhus/millrace/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/tim-osterhus/millrace/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/tim-osterhus/millrace/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/tim-osterhus/millrace/compare/v0.16.2...v0.16.3

@@ -20,12 +20,15 @@ Options:
 
 ## API
 
-The first release exposes read-only routes under `/api`. It intentionally does
-not mount `/control` or queue mutation routes.
+The current dashboard exposes read-only routes under `/api`. It intentionally
+does not mount `/control` or queue mutation routes.
+
+The static Detail and Flow views poll workspace summaries. Flow preserves its
+animated graph DOM between unchanged responses so the dashboard can keep
+refreshing state without restarting visual lane effects every second.
 
 ## Future Controls
 
 Future interactive controls should use Millrace `RuntimeControl` or the same
 intake/control functions used by the CLI. The web server should not write
 authoritative runtime files directly.
-

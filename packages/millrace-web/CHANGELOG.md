@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.2
+
+- Prevent the Flow graph from rebuilding animated lane DOM on unchanged
+  one-second workspace summary polls.
+- Polish Detail and Flow layout density, long identifier display, Flow lane
+  wrapping, and read-only dashboard legibility.
+- Replace visibly tiled particle motion with non-repeating random-walk particle
+  layers in the Flow view.
+- Update package docs and the shipped Millrace ops skill with current
+  `millrace-web serve` usage and the read-only/no-lock safety boundary.
+- Sync the package version and runtime dependency to `millrace-ai>=0.17.2`.
+
 ## 0.17.1
 
 - Publish as a normal PyPI sidecar package through the configured

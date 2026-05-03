@@ -20,8 +20,12 @@ explicitly passed with `--workspace`.
   run artifacts, compiled plan identity, usage governance, and Arbiter status.
 - `Flow`: a visual runtime-flow view over the same read-only backend data.
 
-Both views share the same DTOs and refresh loop. The first release does not
-mount write or control routes.
+Both views share the same DTOs and refresh loop. The dashboard does not mount
+write or control routes.
+
+`0.17.2` keeps the Flow graph DOM stable between unchanged poll responses so
+animated lane effects continue smoothly while the rest of the read-only state
+refreshes.
 
 ## Safety Model
 

@@ -3,6 +3,7 @@ const state = {
   activeWorkspaceId: null,
   summary: null,
   view: new URLSearchParams(window.location.search).get("view") === "flow" ? "flow" : "detail",
+  renderKeys: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -35,7 +36,7 @@ function renderWorkspaces() {
   $("workspace-list").innerHTML = state.workspaces
     .map((workspace) => {
       const active = workspace.id === state.activeWorkspaceId ? " active" : "";
-      return `<button class="workspace-card${active}" data-workspace="${workspace.id}"><strong>${escapeHtml(workspace.name)}</strong><span>${escapeHtml(workspace.path)}</span></button>`;
+      return `<button class="workspace-card${active}" data-workspace="${escapeHtml(workspace.id)}" title="${escapeHtml(workspace.path)}"><strong>${escapeHtml(workspace.name)}</strong><span>${escapeHtml(compactPath(workspace.path))}</span></button>`;
     })
     .join("");
   document.querySelectorAll("[data-workspace]").forEach((button) => {
@@ -110,7 +111,11 @@ function renderSummary() {
 
 function fields(items) {
   return Object.entries(items)
-    .map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd></div>`)
+    .map(([key, value]) => {
+      const display = String(value);
+      const valueClass = valueClasses(display);
+      return `<div><dt>${escapeHtml(key)}</dt><dd class="${valueClass}" title="${escapeHtml(display)}">${escapeHtml(display)}</dd></div>`;
+    })
     .join("");
 }
 
@@ -133,8 +138,16 @@ function queueRows(queues) {
 function renderGraph(targetId, summary, variant) {
   const activeRuns = new Map((summary.runtime.active_runs_by_plane || []).map((run) => [run.node_id, run]));
   const graphs = summary.graphs && summary.graphs.length ? summary.graphs : fallbackGraphs(summary);
+  const renderKey = graphRenderKey(summary, graphs, activeRuns, variant);
+  if (state.renderKeys[targetId] === renderKey) {
+    return;
+  }
+  state.renderKeys[targetId] = renderKey;
   $(targetId).innerHTML = graphs
     .map((graph) => {
+      if (variant === "flow") {
+        return renderFlowLane(graph, summary, activeRuns);
+      }
       const nodes = graph.nodes
         .map((node, index) => {
           const active = activeRuns.has(node.node_id) || node.node_id === summary.runtime.active_node_id;
@@ -145,6 +158,62 @@ function renderGraph(targetId, summary, variant) {
       return `<section class="lane ${variant}"><div class="lane-title">${escapeHtml(graph.plane)} lane</div><div class="node-row">${nodes || "No graph data"}</div></section>`;
     })
     .join("");
+}
+
+function graphRenderKey(summary, graphs, activeRuns, variant) {
+  const activeRunKeys = [...activeRuns.values()]
+    .map((run) => [run.plane || "", run.node_id || "", run.stage || "", run.stage_kind_id || "", run.run_id || ""].join(":"))
+    .sort();
+  const graphKeys = graphs.map((graph) => [
+    graph.plane || "",
+    graph.loop_id || "",
+    (graph.nodes || [])
+      .map((node) => [node.node_id || "", node.label || ""].join(":"))
+      .join(","),
+  ].join("|"));
+  return JSON.stringify({
+    variant,
+    workspace: summary.workspace.id,
+    activeNode: summary.runtime.active_node_id || "",
+    activePlane: summary.runtime.active_plane || "",
+    activeStage: summary.runtime.active_stage || "",
+    activeStageKind: summary.runtime.active_stage_kind_id || "",
+    activeRuns: activeRunKeys,
+    graphs: graphKeys,
+  });
+}
+
+function renderFlowLane(graph, summary, activeRuns) {
+  const plane = graph.plane || "execution";
+  const orderedNodes = orderNodesForPlane(plane, graph.nodes || []);
+  const activeNodeId = summary.runtime.active_node_id;
+  const nodeCount = Math.max(orderedNodes.length, 1);
+  const activeCount = orderedNodes.filter((node) => activeRuns.has(node.node_id) || node.node_id === activeNodeId).length;
+  const laneState = activeCount ? `${activeCount} active` : "idle";
+  const nodes = orderedNodes
+    .map((node, index) => {
+      const active = activeRuns.has(node.node_id) || node.node_id === activeNodeId;
+      const idleHighlight = !activeCount && index === Math.min(1, orderedNodes.length - 1);
+      const classes = ["node", "flow-node"];
+      if (active) classes.push("active");
+      if (idleHighlight) classes.push("idle-highlight");
+      return `<span class="${classes.join(" ")}" style="--i: ${index}" title="${escapeHtml(node.node_id)}"><span class="flow-label">${escapeHtml(node.label || node.node_id)}</span><span class="flow-trace" aria-hidden="true"></span></span>`;
+    })
+    .join("");
+  return `<section class="lane flow-lane plane-${escapeHtml(plane)}"><div class="lane-title"><span>${escapeHtml(plane)} lane</span><span class="lane-subtitle">${escapeHtml(laneState)}</span></div><div class="flow-canvas" style="--node-count: ${nodeCount}"><div class="node-row">${nodes || "No graph data"}</div></div></section>`;
+}
+
+function orderNodesForPlane(plane, nodes) {
+  const preferred = {
+    execution: ["builder", "checker", "fixer", "doublechecker", "updater", "troubleshooter", "consultant"],
+    learning: ["analyst", "professor", "curator"],
+    planning: ["planner", "manager", "mechanic", "auditor", "arbiter"],
+  }[plane] || [];
+  if (!preferred.length) return nodes;
+  const byId = new Map(nodes.map((node) => [node.node_id, node]));
+  const ordered = preferred.map((nodeId) => byId.get(nodeId)).filter(Boolean);
+  const seen = new Set(ordered.map((node) => node.node_id));
+  return ordered.concat(nodes.filter((node) => !seen.has(node.node_id)));
 }
 
 function fallbackGraphs(summary) {
@@ -162,14 +231,14 @@ function fallbackGraphs(summary) {
 
 function runRows(runs) {
   return runs
-    .map((run) => `<tr><td>${escapeHtml(run.run_id)}</td><td>${escapeHtml(run.stage || "none")}</td><td>${escapeHtml(run.result || run.status)}</td><td>${formatDuration(run.duration_seconds)}</td><td>${run.total_tokens || 0}</td></tr>`)
+    .map((run) => `<tr><td title="${escapeHtml(run.run_id)}">${escapeHtml(shortId(run.run_id))}</td><td>${escapeHtml(run.stage || "none")}</td><td title="${escapeHtml(run.result || run.status)}">${escapeHtml(run.result || run.status)}</td><td>${formatDuration(run.duration_seconds)}</td><td>${run.total_tokens || 0}</td></tr>`)
     .join("");
 }
 
 function artifactList(runs) {
   const artifacts = runs.flatMap((run) => run.artifacts || []).slice(0, 8);
   if (!artifacts.length) return "<li>No artifacts yet</li>";
-  return artifacts.map((artifact) => `<li>${escapeHtml(artifact.path)}</li>`).join("");
+  return artifacts.map((artifact) => `<li title="${escapeHtml(artifact.path)}"><code>${escapeHtml(shortPath(artifact.path))}</code></li>`).join("");
 }
 
 function renderEvents(events) {
@@ -180,7 +249,7 @@ function renderEvents(events) {
     .map((event) => {
       const time = new Date(event.occurred_at).toLocaleTimeString();
       const subject = [event.plane, event.stage].filter(Boolean).join(".") || event.workspace_id;
-      return `<div class="event-row"><span>${time}</span><b>${escapeHtml(event.event_type)}</b><span>${escapeHtml(subject)} ${escapeHtml(event.details || "")}</span></div>`;
+      return `<div class="event-row"><span>${time}</span><b>${escapeHtml(event.event_type)}</b><span title="${escapeHtml(`${subject} ${event.details || ""}`)}">${escapeHtml(subject)} ${escapeHtml(event.details || "")}</span></div>`;
     })
     .join("");
 }
@@ -197,6 +266,42 @@ function latestResult(runs) {
   return runs.length ? runs[0].result || runs[0].status : "none";
 }
 
+function valueClasses(value) {
+  const classes = [];
+  if (value.length > 22 || value.includes("/") || value.startsWith("run-") || value.startsWith("plan-")) {
+    classes.push("value-long");
+  }
+  if (["current", "initialized", "running", "yes", "true"].includes(value)) {
+    classes.push("value-good");
+  }
+  if (["stopped", "idle", "disabled", "none", "false"].includes(value)) {
+    classes.push("value-warn");
+  }
+  if (["blocked", "failed", "error"].includes(value)) {
+    classes.push("value-bad");
+  }
+  return classes.join(" ");
+}
+
+function shortId(value) {
+  if (!value) return "none";
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 14)}…${value.slice(-6)}`;
+}
+
+function shortPath(value) {
+  const parts = String(value).split("/");
+  if (parts.length <= 2) return value;
+  return parts.slice(-2).join("/");
+}
+
+function compactPath(value) {
+  const path = String(value);
+  const marker = "/Millrace-Dev/";
+  if (path.includes(marker)) return `…/${path.split(marker).pop()}`;
+  return shortPath(path);
+}
+
 function formatDuration(seconds) {
   if (seconds === null || seconds === undefined) return "idle";
   const safe = Math.max(0, Math.floor(seconds));
@@ -207,7 +312,7 @@ function formatDuration(seconds) {
 }
 
 function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (char) => ({
+  return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
@@ -222,4 +327,3 @@ $("flow-button").addEventListener("click", () => setView("flow"));
 setView(state.view);
 loadWorkspaces().then(loadSummary);
 setInterval(loadSummary, 1000);
-
