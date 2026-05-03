@@ -223,6 +223,11 @@ activity or a different idle reason appears.
 Use `--monitor-log <path>` when you want the same clean monitor stream written
 to a file without necessarily printing live monitor lines to stdout.
 
+For an optional local dashboard, install the separate `millrace-web` package
+and run `millrace-web serve --workspace "$WORKSPACE"`. The web dashboard is a
+read-only observer with Detail and Flow views; it is not included in the
+`millrace-ai` wheel and does not acquire runtime ownership locks.
+
 When the packaged workspace baseline changes, use `millrace upgrade` first to
 preview the managed-file classifications, then `millrace upgrade --apply` to
 apply safe baseline updates. This does not update the installed Python package;

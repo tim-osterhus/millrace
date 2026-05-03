@@ -327,6 +327,11 @@ Important monitoring note:
   persisted runtime artifacts
 - `millrace run daemon --monitor-log <path>` writes basic monitor output to a
   file; combine it with `--monitor none` for quiet foreground operation
+- optional local dashboard monitoring lives in the separate `millrace-web`
+  package: install it separately and run
+  `millrace-web serve --workspace <workspace>`. It is read-only, has Detail and
+  Flow views, does not ship inside `millrace-ai`, and must not be treated as a
+  runtime control surface
 - `millrace doctor` is the quick integrity check for mode assets and resolved
   runner posture, including missing harness binaries and closure lineage drift
 - `millrace status` exposes `pause_sources` and usage-governance blockers when
