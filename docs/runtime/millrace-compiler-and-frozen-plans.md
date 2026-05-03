@@ -181,7 +181,7 @@ mismatched plan is still authoritative.
 
 - `compiled_plan_id`
 - loop and graph identity
-- stage/node request-binding details
+- stage/node request-binding details, including runner/model/thinking bindings
 - loop ids by plane
 - concurrency policy and learning trigger rules when present
 - `baseline_manifest_id`

@@ -109,6 +109,7 @@ def build_stage_run_request(
         else None,
         runner_name=stage_plan.runner_name,
         model_name=stage_plan.model_name,
+        thinking_level=stage_plan.thinking_level,
         model_reasoning_effort=stage_plan.model_reasoning_effort,
         timeout_seconds=stage_plan.timeout_seconds,
     )
@@ -177,6 +178,7 @@ def build_closure_target_stage_run_request(
         else None,
         runner_name=stage_plan.runner_name,
         model_name=stage_plan.model_name,
+        thinking_level=stage_plan.thinking_level,
         model_reasoning_effort=stage_plan.model_reasoning_effort,
         timeout_seconds=stage_plan.timeout_seconds,
     )
@@ -293,6 +295,7 @@ def runner_failure_result(
         stage=request.stage,
         runner_name=request.runner_name or "runtime",
         model_name=request.model_name,
+        thinking_level=request.thinking_level,
         model_reasoning_effort=request.model_reasoning_effort,
         exit_kind="runner_error",
         exit_code=1,

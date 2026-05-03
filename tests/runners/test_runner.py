@@ -532,6 +532,7 @@ def test_render_stage_request_context_lines_handles_optional_fields_absent(
             "attached_skill_paths": (),
             "runner_name": None,
             "model_name": None,
+            "thinking_level": None,
             "model_reasoning_effort": None,
         }
     )
@@ -547,6 +548,7 @@ def test_render_stage_request_context_lines_handles_optional_fields_absent(
     assert "Runtime Error Catalog Path: none" in context
     assert "Runner Name: none" in context
     assert "Model Name: none" in context
+    assert "Thinking Level: none" in context
     assert "Model Reasoning Effort: none" in context
 
 
@@ -601,6 +603,7 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "skill_revision_evidence_path": "Skill Revision Evidence Path:",
         "runner_name": "Runner Name:",
         "model_name": "Model Name:",
+        "thinking_level": "Thinking Level:",
         "model_reasoning_effort": "Model Reasoning Effort:",
         "timeout_seconds": "Timeout Seconds:",
     }

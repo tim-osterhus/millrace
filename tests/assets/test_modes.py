@@ -6,10 +6,11 @@ import shutil
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import Plane
+from millrace_ai.contracts import ModeDefinition, Plane
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.modes import (
     SHIPPED_MODE_IDS,
@@ -59,6 +60,7 @@ def _write_workspace_local_mode_assets(assets_root: Path) -> None:
                 "stage_entrypoint_overrides": {},
                 "stage_skill_additions": {},
                 "stage_model_bindings": {"checker": "gpt-5.4"},
+                "stage_thinking_bindings": {"checker": "high", "updater": None},
                 "stage_runner_bindings": {
                     "builder": "codex_cli",
                     "checker": "codex_cli",
@@ -162,7 +164,38 @@ def test_workspace_local_mode_loads_discovered_loops_and_stage_bindings(tmp_path
     assert bundle.execution_loop.loop_id == "execution.local_review"
     assert bundle.planning_loop.loop_id == "planning.local_review"
     assert bundle.mode.stage_model_bindings["checker"] == "gpt-5.4"
+    assert bundle.mode.stage_thinking_bindings["checker"] == "high"
+    assert bundle.mode.stage_thinking_bindings["updater"] is None
     assert set(bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
+
+
+def test_mode_definition_accepts_stage_thinking_bindings_with_null_defaults() -> None:
+    mode = ModeDefinition(
+        mode_id="custom_mode",
+        loop_ids_by_plane={
+            "execution": "execution.standard",
+            "planning": "planning.standard",
+        },
+        stage_thinking_bindings={
+            "checker": "high",
+            "updater": None,
+        },
+    )
+
+    assert mode.stage_thinking_bindings["checker"] == "high"
+    assert mode.stage_thinking_bindings["updater"] is None
+
+
+def test_mode_definition_rejects_empty_stage_thinking_binding() -> None:
+    with pytest.raises(ValidationError, match="stage_thinking_bindings"):
+        ModeDefinition(
+            mode_id="custom_mode",
+            loop_ids_by_plane={
+                "execution": "execution.standard",
+                "planning": "planning.standard",
+            },
+            stage_thinking_bindings={"checker": " "},
+        )
 
 
 def test_mode_asset_errors_use_project_error_hierarchy() -> None:

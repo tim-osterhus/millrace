@@ -58,6 +58,7 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
     attached_skill_additions: tuple[str, ...] = ()
     runner_name: str | None = None
     model_name: str | None = None
+    thinking_level: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
 
     @field_validator("node_id", "stage_kind_id")
@@ -95,6 +96,13 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
         ]
         return dedupe_preserve_order(normalized)
 
+    @field_validator("thinking_level")
+    @classmethod
+    def validate_thinking_level(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_nonempty_text(value, field_label="thinking_level")
+
     def declared_override_names(self) -> set[str]:
         overrides: set[str] = set()
         if self.entrypoint_path is not None:
@@ -105,6 +113,8 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
             overrides.add("runner_name")
         if self.model_name is not None:
             overrides.add("model_name")
+        if self.thinking_level is not None:
+            overrides.add("thinking_level")
         if self.timeout_seconds is not None:
             overrides.add("timeout_seconds")
         return overrides

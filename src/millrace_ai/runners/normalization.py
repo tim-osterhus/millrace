@@ -120,6 +120,7 @@ def normalize_stage_result(
         stderr_path=raw_result.stderr_path,
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
+        thinking_level=_resolved_thinking_level(request, raw_result),
         model_reasoning_effort=raw_result.model_reasoning_effort or request.model_reasoning_effort,
         token_usage=raw_result.token_usage,
         notes=extraction.notes + _transport_reconciliation_notes(raw_result),
@@ -425,6 +426,7 @@ def _failure_envelope(
         stderr_path=raw_result.stderr_path,
         runner_name=raw_result.runner_name,
         model_name=raw_result.model_name,
+        thinking_level=_resolved_thinking_level(request, raw_result),
         model_reasoning_effort=raw_result.model_reasoning_effort or request.model_reasoning_effort,
         token_usage=raw_result.token_usage,
         notes=notes,
@@ -498,6 +500,18 @@ def _transport_reconciliation_notes(raw_result: RunnerRawResult) -> tuple[str, .
     )
 
 
+def _resolved_thinking_level(
+    request: StageRunRequest,
+    raw_result: RunnerRawResult,
+) -> str | None:
+    return (
+        raw_result.thinking_level
+        or request.thinking_level
+        or raw_result.model_reasoning_effort
+        or request.model_reasoning_effort
+    )
+
+
 def _resolved_report_artifact(request: StageRunRequest) -> str | None:
     for candidate in (request.preferred_report_path, request.preferred_troubleshoot_report_path):
         if not candidate:
@@ -566,6 +580,7 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,
         "skill_revision_evidence_path": request.skill_revision_evidence_path,
+        "thinking_level": request.thinking_level,
         "model_reasoning_effort": request.model_reasoning_effort,
     }
 

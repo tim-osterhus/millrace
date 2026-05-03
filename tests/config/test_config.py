@@ -53,6 +53,25 @@ def test_stage_config_uses_one_hour_default_timeout() -> None:
     assert StageConfig().timeout_seconds == 3600
 
 
+def test_stage_config_accepts_runner_neutral_thinking_level() -> None:
+    config = StageConfig(thinking_level="high")
+
+    assert config.thinking_level == "high"
+    assert config.model_reasoning_effort is None
+
+
+def test_stage_config_maps_legacy_reasoning_effort_to_thinking_level() -> None:
+    config = StageConfig(model_reasoning_effort="high")
+
+    assert config.model_reasoning_effort is CodexReasoningEffort.HIGH
+    assert config.thinking_level == "high"
+
+
+def test_stage_config_rejects_conflicting_thinking_aliases() -> None:
+    with pytest.raises(ValidationError, match="thinking_level.*model_reasoning_effort"):
+        StageConfig(thinking_level="medium", model_reasoning_effort="high")
+
+
 def test_runtime_config_defaults_codex_permissions_to_maximum() -> None:
     assert RuntimeConfig().runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
 
@@ -164,6 +183,7 @@ def test_learning_stage_config_and_codex_stage_permissions_are_supported() -> No
     )
 
     assert config.stages["professor"].model == "gpt-5.4"
+    assert config.stages["professor"].thinking_level == "high"
     assert config.stages["professor"].model_reasoning_effort is CodexReasoningEffort.HIGH
     assert config.runners.codex.permission_by_stage["professor"] is CodexPermissionLevel.ELEVATED
 
@@ -211,6 +231,7 @@ def test_each_config_field_has_an_apply_boundary() -> None:
             "builder": StageConfig(
                 runner="codex",
                 model="gpt-5",
+                thinking_level="high",
                 model_reasoning_effort=CodexReasoningEffort.HIGH,
                 timeout_seconds=180,
             )
@@ -234,6 +255,7 @@ def test_each_config_field_has_an_apply_boundary() -> None:
     )
     assert apply_boundary_for_field("runtime.default_mode") is ApplyBoundary.RECOMPILE
     assert apply_boundary_for_field("stages.builder.model") is ApplyBoundary.RECOMPILE
+    assert apply_boundary_for_field("stages.builder.thinking_level") is ApplyBoundary.RECOMPILE
     assert apply_boundary_for_field("stages.builder.model_reasoning_effort") is ApplyBoundary.RECOMPILE
 
 
@@ -285,7 +307,7 @@ def test_recompile_boundary_helpers_surface_recompile_keys() -> None:
     candidate_payload["stages"]["builder"] = {
         "runner": "codex",
         "model": "gpt-5",
-        "model_reasoning_effort": "high",
+        "thinking_level": "high",
         "timeout_seconds": 200,
     }
     candidate = RuntimeConfig.model_validate(candidate_payload)
@@ -295,7 +317,7 @@ def test_recompile_boundary_helpers_surface_recompile_keys() -> None:
     assert "runtime.default_mode" in summary.changed_keys
     assert "watchers.enabled" in summary.changed_keys
     assert "stages.builder.runner" in summary.changed_keys
-    assert "stages.builder.model_reasoning_effort" in summary.changed_keys
+    assert "stages.builder.thinking_level" in summary.changed_keys
     assert summary.requires_recompile is True
     assert summary.highest_boundary is ApplyBoundary.RECOMPILE
     assert tuple(sorted(summary.recompile_keys)) == (
@@ -303,6 +325,7 @@ def test_recompile_boundary_helpers_surface_recompile_keys() -> None:
         "stages.builder.model",
         "stages.builder.model_reasoning_effort",
         "stages.builder.runner",
+        "stages.builder.thinking_level",
         "stages.builder.timeout_seconds",
     )
     assert recompile_boundary_changes(current, candidate) == summary.recompile_keys

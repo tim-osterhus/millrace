@@ -222,6 +222,7 @@ The current mode shape is intentionally small:
 - `stage_skill_additions`
 - `stage_model_bindings`
 - `stage_runner_bindings`
+- `stage_thinking_bindings`
 - `concurrency_policy`
 - `learning_trigger_rules`
 
@@ -289,6 +290,15 @@ This map sets a mode-level runner name for a stage.
 
 If present, it wins over stage-level config for that stage during compile.
 
+### `stage_thinking_bindings`
+
+This map sets a mode-level runner-neutral thinking level for a stage.
+
+If the stage key is present, it wins over graph-loop node defaults and
+stage-level config during compile. JSON `null` is meaningful here: it freezes
+the compiled stage default, so the request carries no explicit thinking
+override and the selected adapter can use its own default behavior.
+
 ## Stage Config Overlays
 
 Runtime config may define `stages.<stage>` entries for execution, planning, and
@@ -299,13 +309,18 @@ Supported stage config fields are:
 
 - `runner`
 - `model`
+- `thinking_level`
 - `model_reasoning_effort`
 - `timeout_seconds`
 
-`model_reasoning_effort` is Codex-specific. It is copied into the compiled node
-binding and the stage request, then passed to Codex CLI as
-`model_reasoning_effort="<value>"`. It is also visible in `compile show`,
-runner invocation artifacts, persisted stage results, and `runs show`.
+`thinking_level` is runner-neutral. It is copied into the compiled node binding
+and stage request, then translated by the selected adapter. Codex passes it as
+`model_reasoning_effort="<value>"`; Pi passes it as `--thinking <value>`.
+It is also visible in `compile show`, runner invocation artifacts, persisted
+stage results, and `runs show`.
+
+`model_reasoning_effort` remains accepted as a Codex compatibility alias. If
+both fields are set for a stage, they must match.
 
 ## What The Compiler Freezes From Modes And Loops
 
@@ -321,6 +336,7 @@ Each materialized node binding records:
 - `attached_skill_additions`
 - `runner_name`
 - `model_name`
+- `thinking_level`
 - `model_reasoning_effort`
 - `timeout_seconds`
 
@@ -343,6 +359,7 @@ Relevant examples:
 - `runtime.default_mode`
 - `stages.<stage>.runner`
 - `stages.<stage>.model`
+- `stages.<stage>.thinking_level`
 - `stages.<stage>.model_reasoning_effort`
 - `stages.<stage>.timeout_seconds`
 

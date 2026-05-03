@@ -11,6 +11,22 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [Unreleased]
+
+### Added
+
+- Added runner-neutral compiled stage `thinking_level` bindings across stage
+  config, mode `stage_thinking_bindings`, graph-loop node definitions,
+  compiled plans, stage requests, runner artifacts, persisted stage results,
+  `compile show`, and run inspection. Codex maps the value to
+  `model_reasoning_effort`; Pi maps it to `--thinking`.
+
+### Changed
+
+- Kept `stages.<stage>.model_reasoning_effort` as a Codex compatibility alias
+  while making `stages.<stage>.thinking_level` the preferred stage config
+  surface. Explicit `null` mode thinking bindings now mean compiled default.
+
 ## [0.17.2] - 2026-05-03
 
 ### Fixed

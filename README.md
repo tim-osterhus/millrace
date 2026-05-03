@@ -230,7 +230,7 @@ The basic monitor is a human-facing stream: it compacts stage labels, shortens
 long run ids for display, omits unknown token filler, and leaves full ids and
 artifacts to `millrace runs ...` inspection commands.
 The basic monitor prints the first `idle reason=no_work` line immediately, then
-throttles repeated `no_work` idles to a 120-second heartbeat until runtime
+throttles repeated `no_work` idles to a 6-hour heartbeat until runtime
 activity or a different idle reason appears.
 Use `--monitor-log <path>` when you want the same clean monitor stream written
 to a file without necessarily printing live monitor lines to stdout.
@@ -249,10 +249,13 @@ manager first and verify with `millrace --version` or `millrace version`. If
 compile inputs drift and the persisted plan is stale, runtime startup and
 config reload refuse to keep running on the stale plan.
 
-Stage config supports all execution, planning, and learning stage names. For
-Codex-backed stages, `stages.<stage>.model_reasoning_effort` sets the
-per-stage Codex reasoning effort that compile, runner invocation artifacts, and
-run inspection will surface.
+Stage config supports all execution, planning, and learning stage names.
+`stages.<stage>.thinking_level` sets a runner-neutral per-stage thinking level
+that the compiler freezes into node bindings, stage requests, runner artifacts,
+persisted stage results, and run inspection. Codex translates it to
+`model_reasoning_effort="<value>"`; Pi translates it to `--thinking <value>`.
+The older `stages.<stage>.model_reasoning_effort` field remains accepted as a
+Codex compatibility alias.
 
 Canonical shipped modes today:
 

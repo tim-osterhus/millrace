@@ -96,6 +96,7 @@ Today the important authoring rule is scope:
 - `stage_skill_additions`
 - `stage_model_bindings`
 - `stage_runner_bindings`
+- `stage_thinking_bindings`
 - `concurrency_policy`
 - `learning_trigger_rules`
 
@@ -152,9 +153,11 @@ That includes:
 - changing `runtime.default_mode`
 - changing stage-level `runner`
 - changing stage-level `model`
+- changing stage-level `thinking_level` or legacy `model_reasoning_effort`
 - changing stage-level `timeout_seconds`
 - changing legacy loop stage topology
 - changing graph-loop topology
+- changing graph-loop node `thinking_level`
 - changing stage-kind contracts used by graph loops
 - changing mode stage maps
 

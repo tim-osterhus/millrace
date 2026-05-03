@@ -99,7 +99,8 @@ class CodexCliRunnerAdapter:
                 stage=request.stage,
                 runner_name=self.name,
                 model_name=request.model_name,
-                model_reasoning_effort=request.model_reasoning_effort,
+                thinking_level=request.thinking_level,
+                model_reasoning_effort=_codex_model_reasoning_effort(request),
                 exit_kind="runner_error",
                 exit_code=127,
                 stdout_path=str(artifact_paths.stdout_path),
@@ -166,7 +167,8 @@ class CodexCliRunnerAdapter:
             stage=request.stage,
             runner_name=self.name,
             model_name=request.model_name,
-            model_reasoning_effort=request.model_reasoning_effort,
+            thinking_level=request.thinking_level,
+            model_reasoning_effort=_codex_model_reasoning_effort(request),
             exit_kind=canonical_exit_kind,
             exit_code=canonical_exit_code,
             observed_exit_kind=observed_exit_kind,
@@ -215,5 +217,10 @@ class CodexCliRunnerAdapter:
 
     def _build_prompt(self, request: StageRunRequest) -> str:
         return build_stage_prompt(request)
+
+
+def _codex_model_reasoning_effort(request: StageRunRequest) -> str | None:
+    return request.thinking_level or request.model_reasoning_effort
+
 
 __all__ = ["CodexCliRunnerAdapter"]

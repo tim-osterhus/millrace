@@ -87,6 +87,7 @@ class PiRpcRunnerAdapter:
                 stage=request.stage,
                 runner_name=self.name,
                 model_name=request.model_name,
+                thinking_level=request.thinking_level,
                 model_reasoning_effort=request.model_reasoning_effort,
                 exit_kind="runner_error",
                 exit_code=127,
@@ -119,6 +120,7 @@ class PiRpcRunnerAdapter:
                 stage=request.stage,
                 runner_name=self.name,
                 model_name=request.model_name,
+                thinking_level=request.thinking_level,
                 model_reasoning_effort=request.model_reasoning_effort,
                 exit_kind="runner_error",
                 exit_code=1,
@@ -163,6 +165,7 @@ class PiRpcRunnerAdapter:
             stage=request.stage,
             runner_name=self.name,
             model_name=request.model_name,
+            thinking_level=request.thinking_level,
             model_reasoning_effort=request.model_reasoning_effort,
             exit_kind=session_result.exit_kind,
             exit_code=session_result.exit_code,
@@ -199,8 +202,9 @@ class PiRpcRunnerAdapter:
             command.extend(["--provider", pi.provider])
         if request.model_name is not None:
             command.extend(["--model", request.model_name])
-        if pi.thinking is not None:
-            command.extend(["--thinking", pi.thinking])
+        thinking_level = request.thinking_level if request.thinking_level is not None else pi.thinking
+        if thinking_level is not None:
+            command.extend(["--thinking", thinking_level])
         if pi.disable_context_files:
             command.append("--no-context-files")
         if pi.disable_skills:

@@ -70,6 +70,7 @@ def _write_workspace_local_graph_mode_assets(assets_root: Path) -> None:
                 "stage_entrypoint_overrides": {},
                 "stage_skill_additions": {},
                 "stage_model_bindings": {"checker": "gpt-5.4"},
+                "stage_thinking_bindings": {"checker": "high"},
                 "stage_runner_bindings": {
                     "builder": "codex_cli",
                     "checker": "codex_cli",
@@ -396,6 +397,8 @@ def test_compile_materializes_workspace_local_mode_contract(tmp_path: Path) -> N
     )
 
     assert execution_nodes["checker"].model_name == "gpt-5.4"
+    assert execution_nodes["checker"].thinking_level == "high"
+    assert execution_nodes["checker"].model_reasoning_effort == "high"
     assert fix_threshold.threshold == 5
     assert {
         (asset.asset_family, asset.logical_id, asset.compile_time_path)
@@ -445,6 +448,7 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
     ]
     learning_nodes = {node.node_id: node for node in outcome.active_plan.learning_graph.nodes}
     assert learning_nodes["professor"].model_name == "gpt-5.4"
+    assert learning_nodes["professor"].thinking_level == "high"
     assert learning_nodes["professor"].model_reasoning_effort == "high"
     assert {node.runner_name for node in _all_nodes(outcome.active_plan)} == {"codex_cli"}
     assert {
@@ -526,6 +530,103 @@ def test_default_pi_compiles_with_pi_runner_bound_for_every_node(tmp_path: Path)
     assert outcome.active_plan is not None
     assert outcome.active_plan.mode_id == "default_pi"
     assert {node.runner_name for node in _all_nodes(outcome.active_plan)} == {"pi_rpc"}
+
+
+def test_compile_resolves_runner_neutral_thinking_precedence_for_pi(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+
+    execution_graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    execution_graph = json.loads(execution_graph_path.read_text(encoding="utf-8"))
+    for node in execution_graph["nodes"]:
+        if node["node_id"] == "builder":
+            node["thinking_level"] = "low"
+    execution_graph_path.write_text(json.dumps(execution_graph, indent=2) + "\n", encoding="utf-8")
+
+    mode_path = assets_root / "modes" / "default_pi.json"
+    mode = json.loads(mode_path.read_text(encoding="utf-8"))
+    mode["stage_thinking_bindings"] = {
+        "builder": "high",
+        "checker": None,
+    }
+    mode_path.write_text(json.dumps(mode, indent=2) + "\n", encoding="utf-8")
+
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(
+            stages={
+                "builder": {"thinking_level": "medium"},
+                "checker": {"thinking_level": "xhigh"},
+                "fixer": {"model_reasoning_effort": "high"},
+            }
+        ),
+        requested_mode_id="default_pi",
+        assets_root=assets_root,
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    nodes = {node.node_id: node for node in outcome.active_plan.execution_graph.nodes}
+    assert nodes["builder"].thinking_level == "high"
+    assert nodes["builder"].model_reasoning_effort is None
+    assert nodes["checker"].thinking_level is None
+    assert nodes["checker"].model_reasoning_effort is None
+    assert nodes["fixer"].thinking_level == "high"
+    assert nodes["fixer"].model_reasoning_effort is None
+
+
+def test_compile_materializes_graph_loop_thinking_default(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+
+    execution_graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    execution_graph = json.loads(execution_graph_path.read_text(encoding="utf-8"))
+    for node in execution_graph["nodes"]:
+        if node["node_id"] == "builder":
+            node["thinking_level"] = "high"
+    execution_graph_path.write_text(json.dumps(execution_graph, indent=2) + "\n", encoding="utf-8")
+
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=assets_root,
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    builder = next(node for node in outcome.active_plan.execution_graph.nodes if node.node_id == "builder")
+    assert builder.thinking_level == "high"
+    assert builder.model_reasoning_effort == "high"
+
+
+def test_compile_rejects_stage_thinking_binding_outside_selected_loops(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    mode_path = assets_root / "modes" / "default_codex.json"
+    mode = json.loads(mode_path.read_text(encoding="utf-8"))
+    mode["stage_thinking_bindings"] = {"professor": "high"}
+    mode_path.write_text(json.dumps(mode, indent=2) + "\n", encoding="utf-8")
+
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=assets_root,
+    )
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.diagnostics.errors == (
+        "Mode map `stage_thinking_bindings` references stage outside selected loops: professor",
+    )
 
 
 def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:

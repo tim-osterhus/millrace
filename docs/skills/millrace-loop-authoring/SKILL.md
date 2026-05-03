@@ -173,6 +173,8 @@ When changing a mode, confirm:
 - `stage_skill_additions` only references selected stages
 - `stage_model_bindings` only references selected stages
 - `stage_runner_bindings` only references selected stages
+- `stage_thinking_bindings` only references selected stages; use JSON `null`
+  only when the mode should force the compiled stage default
 - concurrency policy only references selected planes and stages
 - `learning_trigger_rules` are present only when a learning loop is selected
 - each learning trigger target is a valid selected learning stage

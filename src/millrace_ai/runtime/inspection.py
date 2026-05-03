@@ -43,6 +43,7 @@ class InspectedStageResult:
     completed_at: str
     duration_seconds: float = 0.0
     token_usage: TokenUsage | None = None
+    thinking_level: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +169,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 ),
                 runner_name=stage_result.runner_name,
                 model_name=stage_result.model_name,
+                thinking_level=stage_result.thinking_level,
                 model_reasoning_effort=stage_result.model_reasoning_effort,
                 started_at=stage_result.started_at.isoformat(),
                 completed_at=stage_result.completed_at.isoformat(),

@@ -118,6 +118,67 @@ def test_pi_adapter_omits_event_log_for_success_by_default(
     ]
 
 
+def test_pi_adapter_prefers_request_thinking_level_over_global_default(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path).model_copy(update={"thinking_level": "high"})
+    observed_command: list[tuple[str, ...]] = []
+
+    def fake_client_factory(*, command, cwd, env):
+        del cwd, env
+        observed_command.append(command)
+
+        class _FakeClient:
+            def run_prompt(self, *, prompt, timeout_seconds):
+                del prompt, timeout_seconds
+                return _completed_session_result(event_lines=())
+
+        return _FakeClient()
+
+    adapter = PiRpcRunnerAdapter(
+        config=RuntimeConfig(runners={"pi": {"thinking": "medium"}}),
+        workspace_root=tmp_path,
+        client_factory=fake_client_factory,
+    )
+
+    result = adapter.run(request)
+
+    assert result.thinking_level == "high"
+    command = observed_command[0]
+    thinking_index = command.index("--thinking")
+    assert command[thinking_index + 1] == "high"
+
+
+def test_pi_adapter_uses_global_thinking_when_request_is_default(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path)
+    observed_command: list[tuple[str, ...]] = []
+
+    def fake_client_factory(*, command, cwd, env):
+        del cwd, env
+        observed_command.append(command)
+
+        class _FakeClient:
+            def run_prompt(self, *, prompt, timeout_seconds):
+                del prompt, timeout_seconds
+                return _completed_session_result(event_lines=())
+
+        return _FakeClient()
+
+    adapter = PiRpcRunnerAdapter(
+        config=RuntimeConfig(runners={"pi": {"thinking": "medium"}}),
+        workspace_root=tmp_path,
+        client_factory=fake_client_factory,
+    )
+
+    adapter.run(request)
+
+    command = observed_command[0]
+    thinking_index = command.index("--thinking")
+    assert command[thinking_index + 1] == "medium"
+
+
 def test_pi_request_carries_compiled_identity_defaults(tmp_path: Path) -> None:
     request = _request(tmp_path)
 

@@ -13,6 +13,7 @@ def validate_mode_stage_maps(mode: ModeDefinition, selected_stages: set[StageNam
         ("stage_skill_additions", mode.stage_skill_additions),
         ("stage_model_bindings", mode.stage_model_bindings),
         ("stage_runner_bindings", mode.stage_runner_bindings),
+        ("stage_thinking_bindings", mode.stage_thinking_bindings),
     ):
         for stage in sorted(mapping, key=lambda stage_name: stage_name.value):
             if stage not in selected_stages:

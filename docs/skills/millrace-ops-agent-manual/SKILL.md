@@ -124,7 +124,7 @@ remains single-writer and serialized by the daemon supervisor.
    `millrace runs ls` and `millrace runs show <run_id>` for full run ids,
    artifacts, and durable details.
    The basic monitor prints the first `idle reason=no_work` line immediately,
-   then treats repeated `no_work` idles as a 120-second heartbeat until runtime
+   then treats repeated `no_work` idles as a 6-hour heartbeat until runtime
    activity or a different idle reason appears.
    Use `--monitor-log <path>` when you need the same clean monitor stream
    persisted to a file without necessarily printing it to stdout.
@@ -325,7 +325,7 @@ Important monitoring note:
 - `millrace status watch` is monitor-only and does not acquire runtime
   ownership locks
 - `millrace run daemon --monitor basic` is live-only output; repeated
-  `idle reason=no_work` lines are throttled to one heartbeat every 120 seconds
+  `idle reason=no_work` lines are throttled to one heartbeat every 6 hours
   until runtime activity or a different idle reason resets the heartbeat
 - the basic monitor is intentionally human-facing: stage labels are compact,
   long run ids are shortened for display, unknown token usage is omitted, and
@@ -427,7 +427,8 @@ Use intervention commands only when the runtime state actually justifies them:
   workspace. If the daemon was started with an explicit `--mode`, that override
   remains pinned across reloads.
 - Stage config supports learning stages such as `professor`, including
-  `model`, `timeout_seconds`, and Codex `model_reasoning_effort`.
+  `model`, runner-neutral `thinking_level`, legacy Codex
+  `model_reasoning_effort`, and `timeout_seconds`.
 - New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
   `runners.default_runner = "codex_cli"`.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.

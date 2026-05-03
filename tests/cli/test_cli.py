@@ -184,6 +184,7 @@ def _inspected_run_summary(
     mode_id: str | None = "default_codex",
     request_kind: str | None = None,
     closure_target_root_spec_id: str | None = None,
+    thinking_level: str | None = None,
     model_reasoning_effort: str | None = None,
 ) -> InspectedRunSummary:
     artifact_paths = tuple(
@@ -210,6 +211,7 @@ def _inspected_run_summary(
         artifact_paths=artifact_paths,
         runner_name="codex-cli",
         model_name="gpt-5.4",
+        thinking_level=thinking_level,
         model_reasoning_effort=model_reasoning_effort,
         started_at=NOW.isoformat(),
         completed_at=NOW.isoformat(),
@@ -1159,7 +1161,11 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     monkeypatch.setattr(
         cli,
         "inspect_run_id",
-        lambda target, run_id: _inspected_run_summary(run_id, model_reasoning_effort="high"),
+        lambda target, run_id: _inspected_run_summary(
+            run_id,
+            thinking_level="high",
+            model_reasoning_effort="high",
+        ),
     )
 
     runner = CliRunner()
@@ -1176,6 +1182,7 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     assert "terminal_result: CHECKER_PASS" in result.output
     assert "runner_name: codex-cli" in result.output
     assert "model_name: gpt-5.4" in result.output
+    assert "thinking_level: high" in result.output
     assert "model_reasoning_effort: high" in result.output
     assert "duration_seconds: 3.0" in result.output
     assert "input_tokens: 100" in result.output
@@ -1972,6 +1979,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         attached_skill_additions=(),
                         runner_name="codex_cli",
                         model_name=None,
+                        thinking_level="high",
                         model_reasoning_effort="high",
                         timeout_seconds=3600,
                     ),
@@ -1997,6 +2005,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         attached_skill_additions=(),
                         runner_name="codex_cli",
                         model_name=None,
+                        thinking_level=None,
                         model_reasoning_effort=None,
                         timeout_seconds=3600,
                     ),
@@ -2073,6 +2082,7 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "attached_skills: none" in result.output
     assert "runner_name: codex_cli" in result.output
     assert "model_name: none" in result.output
+    assert "thinking_level: high" in result.output
     assert "model_reasoning_effort: high" in result.output
     assert "timeout_seconds: 3600" in result.output
     assert "completion_behavior.trigger: backlog_drained" in result.output

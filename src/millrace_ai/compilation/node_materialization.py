@@ -83,9 +83,17 @@ def materialize_graph_node_plan(
         if mode_model is not None:
             model_name = mode_model
 
-    model_reasoning_effort = config.runners.codex.model_reasoning_effort
-    if stage_config is not None and stage_config.model_reasoning_effort is not None:
-        model_reasoning_effort = stage_config.model_reasoning_effort
+    thinking_level = node.thinking_level
+    if stage_config is not None and stage_config.thinking_level is not None:
+        thinking_level = stage_config.thinking_level
+    if stage_name is not None and stage_name in mode.stage_thinking_bindings:
+        thinking_level = mode.stage_thinking_bindings[stage_name]
+
+    model_reasoning_effort = (
+        thinking_level
+        if runner_name == "codex_cli" and thinking_level is not None
+        else None
+    )
 
     timeout_seconds = (
         node.timeout_seconds
@@ -108,9 +116,8 @@ def materialize_graph_node_plan(
         attached_skill_additions=attached_skill_additions,
         runner_name=runner_name,
         model_name=model_name,
-        model_reasoning_effort=(
-            model_reasoning_effort.value if model_reasoning_effort is not None else None
-        ),
+        thinking_level=thinking_level,
+        model_reasoning_effort=model_reasoning_effort,
         timeout_seconds=timeout_seconds,
     )
 

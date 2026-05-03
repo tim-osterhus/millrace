@@ -64,6 +64,7 @@ class ModeDefinition(ContractModel):
     stage_skill_additions: dict[StageName, tuple[str, ...]] = Field(default_factory=dict)
     stage_model_bindings: dict[StageName, str] = Field(default_factory=dict)
     stage_runner_bindings: dict[StageName, str] = Field(default_factory=dict)
+    stage_thinking_bindings: dict[StageName, str | None] = Field(default_factory=dict)
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
 
@@ -85,6 +86,23 @@ class ModeDefinition(ContractModel):
         if loop_ids:
             payload["loop_ids_by_plane"] = loop_ids
         return payload
+
+    @field_validator("stage_thinking_bindings")
+    @classmethod
+    def validate_stage_thinking_bindings(
+        cls,
+        value: dict[StageName, str | None],
+    ) -> dict[StageName, str | None]:
+        normalized: dict[StageName, str | None] = {}
+        for stage, thinking_level in value.items():
+            if thinking_level is None:
+                normalized[stage] = None
+                continue
+            stripped = thinking_level.strip()
+            if not stripped:
+                raise ValueError("stage_thinking_bindings values must not be empty")
+            normalized[stage] = stripped
+        return normalized
 
     @model_validator(mode="after")
     def validate_loop_bindings(self) -> "ModeDefinition":

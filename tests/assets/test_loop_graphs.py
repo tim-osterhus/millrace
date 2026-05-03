@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from millrace_ai.architecture import GraphLoopCounterName, GraphLoopTerminalClass
+from millrace_ai.architecture import (
+    GraphLoopCounterName,
+    GraphLoopNodeDefinition,
+    GraphLoopTerminalClass,
+)
 from millrace_ai.contracts import Plane
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.loop_graphs import (
@@ -223,6 +227,17 @@ def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:
         "learning_complete",
         "blocked",
     }
+
+
+def test_graph_loop_node_declares_thinking_level_override() -> None:
+    node = GraphLoopNodeDefinition(
+        node_id="builder",
+        stage_kind_id="builder",
+        thinking_level="high",
+    )
+
+    assert node.thinking_level == "high"
+    assert "thinking_level" in node.declared_override_names()
 
 
 def test_graph_loop_asset_errors_use_project_error_hierarchy() -> None:

@@ -48,6 +48,7 @@
     "entrypoint_path",
     "runner_name",
     "model_name",
+    "thinking_level",
     "timeout_seconds",
     "attached_skill_additions"
   ],

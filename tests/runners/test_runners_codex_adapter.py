@@ -54,7 +54,7 @@ def _command_option_value(command: tuple[str, ...], flag: str) -> str:
 
 
 def test_codex_adapter_writes_invocation_and_completion_artifacts(tmp_path: Path) -> None:
-    request = _request(tmp_path)
+    request = _request(tmp_path).model_copy(update={"thinking_level": "high"})
 
     def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
         del cwd, env, timeout_seconds
@@ -118,7 +118,9 @@ def test_codex_adapter_writes_invocation_and_completion_artifacts(tmp_path: Path
     invocation_payload = json.loads(invocation_path.read_text(encoding="utf-8"))
     completion_payload = json.loads(completion_path.read_text(encoding="utf-8"))
     assert invocation_payload["runner_name"] == "codex_cli"
+    assert invocation_payload["thinking_level"] == "high"
     assert completion_payload["runner_name"] == "codex_cli"
+    assert completion_payload["thinking_level"] == "high"
     assert completion_payload["exit_kind"] == "completed"
     assert completion_payload["event_log_path"] == str(event_log_path)
     assert completion_payload["token_usage"] == {
@@ -339,8 +341,13 @@ def test_codex_adapter_resolves_permission_precedence_and_command_mapping(
     assert "--dangerously-bypass-approvals-and-sandbox" not in updater_command
 
 
-def test_codex_adapter_passes_request_reasoning_effort_after_extra_config(tmp_path: Path) -> None:
-    request = _request(tmp_path).model_copy(update={"model_reasoning_effort": "high"})
+def test_codex_adapter_passes_request_thinking_level_after_extra_config(tmp_path: Path) -> None:
+    request = _request(tmp_path).model_copy(
+        update={
+            "thinking_level": "high",
+            "model_reasoning_effort": "medium",
+        }
+    )
     seen_command: dict[str, tuple[str, ...]] = {}
 
     def fake_execute(*, command, cwd, env, timeout_seconds, stdout_path, stderr_path):
@@ -608,6 +615,8 @@ def test_codex_adapter_prompt_uses_none_for_absent_optional_context(tmp_path: Pa
             "active_work_item_path": None,
             "runner_name": None,
             "model_name": None,
+            "thinking_level": None,
+            "model_reasoning_effort": None,
         }
     )
 
@@ -640,3 +649,5 @@ def test_codex_adapter_prompt_uses_none_for_absent_optional_context(tmp_path: Pa
     assert "Attached Skill Paths: none" in prompt
     assert "Runner Name: none" in prompt
     assert "Model Name: none" in prompt
+    assert "Thinking Level: none" in prompt
+    assert "Model Reasoning Effort: none" in prompt

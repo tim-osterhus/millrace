@@ -476,13 +476,15 @@ The built-in shipped adapters are the Codex CLI adapter and the Pi RPC adapter,
 and the architecture is set up so additional adapters can be added later without
 rewriting orchestration.
 
-Codex-backed stages support explicit model and reasoning-effort selection
-through runtime config. `stages.<stage>.model` sets the model, and
-`stages.<stage>.model_reasoning_effort` sets the Codex
-`model_reasoning_effort` value for execution, planning, and learning stages
-including `professor`. The compiled plan, stage request, runner invocation
-artifact, persisted stage result, and `runs show` output all carry the selected
-reasoning effort when it is configured.
+Stages support explicit model and runner-neutral thinking selection through
+runtime config. `stages.<stage>.model` sets the model, and
+`stages.<stage>.thinking_level` sets the compiled thinking level for execution,
+planning, and learning stages including `professor`. Codex translates that
+value to `model_reasoning_effort`; Pi translates it to `--thinking`. The
+compiled plan, stage request, runner invocation artifact, persisted stage
+result, and `runs show` output all carry the selected thinking level when it is
+configured. `stages.<stage>.model_reasoning_effort` remains accepted as a
+Codex compatibility alias.
 
 Each stage run produces a run directory under
 `millrace-agents/runs/<run-id>/`. It can contain:

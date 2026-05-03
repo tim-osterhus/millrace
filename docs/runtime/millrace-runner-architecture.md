@@ -70,11 +70,16 @@ The same split applies to runtime identity:
 2. runtime stage-request construction copies that identity into every
    `StageRunRequest`
 
-For Codex stages, compile also freezes `model_reasoning_effort` from either
-`runners.codex.model_reasoning_effort` or the more specific
-`stages.<stage>.model_reasoning_effort`. The Codex adapter passes that value as
-`-c model_reasoning_effort="<value>"` after generic `runners.codex.extra_config`
-so per-stage config can override a global extra-config default.
+Compile also freezes the runner-neutral `thinking_level` node binding from
+graph-loop node defaults, `stages.<stage>.thinking_level`, the legacy
+`stages.<stage>.model_reasoning_effort` alias, or mode-level
+`stage_thinking_bindings`. A missing value or explicit mode `null` means no
+compiled stage override. The Codex adapter passes the selected value as
+`-c model_reasoning_effort="<value>"` after generic
+`runners.codex.extra_config`; the Pi adapter passes it as `--thinking <value>`.
+When no compiled value exists, adapters may still use their runner-global
+defaults, such as `runners.codex.model_reasoning_effort` or
+`runners.pi.thinking`.
 
 The shipped canonical modes make that explicit:
 
@@ -223,6 +228,8 @@ args = []
 disable_context_files = true
 disable_skills = true
 event_log_policy = "failure_full"
+# optional default used only when a stage request has no compiled thinking_level
+# thinking = "medium"
 ```
 
 Pi can auto-discover `AGENTS.md` / `CLAUDE.md` context files and Pi-native

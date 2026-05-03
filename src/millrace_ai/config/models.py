@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, PlanningStageName, RuntimeMode
 
@@ -236,8 +236,36 @@ class WatchersSection(ConfigModel):
 class StageConfig(ConfigModel):
     runner: str | None = None
     model: str | None = None
+    thinking_level: str | None = None
     model_reasoning_effort: CodexReasoningEffort | None = None
     timeout_seconds: int = Field(default=3600, gt=0)
+
+    @field_validator("thinking_level")
+    @classmethod
+    def validate_thinking_level(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("thinking_level must not be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def normalize_thinking_aliases(self) -> "StageConfig":
+        legacy_value = (
+            self.model_reasoning_effort.value
+            if self.model_reasoning_effort is not None
+            else None
+        )
+        if self.thinking_level is not None and legacy_value is not None:
+            if self.thinking_level != legacy_value:
+                raise ValueError(
+                    "thinking_level and model_reasoning_effort must match when both are set"
+                )
+            return self
+        if self.thinking_level is None and legacy_value is not None:
+            self.thinking_level = legacy_value
+        return self
 
 
 class RuntimeConfig(ConfigModel):

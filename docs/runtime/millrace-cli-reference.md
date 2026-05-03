@@ -139,7 +139,7 @@ or `millrace runs show`.
 
 When the daemon is idle with `reason=no_work`, the basic monitor prints the
 first idle line immediately and then treats repeated `no_work` idles as a
-heartbeat. It emits that heartbeat at most once every 120 seconds while the
+heartbeat. It emits that heartbeat at most once every 6 hours while the
 same idle condition continues. Any non-idle monitor event, or an idle event
 with a different reason, resets the heartbeat.
 
@@ -400,7 +400,8 @@ Compiles and prints operator inspectability surface:
 - `persisted_compile_input.*`
 - frozen `completion_behavior.*` fields when the selected planning loop defines one
 - stage ordering
-- per-stage `model_reasoning_effort` when configured
+- per-stage `thinking_level` when configured
+- Codex compatibility `model_reasoning_effort` when configured
 - entrypoint path per stage
 - `stage_kind_id`
 - `running_status_marker`
