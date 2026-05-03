@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from inspect import signature
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 
 from millrace_web.app import create_app
 from millrace_web.cli import app as cli_app
+from millrace_web.cli import serve
 
 
 def test_read_only_api_and_static_shell(tmp_path: Path) -> None:
@@ -49,4 +51,5 @@ def test_cli_exposes_serve_subcommand() -> None:
     result = CliRunner().invoke(cli_app, ["serve", "--help"], terminal_width=140)
 
     assert result.exit_code == 0
-    assert "--workspace" in result.output
+    assert any(command.callback is serve for command in cli_app.registered_commands)
+    assert "workspace" in signature(serve).parameters
