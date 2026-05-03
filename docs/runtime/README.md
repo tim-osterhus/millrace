@@ -37,6 +37,9 @@ runtime references, start with `../millrace-technical-overview.md`.
 - Use `millrace-workspace-baselines-and-upgrades.md` when you need the explicit `init` / `upgrade` workflow for managed workspace assets.
 - Use `millrace-cli-reference.md` when you need `millrace skills`, daemon
   monitor, usage-governance, or status command details.
+- Use `../../packages/millrace-web/README.md` when you need the optional local
+  read-only dashboard. `millrace-web` is a separate package and is not part of
+  the base `millrace-ai` wheel.
 - Use `millrace-loop-authoring.md` before changing loop, mode, or stage-selection assets.
 - Use `millrace-runner-architecture.md` if you are changing runner dispatch, adapter behavior, or the compiled identity carried through runtime requests and inspection.
 

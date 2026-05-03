@@ -7,6 +7,9 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 - importable package code lives under `src/millrace_ai/`
 - tests mirror ownership under `tests/assets/`, `tests/cli/`, `tests/config/`, `tests/runners/`, `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
 - the package entrypoints are `src/millrace_ai/__main__.py` and the `src/millrace_ai/cli/` package
+- optional web dashboard code lives under `packages/millrace-web/` as a
+  separate source distribution; it is not imported by or packaged into the base
+  `millrace-ai` wheel
 
 ## Old-To-New Module Map
 

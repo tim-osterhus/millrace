@@ -35,3 +35,12 @@ jobs:
 
       - name: Run MyPy
         run: uv run --with mypy mypy src/millrace_ai
+
+      - name: Install optional web package for tests
+        run: python -m pip install -e . -e "packages/millrace-web[dev]"
+
+      - name: Run optional web package tests
+        run: python -m pytest packages/millrace-web/tests -q
+
+      - name: Run optional web package Ruff
+        run: python -m ruff check packages/millrace-web

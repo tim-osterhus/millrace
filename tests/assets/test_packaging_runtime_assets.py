@@ -77,6 +77,8 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
     assert required_assets.issubset(entries)
     assert "millrace_ai/py.typed" in wheel_names
     assert all(not name.startswith("millrace_ai/assets/roles/") for name in entries)
+    assert all(not name.startswith("millrace_ai/web/") for name in wheel_names)
+    assert all(not name.startswith("millrace_web/") for name in wheel_names)
     assert all(not name.endswith(".DS_Store") for name in wheel_names)
 
 

@@ -21,10 +21,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install release tooling
-        run: python -m pip install --upgrade pip uv twine
+        run: python -m pip install --upgrade pip build uv twine
 
       - name: Build distribution artifacts
-        run: uv build
+        run: |
+          uv build
+          python -m build --wheel --outdir dist packages/millrace-web
 
       - name: Validate distribution metadata
         run: python -m twine check dist/*
@@ -42,6 +44,7 @@ jobs:
           rm -rf "$workspace"
           mkdir -p "$workspace"
           .publish-smoke/bin/millrace init --workspace "$workspace" > "$RUNNER_TEMP/millrace-init.txt"
+          .publish-smoke/bin/millrace-web serve --help > "$RUNNER_TEMP/millrace-web-help.txt"
           cat > "$task_json" <<'JSON'
           {
             "task_id": "smoke-task-001",
@@ -73,6 +76,7 @@ jobs:
 
           test -f "$workspace/millrace-agents/millrace.toml"
           test -f "$workspace/millrace-agents/state/compiled_plan.json"
+          grep -q -- '--workspace' "$RUNNER_TEMP/millrace-web-help.txt"
           grep -q '^ok: true$' "$RUNNER_TEMP/millrace-compile.txt"
           grep -q '^tick_reason: no_work$' "$RUNNER_TEMP/millrace-run-once-no-work.txt"
           grep -q '^compiled_plan_id: ' "$RUNNER_TEMP/millrace-status.txt"

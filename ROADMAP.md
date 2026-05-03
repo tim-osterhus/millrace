@@ -29,6 +29,8 @@ contracts:
   guessing what happened
 - learning-plane skill improvement workflows that remain explicit,
   evidence-backed, and operator-controlled
+- optional local observability surfaces that make workspace state visible
+  without adding runtime authority or weight to the base deployment package
 
 ## Active
 
@@ -71,6 +73,20 @@ Expected user impact:
 - less stale public guidance
 - clearer distinction between shipped facts, planned work, and speculative ideas
 - easier evaluation of whether Millrace is ready for a given workspace
+
+### Optional Web Observability
+
+`millrace-web` is now a separate optional distribution for local read-only
+workspace observation. The active direction is to keep Detail and Flow views
+grounded in runtime-owned state while preserving the base `millrace-ai` wheel as
+a lightweight runtime package.
+
+Expected user impact:
+
+- easier local inspection and demonstration of active workspace state
+- clearer separation between read-only observability and runtime control
+- no web dependencies, modules, or static assets in the base `millrace-ai`
+  deployment package
 
 ### Daemon Monitoring Follow-Through
 
@@ -181,10 +197,10 @@ when needed to isolate compiler/runtime regressions from runner-specific issues.
 ### Operator Diagnostics
 
 The operator surface should keep improving around `doctor`, `status`,
-`status watch`, `runs ls`, `runs show`, `runs tail`, compile diagnostics, and
-runner artifacts.
+`status watch`, `runs ls`, `runs show`, `runs tail`, compile diagnostics,
+runner artifacts, and the optional read-only web dashboard.
 
-The goal is not a decorative dashboard. The goal is enough evidence to answer:
+The goal is enough evidence to answer:
 
 - what is active
 - what ran

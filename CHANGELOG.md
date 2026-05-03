@@ -11,6 +11,37 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.17.0] - 2026-05-02
+
+### Added
+
+- Added the optional `millrace-web` source distribution under
+  `packages/millrace-web/`. It provides the read-only `millrace-web serve`
+  local dashboard with Detail and Flow views over the same workspace summary,
+  queue, run, compiled-plan, Arbiter, usage-governance, and event DTOs.
+- Added read-only Web UI service tests, CLI smoke coverage, static shell
+  coverage, and package-boundary checks proving the base `millrace-ai` wheel
+  does not contain web modules or web static assets.
+
+### Fixed
+
+- Closure targets that are open only because lineage work is blocked no longer
+  count as actionable closure targets for new root-spec activation. That lets
+  unrelated queued root specs start once the active closure target is blocked
+  by its own lineage work instead of falsely reporting multiple open targets as
+  corrupt state.
+- `millrace status` now prefers the actionable open closure target when older
+  lineage-blocked target records remain in the workspace.
+
+### Changed
+
+- The release workflow now builds and validates both the base `millrace-ai`
+  distribution and the optional `millrace-web` distribution while keeping their
+  package data separate.
+- Updated README guidance, the shipped Millrace ops skill, and runtime docs to
+  describe the optional read-only dashboard, local-only safety model, and
+  separate package boundary.
+
 ## [0.16.3] - 2026-04-29
 
 ### Added
@@ -529,7 +560,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/tim-osterhus/millrace/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/tim-osterhus/millrace/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/tim-osterhus/millrace/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/tim-osterhus/millrace/compare/v0.16.0...v0.16.1
