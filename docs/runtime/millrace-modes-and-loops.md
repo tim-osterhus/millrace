@@ -192,14 +192,20 @@ Its legacy loop `entry_stage` is `analyst`.
 
 Its current `terminal_results` are:
 
+- `ANALYST_NOOP`
+- `PROFESSOR_NOOP`
 - `CURATOR_COMPLETE`
+- `CURATOR_NOOP`
 - `BLOCKED`
 
 In the shipped graph:
 
 - `ANALYST_COMPLETE` moves `analyst -> professor`
+- `ANALYST_NOOP` terminates with `analyst_noop`
 - `PROFESSOR_COMPLETE` moves `professor -> curator`
+- `PROFESSOR_NOOP` terminates with `professor_noop`
 - `CURATOR_COMPLETE` terminates with `learning_complete`
+- `CURATOR_NOOP` terminates with `curator_noop`
 - `BLOCKED` from any learning stage terminates with `blocked`
 
 The graph-loop asset exposes one intake entry:
@@ -208,7 +214,15 @@ The graph-loop asset exposes one intake entry:
 
 Learning requests may also carry a target stage. When a target stage is present,
 runtime activation uses the compiled learning graph to start at that stage
-instead of replaying the full Analyst-to-Curator path.
+instead of replaying the full Analyst-to-Curator path. Built-in generic success
+learning starts at Analyst. Direct Curator triggers are only valid when the
+trigger rule includes a safe destination such as `target_skill_id` or
+`preferred_output_paths`; otherwise compile validation rejects the mode.
+
+No-op learning terminal states move the learning request to
+`learning/requests/done/`, not `learning/requests/blocked/`. They mean the
+evidence was reviewed and no skill candidate, patch, or workspace-installed
+mutation was warranted.
 
 ## What A Mode Defines
 

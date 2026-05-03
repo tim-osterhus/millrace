@@ -522,14 +522,17 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
         },
         LearningStageName.ANALYST.value: {
             LearningTerminalResult.ANALYST_COMPLETE.value,
+            LearningTerminalResult.ANALYST_NOOP.value,
             LearningTerminalResult.BLOCKED.value,
         },
         LearningStageName.PROFESSOR.value: {
             LearningTerminalResult.PROFESSOR_COMPLETE.value,
+            LearningTerminalResult.PROFESSOR_NOOP.value,
             LearningTerminalResult.BLOCKED.value,
         },
         LearningStageName.CURATOR.value: {
             LearningTerminalResult.CURATOR_COMPLETE.value,
+            LearningTerminalResult.CURATOR_NOOP.value,
             LearningTerminalResult.BLOCKED.value,
         },
     }
@@ -995,16 +998,19 @@ def test_learning_entrypoints_define_durable_handoff_artifacts() -> None:
     assert "run_dir/analyst_research_packet.md" in analyst
     assert "source_refs" in analyst
     assert "Do not author or modify skills" in analyst
+    assert "ANALYST_NOOP" in analyst
 
     assert "run_dir/professor_skill_candidate/" in professor
     assert "run_dir/professor_skill_patch.md" in professor
     assert "millrace-skill-creator" in professor
     assert "Professor approval is not publication" in professor
+    assert "PROFESSOR_NOOP" in professor
 
     assert "run_dir/curator_decision.md" in curator
     assert "workspace-installed skills" in curator
     assert "source promotion" in curator
     assert "promotion remains an operator command" in curator.lower()
+    assert "CURATOR_NOOP" in curator
 
 
 def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
@@ -1016,15 +1022,18 @@ def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
     assert "analyst_research_packet.md" in analyst
     assert "requested_action" in analyst
     assert "target_stage" in analyst
+    assert "ANALYST_NOOP" in analyst
 
     assert "professor_skill_candidate" in professor
     assert "professor_skill_patch.md" in professor
     assert "lint_skill.py" in professor
     assert "evaluate_skill.py" in professor
+    assert "PROFESSOR_NOOP" in professor
 
     assert "curator_decision.md" in curator
     assert "workspace-installed skills" in curator
     assert "source promotion" in curator
+    assert "CURATOR_NOOP" in curator
 
 
 def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> None:

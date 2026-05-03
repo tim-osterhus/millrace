@@ -12,6 +12,7 @@
   "running_status_marker": "ANALYST_RUNNING",
   "legal_outcomes": [
     "ANALYST_COMPLETE",
+    "ANALYST_NOOP",
     "BLOCKED"
   ],
   "success_outcomes": [
@@ -23,6 +24,9 @@
   "allowed_result_classes_by_outcome": {
     "ANALYST_COMPLETE": [
       "success"
+    ],
+    "ANALYST_NOOP": [
+      "no_op"
     ],
     "BLOCKED": [
       "blocked",

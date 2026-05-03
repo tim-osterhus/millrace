@@ -12,6 +12,7 @@
   "running_status_marker": "CURATOR_RUNNING",
   "legal_outcomes": [
     "CURATOR_COMPLETE",
+    "CURATOR_NOOP",
     "BLOCKED"
   ],
   "success_outcomes": [
@@ -23,6 +24,9 @@
   "allowed_result_classes_by_outcome": {
     "CURATOR_COMPLETE": [
       "success"
+    ],
+    "CURATOR_NOOP": [
+      "no_op"
     ],
     "BLOCKED": [
       "blocked",

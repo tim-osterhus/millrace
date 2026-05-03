@@ -636,6 +636,38 @@ def test_mode_definition_supports_learning_plane_bindings_and_triggers() -> None
     assert mode.learning_trigger_rules[0].target_stage is LearningStageName.CURATOR
 
 
+def test_learning_trigger_rule_carries_optional_destination_metadata() -> None:
+    mode = ModeDefinition(
+        mode_id="learning_codex",
+        loop_ids_by_plane={
+            "execution": "execution.standard",
+            "planning": "planning.standard",
+            "learning": "learning.standard",
+        },
+        learning_trigger_rules=[
+            {
+                "rule_id": "execution.doublechecker.precise-to-curator",
+                "source_plane": "execution",
+                "source_stage": "doublechecker",
+                "on_terminal_results": ["DOUBLECHECK_PASS"],
+                "target_stage": "curator",
+                "requested_action": "improve",
+                "target_skill_id": "doublechecker-core",
+                "preferred_output_paths": [
+                    "millrace-agents/skills/stage/execution/doublechecker-core/SKILL.md",
+                    "millrace-agents/skills/stage/execution/doublechecker-core/SKILL.md",
+                ],
+            }
+        ],
+    )
+
+    rule = mode.learning_trigger_rules[0]
+    assert rule.target_skill_id == "doublechecker-core"
+    assert rule.preferred_output_paths == (
+        "millrace-agents/skills/stage/execution/doublechecker-core/SKILL.md",
+    )
+
+
 def test_stage_result_envelope_accepts_arbiter_remediation_needed() -> None:
     env = StageResultEnvelope(
         run_id="run-001",

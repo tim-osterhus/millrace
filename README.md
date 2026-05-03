@@ -95,7 +95,9 @@ It wraps long-horizon work in a runtime with a few hard contracts:
 
 The shipped core includes separate Planning and Execution loops.
 Learning-enabled modes add Analyst, Professor, and Curator stages for
-evidence-backed skill improvement flows.
+evidence-backed skill improvement flows. Generic success-triggered learning is
+Analyst-first, and reviewed no-change learning can close as no-op instead of
+being treated as blocked.
 
 For operational details, see `docs/runtime/README.md`,
 `docs/runtime/millrace-cli-reference.md`, and

@@ -120,13 +120,18 @@ Expected user impact:
 The learning plane now ships as an opt-in mode family through `learning_codex`
 and `learning_pi`. Active work is to keep the Analyst, Professor, and Curator
 flow grounded in runtime evidence and to avoid automatic skill changes without
-clear operator-controlled promotion.
+clear operator-controlled promotion. Generic success-triggered learning now
+starts at Analyst, direct Curator triggers require explicit destination
+metadata, and reviewed no-change learning can terminate as no-op/done instead
+of creating noisy blocked artifacts.
 
 Expected user impact:
 
 - safer skill-improvement experiments from real run evidence
 - clearer distinction between runtime-generated learning requests and accepted
   skill updates
+- fewer false blocked-learning signals when the correct reviewed outcome is
+  no skill mutation
 - better compile/status visibility for learning triggers, queue depth, and
   status markers
 

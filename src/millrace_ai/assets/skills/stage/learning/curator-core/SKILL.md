@@ -58,6 +58,8 @@ rejected update is justified.
 - A curated workspace skill update, rejected candidate, or blocked decision.
 - A short explanation of evidence and scope fit.
 - Notes that make later source promotion or rollback auditable.
+- A no-op rationale in `run_dir/curator_decision.md` when the entrypoint terminal
+  contract permits `CURATOR_NOOP` and no workspace-installed mutation is warranted.
 
 ## Procedure
 
@@ -67,7 +69,10 @@ rejected update is justified.
 4. Verify the change stays inside the skill's declared scope.
 5. Apply or prepare the smallest skill improvement that addresses the evidence.
 6. Update discovery metadata only when trigger behavior changes.
-7. Record what changed, why it changed, and what was deliberately left out.
+7. Use the no-op terminal path (`CURATOR_NOOP`) when a concrete destination or
+   candidate was reviewed and the supported action is to leave the workspace
+   skill unchanged.
+8. Record what changed, why it changed, and what was deliberately left out.
 
 ## Pitfalls And Gotchas
 
@@ -76,6 +81,8 @@ rejected update is justified.
 - Losing the audit trail between evidence and edits.
 - Mixing workspace experiments with source promotion.
 - Editing source-packaged skills directly from a Curator pass.
+- Blocking a request solely because no mutation was warranted after adequate
+  destination and evidence review.
 
 ## Progressive Disclosure
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.4
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.17.4`.
+
 ## 0.17.3
 
 - Sync the package version and runtime dependency to `millrace-ai>=0.17.3`.

@@ -106,6 +106,12 @@ loops.
 The compiler enforces that by building the set of selected stages first and then
 rejecting mode maps that refer outside that set.
 
+Learning-trigger authoring has one additional safety rule: a rule that targets
+`curator` directly must include `target_skill_id` or
+`preferred_output_paths`. Vague learning evidence should target `analyst`
+instead so the learning plane can research, no-op, or escalate without asking
+Curator to infer a mutation destination.
+
 Legacy `execution_loop_id` and `planning_loop_id` fields are still accepted for
 compatibility, but new mode assets should use `loop_ids_by_plane`.
 

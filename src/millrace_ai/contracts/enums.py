@@ -63,8 +63,11 @@ class PlanningTerminalResult(str, Enum):
 
 class LearningTerminalResult(str, Enum):
     ANALYST_COMPLETE = "ANALYST_COMPLETE"
+    ANALYST_NOOP = "ANALYST_NOOP"
     PROFESSOR_COMPLETE = "PROFESSOR_COMPLETE"
+    PROFESSOR_NOOP = "PROFESSOR_NOOP"
     CURATOR_COMPLETE = "CURATOR_COMPLETE"
+    CURATOR_NOOP = "CURATOR_NOOP"
     BLOCKED = "BLOCKED"
 
 
@@ -73,6 +76,7 @@ TerminalResult = ExecutionTerminalResult | PlanningTerminalResult | LearningTerm
 
 class ResultClass(str, Enum):
     SUCCESS = "success"
+    NO_OP = "no_op"
     FOLLOWUP_NEEDED = "followup_needed"
     RECOVERABLE_FAILURE = "recoverable_failure"
     ESCALATE_PLANNING = "escalate_planning"

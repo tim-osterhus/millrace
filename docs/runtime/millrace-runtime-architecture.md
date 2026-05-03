@@ -267,6 +267,13 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 - Work-item stage requests include `active_work_item_path`, `run_dir`, and relevant context paths so entrypoints do not invent runtime paths.
 - Closure-target stage requests such as `arbiter` use `request_kind = closure_target` and pass canonical root-spec and seed-idea paths instead of fabricating an active queue document.
 - Learning stage requests use `request_kind = learning_request` and active request paths under `millrace-agents/learning/requests/active/`.
+- Learning requests can finish with stage-specific no-op terminal outcomes when
+  evidence was reviewed and no skill update is warranted. No-op requests are
+  moved to `millrace-agents/learning/requests/done/`, not `blocked/`.
+- Runtime-generated generic success learning starts at Analyst. Mode-authored
+  direct Curator triggers must include `target_skill_id` or
+  `preferred_output_paths`; otherwise compile validation rejects the mode rather
+  than letting Curator guess a destination.
 - Runtime ships `millrace-agents/skills/skills_index.md`, shared skill docs, and one required stage-core skill per stage.
 - Entrypoint advisory sections use `Required Stage-Core Skill` and `Optional Secondary Skills` as the only runtime-shipped advisory pattern.
 - Optional secondary skills must be present in the packaged or installed skills surface before entrypoints reference them. The packaged skills index points to the supported downloadable optional-skills directory at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.

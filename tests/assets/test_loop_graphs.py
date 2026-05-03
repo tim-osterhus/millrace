@@ -224,9 +224,17 @@ def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:
         "curator",
     ]
     assert {state.terminal_state_id for state in learning.terminal_states} == {
+        "analyst_noop",
         "learning_complete",
+        "professor_noop",
+        "curator_noop",
         "blocked",
     }
+    assert {
+        state.terminal_class
+        for state in learning.terminal_states
+        if state.terminal_state_id.endswith("_noop")
+    } == {GraphLoopTerminalClass.NO_OP}
 
 
 def test_graph_loop_node_declares_thinking_level_override() -> None:

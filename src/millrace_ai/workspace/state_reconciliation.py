@@ -71,9 +71,15 @@ _STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
     PlanningStageName.ARBITER.value: frozenset(
         {"### ARBITER_COMPLETE", "### REMEDIATION_NEEDED", "### BLOCKED"}
     ),
-    LearningStageName.ANALYST.value: frozenset({"### ANALYST_COMPLETE", "### BLOCKED"}),
-    LearningStageName.PROFESSOR.value: frozenset({"### PROFESSOR_COMPLETE", "### BLOCKED"}),
-    LearningStageName.CURATOR.value: frozenset({"### CURATOR_COMPLETE", "### BLOCKED"}),
+    LearningStageName.ANALYST.value: frozenset(
+        {"### ANALYST_COMPLETE", "### ANALYST_NOOP", "### BLOCKED"}
+    ),
+    LearningStageName.PROFESSOR.value: frozenset(
+        {"### PROFESSOR_COMPLETE", "### PROFESSOR_NOOP", "### BLOCKED"}
+    ),
+    LearningStageName.CURATOR.value: frozenset(
+        {"### CURATOR_COMPLETE", "### CURATOR_NOOP", "### BLOCKED"}
+    ),
 }
 
 _STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {

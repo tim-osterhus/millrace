@@ -268,11 +268,13 @@ STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
             plane=Plane.LEARNING,
             legal_terminal_results=(
                 LearningTerminalResult.ANALYST_COMPLETE.value,
+                LearningTerminalResult.ANALYST_NOOP.value,
                 LearningTerminalResult.BLOCKED.value,
             ),
             allowed_result_classes_by_outcome=_allowed(
                 {
                     LearningTerminalResult.ANALYST_COMPLETE.value: (ResultClass.SUCCESS,),
+                    LearningTerminalResult.ANALYST_NOOP.value: (ResultClass.NO_OP,),
                     LearningTerminalResult.BLOCKED.value: (
                         ResultClass.BLOCKED,
                         ResultClass.RECOVERABLE_FAILURE,
@@ -285,11 +287,13 @@ STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
             plane=Plane.LEARNING,
             legal_terminal_results=(
                 LearningTerminalResult.PROFESSOR_COMPLETE.value,
+                LearningTerminalResult.PROFESSOR_NOOP.value,
                 LearningTerminalResult.BLOCKED.value,
             ),
             allowed_result_classes_by_outcome=_allowed(
                 {
                     LearningTerminalResult.PROFESSOR_COMPLETE.value: (ResultClass.SUCCESS,),
+                    LearningTerminalResult.PROFESSOR_NOOP.value: (ResultClass.NO_OP,),
                     LearningTerminalResult.BLOCKED.value: (
                         ResultClass.BLOCKED,
                         ResultClass.RECOVERABLE_FAILURE,
@@ -302,11 +306,13 @@ STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
             plane=Plane.LEARNING,
             legal_terminal_results=(
                 LearningTerminalResult.CURATOR_COMPLETE.value,
+                LearningTerminalResult.CURATOR_NOOP.value,
                 LearningTerminalResult.BLOCKED.value,
             ),
             allowed_result_classes_by_outcome=_allowed(
                 {
                     LearningTerminalResult.CURATOR_COMPLETE.value: (ResultClass.SUCCESS,),
+                    LearningTerminalResult.CURATOR_NOOP.value: (ResultClass.NO_OP,),
                     LearningTerminalResult.BLOCKED.value: (
                         ResultClass.BLOCKED,
                         ResultClass.RECOVERABLE_FAILURE,

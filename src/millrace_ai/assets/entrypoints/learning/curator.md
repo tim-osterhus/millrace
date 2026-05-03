@@ -32,7 +32,7 @@ Not allowed:
 
 Runtime-owned, not stage-owned:
 - learning request activation
-- terminal routing after `CURATOR_COMPLETE` or `BLOCKED`
+- terminal routing after `CURATOR_COMPLETE`, `CURATOR_NOOP`, or `BLOCKED`
 - status persistence to `summary_status_path`
 - source promotion, release, and public distribution
 
@@ -108,6 +108,9 @@ The curation decision must include:
 5. Decide the terminal result.
 - Emit `### CURATOR_COMPLETE` when curation is complete, including accepted or
   rejected decisions that are fully recorded.
+- Emit `### CURATOR_NOOP` when a concrete destination or candidate was reviewed
+  and no workspace-installed skill mutation is warranted. Still write
+  `run_dir/curator_decision.md` with the no-op rationale.
 - Emit `### BLOCKED` when Curator cannot decide or apply safely.
 
 ## Completion Signaling
@@ -117,6 +120,9 @@ Emit exactly one legal terminal result for runtime persistence to
 
 Success:
 `### CURATOR_COMPLETE`
+
+No-op:
+`### CURATOR_NOOP`
 
 Blocked:
 `### BLOCKED`

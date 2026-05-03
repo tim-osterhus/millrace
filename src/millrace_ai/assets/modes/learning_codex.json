@@ -33,11 +33,11 @@
   },
   "learning_trigger_rules": [
     {
-      "rule_id": "execution.doublechecker.success-to-curator",
+      "rule_id": "execution.doublechecker.success-to-analyst",
       "source_plane": "execution",
       "source_stage": "doublechecker",
       "on_terminal_results": ["DOUBLECHECK_PASS"],
-      "target_stage": "curator",
+      "target_stage": "analyst",
       "requested_action": "improve"
     },
     {

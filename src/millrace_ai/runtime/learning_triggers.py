@@ -46,6 +46,7 @@ def enqueue_learning_requests_for_stage_result(
                 f"trigger rule: {rule.rule_id}"
             ),
             requested_action=rule.requested_action,
+            target_skill_id=rule.target_skill_id,
             target_stage=rule.target_stage,
             source_refs=(
                 f"run:{stage_result.run_id}",
@@ -58,6 +59,7 @@ def enqueue_learning_requests_for_stage_result(
             trigger_metadata=_trigger_metadata(rule_id=rule.rule_id, stage_result=stage_result),
             originating_run_ids=(stage_result.run_id,),
             artifact_paths=(str(stage_result_path),),
+            preferred_output_paths=rule.preferred_output_paths,
             created_at=engine._now(),
             created_by="millrace runtime",
         )
@@ -75,6 +77,8 @@ def enqueue_learning_requests_for_stage_result(
                 "source_stage_kind_id": stage_result.stage_kind_id,
                 "terminal_result": stage_result.terminal_result.value,
                 "target_stage": rule.target_stage.value,
+                "target_skill_id": rule.target_skill_id,
+                "preferred_output_paths": list(rule.preferred_output_paths),
                 "path": str(queued_path),
             },
         )

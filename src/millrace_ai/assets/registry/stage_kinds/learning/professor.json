@@ -14,6 +14,7 @@
   "running_status_marker": "PROFESSOR_RUNNING",
   "legal_outcomes": [
     "PROFESSOR_COMPLETE",
+    "PROFESSOR_NOOP",
     "BLOCKED"
   ],
   "success_outcomes": [
@@ -25,6 +26,9 @@
   "allowed_result_classes_by_outcome": {
     "PROFESSOR_COMPLETE": [
       "success"
+    ],
+    "PROFESSOR_NOOP": [
+      "no_op"
     ],
     "BLOCKED": [
       "blocked",

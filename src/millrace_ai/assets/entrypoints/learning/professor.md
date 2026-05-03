@@ -31,7 +31,7 @@ Runtime-owned, not stage-owned:
 - learning request activation
 - transition from Professor to Curator
 - status persistence to `summary_status_path`
-- final adoption or blocked handling
+- final adoption, no-op terminal handling, or blocked handling
 
 ## Required Outputs And Evidence
 
@@ -106,6 +106,9 @@ The Professor output must include:
 
 5. Decide the terminal result.
 - Emit `### PROFESSOR_COMPLETE` only when Curator has a concrete candidate or patch.
+- Emit `### PROFESSOR_NOOP` when the Analyst packet is coherent but no
+  evidence-backed candidate or patch should be authored. Still write
+  `run_dir/professor_notes.md` with the no-op rationale.
 - Emit `### BLOCKED` when authoring would require guessing.
 
 ## Completion Signaling
@@ -115,6 +118,9 @@ Emit exactly one legal terminal result for runtime persistence to
 
 Success:
 `### PROFESSOR_COMPLETE`
+
+No-op:
+`### PROFESSOR_NOOP`
 
 Blocked:
 `### BLOCKED`

@@ -69,7 +69,9 @@ skip, or block a skill change.
 3. Compare the observed behavior against nearby existing skills.
 4. Record useful best-practice findings without turning research into a survey.
 5. Recommend the smallest honest downstream learning action.
-6. Block when the request cannot be researched without guessing.
+6. Recommend the no-op terminal path (`ANALYST_NOOP`) when the evidence was
+   reviewed and does not justify a skill change or downstream authoring task.
+7. Block when the request cannot be researched without guessing.
 
 ## Pitfalls And Gotchas
 
@@ -78,6 +80,8 @@ skip, or block a skill change.
 - Losing the evidence trail that Professor or Curator needs to act safely.
 - Expanding the scope into runtime implementation changes.
 - Treating `target_stage` as permission to skip missing evidence.
+- Treating a no-op recommendation as a failure; reviewed no-change evidence is
+  useful and should be recorded explicitly.
 
 ## Progressive Disclosure
 

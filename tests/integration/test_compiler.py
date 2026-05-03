@@ -460,11 +460,75 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
         )
         for rule in outcome.active_plan.learning_trigger_rules
     } == {
-        ("doublechecker", ("DOUBLECHECK_PASS",), "curator", "improve"),
+        ("doublechecker", ("DOUBLECHECK_PASS",), "analyst", "improve"),
         ("troubleshooter", ("TROUBLESHOOT_COMPLETE", "BLOCKED"), "analyst", "improve"),
         ("consultant", ("CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"), "analyst", "improve"),
     }
     assert "graph_loop:learning.standard" in outcome.active_plan.source_refs
+
+
+def test_compile_rejects_direct_curator_trigger_without_destination(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+    mode_path = paths.runtime_root / "modes" / "learning_codex.json"
+    payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    payload["learning_trigger_rules"] = [
+        {
+            "rule_id": "execution.doublechecker.unsafe-to-curator",
+            "source_plane": "execution",
+            "source_stage": "doublechecker",
+            "on_terminal_results": ["DOUBLECHECK_PASS"],
+            "target_stage": "curator",
+            "requested_action": "improve",
+        }
+    ]
+    mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="learning_codex",
+        assets_root=paths.runtime_root,
+        refuse_stale_last_known_good=True,
+    )
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert "targets curator without a safe destination" in outcome.diagnostics.errors[0]
+
+
+def test_compile_accepts_direct_curator_trigger_with_destination(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+    mode_path = paths.runtime_root / "modes" / "learning_codex.json"
+    payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    payload["learning_trigger_rules"] = [
+        {
+            "rule_id": "execution.doublechecker.precise-to-curator",
+            "source_plane": "execution",
+            "source_stage": "doublechecker",
+            "on_terminal_results": ["DOUBLECHECK_PASS"],
+            "target_stage": "curator",
+            "requested_action": "improve",
+            "target_skill_id": "doublechecker-core",
+        }
+    ]
+    mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="learning_codex",
+        assets_root=paths.runtime_root,
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    rule = outcome.active_plan.learning_trigger_rules[0]
+    assert rule.target_stage.value == "curator"
+    assert rule.target_skill_id == "doublechecker-core"
 
 
 def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Path) -> None:

@@ -106,6 +106,8 @@ Know which shipped harness posture you are validating:
   to the Pi RPC adapter
 - `learning_codex` and `learning_pi` add the Analyst/Professor/Curator learning
   plane for runtime learning requests and skill-improvement workflows
+- learning requests may close as no-op/done when evidence was reviewed and no
+  skill update is warranted; this is not the same as a blocked learning request
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 
@@ -113,6 +115,9 @@ Daemon mode uses a compiled plane scheduler. Default modes remain serial.
 Learning-enabled modes may run one Learning stage concurrently with one
 permitted foreground Planning or Execution stage. Runtime-owned mutation
 remains single-writer and serialized by the daemon supervisor.
+Generic success-triggered learning starts at Analyst. Direct Curator trigger
+rules are only valid when a compiled mode names a safe destination such as
+`target_skill_id` or `preferred_output_paths`.
 
 6. Intake work only after the workspace is healthy and Millrace use is allowed.
 7. Run `millrace run once --workspace <workspace>` when you want one safe tick,

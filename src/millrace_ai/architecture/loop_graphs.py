@@ -40,6 +40,7 @@ class GraphLoopEdgeKind(str, Enum):
 
 class GraphLoopTerminalClass(str, Enum):
     SUCCESS = "success"
+    NO_OP = "no_op"
     FOLLOWUP_NEEDED = "followup_needed"
     BLOCKED = "blocked"
     ESCALATE_PLANNING = "escalate_planning"

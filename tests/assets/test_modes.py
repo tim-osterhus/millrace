@@ -152,6 +152,16 @@ def test_learning_modes_load_learning_plane_without_changing_default_modes() -> 
     assert learning_bundle.learning_loop.plane is Plane.LEARNING
     assert learning_bundle.mode.learning_trigger_rules
     assert set(learning_bundle.mode.stage_runner_bindings.values()) == {"codex_cli"}
+    assert {
+        (rule.rule_id, rule.target_stage.value)
+        for rule in learning_bundle.mode.learning_trigger_rules
+    } >= {
+        ("execution.doublechecker.success-to-analyst", "analyst"),
+    }
+    assert all(
+        rule.target_stage.value != "curator" or rule.target_skill_id or rule.preferred_output_paths
+        for rule in learning_bundle.mode.learning_trigger_rules
+    )
 
 
 def test_workspace_local_mode_loads_discovered_loops_and_stage_bindings(tmp_path: Path) -> None:

@@ -18,6 +18,8 @@ class LearningTriggerRuleDefinition(ContractModel):
     on_terminal_results: tuple[str, ...] = Field(min_length=1)
     target_stage: LearningStageName
     requested_action: LearningRequestAction = LearningRequestAction.IMPROVE
+    target_skill_id: str | None = None
+    preferred_output_paths: tuple[str, ...] = ()
 
     @field_validator("on_terminal_results", mode="before")
     @classmethod
@@ -30,6 +32,31 @@ class LearningTriggerRuleDefinition(ContractModel):
         if not normalized:
             raise ValueError("on_terminal_results must not be empty")
         return normalized
+
+    @field_validator("target_skill_id")
+    @classmethod
+    def validate_target_skill_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_safe_identifier(value, field_name="target_skill_id")
+
+    @field_validator("preferred_output_paths", mode="before")
+    @classmethod
+    def normalize_preferred_output_paths(
+        cls,
+        value: tuple[str, ...] | list[str] | str | None,
+    ) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        raw_values = [value] if isinstance(value, str) else list(value)
+        normalized: list[str] = []
+        for item in raw_values:
+            path = str(item).strip()
+            if not path:
+                raise ValueError("preferred_output_paths entries must not be empty")
+            if path not in normalized:
+                normalized.append(path)
+        return tuple(normalized)
 
     @model_validator(mode="after")
     def validate_rule_shape(self) -> "LearningTriggerRuleDefinition":

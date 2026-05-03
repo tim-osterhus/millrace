@@ -270,9 +270,10 @@ policy through the plane scheduler: default modes remain serial, while
 learning-enabled modes may run one Learning stage concurrently with one
 permitted foreground Planning or Execution stage. Runtime-owned mutation stays
 single-writer and serialized by the supervisor. Learning trigger rules can
-enqueue targeted learning requests from runtime evidence, for example a Curator
-request after a successful Doublechecker pass or an Analyst request after
-troubleshooting/consultation.
+enqueue targeted learning requests from runtime evidence. Built-in success
+learning starts at Analyst; direct Curator trigger rules are reserved for
+custom modes that name a concrete destination. Troubleshooting and consultation
+recovery also route learning evidence through Analyst.
 
 The compiler materializes one `CompiledRunPlan`, whose graph nodes record
 the exact runtime execution contract the engine will use later:
@@ -343,10 +344,13 @@ The current learning loop is:
 
 Learning is opt-in through `learning_codex` or `learning_pi`. Its normal path is
 Analyst evidence analysis, Professor synthesis, then Curator acceptance and
-skill-update curation. It can terminate with `CURATOR_COMPLETE` or `BLOCKED`.
-Learning requests live under `millrace-agents/learning/requests/`, and targeted
-requests can start at a specific learning stage when a compiler-frozen trigger
-rule says that stage is the right entry point.
+skill-update curation. It can terminate with `CURATOR_COMPLETE`, a
+stage-specific no-op outcome, or `BLOCKED`. Learning requests live under
+`millrace-agents/learning/requests/`, and targeted requests can start at a
+specific learning stage when a compiler-frozen trigger rule says that stage is
+the right entry point. Generic success-triggered learning starts at Analyst;
+direct Curator triggers require a safe destination such as `target_skill_id` or
+`preferred_output_paths`.
 
 The phase-1 graph loops make the shipped intake mapping explicit:
 

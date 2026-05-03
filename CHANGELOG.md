@@ -11,6 +11,26 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.17.4] - 2026-05-03
+
+### Added
+
+- Added first-class learning no-op terminal outcomes for Analyst, Professor,
+  and Curator so reviewed no-change learning requests close as done instead of
+  appearing blocked.
+
+### Changed
+
+- Changed built-in learning-mode generic Doublechecker success learning to start
+  at Analyst instead of direct Curator, keeping vague success evidence in the
+  research stage.
+
+### Fixed
+
+- Compile validation now rejects direct Curator learning trigger rules unless
+  they include `target_skill_id` or `preferred_output_paths`, preventing
+  runtime-generated Curator requests that have no safe skill destination.
+
 ## [0.17.3] - 2026-05-03
 
 ### Added
@@ -613,7 +633,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.3...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.4...HEAD
+[0.17.4]: https://github.com/tim-osterhus/millrace/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/tim-osterhus/millrace/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/tim-osterhus/millrace/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/tim-osterhus/millrace/compare/v0.17.0...v0.17.1

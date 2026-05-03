@@ -12,14 +12,32 @@
       "target_stage": "professor"
     },
     {
+      "source_stage": "analyst",
+      "on_terminal_result": "ANALYST_NOOP",
+      "terminal_result": "ANALYST_NOOP",
+      "edge_kind": "terminal"
+    },
+    {
       "source_stage": "professor",
       "on_terminal_result": "PROFESSOR_COMPLETE",
       "target_stage": "curator"
     },
     {
+      "source_stage": "professor",
+      "on_terminal_result": "PROFESSOR_NOOP",
+      "terminal_result": "PROFESSOR_NOOP",
+      "edge_kind": "terminal"
+    },
+    {
       "source_stage": "curator",
       "on_terminal_result": "CURATOR_COMPLETE",
       "terminal_result": "CURATOR_COMPLETE",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "curator",
+      "on_terminal_result": "CURATOR_NOOP",
+      "terminal_result": "CURATOR_NOOP",
       "edge_kind": "terminal"
     },
     {
@@ -41,5 +59,11 @@
       "edge_kind": "terminal"
     }
   ],
-  "terminal_results": ["CURATOR_COMPLETE", "BLOCKED"]
+  "terminal_results": [
+    "ANALYST_NOOP",
+    "PROFESSOR_NOOP",
+    "CURATOR_COMPLETE",
+    "CURATOR_NOOP",
+    "BLOCKED"
+  ]
 }

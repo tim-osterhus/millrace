@@ -34,7 +34,7 @@ Runtime-owned, not stage-owned:
 - learning request claim order
 - target-stage activation
 - status persistence to `summary_status_path`
-- transition from Analyst to Professor or terminal blocked handling
+- transition from Analyst to Professor, no-op terminal handling, or blocked handling
 
 ## Required Outputs And Evidence
 
@@ -109,6 +109,10 @@ The research packet must include:
 
 5. Decide the terminal result.
 - Emit `### ANALYST_COMPLETE` only when the research packet is usable.
+- Emit `### ANALYST_NOOP` when the evidence was reviewed and clearly does not
+  support a reusable skill change, Professor candidate, Curator update, or
+  downstream learning action. Still write `run_dir/analyst_research_packet.md`
+  with the no-op rationale.
 - Emit `### BLOCKED` when an honest packet cannot be produced.
 
 ## Completion Signaling
@@ -118,6 +122,9 @@ Emit exactly one legal terminal result for runtime persistence to
 
 Success:
 `### ANALYST_COMPLETE`
+
+No-op:
+`### ANALYST_NOOP`
 
 Blocked:
 `### BLOCKED`

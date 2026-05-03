@@ -61,6 +61,9 @@ review rather than publication.
   Curator review points.
 - Clear trigger language and operator workflow guidance.
 - Validation notes from `lint_skill.py` and `evaluate_skill.py` when practical.
+- A no-op rationale in `run_dir/professor_notes.md` when the entrypoint terminal
+  contract permits `PROFESSOR_NOOP` and no evidence-backed candidate or patch
+  should be authored.
 
 ## Procedure
 
@@ -70,7 +73,9 @@ review rather than publication.
 4. Write operational guidance that changes agent behavior in the target task.
 5. Keep examples tied to evidence from research packets or request artifacts.
 6. Run local skill validation when practical and record skipped checks honestly.
-7. Leave curation notes for unresolved scope, quality, or packaging concerns.
+7. Use the no-op terminal path (`PROFESSOR_NOOP`) when the Analyst packet is
+   coherent but authoring a candidate or patch would manufacture a skill change.
+8. Leave curation notes for unresolved scope, quality, or packaging concerns.
 
 ## Pitfalls And Gotchas
 
@@ -79,6 +84,8 @@ review rather than publication.
 - Adding references that are not used by the workflow.
 - Treating Professor output as an installed or published skill.
 - Skipping validation notes because the candidate looks plausible.
+- Treating "no candidate should be authored" as blocked when the evidence was
+  adequate and the honest outcome is no-op.
 
 ## Progressive Disclosure
 

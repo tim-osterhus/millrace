@@ -205,7 +205,8 @@ flowchart LR
 - Write stage-result artifacts.
 - Route terminal status.
 - Mark tasks, specs, or incidents done or blocked.
-- Mark learning requests done or blocked when the learning plane is active.
+- Mark learning requests done, done-as-no-op, or blocked when the learning plane
+  is active.
 - Update recovery counters and closure-target state.
 - Record stage token usage into the governance ledger and apply any resulting
   between-stage pause.

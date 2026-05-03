@@ -171,6 +171,14 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert analyst.plane is Plane.LEARNING
     assert analyst.can_start_learning_requests is True
     assert analyst.required_skill_paths == ("skills/stage/learning/analyst-core/SKILL.md",)
+    assert analyst.allowed_result_classes_by_outcome["ANALYST_NOOP"] == (ResultClass.NO_OP,)
+    assert "ANALYST_NOOP" not in analyst.success_outcomes
+    assert "ANALYST_NOOP" not in analyst.failure_outcomes
+
+    professor = load_builtin_stage_kind_definition("professor")
+    curator = load_builtin_stage_kind_definition("curator")
+    assert professor.allowed_result_classes_by_outcome["PROFESSOR_NOOP"] == (ResultClass.NO_OP,)
+    assert curator.allowed_result_classes_by_outcome["CURATOR_NOOP"] == (ResultClass.NO_OP,)
 
 
 def test_stage_kind_asset_errors_use_project_error_hierarchy() -> None:
