@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.1
+
+- Publish as a normal PyPI sidecar package through the configured
+  `millrace-web` trusted publisher.
+- Sync the package version and runtime dependency to `millrace-ai>=0.17.1`.
+
 ## 0.17.0
 
 - Add optional `millrace-web` distribution with `millrace-web serve`.

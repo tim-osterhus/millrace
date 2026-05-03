@@ -331,8 +331,7 @@ Important monitoring note:
   package: install it separately and run
   `millrace-web serve --workspace <workspace>`. It is read-only, has Detail and
   Flow views, does not ship inside `millrace-ai`, and must not be treated as a
-  runtime control surface. If `millrace-web` is not available from PyPI yet,
-  install the matching `millrace_web-*.whl` asset from the GitHub release
+  runtime control surface.
 - `millrace doctor` is the quick integrity check for mode assets and resolved
   runner posture, including missing harness binaries and closure lineage drift
 - `millrace status` exposes `pause_sources` and usage-governance blockers when

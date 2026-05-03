@@ -11,9 +11,6 @@ millrace-web serve --workspace /path/to/workspace
 millrace-web serve --workspace /path/a --workspace /path/b
 ```
 
-If `millrace-web` is not available from PyPI in your environment yet, install
-the matching `millrace_web-*.whl` asset attached to the GitHub release instead.
-
 The server binds to `127.0.0.1:8765` by default and only serves workspaces
 explicitly passed with `--workspace`.
 

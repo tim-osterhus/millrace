@@ -11,6 +11,20 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [0.17.1] - 2026-05-03
+
+### Changed
+
+- Restored the normal release workflow path for publishing the full built
+  distribution set to PyPI now that the separate `millrace-web` pending trusted
+  publisher is configured.
+- Updated `millrace-web` to `0.17.1` with a synchronized
+  `millrace-ai>=0.17.1` dependency so the optional web dashboard can ship from
+  PyPI alongside the base runtime in normal releases.
+- Updated the public README proof point to document the autonomous Rust
+  Millrace parity implementation campaign instead of the earlier comparative
+  benchmark.
+
 ## [0.17.0] - 2026-05-02
 
 ### Added
@@ -560,7 +574,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/tim-osterhus/millrace/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/tim-osterhus/millrace/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/tim-osterhus/millrace/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/tim-osterhus/millrace/compare/v0.16.1...v0.16.2
