@@ -46,7 +46,7 @@ def test_api_rejects_unregistered_workspace_ids(tmp_path: Path) -> None:
 
 
 def test_cli_exposes_serve_subcommand() -> None:
-    result = CliRunner().invoke(cli_app, ["serve", "--help"])
+    result = CliRunner().invoke(cli_app, ["serve", "--help"], terminal_width=140)
 
     assert result.exit_code == 0
     assert "--workspace" in result.output

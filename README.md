@@ -224,7 +224,9 @@ Use `--monitor-log <path>` when you want the same clean monitor stream written
 to a file without necessarily printing live monitor lines to stdout.
 
 For an optional local dashboard, install the separate `millrace-web` package
-and run `millrace-web serve --workspace "$WORKSPACE"`. The web dashboard is a
+and run `millrace-web serve --workspace "$WORKSPACE"`. If the package is not
+available from PyPI in your environment yet, install the matching
+`millrace_web-*.whl` asset from the GitHub release. The web dashboard is a
 read-only observer with Detail and Flow views; it is not included in the
 `millrace-ai` wheel and does not acquire runtime ownership locks.
 

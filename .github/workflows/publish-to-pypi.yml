@@ -31,6 +31,11 @@ jobs:
       - name: Validate distribution metadata
         run: python -m twine check dist/*
 
+      - name: Stage PyPI distributions
+        run: |
+          mkdir -p dist-pypi
+          cp dist/millrace_ai-* dist-pypi/
+
       - name: Smoke install built wheel against the minimum-functionality contract
         run: |
           set -euo pipefail
@@ -122,11 +127,11 @@ jobs:
             exit 1
           fi
 
-      - name: Upload built distributions
+      - name: Upload PyPI distributions
         uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
-          path: dist/
+          path: dist-pypi/
 
   publish:
     needs: build
@@ -141,7 +146,9 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
-          path: dist/
+          path: dist-pypi/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-pypi/

@@ -11,6 +11,9 @@ millrace-web serve --workspace /path/to/workspace
 millrace-web serve --workspace /path/a --workspace /path/b
 ```
 
+If `millrace-web` is not available from PyPI in your environment yet, install
+the matching `millrace_web-*.whl` asset attached to the GitHub release instead.
+
 The server binds to `127.0.0.1:8765` by default and only serves workspaces
 explicitly passed with `--workspace`.
 
@@ -29,4 +32,3 @@ The dashboard reads initialized workspace state under `millrace-agents/` and
 does not acquire the daemon ownership lock. Future interactivity should be
 added through explicit control routes that call Millrace's supported runtime
 control surfaces, not by writing runtime files directly.
-
