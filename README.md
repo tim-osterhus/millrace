@@ -70,43 +70,36 @@ flowchart TD
 ```
 
 Millrace does not try to replace raw harness reasoning with a thicker prompt.
-It wraps long-horizon work in a real runtime:
+It wraps long-horizon work in a runtime with a few hard contracts:
 
-- workspace bootstrap is explicit: run `millrace init` before operator commands
-- runtime package updates are separate from workspace baseline refreshes: use
-  the deployment package manager to update `millrace-ai`, then run
-  `millrace upgrade` only when managed workspace assets should be refreshed
-- managed baseline refresh is explicit: run `millrace upgrade` to preview or apply packaged workspace asset updates
-- removed managed assets can be explicitly localized during upgrade when an
-  operator wants the workspace copy to become local content
-- compile happens at startup and again only on explicit config reload
-- compile tracks input fingerprints so operators can see whether the persisted compiled plan is current or stale
-- daemon mode uses a compiled plane scheduler; default modes remain serial,
-  while learning-enabled modes may run one Learning stage concurrently with one
-  permitted foreground Planning or Execution stage
-- runtime-owned mutation remains single-writer and serialized even when stage
-  runner workers execute concurrently
-- stage results are routed by the runtime, not by direct stage-to-stage
-  handoffs
-- runtime-generated planning handoff incidents preserve source work-item
-  lineage so closure-scoped remediation stays claimable while unrelated root
-  specs remain backpressured
-- Arbiter activates only when the scheduler finds no lineage work left and
-  closure behavior is actually ready
-- the shipped v1 usage-governance surface can pause and auto-resume between
-  stages when configured token or subscription quota rules are reached
-- runtime startup and config reload refuse to keep running on a stale
-  last-known-good plan when current compile inputs no longer match
-- opt-in usage governance can pause between stages from token or subscription
-  quota rules without clearing operator-owned pauses
-  and applies config-reload changes at the next runtime tick with status/monitor
-  visibility
+- **Explicit workspace lifecycle:** operators initialize workspaces with
+  `millrace init`, update the Python package with their package manager, and
+  use `millrace upgrade` only to preview or apply managed workspace asset
+  refreshes.
+- **Compiler-owned runtime structure:** startup and config reload compile a
+  fingerprinted plan; if inputs drift and the persisted plan is stale, the
+  daemon refuses to keep running on a last-known-good plan.
+- **Runtime-owned execution:** stage results are routed by the runtime,
+  mutation stays single-writer and serialized, and daemon scheduling follows
+  the compiled plane scheduler. Default modes are serial; learning-enabled
+  modes may run one Learning stage alongside one foreground Planning or
+  Execution stage.
+- **Closure-safe remediation:** runtime-generated planning handoff incidents
+  preserve source work-item lineage, so same-root remediation remains claimable
+  while unrelated root specs stay backpressured. Arbiter activates only when no
+  lineage work remains and closure behavior is ready.
+- **Inspectable governance and evidence:** usage governance can pause and
+  auto-resume between stages when configured quota rules are reached, while
+  typed terminal results, status/monitor output, and persisted run artifacts
+  keep post-run inspection grounded in runtime evidence.
 
-The shipped core already includes separate planning and execution loops, typed
-terminal results, compiler-governed completion behavior, and persisted run
-artifacts for post-run inspection. Learning-enabled modes also ship the
-Analyst, Professor, and Curator stages for evidence-backed skill improvement
-flows.
+The shipped core includes separate Planning and Execution loops.
+Learning-enabled modes add Analyst, Professor, and Curator stages for
+evidence-backed skill improvement flows.
+
+For operational details, see `docs/runtime/README.md`,
+`docs/runtime/millrace-cli-reference.md`, and
+`docs/runtime/millrace-workspace-baselines-and-upgrades.md`.
 
 ## Early Proof
 
