@@ -1081,6 +1081,52 @@ def test_status_surfaces_closure_target_state(tmp_path: Path) -> None:
     assert "closure_target_latest_report_path: millrace-agents/arbiter/reports/run-001.md" in result.output
 
 
+def test_status_prefers_actionable_closure_target_when_blocked_targets_remain(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-blocked",
+            root_idea_id="idea-blocked",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-blocked.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-blocked.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-blocked.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=True,
+            blocking_work_ids=("task-blocked",),
+            opened_at=NOW,
+        ),
+    )
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-active",
+            root_idea_id="idea-active",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-active.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-active.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-active.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "invalid_multiple_open_targets" not in result.output
+    assert "closure_target_root_spec_id: spec-root-active" in result.output
+    assert "closure_target_blocked_by_lineage_work: false" in result.output
+
+
 def test_runs_ls_uses_run_inspection_backend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

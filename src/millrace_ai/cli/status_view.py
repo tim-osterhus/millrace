@@ -8,6 +8,7 @@ import typer
 
 from millrace_ai.compiler import CompiledPlanCurrentness, inspect_workspace_plan_currentness
 from millrace_ai.config import load_runtime_config
+from millrace_ai.contracts import ClosureTargetState
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.runtime.pause_state import pause_sources_label
 from millrace_ai.runtime.usage_governance import load_usage_governance_state
@@ -112,9 +113,10 @@ def _print_statuses(paths_list: Sequence[WorkspacePaths]) -> None:
 
 def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     open_targets = list_open_closure_target_states(paths)
-    if len(open_targets) > 1:
+    actionable_targets = _actionable_open_closure_targets(open_targets)
+    if len(actionable_targets) > 1:
         return (
-            "closure_target_root_spec_id: invalid_multiple_open_targets",
+            "closure_target_root_spec_id: invalid_multiple_actionable_open_targets",
             "closure_target_open: invalid",
             "closure_target_blocked_by_lineage_work: invalid",
             "planning_root_specs_deferred_by_closure_target: invalid",
@@ -131,7 +133,7 @@ def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...
             "closure_target_latest_report_path: none",
         )
 
-    target = open_targets[0]
+    target = actionable_targets[0] if actionable_targets else open_targets[0]
     deferred_root_spec_ids = list_deferred_root_spec_ids(
         paths,
         open_root_spec_id=target.root_spec_id,
@@ -146,6 +148,16 @@ def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...
         f"planning_root_specs_deferred_by_closure_target: {len(deferred_root_spec_ids)}",
         f"closure_target_latest_verdict_path: {_status_value(target.latest_verdict_path)}",
         f"closure_target_latest_report_path: {_status_value(target.latest_report_path)}",
+    )
+
+
+def _actionable_open_closure_targets(
+    open_targets: tuple[ClosureTargetState, ...],
+) -> tuple[ClosureTargetState, ...]:
+    return tuple(
+        target
+        for target in open_targets
+        if not target.closure_blocked_by_lineage_work
     )
 
 

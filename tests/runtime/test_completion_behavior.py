@@ -252,6 +252,62 @@ def test_open_closure_target_backpressures_unrelated_root_spec_and_runs_lineage_
     )
 
 
+def test_blocked_closure_target_allows_unrelated_root_spec_to_start(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(
+        _task_doc(
+            "task-blocked-001",
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            created_at=NOW,
+        )
+    )
+    blocked_claim = queue.claim_next_execution_task()
+
+    assert blocked_claim is not None
+
+    queue.mark_task_blocked("task-blocked-001")
+    save_closure_target_state(
+        paths,
+        _target_state().model_copy(
+            update={
+                "closure_blocked_by_lineage_work": True,
+                "blocking_work_ids": ("task-blocked-001",),
+            }
+        ),
+    )
+    _write_idea(paths, "idea-002")
+    queue.enqueue_spec(
+        _root_spec_doc(
+            "spec-root-002",
+            root_idea_id="idea-002",
+            created_at=NOW,
+            idea_reference="ideas/inbox/idea-002.md",
+        )
+    )
+    captured_requests: list[StageRunRequest] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        captured_requests.append(request)
+        return _runner_result(request, terminal="PLANNER_COMPLETE")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+
+    engine.tick()
+
+    assert len(captured_requests) == 1
+    request = captured_requests[0]
+    assert request.stage is PlanningStageName.PLANNER
+    assert request.active_work_item_kind is WorkItemKind.SPEC
+    assert request.active_work_item_id == "spec-root-002"
+    assert (paths.specs_active_dir / "spec-root-002.md").is_file()
+    assert load_closure_target_state(paths, root_spec_id="spec-root-001").closure_open is True
+    assert load_closure_target_state(paths, root_spec_id="spec-root-002").closure_open is True
+
+
 def test_open_closure_target_activates_arbiter_before_unrelated_root_spec(
     tmp_path: Path,
 ) -> None:

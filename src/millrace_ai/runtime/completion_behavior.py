@@ -107,11 +107,12 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
 
 def active_closure_target(engine: RuntimeEngine) -> ClosureTargetState | None:
     open_targets = list_open_closure_target_states(engine.paths)
-    if not open_targets:
+    actionable_targets = _actionable_open_closure_targets(open_targets)
+    if not actionable_targets:
         return None
-    if len(open_targets) > 1:
-        raise WorkspaceStateError("multiple open closure targets found")
-    return open_targets[0]
+    if len(actionable_targets) > 1:
+        raise WorkspaceStateError("multiple actionable open closure targets found")
+    return actionable_targets[0]
 
 
 def refresh_closure_target_readiness(
@@ -233,17 +234,26 @@ def _prepare_closure_target_for_spec(
         return ClosureTargetPreparation(allowed=True, target=existing_target)
 
     open_targets = list_open_closure_target_states(engine.paths)
-    if len(open_targets) > 1:
-        raise WorkspaceStateError("multiple open closure targets found")
-    if open_targets:
+    actionable_targets = _actionable_open_closure_targets(open_targets)
+    if len(actionable_targets) > 1:
+        raise WorkspaceStateError("multiple actionable open closure targets found")
+    if actionable_targets:
         return ClosureTargetPreparation(
             allowed=False,
-            open_root_spec_id=open_targets[0].root_spec_id,
+            open_root_spec_id=actionable_targets[0].root_spec_id,
             deferred_root_spec_id=spec.root_spec_id,
         )
 
     target = _create_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
     return ClosureTargetPreparation(allowed=True, target=target)
+
+
+def _actionable_open_closure_targets(
+    open_targets: tuple[ClosureTargetState, ...],
+) -> tuple[ClosureTargetState, ...]:
+    return tuple(
+        target for target in open_targets if not target.closure_blocked_by_lineage_work
+    )
 
 
 def _create_closure_target_for_spec(
