@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.3
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.17.3`.
+
 ## 0.17.2
 
 - Prevent the Flow graph from rebuilding animated lane DOM on unchanged

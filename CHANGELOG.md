@@ -11,7 +11,7 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
-## [Unreleased]
+## [0.17.3] - 2026-05-03
 
 ### Added
 
@@ -26,6 +26,10 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Kept `stages.<stage>.model_reasoning_effort` as a Codex compatibility alias
   while making `stages.<stage>.thinking_level` the preferred stage config
   surface. Explicit `null` mode thinking bindings now mean compiled default.
+- Reduced repeated basic daemon monitor `idle reason=no_work` output from a
+  120-second heartbeat to a 6-hour heartbeat while preserving the immediate
+  first idle line and reset behavior after runtime activity or a different idle
+  reason.
 
 ## [0.17.2] - 2026-05-03
 
@@ -609,7 +613,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.2...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.3...HEAD
+[0.17.3]: https://github.com/tim-osterhus/millrace/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/tim-osterhus/millrace/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/tim-osterhus/millrace/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/tim-osterhus/millrace/compare/v0.16.3...v0.17.0

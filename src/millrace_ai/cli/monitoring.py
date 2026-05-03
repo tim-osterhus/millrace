@@ -10,7 +10,7 @@ from typing import Mapping, TextIO
 from millrace_ai.contracts.stage_metadata import STAGE_METADATA_BY_VALUE
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent, RuntimeMonitorSink
 
-_IDLE_HEARTBEAT_SECONDS = 120.0
+_IDLE_HEARTBEAT_SECONDS = 21_600.0
 _RUN_HANDLE_LENGTHS = (8, 12, 16)
 
 

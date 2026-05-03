@@ -201,7 +201,7 @@ def test_basic_terminal_monitor_throttles_repeated_no_work_idle_heartbeat() -> N
     stream = StringIO()
     monitor = BasicTerminalMonitor(stream=stream)
 
-    for offset_seconds in (0, 1, 119, 120):
+    for offset_seconds in (0, 1, 120, 21_599, 21_600):
         monitor.emit(
             RuntimeMonitorEvent(
                 event_type="runtime_idle",
@@ -212,7 +212,7 @@ def test_basic_terminal_monitor_throttles_repeated_no_work_idle_heartbeat() -> N
 
     assert stream.getvalue().splitlines() == [
         "[12:14:03] idle reason=no_work",
-        "[12:16:03] idle reason=no_work",
+        "[18:14:03] idle reason=no_work",
     ]
 
 
