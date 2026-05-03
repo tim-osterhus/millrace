@@ -110,36 +110,48 @@ flows.
 
 ## Early Proof
 
-Millrace already has a useful public benchmark, and the right read is not
-"Millrace already beats raw Codex on absolute final quality." The useful read
-is that framework-driven orchestration is already competitive on hard,
-long-horizon work while being much more efficient.
+Millrace's strongest early proof point is self-referential: Python
+`millrace-ai` built the first released Rust parity implementation of Millrace.
 
-On the first substantive public A/B benchmark, both systems were aimed at the
-same target: a parity-first modern Fabric port of Aura Cascade, a ten-year-old
-Minecraft mod. The stronger direct-agent condition, raw Codex on `gpt-5.4`
-`xhigh`, finished at `95 / 100`. Millrace, running as a staged daemon workflow
-on routed `gpt-5.3-codex` `high` / `xhigh`, finished at `94 / 100`.
+The campaign used Python `millrace-ai` `v0.16.1` in `learning_codex` mode to
+drive the Rust `millrace-ai` `v0.1.0` implementation from seeded parity ideas
+through planning, execution, QA, Arbiter closure, remediation, and release-ready
+workspace state. After the operator started the daemon, there were no
+pause/resume cycles, continuation prompts, or external code interventions. The
+run proceeded to completion with zero outside assistance. The only external
+post-run action was publication: Millrace's ops agent published the completed
+result to GitHub and as a Rust crate without touching the code Millrace had
+produced.
 
-| Metric | Raw Codex | Millrace |
-|------|------:|------:|
-| Final score | `95 / 100` | `94 / 100` |
-| Total tokens | `1,071,700,018` | `241,046,303` |
-| Wall-clock span | `72h 23m 20.320s` | `28h 02m 36.972s` |
-| Active runtime | `18h 04m 07.914s` | `12h 36m 15.515s` |
+Headline evidence from the autonomous build campaign:
 
-That means raw Codex used about `4.45x` Millrace's total tokens, took about
-`2.58x` the wall-clock span, and still used about `1.43x` Millrace's active
-runtime.
+| Metric | Value |
+|------|------:|
+| Seeded parity slices | `8` |
+| Completed specs | `11` |
+| Completed tasks | `57` |
+| Recorded runs | `99` |
+| Recorded stage results | `261` |
+| Resolved incidents/remediations | `5` |
+| Wall-clock campaign span | `28h 9m 49.5s` |
+| Input plus output tokens | `730,406,757` |
+| Cached-input share | `95.47%` |
+| Release tag | `v0.1.0` |
+| Release commit | `4c82685` |
 
-That wall-clock gap is not pure model speed. The raw Codex run needed repeated
-manual continuation prompts whenever the operator was away from the keyboard,
-while Millrace kept progressing through a staged runtime. Even after accounting
-for that, the active-runtime gap still favors Millrace.
+The release moved the Rust crate from an initial claimed package to a parity
+runtime across `193` changed files and `87,992` insertions. The finished crate
+also passed a post-publish real daemon smoke: an installed `millrace-ai v0.1.0`
+crate completed a real Codex-backed `builder -> checker -> updater` run in
+`6m 32.9s` and produced the expected filesystem output.
+
+The caveat is important and narrow: this proves that Python Millrace could
+autonomously build the Rust parity runtime. It does not claim that the Rust
+crate independently self-hosted the whole port campaign.
 
 Read the full public evidence pack here:
 
-- [codex-vs-millrace-mc-mod](https://github.com/tim-osterhus/codex-vs-millrace-mc-mod)
+- [millrace-rs-port-docs](https://github.com/tim-osterhus/millrace-rs-port-docs)
 
 ## How Millrace Fits With Raw Harnesses
 
