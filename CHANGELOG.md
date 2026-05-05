@@ -13,6 +13,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-05-05
+
 ### Added
 
 - Added stable compiled-stage-graph export contracts and
@@ -655,7 +657,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.17.4...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/tim-osterhus/millrace/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/tim-osterhus/millrace/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/tim-osterhus/millrace/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/tim-osterhus/millrace/compare/v0.17.1...v0.17.2
