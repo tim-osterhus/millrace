@@ -2,7 +2,7 @@
 asset_type: skill
 asset_id: millrace-ops-agent-manual
 version: 1
-description: External operator skill for deciding when to use Millrace and how to run, monitor, and intervene safely.
+description: External operator runbook for running, monitoring, and intervening in Millrace workspaces safely after Millrace use is requested or selected.
 advisory_only: true
 capability_type: operator_manual
 forbidden_claims:
@@ -18,8 +18,8 @@ forbidden_claims:
 # Millrace Operator
 
 Use this skill when you are acting as the operator of a Millrace workspace or
-when you need to decide whether work should run through Millrace instead of a
-direct Codex or Claude Code session.
+when another active delegation policy has selected Millrace as the execution
+path.
 
 If your harness supports repo-local `SKILL.md` packages, load this directory as
 the skill package. If the harness ignores YAML frontmatter, treat the markdown
@@ -38,9 +38,10 @@ body below as the canonical operator instructions.
 
 Become a truthful Millrace operator:
 
-- decide whether the work should stay in a direct harness session or be
-  delegated into Millrace
+- honor the active Millrace delegation policy, or use the fallback fit test
+  when this runbook is loaded by itself
 - ask the user what Millrace delegation authority you are allowed to exercise
+  only when no policy is already established
 - operate Millrace through the supported CLI rather than by mutating
   runtime-owned state directly
 - monitor runtime state, runs, queue movement, and recovery signals without
@@ -51,7 +52,10 @@ Become a truthful Millrace operator:
 Load this skill when any of the following is true:
 
 - the user asks you to operate, run, monitor, or troubleshoot Millrace
-- the user asks whether a task or spec should be delegated into Millrace
+- `millrace-autonomous-delegation` or another active policy has selected
+  Millrace for the current work
+- the user asks whether a task or spec should be delegated into Millrace and no
+  separate delegation skill is available
 - you are managing a workspace that already contains `millrace-agents/`
 - you need to intake tasks, specs, or ideas into a Millrace queue
 - you need to watch or report on a running Millrace daemon
@@ -61,6 +65,10 @@ Ordinary direct code edits do not automatically require the Millrace operator
 posture.
 
 ## Required Autonomy Handshake
+
+If `millrace-autonomous-delegation` is active, or an equivalent workspace or
+user policy already permits autonomous Millrace delegation, do not ask the
+handshake again. Follow that policy.
 
 Before you use Millrace on a user's behalf in a thread or workspace where no
 Millrace delegation policy is already established, ask once:
@@ -80,8 +88,11 @@ After the user answers:
 
 ## Quick Start
 
-1. Decide whether the work is a Millrace candidate or better handled directly.
-2. If no Millrace delegation policy is on record, ask the autonomy handshake.
+1. Confirm that Millrace is requested, selected, or permitted. If
+   `millrace-autonomous-delegation` is active, use its decision; otherwise use
+   the fallback fit test below.
+2. If no Millrace delegation policy is on record and Millrace was not
+   explicitly requested, ask the autonomy handshake.
 3. Read `docs/runtime/millrace-cli-reference.md` and
    `docs/runtime/millrace-runtime-architecture.md`.
 4. Initialize the workspace if the managed baseline is missing:
@@ -149,7 +160,11 @@ rules are only valid when a compiled mode names a safe destination such as
    learning-plane skill requests; ordinary task intake still belongs in
    `millrace queue ...`.
 
-## Millrace Fit Test
+## Fallback Millrace Fit Test
+
+Prefer `docs/skills/millrace-autonomous-delegation/SKILL.md` for the dedicated
+decision layer when the harness can load it. Use this shorter fit test when
+this runbook is the only available Millrace skill.
 
 Prefer a direct raw-harness session when all of these are true:
 
@@ -220,7 +235,8 @@ Load these on demand when the current task requires them:
 ## Inputs This Skill Expects
 
 - a workspace root path
-- the user's Millrace delegation policy for the current thread or workspace
+- the user's Millrace delegation policy for the current thread or workspace,
+  unless Millrace was explicitly requested for the current task
 - a candidate task, spec, or idea, or a running Millrace workspace to monitor
 - enough local repo or workspace context to tell whether Millrace is warranted
 
@@ -229,17 +245,21 @@ Load these on demand when the current task requires them:
 When you use this skill well, your output should include:
 
 - a clear call on whether the work should stay direct or enter Millrace
-- a statement of which user delegation policy is in force
+- a statement of which user or workspace delegation policy is in force when
+  that policy affects the next operator action
 - the next truthful operator action
 - status, queue, or run evidence when you are monitoring an existing workspace
 - intervention guidance only through supported control surfaces
 
 ## Procedure
 
-1. Classify the work as direct-session work or Millrace-candidate work.
-2. Check whether a Millrace delegation policy is already established.
-3. If not established, ask the autonomy handshake and default to suggestion
-   mode until answered.
+1. Confirm whether Millrace was explicitly requested, selected by an active
+   delegation policy, or still only a candidate.
+2. If the work is still only a candidate and
+   `millrace-autonomous-delegation` is available, use that skill for the
+   decision.
+3. If no delegation policy is established, ask the autonomy handshake and
+   default to suggestion mode until answered.
 4. If the work should stay direct, say so plainly and do not force Millrace
    into the flow.
 5. If Millrace is warranted and permitted, validate the workspace first.
@@ -474,7 +494,8 @@ Do not invent semantics for runtime error codes from memory alone.
 
 - Using Millrace because it sounds more advanced, not because the task needs
   governance.
-- Forgetting to ask the user which Millrace delegation authority you have.
+- Forgetting to ask the user which Millrace delegation authority you have when
+  no autonomous policy or explicit Millrace request is already in force.
 - Treating direct queue-folder mutation as equivalent to the CLI intake surface.
 - Acting as if Planning and Execution can overlap in shipped modes; Learning is
   the opportunistic concurrent lane, and only when the compiled policy permits
@@ -486,10 +507,10 @@ Do not invent semantics for runtime error codes from memory alone.
 
 ## Progressive Disclosure
 
-Start with the fit test, the delegation-policy check, and the CLI reference.
-Read deeper runtime docs only when the current operator decision depends on
-them. Do not dump the full architecture into every turn if a direct command or
-recommendation is enough.
+Start with the active delegation policy, the fallback fit test if needed, and
+the CLI reference. Read deeper runtime docs only when the current operator
+decision depends on them. Do not dump the full architecture into every turn if
+a direct command or recommendation is enough.
 
 ## Verification Pattern
 

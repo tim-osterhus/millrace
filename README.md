@@ -29,21 +29,24 @@ state, recovery paths, and closure behavior around that work.
 
 > If you are an agent and your harness supports repo-local skills, for example
 > Codex or Claude Code, install
-> `docs/skills/millrace-ops-agent-manual/SKILL.md` to become a Millrace
-> Operator before deciding whether work should enter Millrace. It teaches when
-> to use Millrace, when not to, and how to run, monitor, and intervene safely.
+> `docs/skills/millrace-autonomous-delegation/SKILL.md` when you have authority
+> to choose whether substantial work should enter Millrace. Once Millrace is
+> selected or explicitly requested, use
+> `docs/skills/millrace-ops-agent-manual/SKILL.md` as the operator runbook.
 
 ### Agent Install Examples
 
 - Codex: if your environment supports repo-local skills, load
-  `docs/skills/millrace-ops-agent-manual/` as the local skill package. The
-  entry file is `docs/skills/millrace-ops-agent-manual/SKILL.md`.
+  `docs/skills/millrace-autonomous-delegation/` for autonomous delegation
+  decisions and `docs/skills/millrace-ops-agent-manual/` for Millrace
+  operation. The entry files are each package's `SKILL.md`.
 - Claude Code: use the same package path or entry file as the local project
-  skill, then follow the autonomy handshake inside the skill before deciding
-  whether work should enter Millrace.
+  skill. Use the autonomous delegation skill only when the user or workspace
+  has granted that authority; otherwise follow the ops manual handshake.
 - Other harnesses: if the harness accepts a `SKILL.md`, point it at
-  `docs/skills/millrace-ops-agent-manual/SKILL.md`; if it supports directory
-  packages, prefer `docs/skills/millrace-ops-agent-manual/`.
+  `docs/skills/millrace-autonomous-delegation/SKILL.md` for the decision layer
+  and `docs/skills/millrace-ops-agent-manual/SKILL.md` for operation; if it
+  supports directory packages, prefer the containing directories.
 
 ## Runtime Lifecycle
 
@@ -282,6 +285,8 @@ Start with `docs/millrace-technical-overview.md`.
 ### Start Here
 
 - `docs/runtime/README.md`
+- `docs/skills/millrace-autonomous-delegation/SKILL.md` if you are authorized
+  to decide whether substantial work should use Millrace
 - `docs/skills/millrace-ops-agent-manual/SKILL.md` if you are operating
   Millrace as an agent
 

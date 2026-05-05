@@ -20,10 +20,15 @@ typed contracts.
 
 Current public agent docs:
 
-- `millrace-ops-agent-manual/SKILL.md`: when to use Millrace, when not to use it, and
-  how a dedicated ops agent should deploy, configure, and operate it
+- `millrace-autonomous-delegation/SKILL.md`: how an authorized external agent
+  should decide whether substantial work should enter Millrace or stay direct
+- `millrace-ops-agent-manual/SKILL.md`: how a dedicated ops agent should
+  deploy, configure, monitor, and operate Millrace after Millrace is requested
+  or selected
 - `millrace-loop-authoring/SKILL.md`: how to reason about loops, stages, modes, and
   compiler-valid authoring when extending Millrace
 
 If you are an external agent approaching this repo for the first time, start
-with `millrace-ops-agent-manual/SKILL.md`.
+with `millrace-autonomous-delegation/SKILL.md` when you are authorized to
+choose the execution path, then use `millrace-ops-agent-manual/SKILL.md` before
+operating Millrace.

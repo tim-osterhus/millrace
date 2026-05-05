@@ -23,6 +23,15 @@ This file starts at `0.13.0`, the current documented public baseline.
   stage-result artifacts.
 - Added read-only `millrace-web` compiled graph and run-trace API routes and
   Flow view trace outcome overlays.
+- Added the repo-local `millrace-autonomous-delegation` external-agent skill as
+  a compact, opinionated decision layer for trusted sessions that can choose
+  whether substantial work should enter Millrace.
+
+### Changed
+
+- Refocused the repo-local `millrace-ops-agent-manual` skill as the procedural
+  runbook for CLI operation, daemon monitoring, workspace validation, and safe
+  intervention after Millrace is requested or selected.
 
 ## [0.17.4] - 2026-05-03
 

@@ -37,10 +37,12 @@ Millrace is also agent-native in how it is meant to be operated. The intended
 posture is an external agent acting as the Millrace operator, not a human
 manually steering runtime internals without an agent in the loop. Humans can
 still invoke the CLI directly, but when a harness such as Codex or Claude Code
-supports repo-local skills, the right starting point is
-`docs/skills/millrace-ops-agent-manual/SKILL.md` so the operator agent has the
-right fit criteria, autonomy handshake, and command discipline before deciding
-whether work should enter Millrace.
+supports repo-local skills, the lightweight decision layer is
+`docs/skills/millrace-autonomous-delegation/SKILL.md` for trusted sessions
+where the operator has authority to choose the execution path. Once Millrace is
+requested or selected, `docs/skills/millrace-ops-agent-manual/SKILL.md` is the
+procedural runbook for workspace validation, CLI operation, monitoring, and
+safe intervention.
 
 ## High-Level System Model
 
@@ -746,8 +748,10 @@ Use this document as the front door, then drop into the narrower references when
 needed:
 
 - `README.md` for the public landing-page framing
+- `docs/skills/millrace-autonomous-delegation/SKILL.md` if you are an external
+  agent authorized to decide whether substantial work should use Millrace
 - `docs/skills/millrace-ops-agent-manual/SKILL.md` if you are an external
-  agent deciding when to use Millrace and how to operate it safely
+  agent operating Millrace safely after it is requested or selected
 - `docs/runtime/millrace-runtime-architecture.md` for the runtime/storage model
 - `docs/runtime/millrace-compiler-and-frozen-plans.md` for compile semantics
 - `docs/runtime/millrace-modes-and-loops.md` for loop topology and mode maps
