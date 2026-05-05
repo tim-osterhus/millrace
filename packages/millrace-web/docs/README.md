@@ -27,6 +27,16 @@ The static Detail and Flow views poll workspace summaries. Flow preserves its
 animated graph DOM between unchanged responses so the dashboard can keep
 refreshing state without restarting visual lane effects every second.
 
+Graph and trace data use the same read-only contracts as the CLI:
+
+- `/api/workspaces/<workspace_id>/compiled-plan/graphs` returns compiled stage
+  graph exports derived from `compiled_plan.json`.
+- `/api/workspaces/<workspace_id>/runs/<run_id>/trace` returns a compact trace
+  summary from `run_trace.json`, or from stage-result fallback inspection when
+  the trace artifact is absent.
+- Flow renders compiled topology as stable lane structure and overlays active
+  runtime state plus recent trace outcomes.
+
 ## Future Controls
 
 Future interactive controls should use Millrace `RuntimeControl` or the same

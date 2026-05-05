@@ -27,6 +27,7 @@ from .learning_promotions import (
 )
 from .learning_triggers import enqueue_learning_requests_for_stage_result
 from .plane_concurrency import can_dispatch_plane
+from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -353,14 +354,33 @@ def apply_stage_completion(
     router_decision: RouterDecision | None = None
     try:
         stage_result_path = engine._write_stage_result(outcome.request, stage_result)
-        enqueue_learning_requests_for_stage_result(
+        learning_request_paths = enqueue_learning_requests_for_stage_result(
             engine,
             stage_result=stage_result,
             stage_result_path=stage_result_path,
         )
         router_decision = engine._route_stage_result(stage_result)
         engine._write_plane_status(stage_result)
-        engine._apply_router_decision(router_decision, stage_result)
+        spawned_paths = engine._apply_router_decision(router_decision, stage_result)
+        spawned_work = tuple(
+            spawned_work_ref_from_path(
+                path,
+                source_stage_result=stage_result,
+                reason=(
+                    "learning_trigger"
+                    if path in learning_request_paths
+                    else router_decision.reason
+                ),
+            )
+            for path in (*learning_request_paths, *spawned_paths)
+        )
+        record_router_decision_trace(
+            engine.paths,
+            run_dir=Path(stage_result_path).parents[1],
+            stage_result=stage_result,
+            decision=router_decision,
+            spawned_work=spawned_work,
+        )
         handle_learning_curator_promotion_boundary(engine, stage_result=stage_result)
         apply_deferred_learning_promotions_if_safe(engine)
     except Exception as exc:

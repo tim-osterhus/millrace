@@ -16,6 +16,7 @@ runtime references, start with `../millrace-technical-overview.md`.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
 - `millrace-usage-governance.md`: shipped v1 default-off runtime-owned usage accounting, automatic pause/resume behavior, subscription telemetry, config-reload next-tick behavior, and operator visibility.
 - `millrace-compiler-and-frozen-plans.md`: mode resolution, asset loading, compiled-plan freezing, compile-input fingerprints, current-vs-stale plan status, baseline manifest identity, stale-plan refusal, and `compile validate` / `compile show`.
+- `millrace-compiled-stage-graphs-and-run-traces.md`: compiled topology exports, per-run `run_trace.json` artifacts, CLI trace inspection, fallback behavior for older runs, and Web UI Flow data sources.
 - `millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage topology, learning plane, no-op learning terminals, compiled concurrency policy, learning triggers, and compile-time stage maps.
 - `millrace-loop-authoring.md`: maintainer rules for changing loop and mode assets without violating compiler and contract boundaries.
 - `millrace-runner-architecture.md`: runner dispatch, adapter contract, artifact model, compiled request identity, and Codex/Pi adapter behavior.
@@ -32,6 +33,7 @@ runtime references, start with `../millrace-technical-overview.md`.
 - Start with `millrace-runtime-architecture.md` if you need the overall runtime model.
 - Read `millrace-arbiter-and-completion-behavior.md` next if you need to understand how backlog drain now reaches true completion.
 - Use `millrace-cli-reference.md` if you need commands.
+- Use `millrace-compiled-stage-graphs-and-run-traces.md` when you need to distinguish legal compiled topology from what one concrete run actually did.
 - Use `millrace-usage-governance.md` before enabling automatic runtime pause/resume rules for token or subscription quota protection.
 - Use `millrace-compiler-and-frozen-plans.md` and `millrace-modes-and-loops.md` if you need to understand what the compiler is freezing, which planes are selected, and how current-vs-stale compiled identity is determined.
 - Use `millrace-workspace-baselines-and-upgrades.md` when you need the explicit `init` / `upgrade` workflow for managed workspace assets.

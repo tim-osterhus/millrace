@@ -11,6 +11,19 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
+## [Unreleased]
+
+### Added
+
+- Added stable compiled-stage-graph export contracts and
+  `millrace compile graph` for inspecting legal runtime topology by plane.
+- Added per-run `run_trace.json` artifacts plus `millrace runs trace <run_id>`
+  for graph-shaped run history, router decisions, artifacts, and spawned work.
+- Added fallback run-trace inspection for older run directories that only have
+  stage-result artifacts.
+- Added read-only `millrace-web` compiled graph and run-trace API routes and
+  Flow view trace outcome overlays.
+
 ## [0.17.4] - 2026-05-03
 
 ### Added

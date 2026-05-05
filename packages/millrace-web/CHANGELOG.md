@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add read-only compiled graph and run-trace API surfaces for Flow:
+  `/api/workspaces/<workspace_id>/compiled-plan/graphs` and
+  `/api/workspaces/<workspace_id>/runs/<run_id>/trace`.
+- Overlay recent trace outcomes in the Flow view while preserving the compiled
+  topology as the stable lane structure.
+
 ## 0.17.4
 
 - Sync the package version and runtime dependency to `millrace-ai>=0.17.4`.

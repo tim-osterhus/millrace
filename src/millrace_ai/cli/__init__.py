@@ -27,6 +27,7 @@ from millrace_ai.modes import (
 from millrace_ai.run_inspection import (
     InspectedRunSummary,
     inspect_run_id,
+    inspect_run_trace_id,
     list_runs,
     select_primary_run_artifact,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "compile_and_persist_workspace_plan",
     "inspect_workspace_plan_currentness",
     "inspect_run_id",
+    "inspect_run_trace_id",
     "list_runs",
     "builtin_mode_alias_target",
     "load_builtin_mode_definition",

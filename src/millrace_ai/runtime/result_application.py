@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
@@ -55,7 +56,11 @@ def route_stage_result(engine: RuntimeEngine, stage_result: StageResultEnvelope)
     return decision
 
 
-def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage_result: StageResultEnvelope) -> None:
+def apply_router_decision(
+    engine: RuntimeEngine,
+    decision: RouterDecision,
+    stage_result: StageResultEnvelope,
+) -> tuple[Path, ...]:
     assert engine.snapshot is not None
     assert engine.counters is not None
 
@@ -67,7 +72,7 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
 
     if _is_closure_target_result(stage_result):
         apply_closure_target_router_decision(engine, decision, stage_result)
-        return
+        return ()
 
     if decision.action is RouterAction.RUN_STAGE:
         next_stage = decision.next_stage
@@ -82,7 +87,7 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
             current_failure_class=decision.failure_class,
         )
         engine.snapshot = increment_route_counters(engine, updated, decision, stage_result)
-        return
+        return ()
 
     if decision.action is RouterAction.IDLE:
         apply_idle_router_decision(engine, stage_result)
@@ -90,15 +95,14 @@ def apply_router_decision(engine: RuntimeEngine, decision: RouterDecision, stage
             target = active_closure_target(engine)
             if target is not None:
                 block_on_closure_lineage_drift_if_present(engine, target)
-        return
+        return ()
 
     if decision.action is RouterAction.HANDOFF:
-        apply_handoff_router_decision(engine, decision, stage_result)
-        return
+        return apply_handoff_router_decision(engine, decision, stage_result)
 
     if decision.action is RouterAction.BLOCKED:
         apply_blocked_router_decision(engine, decision, stage_result)
-        return
+        return ()
 
     raise ValueError(f"Unsupported router action: {decision.action.value}")
 

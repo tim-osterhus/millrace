@@ -203,6 +203,8 @@ flowchart LR
 - Invalid active state is cleared before the runtime settles on `no_work`.
 - Normalize and persist the stage result.
 - Write stage-result artifacts.
+- Upsert the run-trace node, then record the router decision edge after the
+  runtime-owned mutation is applied.
 - Route terminal status.
 - Mark tasks, specs, or incidents done or blocked.
 - Mark learning requests done, done-as-no-op, or blocked when the learning plane

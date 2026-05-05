@@ -364,6 +364,12 @@ behavior is present, normalized compiled transition indexes, compiled resume and
 threshold recovery policies, terminal states, loop ids by plane, optional
 learning trigger rules, and optional plane concurrency policy.
 
+For operator inspection, `millrace compile graph --workspace <workspace>` exports
+the selected compiled topology as stable graph contracts. That output describes
+legal control flow and can contain recovery cycles. Per-run history belongs to
+`millrace runs trace <run_id>`, which reads `run_trace.json` or derives a
+fallback trace from stage results for older runs.
+
 ## Config Interaction And Recompile Boundaries
 
 The config system classifies certain fields as recompile-triggering boundaries.

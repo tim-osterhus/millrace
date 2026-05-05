@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import Plane, StageResultEnvelope, WorkItemKind
@@ -106,9 +107,12 @@ def apply_handoff_router_decision(
     engine: RuntimeEngine,
     decision: RouterDecision,
     stage_result: StageResultEnvelope,
-) -> None:
+) -> tuple[Path, ...]:
+    spawned_paths: list[Path] = []
     if decision.create_incident:
-        enqueue_handoff_incident(engine, decision=decision, stage_result=stage_result)
+        spawned_paths.append(
+            enqueue_handoff_incident(engine, decision=decision, stage_result=stage_result)
+        )
     mark_active_work_item_blocked_with_recovery(
         engine,
         stage_result,
@@ -126,6 +130,7 @@ def apply_handoff_router_decision(
         work_item_id=stage_result.work_item_id,
     )
     engine.counters = load_recovery_counters(engine.paths)
+    return tuple(spawned_paths)
 
 
 def apply_blocked_router_decision(

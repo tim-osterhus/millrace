@@ -11,10 +11,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from millrace_web.models import EventsResponse, HealthResponse, WorkspacesResponse
-from millrace_web.services.compiled_plan_reader import read_compiled_plan_summary, read_stage_graphs
+from millrace_web.services.compiled_plan_reader import (
+    read_compiled_plan_summary,
+    read_compiled_stage_graph_exports,
+    read_stage_graphs,
+)
 from millrace_web.services.event_stream import list_event_summaries, sse_events
 from millrace_web.services.queue_reader import read_queue_summary
-from millrace_web.services.run_reader import read_run_summary, read_runs_response
+from millrace_web.services.run_reader import read_run_summary, read_run_trace_summary, read_runs_response
 from millrace_web.services.snapshot_reader import build_workspace_summary
 from millrace_web.services.workspace_registry import WorkspaceRegistry
 
@@ -70,6 +74,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="run not found")
         return run
 
+    @app.get("/api/workspaces/{workspace_id}/runs/{run_id}/trace")
+    def run_trace_route(workspace_id: str, run_id: str) -> object:
+        trace = read_run_trace_summary(_workspace_or_404(registry, workspace_id), run_id)
+        if trace is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return trace
+
     @app.get("/api/workspaces/{workspace_id}/compiled-plan")
     def compiled_plan_route(workspace_id: str) -> object:
         workspace = _workspace_or_404(registry, workspace_id)
@@ -77,6 +88,10 @@ def create_app(
             "summary": read_compiled_plan_summary(workspace),
             "graphs": read_stage_graphs(workspace),
         }
+
+    @app.get("/api/workspaces/{workspace_id}/compiled-plan/graphs")
+    def compiled_plan_graphs_route(workspace_id: str) -> object:
+        return {"graphs": read_compiled_stage_graph_exports(_workspace_or_404(registry, workspace_id))}
 
     @app.get("/api/workspaces/{workspace_id}/arbiter")
     def arbiter_route(workspace_id: str) -> object:

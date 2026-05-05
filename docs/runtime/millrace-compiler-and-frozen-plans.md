@@ -193,6 +193,12 @@ mismatched plan is still authoritative.
 - `compiled_plan_currentness`
 - `completion_behavior.*` when present
 
+`millrace compile graph` exports the compiled stage graph as a public contract
+for one or more planes. Use it for legal topology inspection: node bindings,
+entry surfaces, transitions, terminal states, loop ids, and source refs. It is
+different from `millrace runs trace <run_id>`, which reads historical evidence
+for one concrete run.
+
 `millrace status` prints the live snapshot plus:
 
 - `compiled_plan_id`

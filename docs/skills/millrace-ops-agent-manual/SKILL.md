@@ -95,6 +95,7 @@ millrace init --workspace <workspace>
 ```bash
 millrace compile validate --workspace <workspace>
 millrace compile show --workspace <workspace>
+millrace compile graph --workspace <workspace>
 millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 ```
@@ -137,6 +138,9 @@ rules are only valid when a compiled mode names a safe destination such as
    it inside a `tmux` pane rather than as an ordinary shell background process.
 8. Monitor with `millrace status watch`, `millrace runs ls`, and
    `millrace runs show <run_id>`.
+   Use `millrace compile graph --workspace <workspace>` when you need the legal
+   compiled topology, and `millrace runs trace <run_id> --workspace <workspace>`
+   when you need the graph-shaped path one concrete run followed.
 9. For a browser dashboard, install the separate optional `millrace-web`
    package and run `millrace-web serve --workspace <workspace>`. Use Detail for
    dense state inspection and Flow for visual plane/lane monitoring. Treat it
@@ -192,6 +196,7 @@ Minimum operator reading:
 Load these on demand when the current task requires them:
 
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
+- `docs/runtime/millrace-compiled-stage-graphs-and-run-traces.md`
 - `docs/runtime/millrace-runner-architecture.md`
 - `docs/runtime/millrace-runtime-error-codes.md`
 - `docs/runtime/millrace-modes-and-loops.md`
@@ -289,6 +294,7 @@ millrace upgrade --apply --workspace <workspace>
 millrace upgrade --localize-removed <managed/path> --workspace <workspace>
 millrace compile validate --workspace <workspace>
 millrace compile show --workspace <workspace>
+millrace compile graph --workspace <workspace>
 millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 millrace queue show <work_item_id> --workspace <workspace>
@@ -299,6 +305,7 @@ millrace status watch --workspace <workspace>
 millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
 millrace runs tail <run_id> --workspace <workspace>
+millrace runs trace <run_id> --workspace <workspace>
 millrace modes list
 millrace modes show <mode_id>
 millrace skills ls --workspace <workspace>
@@ -336,6 +343,10 @@ Important monitoring note:
   long run ids are shortened for display, unknown token usage is omitted, and
   full details remain available through `millrace runs ...` commands and
   persisted runtime artifacts
+- `millrace compile graph` shows the compiled legal topology; `millrace runs
+  trace <run_id>` shows concrete stage instances, router decisions, and
+  spawned-work references for one run. Older runs without `run_trace.json` are
+  still inspectable through stage-result fallback derivation.
 - `millrace run daemon --monitor-log <path>` writes basic monitor output to a
   file; combine it with `--monitor none` for quiet foreground operation
 - optional local dashboard monitoring lives in the separate `millrace-web`
@@ -376,7 +387,9 @@ Use this rhythm:
 4. `millrace runs ls --workspace <workspace>` to find the recent run.
 5. `millrace runs show <run_id> --workspace <workspace>` for one run's
    evidence.
-6. `millrace runs tail <run_id> --workspace <workspace>` when the primary run
+6. `millrace runs trace <run_id> --workspace <workspace>` when the concrete
+   stage path and router decisions matter.
+7. `millrace runs tail <run_id> --workspace <workspace>` when the primary run
    artifact matters more than the summary.
 
 Interpret status markers literally:
@@ -494,6 +507,7 @@ Before claiming that execution actually progressed, verify run evidence:
 ```bash
 millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
+millrace runs trace <run_id> --workspace <workspace>
 ```
 
 If those surfaces do not support your claim, you do not yet know enough to make

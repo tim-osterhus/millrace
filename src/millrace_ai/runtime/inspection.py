@@ -10,8 +10,14 @@ from typing import Iterable, Literal
 
 from pydantic import ValidationError
 
-from millrace_ai.contracts import StageResultEnvelope, TokenUsage, WorkItemKind
+from millrace_ai.contracts import RunTraceGraph, StageResultEnvelope, TokenUsage, WorkItemKind
 from millrace_ai.paths import WorkspacePaths, workspace_paths
+from millrace_ai.runtime.run_traces import (
+    inspect_run_trace as _inspect_run_trace,
+)
+from millrace_ai.runtime.run_traces import (
+    inspect_run_trace_id as _inspect_run_trace_id,
+)
 
 RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
 
@@ -232,6 +238,19 @@ def inspect_run_id(target: WorkspacePaths | Path | str, run_id: str) -> Inspecte
     return inspect_run(run_dir)
 
 
+def inspect_run_trace(run_dir: Path | str) -> RunTraceGraph:
+    """Inspect one run trace without mutating runtime state."""
+
+    return _inspect_run_trace(run_dir)
+
+
+def inspect_run_trace_id(target: WorkspacePaths | Path | str, run_id: str) -> RunTraceGraph | None:
+    """Inspect one run trace by id from a workspace, returning None when absent."""
+
+    paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
+    return _inspect_run_trace_id(paths, run_id)
+
+
 def select_primary_run_artifact(summary: InspectedRunSummary) -> str | None:
     """Return the preferred tail target for one inspected run summary."""
 
@@ -327,6 +346,8 @@ __all__ = [
     "InspectedStageResult",
     "RunInspectionStatus",
     "inspect_run_id",
+    "inspect_run_trace",
+    "inspect_run_trace_id",
     "inspect_run",
     "list_runs",
     "select_primary_run_artifact",

@@ -201,6 +201,7 @@ export WORKSPACE=/absolute/path/to/your/workspace
 
 millrace init --workspace "$WORKSPACE"
 millrace compile validate --workspace "$WORKSPACE"
+millrace compile graph --workspace "$WORKSPACE"
 millrace run once --workspace "$WORKSPACE"
 millrace status --workspace "$WORKSPACE"
 ```
@@ -214,6 +215,9 @@ That flow proves seven things quickly:
   assets so `compile show` / `status` can report whether the plan is current
   or stale
 - that compiled plan carries node bindings, intake entries, recovery policies, closure-target activation, and post-stage routing
+- `compile graph` exposes that legal topology as a stable compiled-stage-graph
+  export, while `runs trace <run_id>` shows the concrete path one run actually
+  followed
 - the shipped `default_codex` mode freezes closure behavior directly into that single compiled artifact
 - status and run inspection carry compiled-plan identity so operators can tie
   runtime activity back to the compiled plan that produced it

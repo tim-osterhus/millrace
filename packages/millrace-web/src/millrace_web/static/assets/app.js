@@ -171,6 +171,12 @@ function graphRenderKey(summary, graphs, activeRuns, variant) {
       .map((node) => [node.node_id || "", node.label || ""].join(":"))
       .join(","),
   ].join("|"));
+  const traceKeys = (summary.recent_traces || []).map((trace) => [
+    trace.run_id || "",
+    trace.status || "",
+    (trace.nodes || []).map((node) => [node.trace_node_id || "", node.node_id || "", node.terminal_result || ""].join(":")).join(","),
+    (trace.edges || []).map((edge) => [edge.source_trace_node_id || "", edge.outcome || "", edge.target_node_id || edge.terminal_state_id || ""].join(":")).join(","),
+  ].join("|"));
   return JSON.stringify({
     variant,
     workspace: summary.workspace.id,
@@ -180,6 +186,7 @@ function graphRenderKey(summary, graphs, activeRuns, variant) {
     activeStageKind: summary.runtime.active_stage_kind_id || "",
     activeRuns: activeRunKeys,
     graphs: graphKeys,
+    traces: traceKeys,
   });
 }
 
@@ -187,20 +194,43 @@ function renderFlowLane(graph, summary, activeRuns) {
   const plane = graph.plane || "execution";
   const orderedNodes = orderNodesForPlane(plane, graph.nodes || []);
   const activeNodeId = summary.runtime.active_node_id;
+  const trace = traceForPlane(summary, plane);
+  const traceNodesByNodeId = new Map((trace?.nodes || []).filter((node) => node.plane === plane).map((node) => [node.node_id, node]));
+  const traceOutcomeByNodeId = new Map(
+    (trace?.edges || [])
+      .map((edge) => {
+        const sourceNode = (trace?.nodes || []).find((node) => node.trace_node_id === edge.source_trace_node_id);
+        return sourceNode ? [sourceNode.node_id, edge.outcome] : null;
+      })
+      .filter(Boolean)
+  );
   const nodeCount = Math.max(orderedNodes.length, 1);
   const activeCount = orderedNodes.filter((node) => activeRuns.has(node.node_id) || node.node_id === activeNodeId).length;
   const laneState = activeCount ? `${activeCount} active` : "idle";
   const nodes = orderedNodes
     .map((node, index) => {
       const active = activeRuns.has(node.node_id) || node.node_id === activeNodeId;
+      const tracedNode = traceNodesByNodeId.get(node.node_id);
+      const traceOutcome = traceOutcomeByNodeId.get(node.node_id) || tracedNode?.terminal_result;
       const idleHighlight = !activeCount && index === Math.min(1, orderedNodes.length - 1);
       const classes = ["node", "flow-node"];
       if (active) classes.push("active");
+      if (tracedNode) classes.push("trace-visited");
       if (idleHighlight) classes.push("idle-highlight");
-      return `<span class="${classes.join(" ")}" style="--i: ${index}" title="${escapeHtml(node.node_id)}"><span class="flow-label">${escapeHtml(node.label || node.node_id)}</span><span class="flow-trace" aria-hidden="true"></span></span>`;
+      const title = [node.node_id, traceOutcome ? `last outcome: ${traceOutcome}` : ""].filter(Boolean).join(" · ");
+      const outcome = traceOutcome ? `<span class="trace-result">${escapeHtml(compactTerminal(traceOutcome))}</span>` : "";
+      return `<span class="${classes.join(" ")}" style="--i: ${index}" title="${escapeHtml(title)}"><span class="flow-label">${escapeHtml(node.label || node.node_id)}</span>${outcome}<span class="flow-trace" aria-hidden="true"></span></span>`;
     })
     .join("");
   return `<section class="lane flow-lane plane-${escapeHtml(plane)}"><div class="lane-title"><span>${escapeHtml(plane)} lane</span><span class="lane-subtitle">${escapeHtml(laneState)}</span></div><div class="flow-canvas" style="--node-count: ${nodeCount}"><div class="node-row">${nodes || "No graph data"}</div></div></section>`;
+}
+
+function traceForPlane(summary, plane) {
+  const traces = summary.recent_traces || [];
+  const activeRunIds = new Set((summary.runtime.active_runs_by_plane || []).filter((run) => run.plane === plane).map((run) => run.run_id));
+  const activeTrace = traces.find((trace) => activeRunIds.has(trace.run_id) && (trace.nodes || []).some((node) => node.plane === plane));
+  if (activeTrace) return activeTrace;
+  return traces.find((trace) => (trace.nodes || []).some((node) => node.plane === plane)) || null;
 }
 
 function orderNodesForPlane(plane, nodes) {
@@ -293,6 +323,13 @@ function shortPath(value) {
   const parts = String(value).split("/");
   if (parts.length <= 2) return value;
   return parts.slice(-2).join("/");
+}
+
+function compactTerminal(value) {
+  return String(value)
+    .replace(/_(COMPLETE|PASS|NOOP)$/, "")
+    .replace(/_/g, " ")
+    .toLowerCase();
 }
 
 function compactPath(value) {

@@ -19,7 +19,7 @@ from millrace_web.services.baseline_reader import read_baseline_summary
 from millrace_web.services.compiled_plan_reader import read_compiled_plan_summary, read_stage_graphs
 from millrace_web.services.event_stream import list_event_summaries
 from millrace_web.services.queue_reader import read_queue_summary
-from millrace_web.services.run_reader import read_runs_response
+from millrace_web.services.run_reader import read_recent_run_traces, read_runs_response
 from millrace_web.services.usage_governance_reader import read_usage_governance_summary
 
 
@@ -55,6 +55,7 @@ def build_workspace_summary(workspace: WorkspaceRef) -> DashboardSummary:
             for _, run in sorted(snapshot.active_runs_by_plane.items(), key=lambda item: item[0].value)
         ),
     )
+    recent_runs = read_runs_response(workspace, limit=5).runs
     return DashboardSummary(
         workspace=workspace,
         daemon=DaemonSummary(
@@ -72,7 +73,8 @@ def build_workspace_summary(workspace: WorkspaceRef) -> DashboardSummary:
             latest_result=snapshot.last_terminal_result.value if snapshot.last_terminal_result else None,
         ),
         graphs=read_stage_graphs(workspace),
-        recent_runs=read_runs_response(workspace, limit=5).runs,
+        recent_runs=recent_runs,
+        recent_traces=read_recent_run_traces(workspace, limit=3),
         events=list_event_summaries(workspace, limit=25),
     )
 
@@ -90,4 +92,3 @@ def _elapsed_seconds(active_since: datetime | None) -> float | None:
         return None
     now = datetime.now(timezone.utc)
     return max(0.0, (now - active_since).total_seconds())
-

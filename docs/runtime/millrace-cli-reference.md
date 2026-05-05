@@ -247,6 +247,22 @@ Each stage-result block now includes:
 
 Prints the primary tailable artifact for one run. Millrace prefers the troubleshoot report first, then stdout/stderr artifacts.
 
+### `millrace runs trace <RUN_ID>`
+
+Prints the graph-shaped trace for one run. New runs persist
+`millrace-agents/runs/<run_id>/run_trace.json`; older runs without that file are
+derived from stage-result artifacts and reported with a fallback note.
+
+Options:
+
+- `--workspace PATH`
+- `--format [text|json]`
+- `--output PATH`
+
+Use this when you need to see concrete stage instances and runtime router
+decisions, for example `builder BUILDER_COMPLETE -> checker` or
+`updater UPDATE_COMPLETE -> terminal:update_complete`.
+
 ## Queue Commands
 
 ### `millrace queue ls`
@@ -418,6 +434,26 @@ Currentness interpretation:
 - `current`: persisted compiled plan matches the current mode/config/assets fingerprint
 - `stale`: persisted compiled plan exists but does not match current compile inputs
 - `missing`: no persisted compiled plan exists yet
+
+### `millrace compile graph [--mode MODE_ID]`
+
+Compiles the selected mode and exports stable compiled-stage-graph contracts.
+This is the legal topology surface: nodes, entry surfaces, transitions,
+terminal states, runner/model/thinking bindings, and source refs derived from
+the selected compiled plan.
+
+Options:
+
+- `--workspace PATH`
+- `--mode MODE_ID`
+- `--config PATH`
+- `--plane [execution|planning|learning]`
+- `--format [text|json]`
+- `--output PATH`
+
+Use this when an operator or outside agent needs to understand which stage
+transitions are legal before inspecting any individual run. Use
+`millrace runs trace <RUN_ID>` for what a concrete run actually did.
 
 ## Runtime / Compile Lifecycle Notes
 

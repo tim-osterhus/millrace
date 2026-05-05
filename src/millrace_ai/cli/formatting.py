@@ -7,6 +7,8 @@ from pathlib import Path
 import typer
 
 from millrace_ai.contracts import ResultClass, TokenUsage
+from millrace_ai.contracts.graph_exports import CompiledStageGraphExport
+from millrace_ai.contracts.run_trace import RunTraceGraph
 from millrace_ai.control import ControlActionResult
 from millrace_ai.run_inspection import InspectedRunSummary
 from millrace_ai.runtime import RuntimeTickOutcome
@@ -102,6 +104,60 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _render_compiled_graph_lines(
+    graphs: tuple[CompiledStageGraphExport, ...],
+) -> tuple[str, ...]:
+    if not graphs:
+        return ("compiled_graphs: none",)
+    lines = [
+        f"compiled_plan_id: {graphs[0].compiled_plan_id}",
+        f"mode_id: {graphs[0].mode_id}",
+        "planes: " + ", ".join(graph.plane.value for graph in graphs),
+    ]
+    for graph in graphs:
+        lines.append("")
+        lines.append(f"{graph.plane.value}:")
+        for edge in graph.edges:
+            target = (
+                edge.target_node_id
+                if edge.target_node_id is not None
+                else f"terminal:{edge.terminal_state_id}"
+            )
+            lines.append(f"  {edge.source_node_id} --{edge.outcome}--> {target}")
+    return tuple(lines)
+
+
+def _render_run_trace_lines(trace: RunTraceGraph) -> tuple[str, ...]:
+    lines = [
+        f"run_id: {trace.run_id}",
+        f"status: {trace.status}",
+        f"compiled_plan_id: {_value(trace.compiled_plan_id)}",
+        f"mode_id: {_value(trace.mode_id)}",
+        f"request_kind: {_value(trace.request_kind)}",
+        f"work_item_kind: {_value(trace.work_item_kind)}",
+        f"work_item_id: {_value(trace.work_item_id)}",
+        f"node_count: {len(trace.nodes)}",
+        f"edge_count: {len(trace.edges)}",
+    ]
+    for note in trace.notes:
+        lines.append(f"note: {note}")
+    if not trace.edges:
+        for node in trace.nodes:
+            lines.append(f"{node.stage} {node.terminal_result}")
+        return tuple(lines)
+    nodes_by_trace_id = {node.trace_node_id: node for node in trace.nodes}
+    for edge in trace.edges:
+        source = nodes_by_trace_id.get(edge.source_trace_node_id)
+        source_label = source.stage if source is not None else edge.source_trace_node_id
+        target = (
+            edge.target_trace_node_id
+            or edge.target_node_id
+            or f"terminal:{edge.terminal_state_id}"
+        )
+        lines.append(f"{source_label} {edge.outcome} -> {target}")
+    return tuple(lines)
+
+
 def _render_token_usage_lines(token_usage: TokenUsage | None) -> tuple[str, ...]:
     if token_usage is None:
         return ()
@@ -123,7 +179,9 @@ def _resolve_run_artifact_path(run_dir: str, candidate: str) -> Path:
 
 __all__ = [
     "_print_control_result",
+    "_render_compiled_graph_lines",
     "_render_run_show_lines",
+    "_render_run_trace_lines",
     "_resolve_run_artifact_path",
     "_run_once_exit_code",
     "_value",

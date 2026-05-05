@@ -24,6 +24,8 @@ Millrace is focused on stabilizing the pre-1.0 runtime line around four
 contracts:
 
 - the compiled graph plan as the runtime-authoritative structure
+- graph-shaped inspection artifacts that distinguish legal topology from
+  concrete run history
 - first-class runner harnesses with clear diagnostics and artifacts
 - durable local workspaces that can be inspected, resumed, and debugged without
   guessing what happened
@@ -41,10 +43,16 @@ for activation, request binding, recovery policy, completion behavior, and
 post-stage routing to come from one compiled graph plan instead of scattered
 runtime tables or prompt prose.
 
+The current implementation direction exposes that topology through
+`millrace compile graph` and records concrete execution evidence through
+per-run `run_trace.json` artifacts. The compiled stage graph remains authority;
+the run trace is inspection evidence.
+
 Expected user impact:
 
 - more predictable workspace behavior after configuration or mode changes
 - clearer `millrace compile show` output
+- easier comparison between legal compiled topology and what one run actually did
 - fewer hidden differences between what the compiler reports and what the
   runtime actually executes
 
@@ -80,6 +88,11 @@ Expected user impact:
 workspace observation. The active direction is to keep Detail and Flow views
 grounded in runtime-owned state while preserving the base `millrace-ai` wheel as
 a lightweight runtime package.
+
+Flow should render compiled stage graph topology as the stable lane structure
+and overlay active runtime state plus recent run-trace outcomes. It must remain
+read-only unless a future control surface is explicitly routed through the same
+supported runtime control APIs as the CLI.
 
 Expected user impact:
 

@@ -18,7 +18,8 @@ explicitly passed with `--workspace`.
 
 - `Detail`: the default dense operator view for active runtime state, queues,
   run artifacts, compiled plan identity, usage governance, and Arbiter status.
-- `Flow`: a visual runtime-flow view over the same read-only backend data.
+- `Flow`: a visual runtime-flow view over compiled stage graph topology,
+  active runtime state, and recent run-trace outcomes when available.
 
 Both views share the same DTOs and refresh loop. The dashboard does not mount
 write or control routes.
@@ -26,6 +27,11 @@ write or control routes.
 `0.17.2` keeps the Flow graph DOM stable between unchanged poll responses so
 animated lane effects continue smoothly while the rest of the read-only state
 refreshes.
+
+The API also exposes graph/trace-specific read surfaces:
+
+- `/api/workspaces/<workspace_id>/compiled-plan/graphs`
+- `/api/workspaces/<workspace_id>/runs/<run_id>/trace`
 
 ## Safety Model
 

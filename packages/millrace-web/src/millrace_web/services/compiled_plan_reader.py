@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from millrace_ai.architecture import CompiledRunPlan
+from millrace_ai.compilation.graph_exports import export_compiled_stage_graphs
 from millrace_ai.compilation.persistence import load_existing_plan
+from millrace_ai.contracts.graph_exports import CompiledStageGraphExport
 from millrace_ai.paths import workspace_paths
 
 from millrace_web.models import (
@@ -24,19 +26,27 @@ def read_compiled_plan_summary(workspace: WorkspaceRef, *, snapshot_plan_id: str
 
 
 def read_stage_graphs(workspace: WorkspaceRef) -> tuple[StageGraphSummary, ...]:
+    return _graphs_from_exports(read_compiled_stage_graph_exports(workspace))
+
+
+def read_compiled_stage_graph_exports(workspace: WorkspaceRef) -> tuple[CompiledStageGraphExport, ...]:
     paths = workspace_paths(workspace.path)
     plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
     if plan is None:
         return ()
-    return _graphs_from_plan(plan)
+    return export_compiled_stage_graphs(plan)
 
 
 def _graphs_from_plan(plan: CompiledRunPlan) -> tuple[StageGraphSummary, ...]:
+    return _graphs_from_exports(export_compiled_stage_graphs(plan))
+
+
+def _graphs_from_exports(exports: tuple[CompiledStageGraphExport, ...]) -> tuple[StageGraphSummary, ...]:
     graphs: list[StageGraphSummary] = []
-    for plane, graph in sorted(plan.graphs_by_plane.items(), key=lambda item: item[0].value):
+    for graph in exports:
         graphs.append(
             StageGraphSummary(
-                plane=plane.value,
+                plane=graph.plane.value,
                 loop_id=graph.loop_id,
                 nodes=tuple(
                     StageNodeSummary(
@@ -53,11 +63,17 @@ def _graphs_from_plan(plan: CompiledRunPlan) -> tuple[StageGraphSummary, ...]:
                         target_node_id=edge.target_node_id,
                         terminal_state_id=edge.terminal_state_id,
                         outcome=edge.outcome,
-                        kind=edge.kind.value,
+                        kind=edge.kind,
                     )
-                    for edge in graph.compiled_transitions
+                    for edge in graph.edges
                 ),
             )
         )
     return tuple(graphs)
 
+
+__all__ = [
+    "read_compiled_plan_summary",
+    "read_compiled_stage_graph_exports",
+    "read_stage_graphs",
+]

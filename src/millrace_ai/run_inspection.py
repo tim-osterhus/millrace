@@ -6,6 +6,8 @@ from millrace_ai.runtime.inspection import (
     RunInspectionStatus,
     inspect_run,
     inspect_run_id,
+    inspect_run_trace,
+    inspect_run_trace_id,
     list_runs,
     select_primary_run_artifact,
 )
@@ -16,6 +18,8 @@ __all__ = [
     "RunInspectionStatus",
     "inspect_run",
     "inspect_run_id",
+    "inspect_run_trace",
+    "inspect_run_trace_id",
     "list_runs",
     "select_primary_run_artifact",
 ]

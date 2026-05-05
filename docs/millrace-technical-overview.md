@@ -292,6 +292,11 @@ That freeze step is what makes later execution deterministic and inspectable.
 The runtime no longer has to keep inferring structure from loose config while it
 is in the middle of a run.
 
+Operators can inspect that legal topology with `millrace compile graph`. That
+compiled stage graph is a control-flow graph and may contain intentional
+recovery cycles; it is not a DAG runtime. Concrete run history is separate and
+is recorded as a per-run trace graph.
+
 ## The Shipped Planning And Execution Planes
 
 The current execution loop is:
@@ -498,10 +503,11 @@ Each stage run produces a run directory under
 - stdout/stderr captures
 - completion metadata
 - normalized stage result JSON
+- `run_trace.json`
 - stage-authored reports such as troubleshoot or arbiter reports
 
 The runtime later inspects these persisted artifacts through `millrace runs ls`,
-`millrace runs show`, and `millrace runs tail`.
+`millrace runs show`, `millrace runs tail`, and `millrace runs trace`.
 
 ## Result Normalization And Router Decisions
 

@@ -147,6 +147,35 @@ class RunsResponse(WebModel):
     runs: tuple[RunSummary, ...]
 
 
+class TraceNodeSummary(WebModel):
+    trace_node_id: str
+    plane: str
+    stage: str
+    node_id: str
+    terminal_result: str
+    result_class: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+
+
+class TraceEdgeSummary(WebModel):
+    source_trace_node_id: str
+    outcome: str
+    target_node_id: str | None = None
+    target_trace_node_id: str | None = None
+    terminal_state_id: str | None = None
+    edge_kind: str
+
+
+class RunTraceSummary(WebModel):
+    run_id: str
+    status: str
+    nodes: tuple[TraceNodeSummary, ...] = ()
+    edges: tuple[TraceEdgeSummary, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
 class EventSummary(WebModel):
     workspace_id: str
     event_type: str
@@ -174,5 +203,5 @@ class DashboardSummary(WebModel):
     arbiter: ArbiterSummary
     graphs: tuple[StageGraphSummary, ...] = ()
     recent_runs: tuple[RunSummary, ...] = ()
+    recent_traces: tuple[RunTraceSummary, ...] = ()
     events: tuple[EventSummary, ...] = ()
-

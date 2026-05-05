@@ -142,7 +142,9 @@ Per stage execution:
 1. Runtime builds `StageRunRequest` from the compiled plan and active work item.
 2. `StageRunnerDispatcher` resolves adapter by runner name precedence.
 3. Adapter executes (`codex_cli` by default, `pi_rpc` in Pi modes) and returns `RunnerRawResult`.
-4. Runtime normalizes into `StageResultEnvelope` and routes next state.
+4. Runtime normalizes into `StageResultEnvelope`, persists the stage result,
+   upserts the run-trace node, applies the authoritative router decision, and
+   records the run-trace edge.
 
 The runtime boundary stays `StageRunRequest -> RunnerRawResult` so additional adapters can be added without changing orchestration flow.
 
@@ -181,8 +183,8 @@ Per daemon scheduler cycle:
 13. Worker tasks execute blocking runner adapters from immutable
     `StageRunRequest` inputs and return typed outcomes only.
 14. The supervisor applies completed outcomes serially: normalize, persist,
-    route, update queue/snapshot/status/counters, emit monitor/runtime events,
-    and evaluate post-stage usage governance.
+    update `run_trace.json`, route, update queue/snapshot/status/counters, emit
+    monitor/runtime events, and evaluate post-stage usage governance.
 
 The implementation mirrors that ordering directly:
 

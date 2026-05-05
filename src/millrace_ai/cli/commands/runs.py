@@ -8,7 +8,11 @@ from typing import Annotated
 import typer
 
 from millrace_ai.cli.errors import _print_error
-from millrace_ai.cli.formatting import _render_run_show_lines, _resolve_run_artifact_path
+from millrace_ai.cli.formatting import (
+    _render_run_show_lines,
+    _render_run_trace_lines,
+    _resolve_run_artifact_path,
+)
 from millrace_ai.cli.runs_view import _render_runs_ls_lines
 from millrace_ai.cli.shared import WorkspaceOption, _cli_api, _require_paths
 
@@ -50,3 +54,32 @@ def runs_tail(
         typer.echo(artifact_path.read_text(encoding="utf-8"), nl=False)
     except OSError as exc:
         raise typer.Exit(code=_print_error(str(exc))) from exc
+
+
+@runs_app.command("trace")
+def runs_trace(
+    run_id: Annotated[str, typer.Argument(help="Run ID to inspect.")],
+    workspace: WorkspaceOption = Path("."),
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: text or json."),
+    ] = "text",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Optional output file path."),
+    ] = None,
+) -> None:
+    if output_format not in {"text", "json"}:
+        raise typer.Exit(code=_print_error("--format must be text or json"))
+    trace = _cli_api().inspect_run_trace_id(_require_paths(workspace), run_id)
+    if trace is None:
+        raise typer.Exit(code=_print_error(f"run not found: {run_id}"))
+    rendered = (
+        trace.model_dump_json(indent=2)
+        if output_format == "json"
+        else "\n".join(_render_run_trace_lines(trace))
+    )
+    if output is not None:
+        output.write_text(rendered + "\n", encoding="utf-8")
+        return
+    typer.echo(rendered)

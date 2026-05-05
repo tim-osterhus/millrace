@@ -28,6 +28,13 @@ from .enums import (  # noqa: F401
     WatcherMode,
     WorkItemKind,
 )
+from .graph_exports import (
+    CompiledStageGraphExport,
+    GraphExportEdge,
+    GraphExportEntry,
+    GraphExportNode,
+    GraphExportTerminalState,
+)
 from .loop_config import CompletionBehaviorDefinition, LoopConfigDefinition, LoopEdgeDefinition
 from .mailbox import (
     MailboxAddIdeaPayload,
@@ -41,6 +48,13 @@ from .modes import (  # noqa: F401
     PlaneConcurrencyPolicyDefinition,
 )
 from .recovery import RecoveryCounterEntry, RecoveryCounters
+from .run_trace import (
+    RunTraceArtifactRef,
+    RunTraceEdge,
+    RunTraceGraph,
+    RunTraceNode,
+    RunTraceSpawnedWorkRef,
+)
 from .runtime_errors import RuntimeErrorContext
 from .runtime_snapshot import ActiveRunRequestKind, ActiveRunState, RuntimeSnapshot
 from .stage_results import StageResultEnvelope
@@ -56,12 +70,17 @@ from .work_documents import (  # noqa: F401
 __all__ = [
     "ClosureTargetState",
     "CompileDiagnostics",
+    "CompiledStageGraphExport",
     "CompletionBehaviorDefinition",
     "ContractModel",
     "ActiveRunRequestKind",
     "ActiveRunState",
     "ExecutionStageName",
     "ExecutionTerminalResult",
+    "GraphExportEdge",
+    "GraphExportEntry",
+    "GraphExportNode",
+    "GraphExportTerminalState",
     "IncidentDocument",
     "IncidentDecision",
     "IncidentSeverity",
@@ -92,6 +111,11 @@ __all__ = [
     "RuntimeErrorCode",
     "RuntimeErrorContext",
     "RuntimeSnapshot",
+    "RunTraceArtifactRef",
+    "RunTraceEdge",
+    "RunTraceGraph",
+    "RunTraceNode",
+    "RunTraceSpawnedWorkRef",
     "SpecDocument",
     "StageName",
     "StageResultEnvelope",
