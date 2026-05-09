@@ -10,14 +10,28 @@ from typing import TypeVar
 
 from pydantic import ValidationError
 
-from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import (
+    IncidentDocument,
+    LearningRequestDocument,
+    ProbeDocument,
+    SpecDocument,
+    TaskDocument,
+    WorkItemKind,
+)
 from millrace_ai.errors import QueueStateError
 
 from .lineage_integrity import effective_root_spec_id
 from .paths import WorkspacePaths
 from .work_documents import parse_work_document_as
 
-_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
+_DocT = TypeVar(
+    "_DocT",
+    TaskDocument,
+    ProbeDocument,
+    SpecDocument,
+    IncidentDocument,
+    LearningRequestDocument,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +74,11 @@ def claim_next_planning_item(
     root_spec_id: str | None = None,
 ) -> QueueClaim | None:
     active_specs = _list_markdown_files(paths.specs_active_dir)
+    active_probes = _list_markdown_files(paths.probes_active_dir)
     active_incidents = _list_markdown_files(paths.incidents_active_dir)
-    if len(active_specs) + len(active_incidents) > 1:
+    if len(active_specs) + len(active_probes) + len(active_incidents) > 1:
         raise QueueStateError("Multiple active planning items found")
-    if active_specs or active_incidents:
+    if active_specs or active_probes or active_incidents:
         return None
 
     while True:
@@ -84,17 +99,22 @@ def claim_next_planning_item(
                 path=destination,
             )
 
-        spec_candidate = _select_oldest_spec(paths.specs_queue_dir, root_spec_id=root_spec_id)
-        if spec_candidate is None:
+        work_candidate = _select_oldest_probe_or_spec(paths, root_spec_id=root_spec_id)
+        if work_candidate is None:
             return None
 
-        spec_id, source = spec_candidate
-        destination = paths.specs_active_dir / source.name
+        work_item_kind, item_id, source = work_candidate
+        destination_dir = (
+            paths.probes_active_dir
+            if work_item_kind is WorkItemKind.PROBE
+            else paths.specs_active_dir
+        )
+        destination = destination_dir / source.name
         try:
             source.replace(destination)
         except FileNotFoundError:
             continue
-        return QueueClaim(work_item_kind=WorkItemKind.SPEC, work_item_id=spec_id, path=destination)
+        return QueueClaim(work_item_kind=work_item_kind, work_item_id=item_id, path=destination)
 
 
 def claim_next_learning_request(paths: WorkspacePaths) -> QueueClaim | None:
@@ -123,12 +143,16 @@ def claim_next_learning_request(paths: WorkspacePaths) -> QueueClaim | None:
 
 
 def _select_oldest_task(directory: Path) -> tuple[str, Path] | None:
-    return _select_oldest_document(
+    candidate = _select_oldest_document_candidate(
         directory=directory,
         model=TaskDocument,
         id_attr="task_id",
         timestamp_attr="created_at",
     )
+    if candidate is None:
+        return None
+    _timestamp, item_id, path = candidate
+    return item_id, path
 
 
 def _select_oldest_eligible_task(
@@ -177,13 +201,52 @@ def _select_oldest_spec(
     *,
     root_spec_id: str | None = None,
 ) -> tuple[str, Path] | None:
-    return _select_oldest_document(
+    candidate = _select_oldest_document_candidate(
         directory=directory,
         model=SpecDocument,
         id_attr="spec_id",
         timestamp_attr="created_at",
         root_spec_id=root_spec_id,
     )
+    if candidate is None:
+        return None
+    _timestamp, item_id, path = candidate
+    return item_id, path
+
+
+def _select_oldest_probe_or_spec(
+    paths: WorkspacePaths,
+    *,
+    root_spec_id: str | None = None,
+) -> tuple[WorkItemKind, str, Path] | None:
+    candidates: list[tuple[datetime, WorkItemKind, str, Path]] = []
+    # Probes are root intake and should not be claimed while closure-scoped
+    # lineage work is draining for an existing root spec.
+    if root_spec_id is None:
+        probe_candidate = _select_oldest_document_candidate(
+            directory=paths.probes_queue_dir,
+            model=ProbeDocument,
+            id_attr="probe_id",
+            timestamp_attr="created_at",
+        )
+        if probe_candidate is not None:
+            timestamp, item_id, path = probe_candidate
+            candidates.append((timestamp, WorkItemKind.PROBE, item_id, path))
+    spec_candidate = _select_oldest_document_candidate(
+        directory=paths.specs_queue_dir,
+        model=SpecDocument,
+        id_attr="spec_id",
+        timestamp_attr="created_at",
+        root_spec_id=root_spec_id,
+    )
+    if spec_candidate is not None:
+        timestamp, item_id, path = spec_candidate
+        candidates.append((timestamp, WorkItemKind.SPEC, item_id, path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1].value, item[2]))
+    _timestamp, work_item_kind, item_id, path = candidates[0]
+    return work_item_kind, item_id, path
 
 
 def _select_oldest_incident(
@@ -191,32 +254,40 @@ def _select_oldest_incident(
     *,
     root_spec_id: str | None = None,
 ) -> tuple[str, Path] | None:
-    return _select_oldest_document(
+    candidate = _select_oldest_document_candidate(
         directory=directory,
         model=IncidentDocument,
         id_attr="incident_id",
         timestamp_attr="opened_at",
         root_spec_id=root_spec_id,
     )
+    if candidate is None:
+        return None
+    _timestamp, item_id, path = candidate
+    return item_id, path
 
 
 def _select_oldest_learning_request(directory: Path) -> tuple[str, Path] | None:
-    return _select_oldest_document(
+    candidate = _select_oldest_document_candidate(
         directory=directory,
         model=LearningRequestDocument,
         id_attr="learning_request_id",
         timestamp_attr="created_at",
     )
+    if candidate is None:
+        return None
+    _timestamp, item_id, path = candidate
+    return item_id, path
 
 
-def _select_oldest_document(
+def _select_oldest_document_candidate(
     *,
     directory: Path,
     model: type[_DocT],
     id_attr: str,
     timestamp_attr: str,
     root_spec_id: str | None = None,
-) -> tuple[str, Path] | None:
+) -> tuple[datetime, str, Path] | None:
     candidates: list[tuple[datetime, str, Path]] = []
     for path in _list_markdown_files(directory):
         try:
@@ -251,8 +322,7 @@ def _select_oldest_document(
         return None
 
     candidates.sort(key=lambda item: (item[0], item[1]))
-    _timestamp, item_id, path = candidates[0]
-    return item_id, path
+    return candidates[0]
 
 
 def _list_markdown_files(directory: Path) -> list[Path]:

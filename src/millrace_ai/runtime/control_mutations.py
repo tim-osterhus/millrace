@@ -12,6 +12,7 @@ from millrace_ai.contracts import (
     MailboxAddIdeaPayload,
     MailboxCommand,
     Plane,
+    ProbeDocument,
     RecoveryCounters,
     RuntimeSnapshot,
     SpecDocument,
@@ -99,6 +100,25 @@ class DirectControlMutations(Generic[ResultT]):
             mode="direct",
             applied=True,
             detail="spec queued directly",
+            artifact_path=destination,
+        )
+
+    def add_probe(self, snapshot: RuntimeSnapshot, *, document: ProbeDocument) -> ResultT:
+        destination = QueueStore(self.paths).enqueue_probe(document)
+        save_snapshot(
+            self.paths,
+            snapshot.model_copy(
+                update={
+                    "queue_depth_planning": self._planning_queue_depth(),
+                    "updated_at": self._now(),
+                }
+            ),
+        )
+        return self._result_factory(
+            action=MailboxCommand.ADD_PROBE,
+            mode="direct",
+            applied=True,
+            detail="probe queued directly",
             artifact_path=destination,
         )
 
@@ -370,6 +390,12 @@ class DirectControlMutations(Generic[ResultT]):
             except QueueStateError:
                 continue
             requeued_count += 1
+        for path in sorted(self.paths.probes_active_dir.glob("*.md")):
+            try:
+                queue.requeue_probe(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
         for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
             try:
                 queue.requeue_incident(path.stem, reason=reason)
@@ -397,6 +423,9 @@ class DirectControlMutations(Generic[ResultT]):
             return
         if work_item_kind is WorkItemKind.SPEC:
             queue.requeue_spec(work_item_id, reason=reason)
+            return
+        if work_item_kind is WorkItemKind.PROBE:
+            queue.requeue_probe(work_item_id, reason=reason)
             return
         if work_item_kind is WorkItemKind.LEARNING_REQUEST:
             queue.requeue_learning_request(work_item_id, reason=reason)
@@ -432,9 +461,10 @@ class DirectControlMutations(Generic[ResultT]):
         return len(tuple(self.paths.tasks_queue_dir.glob("*.md")))
 
     def _planning_queue_depth(self) -> int:
+        probes = len(tuple(self.paths.probes_queue_dir.glob("*.md")))
         specs = len(tuple(self.paths.specs_queue_dir.glob("*.md")))
         incidents = len(tuple(self.paths.incidents_incoming_dir.glob("*.md")))
-        return specs + incidents
+        return probes + specs + incidents
 
     def _learning_queue_depth(self) -> int:
         return len(tuple(self.paths.learning_requests_queue_dir.glob("*.md")))

@@ -58,7 +58,7 @@ flowchart TD
     A["Initialize workspace, then compile the plan"] --> B{"Deterministic tick loop"}
     B --> C["Process control inputs:<br/>mailbox commands, watcher intake, reconciliation"]
     C --> D{"Scheduler claim decision"}
-    D -- planning incident or spec --> E["Planning loop:<br/>interpret specs and incidents,<br/>govern remediation, emit executable work"]
+    D -- planning probe, incident, or spec --> E["Planning loop:<br/>classify probes,<br/>interpret specs and incidents,<br/>govern remediation, emit executable work"]
     D -- execution task --> F["Execution loop:<br/>build, verify, repair, recover, update"]
     D -- learning request --> K["Learning loop:<br/>analyze runtime evidence,<br/>propose skill improvements,<br/>curate accepted updates"]
     D -- nothing claimable --> G{"Completion behavior eligible?"}
@@ -87,6 +87,10 @@ It wraps long-horizon work in a runtime with a few hard contracts:
   the compiled plane scheduler. Default modes are serial; learning-enabled
   modes may run one Learning stage alongside one foreground Planning or
   Execution stage.
+- **Probe-first intake:** lightweight probe requests enter Planning through
+  Recon, which researches enough repo evidence to route the request into a
+  generated execution task, a generated planning spec, a no-op, or a blocked
+  packet without letting stages mutate queues directly.
 - **Closure-safe remediation:** runtime-generated planning handoff incidents
   preserve source work-item lineage, so same-root remediation remains claimable
   while unrelated root specs stay backpressured. Arbiter activates only when no

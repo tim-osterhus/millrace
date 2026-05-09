@@ -27,6 +27,7 @@ REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     ExecutionStageName.UPDATER: ("skills/stage/execution/updater-core/SKILL.md",),
     ExecutionStageName.TROUBLESHOOTER: ("skills/stage/execution/troubleshooter-core/SKILL.md",),
     ExecutionStageName.CONSULTANT: ("skills/stage/execution/consultant-core/SKILL.md",),
+    PlanningStageName.RECON: ("skills/stage/planning/recon-core/SKILL.md",),
     PlanningStageName.PLANNER: ("skills/stage/planning/planner-core/SKILL.md",),
     PlanningStageName.MANAGER: ("skills/stage/planning/manager-core/SKILL.md",),
     PlanningStageName.MECHANIC: ("skills/stage/planning/mechanic-core/SKILL.md",),

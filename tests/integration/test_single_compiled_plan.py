@@ -42,6 +42,7 @@ def test_compile_persists_single_canonical_compiled_plan_artifact(tmp_path: Path
     }
     assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.planning_graph.compiled_entries} == {
         "incident": "auditor",
+        "probe": "recon",
         "spec": "planner",
     }
     assert persisted_plan.planning_graph.compiled_completion_entry is not None

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import (
+    IncidentDocument,
+    LearningRequestDocument,
+    ProbeDocument,
+    SpecDocument,
+    TaskDocument,
+    WorkItemKind,
+)
 
 from .initialization import bootstrap_workspace
 from .paths import WorkspacePaths, workspace_paths
@@ -22,18 +29,22 @@ from .queue_selection import (
 from .queue_transitions import (
     enqueue_incident,
     enqueue_learning_request,
+    enqueue_probe,
     enqueue_spec,
     enqueue_task,
     mark_incident_blocked,
     mark_incident_resolved,
     mark_learning_request_blocked,
     mark_learning_request_done,
+    mark_probe_blocked,
+    mark_probe_done,
     mark_spec_blocked,
     mark_spec_done,
     mark_task_blocked,
     mark_task_done,
     requeue_incident,
     requeue_learning_request,
+    requeue_probe,
     requeue_spec,
     requeue_task,
 )
@@ -51,6 +62,9 @@ class QueueStore:
 
     def enqueue_spec(self, doc: SpecDocument) -> Path:
         return enqueue_spec(self.paths, doc)
+
+    def enqueue_probe(self, doc: ProbeDocument) -> Path:
+        return enqueue_probe(self.paths, doc)
 
     def enqueue_incident(self, doc: IncidentDocument) -> Path:
         return enqueue_incident(self.paths, doc)
@@ -79,6 +93,12 @@ class QueueStore:
     def mark_spec_blocked(self, spec_id: str) -> Path:
         return mark_spec_blocked(self.paths, spec_id)
 
+    def mark_probe_done(self, probe_id: str) -> Path:
+        return mark_probe_done(self.paths, probe_id)
+
+    def mark_probe_blocked(self, probe_id: str) -> Path:
+        return mark_probe_blocked(self.paths, probe_id)
+
     def mark_incident_resolved(self, incident_id: str) -> Path:
         return mark_incident_resolved(self.paths, incident_id)
 
@@ -96,6 +116,9 @@ class QueueStore:
 
     def requeue_spec(self, spec_id: str, *, reason: str) -> Path:
         return requeue_spec(self.paths, spec_id, reason=reason)
+
+    def requeue_probe(self, probe_id: str, *, reason: str) -> Path:
+        return requeue_probe(self.paths, probe_id, reason=reason)
 
     def requeue_incident(self, incident_id: str, *, reason: str) -> Path:
         return requeue_incident(self.paths, incident_id, reason=reason)

@@ -114,6 +114,8 @@ def activate_claim_for_plane(
 def entry_stage_for_kind(work_item_kind: WorkItemKind) -> StageName:
     if work_item_kind is WorkItemKind.TASK:
         return ExecutionStageName.BUILDER
+    if work_item_kind is WorkItemKind.PROBE:
+        return PlanningStageName.RECON
     if work_item_kind is WorkItemKind.SPEC:
         return PlanningStageName.PLANNER
     if work_item_kind is WorkItemKind.LEARNING_REQUEST:

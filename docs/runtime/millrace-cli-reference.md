@@ -30,7 +30,7 @@ Module entrypoint: `python -m millrace_ai`
 
 Compatibility aliases remain for top-level operator commands:
 
-- `millrace add-task`, `millrace add-spec`, `millrace add-idea`
+- `millrace add-task`, `millrace add-probe`, `millrace add-spec`, `millrace add-idea`
 - `millrace pause`, `millrace resume`, `millrace stop`
 - `millrace retry-active`, `millrace clear-stale-state`, `millrace reload-config`
 
@@ -267,15 +267,22 @@ decisions, for example `builder BUILDER_COMPLETE -> checker` or
 
 ### `millrace queue ls`
 
-Prints queue/active counts for execution, planning, and learning surfaces.
+Prints queue/active counts for execution, planning, and learning surfaces,
+including the probe/spec/incident breakdown inside Planning.
 
 ### `millrace queue show <WORK_ITEM_ID>`
 
-Finds and prints one task/spec/incident document summary by ID.
+Finds and prints one task/probe/spec/incident document summary by ID.
 
 ### `millrace queue add-task <task.md|task.json>`
 
 Imports `TaskDocument`. Canonical queue artifacts are markdown (`.md`); JSON is import-only.
+
+### `millrace queue add-probe <probe.md|probe.json>`
+
+Imports `ProbeDocument`. Probes are lightweight Planning intake that run
+through Recon before becoming a generated execution task, generated planning
+spec, no-op, or blocked probe.
 
 ### `millrace queue add-spec <spec.md|spec.json>`
 
@@ -287,6 +294,7 @@ Drops idea markdown into planning intake.
 
 Top-level convenience alias:
 
+- `millrace add-probe <probe.md|probe.json>`
 - `millrace add-idea <idea.md>`
 
 ### `millrace queue repair-lineage --root-spec-id <ROOT_SPEC_ID>`
@@ -338,7 +346,7 @@ Pause/resume behavior:
   item exists. If multiple planes are active, use a plane-scoped retry surface.
 - `clear-stale-state` is the supported recovery command after an old
   closure-target invariant failure leaves an unrelated root spec half-claimed.
-  It requeues active task, spec, incident, and learning-request artifacts,
+  It requeues active task, probe, spec, incident, and learning-request artifacts,
   clears `active_runs_by_plane`, and preserves the open closure target.
 
 ## Planning Commands

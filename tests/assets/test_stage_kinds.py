@@ -91,7 +91,7 @@ def test_stage_kinds_module_is_assets_facade() -> None:
 def test_builtin_stage_kinds_load_and_validate() -> None:
     stage_kinds = load_builtin_stage_kind_definitions()
 
-    assert len(stage_kinds) == 15
+    assert len(stage_kinds) == 16
     assert [stage_kind.stage_kind_id for stage_kind in stage_kinds] == list(SHIPPED_STAGE_KIND_IDS)
     assert {stage_kind.plane for stage_kind in stage_kinds} == {
         Plane.EXECUTION,
@@ -116,6 +116,7 @@ def test_shipped_stage_kind_ids_are_stable() -> None:
         "updater",
         "troubleshooter",
         "consultant",
+        "recon",
         "planner",
         "manager",
         "mechanic",

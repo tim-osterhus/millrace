@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.18.1
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.18.1`.
+
 ## 0.18.0
 
 - Add read-only compiled graph and run-trace API surfaces for Flow:

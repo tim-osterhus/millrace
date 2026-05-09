@@ -18,6 +18,7 @@
     "updater": "pi_rpc",
     "troubleshooter": "pi_rpc",
     "consultant": "pi_rpc",
+    "recon": "pi_rpc",
     "planner": "pi_rpc",
     "manager": "pi_rpc",
     "mechanic": "pi_rpc",

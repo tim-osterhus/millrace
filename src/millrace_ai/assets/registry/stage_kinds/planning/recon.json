@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "kind": "registered_stage_kind",
+  "stage_kind_id": "recon",
+  "plane": "planning",
+  "display_name": "Recon",
+  "default_entrypoint_path": "entrypoints/planning/recon.md",
+  "required_skill_paths": [
+    "skills/stage/planning/recon-core/SKILL.md"
+  ],
+  "suggested_skill_paths": [],
+  "running_status_marker": "RECON_RUNNING",
+  "legal_outcomes": [
+    "RECON_TO_EXECUTION",
+    "RECON_TO_PLANNING",
+    "RECON_NOOP",
+    "RECON_BLOCKED",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "RECON_TO_EXECUTION",
+    "RECON_TO_PLANNING"
+  ],
+  "failure_outcomes": [
+    "RECON_BLOCKED",
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "RECON_TO_EXECUTION": [
+      "success"
+    ],
+    "RECON_TO_PLANNING": [
+      "success"
+    ],
+    "RECON_NOOP": [
+      "no_op"
+    ],
+    "RECON_BLOCKED": [
+      "blocked"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "probe"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "recon_packet",
+    "task",
+    "spec",
+    "report"
+  ],
+  "idempotence_policy": "retry_safe_with_key",
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "thinking_level",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
+  "can_start_tasks": true,
+  "can_start_specs": true,
+  "can_start_incidents": false,
+  "recovery_role": null,
+  "closure_role": false
+}

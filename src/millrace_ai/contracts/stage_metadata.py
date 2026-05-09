@@ -174,6 +174,29 @@ STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
                 }
             ),
         ),
+        PlanningStageName.RECON.value: StageMetadata(
+            stage=PlanningStageName.RECON,
+            plane=Plane.PLANNING,
+            legal_terminal_results=(
+                PlanningTerminalResult.RECON_TO_EXECUTION.value,
+                PlanningTerminalResult.RECON_TO_PLANNING.value,
+                PlanningTerminalResult.RECON_NOOP.value,
+                PlanningTerminalResult.RECON_BLOCKED.value,
+                PlanningTerminalResult.BLOCKED.value,
+            ),
+            allowed_result_classes_by_outcome=_allowed(
+                {
+                    PlanningTerminalResult.RECON_TO_EXECUTION.value: (ResultClass.SUCCESS,),
+                    PlanningTerminalResult.RECON_TO_PLANNING.value: (ResultClass.SUCCESS,),
+                    PlanningTerminalResult.RECON_NOOP.value: (ResultClass.NO_OP,),
+                    PlanningTerminalResult.RECON_BLOCKED.value: (ResultClass.BLOCKED,),
+                    PlanningTerminalResult.BLOCKED.value: (
+                        ResultClass.BLOCKED,
+                        ResultClass.RECOVERABLE_FAILURE,
+                    ),
+                }
+            ),
+        ),
         PlanningStageName.PLANNER.value: StageMetadata(
             stage=PlanningStageName.PLANNER,
             plane=Plane.PLANNING,

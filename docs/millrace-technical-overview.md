@@ -105,6 +105,7 @@ Millrace persists two fundamentally different artifact families.
 These are the queue-facing markdown documents that represent managed work:
 
 - `millrace-agents/tasks/{queue,active,done,blocked}/*.md`
+- `millrace-agents/probes/{queue,active,done,blocked}/*.md`
 - `millrace-agents/specs/{queue,active,done,blocked}/*.md`
 - `millrace-agents/incidents/{incoming,active,resolved,blocked}/*.md`
 - `millrace-agents/learning/requests/{queue,active,done,blocked}/*.md`
@@ -334,6 +335,8 @@ the problem must be handed back into planning.
 
 Planning is similarly not just "write a spec and stop." In the happy path:
 
+- `recon` classifies lightweight probes and emits a persisted recon packet plus
+  either a generated task, generated spec, no-op, or blocked result
 - `planner` synthesizes or refines a spec
 - `manager` decomposes it into executable tasks
 
@@ -362,6 +365,7 @@ direct Curator triggers require a safe destination such as `target_skill_id` or
 The phase-1 graph loops make the shipped intake mapping explicit:
 
 - execution graph: `task -> builder`
+- planning graph: `probe -> recon`
 - planning graph: `spec -> planner`
 - planning graph: `incident -> auditor`
 - learning graph: `learning_request -> analyst`
@@ -657,19 +661,22 @@ applied.
 ## Watchers, Intake, And Queue Entry
 
 Millrace can intake work through queue-import surfaces and watcher-driven idea
-normalization.
+normalization. Task, probe, and spec imports accept markdown or JSON; canonical
+queue artifacts remain markdown.
 
 The important conceptual rule is that ideas do not go straight into execution.
 They enter planning. In the shipped model, task imports become execution queue
-documents, spec imports become planning queue documents, ideas are normalized
-into planning specs, planning emits executable tasks into execution, and
+documents, probe imports become Recon-classified planning intake, spec imports
+become planning queue documents, ideas are normalized into planning specs,
+planning emits executable tasks into execution, and
 execution can hand real blockers back into planning through incidents.
 
 That preserves the three supported handoff shapes the runtime is built around:
 
 1. direct task handoff into execution
-2. idea or spec handoff into planning, then decomposition into tasks
-3. execution recovery handoff back into planning when execution hits a real
+2. probe handoff into Recon, then generated task/spec/no-op/blocked routing
+3. idea or spec handoff into planning, then decomposition into tasks
+4. execution recovery handoff back into planning when execution hits a real
    blocker
 
 ## Operator Inspection Surfaces

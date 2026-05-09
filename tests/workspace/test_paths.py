@@ -26,6 +26,14 @@ def _expected_directories(root: Path) -> list[Path]:
         runtime_root / "tasks" / "active",
         runtime_root / "tasks" / "done",
         runtime_root / "tasks" / "blocked",
+        runtime_root / "probes",
+        runtime_root / "probes" / "queue",
+        runtime_root / "probes" / "active",
+        runtime_root / "probes" / "done",
+        runtime_root / "probes" / "blocked",
+        runtime_root / "recon",
+        runtime_root / "recon" / "packets",
+        runtime_root / "recon" / "reports",
         runtime_root / "specs",
         runtime_root / "specs" / "queue",
         runtime_root / "specs" / "active",
@@ -97,6 +105,9 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.state_dir == root / "millrace-agents" / "state"
     assert paths.mailbox_incoming_dir == root / "millrace-agents" / "state" / "mailbox" / "incoming"
     assert paths.tasks_queue_dir == root / "millrace-agents" / "tasks" / "queue"
+    assert paths.probes_queue_dir == root / "millrace-agents" / "probes" / "queue"
+    assert paths.probes_active_dir == root / "millrace-agents" / "probes" / "active"
+    assert paths.recon_packets_dir == root / "millrace-agents" / "recon" / "packets"
     assert paths.specs_active_dir == root / "millrace-agents" / "specs" / "active"
     assert paths.incidents_resolved_dir == root / "millrace-agents" / "incidents" / "resolved"
     assert paths.learning_requests_queue_dir == root / "millrace-agents" / "learning" / "requests" / "queue"

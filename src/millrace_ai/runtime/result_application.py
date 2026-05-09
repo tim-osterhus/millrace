@@ -21,6 +21,7 @@ from .completion_behavior import active_closure_target, block_on_closure_lineage
 from .error_recovery import clear_runtime_error_context
 from .graph_authority import route_stage_result_from_graph
 from .handoff_incidents import enqueue_handoff_incident
+from .recon_transitions import apply_recon_router_decision, is_recon_stage_result
 from .result_counters import increment_counter_field, increment_route_counters
 from .stage_result_persistence import write_plane_status, write_stage_result
 from .work_item_transitions import (
@@ -73,6 +74,9 @@ def apply_router_decision(
     if _is_closure_target_result(stage_result):
         apply_closure_target_router_decision(engine, decision, stage_result)
         return ()
+
+    if is_recon_stage_result(stage_result):
+        return apply_recon_router_decision(engine, decision, stage_result)
 
     if decision.action is RouterAction.RUN_STAGE:
         next_stage = decision.next_stage

@@ -13,6 +13,22 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-05-08
+
+### Added
+
+- Added probe intake and a Planning-plane Recon stage. Operators can enqueue
+  `ProbeDocument` work with `millrace add-probe` or `millrace queue add-probe`;
+  the runtime claims probes before ordinary specs, runs Recon, persists a recon
+  packet, and routes the probe to a generated task, generated spec, no-op, or
+  blocked state.
+
+### Changed
+
+- Updated the shipped Planning graph, default Codex/Pi modes, runtime docs, and
+  operator skill guidance so probe intake is available across the four default
+  loop configurations.
+
 ## [0.18.0] - 2026-05-05
 
 ### Added
@@ -657,7 +673,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/tim-osterhus/millrace/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/tim-osterhus/millrace/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/tim-osterhus/millrace/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/tim-osterhus/millrace/compare/v0.17.2...v0.17.3

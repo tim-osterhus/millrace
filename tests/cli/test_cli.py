@@ -169,6 +169,22 @@ def _spec_payload(spec_id: str) -> dict[str, object]:
     }
 
 
+def _probe_payload(probe_id: str) -> dict[str, object]:
+    return {
+        "probe_id": probe_id,
+        "title": f"Probe {probe_id}",
+        "summary": "cli probe",
+        "request": "Research the codebase and route the smallest safe change.",
+        "target_paths": ["src/millrace_ai/runtime.py"],
+        "constraints": ["Do not implement during recon."],
+        "acceptance": ["recon routes the probe"],
+        "risk_notes": ["ambiguous codebase request"],
+        "references": ["operator request"],
+        "created_at": NOW.isoformat(),
+        "created_by": "tests",
+    }
+
+
 def _pending_commands(paths) -> set[MailboxCommand]:
     return {envelope.command for envelope in read_pending_mailbox_commands(paths)}
 
@@ -1270,6 +1286,29 @@ def test_add_task_add_spec_and_queue_ls(tmp_path: Path) -> None:
     assert "learning_queue_depth: 0" in ls.output
 
 
+def test_add_probe_and_queue_show(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    probe_doc = tmp_path / "probe-import.json"
+    probe_doc.write_text(json.dumps(_probe_payload("probe-001")), encoding="utf-8")
+
+    runner = CliRunner()
+    add_probe = runner.invoke(
+        cli.app,
+        ["add-probe", str(probe_doc), "--workspace", str(paths.root)],
+    )
+    ls = runner.invoke(cli.app, ["queue", "ls", "--workspace", str(paths.root)])
+    show = runner.invoke(cli.app, ["queue", "show", "probe-001", "--workspace", str(paths.root)])
+
+    assert add_probe.exit_code == 0
+    assert ls.exit_code == 0
+    assert show.exit_code == 0
+    assert (paths.probes_queue_dir / "probe-001.md").is_file()
+    assert "planning_queue_depth: 1" in ls.output
+    assert "probe_queue_depth: 1" in ls.output
+    assert "work_item_kind: probe" in show.output
+    assert "work_item_state: queue" in show.output
+
+
 def test_queue_ls_reports_active_counts_by_queue_family(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -1304,8 +1343,10 @@ def test_queue_add_commands_and_show_are_available_under_namespaced_surface(tmp_
     paths = _workspace(tmp_path)
     task_doc = tmp_path / "task-import.json"
     spec_doc = tmp_path / "spec-import.json"
+    probe_doc = tmp_path / "probe-import.json"
     task_doc.write_text(json.dumps(_task_payload("task-001")), encoding="utf-8")
     spec_doc.write_text(json.dumps(_spec_payload("spec-001")), encoding="utf-8")
+    probe_doc.write_text(json.dumps(_probe_payload("probe-001")), encoding="utf-8")
 
     runner = CliRunner()
     add_task = runner.invoke(
@@ -1316,6 +1357,10 @@ def test_queue_add_commands_and_show_are_available_under_namespaced_surface(tmp_
         cli.app,
         ["queue", "add-spec", str(spec_doc), "--workspace", str(paths.root)],
     )
+    add_probe = runner.invoke(
+        cli.app,
+        ["queue", "add-probe", str(probe_doc), "--workspace", str(paths.root)],
+    )
     show = runner.invoke(
         cli.app,
         ["queue", "show", "task-001", "--workspace", str(paths.root)],
@@ -1323,6 +1368,7 @@ def test_queue_add_commands_and_show_are_available_under_namespaced_surface(tmp_
 
     assert add_task.exit_code == 0
     assert add_spec.exit_code == 0
+    assert add_probe.exit_code == 0
     assert show.exit_code == 0
     assert "work_item_id: task-001" in show.output
     assert "work_item_kind: task" in show.output
@@ -1366,9 +1412,11 @@ def test_queue_add_commands_route_to_mailbox_when_daemon_owns_workspace(tmp_path
 
     task_doc = tmp_path / "task-import.json"
     spec_doc = tmp_path / "spec-import.json"
+    probe_doc = tmp_path / "probe-import.json"
     idea_doc = tmp_path / "idea-queue-mailbox.md"
     task_doc.write_text(json.dumps(_task_payload("task-mailbox")), encoding="utf-8")
     spec_doc.write_text(json.dumps(_spec_payload("spec-mailbox")), encoding="utf-8")
+    probe_doc.write_text(json.dumps(_probe_payload("probe-mailbox")), encoding="utf-8")
     idea_doc.write_text("# Mailbox idea\n", encoding="utf-8")
 
     runner = CliRunner()
@@ -1380,6 +1428,10 @@ def test_queue_add_commands_route_to_mailbox_when_daemon_owns_workspace(tmp_path
         cli.app,
         ["queue", "add-spec", str(spec_doc), "--workspace", str(paths.root)],
     )
+    add_probe = runner.invoke(
+        cli.app,
+        ["queue", "add-probe", str(probe_doc), "--workspace", str(paths.root)],
+    )
     add_idea = runner.invoke(
         cli.app,
         ["queue", "add-idea", str(idea_doc), "--workspace", str(paths.root)],
@@ -1387,17 +1439,21 @@ def test_queue_add_commands_route_to_mailbox_when_daemon_owns_workspace(tmp_path
 
     assert add_task.exit_code == 0
     assert add_spec.exit_code == 0
+    assert add_probe.exit_code == 0
     assert add_idea.exit_code == 0
     assert "mode: mailbox" in add_task.output
     assert "mode: mailbox" in add_spec.output
+    assert "mode: mailbox" in add_probe.output
     assert "mode: mailbox" in add_idea.output
 
     pending = _pending_commands(paths)
     assert MailboxCommand.ADD_TASK in pending
     assert MailboxCommand.ADD_SPEC in pending
+    assert MailboxCommand.ADD_PROBE in pending
     assert MailboxCommand.ADD_IDEA in pending
     assert not (paths.tasks_queue_dir / "task-mailbox.md").exists()
     assert not (paths.specs_queue_dir / "spec-mailbox.md").exists()
+    assert not (paths.probes_queue_dir / "probe-mailbox.md").exists()
     assert not (paths.root / "ideas" / "inbox" / "idea-queue-mailbox.md").exists()
 
 

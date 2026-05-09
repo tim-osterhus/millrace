@@ -13,13 +13,14 @@ from millrace_ai.cli.formatting import _print_control_result
 from millrace_ai.cli.shared import (
     WorkspaceOption,
     _cli_api,
+    _load_probe_document,
     _load_spec_document,
     _load_task_document,
     _queue_lookup,
     _require_paths,
     _validate_work_item_id,
 )
-from millrace_ai.contracts import IncidentDocument, SpecDocument, TaskDocument
+from millrace_ai.contracts import IncidentDocument, ProbeDocument, SpecDocument, TaskDocument
 from millrace_ai.events import write_runtime_event
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
@@ -38,27 +39,31 @@ queue_app = typer.Typer(add_completion=False, no_args_is_help=True)
 def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     paths = _require_paths(workspace)
     execution_queue_depth = len(tuple(paths.tasks_queue_dir.glob("*.md")))
-    planning_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md"))) + len(
-        tuple(paths.incidents_incoming_dir.glob("*.md"))
-    )
+    probe_queue_depth = len(tuple(paths.probes_queue_dir.glob("*.md")))
+    spec_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md")))
+    incident_queue_depth = len(tuple(paths.incidents_incoming_dir.glob("*.md")))
+    planning_queue_depth = probe_queue_depth + spec_queue_depth + incident_queue_depth
     execution_active = len(tuple(paths.tasks_active_dir.glob("*.md")))
-    planning_active = len(tuple(paths.specs_active_dir.glob("*.md"))) + len(
-        tuple(paths.incidents_active_dir.glob("*.md"))
-    )
+    probe_active = len(tuple(paths.probes_active_dir.glob("*.md")))
+    spec_active = len(tuple(paths.specs_active_dir.glob("*.md")))
+    incident_active = len(tuple(paths.incidents_active_dir.glob("*.md")))
+    planning_active = probe_active + spec_active + incident_active
     learning_active = len(tuple(paths.learning_requests_active_dir.glob("*.md")))
     active_task_count = len(tuple(paths.tasks_active_dir.glob("*.md")))
-    active_spec_count = len(tuple(paths.specs_active_dir.glob("*.md")))
-    active_incident_count = len(tuple(paths.incidents_active_dir.glob("*.md")))
 
     typer.echo(f"execution_queue_depth: {execution_queue_depth}")
     typer.echo(f"planning_queue_depth: {planning_queue_depth}")
     typer.echo(f"learning_queue_depth: {len(tuple(paths.learning_requests_queue_dir.glob('*.md')))}")
+    typer.echo(f"probe_queue_depth: {probe_queue_depth}")
+    typer.echo(f"spec_queue_depth: {spec_queue_depth}")
+    typer.echo(f"incident_queue_depth: {incident_queue_depth}")
     typer.echo(f"execution_active: {execution_active}")
     typer.echo(f"planning_active: {planning_active}")
     typer.echo(f"learning_active: {learning_active}")
     typer.echo(f"active_task_count: {active_task_count}")
-    typer.echo(f"active_spec_count: {active_spec_count}")
-    typer.echo(f"active_incident_count: {active_incident_count}")
+    typer.echo(f"active_probe_count: {probe_active}")
+    typer.echo(f"active_spec_count: {spec_active}")
+    typer.echo(f"active_incident_count: {incident_active}")
     typer.echo(f"active_learning_request_count: {learning_active}")
 
 
@@ -78,11 +83,17 @@ def queue_show(
         raise typer.Exit(code=_print_error(f"work item not found: {validated_work_item_id}"))
     work_item_kind, state, path = located
 
-    document: TaskDocument | SpecDocument | IncidentDocument
+    document: TaskDocument | ProbeDocument | SpecDocument | IncidentDocument
     if work_item_kind == "task":
         document = parse_work_document_as(
             path.read_text(encoding="utf-8"),
             model=TaskDocument,
+            path=path,
+        )
+    elif work_item_kind == "probe":
+        document = parse_work_document_as(
+            path.read_text(encoding="utf-8"),
+            model=ProbeDocument,
             path=path,
         )
     elif work_item_kind == "spec":
@@ -122,6 +133,25 @@ def queue_add_task(
     if result.artifact_path is None:
         raise typer.Exit(code=_print_error("failed to add task: missing artifact path"))
     typer.echo(f"enqueued_task: {result.artifact_path}")
+
+
+@queue_app.command("add-probe")
+def queue_add_probe(
+    probe_path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, resolve_path=True)],
+    workspace: WorkspaceOption = Path("."),
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        document = _load_probe_document(probe_path)
+        result = _cli_api().RuntimeControl(paths).add_probe(document)
+    except (OSError, ValidationError, ValueError) as exc:
+        raise typer.Exit(code=_print_error(f"failed to add probe: {exc}")) from exc
+    if result.mode == "mailbox":
+        _print_control_result(result)
+        return
+    if result.artifact_path is None:
+        raise typer.Exit(code=_print_error("failed to add probe: missing artifact path"))
+    typer.echo(f"enqueued_probe: {result.artifact_path}")
 
 
 @queue_app.command("add-spec")
@@ -252,3 +282,10 @@ def add_spec(
     workspace: WorkspaceOption = Path("."),
 ) -> None:
     queue_add_spec(spec_path=spec_path, workspace=workspace)
+
+
+def add_probe(
+    probe_path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, resolve_path=True)],
+    workspace: WorkspaceOption = Path("."),
+) -> None:
+    queue_add_probe(probe_path=probe_path, workspace=workspace)

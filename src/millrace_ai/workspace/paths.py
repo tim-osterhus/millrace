@@ -40,6 +40,16 @@ class WorkspacePaths:
     incidents_resolved_dir: Path
     incidents_blocked_dir: Path
 
+    probes_dir: Path
+    probes_queue_dir: Path
+    probes_active_dir: Path
+    probes_done_dir: Path
+    probes_blocked_dir: Path
+
+    recon_dir: Path
+    recon_packets_dir: Path
+    recon_reports_dir: Path
+
     learning_dir: Path
     learning_requests_dir: Path
     learning_requests_queue_dir: Path
@@ -118,6 +128,14 @@ class WorkspacePaths:
             self.incidents_active_dir,
             self.incidents_resolved_dir,
             self.incidents_blocked_dir,
+            self.probes_dir,
+            self.probes_queue_dir,
+            self.probes_active_dir,
+            self.probes_done_dir,
+            self.probes_blocked_dir,
+            self.recon_dir,
+            self.recon_packets_dir,
+            self.recon_reports_dir,
             self.learning_dir,
             self.learning_requests_dir,
             self.learning_requests_queue_dir,
@@ -165,6 +183,8 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
     tasks_dir = runtime_root / "tasks"
     specs_dir = runtime_root / "specs"
     incidents_dir = runtime_root / "incidents"
+    probes_dir = runtime_root / "probes"
+    recon_dir = runtime_root / "recon"
     learning_dir = runtime_root / "learning"
     learning_requests_dir = learning_dir / "requests"
     arbiter_dir = runtime_root / "arbiter"
@@ -198,6 +218,14 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         incidents_active_dir=incidents_dir / "active",
         incidents_resolved_dir=incidents_dir / "resolved",
         incidents_blocked_dir=incidents_dir / "blocked",
+        probes_dir=probes_dir,
+        probes_queue_dir=probes_dir / "queue",
+        probes_active_dir=probes_dir / "active",
+        probes_done_dir=probes_dir / "done",
+        probes_blocked_dir=probes_dir / "blocked",
+        recon_dir=recon_dir,
+        recon_packets_dir=recon_dir / "packets",
+        recon_reports_dir=recon_dir / "reports",
         learning_dir=learning_dir,
         learning_requests_dir=learning_requests_dir,
         learning_requests_queue_dir=learning_requests_dir / "queue",

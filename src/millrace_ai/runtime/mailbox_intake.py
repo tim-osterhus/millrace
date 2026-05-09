@@ -11,6 +11,7 @@ from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import fingerprint_runtime_config, load_runtime_config
 from millrace_ai.contracts import (
     MailboxAddIdeaPayload,
+    MailboxAddProbePayload,
     MailboxAddSpecPayload,
     MailboxAddTaskPayload,
     MailboxCommandEnvelope,
@@ -78,6 +79,9 @@ def handle_mailbox_command(
         return
     if command == "add_task":
         enqueue_task_from_mailbox(engine, envelope)
+        return
+    if command == "add_probe":
+        enqueue_probe_from_mailbox(engine, envelope)
         return
     if command == "add_spec":
         enqueue_spec_from_mailbox(engine, envelope)
@@ -230,6 +234,22 @@ def enqueue_task_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnv
     )
 
 
+def enqueue_probe_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxAddProbePayload.model_validate(envelope.payload)
+    destination = QueueStore(engine.paths).enqueue_probe(payload.document)
+    engine._refresh_runtime_queue_depths()
+    save_snapshot(engine.paths, engine.snapshot)
+    write_runtime_event(
+        engine.paths,
+        event_type="mailbox_add_probe_applied",
+        data={
+            "probe_id": payload.document.probe_id,
+            "path": str(destination.relative_to(engine.paths.root)),
+        },
+    )
+
+
 def enqueue_spec_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
     assert engine.snapshot is not None
     payload = MailboxAddSpecPayload.model_validate(envelope.payload)
@@ -289,6 +309,7 @@ def mailbox_retry_scope(envelope: MailboxCommandEnvelope) -> Plane | None:
 __all__ = [
     "drain_mailbox",
     "enqueue_idea_from_mailbox",
+    "enqueue_probe_from_mailbox",
     "enqueue_spec_from_mailbox",
     "enqueue_task_from_mailbox",
     "handle_mailbox_command",

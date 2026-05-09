@@ -18,8 +18,10 @@ from .enums import (  # noqa: F401
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
+    ProbeStatusHint,
     ReloadOutcome,
     ResultClass,
+    RootIntakeKind,
     RuntimeErrorCode,
     RuntimeMode,
     StageName,
@@ -38,6 +40,7 @@ from .graph_exports import (
 from .loop_config import CompletionBehaviorDefinition, LoopConfigDefinition, LoopEdgeDefinition
 from .mailbox import (
     MailboxAddIdeaPayload,
+    MailboxAddProbePayload,
     MailboxAddSpecPayload,
     MailboxAddTaskPayload,
     MailboxCommandEnvelope,
@@ -46,6 +49,14 @@ from .modes import (  # noqa: F401
     LearningTriggerRuleDefinition,
     ModeDefinition,
     PlaneConcurrencyPolicyDefinition,
+)
+from .recon import (
+    ReconConfidence,
+    ReconDecision,
+    ReconPacketDocument,
+    ReconPathFinding,
+    ReconRiskLevel,
+    ReconVerificationPlan,
 )
 from .recovery import RecoveryCounterEntry, RecoveryCounters
 from .run_trace import (
@@ -63,6 +74,7 @@ from .work_documents import (  # noqa: F401
     ClosureTargetState,
     IncidentDocument,
     LearningRequestDocument,
+    ProbeDocument,
     SpecDocument,
     TaskDocument,
 )
@@ -95,6 +107,7 @@ __all__ = [
     "LoopEdgeKind",
     "MailboxCommand",
     "MailboxAddIdeaPayload",
+    "MailboxAddProbePayload",
     "MailboxAddSpecPayload",
     "MailboxAddTaskPayload",
     "MailboxCommandEnvelope",
@@ -103,9 +116,18 @@ __all__ = [
     "PlaneConcurrencyPolicyDefinition",
     "PlanningStageName",
     "PlanningTerminalResult",
+    "ProbeDocument",
+    "ProbeStatusHint",
     "RecoveryCounterEntry",
     "RecoveryCounters",
+    "ReconConfidence",
+    "ReconDecision",
+    "ReconPacketDocument",
+    "ReconPathFinding",
+    "ReconRiskLevel",
+    "ReconVerificationPlan",
     "ResultClass",
+    "RootIntakeKind",
     "ReloadOutcome",
     "RuntimeMode",
     "RuntimeErrorCode",

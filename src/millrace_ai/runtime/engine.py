@@ -161,6 +161,9 @@ class RuntimeEngine:
     def _enqueue_task_from_mailbox(self, envelope: MailboxCommandEnvelope) -> None:
         mailbox_intake.enqueue_task_from_mailbox(self, envelope)
 
+    def _enqueue_probe_from_mailbox(self, envelope: MailboxCommandEnvelope) -> None:
+        mailbox_intake.enqueue_probe_from_mailbox(self, envelope)
+
     def _enqueue_spec_from_mailbox(self, envelope: MailboxCommandEnvelope) -> None:
         mailbox_intake.enqueue_spec_from_mailbox(self, envelope)
 
@@ -444,6 +447,12 @@ class RuntimeEngine:
             except QueueStateError:
                 continue
             requeued_count += 1
+        for path in sorted(self.paths.probes_active_dir.glob("*.md")):
+            try:
+                queue.requeue_probe(path.stem, reason=reason)
+            except QueueStateError:
+                continue
+            requeued_count += 1
         for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
             try:
                 queue.requeue_incident(path.stem, reason=reason)
@@ -471,6 +480,9 @@ class RuntimeEngine:
             return
         if work_item_kind is WorkItemKind.SPEC:
             queue.requeue_spec(work_item_id, reason=reason)
+            return
+        if work_item_kind is WorkItemKind.PROBE:
+            queue.requeue_probe(work_item_id, reason=reason)
             return
         if work_item_kind is WorkItemKind.LEARNING_REQUEST:
             queue.requeue_learning_request(work_item_id, reason=reason)

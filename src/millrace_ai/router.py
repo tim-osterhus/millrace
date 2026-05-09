@@ -165,6 +165,23 @@ def next_planning_step(
     terminal_result = PlanningTerminalResult(stage_result.terminal_result)
     source_stage = PlanningStageName(stage_result.stage)
 
+    if source_stage is PlanningStageName.RECON:
+        if terminal_result is PlanningTerminalResult.RECON_TO_EXECUTION:
+            return _idle(reason="recon_to_execution")
+        if terminal_result is PlanningTerminalResult.RECON_TO_PLANNING:
+            return _idle(reason="recon_to_planning")
+        if terminal_result is PlanningTerminalResult.RECON_NOOP:
+            return _idle(reason="recon_noop")
+        if terminal_result in {PlanningTerminalResult.RECON_BLOCKED, PlanningTerminalResult.BLOCKED}:
+            return _blocked(
+                reason="recon_blocked",
+                failure_class=_resolve_failure_class(
+                    snapshot,
+                    stage_result,
+                    default="recon_blocked",
+                ),
+            )
+
     if terminal_result in _PLANNING_SUCCESS_TRANSITIONS:
         return _run_stage(
             _PLANNING_SUCCESS_TRANSITIONS[terminal_result],

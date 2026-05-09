@@ -56,15 +56,16 @@ def detect_planning_stale_state(
     if has_kind != has_item:
         raise QueueStateError("snapshot_active_kind and snapshot_active_item_id must be set together")
 
-    if snapshot_active_kind not in {None, WorkItemKind.SPEC, WorkItemKind.INCIDENT}:
-        raise QueueStateError("Planning stale-state checks only support spec and incident kinds")
+    if snapshot_active_kind not in {None, WorkItemKind.PROBE, WorkItemKind.SPEC, WorkItemKind.INCIDENT}:
+        raise QueueStateError("Planning stale-state checks only support probe, spec, and incident kinds")
 
+    active_probes = [(WorkItemKind.PROBE, item_id) for item_id in _ids_in_directory(paths.probes_active_dir)]
     active_specs = [(WorkItemKind.SPEC, item_id) for item_id in _ids_in_directory(paths.specs_active_dir)]
     active_incidents = [
         (WorkItemKind.INCIDENT, item_id)
         for item_id in _ids_in_directory(paths.incidents_active_dir)
     ]
-    active_items = active_specs + active_incidents
+    active_items = active_probes + active_specs + active_incidents
     reasons: list[str] = []
 
     if len(active_items) > 1:
@@ -74,11 +75,12 @@ def detect_planning_stale_state(
         reasons.append("active_without_snapshot")
 
     if snapshot_active_kind is not None and snapshot_active_item_id is not None:
-        queued_ids = (
-            _ids_in_directory(paths.specs_queue_dir)
-            if snapshot_active_kind is WorkItemKind.SPEC
-            else _ids_in_directory(paths.incidents_incoming_dir)
-        )
+        if snapshot_active_kind is WorkItemKind.PROBE:
+            queued_ids = _ids_in_directory(paths.probes_queue_dir)
+        elif snapshot_active_kind is WorkItemKind.SPEC:
+            queued_ids = _ids_in_directory(paths.specs_queue_dir)
+        else:
+            queued_ids = _ids_in_directory(paths.incidents_incoming_dir)
         if snapshot_active_item_id in queued_ids:
             reasons.append("snapshot_points_to_queued_item")
 

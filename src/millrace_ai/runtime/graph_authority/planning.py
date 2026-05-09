@@ -126,6 +126,42 @@ def decision_from_planning_transition(
     assert terminal_state_id is not None
     terminal_state = terminal_state_by_id(graph, terminal_state_id)
 
+    if source_stage is PlanningStageName.RECON:
+        if terminal_result is PlanningTerminalResult.RECON_TO_EXECUTION:
+            return RouterDecision(
+                action=RouterAction.IDLE,
+                next_plane=None,
+                next_stage=None,
+                reason="recon_to_execution",
+            )
+        if terminal_result is PlanningTerminalResult.RECON_TO_PLANNING:
+            return RouterDecision(
+                action=RouterAction.IDLE,
+                next_plane=None,
+                next_stage=None,
+                reason="recon_to_planning",
+            )
+        if terminal_result is PlanningTerminalResult.RECON_NOOP:
+            return RouterDecision(
+                action=RouterAction.IDLE,
+                next_plane=None,
+                next_stage=None,
+                reason="recon_noop",
+            )
+        if terminal_result in {PlanningTerminalResult.RECON_BLOCKED, PlanningTerminalResult.BLOCKED}:
+            failure_class = resolve_failure_class(
+                snapshot,
+                stage_result,
+                default="recon_blocked",
+            )
+            return RouterDecision(
+                action=RouterAction.BLOCKED,
+                next_plane=None,
+                next_stage=None,
+                reason="recon_blocked",
+                failure_class=failure_class,
+            )
+
     if source_stage is PlanningStageName.MANAGER and terminal_result is PlanningTerminalResult.MANAGER_COMPLETE:
         return RouterDecision(
             action=RouterAction.IDLE,

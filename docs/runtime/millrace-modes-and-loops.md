@@ -138,16 +138,21 @@ governance loop.
 
 `planning.standard` currently declares these stages:
 
-1. `planner`
-2. `manager`
-3. `mechanic`
-4. `auditor`
-5. `arbiter`
+1. `recon`
+2. `planner`
+3. `manager`
+4. `mechanic`
+5. `auditor`
+6. `arbiter`
 
 Its legacy loop `entry_stage` is `planner`.
 
 Its current `terminal_results` are:
 
+- `RECON_TO_EXECUTION`
+- `RECON_TO_PLANNING`
+- `RECON_NOOP`
+- `RECON_BLOCKED`
 - `MANAGER_COMPLETE`
 - `ARBITER_COMPLETE`
 - `REMEDIATION_NEEDED`
@@ -155,6 +160,12 @@ Its current `terminal_results` are:
 
 In the shipped graph:
 
+- `RECON_TO_EXECUTION` persists a recon packet and routes the probe to a
+  generated execution task
+- `RECON_TO_PLANNING` persists a recon packet and routes the probe to a
+  generated planning spec
+- `RECON_NOOP` closes the probe without downstream queue work
+- `RECON_BLOCKED` blocks the probe with the recon packet as evidence
 - `PLANNER_COMPLETE` moves `planner -> manager`
 - blocked `planner` or `manager` work routes into `mechanic`
 - `MECHANIC_COMPLETE` loops back into `planner`
@@ -175,6 +186,7 @@ The phase-1 graph-loop asset makes the planning intake split explicit through
 `entry_nodes`:
 
 - `spec -> planner`
+- `probe -> recon`
 - `incident -> auditor`
 
 That means the graph surface models the shipped incident intake behavior more

@@ -499,6 +499,13 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
             ExecutionTerminalResult.NEEDS_PLANNING.value,
             ExecutionTerminalResult.BLOCKED.value,
         },
+        PlanningStageName.RECON.value: {
+            PlanningTerminalResult.RECON_TO_EXECUTION.value,
+            PlanningTerminalResult.RECON_TO_PLANNING.value,
+            PlanningTerminalResult.RECON_NOOP.value,
+            PlanningTerminalResult.RECON_BLOCKED.value,
+            PlanningTerminalResult.BLOCKED.value,
+        },
         PlanningStageName.PLANNER.value: {
             PlanningTerminalResult.PLANNER_COMPLETE.value,
             PlanningTerminalResult.BLOCKED.value,
@@ -547,6 +554,7 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
         ExecutionStageName.UPDATER.value: "updater-core",
         ExecutionStageName.TROUBLESHOOTER.value: "troubleshooter-core",
         ExecutionStageName.CONSULTANT.value: "consultant-core",
+        PlanningStageName.RECON.value: "recon-core",
         PlanningStageName.PLANNER.value: "planner-core",
         PlanningStageName.MANAGER.value: "manager-core",
         PlanningStageName.MECHANIC.value: "mechanic-core",
@@ -575,6 +583,7 @@ def _expected_stage_core_skill_paths() -> dict[str, Path]:
         / "troubleshooter-core"
         / "SKILL.md",
         ExecutionStageName.CONSULTANT.value: SKILLS_DIR / "stage" / "execution" / "consultant-core" / "SKILL.md",
+        PlanningStageName.RECON.value: SKILLS_DIR / "stage" / "planning" / "recon-core" / "SKILL.md",
         PlanningStageName.PLANNER.value: SKILLS_DIR / "stage" / "planning" / "planner-core" / "SKILL.md",
         PlanningStageName.MANAGER.value: SKILLS_DIR / "stage" / "planning" / "manager-core" / "SKILL.md",
         PlanningStageName.MECHANIC.value: SKILLS_DIR / "stage" / "planning" / "mechanic-core" / "SKILL.md",
@@ -624,6 +633,11 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "continuation",
             "evidence",
             "incident",
+        ),
+        PlanningStageName.RECON.value: (
+            "probe",
+            "route",
+            "evidence",
         ),
         PlanningStageName.PLANNER.value: (
             "assumption",

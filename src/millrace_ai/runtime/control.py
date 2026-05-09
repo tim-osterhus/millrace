@@ -11,10 +11,12 @@ from pydantic import JsonValue
 
 from millrace_ai.contracts import (
     MailboxAddIdeaPayload,
+    MailboxAddProbePayload,
     MailboxAddSpecPayload,
     MailboxAddTaskPayload,
     MailboxCommand,
     Plane,
+    ProbeDocument,
     SpecDocument,
     TaskDocument,
 )
@@ -160,6 +162,15 @@ class RuntimeControl:
             issuer=issuer,
             payload=payload,
             direct_handler=lambda snapshot: self._mutations.add_task(snapshot, document=document),
+        )
+
+    def add_probe(self, document: ProbeDocument, *, issuer: str = "operator") -> ControlActionResult:
+        payload = MailboxAddProbePayload(document=document).model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.ADD_PROBE,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.add_probe(snapshot, document=document),
         )
 
     def add_spec(self, document: SpecDocument, *, issuer: str = "operator") -> ControlActionResult:

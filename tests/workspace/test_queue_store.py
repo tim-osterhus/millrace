@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
     IncidentDecision,
     IncidentDocument,
     Plane,
+    ProbeDocument,
     SpecDocument,
     TaskDocument,
     WorkItemKind,
@@ -57,6 +58,22 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
         constraints=("stay deterministic",),
         acceptance=("planning queue works",),
         references=("lab/specs/drafts/millrace-work-item-queue-and-ownership-contract.md",),
+        created_at=created_at,
+        created_by="tests",
+    )
+
+
+def _probe_doc(probe_id: str, *, created_at: datetime) -> ProbeDocument:
+    return ProbeDocument(
+        probe_id=probe_id,
+        title=f"Probe {probe_id}",
+        summary="ambiguous repo-facing request",
+        request="Research the current codebase and route the smallest safe change.",
+        target_paths=("src/example/parser.py",),
+        constraints=("Do not implement during recon.",),
+        acceptance=("Recon routes the probe with a durable packet.",),
+        risk_notes=("Parser changes can regress adjacent behavior.",),
+        references=("operator request",),
         created_at=created_at,
         created_by="tests",
     )
@@ -205,9 +222,10 @@ def test_queue_store_facade_is_split_over_workspace_modules() -> None:
 
 
 def test_work_documents_round_trip_for_task_spec_and_incident() -> None:
-    documents: tuple[TaskDocument | SpecDocument | IncidentDocument, ...] = (
+    documents: tuple[TaskDocument | SpecDocument | ProbeDocument | IncidentDocument, ...] = (
         _task_doc("task-roundtrip", created_at=NOW),
         _spec_doc("spec-roundtrip", created_at=NOW),
+        _probe_doc("probe-roundtrip", created_at=NOW),
         _incident_doc("inc-roundtrip", opened_at=NOW),
     )
 
@@ -454,6 +472,51 @@ def test_planning_lifecycle_incidents_then_specs_with_done_and_blocked(tmp_path:
     assert fourth.work_item_id == "spec-002"
     store.mark_spec_blocked("spec-002")
     assert (paths.specs_blocked_dir / "spec-002.md").is_file()
+
+
+def test_planning_lifecycle_incidents_then_oldest_probe_or_spec(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+
+    store.enqueue_spec(_spec_doc("spec-001", created_at=NOW + timedelta(minutes=5)))
+    store.enqueue_probe(_probe_doc("probe-001", created_at=NOW + timedelta(minutes=1)))
+    store.enqueue_incident(_incident_doc("inc-001", opened_at=NOW + timedelta(minutes=2)))
+
+    first = store.claim_next_planning_item()
+    assert first is not None
+    assert first.work_item_kind is WorkItemKind.INCIDENT
+    assert first.work_item_id == "inc-001"
+    store.mark_incident_resolved("inc-001")
+
+    second = store.claim_next_planning_item()
+    assert second is not None
+    assert second.work_item_kind is WorkItemKind.PROBE
+    assert second.work_item_id == "probe-001"
+    assert second.path == paths.probes_active_dir / "probe-001.md"
+    store.mark_probe_done("probe-001")
+    assert (paths.probes_done_dir / "probe-001.md").is_file()
+
+    third = store.claim_next_planning_item()
+    assert third is not None
+    assert third.work_item_kind is WorkItemKind.SPEC
+    assert third.work_item_id == "spec-001"
+
+
+def test_requeue_probe_returns_to_queue_surface(tmp_path: Path) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+
+    store.enqueue_probe(_probe_doc("probe-001", created_at=NOW))
+    probe_claim = store.claim_next_planning_item()
+    assert probe_claim is not None
+    assert probe_claim.work_item_kind is WorkItemKind.PROBE
+    store.requeue_probe("probe-001", reason="operator requested another recon pass")
+
+    assert (paths.probes_queue_dir / "probe-001.md").is_file()
+    reason_log = _read_json_lines(paths.probes_queue_dir / "probe-001.requeue.jsonl")
+    assert [entry["reason"] for entry in reason_log] == ["operator requested another recon pass"]
 
 
 def test_requeue_is_deterministic_and_records_reasons(tmp_path: Path) -> None:

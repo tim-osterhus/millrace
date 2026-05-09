@@ -15,6 +15,8 @@ from .enums import (
     LearningRequestAction,
     LearningStageName,
     Plane,
+    ProbeStatusHint,
+    RootIntakeKind,
     StageName,
     TaskStatusHint,
 )
@@ -31,6 +33,8 @@ class TaskDocument(ContractModel):
 
     root_idea_id: str | None = None
     root_spec_id: str | None = None
+    root_intake_kind: RootIntakeKind | None = None
+    root_intake_id: str | None = None
     spec_id: str | None = None
     parent_task_id: str | None = None
     incident_id: str | None = None
@@ -57,6 +61,8 @@ class TaskDocument(ContractModel):
             validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
         if self.root_spec_id is not None:
             validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
+        if self.root_intake_id is not None:
+            validate_safe_identifier(self.root_intake_id, field_name="root_intake_id")
         if self.spec_id is not None:
             validate_safe_identifier(self.spec_id, field_name="spec_id")
         if self.parent_task_id is not None:
@@ -74,11 +80,13 @@ class SpecDocument(ContractModel):
     title: str
     summary: str
 
-    source_type: Literal["idea", "incident", "manual", "derived_spec"]
+    source_type: Literal["idea", "incident", "manual", "derived_spec", "probe"]
     source_id: str | None = None
     parent_spec_id: str | None = None
     root_idea_id: str | None = None
     root_spec_id: str | None = None
+    root_intake_kind: RootIntakeKind | None = None
+    root_intake_id: str | None = None
 
     goals: tuple[str, ...] = Field(min_length=1)
     non_goals: tuple[str, ...] = ()
@@ -106,10 +114,41 @@ class SpecDocument(ContractModel):
             validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
         if self.root_spec_id is not None:
             validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
+        if self.root_intake_id is not None:
+            validate_safe_identifier(self.root_intake_id, field_name="root_intake_id")
         if self.source_id is not None:
             validate_safe_identifier(self.source_id, field_name="source_id")
         if self.parent_spec_id is not None:
             validate_safe_identifier(self.parent_spec_id, field_name="parent_spec_id")
+        return self
+
+
+class ProbeDocument(ContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["probe"] = "probe"
+
+    probe_id: str
+    title: str
+    summary: str
+    request: str
+
+    target_paths: tuple[str, ...] = ()
+    constraints: tuple[str, ...] = ()
+    acceptance: tuple[str, ...] = ()
+    risk_notes: tuple[str, ...] = ()
+    references: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+
+    status_hint: ProbeStatusHint | None = None
+    created_at: datetime
+    created_by: str
+    updated_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_identifier_shape(self) -> "ProbeDocument":
+        validate_safe_identifier(self.probe_id, field_name="probe_id")
+        if not self.request.strip():
+            raise ValueError("request is required")
         return self
 
 
@@ -123,6 +162,8 @@ class IncidentDocument(ContractModel):
 
     root_idea_id: str | None = None
     root_spec_id: str | None = None
+    root_intake_kind: RootIntakeKind | None = None
+    root_intake_id: str | None = None
     source_task_id: str | None = None
     source_spec_id: str | None = None
     source_stage: StageName
@@ -154,6 +195,8 @@ class IncidentDocument(ContractModel):
             validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
         if self.root_spec_id is not None:
             validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
+        if self.root_intake_id is not None:
+            validate_safe_identifier(self.root_intake_id, field_name="root_intake_id")
         if self.source_task_id is not None:
             validate_safe_identifier(self.source_task_id, field_name="source_task_id")
         if self.source_spec_id is not None:
@@ -201,6 +244,8 @@ class ClosureTargetState(ContractModel):
 
     root_spec_id: str
     root_idea_id: str
+    root_intake_kind: RootIntakeKind | None = None
+    root_intake_id: str | None = None
     root_spec_path: str
     root_idea_path: str
     rubric_path: str
@@ -217,6 +262,8 @@ class ClosureTargetState(ContractModel):
     def validate_target_state(self) -> "ClosureTargetState":
         validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
         validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.root_intake_id is not None:
+            validate_safe_identifier(self.root_intake_id, field_name="root_intake_id")
         if self.last_arbiter_run_id is not None:
             validate_safe_identifier(self.last_arbiter_run_id, field_name="last_arbiter_run_id")
         for work_item_id in self.blocking_work_ids:
@@ -234,6 +281,7 @@ __all__ = [
     "ClosureTargetState",
     "IncidentDocument",
     "LearningRequestDocument",
+    "ProbeDocument",
     "SpecDocument",
     "TaskDocument",
 ]

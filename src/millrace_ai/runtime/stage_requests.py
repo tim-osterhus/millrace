@@ -260,6 +260,8 @@ def active_work_item_path(
         return None
     if work_item_kind is WorkItemKind.TASK:
         return engine.paths.tasks_active_dir / f"{work_item_id}.md"
+    if work_item_kind is WorkItemKind.PROBE:
+        return engine.paths.probes_active_dir / f"{work_item_id}.md"
     if work_item_kind is WorkItemKind.SPEC:
         return engine.paths.specs_active_dir / f"{work_item_id}.md"
     if work_item_kind is WorkItemKind.LEARNING_REQUEST:
@@ -272,9 +274,10 @@ def execution_queue_depth(engine: RuntimeEngine) -> int:
 
 
 def planning_queue_depth(engine: RuntimeEngine) -> int:
+    probe_depth = len(list(engine.paths.probes_queue_dir.glob("*.md")))
     spec_depth = len(list(engine.paths.specs_queue_dir.glob("*.md")))
     incident_depth = len(list(engine.paths.incidents_incoming_dir.glob("*.md")))
-    return spec_depth + incident_depth
+    return probe_depth + spec_depth + incident_depth
 
 
 def learning_queue_depth(engine: RuntimeEngine) -> int:

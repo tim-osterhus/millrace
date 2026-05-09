@@ -11,7 +11,7 @@ from pydantic import Field, JsonValue, model_validator
 from .base import ContractModel
 from .enums import MailboxCommand
 from .stage_metadata import validate_safe_identifier
-from .work_documents import SpecDocument, TaskDocument
+from .work_documents import ProbeDocument, SpecDocument, TaskDocument
 
 
 class MailboxCommandEnvelope(ContractModel):
@@ -27,6 +27,10 @@ class MailboxCommandEnvelope(ContractModel):
 
 class MailboxAddTaskPayload(ContractModel):
     document: TaskDocument
+
+
+class MailboxAddProbePayload(ContractModel):
+    document: ProbeDocument
 
 
 class MailboxAddSpecPayload(ContractModel):
@@ -58,6 +62,7 @@ class MailboxAddIdeaPayload(ContractModel):
 
 __all__ = [
     "MailboxAddIdeaPayload",
+    "MailboxAddProbePayload",
     "MailboxAddSpecPayload",
     "MailboxAddTaskPayload",
     "MailboxCommandEnvelope",

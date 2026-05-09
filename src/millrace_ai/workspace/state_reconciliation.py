@@ -64,6 +64,15 @@ _STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
     ExecutionStageName.CONSULTANT.value: frozenset(
         {"### CONSULT_COMPLETE", "### NEEDS_PLANNING", "### BLOCKED"}
     ),
+    PlanningStageName.RECON.value: frozenset(
+        {
+            "### RECON_TO_EXECUTION",
+            "### RECON_TO_PLANNING",
+            "### RECON_NOOP",
+            "### RECON_BLOCKED",
+            "### BLOCKED",
+        }
+    ),
     PlanningStageName.PLANNER.value: frozenset({"### PLANNER_COMPLETE", "### BLOCKED"}),
     PlanningStageName.MANAGER.value: frozenset({"### MANAGER_COMPLETE", "### BLOCKED"}),
     PlanningStageName.MECHANIC.value: frozenset({"### MECHANIC_COMPLETE", "### BLOCKED"}),
@@ -103,6 +112,7 @@ _STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {
     ),
     ExecutionStageName.TROUBLESHOOTER.value: _EXECUTION_STATUS_MARKERS - {_IDLE_MARKER},
     ExecutionStageName.CONSULTANT.value: _EXECUTION_STATUS_MARKERS - {_IDLE_MARKER},
+    PlanningStageName.RECON.value: frozenset(),
     PlanningStageName.PLANNER.value: frozenset({"### AUDITOR_COMPLETE", "### MECHANIC_COMPLETE"}),
     PlanningStageName.MANAGER.value: frozenset({"### PLANNER_COMPLETE"}),
     PlanningStageName.MECHANIC.value: _PLANNING_STATUS_MARKERS - {_IDLE_MARKER},

@@ -54,10 +54,10 @@ Load this skill when any of the following is true:
 - the user asks you to operate, run, monitor, or troubleshoot Millrace
 - `millrace-autonomous-delegation` or another active policy has selected
   Millrace for the current work
-- the user asks whether a task or spec should be delegated into Millrace and no
+- the user asks whether a task, probe, or spec should be delegated into Millrace and no
   separate delegation skill is available
 - you are managing a workspace that already contains `millrace-agents/`
-- you need to intake tasks, specs, or ideas into a Millrace queue
+- you need to intake tasks, probes, specs, or ideas into a Millrace queue
 - you need to watch or report on a running Millrace daemon
 
 Do not load this skill just because the repo happens to contain Millrace.
@@ -118,6 +118,8 @@ Know which shipped harness posture you are validating:
   to the Pi RPC adapter
 - `learning_codex` and `learning_pi` add the Analyst/Professor/Curator learning
   plane for runtime learning requests and skill-improvement workflows
+- probes enter Planning through Recon before becoming generated tasks,
+  generated specs, no-ops, or blocked probe artifacts
 - learning requests may close as no-op/done when evidence was reviewed and no
   skill update is warranted; this is not the same as a blocked learning request
 - `standard_plain` remains accepted only as a compatibility alias for
@@ -222,7 +224,7 @@ Load these on demand when the current task requires them:
 - Prefer supported CLI commands over direct mutation of runtime-owned files.
 - Treat content under `<workspace>/millrace-agents/` as runtime-owned unless a
   documented intake surface says otherwise.
-- Keep operator-authored tasks, specs, and ideas outcome-focused; do not hide
+- Keep operator-authored tasks, probes, specs, and ideas outcome-focused; do not hide
   routing instructions inside them.
 - Do not invent new queue states, stage names, or terminal results.
 - Do not describe this `docs/skills/` skill as if it were a runtime-shipped
@@ -338,6 +340,7 @@ millrace skills improve <skill_id> --mode learning_codex --workspace <workspace>
 millrace skills promote <skill_id> --workspace <workspace>
 millrace skills export <skill_id> --workspace <workspace>
 millrace queue add-task <task.md|task.json> --workspace <workspace>
+millrace queue add-probe <probe.md|probe.json> --workspace <workspace>
 millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
 millrace queue add-idea <idea.md> --workspace <workspace>
 millrace control pause --workspace <workspace>

@@ -32,6 +32,9 @@ def mark_active_work_item_complete(engine: RuntimeEngine, stage_result: StageRes
     if stage_result.work_item_kind is WorkItemKind.SPEC:
         queue.mark_spec_done(stage_result.work_item_id)
         return
+    if stage_result.work_item_kind is WorkItemKind.PROBE:
+        queue.mark_probe_done(stage_result.work_item_id)
+        return
     if stage_result.work_item_kind is WorkItemKind.INCIDENT:
         queue.mark_incident_resolved(stage_result.work_item_id)
         return
@@ -46,6 +49,9 @@ def mark_active_work_item_blocked(engine: RuntimeEngine, stage_result: StageResu
         return
     if stage_result.work_item_kind is WorkItemKind.SPEC:
         queue.mark_spec_blocked(stage_result.work_item_id)
+        return
+    if stage_result.work_item_kind is WorkItemKind.PROBE:
+        queue.mark_probe_blocked(stage_result.work_item_id)
         return
     if stage_result.work_item_kind is WorkItemKind.INCIDENT:
         queue.mark_incident_blocked(stage_result.work_item_id)

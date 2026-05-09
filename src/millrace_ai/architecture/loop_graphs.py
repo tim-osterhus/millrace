@@ -24,6 +24,7 @@ _ALLOWED_SKILL_PREFIX = "skills/"
 
 class GraphLoopEntryKey(str, Enum):
     TASK = "task"
+    PROBE = "probe"
     SPEC = "spec"
     INCIDENT = "incident"
     CLOSURE_TARGET = "closure_target"

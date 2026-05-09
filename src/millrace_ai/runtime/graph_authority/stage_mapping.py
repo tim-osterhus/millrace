@@ -10,6 +10,8 @@ from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 def entry_key_for_work_item_kind(work_item_kind: WorkItemKind) -> str:
     if work_item_kind is WorkItemKind.TASK:
         return "task"
+    if work_item_kind is WorkItemKind.PROBE:
+        return "probe"
     if work_item_kind is WorkItemKind.SPEC:
         return "spec"
     if work_item_kind is WorkItemKind.INCIDENT:

@@ -22,6 +22,7 @@ class ExecutionStageName(str, Enum):
 
 
 class PlanningStageName(str, Enum):
+    RECON = "recon"
     PLANNER = "planner"
     MANAGER = "manager"
     MECHANIC = "mechanic"
@@ -52,6 +53,10 @@ class ExecutionTerminalResult(str, Enum):
 
 
 class PlanningTerminalResult(str, Enum):
+    RECON_TO_EXECUTION = "RECON_TO_EXECUTION"
+    RECON_TO_PLANNING = "RECON_TO_PLANNING"
+    RECON_BLOCKED = "RECON_BLOCKED"
+    RECON_NOOP = "RECON_NOOP"
     PLANNER_COMPLETE = "PLANNER_COMPLETE"
     MANAGER_COMPLETE = "MANAGER_COMPLETE"
     MECHANIC_COMPLETE = "MECHANIC_COMPLETE"
@@ -85,6 +90,7 @@ class ResultClass(str, Enum):
 
 class WorkItemKind(str, Enum):
     TASK = "task"
+    PROBE = "probe"
     SPEC = "spec"
     INCIDENT = "incident"
     LEARNING_REQUEST = "learning_request"
@@ -103,6 +109,21 @@ class TaskStatusHint(str, Enum):
     ACTIVE = "active"
     BLOCKED = "blocked"
     DONE = "done"
+
+
+class ProbeStatusHint(str, Enum):
+    QUEUED = "queued"
+    ACTIVE = "active"
+    BLOCKED = "blocked"
+    DONE = "done"
+
+
+class RootIntakeKind(str, Enum):
+    IDEA = "idea"
+    PROBE = "probe"
+    MANUAL = "manual"
+    INCIDENT = "incident"
+    DERIVED_SPEC = "derived_spec"
 
 
 class IncidentStatusHint(str, Enum):
@@ -153,6 +174,7 @@ class MailboxCommand(str, Enum):
     RESUME = "resume"
     RELOAD_CONFIG = "reload_config"
     ADD_TASK = "add_task"
+    ADD_PROBE = "add_probe"
     ADD_SPEC = "add_spec"
     ADD_IDEA = "add_idea"
     RETRY_ACTIVE = "retry_active"
@@ -181,8 +203,10 @@ __all__ = [
     "Plane",
     "PlanningStageName",
     "PlanningTerminalResult",
+    "ProbeStatusHint",
     "ReloadOutcome",
     "ResultClass",
+    "RootIntakeKind",
     "RuntimeErrorCode",
     "RuntimeMode",
     "StageName",

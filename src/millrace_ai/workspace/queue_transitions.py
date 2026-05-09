@@ -7,14 +7,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
-from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import (
+    IncidentDocument,
+    LearningRequestDocument,
+    ProbeDocument,
+    SpecDocument,
+    TaskDocument,
+    WorkItemKind,
+)
 from millrace_ai.errors import QueueStateError
 
 from .paths import WorkspacePaths
 from .task_lifecycle_integrity import retire_stale_blocked_task_duplicate_after_done
 from .work_documents import render_work_document
 
-_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
+_DocT = TypeVar(
+    "_DocT",
+    TaskDocument,
+    ProbeDocument,
+    SpecDocument,
+    IncidentDocument,
+    LearningRequestDocument,
+)
 
 
 def enqueue_task(paths: WorkspacePaths, doc: TaskDocument) -> Path:
@@ -27,6 +41,13 @@ def enqueue_task(paths: WorkspacePaths, doc: TaskDocument) -> Path:
 def enqueue_spec(paths: WorkspacePaths, doc: SpecDocument) -> Path:
     _ensure_unique_spec_id(paths, doc.spec_id)
     destination = paths.specs_queue_dir / f"{doc.spec_id}.md"
+    _write_model(destination, doc)
+    return destination
+
+
+def enqueue_probe(paths: WorkspacePaths, doc: ProbeDocument) -> Path:
+    _ensure_unique_probe_id(paths, doc.probe_id)
+    destination = paths.probes_queue_dir / f"{doc.probe_id}.md"
     _write_model(destination, doc)
     return destination
 
@@ -80,6 +101,24 @@ def mark_spec_blocked(paths: WorkspacePaths, spec_id: str) -> Path:
         destination_dir=paths.specs_blocked_dir,
         item_id=spec_id,
         kind=WorkItemKind.SPEC,
+    )
+
+
+def mark_probe_done(paths: WorkspacePaths, probe_id: str) -> Path:
+    return _move_item(
+        source_dir=paths.probes_active_dir,
+        destination_dir=paths.probes_done_dir,
+        item_id=probe_id,
+        kind=WorkItemKind.PROBE,
+    )
+
+
+def mark_probe_blocked(paths: WorkspacePaths, probe_id: str) -> Path:
+    return _move_item(
+        source_dir=paths.probes_active_dir,
+        destination_dir=paths.probes_blocked_dir,
+        item_id=probe_id,
+        kind=WorkItemKind.PROBE,
     )
 
 
@@ -138,6 +177,17 @@ def requeue_spec(paths: WorkspacePaths, spec_id: str, *, reason: str) -> Path:
         kind=WorkItemKind.SPEC,
     )
     _append_requeue_reason(paths.specs_queue_dir, spec_id, WorkItemKind.SPEC, reason)
+    return destination
+
+
+def requeue_probe(paths: WorkspacePaths, probe_id: str, *, reason: str) -> Path:
+    destination = _move_item(
+        source_dir=paths.probes_active_dir,
+        destination_dir=paths.probes_queue_dir,
+        item_id=probe_id,
+        kind=WorkItemKind.PROBE,
+    )
+    _append_requeue_reason(paths.probes_queue_dir, probe_id, WorkItemKind.PROBE, reason)
     return destination
 
 
@@ -233,6 +283,19 @@ def _ensure_unique_spec_id(paths: WorkspacePaths, spec_id: str) -> None:
     )
 
 
+def _ensure_unique_probe_id(paths: WorkspacePaths, probe_id: str) -> None:
+    _ensure_unique_id(
+        work_item_id=probe_id,
+        directories=(
+            paths.probes_queue_dir,
+            paths.probes_active_dir,
+            paths.probes_done_dir,
+            paths.probes_blocked_dir,
+        ),
+        kind=WorkItemKind.PROBE,
+    )
+
+
 def _ensure_unique_incident_id(paths: WorkspacePaths, incident_id: str) -> None:
     _ensure_unique_id(
         work_item_id=incident_id,
@@ -278,18 +341,22 @@ def _write_model(destination: Path, document: _DocT) -> None:
 __all__ = [
     "enqueue_incident",
     "enqueue_learning_request",
+    "enqueue_probe",
     "enqueue_spec",
     "enqueue_task",
     "mark_incident_blocked",
     "mark_incident_resolved",
     "mark_learning_request_blocked",
     "mark_learning_request_done",
+    "mark_probe_blocked",
+    "mark_probe_done",
     "mark_spec_blocked",
     "mark_spec_done",
     "mark_task_blocked",
     "mark_task_done",
     "requeue_incident",
     "requeue_learning_request",
+    "requeue_probe",
     "requeue_spec",
     "requeue_task",
 ]

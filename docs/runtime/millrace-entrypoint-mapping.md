@@ -21,6 +21,7 @@ pre-packaging draft tree for entrypoints.
 
 ### Planning Plane
 
+- `src/millrace_ai/assets/entrypoints/planning/recon.md` -> `millrace-agents/entrypoints/planning/recon.md`
 - `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
 - `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
 - `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
@@ -40,6 +41,7 @@ pre-packaging draft tree for entrypoints.
   - `millrace-agents/entrypoints/execution/builder.md`
 - Entrypoints read active work from request-provided paths such as:
   - `active_work_item_path`: `millrace-agents/tasks/active/<TASK_ID>.md`
+  - `active_work_item_path`: `millrace-agents/probes/active/<PROBE_ID>.md`
   - `active_work_item_path`: `millrace-agents/specs/active/<SPEC_ID>.md`
   - `active_work_item_path`: `millrace-agents/incidents/active/<INCIDENT_ID>.md`
   - `active_work_item_path`: `millrace-agents/learning/requests/active/<REQUEST_ID>.md`

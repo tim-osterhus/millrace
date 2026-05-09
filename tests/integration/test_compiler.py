@@ -227,6 +227,7 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     }
     assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.planning_graph.compiled_entries} == {
         "incident": "auditor",
+        "probe": "recon",
         "spec": "planner",
     }
     assert persisted_plan.planning_graph.compiled_completion_entry is not None
@@ -711,9 +712,10 @@ def test_compile_resolves_minimal_required_stage_skills(tmp_path: Path) -> None:
         for node in _all_nodes(outcome.active_plan)
     }
 
-    assert len(required_by_stage) == 12
+    assert len(required_by_stage) == 13
     assert required_by_stage["builder"] == ("skills/stage/execution/builder-core/SKILL.md",)
     assert required_by_stage["checker"] == ("skills/stage/execution/checker-core/SKILL.md",)
+    assert required_by_stage["recon"] == ("skills/stage/planning/recon-core/SKILL.md",)
     assert required_by_stage["planner"] == ("skills/stage/planning/planner-core/SKILL.md",)
     assert required_by_stage["auditor"] == ("skills/stage/planning/auditor-core/SKILL.md",)
     assert required_by_stage["arbiter"] == ("skills/stage/planning/arbiter-core/SKILL.md",)

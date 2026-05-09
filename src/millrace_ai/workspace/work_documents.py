@@ -10,10 +10,23 @@ from typing import TypeVar
 
 from pydantic import ValidationError
 
-from millrace_ai.contracts import IncidentDocument, LearningRequestDocument, SpecDocument, TaskDocument
+from millrace_ai.contracts import (
+    IncidentDocument,
+    LearningRequestDocument,
+    ProbeDocument,
+    SpecDocument,
+    TaskDocument,
+)
 
-WorkDocument = TaskDocument | SpecDocument | IncidentDocument | LearningRequestDocument
-_DocT = TypeVar("_DocT", TaskDocument, SpecDocument, IncidentDocument, LearningRequestDocument)
+WorkDocument = TaskDocument | ProbeDocument | SpecDocument | IncidentDocument | LearningRequestDocument
+_DocT = TypeVar(
+    "_DocT",
+    TaskDocument,
+    ProbeDocument,
+    SpecDocument,
+    IncidentDocument,
+    LearningRequestDocument,
+)
 _TITLE_PATTERN = re.compile(r"^#\s+(?P<title>.+?)\s*$")
 _FIELD_PATTERN = re.compile(r"^(?P<label>[A-Za-z][A-Za-z0-9-]*):(?:\s*(?P<value>.*))?$")
 _LIST_ITEM_PATTERN = re.compile(r"^-\s+(?P<value>.+?)\s*$")
@@ -36,6 +49,8 @@ _TASK_SCHEMA = _DocumentSchema(
         ("Summary", "summary"),
         ("Root-Idea-ID", "root_idea_id"),
         ("Root-Spec-ID", "root_spec_id"),
+        ("Root-Intake-Kind", "root_intake_kind"),
+        ("Root-Intake-ID", "root_intake_id"),
         ("Spec-ID", "spec_id"),
         ("Parent-Task-ID", "parent_task_id"),
         ("Incident-ID", "incident_id"),
@@ -55,6 +70,28 @@ _TASK_SCHEMA = _DocumentSchema(
         ("Risk", "risk"),
     ),
 )
+_PROBE_SCHEMA = _DocumentSchema(
+    model=ProbeDocument,
+    id_field="probe_id",
+    scalar_fields=(
+        ("Probe-ID", "probe_id"),
+        ("Title", "title"),
+        ("Summary", "summary"),
+        ("Request", "request"),
+        ("Status-Hint", "status_hint"),
+        ("Created-At", "created_at"),
+        ("Created-By", "created_by"),
+        ("Updated-At", "updated_at"),
+    ),
+    list_fields=(
+        ("Target-Paths", "target_paths"),
+        ("Constraints", "constraints"),
+        ("Acceptance", "acceptance"),
+        ("Risk-Notes", "risk_notes"),
+        ("References", "references"),
+        ("Tags", "tags"),
+    ),
+)
 _SPEC_SCHEMA = _DocumentSchema(
     model=SpecDocument,
     id_field="spec_id",
@@ -67,6 +104,8 @@ _SPEC_SCHEMA = _DocumentSchema(
         ("Parent-Spec-ID", "parent_spec_id"),
         ("Root-Idea-ID", "root_idea_id"),
         ("Root-Spec-ID", "root_spec_id"),
+        ("Root-Intake-Kind", "root_intake_kind"),
+        ("Root-Intake-ID", "root_intake_id"),
         ("Created-At", "created_at"),
         ("Created-By", "created_by"),
         ("Updated-At", "updated_at"),
@@ -95,6 +134,8 @@ _INCIDENT_SCHEMA = _DocumentSchema(
         ("Summary", "summary"),
         ("Root-Idea-ID", "root_idea_id"),
         ("Root-Spec-ID", "root_spec_id"),
+        ("Root-Intake-Kind", "root_intake_kind"),
+        ("Root-Intake-ID", "root_intake_id"),
         ("Source-Task-ID", "source_task_id"),
         ("Source-Spec-ID", "source_spec_id"),
         ("Source-Stage", "source_stage"),
@@ -143,6 +184,7 @@ _LEARNING_REQUEST_SCHEMA = _DocumentSchema(
 )
 _SCHEMA_BY_MODEL: dict[type[WorkDocument], _DocumentSchema] = {
     TaskDocument: _TASK_SCHEMA,
+    ProbeDocument: _PROBE_SCHEMA,
     SpecDocument: _SPEC_SCHEMA,
     IncidentDocument: _INCIDENT_SCHEMA,
     LearningRequestDocument: _LEARNING_REQUEST_SCHEMA,
@@ -177,6 +219,8 @@ def parse_work_document(raw: str, *, path: Path | None = None) -> WorkDocument:
     model = _infer_model(field_payload, path=path)
     if model is TaskDocument:
         return _validate_document(model=TaskDocument, heading_title=heading_title, field_payload=field_payload)
+    if model is ProbeDocument:
+        return _validate_document(model=ProbeDocument, heading_title=heading_title, field_payload=field_payload)
     if model is SpecDocument:
         return _validate_document(model=SpecDocument, heading_title=heading_title, field_payload=field_payload)
     if model is IncidentDocument:

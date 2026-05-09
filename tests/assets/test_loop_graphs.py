@@ -194,7 +194,7 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
     }
 
     assert planning.plane is Plane.PLANNING
-    assert planning_entry_nodes == {"incident": "auditor", "spec": "planner"}
+    assert planning_entry_nodes == {"incident": "auditor", "probe": "recon", "spec": "planner"}
     assert planning_dynamic is not None
     assert {policy.policy_id for policy in planning_dynamic.resume_policies} == {
         "planning.mechanic.resume"

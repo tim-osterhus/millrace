@@ -31,6 +31,8 @@ contracts:
   guessing what happened
 - learning-plane skill improvement workflows that remain explicit,
   evidence-backed, and operator-controlled
+- probe-first intake that can classify ambiguous work before committing it to
+  Planner or Execution
 - optional local observability surfaces that make workspace state visible
   without adding runtime authority or weight to the base deployment package
 
@@ -81,6 +83,22 @@ Expected user impact:
 - less stale public guidance
 - clearer distinction between shipped facts, planned work, and speculative ideas
 - easier evaluation of whether Millrace is ready for a given workspace
+
+### Probe And Recon Intake
+
+Millrace now has a lightweight probe intake path for ambiguous requests that
+need grounded classification before they become normal specs or execution
+tasks. The active direction is to keep Recon evidence-rich but deliberately
+non-implementing: it should produce route decisions, recon packets, and one
+generated handoff artifact when needed, while runtime-owned mutation remains
+single-writer.
+
+Expected user impact:
+
+- fewer overgrown specs for small repo-research questions
+- safer conversion from vague operator requests into execution tasks
+- clearer audit evidence for why ambiguous work entered Planning, Execution,
+  no-op, or blocked state
 
 ### Optional Web Observability
 

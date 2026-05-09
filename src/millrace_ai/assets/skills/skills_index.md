@@ -13,6 +13,7 @@ recommended_for_stages:
   - updater
   - troubleshooter
   - consultant
+  - recon
   - planner
   - manager
   - mechanic
@@ -62,6 +63,7 @@ entrypoint explicitly assigns them.
 | `updater-core` | Updater factual reconciliation and doc-hygiene habits. | `execution`, `stage-core` | `skills/stage/execution/updater-core/SKILL.md` | shipped |
 | `troubleshooter-core` | Troubleshooter diagnosis and smallest-safe-fix heuristics. | `execution`, `stage-core` | `skills/stage/execution/troubleshooter-core/SKILL.md` | shipped |
 | `consultant-core` | Consultant escalation judgment and evidence-preserving recovery posture. | `execution`, `stage-core` | `skills/stage/execution/consultant-core/SKILL.md` | shipped |
+| `recon-core` | Recon posture for grounded probe classification and downstream handoff context. | `planning`, `stage-core` | `skills/stage/planning/recon-core/SKILL.md` | shipped |
 | `planner-core` | Planner synthesis posture, assumption marking, and spec focus. | `planning`, `stage-core` | `skills/stage/planning/planner-core/SKILL.md` | shipped |
 | `manager-core` | Manager decomposition posture, ordering, and task-verifiability habits. | `planning`, `stage-core` | `skills/stage/planning/manager-core/SKILL.md` | shipped |
 | `mechanic-core` | Mechanic repair posture for planning-side inconsistencies. | `planning`, `stage-core` | `skills/stage/planning/mechanic-core/SKILL.md` | shipped |

@@ -34,19 +34,20 @@ for the shipped mode and loop topology the compiler resolves.
 ### Markdown work documents (canonical queue artifacts)
 
 - `millrace-agents/tasks/{queue,active,done,blocked}/*.md`
+- `millrace-agents/probes/{queue,active,done,blocked}/*.md`
 - `millrace-agents/specs/{queue,active,done,blocked}/*.md`
 - `millrace-agents/incidents/{incoming,active,resolved,blocked}/*.md`
 - `millrace-agents/learning/requests/{queue,active,done,blocked}/*.md`
 
-Canonical task/spec/incident/learning-request documents use headed markdown:
+Canonical task/probe/spec/incident/learning-request documents use headed markdown:
 
 - leading H1 title
 - scalar headings such as `Task-ID: ...` or `Spec-ID: ...`
 - list sections such as `Acceptance:` followed by `- ...` items
 
 Incident documents also accept `Status-Hint` values of `incoming`, `active`,
-`blocked`, or `resolved`. Task documents use their own queue-state hints:
-`queued`, `active`, `blocked`, and `done`.
+`blocked`, or `resolved`. Task and probe documents use their own queue-state
+hints: `queued`, `active`, `blocked`, and `done`.
 
 JSON imports are still accepted for queue intake, but canonical on-disk queue artifacts are markdown.
 
@@ -80,7 +81,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/workspace/asset_deployment.py`: packaged runtime asset source resolution and deployment into initialized workspaces.
 - `src/millrace_ai/workspace/initialization.py`: explicit `millrace init` workspace baseline orchestration and the `bootstrap_workspace` compatibility alias.
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
-- `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/spec/incident/learning-request documents.
+- `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/probe/spec/incident/learning-request documents.
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
 - `src/millrace_ai/workspace/task_lifecycle_integrity.py`: duplicate task lifecycle detection and safe stale-blocked predecessor retirement when a same-root continuation reaches `done`.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
@@ -112,6 +113,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/runtime/result_counters.py`: recovery-counter entry mutation and snapshot counter increments.
 - `src/millrace_ai/runtime/work_item_transitions.py`: non-closure work-item completion, blocked transitions, and active-snapshot clearing.
 - `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and arbiter-gap incident materialization, including source work-item lineage inheritance for runtime-created handoff incidents.
+- `src/millrace_ai/runtime/recon_transitions.py`: Recon packet persistence and probe-to-task/spec/no-op/blocked mutation.
 - `src/millrace_ai/runtime/stage_result_persistence.py`: persisted stage-result JSON writes and plane status-marker updates.
 - `src/millrace_ai/runtime/learning_triggers.py`: compiler-frozen learning-trigger evaluation and learning-request enqueueing.
 - `src/millrace_ai/runtime/skill_evidence.py`: per-request skill revision evidence snapshots for learning-enabled runs.
@@ -268,6 +270,9 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 - Entrypoints are plain markdown instruction files under `millrace-agents/entrypoints/<plane>/<stage>.md`.
 - Work-item stage requests include `active_work_item_path`, `run_dir`, and relevant context paths so entrypoints do not invent runtime paths.
 - Closure-target stage requests such as `arbiter` use `request_kind = closure_target` and pass canonical root-spec and seed-idea paths instead of fabricating an active queue document.
+- Probe stage requests enter Planning through `recon`; successful Recon outputs
+  are persisted as `millrace-agents/recon/packets/<PACKET_ID>.md` before
+  generated task/spec artifacts are enqueued by the runtime.
 - Learning stage requests use `request_kind = learning_request` and active request paths under `millrace-agents/learning/requests/active/`.
 - Learning requests can finish with stage-specific no-op terminal outcomes when
   evidence was reviewed and no skill update is warranted. No-op requests are

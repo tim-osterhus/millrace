@@ -10,7 +10,7 @@ import typer
 
 from millrace_ai.cli.errors import _print_error
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import SpecDocument, TaskDocument
+from millrace_ai.contracts import ProbeDocument, SpecDocument, TaskDocument
 from millrace_ai.paths import WorkspacePaths, initialize_workspace, require_initialized_workspace, workspace_paths
 from millrace_ai.runners.adapters.codex_cli import CodexCliRunnerAdapter
 from millrace_ai.runners.adapters.pi_rpc import PiRpcRunnerAdapter
@@ -87,6 +87,18 @@ def _load_spec_document(input_path: Path) -> SpecDocument:
     raise ValueError("spec import path must end with .md or .json")
 
 
+def _load_probe_document(input_path: Path) -> ProbeDocument:
+    if input_path.suffix == ".md":
+        return parse_work_document_as(
+            input_path.read_text(encoding="utf-8"),
+            model=ProbeDocument,
+            path=input_path,
+        )
+    if input_path.suffix == ".json":
+        return read_json_import(input_path, model=ProbeDocument)
+    raise ValueError("probe import path must end with .md or .json")
+
+
 def _queue_lookup(
     paths: WorkspacePaths,
     *,
@@ -97,6 +109,10 @@ def _queue_lookup(
         ("task", "active", paths.tasks_active_dir),
         ("task", "done", paths.tasks_done_dir),
         ("task", "blocked", paths.tasks_blocked_dir),
+        ("probe", "queue", paths.probes_queue_dir),
+        ("probe", "active", paths.probes_active_dir),
+        ("probe", "done", paths.probes_done_dir),
+        ("probe", "blocked", paths.probes_blocked_dir),
         ("spec", "queue", paths.specs_queue_dir),
         ("spec", "active", paths.specs_active_dir),
         ("spec", "done", paths.specs_done_dir),
@@ -160,6 +176,7 @@ __all__ = [
     "_cli_api",
     "_ensure_paths",
     "_initialize_paths",
+    "_load_probe_document",
     "_load_spec_document",
     "_load_task_document",
     "_queue_lookup",

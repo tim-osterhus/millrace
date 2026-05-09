@@ -17,6 +17,7 @@
     "updater": "codex_cli",
     "troubleshooter": "codex_cli",
     "consultant": "codex_cli",
+    "recon": "codex_cli",
     "planner": "codex_cli",
     "manager": "codex_cli",
     "mechanic": "codex_cli",

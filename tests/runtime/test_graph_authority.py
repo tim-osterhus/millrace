@@ -142,12 +142,15 @@ def test_work_item_activation_resolves_from_compiled_plan_entries(tmp_path: Path
     assert engine.compiled_plan is not None
 
     task = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.TASK)
+    probe = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.PROBE)
     spec = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.SPEC)
     incident = work_item_activation_for_graph(engine.compiled_plan, WorkItemKind.INCIDENT)
     completion = completion_activation_for_graph(engine.compiled_plan)
 
     assert task.plane is Plane.EXECUTION
     assert task.stage is ExecutionStageName.BUILDER
+    assert probe.plane is Plane.PLANNING
+    assert probe.stage is PlanningStageName.RECON
     assert spec.plane is Plane.PLANNING
     assert spec.stage is PlanningStageName.PLANNER
     assert incident.plane is Plane.PLANNING
@@ -257,6 +260,23 @@ def test_completion_activation_fails_when_completion_entry_is_missing(tmp_path: 
             RecoveryCounters(),
             "run_stage",
             ExecutionStageName.CHECKER,
+        ),
+        (
+            _snapshot(
+                plane=Plane.PLANNING,
+                stage=PlanningStageName.RECON,
+                work_item_kind=WorkItemKind.PROBE,
+                work_item_id="probe-001",
+            ),
+            _stage_result(
+                stage=PlanningStageName.RECON,
+                terminal_result=PlanningTerminalResult.RECON_TO_EXECUTION,
+                work_item_kind=WorkItemKind.PROBE,
+                work_item_id="probe-001",
+            ),
+            RecoveryCounters(),
+            "idle",
+            None,
         ),
         (
             _snapshot(
