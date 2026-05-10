@@ -13,6 +13,21 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- `millrace status` and `millrace status show` now support `--format json`,
+  including blocked-idle diagnostics and the latest runtime error report path.
+
+### Fixed
+
+- Invalid Recon handoff artifacts now block the active probe with
+  `recon_handoff_invalid` instead of letting malformed probe output fall into
+  ordinary planning recovery.
+- Graph-loop asset validation now rejects Recon handoff outcomes wired directly
+  to stage nodes; typed Recon promotion must remain runtime-owned.
+- Stage-request construction now refuses stale stage/work-item pairings before
+  runner invocation, preventing Manager from receiving probe work.
+
 ## [0.18.1] - 2026-05-08
 
 ### Added

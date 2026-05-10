@@ -322,6 +322,22 @@ def test_broken_edge_target_fails_deterministically(tmp_path: Path) -> None:
         load_builtin_graph_loop_definition("planning.standard", assets_root=assets_root)
 
 
+def test_recon_handoff_edge_to_planner_fails_deterministically(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    for edge in payload["edges"]:
+        if edge["edge_id"] == "recon-to-planning-to-terminal-recon-to-planning":
+            edge.pop("terminal_state_id")
+            edge["to_node_id"] = "planner"
+            edge["kind"] = "normal"
+            break
+    graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(GraphLoopAssetError, match="Recon handoff outcomes must target terminal states"):
+        load_builtin_graph_loop_definition("planning.standard", assets_root=assets_root)
+
+
 def test_invalid_resume_policy_target_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     graph_path = assets_root / "graphs" / "execution" / "standard.json"

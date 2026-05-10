@@ -166,6 +166,7 @@ class RuntimeErrorCode(str, Enum):
     EXECUTION_WORK_ITEM_COMPLETION_CONFLICT = "execution_work_item_completion_conflict"
     PLANNING_POST_STAGE_APPLY_FAILED = "planning_post_stage_apply_failed"
     EXECUTION_POST_STAGE_APPLY_FAILED = "execution_post_stage_apply_failed"
+    RECON_HANDOFF_INVALID = "recon_handoff_invalid"
 
 
 class MailboxCommand(str, Enum):

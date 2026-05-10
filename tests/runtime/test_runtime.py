@@ -20,6 +20,12 @@ from millrace_ai.contracts import (
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
+    ProbeDocument,
+    ReconConfidence,
+    ReconDecision,
+    ReconPacketDocument,
+    ReconPathFinding,
+    ReconRiskLevel,
     RecoveryCounterEntry,
     RecoveryCounters,
     ResultClass,
@@ -35,6 +41,7 @@ from millrace_ai.events import read_runtime_events
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.recon_packets import render_recon_packet
 from millrace_ai.router import RouterAction
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
@@ -106,6 +113,62 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
         references=["lab/specs/drafts/millrace-agent-topology-and-transition-table.md"],
         created_at=created_at,
         created_by="tests",
+    )
+
+
+def _probe_doc(probe_id: str, *, created_at: datetime) -> ProbeDocument:
+    return ProbeDocument(
+        probe_id=probe_id,
+        title=f"Probe {probe_id}",
+        summary="runtime probe input",
+        request="Research the codebase before routing this work.",
+        target_paths=("src/example.py",),
+        acceptance=("Recon routes the probe.",),
+        created_at=created_at,
+        created_by="tests",
+    )
+
+
+def _recon_packet(
+    probe_id: str,
+    *,
+    decision: ReconDecision,
+    emitted_task_id: str | None = None,
+    emitted_spec_id: str | None = None,
+) -> ReconPacketDocument:
+    return ReconPacketDocument(
+        recon_packet_id=f"recon-{probe_id}",
+        probe_id=probe_id,
+        decision=decision,
+        confidence=ReconConfidence.HIGH,
+        risk_level=ReconRiskLevel.MEDIUM,
+        request_summary="Research before routing.",
+        interpreted_goal="Route this work through the smallest safe lane.",
+        relevant_paths=(ReconPathFinding(path="src/example.py", reason="Likely behavior owner."),),
+        semantic_invariants=("Preserve adjacent behavior.",),
+        handoff_target="execution" if decision is ReconDecision.TO_EXECUTION else "planning",
+        emitted_task_id=emitted_task_id,
+        emitted_spec_id=emitted_spec_id,
+        created_at=NOW,
+    )
+
+
+def _generated_probe_spec(spec_id: str = "spec-from-probe") -> SpecDocument:
+    return SpecDocument(
+        spec_id=spec_id,
+        title="Spec from probe",
+        summary="planning route",
+        source_type="probe",
+        source_id="probe-001",
+        root_intake_kind="probe",
+        root_intake_id="probe-001",
+        root_spec_id=spec_id,
+        goals=("Plan the probe-derived change.",),
+        constraints=("Use the recon packet as required context.",),
+        acceptance=("Manager can decompose the spec.",),
+        references=("millrace-agents/probes/active/probe-001.md",),
+        created_at=NOW,
+        created_by="recon",
     )
 
 
@@ -1325,6 +1388,176 @@ def test_runtime_routes_post_stage_planning_completion_conflict_into_mechanic(
     assert "planning_work_item_completion_conflict" in report_text
     assert "QueueStateError" in report_text
     assert "spec spec-001 is not active" in report_text
+
+
+def test_runtime_blocks_malformed_recon_handoff_without_running_mechanic_or_manager(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_probe(_probe_doc("probe-001", created_at=NOW))
+
+    seen_stages: list[PlanningStageName] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        seen_stages.append(PlanningStageName(request.stage))
+        run_dir = Path(request.run_dir)
+        if request.stage is PlanningStageName.RECON:
+            (run_dir / "recon_packet.md").write_text(
+                """# Bad Recon Packet
+
+Recon-Packet-ID: recon-probe-001
+Probe-ID: probe-001
+Decision: to_planning
+Confidence: high
+Risk-Level: medium
+Request-Summary: Research before routing.
+Interpreted-Goal: Route this work safely.
+Handoff-Target: planning
+Emitted-Task-ID: task-from-probe
+Created-At: 2026-04-28T12:00:00Z
+Created-By: recon
+
+Relevant-Paths:
+- src/example.py | likely behavior owner
+
+Semantic-Invariants:
+- Preserve adjacent behavior.
+""",
+                encoding="utf-8",
+            )
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.RECON_TO_PLANNING.value,
+                now=NOW,
+            )
+        raise AssertionError(f"unexpected stage after malformed recon handoff: {request.stage}")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+
+    assert outcome.stage is PlanningStageName.RECON
+    assert seen_stages == [PlanningStageName.RECON]
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is None
+    assert snapshot.active_work_item_kind is None
+    assert snapshot.current_failure_class == "recon_handoff_invalid"
+    assert load_planning_status(paths) == "### BLOCKED"
+    assert (paths.probes_blocked_dir / "probe-001.md").is_file()
+    assert not (paths.probes_active_dir / "probe-001.md").exists()
+    assert not any(paths.specs_queue_dir.glob("*.md"))
+
+    second = engine.tick()
+    assert second.router_decision.reason == "no_work"
+
+
+def test_runtime_claims_generated_spec_after_recon_to_planning_handoff(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_probe(_probe_doc("probe-001", created_at=NOW))
+
+    captured_requests: list[StageRunRequest] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        captured_requests.append(request)
+        run_dir = Path(request.run_dir)
+        if request.stage is PlanningStageName.RECON:
+            packet = _recon_packet(
+                "probe-001",
+                decision=ReconDecision.TO_PLANNING,
+                emitted_spec_id="spec-from-probe",
+            )
+            (run_dir / "recon_packet.md").write_text(render_recon_packet(packet), encoding="utf-8")
+            (run_dir / "generated_spec.md").write_text(
+                _generated_probe_spec().model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.RECON_TO_PLANNING.value,
+                now=NOW,
+            )
+        if request.stage is PlanningStageName.PLANNER:
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.PLANNER_COMPLETE.value,
+                now=NOW,
+            )
+        if request.stage is PlanningStageName.MANAGER:
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.MANAGER_COMPLETE.value,
+                now=NOW,
+            )
+        raise AssertionError(f"unexpected planning stage: {request.stage}")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    recon = engine.tick()
+    planner = engine.tick()
+    manager = engine.tick()
+
+    assert recon.stage is PlanningStageName.RECON
+    assert planner.stage is PlanningStageName.PLANNER
+    assert manager.stage is PlanningStageName.MANAGER
+    assert captured_requests[0].active_work_item_kind is WorkItemKind.PROBE
+    assert captured_requests[1].active_work_item_kind is WorkItemKind.SPEC
+    assert captured_requests[1].active_work_item_id == "spec-from-probe"
+    assert captured_requests[1].active_work_item_path is not None
+    assert "/specs/active/spec-from-probe.md" in captured_requests[1].active_work_item_path
+    assert captured_requests[2].active_work_item_kind is WorkItemKind.SPEC
+    assert captured_requests[2].active_work_item_id == "spec-from-probe"
+    assert not (paths.probes_active_dir / "probe-001.md").exists()
+
+
+def test_runtime_refuses_manager_request_for_stale_active_probe(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_probe(_probe_doc("probe-001", created_at=NOW))
+    queue.claim_next_planning_item()
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError(f"runner should not be invoked for {request.stage}")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    engine.snapshot = load_snapshot(paths).model_copy(
+        update={
+            "process_running": True,
+            "active_plane": Plane.PLANNING,
+            "active_stage": PlanningStageName.MANAGER,
+            "active_node_id": "manager",
+            "active_stage_kind_id": "manager",
+            "active_run_id": "run-stale-manager-probe",
+            "active_work_item_kind": WorkItemKind.PROBE,
+            "active_work_item_id": "probe-001",
+            "planning_status_marker": "### MANAGER_RUNNING",
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+    set_planning_status(paths, "### MANAGER_RUNNING")
+
+    outcome = engine.tick()
+
+    assert outcome.router_decision.reason == "stage_work_item_ownership_invalid"
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is None
+    assert snapshot.active_work_item_kind is None
+    assert snapshot.current_failure_class == "stage_work_item_ownership_invalid"
+    assert (paths.probes_queue_dir / "probe-001.md").is_file()
+    assert not (paths.probes_active_dir / "probe-001.md").exists()
+    events = read_runtime_events(paths)
+    assert any(
+        event.event_type == "runtime_stage_work_item_ownership_invalid"
+        for event in events
+    )
 
 
 def test_runtime_routes_post_stage_execution_completion_conflict_into_troubleshooter(

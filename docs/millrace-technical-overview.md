@@ -567,6 +567,12 @@ If a stage emitted a legal terminal result but the runtime itself then fails
 while applying that result, Millrace emits a runtime-owned error code and routes
 that into a repair stage with an explicit runtime error context.
 
+Recon handoff validation is deliberately stricter. If Recon returns
+`RECON_TO_EXECUTION` or `RECON_TO_PLANNING` but its packet or generated
+handoff artifact is invalid, Millrace records `recon_handoff_invalid`, blocks
+the active probe, and does not convert that probe into Planner, Manager, or
+Mechanic work.
+
 That distinction prevents recovery agents from diagnosing the wrong problem
 class.
 

@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
+    PlanningStageName,
     PlanningTerminalResult,
     ReconDecision,
     ReconPacketDocument,
     RootIntakeKind,
+    RuntimeErrorCode,
     SpecDocument,
     StageResultEnvelope,
     TaskDocument,
@@ -20,6 +22,7 @@ from millrace_ai.recon_packets import read_recon_packet, render_recon_packet
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.work_documents import parse_work_document_as
 
+from .error_recovery import record_post_stage_exception_context
 from .work_item_transitions import apply_blocked_router_decision, apply_idle_router_decision
 
 if TYPE_CHECKING:
@@ -39,6 +42,8 @@ def apply_recon_router_decision(
     engine: RuntimeEngine,
     decision: RouterDecision,
     stage_result: StageResultEnvelope,
+    *,
+    stage_result_path: Path | None = None,
 ) -> tuple[Path, ...]:
     """Persist Recon artifacts, enqueue routed work, then finish the active probe."""
 
@@ -55,23 +60,69 @@ def apply_recon_router_decision(
     } and decision.action is not RouterAction.BLOCKED:
         raise ValueError("blocked recon terminal results require a blocked router decision")
 
-    packet = _read_and_persist_packet(engine, stage_result)
-    _validate_packet_for_stage_result(packet, stage_result, terminal_result)
+    try:
+        packet = _read_and_persist_packet(engine, stage_result)
+        _validate_packet_for_stage_result(packet, stage_result, terminal_result)
 
-    spawned: tuple[Path, ...] = ()
-    if terminal_result is PlanningTerminalResult.RECON_TO_EXECUTION:
-        spawned = (_enqueue_generated_task(engine, stage_result, packet),)
-        apply_idle_router_decision(engine, stage_result)
-        return spawned
-    if terminal_result is PlanningTerminalResult.RECON_TO_PLANNING:
-        spawned = (_enqueue_generated_spec(engine, stage_result, packet),)
-        apply_idle_router_decision(engine, stage_result)
-        return spawned
-    if terminal_result is PlanningTerminalResult.RECON_NOOP:
-        apply_idle_router_decision(engine, stage_result)
+        spawned: tuple[Path, ...] = ()
+        if terminal_result is PlanningTerminalResult.RECON_TO_EXECUTION:
+            spawned = (_enqueue_generated_task(engine, stage_result, packet),)
+            apply_idle_router_decision(engine, stage_result)
+            return spawned
+        if terminal_result is PlanningTerminalResult.RECON_TO_PLANNING:
+            spawned = (_enqueue_generated_spec(engine, stage_result, packet),)
+            apply_idle_router_decision(engine, stage_result)
+            return spawned
+        if terminal_result is PlanningTerminalResult.RECON_NOOP:
+            apply_idle_router_decision(engine, stage_result)
+            return ()
+
+        apply_blocked_router_decision(engine, decision, stage_result)
         return ()
+    except Exception as exc:
+        return _block_invalid_recon_handoff(
+            engine,
+            stage_result=stage_result,
+            router_decision=decision,
+            stage_result_path=stage_result_path,
+            error=exc,
+        )
 
-    apply_blocked_router_decision(engine, decision, stage_result)
+
+def _block_invalid_recon_handoff(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    router_decision: RouterDecision,
+    stage_result_path: Path | None,
+    error: Exception,
+) -> tuple[Path, ...]:
+    record_post_stage_exception_context(
+        engine,
+        stage_result=stage_result,
+        error=error,
+        router_decision=router_decision,
+        stage_result_path=stage_result_path,
+        error_code=RuntimeErrorCode.RECON_HANDOFF_INVALID,
+        repair_stage=PlanningStageName.RECON,
+    )
+    engine._set_plane_status_marker(
+        plane=stage_result.plane,
+        marker="### BLOCKED",
+        run_id=stage_result.run_id,
+        source="recon_handoff_invalid",
+    )
+    apply_blocked_router_decision(
+        engine,
+        RouterDecision(
+            action=RouterAction.BLOCKED,
+            next_plane=None,
+            next_stage=None,
+            reason="recon_handoff_invalid",
+            failure_class=RuntimeErrorCode.RECON_HANDOFF_INVALID.value,
+        ),
+        stage_result,
+    )
     return ()
 
 

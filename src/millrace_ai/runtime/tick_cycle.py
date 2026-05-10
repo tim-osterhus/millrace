@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.errors import WorkspaceStateError
+from millrace_ai.errors import StageWorkItemOwnershipError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import normalize_stage_result
@@ -19,6 +19,7 @@ from .learning_promotions import (
 )
 from .learning_triggers import enqueue_learning_requests_for_stage_result
 from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
+from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -103,13 +104,17 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         engine.snapshot.active_stage,
         node_id=engine.snapshot.active_node_id,
     )
-    if engine._is_completion_stage_active():
-        closure_target = engine._active_closure_target()
-        if closure_target is None:
-            raise WorkspaceStateError("completion stage is active without an open closure target")
-        request = engine._build_closure_target_stage_run_request(stage_plan, closure_target)
-    else:
-        request = engine._build_stage_run_request(stage_plan)
+    try:
+        if engine._is_completion_stage_active():
+            closure_target = engine._active_closure_target()
+            if closure_target is None:
+                raise WorkspaceStateError("completion stage is active without an open closure target")
+            request = engine._build_closure_target_stage_run_request(stage_plan, closure_target)
+        else:
+            request = engine._build_stage_run_request(stage_plan)
+    except StageWorkItemOwnershipError as exc:
+        handle_stage_work_item_ownership_error(engine, error=exc)
+        return engine._idle_tick_outcome(reason="stage_work_item_ownership_invalid")
     engine._mark_active_stage_running(
         plane=request.plane,
         stage=request.stage,
@@ -164,7 +169,11 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         )
         router_decision = engine._route_stage_result(stage_result)
         engine._write_plane_status(stage_result)
-        spawned_paths = engine._apply_router_decision(router_decision, stage_result)
+        spawned_paths = engine._apply_router_decision(
+            router_decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
         spawned_work = tuple(
             spawned_work_ref_from_path(
                 path,

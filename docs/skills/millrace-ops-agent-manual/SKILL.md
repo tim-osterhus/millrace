@@ -151,6 +151,9 @@ rules are only valid when a compiled mode names a safe destination such as
    it inside a `tmux` pane rather than as an ordinary shell background process.
 8. Monitor with `millrace status watch`, `millrace runs ls`, and
    `millrace runs show <run_id>`.
+   Use `millrace status show --format json --workspace <workspace>` when you
+   need machine-readable diagnostics such as `blocked_idle`,
+   `current_failure_class`, or `latest_runtime_error_report_path`.
    Use `millrace compile graph --workspace <workspace>` when you need the legal
    compiled topology, and `millrace runs trace <run_id> --workspace <workspace>`
    when you need the graph-shaped path one concrete run followed.
@@ -492,6 +495,18 @@ Read in this order when present:
 2. `runtime_error_catalog_path`
 
 Do not invent semantics for runtime error codes from memory alone.
+
+Recon handoff failures are a special blocked-probe case. If status shows
+`current_failure_class: recon_handoff_invalid`, run:
+
+```bash
+millrace status show --format json --workspace <workspace>
+```
+
+Then read `latest_runtime_error_report_path` and inspect the run's
+`recon_packet.md` plus any generated task/spec artifact. The supported
+diagnosis is that Recon emitted an invalid typed handoff; do not manually route
+that probe into Planner, Manager, or Mechanic.
 
 ## Pitfalls And Gotchas
 

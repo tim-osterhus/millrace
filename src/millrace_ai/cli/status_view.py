@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+import json
+from typing import Any, Sequence
 
 import typer
 
@@ -10,6 +11,7 @@ from millrace_ai.compiler import CompiledPlanCurrentness, inspect_workspace_plan
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import ClosureTargetState
 from millrace_ai.paths import WorkspacePaths
+from millrace_ai.runtime.error_recovery import load_runtime_error_context
 from millrace_ai.runtime.pause_state import pause_sources_label
 from millrace_ai.runtime.usage_governance import load_usage_governance_state
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
@@ -26,11 +28,22 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     lock_status = inspect_runtime_ownership_lock(paths)
     process_running = snapshot.process_running and lock_status.state == "active"
 
-    execution_queue_depth = len(tuple(paths.tasks_queue_dir.glob("*.md")))
-    planning_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md"))) + len(
-        tuple(paths.incidents_incoming_dir.glob("*.md"))
+    queue_depths = _queue_depths(paths)
+    closure_status = _closure_target_status(paths)
+    latest_runtime_error_report_path = _latest_runtime_error_report_path(paths)
+    blocked_idle = _blocked_idle(
+        process_running=process_running,
+        active_run_count=len(snapshot.active_runs_by_plane),
+        execution_queue_depth=queue_depths["execution"],
+        planning_queue_depth=queue_depths["planning"],
+        learning_queue_depth=queue_depths["learning"],
+        closure_target_open=closure_status["closure_target_open"],
+        closure_target_blocked_by_lineage_work=closure_status[
+            "closure_target_blocked_by_lineage_work"
+        ],
+        planning_status_marker=snapshot.planning_status_marker,
+        current_failure_class=snapshot.current_failure_class,
     )
-    learning_queue_depth = len(tuple(paths.learning_requests_queue_dir.glob("*.md")))
 
     lines = [
         f"workspace: {paths.root}",
@@ -50,18 +63,20 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"active_work_item_kind: {_status_value(snapshot.active_work_item_kind)}",
         f"active_work_item_id: {_status_value(snapshot.active_work_item_id)}",
         f"active_run_count: {len(snapshot.active_runs_by_plane)}",
-        f"execution_queue_depth: {execution_queue_depth}",
-        f"planning_queue_depth: {planning_queue_depth}",
-        f"learning_queue_depth: {learning_queue_depth}",
+        f"execution_queue_depth: {queue_depths['execution']}",
+        f"planning_queue_depth: {queue_depths['planning']}",
+        f"learning_queue_depth: {queue_depths['learning']}",
         f"execution_status_marker: {snapshot.execution_status_marker}",
         f"planning_status_marker: {snapshot.planning_status_marker}",
         f"learning_status_marker: {snapshot.learning_status_marker}",
+        f"blocked_idle: {'true' if blocked_idle else 'false'}",
+        f"latest_runtime_error_report_path: {_status_value(latest_runtime_error_report_path)}",
     ]
     lines.extend(_render_active_run_lines(snapshot.active_runs_by_plane))
     lines.extend(_render_baseline_manifest_lines(baseline_manifest))
     lines.extend(_render_compile_currentness_lines(currentness, currentness_error))
     lines.extend(_render_usage_governance_status_lines(paths))
-    lines.extend(_render_closure_target_status_lines(paths))
+    lines.extend(_render_closure_target_status_lines_from_status(closure_status))
     if snapshot.current_failure_class:
         lines.append(f"current_failure_class: {snapshot.current_failure_class}")
         for label, count in (
@@ -73,6 +88,62 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
             if count > 0:
                 lines.append(f"{label}: {count}")
     return tuple(lines)
+
+
+def _status_payload(paths: WorkspacePaths) -> dict[str, Any]:
+    snapshot = load_snapshot(paths)
+    currentness, currentness_error = _load_compile_currentness(paths)
+    lock_status = inspect_runtime_ownership_lock(paths)
+    process_running = snapshot.process_running and lock_status.state == "active"
+    queue_depths = _queue_depths(paths)
+    closure_status = _closure_target_status(paths)
+    latest_runtime_error_report_path = _latest_runtime_error_report_path(paths)
+    active_run_count = len(snapshot.active_runs_by_plane)
+    blocked_idle = _blocked_idle(
+        process_running=process_running,
+        active_run_count=active_run_count,
+        execution_queue_depth=queue_depths["execution"],
+        planning_queue_depth=queue_depths["planning"],
+        learning_queue_depth=queue_depths["learning"],
+        closure_target_open=closure_status["closure_target_open"],
+        closure_target_blocked_by_lineage_work=closure_status[
+            "closure_target_blocked_by_lineage_work"
+        ],
+        planning_status_marker=snapshot.planning_status_marker,
+        current_failure_class=snapshot.current_failure_class,
+    )
+    return {
+        "workspace": str(paths.root),
+        "runtime_mode": snapshot.runtime_mode.value,
+        "process_running": process_running,
+        "runtime_ownership_lock": lock_status.state,
+        "paused": snapshot.paused,
+        "pause_sources": pause_sources_label(snapshot),
+        "stop_requested": snapshot.stop_requested,
+        "active_mode_id": snapshot.active_mode_id,
+        "compiled_plan_id": snapshot.compiled_plan_id,
+        "compiled_plan_currentness": _compiled_plan_currentness_value(
+            currentness,
+            currentness_error,
+        ),
+        "active_plane": _status_payload_value(snapshot.active_plane),
+        "active_stage": _status_payload_value(snapshot.active_stage),
+        "active_node_id": snapshot.active_node_id,
+        "active_stage_kind_id": snapshot.active_stage_kind_id,
+        "active_work_item_kind": _status_payload_value(snapshot.active_work_item_kind),
+        "active_work_item_id": snapshot.active_work_item_id,
+        "active_run_count": active_run_count,
+        "execution_queue_depth": queue_depths["execution"],
+        "planning_queue_depth": queue_depths["planning"],
+        "learning_queue_depth": queue_depths["learning"],
+        "execution_status_marker": snapshot.execution_status_marker,
+        "planning_status_marker": snapshot.planning_status_marker,
+        "learning_status_marker": snapshot.learning_status_marker,
+        "blocked_idle": blocked_idle,
+        "current_failure_class": snapshot.current_failure_class,
+        "latest_runtime_error_report_path": latest_runtime_error_report_path,
+        **closure_status,
+    }
 
 
 def _render_active_run_lines(active_runs_by_plane: object) -> tuple[str, ...]:
@@ -104,6 +175,10 @@ def _print_status(paths: WorkspacePaths) -> None:
         typer.echo(line)
 
 
+def _print_status_json(paths: WorkspacePaths) -> None:
+    typer.echo(json.dumps(_status_payload(paths), indent=2, sort_keys=True))
+
+
 def _print_statuses(paths_list: Sequence[WorkspacePaths]) -> None:
     for index, paths in enumerate(paths_list):
         if index > 0:
@@ -111,44 +186,60 @@ def _print_statuses(paths_list: Sequence[WorkspacePaths]) -> None:
         _print_status(paths)
 
 
-def _render_closure_target_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
+def _render_closure_target_status_lines_from_status(
+    status: dict[str, object],
+) -> tuple[str, ...]:
+    return (
+        f"closure_target_root_spec_id: {_status_value(status['closure_target_root_spec_id'])}",
+        f"closure_target_open: {_status_value(status['closure_target_open'])}",
+        (
+            "closure_target_blocked_by_lineage_work: "
+            f"{_status_value(status['closure_target_blocked_by_lineage_work'])}"
+        ),
+        (
+            "planning_root_specs_deferred_by_closure_target: "
+            f"{_status_value(status['planning_root_specs_deferred_by_closure_target'])}"
+        ),
+        f"closure_target_latest_verdict_path: {_status_value(status['closure_target_latest_verdict_path'])}",
+        f"closure_target_latest_report_path: {_status_value(status['closure_target_latest_report_path'])}",
+    )
+
+
+def _closure_target_status(paths: WorkspacePaths) -> dict[str, object]:
     open_targets = list_open_closure_target_states(paths)
     actionable_targets = _actionable_open_closure_targets(open_targets)
     if len(actionable_targets) > 1:
-        return (
-            "closure_target_root_spec_id: invalid_multiple_actionable_open_targets",
-            "closure_target_open: invalid",
-            "closure_target_blocked_by_lineage_work: invalid",
-            "planning_root_specs_deferred_by_closure_target: invalid",
-            "closure_target_latest_verdict_path: none",
-            "closure_target_latest_report_path: none",
-        )
+        return {
+            "closure_target_root_spec_id": "invalid_multiple_actionable_open_targets",
+            "closure_target_open": "invalid",
+            "closure_target_blocked_by_lineage_work": "invalid",
+            "planning_root_specs_deferred_by_closure_target": "invalid",
+            "closure_target_latest_verdict_path": None,
+            "closure_target_latest_report_path": None,
+        }
     if not open_targets:
-        return (
-            "closure_target_root_spec_id: none",
-            "closure_target_open: none",
-            "closure_target_blocked_by_lineage_work: none",
-            "planning_root_specs_deferred_by_closure_target: 0",
-            "closure_target_latest_verdict_path: none",
-            "closure_target_latest_report_path: none",
-        )
+        return {
+            "closure_target_root_spec_id": None,
+            "closure_target_open": None,
+            "closure_target_blocked_by_lineage_work": None,
+            "planning_root_specs_deferred_by_closure_target": 0,
+            "closure_target_latest_verdict_path": None,
+            "closure_target_latest_report_path": None,
+        }
 
     target = actionable_targets[0] if actionable_targets else open_targets[0]
     deferred_root_spec_ids = list_deferred_root_spec_ids(
         paths,
         open_root_spec_id=target.root_spec_id,
     )
-    return (
-        f"closure_target_root_spec_id: {target.root_spec_id}",
-        f"closure_target_open: {'true' if target.closure_open else 'false'}",
-        (
-            "closure_target_blocked_by_lineage_work: "
-            f"{'true' if target.closure_blocked_by_lineage_work else 'false'}"
-        ),
-        f"planning_root_specs_deferred_by_closure_target: {len(deferred_root_spec_ids)}",
-        f"closure_target_latest_verdict_path: {_status_value(target.latest_verdict_path)}",
-        f"closure_target_latest_report_path: {_status_value(target.latest_report_path)}",
-    )
+    return {
+        "closure_target_root_spec_id": target.root_spec_id,
+        "closure_target_open": target.closure_open,
+        "closure_target_blocked_by_lineage_work": target.closure_blocked_by_lineage_work,
+        "planning_root_specs_deferred_by_closure_target": len(deferred_root_spec_ids),
+        "closure_target_latest_verdict_path": target.latest_verdict_path,
+        "closure_target_latest_report_path": target.latest_report_path,
+    }
 
 
 def _actionable_open_closure_targets(
@@ -191,6 +282,48 @@ def _render_usage_governance_status_lines(paths: WorkspacePaths) -> tuple[str, .
             f"threshold={blocker.threshold:g}"
         )
     return tuple(lines)
+
+
+def _queue_depths(paths: WorkspacePaths) -> dict[str, int]:
+    return {
+        "execution": len(tuple(paths.tasks_queue_dir.glob("*.md"))),
+        "planning": (
+            len(tuple(paths.specs_queue_dir.glob("*.md")))
+            + len(tuple(paths.probes_queue_dir.glob("*.md")))
+            + len(tuple(paths.incidents_incoming_dir.glob("*.md")))
+        ),
+        "learning": len(tuple(paths.learning_requests_queue_dir.glob("*.md"))),
+    }
+
+
+def _latest_runtime_error_report_path(paths: WorkspacePaths) -> str | None:
+    context = load_runtime_error_context(paths)
+    return context.report_path if context is not None else None
+
+
+def _blocked_idle(
+    *,
+    process_running: bool,
+    active_run_count: int,
+    execution_queue_depth: int,
+    planning_queue_depth: int,
+    learning_queue_depth: int,
+    closure_target_open: object,
+    closure_target_blocked_by_lineage_work: object,
+    planning_status_marker: str,
+    current_failure_class: str | None,
+) -> bool:
+    return (
+        process_running
+        and active_run_count == 0
+        and execution_queue_depth == 0
+        and planning_queue_depth == 0
+        and learning_queue_depth == 0
+        and closure_target_open is True
+        and closure_target_blocked_by_lineage_work is True
+        and planning_status_marker == "### BLOCKED"
+        and current_failure_class is not None
+    )
 
 
 def _render_baseline_manifest_lines(manifest: BaselineManifest | None) -> tuple[str, ...]:
@@ -286,10 +419,19 @@ def _load_compile_currentness(
 def _status_value(value: object) -> str:
     if value is None:
         return "none"
+    if isinstance(value, bool):
+        return "true" if value else "false"
     enum_value = getattr(value, "value", None)
     if isinstance(enum_value, str):
         return enum_value
     return str(value)
+
+
+def _status_payload_value(value: object) -> object:
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        return enum_value
+    return value
 
 
 def _plane_key(value: str) -> object:
@@ -308,4 +450,10 @@ def _short_run_handle(run_id: object) -> str:
     return value
 
 
-__all__ = ["_print_status", "_print_statuses", "_render_status_lines"]
+__all__ = [
+    "_print_status",
+    "_print_status_json",
+    "_print_statuses",
+    "_render_status_lines",
+    "_status_payload",
+]

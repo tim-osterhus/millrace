@@ -12,7 +12,7 @@ from pydantic import model_validator
 
 from millrace_ai.contracts import ActiveRunState, Plane, StageResultEnvelope
 from millrace_ai.contracts.base import ContractModel
-from millrace_ai.errors import WorkspaceStateError
+from millrace_ai.errors import StageWorkItemOwnershipError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest, normalize_stage_result
@@ -28,6 +28,7 @@ from .learning_promotions import (
 from .learning_triggers import enqueue_learning_requests_for_stage_result
 from .plane_concurrency import can_dispatch_plane
 from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
+from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -200,7 +201,11 @@ class RuntimeDaemonSupervisor:
     def _start_worker(self, active_run: ActiveRunState) -> None:
         if active_run.plane in self._tasks:
             return
-        request = self._request_for_active_run(active_run)
+        try:
+            request = self._request_for_active_run(active_run)
+        except StageWorkItemOwnershipError as exc:
+            handle_stage_work_item_ownership_error(self.engine, error=exc)
+            return
         active_run = active_run.model_copy(
             update={"running_status_marker": request.running_status_marker}
         )
@@ -361,7 +366,11 @@ def apply_stage_completion(
         )
         router_decision = engine._route_stage_result(stage_result)
         engine._write_plane_status(stage_result)
-        spawned_paths = engine._apply_router_decision(router_decision, stage_result)
+        spawned_paths = engine._apply_router_decision(
+            router_decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
         spawned_work = tuple(
             spawned_work_ref_from_path(
                 path,

@@ -166,6 +166,13 @@ In the shipped graph:
   generated planning spec
 - `RECON_NOOP` closes the probe without downstream queue work
 - `RECON_BLOCKED` blocks the probe with the recon packet as evidence
+- Recon handoff outcomes are terminal graph edges. The runtime performs typed
+  promotion from the Recon packet and generated artifact into task/spec queues;
+  graph assets may not wire `RECON_TO_EXECUTION` or `RECON_TO_PLANNING`
+  directly to another stage node.
+- If Recon emits a handoff terminal result with an invalid packet or generated
+  artifact, the runtime records `recon_handoff_invalid`, blocks the active
+  probe, and leaves Planner, Manager, and Mechanic uninvolved.
 - `PLANNER_COMPLETE` moves `planner -> manager`
 - blocked `planner` or `manager` work routes into `mechanic`
 - `MECHANIC_COMPLETE` loops back into `planner`

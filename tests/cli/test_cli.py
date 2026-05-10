@@ -24,8 +24,12 @@ from millrace_ai.contracts import (
     LearningStageName,
     MailboxCommand,
     Plane,
+    PlanningStageName,
+    PlanningTerminalResult,
     ReloadOutcome,
     ResultClass,
+    RuntimeErrorCode,
+    RuntimeErrorContext,
     RuntimeMode,
     SpecDocument,
     TaskDocument,
@@ -1050,6 +1054,80 @@ def test_status_surfaces_failure_class_and_retry_counters(tmp_path: Path) -> Non
     assert "troubleshoot_attempt_count: 2" in result.output
     assert "fix_cycle_count: 1" in result.output
     assert "consultant_invocations: 1" in result.output
+
+
+def test_status_json_surfaces_blocked_idle_context_and_runtime_error_report(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    report_path = paths.runs_dir / "run-recon" / "runtime_error_report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# Runtime Error Report\n", encoding="utf-8")
+    paths.runtime_error_context_file.write_text(
+        RuntimeErrorContext(
+            error_code=RuntimeErrorCode.RECON_HANDOFF_INVALID,
+            plane=Plane.PLANNING,
+            failed_stage=PlanningStageName.RECON,
+            repair_stage=PlanningStageName.RECON,
+            work_item_kind=WorkItemKind.PROBE,
+            work_item_id="probe-001",
+            run_id="run-recon",
+            router_action="idle",
+            terminal_result=PlanningTerminalResult.RECON_TO_PLANNING,
+            stage_result_path="millrace-agents/runs/run-recon/stage_results/request-001.json",
+            report_path=str(report_path),
+            exception_type="ValidationError",
+            exception_message="Emitted-Spec-ID is required for to_planning decisions",
+            captured_at=NOW,
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-blocked",
+            root_idea_id="idea-blocked",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-blocked.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-blocked.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-blocked.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=True,
+            blocking_work_ids=("probe-001",),
+            opened_at=NOW,
+        ),
+    )
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "runtime_mode": RuntimeMode.DAEMON,
+            "process_running": True,
+            "planning_status_marker": "### BLOCKED",
+            "current_failure_class": "recon_handoff_invalid",
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="status-json-tests",
+        acquired_at=NOW,
+    )
+
+    result = CliRunner().invoke(cli.app, ["status", "show", "--format", "json", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["process_running"] is True
+    assert payload["active_run_count"] == 0
+    assert payload["planning_queue_depth"] == 0
+    assert payload["closure_target_open"] is True
+    assert payload["closure_target_blocked_by_lineage_work"] is True
+    assert payload["blocked_idle"] is True
+    assert payload["current_failure_class"] == "recon_handoff_invalid"
+    assert payload["latest_runtime_error_report_path"] == str(report_path)
 
 
 def test_status_surfaces_closure_target_state(tmp_path: Path) -> None:

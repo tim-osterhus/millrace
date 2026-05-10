@@ -94,13 +94,23 @@ class ReconPacketDocument(ContractModel):
         if self.handoff_target != expected_handoff:
             raise ValueError("handoff_target must match decision")
         if self.decision is ReconDecision.TO_EXECUTION and self.emitted_task_id is None:
-            raise ValueError("to_execution decisions require emitted_task_id")
+            raise ValueError("to_execution decisions require Emitted-Task-ID")
         if self.decision is not ReconDecision.TO_EXECUTION and self.emitted_task_id is not None:
-            raise ValueError("emitted_task_id is only valid for to_execution decisions")
+            if self.decision is ReconDecision.TO_PLANNING:
+                raise ValueError(
+                    "to_planning decisions require Emitted-Spec-ID; "
+                    "Emitted-Task-ID is only valid for to_execution decisions"
+                )
+            raise ValueError("Emitted-Task-ID is only valid for to_execution decisions")
         if self.decision is ReconDecision.TO_PLANNING and self.emitted_spec_id is None:
-            raise ValueError("to_planning decisions require emitted_spec_id")
+            raise ValueError("to_planning decisions require Emitted-Spec-ID")
         if self.decision is not ReconDecision.TO_PLANNING and self.emitted_spec_id is not None:
-            raise ValueError("emitted_spec_id is only valid for to_planning decisions")
+            if self.decision is ReconDecision.TO_EXECUTION:
+                raise ValueError(
+                    "to_execution decisions require Emitted-Task-ID; "
+                    "Emitted-Spec-ID is only valid for to_planning decisions"
+                )
+            raise ValueError("Emitted-Spec-ID is only valid for to_planning decisions")
         return self
 
 

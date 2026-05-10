@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from millrace_ai.architecture import GraphLoopDefinition
+from millrace_ai.architecture import GraphLoopDefinition, GraphLoopEdgeKind
 from millrace_ai.assets.architecture import (
     ArchitectureAssetError,
     discover_stage_kind_definitions,
@@ -17,6 +17,12 @@ from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent
 GRAPH_LOOPS_ROOT = Path("graphs")
+_RECON_HANDOFF_OUTCOMES = {
+    "RECON_TO_EXECUTION",
+    "RECON_TO_PLANNING",
+    "RECON_NOOP",
+    "RECON_BLOCKED",
+}
 
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("graphs/execution/standard.json"),
@@ -142,6 +148,17 @@ def _validate_graph_loop_against_stage_kinds(
     for edge in graph_loop.edges:
         source_node = node_map[edge.from_node_id]
         source_stage_kind = stage_kinds[source_node.stage_kind_id]
+        if (
+            source_stage_kind.stage_kind_id == "recon"
+            and edge.kind is not GraphLoopEdgeKind.TERMINAL
+            and any(outcome in _RECON_HANDOFF_OUTCOMES for outcome in edge.on_outcomes)
+        ):
+            raise GraphLoopAssetError(
+                f"Graph loop {graph_loop.loop_id} edge {edge.edge_id} declares Recon "
+                "handoff outcomes that target a non-terminal edge. "
+                "Recon handoff outcomes must target terminal states so typed promotion "
+                "can enqueue task/spec work explicitly."
+            )
         for outcome in edge.on_outcomes:
             if outcome not in source_stage_kind.legal_outcomes:
                 raise GraphLoopAssetError(

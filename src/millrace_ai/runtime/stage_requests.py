@@ -19,6 +19,8 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.contracts.stage_metadata import stage_name_for_plane
+from millrace_ai.errors import StageWorkItemOwnershipError
+from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.requests import RequestKind
@@ -33,6 +35,24 @@ from .error_recovery import build_runtime_error_request_fields
 from .skill_evidence import write_skill_revision_evidence
 
 _STATUS_IDLE = "### IDLE"
+_STAGE_WORK_ITEM_OWNERSHIP_INVALID = "stage_work_item_ownership_invalid"
+_STAGE_WORK_ITEM_OWNERSHIP: dict[str, frozenset[WorkItemKind]] = {
+    "builder": frozenset({WorkItemKind.TASK}),
+    "checker": frozenset({WorkItemKind.TASK}),
+    "fixer": frozenset({WorkItemKind.TASK}),
+    "doublechecker": frozenset({WorkItemKind.TASK}),
+    "updater": frozenset({WorkItemKind.TASK}),
+    "troubleshooter": frozenset({WorkItemKind.TASK}),
+    "consultant": frozenset({WorkItemKind.TASK}),
+    "recon": frozenset({WorkItemKind.PROBE}),
+    "planner": frozenset({WorkItemKind.SPEC, WorkItemKind.INCIDENT}),
+    "manager": frozenset({WorkItemKind.SPEC, WorkItemKind.INCIDENT}),
+    "auditor": frozenset({WorkItemKind.INCIDENT}),
+    "mechanic": frozenset({WorkItemKind.SPEC, WorkItemKind.INCIDENT}),
+    "analyst": frozenset({WorkItemKind.LEARNING_REQUEST}),
+    "professor": frozenset({WorkItemKind.LEARNING_REQUEST}),
+    "curator": frozenset({WorkItemKind.LEARNING_REQUEST}),
+}
 
 
 def build_stage_run_request(
@@ -56,6 +76,11 @@ def build_stage_run_request(
         engine,
         active_work_item_kind,
         active_work_item_id,
+    )
+    validate_stage_work_item_ownership(
+        stage_plan,
+        request_kind=request_kind,
+        active_work_item_kind=active_work_item_kind,
     )
     run_id = active_run.run_id if active_run is not None else engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
@@ -116,6 +141,64 @@ def build_stage_run_request(
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
     save_snapshot(engine.paths, engine.snapshot)
     return request
+
+
+def validate_stage_work_item_ownership(
+    stage_plan: MaterializedGraphNodePlan,
+    *,
+    request_kind: RequestKind,
+    active_work_item_kind: WorkItemKind | None,
+) -> None:
+    """Fail before runner invocation if a stage would receive the wrong work item."""
+
+    if request_kind != "active_work_item":
+        return
+    allowed = _STAGE_WORK_ITEM_OWNERSHIP.get(stage_plan.stage_kind_id)
+    if allowed is None or active_work_item_kind in allowed:
+        return
+    actual = active_work_item_kind.value if active_work_item_kind is not None else "none"
+    expected = ", ".join(sorted(kind.value for kind in allowed))
+    raise StageWorkItemOwnershipError(
+        f"stage kind {stage_plan.stage_kind_id} requires work item kind "
+        f"{expected}; active work item kind is {actual}"
+    )
+
+
+def handle_stage_work_item_ownership_error(
+    engine: RuntimeEngine,
+    *,
+    error: StageWorkItemOwnershipError,
+) -> None:
+    """Record, requeue active work, and leave a classified idle snapshot."""
+
+    assert engine.snapshot is not None
+    write_runtime_event(
+        engine.paths,
+        event_type="runtime_stage_work_item_ownership_invalid",
+        data={
+            "failure_class": _STAGE_WORK_ITEM_OWNERSHIP_INVALID,
+            "active_plane": engine.snapshot.active_plane.value
+            if engine.snapshot.active_plane is not None
+            else None,
+            "active_stage": engine.snapshot.active_stage.value
+            if engine.snapshot.active_stage is not None
+            else None,
+            "active_stage_kind_id": engine.snapshot.active_stage_kind_id,
+            "active_work_item_kind": engine.snapshot.active_work_item_kind.value
+            if engine.snapshot.active_work_item_kind is not None
+            else None,
+            "active_work_item_id": engine.snapshot.active_work_item_id,
+            "error": str(error),
+        },
+    )
+    engine._clear_stale_state(reason="stage work-item ownership guard")
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "current_failure_class": _STAGE_WORK_ITEM_OWNERSHIP_INVALID,
+            "updated_at": engine._now(),
+        }
+    )
+    save_snapshot(engine.paths, engine.snapshot)
 
 
 def build_closure_target_stage_run_request(
@@ -375,6 +458,7 @@ __all__ = [
     "build_closure_target_stage_run_request",
     "build_stage_run_request",
     "execution_queue_depth",
+    "handle_stage_work_item_ownership_error",
     "idle_stage_for_no_work",
     "idle_tick_outcome",
     "learning_queue_depth",
@@ -384,4 +468,5 @@ __all__ = [
     "planning_queue_depth",
     "runner_failure_result",
     "stage_plan_for",
+    "validate_stage_work_item_ownership",
 ]

@@ -61,6 +61,8 @@ def apply_router_decision(
     engine: RuntimeEngine,
     decision: RouterDecision,
     stage_result: StageResultEnvelope,
+    *,
+    stage_result_path: Path | None = None,
 ) -> tuple[Path, ...]:
     assert engine.snapshot is not None
     assert engine.counters is not None
@@ -76,7 +78,12 @@ def apply_router_decision(
         return ()
 
     if is_recon_stage_result(stage_result):
-        return apply_recon_router_decision(engine, decision, stage_result)
+        return apply_recon_router_decision(
+            engine,
+            decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
 
     if decision.action is RouterAction.RUN_STAGE:
         next_stage = decision.next_stage

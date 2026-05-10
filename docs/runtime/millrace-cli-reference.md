@@ -168,7 +168,7 @@ The `execution_status_marker` and `planning_status_marker` fields show the
 currently running stage marker while a stage is executing, then fall back to
 the latest terminal marker or `### IDLE` when no stage is active on that plane.
 When a learning-enabled mode is active, status also includes
-`learning_status_marker` and `queue_depth_learning`.
+`learning_status_marker` and `learning_queue_depth`.
 Status now also surfaces compiled-plan and managed-baseline identity:
 
 - `compiled_plan_id`
@@ -201,7 +201,26 @@ When Arbiter closure is active, status surfaces closure-target backpressure:
 - `closure_target_latest_verdict_path`
 - `closure_target_latest_report_path`
 
-`millrace status show` is an explicit alias for the same output.
+Status also prints `blocked_idle` and `latest_runtime_error_report_path`.
+`blocked_idle: true` means the daemon is running, no plane has an active run,
+all queues are empty, an open closure target remains blocked by lineage work,
+and the planning status is `### BLOCKED`. That is a diagnostic state, not
+normal no-work idleness.
+
+`millrace status show` is an explicit alias for the same text output. Pass
+`--format json` to either `millrace status` or `millrace status show` for a
+machine-readable status payload with the same key state, including:
+
+- `process_running`
+- `active_run_count`
+- `execution_queue_depth`
+- `planning_queue_depth`
+- `learning_queue_depth`
+- `closure_target_open`
+- `closure_target_blocked_by_lineage_work`
+- `blocked_idle`
+- `current_failure_class`
+- `latest_runtime_error_report_path`
 
 ### `millrace status watch`
 

@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from millrace_ai.cli.shared import WorkspaceOption, _require_paths
-from millrace_ai.cli.status_view import _print_status, _print_statuses
+from millrace_ai.cli.status_view import _print_status, _print_status_json, _print_statuses
 
 status_app = typer.Typer(add_completion=False, no_args_is_help=False)
 
@@ -17,14 +17,36 @@ status_app = typer.Typer(add_completion=False, no_args_is_help=False)
 def status(
     ctx: typer.Context,
     workspace: WorkspaceOption = Path("."),
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: text or json."),
+    ] = "text",
 ) -> None:
     if ctx.invoked_subcommand is None:
-        _print_status(_require_paths(workspace))
+        paths = _require_paths(workspace)
+        if output_format == "json":
+            _print_status_json(paths)
+            return
+        if output_format != "text":
+            raise typer.BadParameter("format must be text or json")
+        _print_status(paths)
 
 
 @status_app.command("show")
-def status_show(workspace: WorkspaceOption = Path(".")) -> None:
-    _print_status(_require_paths(workspace))
+def status_show(
+    workspace: WorkspaceOption = Path("."),
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: text or json."),
+    ] = "text",
+) -> None:
+    paths = _require_paths(workspace)
+    if output_format == "json":
+        _print_status_json(paths)
+        return
+    if output_format != "text":
+        raise typer.BadParameter("format must be text or json")
+    _print_status(paths)
 
 
 @status_app.command("watch")

@@ -273,6 +273,14 @@ The operator-facing `millrace runs ls/show/tail` commands inspect these persiste
 - Probe stage requests enter Planning through `recon`; successful Recon outputs
   are persisted as `millrace-agents/recon/packets/<PACKET_ID>.md` before
   generated task/spec artifacts are enqueued by the runtime.
+- Recon handoff artifacts are strict runtime-owned promotion contracts. A
+  malformed `recon_packet.md`, missing generated task/spec, or packet/artifact
+  ID mismatch records `recon_handoff_invalid`, blocks the active probe, and
+  stops that probe from being treated as ordinary Planner/Manager/Mechanic
+  work.
+- Stage request construction also checks stage/work-item ownership before a
+  runner is invoked, so stale state cannot send a probe to Manager or a spec to
+  Recon.
 - Learning stage requests use `request_kind = learning_request` and active request paths under `millrace-agents/learning/requests/active/`.
 - Learning requests can finish with stage-specific no-op terminal outcomes when
   evidence was reviewed and no skill update is warranted. No-op requests are

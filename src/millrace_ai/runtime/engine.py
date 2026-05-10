@@ -221,8 +221,15 @@ class RuntimeEngine:
         self,
         decision: RouterDecision,
         stage_result: StageResultEnvelope,
+        *,
+        stage_result_path: Path | None = None,
     ) -> tuple[Path, ...]:
-        return result_application.apply_router_decision(self, decision, stage_result)
+        return result_application.apply_router_decision(
+            self,
+            decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
 
     def _increment_route_counters(
         self,

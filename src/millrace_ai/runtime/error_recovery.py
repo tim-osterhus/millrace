@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -106,30 +107,21 @@ def schedule_post_stage_exception_recovery(
         error=error,
         router_decision=router_decision,
     )
-    report_path = _report_path_for(paths=engine.paths, run_id=stage_result.run_id)
     repair_node_id, repair_stage_kind_id = _compiled_identity_for_stage(
         engine,
         plane=stage_result.plane,
         stage=repair_stage,
     )
-    context = RuntimeErrorContext(
+    context = record_post_stage_exception_context(
+        engine,
+        stage_result=stage_result,
+        error=error,
+        router_decision=router_decision,
+        stage_result_path=stage_result_path,
         error_code=error_code,
-        plane=stage_result.plane,
-        failed_stage=stage_result.stage,
         repair_stage=repair_stage,
-        work_item_kind=stage_result.work_item_kind,
-        work_item_id=stage_result.work_item_id,
-        run_id=stage_result.run_id,
-        router_action=router_decision.action.value if router_decision is not None else None,
-        terminal_result=stage_result.terminal_result,
-        stage_result_path=_path_relative_to_root(engine.paths, stage_result_path),
-        report_path=str(report_path),
-        exception_type=type(error).__name__,
-        exception_message=str(error),
         captured_at=captured_at,
     )
-    _write_runtime_error_report(engine.paths, context)
-    _save_runtime_error_context(engine.paths, context)
 
     if stage_result.plane is Plane.EXECUTION:
         execution_marker = engine._set_plane_status_marker(
@@ -185,7 +177,7 @@ def schedule_post_stage_exception_recovery(
             "work_item_id": stage_result.work_item_id,
             "exception_type": type(error).__name__,
             "exception_message": str(error),
-            "report_path": str(report_path),
+            "report_path": context.report_path,
         },
     )
     return RouterDecision(
@@ -197,6 +189,42 @@ def schedule_post_stage_exception_recovery(
         reason=f"runtime_exception:{error_code.value}",
         failure_class=error_code.value,
     )
+
+
+def record_post_stage_exception_context(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    error: Exception,
+    router_decision: RouterDecision | None,
+    stage_result_path: Path | None,
+    error_code: RuntimeErrorCode,
+    repair_stage: PlanningStageName | ExecutionStageName,
+    captured_at: datetime | None = None,
+) -> RuntimeErrorContext:
+    """Persist runtime exception context without choosing a recovery route."""
+
+    assert engine.snapshot is not None
+    captured = captured_at if captured_at is not None else engine._now()
+    context = RuntimeErrorContext(
+        error_code=error_code,
+        plane=stage_result.plane,
+        failed_stage=stage_result.stage,
+        repair_stage=repair_stage,
+        work_item_kind=stage_result.work_item_kind,
+        work_item_id=stage_result.work_item_id,
+        run_id=stage_result.run_id,
+        router_action=router_decision.action.value if router_decision is not None else None,
+        terminal_result=stage_result.terminal_result,
+        stage_result_path=_path_relative_to_root(engine.paths, stage_result_path),
+        report_path=str(_report_path_for(paths=engine.paths, run_id=stage_result.run_id)),
+        exception_type=type(error).__name__,
+        exception_message=str(error),
+        captured_at=captured,
+    )
+    _write_runtime_error_report(engine.paths, context)
+    _save_runtime_error_context(engine.paths, context)
+    return context
 
 
 def classify_post_stage_exception(
@@ -259,7 +287,7 @@ def _write_runtime_error_report(paths: WorkspacePaths, context: RuntimeErrorCont
         "",
         "Summary:",
         "- The runtime hit an exception after a stage returned a legal terminal result.",
-        "- Forward progress was rerouted into the default recovery stage instead of exiting the daemon.",
+        "- Runtime-owned handling either stopped this work item or rerouted it according to the error code.",
         "- Consult the runtime error catalog when the error code needs interpretation.",
     ]
     _atomic_write_text(Path(context.report_path), "\n".join(lines) + "\n")
@@ -307,6 +335,7 @@ __all__ = [
     "classify_post_stage_exception",
     "clear_runtime_error_context",
     "load_runtime_error_context",
+    "record_post_stage_exception_context",
     "runtime_error_catalog_path",
     "schedule_post_stage_exception_recovery",
 ]

@@ -15,6 +15,10 @@ class WorkspaceStateError(MillraceError):
     """Raised for invalid or unrecoverable workspace filesystem state."""
 
 
+class StageWorkItemOwnershipError(WorkspaceStateError):
+    """Raised when a stage request would violate stage/work-item ownership."""
+
+
 class QueueStateError(MillraceError):
     """Raised for invalid queue ownership or transition state."""
 
@@ -38,5 +42,6 @@ __all__ = [
     "MillraceError",
     "QueueStateError",
     "RuntimeLifecycleError",
+    "StageWorkItemOwnershipError",
     "WorkspaceStateError",
 ]
