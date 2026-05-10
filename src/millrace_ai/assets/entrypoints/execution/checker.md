@@ -29,7 +29,7 @@ Not allowed:
 2. request-provided `active_work_item_path` (typically `millrace-agents/tasks/active/<TASK_ID>.md`)
 3. `README.md` when present at repo root
 4. request-provided `summary_status_path` (typically `millrace-agents/state/execution_status.md`)
-5. request-provided `run_dir` and `run_dir/builder_summary.md` when present, but only after expectations are written
+5. request-provided `run_dir`, `run_dir/builder_summary.md`, and `run_dir/integration_report.md` when present, but only after expectations are written
 6. `millrace-agents/historylog.md`, but only after expectations are written
 
 Before expectations are written:
@@ -87,11 +87,12 @@ If expectations cannot be written because the task is ambiguous, stop with `### 
 
 After expectations exist:
 1. Read builder-side evidence.
-2. Inspect the implementation.
-3. Reproduce claimed verification where possible.
-4. Compare reality against the expectations artifact and active task contract.
-5. Prefer concrete failures over vague criticism.
-6. If the task needs a broader final-state or end-to-end audit, use `marathon-qa-audit` to widen the pass deliberately instead of drifting into unfocused review.
+2. Read `run_dir/integration_report.md` when present and use it as integration evidence, not as a substitute for Checker judgment.
+3. Inspect the implementation.
+4. Reproduce claimed verification where possible.
+5. Compare reality against the expectations artifact and active task contract.
+6. Prefer concrete failures over vague criticism.
+7. If the task needs a broader final-state or end-to-end audit, use `marathon-qa-audit` to widen the pass deliberately instead of drifting into unfocused review.
 
 ### Phase 4: write findings
 

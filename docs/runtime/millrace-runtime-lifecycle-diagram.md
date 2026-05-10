@@ -113,6 +113,11 @@ stateDiagram-v2
 
 ## Execution Loop Detail
 
+This diagram shows `execution.standard`. Integrated Codex modes select
+`execution.with_integrator`, which inserts `Integrator` between `Builder` and
+`Checker`; `INTEGRATION_COMPLETE` continues to Checker and `BLOCKED` uses the
+same recovery path as other execution stages.
+
 ```mermaid
 stateDiagram-v2
     direction LR

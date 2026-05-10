@@ -190,7 +190,9 @@ The compiler currently ships with baseline and learning-enabled built-in modes:
 
 - baseline modes: `default_codex`, `default_pi`
 - learning-enabled modes: `learning_codex`, `learning_pi`
-- execution loop: `execution.standard`
+- integrated quality modes: `default_codex_integrated`,
+  `learning_codex_integrated`
+- execution loops: `execution.standard`, `execution.with_integrator`
 - planning loop: `planning.standard`
 - learning loop: `learning.standard`
 
@@ -264,8 +266,22 @@ expressed:
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
+- `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
+  while selecting `execution.with_integrator`
 
-The loop topology does not fork just because the harness changes.
+The loop topology does not fork just because the harness changes. It forks only
+when the operator intentionally selects an integrated quality mode.
+
+Integrated Codex modes are quality-first and more expensive. Their execution
+path is:
+
+```text
+builder -> integrator -> checker -> fixer/doublechecker -> updater
+```
+
+Integrator inspects Builder evidence and the implementation diff, runs explicit
+or discoverable integration gates, checks changed docs/config/assets when
+relevant, and writes `integration_report.md` before Checker performs normal QA.
 
 The learning modes preserve execution/planning mutual exclusion and freeze a
 plane concurrency policy into the compiled plan. Daemon mode enforces that
@@ -302,7 +318,7 @@ is recorded as a per-run trace graph.
 
 ## The Shipped Planning And Execution Planes
 
-The current execution loop is:
+The standard execution loop is:
 
 - `builder`
 - `checker`
@@ -312,8 +328,12 @@ The current execution loop is:
 - `troubleshooter`
 - `consultant`
 
+The integrated execution loop inserts `integrator` after `builder` for
+operator-selected high-assurance Codex modes.
+
 The current planning loop is:
 
+- `recon`
 - `planner`
 - `manager`
 - `mechanic`
@@ -379,6 +399,13 @@ Millrace currently ships two first-class built-in runner adapters:
 
 Codex remains the canonical bootstrap posture. New workspaces default to
 `runtime.default_mode = "default_codex"` and `runners.default_runner = "codex_cli"`.
+
+When output quality matters more than stage count, operators can select
+`default_codex_integrated` or `learning_codex_integrated` after refreshing
+managed workspace assets with `millrace upgrade --apply`. A running daemon can
+pick up a config-driven `runtime.default_mode` change through
+`millrace config reload` unless it was started with an explicit `--mode`
+override.
 
 Pi is opt-in through `default_pi` or direct runner selection. The Pi adapter
 uses RPC mode and disables Pi-native context-file and skill discovery by

@@ -38,6 +38,7 @@ _STATUS_IDLE = "### IDLE"
 _STAGE_WORK_ITEM_OWNERSHIP_INVALID = "stage_work_item_ownership_invalid"
 _STAGE_WORK_ITEM_OWNERSHIP: dict[str, frozenset[WorkItemKind]] = {
     "builder": frozenset({WorkItemKind.TASK}),
+    "integrator": frozenset({WorkItemKind.TASK}),
     "checker": frozenset({WorkItemKind.TASK}),
     "fixer": frozenset({WorkItemKind.TASK}),
     "doublechecker": frozenset({WorkItemKind.TASK}),

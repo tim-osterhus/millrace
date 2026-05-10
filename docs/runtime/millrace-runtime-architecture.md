@@ -260,8 +260,8 @@ Run directories hold:
 - `runner_completion.<request_id>.json`
 - runner stdout/stderr artifacts where present
 - per-request Codex event logs where present
-- stage-authored reports such as `troubleshoot_report.md` or
-  `arbiter_report.md` when emitted
+- stage-authored reports such as `integration_report.md`,
+  `troubleshoot_report.md`, or `arbiter_report.md` when emitted
 
 The operator-facing `millrace runs ls/show/tail` commands inspect these persisted artifacts without taking runtime ownership.
 

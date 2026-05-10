@@ -26,6 +26,7 @@ _RECON_HANDOFF_OUTCOMES = {
 
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("graphs/execution/standard.json"),
+    "execution.with_integrator": Path("graphs/execution/with_integrator.json"),
     "learning.standard": Path("graphs/learning/standard.json"),
     "planning.standard": Path("graphs/planning/standard.json"),
 }

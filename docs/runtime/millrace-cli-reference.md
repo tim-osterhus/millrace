@@ -125,6 +125,10 @@ Learning-enabled modes may run one Learning stage concurrently with one
 permitted foreground Planning or Execution stage. Runtime-owned queue,
 snapshot, counter, status, and router mutation remains single-writer and
 serialized by the daemon supervisor.
+Integrated Codex modes remain opt-in: `default_codex_integrated` and
+`learning_codex_integrated` select `execution.with_integrator`, so every
+successful Builder run goes through Integrator before Checker. The integrated
+learning mode keeps the same Learning concurrency policy as `learning_codex`.
 
 `--monitor basic` prints a compact terminal stream for visible daemon sessions:
 startup lifecycle context, baseline/currentness identity, loop and concurrency
@@ -280,6 +284,7 @@ Options:
 
 Use this when you need to see concrete stage instances and runtime router
 decisions, for example `builder BUILDER_COMPLETE -> checker` or
+`builder BUILDER_COMPLETE -> integrator` in an integrated mode, or
 `updater UPDATE_COMPLETE -> terminal:update_complete`.
 
 ## Queue Commands
@@ -530,11 +535,19 @@ Default subscription rules, when enabled, pause at 95 percent usage for the
 
 ### `millrace modes list`
 
-Lists built-in modes and loop references.
+Lists built-in modes and loop references. Current packaged modes are:
+
+- `default_codex`
+- `default_pi`
+- `learning_codex`
+- `learning_pi`
+- `default_codex_integrated`
+- `learning_codex_integrated`
 
 ### `millrace modes show MODE_ID`
 
-Prints one mode definition summary.
+Prints one mode definition summary. Use this to confirm whether a mode selects
+`execution.standard` or the quality-first `execution.with_integrator` loop.
 
 ## Skills Commands
 

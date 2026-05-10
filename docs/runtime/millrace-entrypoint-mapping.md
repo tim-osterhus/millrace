@@ -12,6 +12,7 @@ pre-packaging draft tree for entrypoints.
 ### Execution Plane
 
 - `src/millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
+- `src/millrace_ai/assets/entrypoints/execution/integrator.md` -> `millrace-agents/entrypoints/execution/integrator.md`
 - `src/millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
 - `src/millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
 - `src/millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`

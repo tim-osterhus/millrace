@@ -91,7 +91,7 @@ def test_stage_kinds_module_is_assets_facade() -> None:
 def test_builtin_stage_kinds_load_and_validate() -> None:
     stage_kinds = load_builtin_stage_kind_definitions()
 
-    assert len(stage_kinds) == 16
+    assert len(stage_kinds) == 17
     assert [stage_kind.stage_kind_id for stage_kind in stage_kinds] == list(SHIPPED_STAGE_KIND_IDS)
     assert {stage_kind.plane for stage_kind in stage_kinds} == {
         Plane.EXECUTION,
@@ -110,6 +110,7 @@ def test_builtin_stage_kinds_load_and_validate() -> None:
 def test_shipped_stage_kind_ids_are_stable() -> None:
     assert SHIPPED_STAGE_KIND_IDS == (
         "builder",
+        "integrator",
         "checker",
         "fixer",
         "doublechecker",
@@ -140,6 +141,7 @@ def test_builtin_stage_kinds_cover_current_shipped_stage_enums() -> None:
 
 def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     builder = load_builtin_stage_kind_definition("builder")
+    integrator = load_builtin_stage_kind_definition("integrator")
     arbiter = load_builtin_stage_kind_definition("arbiter")
     troubleshooter = load_builtin_stage_kind_definition("troubleshooter")
     analyst = load_builtin_stage_kind_definition("analyst")
@@ -153,6 +155,18 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     }
     assert builder.can_start_tasks is True
     assert builder.idempotence_policy is StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
+
+    assert integrator.plane is Plane.EXECUTION
+    assert integrator.default_entrypoint_path == "entrypoints/execution/integrator.md"
+    assert integrator.required_skill_paths == (
+        "skills/stage/execution/integrator-core/SKILL.md",
+    )
+    assert integrator.allowed_result_classes_by_outcome == {
+        "INTEGRATION_COMPLETE": (ResultClass.SUCCESS,),
+        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
+    }
+    assert integrator.can_start_tasks is False
+    assert integrator.idempotence_policy is StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
 
     assert troubleshooter.recovery_role is RecoveryRole.LOCAL_REPAIR
     assert troubleshooter.running_status_marker == "TROUBLESHOOTER_RUNNING"

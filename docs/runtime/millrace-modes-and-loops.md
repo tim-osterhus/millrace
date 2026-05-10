@@ -33,6 +33,7 @@ the runtime's live routing authority.
 Today the shipped loop ids are:
 
 - `execution.standard`
+- `execution.with_integrator`
 - `planning.standard`
 - `learning.standard`
 
@@ -42,6 +43,8 @@ The shipped canonical mode ids are:
 - `default_pi`
 - `learning_codex`
 - `learning_pi`
+- `default_codex_integrated`
+- `learning_codex_integrated`
 
 Compatibility alias:
 
@@ -133,6 +136,34 @@ In the shipped graph:
 
 This is why the execution loop is not a straight line. It is a repair-capable
 governance loop.
+
+## Integrated Execution Loop
+
+`execution.with_integrator` is an opt-in high-assurance execution graph. It
+uses the same task intake and recovery model as `execution.standard`, but inserts
+`integrator` after `builder` and before `checker`:
+
+```text
+builder -> integrator -> checker -> fixer/doublechecker -> updater
+```
+
+Integrator is quality-first rather than speed-first. It inspects the Builder
+diff and evidence, identifies changed integration surfaces, runs explicit task
+checks and discoverable repo-standard gates, and writes
+`run_dir/integration_report.md`. Checker then reads that report when present,
+but still owns the normal QA judgment.
+
+In the shipped graph:
+
+- `BUILDER_COMPLETE` moves `builder -> integrator`
+- `INTEGRATION_COMPLETE` moves `integrator -> checker`
+- `BLOCKED` from Integrator routes into `troubleshooter`
+- repeated Integrator blockage participates in the same execution blocked
+  recovery threshold policy as Builder, Checker, Fixer, Doublechecker,
+  Updater, and Troubleshooter
+
+This loop is selected by the integrated Codex modes. The standard default modes
+do not run Integrator.
 
 ## Shipped Planning Loop
 
@@ -264,6 +295,10 @@ Baseline modes point at:
 - `loop_ids_by_plane.execution = execution.standard`
 - `loop_ids_by_plane.planning = planning.standard`
 
+Integrated Codex modes point execution at:
+
+- `loop_ids_by_plane.execution = execution.with_integrator`
+
 The learning-enabled modes also point at:
 
 - `loop_ids_by_plane.learning = learning.standard`
@@ -275,12 +310,16 @@ The mode families differ primarily in `stage_runner_bindings`:
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
+- `default_codex_integrated` binds execution with Integrator plus planning to
+  `codex_cli`
+- `learning_codex_integrated` binds execution with Integrator, planning, and
+  learning to `codex_cli`
 
 Entrypoint, skill-addition, and model maps otherwise remain empty in the
-baseline, which means loop topology and stage semantics stay identical across
-the harness presets. Learning modes add a compiled concurrency policy and
-learning trigger rules; those are explicit mode data, not prompt-only
-instructions.
+baseline. Harness-only presets keep topology identical; integrated presets
+intentionally select a more expensive execution topology. Learning modes add a
+compiled concurrency policy and learning trigger rules; those are explicit mode
+data, not prompt-only instructions.
 
 Specialized repository-local workflows should provide their own workspace-local
 mode, loop, graph, and entrypoint assets under their owning project area, then

@@ -472,6 +472,10 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
             ExecutionTerminalResult.BUILDER_COMPLETE.value,
             ExecutionTerminalResult.BLOCKED.value,
         },
+        ExecutionStageName.INTEGRATOR.value: {
+            ExecutionTerminalResult.INTEGRATION_COMPLETE.value,
+            ExecutionTerminalResult.BLOCKED.value,
+        },
         ExecutionStageName.CHECKER.value: {
             ExecutionTerminalResult.CHECKER_PASS.value,
             ExecutionTerminalResult.FIX_NEEDED.value,
@@ -548,6 +552,7 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
 def _expected_stage_core_skill_ids() -> dict[str, str]:
     return {
         ExecutionStageName.BUILDER.value: "builder-core",
+        ExecutionStageName.INTEGRATOR.value: "integrator-core",
         ExecutionStageName.CHECKER.value: "checker-core",
         ExecutionStageName.FIXER.value: "fixer-core",
         ExecutionStageName.DOUBLECHECKER.value: "doublechecker-core",
@@ -569,6 +574,9 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
 def _expected_stage_core_skill_paths() -> dict[str, Path]:
     return {
         ExecutionStageName.BUILDER.value: SKILLS_DIR / "stage" / "execution" / "builder-core" / "SKILL.md",
+        ExecutionStageName.INTEGRATOR.value: (
+            SKILLS_DIR / "stage" / "execution" / "integrator-core" / "SKILL.md"
+        ),
         ExecutionStageName.CHECKER.value: SKILLS_DIR / "stage" / "execution" / "checker-core" / "SKILL.md",
         ExecutionStageName.FIXER.value: SKILLS_DIR / "stage" / "execution" / "fixer-core" / "SKILL.md",
         ExecutionStageName.DOUBLECHECKER.value: SKILLS_DIR
@@ -602,6 +610,11 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "feature",
             "foundational",
             "verification",
+        ),
+        ExecutionStageName.INTEGRATOR.value: (
+            "integration",
+            "gate",
+            "evidence",
         ),
         ExecutionStageName.CHECKER.value: (
             "contract",
@@ -939,6 +952,7 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
         assert "`historylog.md`" not in body
 
     assert "active_work_item_path" in stage_to_body["builder"]
+    assert "active_work_item_path" in stage_to_body["integrator"]
     assert "active_work_item_path" in stage_to_body["checker"]
     assert "active_work_item_path" in stage_to_body["doublechecker"]
     assert "active_work_item_path" in stage_to_body["planner"]
@@ -951,6 +965,9 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "full-band audit" in stage_to_body["arbiter"].lower()
 
     assert "summary_status_path" in stage_to_body["checker"]
+    assert "summary_status_path" in stage_to_body["integrator"]
+    assert "run_dir/integration_report.md" in stage_to_body["integrator"]
+    assert "run_dir/integration_report.md" in stage_to_body["checker"]
     assert "marathon-qa-audit" in stage_to_body["checker"]
     assert "broader final-state or end-to-end audit" in stage_to_body["checker"].lower()
     assert "summary_status_path" in stage_to_body["doublechecker"]

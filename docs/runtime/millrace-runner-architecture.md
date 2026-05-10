@@ -88,6 +88,8 @@ The shipped canonical modes make that explicit:
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
+- `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
+  while selecting the quality-first `execution.with_integrator` loop
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 

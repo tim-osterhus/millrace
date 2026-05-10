@@ -152,6 +152,7 @@ def test_builtin_graph_loops_load_and_validate() -> None:
 def test_shipped_graph_loop_ids_are_stable() -> None:
     assert SHIPPED_GRAPH_LOOP_IDS == (
         "execution.standard",
+        "execution.with_integrator",
         "learning.standard",
         "planning.standard",
     )
@@ -209,6 +210,29 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
         state.terminal_class is GraphLoopTerminalClass.FOLLOWUP_NEEDED
         for state in planning.terminal_states
     )
+
+
+def test_integrated_execution_graph_runs_integrator_after_builder() -> None:
+    execution = load_builtin_graph_loop_definition("execution.with_integrator")
+    entry_nodes = {entry.entry_key.value: entry.node_id for entry in execution.entry_nodes}
+    edges = {edge.edge_id: edge for edge in execution.edges}
+    blocked_policy = next(
+        policy
+        for policy in execution.dynamic_policies.threshold_policies
+        if policy.policy_id == "execution.blocked.recovery"
+    )
+
+    assert execution.plane is Plane.EXECUTION
+    assert entry_nodes == {"task": "builder"}
+    assert [node.stage_kind_id for node in execution.nodes][:3] == [
+        "builder",
+        "integrator",
+        "checker",
+    ]
+    assert edges["builder-complete-to-integrator"].to_node_id == "integrator"
+    assert edges["integrator-complete-to-checker"].to_node_id == "checker"
+    assert edges["integrator-blocked-to-troubleshooter"].to_node_id == "troubleshooter"
+    assert "integrator" in blocked_policy.source_node_ids
 
 
 def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:

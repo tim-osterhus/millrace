@@ -87,6 +87,10 @@ It wraps long-horizon work in a runtime with a few hard contracts:
   the compiled plane scheduler. Default modes are serial; learning-enabled
   modes may run one Learning stage alongside one foreground Planning or
   Execution stage.
+- **Opt-in quality loops:** integrated Codex modes use a more expensive
+  `builder -> integrator -> checker` execution path. Integrator reviews the
+  Builder diff, runs explicit or discoverable gates, and writes
+  `integration_report.md` before normal Checker QA.
 - **Probe-first intake:** lightweight probe requests enter Planning through
   Recon, which researches enough repo evidence to route the request into a
   generated execution task, a generated planning spec, a no-op, or a blocked
@@ -267,15 +271,23 @@ Canonical shipped modes today:
 
 - `default_codex`
 - `default_pi`
+- `default_codex_integrated`
 
 Learning-enabled shipped modes:
 
 - `learning_codex`
 - `learning_pi`
+- `learning_codex_integrated`
 
 The learning modes use the same execution and planning topology as the default
 modes, add `learning.standard`, and freeze learning trigger rules into the
 compiled plan.
+
+The integrated Codex modes are opt-in quality loops. They keep the same
+Planning and optional Learning behavior as their non-integrated counterparts,
+but select `execution.with_integrator` so every successful Builder result runs
+through Integrator before Checker. Existing workspaces receive those managed
+assets with `millrace upgrade --apply` after updating the installed package.
 
 Compatibility alias:
 

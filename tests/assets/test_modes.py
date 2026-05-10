@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import ModeDefinition, Plane
+from millrace_ai.contracts import ExecutionStageName, ModeDefinition, Plane
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.modes import (
     SHIPPED_MODE_IDS,
@@ -164,6 +164,25 @@ def test_learning_modes_load_learning_plane_without_changing_default_modes() -> 
     )
 
 
+def test_integrated_codex_modes_load_quality_execution_loop() -> None:
+    default_bundle = load_builtin_mode_bundle("default_codex_integrated")
+    learning_bundle = load_builtin_mode_bundle("learning_codex_integrated")
+
+    assert default_bundle.mode.mode_id == "default_codex_integrated"
+    assert default_bundle.execution_loop.loop_id == "execution.with_integrator"
+    assert default_bundle.planning_loop.loop_id == "planning.standard"
+    assert default_bundle.mode.learning_enabled is False
+    assert default_bundle.mode.stage_runner_bindings[ExecutionStageName.INTEGRATOR] == "codex_cli"
+
+    assert learning_bundle.mode.mode_id == "learning_codex_integrated"
+    assert learning_bundle.execution_loop.loop_id == "execution.with_integrator"
+    assert learning_bundle.planning_loop.loop_id == "planning.standard"
+    assert learning_bundle.learning_loop is not None
+    assert learning_bundle.learning_loop.loop_id == "learning.standard"
+    assert learning_bundle.mode.learning_enabled is True
+    assert learning_bundle.mode.stage_runner_bindings[ExecutionStageName.INTEGRATOR] == "codex_cli"
+
+
 def test_workspace_local_mode_loads_discovered_loops_and_stage_bindings(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     _write_workspace_local_mode_assets(assets_root)
@@ -245,6 +264,8 @@ def test_shipped_mode_ids_are_stable() -> None:
         "default_pi",
         "learning_codex",
         "learning_pi",
+        "default_codex_integrated",
+        "learning_codex_integrated",
     )
 
 
@@ -277,3 +298,43 @@ def test_standard_plain_compiles_for_bootstrapped_workspace_without_role_overlay
             *outcome.active_plan.planning_graph.nodes,
         )
     )
+
+
+def test_default_codex_integrated_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex_integrated",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "default_codex_integrated"
+    assert outcome.active_plan.execution_loop_id == "execution.with_integrator"
+    assert outcome.active_plan.planning_loop_id == "planning.standard"
+    assert [node.stage_kind_id for node in outcome.active_plan.execution_graph.nodes][:3] == [
+        "builder",
+        "integrator",
+        "checker",
+    ]
+
+
+def test_learning_codex_integrated_compiles_with_learning_plane(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="learning_codex_integrated",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "learning_codex_integrated"
+    assert outcome.active_plan.execution_loop_id == "execution.with_integrator"
+    assert outcome.active_plan.learning_loop_id == "learning.standard"
+    assert outcome.active_plan.learning_graph is not None

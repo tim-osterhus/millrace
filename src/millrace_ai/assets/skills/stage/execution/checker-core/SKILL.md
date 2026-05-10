@@ -43,6 +43,7 @@ Set the QA posture for checker work: validate the task contract first, then insp
 - The active task contract and acceptance notes.
 - The checker entrypoint guidance and any required verification command.
 - Builder evidence only after expectations are written.
+- `integration_report.md` from Integrator when an integrated mode produced one.
 - Implementation details only after the contract-based checks exist.
 - Optional supporting skills when they materially sharpen the review.
 
@@ -59,9 +60,10 @@ Set the QA posture for checker work: validate the task contract first, then insp
 1. Translate the task contract into explicit expectations before reading builder notes or diffs.
 2. Write down what success, failure, and blockage would look like in observable terms.
 3. Inspect the implementation against those expectations, not against builder rationale.
-4. Capture concrete evidence for every mismatch, including the smallest reproducible symptom.
-5. If the task fails, turn the gap into a deterministic fix contract with exact scope and verification.
-6. If the task is blocked, state the missing prerequisite and stop instead of guessing.
+4. Consider Integrator evidence when present, while keeping Checker responsible for the final QA judgment.
+5. Capture concrete evidence for every mismatch, including the smallest reproducible symptom.
+6. If the task fails, turn the gap into a deterministic fix contract with exact scope and verification.
+7. If the task is blocked, state the missing prerequisite and stop instead of guessing.
 
 ## Pitfalls And Gotchas
 

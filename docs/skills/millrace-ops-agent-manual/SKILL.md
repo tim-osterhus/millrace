@@ -118,6 +118,9 @@ Know which shipped harness posture you are validating:
   to the Pi RPC adapter
 - `learning_codex` and `learning_pi` add the Analyst/Professor/Curator learning
   plane for runtime learning requests and skill-improvement workflows
+- `default_codex_integrated` and `learning_codex_integrated` are opt-in
+  quality loops. They use Codex and select `execution.with_integrator`, so a
+  successful Builder result always runs through Integrator before Checker.
 - probes enter Planning through Recon before becoming generated tasks,
   generated specs, no-ops, or blocked probe artifacts
 - learning requests may close as no-op/done when evidence was reviewed and no
@@ -333,6 +336,7 @@ millrace runs tail <run_id> --workspace <workspace>
 millrace runs trace <run_id> --workspace <workspace>
 millrace modes list
 millrace modes show <mode_id>
+millrace compile validate --mode default_codex_integrated --workspace <workspace>
 millrace skills ls --workspace <workspace>
 millrace skills show <skill_id> --workspace <workspace>
 millrace skills search <query> --workspace <workspace>
@@ -475,6 +479,13 @@ Use intervention commands only when the runtime state actually justifies them:
   `model_reasoning_effort`, and `timeout_seconds`.
 - New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
   `runners.default_runner = "codex_cli"`.
+- To switch a managed workspace into the quality loop after a package update,
+  run `millrace upgrade --apply --workspace <workspace>`, set
+  `runtime.default_mode = "default_codex_integrated"` or
+  `"learning_codex_integrated"`, then run
+  `millrace config reload --workspace <workspace>`. If the daemon was started
+  with an explicit `--mode`, restart it without that override or with the
+  intended integrated mode.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.
 - Pi defaults to disabling Pi-native context-file and skill discovery so the
   shipped `default_pi` posture remains deterministic.

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
@@ -353,6 +355,54 @@ def test_route_stage_result_from_graph_matches_shipped_default_semantics(
 
     assert decision.action.value == expected_action
     assert decision.next_stage == expected_stage
+
+
+@pytest.mark.parametrize(
+    ("terminal_result", "expected_stage", "expected_reason"),
+    (
+        (
+            ExecutionTerminalResult.INTEGRATION_COMPLETE,
+            ExecutionStageName.CHECKER,
+            "integrator:INTEGRATION_COMPLETE",
+        ),
+        (
+            ExecutionTerminalResult.BLOCKED,
+            ExecutionStageName.TROUBLESHOOTER,
+            "integrator_blocked",
+        ),
+    ),
+)
+def test_integrated_graph_routes_integrator_to_checker_or_recovery(
+    tmp_path: Path,
+    terminal_result: ExecutionTerminalResult,
+    expected_stage: ExecutionStageName,
+    expected_reason: str,
+) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex_integrated",
+    )
+    assert outcome.active_plan is not None
+    snapshot = _snapshot(plane=Plane.EXECUTION, stage=ExecutionStageName.INTEGRATOR)
+    stage_result = _stage_result(
+        stage=ExecutionStageName.INTEGRATOR,
+        terminal_result=terminal_result,
+    )
+
+    decision = route_stage_result_from_graph(
+        outcome.active_plan,
+        snapshot,
+        stage_result,
+        RecoveryCounters(),
+        max_fix_cycles=2,
+        max_troubleshoot_attempts_before_consult=2,
+    )
+
+    assert decision.action.value == "run_stage"
+    assert decision.next_stage == expected_stage
+    assert decision.reason == expected_reason
 
 
 def test_route_stage_result_from_graph_rejects_invalid_closure_target_identity(

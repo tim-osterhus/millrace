@@ -13,8 +13,15 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-05-10
+
 ### Added
 
+- Added an opt-in Integrator execution stage and `execution.with_integrator`
+  graph loop for high-assurance Codex runs. The new
+  `default_codex_integrated` and `learning_codex_integrated` modes run
+  `builder -> integrator -> checker`, with Integrator writing
+  `integration_report.md` before normal Checker QA.
 - `millrace status` and `millrace status show` now support `--format json`,
   including blocked-idle diagnostics and the latest runtime error report path.
 
@@ -688,7 +695,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/tim-osterhus/millrace/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/tim-osterhus/millrace/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/tim-osterhus/millrace/compare/v0.17.4...v0.18.0
 [0.17.4]: https://github.com/tim-osterhus/millrace/compare/v0.17.3...v0.17.4

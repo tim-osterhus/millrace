@@ -33,6 +33,8 @@ contracts:
   evidence-backed, and operator-controlled
 - probe-first intake that can classify ambiguous work before committing it to
   Planner or Execution
+- opt-in integrated quality loops that spend extra stage time on post-Builder
+  integration evidence before Checker
 - optional local observability surfaces that make workspace state visible
   without adding runtime authority or weight to the base deployment package
 
@@ -99,6 +101,23 @@ Expected user impact:
 - safer conversion from vague operator requests into execution tasks
 - clearer audit evidence for why ambiguous work entered Planning, Execution,
   no-op, or blocked state
+
+### Integrated Quality Loops
+
+Millrace now has opt-in Codex modes that insert an Integrator stage between
+Builder and Checker. The active direction is to keep this path quality-first:
+Integrator should inspect changed surfaces, run explicit or discoverable gates,
+and write integration evidence without becoming a second Builder or hidden
+dynamic router.
+
+Expected user impact:
+
+- higher-assurance execution for work where quality matters more than stage
+  count
+- clearer evidence for cross-module, docs, config, asset, or generated-artifact
+  coherence before Checker
+- a simple operator choice between standard and integrated Codex modes instead
+  of opaque conditional routing heuristics
 
 ### Optional Web Observability
 

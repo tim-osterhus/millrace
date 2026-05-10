@@ -18,6 +18,7 @@ MODES_ROOT = Path("modes")
 
 BUILTIN_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("loops/execution/default.json"),
+    "execution.with_integrator": Path("loops/execution/with_integrator.json"),
     "learning.standard": Path("loops/learning/default.json"),
     "planning.standard": Path("loops/planning/default.json"),
 }
@@ -27,6 +28,8 @@ BUILTIN_MODE_PATHS: dict[str, Path] = {
     "default_pi": Path("modes/default_pi.json"),
     "learning_codex": Path("modes/learning_codex.json"),
     "learning_pi": Path("modes/learning_pi.json"),
+    "default_codex_integrated": Path("modes/default_codex_integrated.json"),
+    "learning_codex_integrated": Path("modes/learning_codex_integrated.json"),
 }
 
 BUILTIN_MODE_ALIASES: dict[str, str] = {
@@ -38,6 +41,8 @@ SHIPPED_MODE_IDS: tuple[str, ...] = (
     "default_pi",
     "learning_codex",
     "learning_pi",
+    "default_codex_integrated",
+    "learning_codex_integrated",
 )
 _DEFAULT_MODE_IDS: tuple[str, ...] = ("default_codex", "default_pi")
 

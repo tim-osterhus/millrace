@@ -7,6 +7,7 @@ advisory_only: true
 capability_type: documentation
 recommended_for_stages:
   - builder
+  - integrator
   - checker
   - fixer
   - doublechecker
@@ -57,6 +58,7 @@ entrypoint explicitly assigns them.
 | Skill | Description | Tags | Path | Status |
 | --- | --- | --- | --- | --- |
 | `builder-core` | Builder posture, scope control, and implementation evidence habits. | `execution`, `stage-core` | `skills/stage/execution/builder-core/SKILL.md` | shipped |
+| `integrator-core` | Integrator posture for high-assurance integration review and gate evidence. | `execution`, `stage-core` | `skills/stage/execution/integrator-core/SKILL.md` | shipped |
 | `checker-core` | Checker verification posture and failure-report discipline. | `execution`, `stage-core` | `skills/stage/execution/checker-core/SKILL.md` | shipped |
 | `fixer-core` | Fixer remediation narrowness and regression awareness. | `execution`, `stage-core` | `skills/stage/execution/fixer-core/SKILL.md` | shipped |
 | `doublechecker-core` | Doublechecker confirmation posture for previously failed work. | `execution`, `stage-core` | `skills/stage/execution/doublechecker-core/SKILL.md` | shipped |

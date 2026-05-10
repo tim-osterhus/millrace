@@ -7,6 +7,7 @@ advisory_only: true
 capability_type: documentation
 recommended_for_stages:
   - builder
+  - integrator
   - checker
   - fixer
   - doublechecker
@@ -49,6 +50,7 @@ Runtime shipping notes:
 - `marathon-qa-audit` is the shipped shared deep-audit skill currently used by `checker` and `arbiter` when a normal narrow pass is not enough.
 - Shipped stage-core skills use the hybrid format with thin manifest frontmatter for identity and structured markdown sections in the body for the actual guidance.
 - Stage-core skills live under `skills/stage/<plane>/<stage>-core/SKILL.md`.
+- `integrator-core` is used by the opt-in integrated execution modes to guide the quality-first post-Builder integration pass.
 - Each stage-core skill should stay narrow: posture, heuristics, traps, evidence discipline, and optional-skill triggers only.
 - Additional optional skills should be referenced only after they are shipped in the runtime package or installed into the active workspace.
 - Supported downloadable optional skills are listed at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.

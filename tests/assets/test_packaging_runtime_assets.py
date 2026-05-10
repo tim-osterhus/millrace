@@ -52,13 +52,18 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
     assert entries
     required_assets = {
         "millrace_ai/assets/entrypoints/execution/builder.md",
+        "millrace_ai/assets/entrypoints/execution/integrator.md",
         "millrace_ai/assets/entrypoints/planning/planner.md",
         "millrace_ai/assets/graphs/execution/standard.json",
+        "millrace_ai/assets/graphs/execution/with_integrator.json",
         "millrace_ai/assets/graphs/planning/standard.json",
         "millrace_ai/assets/loops/execution/default.json",
+        "millrace_ai/assets/loops/execution/with_integrator.json",
         "millrace_ai/assets/modes/default_codex.json",
+        "millrace_ai/assets/modes/default_codex_integrated.json",
         "millrace_ai/assets/modes/default_pi.json",
         "millrace_ai/assets/registry/stage_kinds/execution/builder.json",
+        "millrace_ai/assets/registry/stage_kinds/execution/integrator.json",
         "millrace_ai/assets/registry/stage_kinds/planning/arbiter.json",
         "millrace_ai/assets/skills/README.md",
         "millrace_ai/assets/skills/millrace-skill-creator/SKILL.md",
@@ -72,6 +77,7 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
         "millrace_ai/assets/skills/millrace-skill-creator/evals/pilot_shape_cases.json",
         "millrace_ai/assets/skills/skills_index.md",
         "millrace_ai/assets/skills/stage/execution/builder-core/SKILL.md",
+        "millrace_ai/assets/skills/stage/execution/integrator-core/SKILL.md",
         "millrace_ai/assets/skills/stage/planning/planner-core/SKILL.md",
     }
     assert required_assets.issubset(entries)

@@ -52,6 +52,9 @@ asset family:
 - `src/millrace_ai/assets/loops/learning/default.json` and
   `src/millrace_ai/assets/graphs/learning/standard.json` ship the learning
   loop alongside execution and planning
+- `src/millrace_ai/assets/loops/execution/with_integrator.json` and
+  `src/millrace_ai/assets/graphs/execution/with_integrator.json` ship the
+  opt-in high-assurance execution loop
 - `src/millrace_ai/assets/modes/learning_codex.json` and
   `src/millrace_ai/assets/modes/learning_pi.json` select execution, planning,
   and learning loops with compiler-frozen learning trigger rules
@@ -150,6 +153,8 @@ presets through canonical mode ids:
 - `default_pi`
 - `learning_codex`
 - `learning_pi`
+- `default_codex_integrated`
+- `learning_codex_integrated`
 
 `standard_plain` is preserved only as a compatibility alias in the asset-loading
 layer, not as a third duplicated mode asset file.

@@ -64,6 +64,23 @@ STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
                 }
             ),
         ),
+        ExecutionStageName.INTEGRATOR.value: StageMetadata(
+            stage=ExecutionStageName.INTEGRATOR,
+            plane=Plane.EXECUTION,
+            legal_terminal_results=(
+                ExecutionTerminalResult.INTEGRATION_COMPLETE.value,
+                ExecutionTerminalResult.BLOCKED.value,
+            ),
+            allowed_result_classes_by_outcome=_allowed(
+                {
+                    ExecutionTerminalResult.INTEGRATION_COMPLETE.value: (ResultClass.SUCCESS,),
+                    ExecutionTerminalResult.BLOCKED.value: (
+                        ResultClass.BLOCKED,
+                        ResultClass.RECOVERABLE_FAILURE,
+                    ),
+                }
+            ),
+        ),
         ExecutionStageName.CHECKER.value: StageMetadata(
             stage=ExecutionStageName.CHECKER,
             plane=Plane.EXECUTION,

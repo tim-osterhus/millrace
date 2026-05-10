@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "kind": "registered_stage_kind",
+  "stage_kind_id": "integrator",
+  "plane": "execution",
+  "display_name": "Integrator",
+  "default_entrypoint_path": "entrypoints/execution/integrator.md",
+  "required_skill_paths": [
+    "skills/stage/execution/integrator-core/SKILL.md"
+  ],
+  "suggested_skill_paths": [],
+  "running_status_marker": "INTEGRATOR_RUNNING",
+  "legal_outcomes": [
+    "INTEGRATION_COMPLETE",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "INTEGRATION_COMPLETE"
+  ],
+  "failure_outcomes": [
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "INTEGRATION_COMPLETE": [
+      "success"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "builder_summary"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "integration_report"
+  ],
+  "idempotence_policy": "retry_safe_with_key",
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "thinking_level",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
+  "can_start_tasks": false,
+  "can_start_specs": false,
+  "can_start_incidents": false,
+  "recovery_role": null,
+  "closure_role": false
+}

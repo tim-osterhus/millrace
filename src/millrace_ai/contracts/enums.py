@@ -13,6 +13,7 @@ class Plane(str, Enum):
 
 class ExecutionStageName(str, Enum):
     BUILDER = "builder"
+    INTEGRATOR = "integrator"
     CHECKER = "checker"
     FIXER = "fixer"
     DOUBLECHECKER = "doublechecker"
@@ -41,6 +42,7 @@ StageName = ExecutionStageName | PlanningStageName | LearningStageName
 
 class ExecutionTerminalResult(str, Enum):
     BUILDER_COMPLETE = "BUILDER_COMPLETE"
+    INTEGRATION_COMPLETE = "INTEGRATION_COMPLETE"
     CHECKER_PASS = "CHECKER_PASS"
     FIX_NEEDED = "FIX_NEEDED"
     FIXER_COMPLETE = "FIXER_COMPLETE"

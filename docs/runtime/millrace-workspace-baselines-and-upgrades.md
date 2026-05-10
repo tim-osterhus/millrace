@@ -194,6 +194,11 @@ Compile currentness answers:
 After `upgrade --apply`, the workspace baseline may be newer than the persisted
 compiled plan. In that case, `millrace status` will report the compiled plan as
 `stale` until the workspace is recompiled.
+New packaged modes or graph assets, such as
+`default_codex_integrated`, `learning_codex_integrated`, and
+`execution.with_integrator`, are managed workspace assets. Existing workspaces
+must apply the baseline refresh before those mode ids are available from the
+workspace runtime asset root.
 
 ## Recommended Operator Flow
 

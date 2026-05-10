@@ -2,7 +2,8 @@
 
 This document describes the shipped completion model for modes that select
 `planning.standard`, including `default_codex`, `default_pi`, `learning_codex`,
-and `learning_pi`.
+`learning_pi`, `default_codex_integrated`, and
+`learning_codex_integrated`.
 
 Millrace no longer treats backlog drain as automatic completion. When a root
 lineage has an open closure target and no queued, active, or blocked work
