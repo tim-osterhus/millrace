@@ -49,7 +49,7 @@ Classify ambiguous probe intake into the smallest safe next runtime action, back
 ## Output Contract
 
 - A recon packet that names relevant paths, symbols, tests, semantic invariants, edge cases, risk, confidence, and focused verification.
-- For execution-ready work, one generated task with probe lineage and enough acceptance detail for Builder.
+- For execution-ready work, one schema-valid generated task with probe lineage and enough acceptance detail for Builder.
 - For planning-needed work, one generated spec with probe lineage and enough scope detail for Planner/Manager.
 - For blocked or no-op work, a packet that explains why no downstream task/spec should be created.
 
@@ -60,13 +60,16 @@ Classify ambiguous probe intake into the smallest safe next runtime action, back
 3. Capture path findings with reasons, not bare path lists.
 4. Choose the route by comparing scope clarity, implementation risk, and verification availability.
 5. Write the recon packet first, then write the generated task or spec only if the packet decision requires it.
-6. End with the legal terminal marker that matches the packet decision.
+6. Before choosing execution, make sure the generated task includes every required task field: target paths, acceptance, required checks, references, risk, creation metadata, and probe lineage.
+7. If any required execution handoff field would be guessed too thinly, block with a clear packet instead of emitting a task with missing required fields.
+8. End with the legal terminal marker that matches the packet decision.
 
 ## Pitfalls And Gotchas
 
 - Treating Recon like Planner and writing broad design without classifying the request.
 - Treating Recon like Builder and making changes before the runtime has routed work.
 - Emitting generic verification like "run tests" when a focused command can be identified.
+- Emitting `RECON_TO_EXECUTION` with missing required fields in `generated_task.md`.
 - Losing probe lineage in generated work, which makes downstream auditability poor.
 - Listing paths without saying why each path matters.
 

@@ -697,6 +697,39 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
     }
 
 
+def test_recon_entrypoint_requires_schema_valid_execution_task_handoff() -> None:
+    body = (REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "recon.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required_label in (
+        "Task-ID",
+        "Title",
+        "Summary",
+        "Target-Paths",
+        "Acceptance",
+        "Required-Checks",
+        "References",
+        "Risk",
+        "Created-At",
+        "Created-By",
+    ):
+        assert required_label in body
+
+    assert "schema-valid" in body
+    assert "conservative" in body
+
+
+def test_recon_core_skill_requires_valid_handoff_or_blocked_output() -> None:
+    body = (SKILLS_DIR / "stage" / "planning" / "recon-core" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "schema-valid" in body
+    assert "block" in body.lower()
+    assert "missing required fields" in body
+
+
 def test_packaged_to_runtime_entrypoint_mapping_complete() -> None:
     runtime_paths = _load_runtime_entrypoint_paths_from_docs()
     mapped_runtime = set(runtime_paths)
