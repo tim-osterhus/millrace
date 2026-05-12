@@ -36,6 +36,7 @@ REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
     LearningStageName.ANALYST: ("skills/stage/learning/analyst-core/SKILL.md",),
     LearningStageName.PROFESSOR: ("skills/stage/learning/professor-core/SKILL.md",),
     LearningStageName.CURATOR: ("skills/stage/learning/curator-core/SKILL.md",),
+    LearningStageName.LIBRARIAN: ("skills/stage/learning/librarian-core/SKILL.md",),
 }
 
 def required_skills_for_stage(stage: StageName) -> tuple[str, ...]:

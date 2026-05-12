@@ -115,6 +115,10 @@ Learning-trigger authoring has one additional safety rule: a rule that targets
 `preferred_output_paths`. Vague learning evidence should target `analyst`
 instead so the learning plane can research, no-op, or escalate without asking
 Curator to infer a mutation destination.
+Planner-to-Librarian trigger rules are allowed in learning-enabled modes
+because Librarian installs bounded remote optional skills into the workspace
+from the supported index; it does not edit source-packaged skills or promote
+workspace assets.
 
 Legacy `execution_loop_id` and `planning_loop_id` fields are still accepted for
 compatibility, but new mode assets should use `loop_ids_by_plane`.

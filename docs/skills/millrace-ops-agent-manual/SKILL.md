@@ -116,8 +116,10 @@ Know which shipped harness posture you are validating:
 - `default_codex` is the canonical bootstrap baseline
 - `default_pi` keeps the same loops and stage semantics, but swaps every stage
   to the Pi RPC adapter
-- `learning_codex` and `learning_pi` add the Analyst/Professor/Curator learning
-  plane for runtime learning requests and skill-improvement workflows
+- `learning_codex` and `learning_pi` add the
+  Analyst/Professor/Curator/Librarian learning plane for runtime learning
+  requests, skill-improvement workflows, and post-Planner optional-skill
+  preparation
 - `default_codex_integrated` and `learning_codex_integrated` are opt-in
   quality loops. They use Codex and select `execution.with_integrator`, so a
   successful Builder result always runs through Integrator before Checker.
@@ -135,6 +137,17 @@ remains single-writer and serialized by the daemon supervisor.
 Generic success-triggered learning starts at Analyst. Direct Curator trigger
 rules are only valid when a compiled mode names a safe destination such as
 `target_skill_id` or `preferred_output_paths`.
+Curator may perform a format-only migration of a touched workspace-installed
+skill only when it is already applying an evidence-backed behavior patch, the
+current skill linter reports a package/section-shape problem, and the migration
+preserves existing semantics. It must record the behavior patch separately from
+the format migration and must not edit source-packaged skills or promote them.
+In learning-enabled shipped modes, successful Planner runs enqueue Librarian as
+a targeted Learning request. Librarian reads Planner output and the installed
+skill index, refreshes/checks the supported remote skill index, installs up to
+eight relevant remote optional skills that are not already installed, and exits
+as a clean no-op when no relevant uninstalled remote skill is available. This is
+non-blocking Learning work; Planning and Execution do not wait on Librarian.
 
 6. Intake work only after the workspace is healthy and Millrace use is allowed.
 7. Run `millrace run once --workspace <workspace>` when you want one safe tick,
@@ -404,7 +417,8 @@ Important monitoring note:
   closure target; the supported fix is to repair the incident lineage, not to
   bypass the root.
 - `millrace skills create` and `millrace skills improve` require a
-  learning-enabled mode such as `learning_codex` or `learning_pi`
+  learning-enabled mode such as `learning_codex`, `learning_pi`, or
+  `learning_codex_integrated`
 
 ## Monitoring And Intervention
 
@@ -474,8 +488,8 @@ Use intervention commands only when the runtime state actually justifies them:
   `stages.<stage>.*` on the daemon's next tick when a daemon owns the
   workspace. If the daemon was started with an explicit `--mode`, that override
   remains pinned across reloads.
-- Stage config supports learning stages such as `professor`, including
-  `model`, runner-neutral `thinking_level`, legacy Codex
+- Stage config supports learning stages such as `professor` and `librarian`,
+  including `model`, runner-neutral `thinking_level`, legacy Codex
   `model_reasoning_effort`, and `timeout_seconds`.
 - New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
   `runners.default_runner = "codex_cli"`.
@@ -533,6 +547,8 @@ that probe into Planner, Manager, or Mechanic.
   running; use a `tmux` pane for persistent daemon operation.
 - Treating this repo-local operator skill as a runtime-shipped stage skill.
 - Running a daemon when one explicit `run once` tick is the safer truthful move.
+- Expecting Librarian-installed optional skills to appear in the base package;
+  Librarian installs remote skills into the active workspace only.
 
 ## Progressive Disclosure
 

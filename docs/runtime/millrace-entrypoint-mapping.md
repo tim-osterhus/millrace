@@ -34,6 +34,7 @@ pre-packaging draft tree for entrypoints.
 - `src/millrace_ai/assets/entrypoints/learning/analyst.md` -> `millrace-agents/entrypoints/learning/analyst.md`
 - `src/millrace_ai/assets/entrypoints/learning/professor.md` -> `millrace-agents/entrypoints/learning/professor.md`
 - `src/millrace_ai/assets/entrypoints/learning/curator.md` -> `millrace-agents/entrypoints/learning/curator.md`
+- `src/millrace_ai/assets/entrypoints/learning/librarian.md` -> `millrace-agents/entrypoints/learning/librarian.md`
 
 ## Entrypoint Contract Expectations
 
@@ -62,7 +63,11 @@ pre-packaging draft tree for entrypoints.
 - Optional secondary skills are advisory additions and must exist in the packaged or installed skills surface before an entrypoint can reference them.
 - `millrace-agents/skills/skills_index.md` lists packaged skills and points to the supported downloadable optional-skills directory at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
 - Entrypoints should direct stage agents to consult the deployed skills index first, then load only relevant optional skills that are actually present.
-- Analyst is the Learning entrypoint responsible for refreshing `millrace-agents/skills/remote_skills_index.md` and installing relevant downloadable optional skills before using them.
+- Analyst may refresh `millrace-agents/skills/remote_skills_index.md` and install relevant downloadable optional skills before using them for a learning request.
+- Librarian is the targeted Learning entrypoint that runs after Planner in
+  learning-enabled modes, compares Planner output with local and remote skill
+  indexes, and installs relevant downloadable optional skills into the
+  workspace.
 - Required stage-core skills and optional attached skills are compile-time
   surfaces and can be inspected via `millrace compile show` as
   `required_skills` and `attached_skills`.

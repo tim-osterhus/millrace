@@ -91,7 +91,7 @@ def test_stage_kinds_module_is_assets_facade() -> None:
 def test_builtin_stage_kinds_load_and_validate() -> None:
     stage_kinds = load_builtin_stage_kind_definitions()
 
-    assert len(stage_kinds) == 17
+    assert len(stage_kinds) == 18
     assert [stage_kind.stage_kind_id for stage_kind in stage_kinds] == list(SHIPPED_STAGE_KIND_IDS)
     assert {stage_kind.plane for stage_kind in stage_kinds} == {
         Plane.EXECUTION,
@@ -126,6 +126,7 @@ def test_shipped_stage_kind_ids_are_stable() -> None:
         "analyst",
         "professor",
         "curator",
+        "librarian",
     )
 
 
@@ -192,8 +193,18 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
 
     professor = load_builtin_stage_kind_definition("professor")
     curator = load_builtin_stage_kind_definition("curator")
+    librarian = load_builtin_stage_kind_definition("librarian")
     assert professor.allowed_result_classes_by_outcome["PROFESSOR_NOOP"] == (ResultClass.NO_OP,)
     assert curator.allowed_result_classes_by_outcome["CURATOR_NOOP"] == (ResultClass.NO_OP,)
+    assert librarian.plane is Plane.LEARNING
+    assert librarian.default_entrypoint_path == "entrypoints/learning/librarian.md"
+    assert librarian.required_skill_paths == ("skills/stage/learning/librarian-core/SKILL.md",)
+    assert librarian.allowed_result_classes_by_outcome == {
+        "LIBRARIAN_COMPLETE": (ResultClass.SUCCESS,),
+        "LIBRARIAN_NOOP": (ResultClass.NO_OP,),
+        "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
+    }
+    assert librarian.can_start_learning_requests is True
 
 
 def test_stage_kind_asset_errors_use_project_error_hierarchy() -> None:

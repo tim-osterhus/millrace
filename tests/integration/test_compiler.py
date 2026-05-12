@@ -446,6 +446,7 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
         "analyst",
         "professor",
         "curator",
+        "librarian",
     ]
     learning_nodes = {node.node_id: node for node in outcome.active_plan.learning_graph.nodes}
     assert learning_nodes["professor"].model_name == "gpt-5.4"
@@ -464,6 +465,7 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
         ("doublechecker", ("DOUBLECHECK_PASS",), "analyst", "improve"),
         ("troubleshooter", ("TROUBLESHOOT_COMPLETE", "BLOCKED"), "analyst", "improve"),
         ("consultant", ("CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"), "analyst", "improve"),
+        ("planner", ("PLANNER_COMPLETE",), "librarian", "install"),
     }
     assert "graph_loop:learning.standard" in outcome.active_plan.source_refs
 

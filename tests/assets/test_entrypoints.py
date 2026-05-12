@@ -546,6 +546,11 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
             LearningTerminalResult.CURATOR_NOOP.value,
             LearningTerminalResult.BLOCKED.value,
         },
+        LearningStageName.LIBRARIAN.value: {
+            LearningTerminalResult.LIBRARIAN_COMPLETE.value,
+            LearningTerminalResult.LIBRARIAN_NOOP.value,
+            LearningTerminalResult.BLOCKED.value,
+        },
     }
 
 
@@ -568,6 +573,7 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
         LearningStageName.ANALYST.value: "analyst-core",
         LearningStageName.PROFESSOR.value: "professor-core",
         LearningStageName.CURATOR.value: "curator-core",
+        LearningStageName.LIBRARIAN.value: "librarian-core",
     }
 
 
@@ -600,6 +606,7 @@ def _expected_stage_core_skill_paths() -> dict[str, Path]:
         LearningStageName.ANALYST.value: SKILLS_DIR / "stage" / "learning" / "analyst-core" / "SKILL.md",
         LearningStageName.PROFESSOR.value: SKILLS_DIR / "stage" / "learning" / "professor-core" / "SKILL.md",
         LearningStageName.CURATOR.value: SKILLS_DIR / "stage" / "learning" / "curator-core" / "SKILL.md",
+        LearningStageName.LIBRARIAN.value: SKILLS_DIR / "stage" / "learning" / "librarian-core" / "SKILL.md",
     }
 
 
@@ -693,6 +700,11 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "skill improvements",
             "evidence",
             "scope",
+        ),
+        LearningStageName.LIBRARIAN.value: (
+            "remote skills",
+            "installed",
+            "up to eight",
         ),
     }
 
@@ -955,10 +967,16 @@ def test_runtime_shared_marathon_qa_skill_is_shipped_with_honest_audit_guidance(
     headings = _extract_h2_headings(body)
     assert "Purpose" in headings
     assert "Quick Start" in headings
-    assert "Audit Modes" in headings
-    assert "Evidence-Depth Ladder" in headings
-    assert "Decision Rules" in headings
+    assert "Operating Constraints" in headings
+    assert "Inputs This Skill Expects" in headings
+    assert "Output Contract" in headings
+    assert "Procedure" in headings
+    assert "Pitfalls And Gotchas" in headings
+    assert "Progressive Disclosure" in headings
     assert "Verification Pattern" in headings
+    assert "Choose Audit Mode" in body
+    assert "Apply The Evidence-Depth Ladder" in body
+    assert "Apply Decision Rules" in body
     assert "full-band" in body.lower()
     assert "reduced evidence quality" in body.lower()
     assert "affirmative failure evidence" in body.lower()
@@ -1044,8 +1062,9 @@ def test_learning_entrypoints_define_durable_handoff_artifacts() -> None:
     analyst = (learning_dir / "analyst.md").read_text(encoding="utf-8")
     professor = (learning_dir / "professor.md").read_text(encoding="utf-8")
     curator = (learning_dir / "curator.md").read_text(encoding="utf-8")
+    librarian = (learning_dir / "librarian.md").read_text(encoding="utf-8")
 
-    for body in (analyst, professor, curator):
+    for body in (analyst, professor, curator, librarian):
         assert "active_work_item_path" in body
         assert "run_dir" in body
         assert "summary_status_path" in body
@@ -1053,7 +1072,8 @@ def test_learning_entrypoints_define_durable_handoff_artifacts() -> None:
         assert "target_stage" in body
         assert "requested_action" in body
         assert "artifact_paths" in body
-        assert "preferred_output_paths" in body
+        if body is not librarian:
+            assert "preferred_output_paths" in body
 
     assert "millrace skills refresh-remote-index" in analyst
     assert "millrace skills install <skill_id>" in analyst
@@ -1075,6 +1095,20 @@ def test_learning_entrypoints_define_durable_handoff_artifacts() -> None:
     assert "source promotion" in curator
     assert "promotion remains an operator command" in curator.lower()
     assert "CURATOR_NOOP" in curator
+    assert "format-only migration" in curator
+    assert "section contract" in curator
+    assert "lint failures are remediation signals" in curator
+    assert "behavior patch" in curator
+
+    assert "run_dir/librarian_selection_report.md" in librarian
+    assert "planner_summary.md" in librarian
+    assert "remote_skills_index.md" in librarian
+    assert "millrace skills refresh-remote-index" in librarian
+    assert "millrace skills install <skill_id>" in librarian
+    assert "up to eight" in librarian.lower()
+    assert "already installed" in librarian.lower()
+    assert "LIBRARIAN_COMPLETE" in librarian
+    assert "LIBRARIAN_NOOP" in librarian
 
 
 def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
@@ -1082,6 +1116,7 @@ def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
     analyst = (learning_skills_dir / "analyst-core" / "SKILL.md").read_text(encoding="utf-8")
     professor = (learning_skills_dir / "professor-core" / "SKILL.md").read_text(encoding="utf-8")
     curator = (learning_skills_dir / "curator-core" / "SKILL.md").read_text(encoding="utf-8")
+    librarian = (learning_skills_dir / "librarian-core" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "analyst_research_packet.md" in analyst
     assert "requested_action" in analyst
@@ -1098,6 +1133,16 @@ def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
     assert "workspace-installed skills" in curator
     assert "source promotion" in curator
     assert "CURATOR_NOOP" in curator
+    assert "format-only migration" in curator
+    assert "behavior changes" in curator
+    assert "lint failures" in curator
+
+    assert "librarian_selection_report.md" in librarian
+    assert "up to eight" in librarian.lower()
+    assert "already installed" in librarian.lower()
+    assert "remote_skills_index.md" in librarian
+    assert "supported remote index" in librarian
+    assert "LIBRARIAN_NOOP" in librarian
 
 
 def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> None:

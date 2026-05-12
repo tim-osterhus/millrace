@@ -40,8 +40,9 @@ That compiled plan freezes:
 - per-node entrypoint path, skill bindings, runner, model, and timeout
 - compiled transitions, resume policies, threshold policies, and completion
   behavior
-- learning trigger rules, including direct-Curator destination metadata, and
-  plane concurrency policy when the selected mode declares them
+- learning trigger rules, including direct-Curator destination metadata,
+  Planner-to-Librarian optional-skill preparation, and plane concurrency policy
+  when the selected mode declares them
 - resolved asset references and content hashes
 
 The runtime then consumes that compiled authority during startup, routing,
@@ -51,6 +52,9 @@ Compile validation rejects learning trigger rules that target Curator directly
 without `target_skill_id` or `preferred_output_paths`. Generic or vague learning
 evidence should target Analyst so the learning plane can research, no-op, or
 escalate without guessing a skill destination.
+Learning-enabled shipped modes include a Planner-to-Librarian trigger for
+`PLANNER_COMPLETE`; that target is safe because Librarian's destination is the
+workspace-local optional-skill install surface, not a source-packaged skill.
 
 ## Authoritative Asset Surfaces
 

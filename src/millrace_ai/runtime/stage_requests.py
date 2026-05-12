@@ -53,6 +53,7 @@ _STAGE_WORK_ITEM_OWNERSHIP: dict[str, frozenset[WorkItemKind]] = {
     "analyst": frozenset({WorkItemKind.LEARNING_REQUEST}),
     "professor": frozenset({WorkItemKind.LEARNING_REQUEST}),
     "curator": frozenset({WorkItemKind.LEARNING_REQUEST}),
+    "librarian": frozenset({WorkItemKind.LEARNING_REQUEST}),
 }
 
 

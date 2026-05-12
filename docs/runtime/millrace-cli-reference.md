@@ -125,6 +125,9 @@ Learning-enabled modes may run one Learning stage concurrently with one
 permitted foreground Planning or Execution stage. Runtime-owned queue,
 snapshot, counter, status, and router mutation remains single-writer and
 serialized by the daemon supervisor.
+In learning-enabled modes, successful Planner runs can trigger Librarian on the
+Learning plane to install relevant remote optional skills into the workspace
+without blocking foreground work.
 Integrated Codex modes remain opt-in: `default_codex_integrated` and
 `learning_codex_integrated` select `execution.with_integrator`, so every
 successful Builder run goes through Integrator before Checker. The integrated
@@ -598,6 +601,9 @@ Options:
 Fetches the supported optional skill index from
 `github.com/tim-osterhus/millrace-skills` and writes it to
 `millrace-agents/skills/remote_skills_index.md`.
+Operators can run this manually before `millrace skills install`; Librarian uses
+the same supported remote index during learning-enabled post-Planner
+preparation.
 
 Options:
 
@@ -656,9 +662,12 @@ Command summary:
 - `millrace skills export <SKILL_ID>`
 
 Create/improve workflows require a learning-enabled mode such as
-`learning_codex` or `learning_pi` because they enqueue learning requests for the
-Analyst/Professor/Curator loop. Install/list/show/search/refresh can be used
-for the deployed skill surface without changing the active runtime mode.
+`learning_codex`, `learning_pi`, or `learning_codex_integrated` because they
+enqueue learning requests for the Analyst/Professor/Curator skill-improvement
+path.
+Install/list/show/search/refresh can be used for the deployed skill surface
+without changing the active runtime mode, and Librarian uses the same remote
+index/install surface after Planner in learning-enabled modes.
 
 ## Doctor Command
 

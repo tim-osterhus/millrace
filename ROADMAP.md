@@ -168,12 +168,13 @@ Expected user impact:
 ### Learning Plane Stabilization
 
 The learning plane now ships as an opt-in mode family through `learning_codex`
-and `learning_pi`. Active work is to keep the Analyst, Professor, and Curator
-flow grounded in runtime evidence and to avoid automatic skill changes without
-clear operator-controlled promotion. Generic success-triggered learning now
-starts at Analyst, direct Curator triggers require explicit destination
-metadata, and reviewed no-change learning can terminate as no-op/done instead
-of creating noisy blocked artifacts.
+and `learning_pi`. Active work is to keep the Analyst, Professor, Curator, and
+Librarian flow grounded in runtime evidence and to avoid automatic skill
+changes without clear operator-controlled promotion. Generic success-triggered
+learning now starts at Analyst, Planner completion can trigger Librarian to
+prepare relevant remote optional skills, direct Curator triggers require
+explicit destination metadata, and reviewed no-change learning can terminate as
+no-op/done instead of creating noisy blocked artifacts.
 
 Expected user impact:
 
@@ -184,15 +185,18 @@ Expected user impact:
   no skill mutation
 - better compile/status visibility for learning triggers, queue depth, and
   status markers
+- relevant optional skills can be installed into a workspace after Planner
+  without bloating the base runtime package
 
 ### Optional Skills Directory
 
 Millrace now has a supported public optional-skills directory outside the core
 runtime package. The active direction is to keep downloadable skills explicitly
 indexed, operator-auditable, and installed into workspaces before stages use
-them. Analyst owns remote optional-skill discovery during Learning, while
-installed `SKILL.md` files remain the workspace-local source of availability
-truth.
+them. Analyst can use remote optional-skill discovery for learning requests,
+and Librarian prepares relevant remote skills after Planner in learning-enabled
+modes, while installed `SKILL.md` files remain the workspace-local source of
+availability truth.
 
 Expected user impact:
 

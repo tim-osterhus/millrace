@@ -36,7 +36,8 @@ Required deliverables:
 - either:
   - refinement of the active spec at `active_work_item_path`, or
   - one or more additional coherent spec artifacts only when true fan-out is required
-- a planner summary that names the input, emitted specs, and major assumptions
+- a planner summary that names the input, emitted specs, major assumptions, and
+  the exact generated or refined spec paths that downstream stages should read
 
 ### Pass-Through Decision Rule (high priority)
 

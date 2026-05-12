@@ -26,7 +26,8 @@
     "arbiter": "codex_cli",
     "analyst": "codex_cli",
     "professor": "codex_cli",
-    "curator": "codex_cli"
+    "curator": "codex_cli",
+    "librarian": "codex_cli"
   },
   "concurrency_policy": {
     "mutually_exclusive_planes": [["execution", "planning"]],
@@ -56,6 +57,14 @@
       "on_terminal_results": ["CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"],
       "target_stage": "analyst",
       "requested_action": "improve"
+    },
+    {
+      "rule_id": "planning.planner.complete-to-librarian",
+      "source_plane": "planning",
+      "source_stage": "planner",
+      "on_terminal_results": ["PLANNER_COMPLETE"],
+      "target_stage": "librarian",
+      "requested_action": "install"
     }
   ]
 }

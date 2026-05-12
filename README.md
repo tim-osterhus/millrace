@@ -60,7 +60,7 @@ flowchart TD
     C --> D{"Scheduler claim decision"}
     D -- planning probe, incident, or spec --> E["Planning loop:<br/>classify probes,<br/>interpret specs and incidents,<br/>govern remediation, emit executable work"]
     D -- execution task --> F["Execution loop:<br/>build, verify, repair, recover, update"]
-    D -- learning request --> K["Learning loop:<br/>analyze runtime evidence,<br/>propose skill improvements,<br/>curate accepted updates"]
+    D -- learning request --> K["Learning loop:<br/>analyze runtime evidence,<br/>prepare optional skills,<br/>curate accepted updates"]
     D -- nothing claimable --> G{"Completion behavior eligible?"}
     G -- yes --> H["Arbiter closure pass"]
     G -- no --> I["Idle until the next tick"]
@@ -105,10 +105,12 @@ It wraps long-horizon work in a runtime with a few hard contracts:
   keep post-run inspection grounded in runtime evidence.
 
 The shipped core includes separate Planning and Execution loops.
-Learning-enabled modes add Analyst, Professor, and Curator stages for
-evidence-backed skill improvement flows. Generic success-triggered learning is
-Analyst-first, and reviewed no-change learning can close as no-op instead of
-being treated as blocked.
+Learning-enabled modes add Analyst, Professor, Curator, and Librarian stages
+for evidence-backed skill improvement and post-Planner optional-skill
+preparation. Generic success-triggered learning is Analyst-first, Planner
+completion can trigger Librarian to install relevant remote optional skills
+into the workspace, and reviewed no-change learning can close as no-op instead
+of being treated as blocked.
 
 For operational details, see `docs/runtime/README.md`,
 `docs/runtime/millrace-cli-reference.md`, and

@@ -246,14 +246,26 @@ def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:
         "analyst",
         "professor",
         "curator",
+        "librarian",
     ]
     assert {state.terminal_state_id for state in learning.terminal_states} == {
         "analyst_noop",
         "learning_complete",
         "professor_noop",
         "curator_noop",
+        "librarian_complete",
+        "librarian_noop",
         "blocked",
     }
+    edges = {edge.edge_id: edge for edge in learning.edges}
+    assert edges["librarian-complete-to-terminal-librarian-complete"].terminal_state_id == "librarian_complete"
+    assert edges["librarian-noop-to-terminal-librarian-noop"].terminal_state_id == "librarian_noop"
+    assert edges["librarian-blocked-to-terminal-blocked"].terminal_state_id == "blocked"
+    assert all(
+        edge.to_node_id not in {"analyst", "professor", "curator"}
+        for edge in learning.edges
+        if edge.from_node_id == "librarian"
+    )
     assert {
         state.terminal_class
         for state in learning.terminal_states

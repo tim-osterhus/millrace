@@ -552,6 +552,71 @@ def test_learning_mode_execution_trigger_enqueues_analyst_first_learning_request
     assert doc.trigger_metadata["terminal_result"] == "DOUBLECHECK_PASS"
 
 
+def test_learning_mode_planner_complete_triggers_librarian_request_with_planner_artifacts(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-001", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        assert request.stage is PlanningStageName.PLANNER
+        run_dir = Path(request.run_dir)
+        planner_summary = run_dir / "planner_summary.md"
+        planner_summary.write_text(
+            "# Planner Summary\n\nGenerated or refined spec paths:\n- millrace-agents/specs/active/spec-001.md\n",
+            encoding="utf-8",
+        )
+        terminal_path = run_dir / "stage_terminal_result.json"
+        terminal_path.write_text(
+            json.dumps(
+                {
+                    "stage": "planner",
+                    "terminal_result": "PLANNER_COMPLETE",
+                    "result_class": "success",
+                    "summary_artifact_paths": ["planner_summary.md"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout_path = run_dir / "runner_stdout.txt"
+        stdout_path.write_text("### PLANNER_COMPLETE\n", encoding="utf-8")
+        return RunnerRawResult(
+            request_id=request.request_id,
+            run_id=request.run_id,
+            stage=request.stage,
+            runner_name=request.runner_name or "test-runner",
+            model_name=request.model_name,
+            exit_kind="completed",
+            exit_code=0,
+            stdout_path=str(stdout_path),
+            stderr_path=None,
+            terminal_result_path=str(terminal_path),
+            started_at=NOW,
+            ended_at=NOW + timedelta(seconds=1),
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine.startup()
+    outcome = engine.tick()
+
+    queued_requests = tuple(paths.learning_requests_queue_dir.glob("*.md"))
+    assert outcome.stage is PlanningStageName.PLANNER
+    assert len(queued_requests) == 1
+    doc = read_work_document_as(queued_requests[0], model=LearningRequestDocument)
+    assert doc.requested_action == "install"
+    assert doc.target_stage is LearningStageName.LIBRARIAN
+    assert doc.trigger_metadata["rule_id"] == "planning.planner.complete-to-librarian"
+    assert doc.trigger_metadata["source_stage"] == "planner"
+    assert doc.trigger_metadata["source_work_item_kind"] == "spec"
+    assert doc.trigger_metadata["source_work_item_id"] == "spec-001"
+    assert doc.trigger_metadata["source_active_work_item_path"].endswith(
+        "millrace-agents/specs/active/spec-001.md"
+    )
+    assert any("/stage_results/" in path and path.endswith(".json") for path in doc.artifact_paths)
+    assert any(path.endswith("planner_summary.md") for path in doc.artifact_paths)
+
+
 def test_runtime_generated_learning_request_copies_trigger_destination_metadata(
     tmp_path: Path,
 ) -> None:
@@ -639,6 +704,42 @@ def test_targeted_learning_request_activates_requested_stage(tmp_path: Path) -> 
     assert captured_request.request_kind == "learning_request"
     assert outcome.router_decision.reason == "curator:CURATOR_COMPLETE"
     assert (paths.learning_requests_done_dir / "learn-001.md").is_file()
+
+
+def test_targeted_librarian_request_activates_librarian_stage(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(
+        LearningRequestDocument(
+            learning_request_id="learn-librarian-001",
+            title="Install relevant remote skills",
+            requested_action="install",
+            target_stage="librarian",
+            artifact_paths=("millrace-agents/runs/run-planner/stage_results/planner.json",),
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+    captured_request: StageRunRequest | None = None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal captured_request
+        captured_request = request
+        return _runner_result(
+            request,
+            terminal=LearningTerminalResult.LIBRARIAN_NOOP.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine.startup()
+    outcome = engine.tick()
+
+    assert captured_request is not None
+    assert captured_request.stage is LearningStageName.LIBRARIAN
+    assert captured_request.request_kind == "learning_request"
+    assert outcome.router_decision.reason == "librarian:LIBRARIAN_NOOP"
+    assert (paths.learning_requests_done_dir / "learn-librarian-001.md").is_file()
 
 
 def test_learning_noop_terminal_marks_request_done(tmp_path: Path) -> None:

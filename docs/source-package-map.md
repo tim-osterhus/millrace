@@ -51,13 +51,16 @@ asset family:
 - `src/millrace_ai/assets/graphs/` ships the graph-loop JSON
 - `src/millrace_ai/assets/loops/learning/default.json` and
   `src/millrace_ai/assets/graphs/learning/standard.json` ship the learning
-  loop alongside execution and planning
+  loop alongside execution and planning, including the
+  Analyst/Professor/Curator chain and the targeted Librarian stage for
+  post-Planner remote optional-skill preparation
 - `src/millrace_ai/assets/loops/execution/with_integrator.json` and
   `src/millrace_ai/assets/graphs/execution/with_integrator.json` ship the
   opt-in high-assurance execution loop
 - `src/millrace_ai/assets/modes/learning_codex.json` and
   `src/millrace_ai/assets/modes/learning_pi.json` select execution, planning,
-  and learning loops with compiler-frozen learning trigger rules
+  and learning loops with compiler-frozen learning trigger rules, including
+  Planner-to-Librarian optional-skill preparation
 
 This scaffolding now owns the runtime control-flow authority surface. The
 legacy loop and router modules still remain in the package as compatibility and

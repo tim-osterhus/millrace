@@ -3,7 +3,7 @@
   "kind": "loop_config",
   "loop_id": "learning.standard",
   "plane": "learning",
-  "stages": ["analyst", "professor", "curator"],
+  "stages": ["analyst", "professor", "curator", "librarian"],
   "entry_stage": "analyst",
   "edges": [
     {
@@ -41,6 +41,18 @@
       "edge_kind": "terminal"
     },
     {
+      "source_stage": "librarian",
+      "on_terminal_result": "LIBRARIAN_COMPLETE",
+      "terminal_result": "LIBRARIAN_COMPLETE",
+      "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "librarian",
+      "on_terminal_result": "LIBRARIAN_NOOP",
+      "terminal_result": "LIBRARIAN_NOOP",
+      "edge_kind": "terminal"
+    },
+    {
       "source_stage": "analyst",
       "on_terminal_result": "BLOCKED",
       "terminal_result": "BLOCKED",
@@ -57,6 +69,12 @@
       "on_terminal_result": "BLOCKED",
       "terminal_result": "BLOCKED",
       "edge_kind": "terminal"
+    },
+    {
+      "source_stage": "librarian",
+      "on_terminal_result": "BLOCKED",
+      "terminal_result": "BLOCKED",
+      "edge_kind": "terminal"
     }
   ],
   "terminal_results": [
@@ -64,6 +82,8 @@
     "PROFESSOR_NOOP",
     "CURATOR_COMPLETE",
     "CURATOR_NOOP",
+    "LIBRARIAN_COMPLETE",
+    "LIBRARIAN_NOOP",
     "BLOCKED"
   ]
 }

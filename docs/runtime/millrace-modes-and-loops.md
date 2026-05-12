@@ -237,6 +237,7 @@ directly than the legacy single-`entry_stage` loop schema.
 1. `analyst`
 2. `professor`
 3. `curator`
+4. `librarian`
 
 Its legacy loop `entry_stage` is `analyst`.
 
@@ -246,6 +247,8 @@ Its current `terminal_results` are:
 - `PROFESSOR_NOOP`
 - `CURATOR_COMPLETE`
 - `CURATOR_NOOP`
+- `LIBRARIAN_COMPLETE`
+- `LIBRARIAN_NOOP`
 - `BLOCKED`
 
 In the shipped graph:
@@ -256,6 +259,8 @@ In the shipped graph:
 - `PROFESSOR_NOOP` terminates with `professor_noop`
 - `CURATOR_COMPLETE` terminates with `learning_complete`
 - `CURATOR_NOOP` terminates with `curator_noop`
+- `LIBRARIAN_COMPLETE` terminates with `librarian_complete`
+- `LIBRARIAN_NOOP` terminates with `librarian_noop`
 - `BLOCKED` from any learning stage terminates with `blocked`
 
 The graph-loop asset exposes one intake entry:
@@ -265,9 +270,12 @@ The graph-loop asset exposes one intake entry:
 Learning requests may also carry a target stage. When a target stage is present,
 runtime activation uses the compiled learning graph to start at that stage
 instead of replaying the full Analyst-to-Curator path. Built-in generic success
-learning starts at Analyst. Direct Curator triggers are only valid when the
-trigger rule includes a safe destination such as `target_skill_id` or
-`preferred_output_paths`; otherwise compile validation rejects the mode.
+learning starts at Analyst. Learning-enabled shipped modes also enqueue a
+targeted Librarian request after `PLANNER_COMPLETE` so the workspace can install
+relevant remote optional skills without blocking foreground Planning or
+Execution. Direct Curator triggers are only valid when the trigger rule includes
+a safe destination such as `target_skill_id` or `preferred_output_paths`;
+otherwise compile validation rejects the mode.
 
 No-op learning terminal states move the learning request to
 `learning/requests/done/`, not `learning/requests/blocked/`. They mean the
@@ -374,8 +382,9 @@ override and the selected adapter can use its own default behavior.
 ## Stage Config Overlays
 
 Runtime config may define `stages.<stage>` entries for execution, planning, and
-learning stages. Learning stages such as `analyst`, `professor`, and `curator`
-use the same supported config surface as execution and planning stages.
+learning stages. Learning stages such as `analyst`, `professor`, `curator`, and
+`librarian` use the same supported config surface as execution and planning
+stages.
 
 Supported stage config fields are:
 
@@ -450,8 +459,10 @@ Those are the fields that change the compiled runtime plan.
 Fields such as `usage_governance.*` are next-tick runtime settings and do not
 change selected modes, loops, or compiled node bindings.
 
-Use `learning_codex` or `learning_pi` only when the workspace should opt into
-runtime learning requests and the Analyst/Professor/Curator flow.
+Use `learning_codex`, `learning_pi`, or `learning_codex_integrated` only when
+the workspace should opt into runtime learning requests, the
+Analyst/Professor/Curator flow, and Planner-triggered Librarian optional-skill
+preparation.
 
 ## Operator View
 

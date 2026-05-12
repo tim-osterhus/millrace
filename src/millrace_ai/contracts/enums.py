@@ -35,6 +35,7 @@ class LearningStageName(str, Enum):
     ANALYST = "analyst"
     PROFESSOR = "professor"
     CURATOR = "curator"
+    LIBRARIAN = "librarian"
 
 
 StageName = ExecutionStageName | PlanningStageName | LearningStageName
@@ -75,6 +76,8 @@ class LearningTerminalResult(str, Enum):
     PROFESSOR_NOOP = "PROFESSOR_NOOP"
     CURATOR_COMPLETE = "CURATOR_COMPLETE"
     CURATOR_NOOP = "CURATOR_NOOP"
+    LIBRARIAN_COMPLETE = "LIBRARIAN_COMPLETE"
+    LIBRARIAN_NOOP = "LIBRARIAN_NOOP"
     BLOCKED = "BLOCKED"
 
 

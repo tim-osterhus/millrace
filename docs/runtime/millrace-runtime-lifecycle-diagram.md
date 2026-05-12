@@ -7,9 +7,10 @@ default runtime configuration:
 - planning loop: `planning.standard`
 - execution loop: `execution.standard`
 
-Learning-enabled modes (`learning_codex`, `learning_pi`) use the same planning
-and execution topology and add `learning.standard`; this default-mode chart
-omits that optional claim path except where noted.
+Learning-enabled modes (`learning_codex`, `learning_pi`, and
+`learning_codex_integrated`) use the same planning topology and add
+`learning.standard`; this default-mode chart omits that optional claim path
+except where noted.
 
 The README embeds a simplified version. This file keeps the fuller chart that
 tracks startup, scheduling, result application, recovery routing, and Arbiter
@@ -203,6 +204,9 @@ flowchart LR
 - Active stages can bypass fresh claim and go straight to request build.
 - Claim precedence is planning incident -> planning spec -> execution task,
   then learning request when a learning loop is active.
+- In learning-enabled shipped modes, a successful Planner result can enqueue a
+  targeted Librarian learning request that prepares workspace-local optional
+  skills from the supported remote index.
 - Root-spec claim opens the closure target and snapshots contracts.
 - Arbiter activates only when no lineage work remains and closure is ready.
 - Invalid active state is cleared before the runtime settles on `no_work`.

@@ -360,6 +360,25 @@ STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
                 }
             ),
         ),
+        LearningStageName.LIBRARIAN.value: StageMetadata(
+            stage=LearningStageName.LIBRARIAN,
+            plane=Plane.LEARNING,
+            legal_terminal_results=(
+                LearningTerminalResult.LIBRARIAN_COMPLETE.value,
+                LearningTerminalResult.LIBRARIAN_NOOP.value,
+                LearningTerminalResult.BLOCKED.value,
+            ),
+            allowed_result_classes_by_outcome=_allowed(
+                {
+                    LearningTerminalResult.LIBRARIAN_COMPLETE.value: (ResultClass.SUCCESS,),
+                    LearningTerminalResult.LIBRARIAN_NOOP.value: (ResultClass.NO_OP,),
+                    LearningTerminalResult.BLOCKED.value: (
+                        ResultClass.BLOCKED,
+                        ResultClass.RECOVERABLE_FAILURE,
+                    ),
+                }
+            ),
+        ),
     }
 )
 

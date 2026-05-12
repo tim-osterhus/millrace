@@ -22,6 +22,7 @@ recommended_for_stages:
   - analyst
   - professor
   - curator
+  - librarian
 forbidden_claims:
   - queue_selection
   - routing
@@ -51,10 +52,14 @@ Runtime shipping notes:
 - Shipped stage-core skills use the hybrid format with thin manifest frontmatter for identity and structured markdown sections in the body for the actual guidance.
 - Stage-core skills live under `skills/stage/<plane>/<stage>-core/SKILL.md`.
 - `integrator-core` is used by the opt-in integrated execution modes to guide the quality-first post-Builder integration pass.
+- `librarian-core` is used by learning-enabled modes for post-Planner remote optional-skill preparation.
 - Each stage-core skill should stay narrow: posture, heuristics, traps, evidence discipline, and optional-skill triggers only.
 - Additional optional skills should be referenced only after they are shipped in the runtime package or installed into the active workspace.
 - Supported downloadable optional skills are listed at `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
 - `millrace skills refresh-remote-index` writes the remote listing to
   `millrace-agents/skills/remote_skills_index.md`; `millrace skills install
   <skill_id>` installs an available remote skill as a workspace-local skill.
+- Librarian uses the same supported commands after Planner completes in
+  learning-enabled modes; the base package still ships instructions and
+  contracts only, not remote optional skill payloads.
 - Arbiter stage-core guidance should stay focused on rubric discipline, parity judgment, and remediation handoff posture rather than runtime authority.

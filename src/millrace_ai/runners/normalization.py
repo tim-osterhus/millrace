@@ -579,6 +579,11 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "preferred_rubric_path": request.preferred_rubric_path,
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,
+        "active_work_item_kind": request.active_work_item_kind.value
+        if request.active_work_item_kind is not None
+        else None,
+        "active_work_item_id": request.active_work_item_id,
+        "active_work_item_path": request.active_work_item_path,
         "skill_revision_evidence_path": request.skill_revision_evidence_path,
         "thinking_level": request.thinking_level,
         "model_reasoning_effort": request.model_reasoning_effort,

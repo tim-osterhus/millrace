@@ -189,7 +189,8 @@ recovery, and post-stage routing from that compiled plan.
 The compiler currently ships with baseline and learning-enabled built-in modes:
 
 - baseline modes: `default_codex`, `default_pi`
-- learning-enabled modes: `learning_codex`, `learning_pi`
+- learning-enabled modes: `learning_codex`, `learning_pi`,
+  `learning_codex_integrated`
 - integrated quality modes: `default_codex_integrated`,
   `learning_codex_integrated`
 - execution loops: `execution.standard`, `execution.with_integrator`
@@ -290,9 +291,12 @@ learning-enabled modes may run one Learning stage concurrently with one
 permitted foreground Planning or Execution stage. Runtime-owned mutation stays
 single-writer and serialized by the supervisor. Learning trigger rules can
 enqueue targeted learning requests from runtime evidence. Built-in success
-learning starts at Analyst; direct Curator trigger rules are reserved for
-custom modes that name a concrete destination. Troubleshooting and consultation
-recovery also route learning evidence through Analyst.
+learning starts at Analyst; learning-enabled shipped modes trigger Librarian
+after Planner completes so relevant remote optional skills can be installed
+into the workspace while foreground work continues. Direct Curator trigger
+rules are reserved for custom modes that name a concrete destination.
+Troubleshooting and consultation recovery also route learning evidence through
+Analyst.
 
 The compiler materializes one `CompiledRunPlan`, whose graph nodes record
 the exact runtime execution contract the engine will use later:
@@ -371,16 +375,26 @@ The current learning loop is:
 - `analyst`
 - `professor`
 - `curator`
+- `librarian`
 
-Learning is opt-in through `learning_codex` or `learning_pi`. Its normal path is
+Learning is opt-in through `learning_codex`, `learning_pi`, or
+`learning_codex_integrated`. Its normal path is
 Analyst evidence analysis, Professor synthesis, then Curator acceptance and
-skill-update curation. It can terminate with `CURATOR_COMPLETE`, a
-stage-specific no-op outcome, or `BLOCKED`. Learning requests live under
-`millrace-agents/learning/requests/`, and targeted requests can start at a
-specific learning stage when a compiler-frozen trigger rule says that stage is
-the right entry point. Generic success-triggered learning starts at Analyst;
-direct Curator triggers require a safe destination such as `target_skill_id` or
-`preferred_output_paths`.
+skill-update curation. Librarian is a targeted one-off Learning stage that runs
+after Planner in learning-enabled modes, checks Planner output against local and
+remote skill indexes, and installs up to eight relevant uninstalled optional
+remote skills into the workspace. Learning can terminate with
+`CURATOR_COMPLETE`, `LIBRARIAN_COMPLETE`, a stage-specific no-op outcome, or
+`BLOCKED`. Learning requests live under `millrace-agents/learning/requests/`,
+and targeted requests can start at a specific learning stage when a
+compiler-frozen trigger rule says that stage is the right entry point. Generic
+success-triggered learning starts at Analyst; direct Curator triggers require a
+safe destination such as `target_skill_id` or `preferred_output_paths`.
+When Curator already applies an evidence-backed patch to a
+workspace-installed skill, it may also perform a format-only migration to the
+current skill section contract if lint reports package-shape drift and the
+existing semantics can be preserved. That migration is recorded separately from
+the behavior patch and does not grant source promotion authority.
 
 The phase-1 graph loops make the shipped intake mapping explicit:
 
@@ -389,6 +403,7 @@ The phase-1 graph loops make the shipped intake mapping explicit:
 - planning graph: `spec -> planner`
 - planning graph: `incident -> auditor`
 - learning graph: `learning_request -> analyst`
+- targeted learning request: `learning_request -> librarian`
 
 ## Runner Baselines
 
@@ -501,7 +516,10 @@ supported downloadable optional-skills directory at
 `https://github.com/tim-osterhus/millrace-skills/blob/main/index.md`.
 Analyst can refresh that index into `millrace-agents/skills/remote_skills_index.md`
 and install relevant remote skill ids with `millrace skills install <skill_id>`
-before using them as normal workspace-local optional skills.
+before using them as normal workspace-local optional skills. Librarian uses the
+same supported commands after Planner completes in learning-enabled modes so
+optional skill payloads stay workspace-local instead of being bundled into the
+base runtime package.
 
 The runtime controls which advisory assets are available and attached, but the
 stage still does the substantive reasoning work inside its own contract.
@@ -521,7 +539,7 @@ rewriting orchestration.
 Stages support explicit model and runner-neutral thinking selection through
 runtime config. `stages.<stage>.model` sets the model, and
 `stages.<stage>.thinking_level` sets the compiled thinking level for execution,
-planning, and learning stages including `professor`. Codex translates that
+planning, and learning stages including `professor` and `librarian`. Codex translates that
 value to `model_reasoning_effort`; Pi translates it to `--thinking`. The
 compiled plan, stage request, runner invocation artifact, persisted stage
 result, and `runs show` output all carry the selected thinking level when it is

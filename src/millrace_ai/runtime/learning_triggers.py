@@ -58,7 +58,7 @@ def enqueue_learning_requests_for_stage_result(
             ),
             trigger_metadata=_trigger_metadata(rule_id=rule.rule_id, stage_result=stage_result),
             originating_run_ids=(stage_result.run_id,),
-            artifact_paths=(str(stage_result_path),),
+            artifact_paths=_learning_artifact_paths(stage_result_path, stage_result),
             preferred_output_paths=rule.preferred_output_paths,
             created_at=engine._now(),
             created_by="millrace runtime",
@@ -100,7 +100,21 @@ def _trigger_metadata(
         "run_id": stage_result.run_id,
         "work_item_kind": stage_result.work_item_kind.value,
         "work_item_id": stage_result.work_item_id,
+        "source_work_item_kind": stage_result.work_item_kind.value,
+        "source_work_item_id": stage_result.work_item_id,
+        "source_active_work_item_path": _string_metadata(stage_result, "active_work_item_path"),
     }
+
+
+def _learning_artifact_paths(
+    stage_result_path: Path,
+    stage_result: StageResultEnvelope,
+) -> tuple[str, ...]:
+    paths: list[str] = [str(stage_result_path)]
+    for artifact_path in stage_result.artifact_paths:
+        if artifact_path not in paths:
+            paths.append(artifact_path)
+    return tuple(paths)
 
 
 def _string_metadata(stage_result: StageResultEnvelope, key: str) -> str | None:

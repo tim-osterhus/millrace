@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import ExecutionStageName, ModeDefinition, Plane
+from millrace_ai.contracts import ExecutionStageName, LearningStageName, ModeDefinition, Plane, PlanningStageName
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.modes import (
     SHIPPED_MODE_IDS,
@@ -181,6 +181,28 @@ def test_integrated_codex_modes_load_quality_execution_loop() -> None:
     assert learning_bundle.learning_loop.loop_id == "learning.standard"
     assert learning_bundle.mode.learning_enabled is True
     assert learning_bundle.mode.stage_runner_bindings[ExecutionStageName.INTEGRATOR] == "codex_cli"
+
+
+def test_learning_enabled_modes_trigger_librarian_after_planner_complete() -> None:
+    for mode_id in ("learning_codex", "learning_pi", "learning_codex_integrated"):
+        bundle = load_builtin_mode_bundle(mode_id)
+        rule_by_id = {rule.rule_id: rule for rule in bundle.mode.learning_trigger_rules}
+
+        rule = rule_by_id["planning.planner.complete-to-librarian"]
+        assert rule.source_plane is Plane.PLANNING
+        assert rule.source_stage is PlanningStageName.PLANNER
+        assert rule.on_terminal_results == ("PLANNER_COMPLETE",)
+        assert rule.target_stage is LearningStageName.LIBRARIAN
+        assert rule.requested_action.value == "install"
+
+
+def test_default_modes_do_not_trigger_librarian() -> None:
+    for mode_id in ("default_codex", "default_pi", "default_codex_integrated"):
+        bundle = load_builtin_mode_bundle(mode_id)
+        assert all(
+            rule.target_stage is not LearningStageName.LIBRARIAN
+            for rule in bundle.mode.learning_trigger_rules
+        )
 
 
 def test_workspace_local_mode_loads_discovered_loops_and_stage_bindings(tmp_path: Path) -> None:

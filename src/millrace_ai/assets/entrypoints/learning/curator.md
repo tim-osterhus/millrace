@@ -21,6 +21,9 @@ Allowed:
   and `run_dir/professor_skill_patch.md` when present
 - inspect linked `artifact_paths`, `source_refs`, `preferred_output_paths`, and current skills
 - update workspace-installed skills when evidence and destination are clear
+- perform a format-only migration of the same touched workspace-installed skill
+  when a supported behavior patch is being applied and the current linter reports
+  a package-shape or section-contract failure
 - write a curation decision and update summary
 
 Not allowed:
@@ -53,6 +56,7 @@ The curation decision must include:
   Analyst packet, and Professor candidate or patch
 - accepted, rejected, or blocked decision
 - exact workspace-installed skill path changed, or why no change was applied
+- whether the update was a behavior patch, a format-only migration, or both
 - validation performed or skipped with reason
 - source promotion note when the change is promotable later
 
@@ -102,6 +106,17 @@ The curation decision must include:
 
 4. Apply or record the result.
 - Apply the smallest safe workspace-installed skill update when supported.
+- Remember that lint failures are remediation signals, not automatic blockers.
+- After applying a supported behavior patch, run the current workspace-available
+  `millrace-skill-creator` linter against the touched skill package when it is
+  available.
+- If lint fails only for package-shape or section-contract reasons, migrate the
+  touched skill into the current section contract without adding behavioral
+  claims, then rerun lint.
+- Record behavior patch and format-only migration decisions separately in
+  `run_dir/curator_decision.md` and `run_dir/curator_skill_update_summary.md`.
+- If lint still fails after a safe migration, record the exact residual issue
+  and a concrete follow-up maintenance note in the run directory.
 - Update workspace skill index metadata only when a new workspace skill is adopted.
 - Write `run_dir/curator_decision.md` either way.
 

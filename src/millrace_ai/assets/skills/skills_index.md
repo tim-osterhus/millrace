@@ -23,6 +23,7 @@ recommended_for_stages:
   - analyst
   - professor
   - curator
+  - librarian
 forbidden_claims:
   - queue_selection
   - routing
@@ -46,8 +47,9 @@ Usage contract:
 - if no fixed required skills are supplied, choose up to three relevant non-core skills
 - avoid loading irrelevant skills
 - do not claim an optional skill is available unless it is installed locally or listed in the supported downloadable skills directory
-- Learning Analyst may refresh the remote directory into `remote_skills_index.md`
-  and install relevant listed skills before loading them
+- Learning Analyst and Librarian may refresh the remote directory into
+  `remote_skills_index.md` and install relevant listed skills before loading
+  them
 
 ## Stage-Core Skills
 
@@ -74,6 +76,7 @@ entrypoint explicitly assigns them.
 | `analyst-core` | Analyst research posture for skill learning requests and evidence packets. | `learning`, `stage-core` | `skills/stage/learning/analyst-core/SKILL.md` | shipped |
 | `professor-core` | Professor authoring posture for skill candidates from research packets. | `learning`, `stage-core` | `skills/stage/learning/professor-core/SKILL.md` | shipped |
 | `curator-core` | Curator improvement posture for workspace-installed skill updates. | `learning`, `stage-core` | `skills/stage/learning/curator-core/SKILL.md` | shipped |
+| `librarian-core` | Librarian posture for bounded remote optional-skill discovery after Planner output. | `learning`, `stage-core` | `skills/stage/learning/librarian-core/SKILL.md` | shipped |
 
 ## Shared Runtime Skills
 
@@ -94,3 +97,6 @@ Use `millrace skills refresh-remote-index` to cache that public index at
 `millrace skills install <skill_id>` to install an available remote skill into a
 workspace. Once installed, rely on the workspace-local `skills_index.md` and the
 installed `SKILL.md` files as the source of availability truth.
+Learning-enabled modes can run Librarian after Planner completes so relevant
+remote optional skills are prepared as workspace-local skills without adding
+those optional payloads to the base runtime package.

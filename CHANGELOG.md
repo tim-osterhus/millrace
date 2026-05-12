@@ -13,6 +13,26 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added a Librarian Learning stage that runs after Planner in learning-enabled
+  modes, checks Planner output against local and remote skill indexes, and
+  installs up to eight relevant uninstalled remote optional skills into the
+  workspace.
+- Added shipped-skill lint regression coverage so every packaged `SKILL.md`
+  asset must satisfy the current skill package contract.
+
+### Changed
+
+- Curator guidance now permits safe format-only migration of a touched
+  workspace-installed skill when an evidence-backed behavior patch is already
+  being applied and the current linter reports package-shape drift.
+
+### Fixed
+
+- Migrated the shipped `marathon-qa-audit` skill to the current required
+  section contract so it passes the packaged skill linter.
+
 ## [0.18.2] - 2026-05-10
 
 ### Added
