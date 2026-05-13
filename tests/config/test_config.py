@@ -44,6 +44,7 @@ def test_runtime_config_schema_uses_draft_categories() -> None:
         "runners",
         "recovery",
         "watchers",
+        "auto_recovery",
         "usage_governance",
         "stages",
     }
@@ -110,6 +111,15 @@ def test_usage_governance_is_inert_by_default() -> None:
     assert config.usage_governance.auto_resume is True
     assert config.usage_governance.runtime_token_rules.enabled is True
     assert config.usage_governance.subscription_quota_rules.enabled is False
+
+
+def test_auto_recovery_defaults_to_bounded_transient_blocked_dependency_retries() -> None:
+    config = RuntimeConfig()
+
+    assert config.auto_recovery.enabled is True
+    assert config.auto_recovery.blocked_dependency_retry_enabled is True
+    assert config.auto_recovery.max_auto_requeues_per_work_item == 3
+    assert config.auto_recovery.cooldown_seconds == (300, 900, 3600)
 
 
 def test_usage_governance_installs_documented_default_rules_when_enabled() -> None:
@@ -248,11 +258,10 @@ def test_each_config_field_has_an_apply_boundary() -> None:
     assert missing == []
     assert apply_boundary_for_field("runtime.idle_sleep_seconds") is ApplyBoundary.NEXT_TICK
     assert apply_boundary_for_field("watchers.enabled") is ApplyBoundary.NEXT_TICK
+    assert apply_boundary_for_field("auto_recovery.enabled") is ApplyBoundary.NEXT_TICK
+    assert apply_boundary_for_field("auto_recovery.blocked_dependency_retry_enabled") is ApplyBoundary.NEXT_TICK
     assert apply_boundary_for_field("usage_governance.enabled") is ApplyBoundary.NEXT_TICK
-    assert (
-        apply_boundary_for_field("usage_governance.runtime_token_rules")
-        is ApplyBoundary.NEXT_TICK
-    )
+    assert apply_boundary_for_field("usage_governance.runtime_token_rules") is ApplyBoundary.NEXT_TICK
     assert apply_boundary_for_field("runtime.default_mode") is ApplyBoundary.RECOMPILE
     assert apply_boundary_for_field("stages.builder.model") is ApplyBoundary.RECOMPILE
     assert apply_boundary_for_field("stages.builder.thinking_level") is ApplyBoundary.RECOMPILE

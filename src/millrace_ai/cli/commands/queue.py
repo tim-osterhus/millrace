@@ -20,8 +20,11 @@ from millrace_ai.cli.shared import (
     _require_paths,
     _validate_work_item_id,
 )
+from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import IncidentDocument, ProbeDocument, SpecDocument, TaskDocument
+from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
+from millrace_ai.runtime.blocked_recovery import retry_blocked_task
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
 from millrace_ai.work_documents import parse_work_document_as
@@ -181,9 +184,13 @@ def queue_add_idea(
     paths = _require_paths(workspace)
     try:
         markdown = idea_path.read_text(encoding="utf-8")
-        result = _cli_api().RuntimeControl(paths).add_idea_markdown(
-            source_name=idea_path.name,
-            markdown=markdown,
+        result = (
+            _cli_api()
+            .RuntimeControl(paths)
+            .add_idea_markdown(
+                source_name=idea_path.name,
+                markdown=markdown,
+            )
         )
     except (OSError, ValueError) as exc:
         raise typer.Exit(code=_print_error(f"failed to add idea: {exc}")) from exc
@@ -193,6 +200,55 @@ def queue_add_idea(
     if result.artifact_path is None:
         raise typer.Exit(code=_print_error("failed to add idea: missing artifact path"))
     typer.echo(f"enqueued_idea: {result.artifact_path}")
+
+
+@queue_app.command("retry-blocked")
+def queue_retry_blocked(
+    task_id: Annotated[str, typer.Argument(help="Blocked task ID to move back to queue.")],
+    workspace: WorkspaceOption = Path("."),
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Audit reason for retrying the blocked task."),
+    ] = "",
+    root_spec_id: Annotated[
+        str,
+        typer.Option("--root-spec-id", help="Optional root-spec guard for the blocked task."),
+    ] = "",
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Override retryability and retry-budget checks."),
+    ] = False,
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        validated_task_id = _validate_work_item_id(task_id)
+        validated_root_spec_id = _validate_work_item_id(root_spec_id) if root_spec_id.strip() else None
+        lock_status = inspect_runtime_ownership_lock(paths)
+        if lock_status.state == "active":
+            raise QueueStateError("active runtime ownership lock prevents blocked retry")
+        config = load_runtime_config(paths.runtime_root / "millrace.toml")
+        result = retry_blocked_task(
+            paths,
+            task_id=validated_task_id,
+            reason=reason,
+            actor="operator",
+            auto=False,
+            force=force,
+            root_spec_id=validated_root_spec_id,
+            config=config,
+        )
+    except (OSError, QueueStateError, ValidationError, ValueError) as exc:
+        raise typer.Exit(code=_print_error(f"failed to retry blocked task: {exc}")) from exc
+
+    typer.echo(f"requeued_task: {result.task_id}")
+    typer.echo(f"source_state: {result.source_state}")
+    typer.echo(f"destination_state: {result.destination_state}")
+    typer.echo(f"source_path: {result.source_path}")
+    typer.echo(f"destination_path: {result.destination_path}")
+    typer.echo(f"actor: {result.actor}")
+    typer.echo(f"auto: {'true' if result.auto else 'false'}")
+    typer.echo(f"attempt_number: {result.attempt_number}")
+    typer.echo(f"failure_class: {result.failure_class or 'none'}")
 
 
 @queue_app.command("repair-lineage")
@@ -264,10 +320,7 @@ def queue_repair_lineage(
             f"{change.old_value} -> {change.new_value}"
         )
     for finding in plan.skipped_findings:
-        typer.echo(
-            "skipped: "
-            f"{finding.work_item_kind.value} {finding.work_item_id} state={finding.state}"
-        )
+        typer.echo(f"skipped: {finding.work_item_kind.value} {finding.work_item_id} state={finding.state}")
 
 
 def add_task(

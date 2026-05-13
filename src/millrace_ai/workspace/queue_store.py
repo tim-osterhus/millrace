@@ -42,6 +42,7 @@ from .queue_transitions import (
     mark_spec_done,
     mark_task_blocked,
     mark_task_done,
+    requeue_blocked_task,
     requeue_incident,
     requeue_learning_request,
     requeue_probe,
@@ -113,6 +114,26 @@ class QueueStore:
 
     def requeue_task(self, task_id: str, *, reason: str) -> Path:
         return requeue_task(self.paths, task_id, reason=reason)
+
+    def requeue_blocked_task(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        actor: str,
+        auto: bool,
+        failure_class: str | None = None,
+        attempt_number: int | None = None,
+    ) -> Path:
+        return requeue_blocked_task(
+            self.paths,
+            task_id,
+            reason=reason,
+            actor=actor,
+            auto=auto,
+            failure_class=failure_class,
+            attempt_number=attempt_number,
+        )
 
     def requeue_spec(self, spec_id: str, *, reason: str) -> Path:
         return requeue_spec(self.paths, spec_id, reason=reason)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
@@ -23,13 +24,22 @@ from millrace_ai.contracts.stage_metadata import (
 )
 
 from .requests import (
-    RunnerExitKind,
     RunnerRawResult,
     StageRunRequest,
     _TerminalExtraction,
 )
 
 _TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
+_MAX_CLASSIFIER_TEXT_CHARS = 16_000
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureClassification:
+    failure_class: str
+    blocked_origin: str
+    failure_scope: str
+    auto_requeue_candidate: bool
+    classifier_code: str
 
 
 class _StructuredTerminalResultPayload(BaseModel):
@@ -58,20 +68,25 @@ def normalize_stage_result(
             notes=identity_notes,
         )
 
-    exit_failure = _failure_class_for_exit_kind(raw_result.exit_kind)
+    exit_failure = (
+        None if raw_result.exit_kind == "completed" else _classify_raw_exit_failure(raw_result)
+    )
     if exit_failure is not None:
         return _failure_envelope(
             request,
             raw_result,
-            failure_class=exit_failure,
+            failure_class=exit_failure.failure_class,
             notes=(f"runner exited with {raw_result.exit_kind}",),
+            classification=exit_failure,
         )
     if raw_result.exit_kind == "completed" and raw_result.exit_code not in (None, 0):
+        exit_failure = _classify_raw_exit_failure(raw_result) or _classification_for_failure_class("runner_transport_failure")
         return _failure_envelope(
             request,
             raw_result,
-            failure_class="runner_transport_failure",
+            failure_class=exit_failure.failure_class,
             notes=("runner completed with non-zero exit code",),
+            classification=exit_failure,
         )
 
     extraction = _extract_terminal_result(request, raw_result)
@@ -126,11 +141,7 @@ def normalize_stage_result(
         notes=extraction.notes + _transport_reconciliation_notes(raw_result),
         metadata={
             **_request_metadata(request),
-            "normalization_source": (
-                "structured_result_file"
-                if raw_result.terminal_result_path
-                else "stdout_terminal_token"
-            ),
+            "normalization_source": ("structured_result_file" if raw_result.terminal_result_path else "stdout_terminal_token"),
             "failure_class": None,
             "valid_terminal_result": True,
             "raw_exit_kind": _raw_exit_kind(raw_result),
@@ -210,9 +221,7 @@ def _extract_from_structured_result_file(
             detected_marker=None,
             artifact_paths=payload.summary_artifact_paths,
             failure_class="illegal_terminal_result",
-            notes=(
-                "structured terminal result stage does not match run request stage",
-            ),
+            notes=("structured terminal result stage does not match run request stage",),
         )
 
     terminal_result = _terminal_result_for_request(request, payload.terminal_result)
@@ -223,9 +232,7 @@ def _extract_from_structured_result_file(
             detected_marker=None,
             artifact_paths=payload.summary_artifact_paths,
             failure_class="illegal_terminal_result",
-            notes=(
-                f"terminal result {payload.terminal_result!r} is illegal for request node {request.node_id}",
-            ),
+            notes=(f"terminal result {payload.terminal_result!r} is illegal for request node {request.node_id}",),
         )
 
     resolved_result_class = _resolve_result_class(
@@ -240,15 +247,11 @@ def _extract_from_structured_result_file(
             detected_marker=None,
             artifact_paths=payload.summary_artifact_paths,
             failure_class="illegal_terminal_result",
-            notes=(
-                "structured terminal result class is incompatible with terminal_result",
-            ),
+            notes=("structured terminal result class is incompatible with terminal_result",),
         )
 
     missing_artifacts = tuple(
-        candidate
-        for candidate in payload.summary_artifact_paths
-        if not _artifact_exists(request.run_dir, candidate)
+        candidate for candidate in payload.summary_artifact_paths if not _artifact_exists(request.run_dir, candidate)
     )
     if missing_artifacts:
         return _TerminalExtraction(
@@ -257,9 +260,7 @@ def _extract_from_structured_result_file(
             detected_marker=None,
             artifact_paths=payload.summary_artifact_paths,
             failure_class="missing_required_artifact",
-            notes=(
-                "missing required summary artifacts: " + ", ".join(missing_artifacts),
-            ),
+            notes=("missing required summary artifacts: " + ", ".join(missing_artifacts),),
         )
 
     return _TerminalExtraction(
@@ -345,9 +346,7 @@ def _extract_from_stdout_tokens(
             detected_marker=f"### {final_token}",
             artifact_paths=(),
             failure_class="illegal_terminal_result",
-            notes=(
-                f"terminal token {final_token!r} is illegal for request node {request.node_id}",
-            ),
+            notes=(f"terminal token {final_token!r} is illegal for request node {request.node_id}",),
         )
 
     result_class = _resolve_result_class(request, final_token, None)
@@ -363,14 +362,198 @@ def _extract_from_stdout_tokens(
     )
 
 
-def _failure_class_for_exit_kind(exit_kind: RunnerExitKind) -> str | None:
-    if exit_kind == "completed":
+def _classify_raw_exit_failure(raw_result: RunnerRawResult) -> _FailureClassification | None:
+    if raw_result.exit_kind == "completed" and raw_result.exit_code in (None, 0):
         return None
-    if exit_kind == "timeout":
-        return "runner_timeout"
-    if exit_kind == "provider_error":
-        return "provider_failure"
-    return "runner_transport_failure"
+    if raw_result.exit_kind == "timeout":
+        return _FailureClassification(
+            failure_class="runner_timeout",
+            blocked_origin="runner_failure",
+            failure_scope="environment",
+            auto_requeue_candidate=True,
+            classifier_code="exit_timeout",
+        )
+
+    evidence = _raw_failure_evidence(raw_result)
+    provider_or_runner = "provider" if raw_result.exit_kind == "provider_error" else "runner"
+    classified = _classify_failure_evidence(evidence, default_origin="runner_failure")
+    if classified is not None:
+        return classified
+    if raw_result.exit_kind == "provider_error":
+        return _FailureClassification(
+            failure_class="provider_unavailable",
+            blocked_origin="runner_failure",
+            failure_scope="provider",
+            auto_requeue_candidate=True,
+            classifier_code=f"{provider_or_runner}_default_unavailable",
+        )
+    return _classification_for_failure_class("runner_transport_failure")
+
+
+def _raw_failure_evidence(raw_result: RunnerRawResult) -> str:
+    parts: list[str] = []
+    for raw_path in (raw_result.stderr_path, raw_result.stdout_path):
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        try:
+            if path.is_file():
+                parts.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return "\n".join(parts)[-_MAX_CLASSIFIER_TEXT_CHARS:].lower()
+
+
+def _classify_failure_evidence(
+    evidence: str,
+    *,
+    default_origin: str,
+) -> _FailureClassification | None:
+    if not evidence.strip():
+        return None
+
+    if _contains_any(
+        evidence,
+        (
+            "runner binary not found",
+            "executable missing",
+            "no such file or directory",
+            "command not found",
+        ),
+    ):
+        return _FailureClassification(
+            failure_class="runner_binary_missing",
+            blocked_origin=default_origin,
+            failure_scope="local_configuration",
+            auto_requeue_candidate=False,
+            classifier_code="runner_binary_missing",
+        )
+    if _contains_any(
+        evidence,
+        (
+            "unauthorized",
+            "authentication",
+            "not authenticated",
+            "login required",
+            "invalid api key",
+            "api key",
+            "401",
+        ),
+    ):
+        return _FailureClassification(
+            failure_class="auth_missing_or_invalid",
+            blocked_origin=default_origin,
+            failure_scope="local_configuration",
+            auto_requeue_candidate=False,
+            classifier_code="auth_missing_or_invalid",
+        )
+    if _contains_any(evidence, ("rate limit", "rate_limit", "too many requests", "429")):
+        return _FailureClassification(
+            failure_class="provider_rate_limited",
+            blocked_origin=default_origin,
+            failure_scope="provider",
+            auto_requeue_candidate=True,
+            classifier_code="provider_rate_limited",
+        )
+    if _contains_any(
+        evidence,
+        (
+            "could not resolve",
+            "temporary failure in name resolution",
+            "dns",
+            "network is unreachable",
+            "connection refused",
+            "connection reset",
+            "no route to host",
+            "offline",
+            "internet",
+        ),
+    ):
+        return _FailureClassification(
+            failure_class="network_unavailable",
+            blocked_origin=default_origin,
+            failure_scope="environment",
+            auto_requeue_candidate=True,
+            classifier_code="network_unavailable",
+        )
+    if _contains_any(
+        evidence,
+        (
+            "service unavailable",
+            "temporarily unavailable",
+            "provider unavailable",
+            "provider overloaded",
+            "overloaded",
+            "503",
+        ),
+    ):
+        return _FailureClassification(
+            failure_class="provider_unavailable",
+            blocked_origin=default_origin,
+            failure_scope="provider",
+            auto_requeue_candidate=True,
+            classifier_code="provider_unavailable",
+        )
+    return None
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _classification_for_failure_class(failure_class: str) -> _FailureClassification:
+    if failure_class == "runner_timeout":
+        return _FailureClassification(
+            failure_class=failure_class,
+            blocked_origin="runner_failure",
+            failure_scope="environment",
+            auto_requeue_candidate=True,
+            classifier_code="runner_timeout",
+        )
+    if failure_class in {"network_unavailable"}:
+        return _FailureClassification(
+            failure_class=failure_class,
+            blocked_origin="runner_failure",
+            failure_scope="environment",
+            auto_requeue_candidate=True,
+            classifier_code=failure_class,
+        )
+    if failure_class in {"provider_unavailable", "provider_rate_limited"}:
+        return _FailureClassification(
+            failure_class=failure_class,
+            blocked_origin="runner_failure",
+            failure_scope="provider",
+            auto_requeue_candidate=True,
+            classifier_code=failure_class,
+        )
+    if failure_class in {"runner_binary_missing", "auth_missing_or_invalid"}:
+        return _FailureClassification(
+            failure_class=failure_class,
+            blocked_origin="runner_failure",
+            failure_scope="local_configuration",
+            auto_requeue_candidate=False,
+            classifier_code=failure_class,
+        )
+    if failure_class in {
+        "missing_terminal_result",
+        "illegal_terminal_result",
+        "conflicting_terminal_results",
+        "missing_required_artifact",
+    }:
+        return _FailureClassification(
+            failure_class=failure_class,
+            blocked_origin="stage_terminal",
+            failure_scope="contract",
+            auto_requeue_candidate=False,
+            classifier_code=failure_class,
+        )
+    return _FailureClassification(
+        failure_class=failure_class,
+        blocked_origin="runner_failure",
+        failure_scope="unknown",
+        auto_requeue_candidate=False,
+        classifier_code="unclassified_failure",
+    )
 
 
 def _identity_mismatch_notes(
@@ -395,11 +578,13 @@ def _failure_envelope(
     notes: tuple[str, ...],
     detected_marker: str | None = None,
     artifact_paths: tuple[str, ...] = (),
+    classification: _FailureClassification | None = None,
 ) -> StageResultEnvelope:
     blocked_terminal = blocked_terminal_for_plane(request.plane)
     work_item_kind, work_item_id = _request_result_identity(request)
     report_artifact = _resolved_report_artifact(request)
 
+    failure_classification = classification or _classification_for_failure_class(failure_class)
     return StageResultEnvelope(
         run_id=request.run_id,
         plane=request.plane,
@@ -433,7 +618,11 @@ def _failure_envelope(
         metadata={
             **_request_metadata(request),
             "normalization_source": "failure",
-            "failure_class": failure_class,
+            "failure_class": failure_classification.failure_class,
+            "blocked_origin": failure_classification.blocked_origin,
+            "failure_scope": failure_classification.failure_scope,
+            "auto_requeue_candidate": failure_classification.auto_requeue_candidate,
+            "failure_classifier_code": failure_classification.classifier_code,
             "valid_terminal_result": False,
             "raw_exit_kind": _raw_exit_kind(raw_result),
             "raw_exit_code": _raw_exit_code(raw_result),
@@ -495,9 +684,7 @@ def _timeout_reconciled(raw_result: RunnerRawResult) -> bool:
 def _transport_reconciliation_notes(raw_result: RunnerRawResult) -> tuple[str, ...]:
     if not _timeout_reconciled(raw_result):
         return ()
-    return (
-        "runner timeout was reconciled after a final terminal marker was captured",
-    )
+    return ("runner timeout was reconciled after a final terminal marker was captured",)
 
 
 def _resolved_thinking_level(
@@ -505,10 +692,7 @@ def _resolved_thinking_level(
     raw_result: RunnerRawResult,
 ) -> str | None:
     return (
-        raw_result.thinking_level
-        or request.thinking_level
-        or raw_result.model_reasoning_effort
-        or request.model_reasoning_effort
+        raw_result.thinking_level or request.thinking_level or raw_result.model_reasoning_effort or request.model_reasoning_effort
     )
 
 
@@ -532,9 +716,7 @@ def _request_result_identity(request: StageRunRequest) -> tuple[WorkItemKind, st
         return (WorkItemKind.LEARNING_REQUEST, request.active_work_item_id)
 
     if request.active_work_item_kind is None or request.active_work_item_id is None:
-        raise ValueError(
-            "active_work_item_kind and active_work_item_id are required to normalize stage results"
-        )
+        raise ValueError("active_work_item_kind and active_work_item_id are required to normalize stage results")
     return (request.active_work_item_kind, request.active_work_item_id)
 
 
@@ -579,9 +761,7 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "preferred_rubric_path": request.preferred_rubric_path,
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,
-        "active_work_item_kind": request.active_work_item_kind.value
-        if request.active_work_item_kind is not None
-        else None,
+        "active_work_item_kind": request.active_work_item_kind.value if request.active_work_item_kind is not None else None,
         "active_work_item_id": request.active_work_item_id,
         "active_work_item_path": request.active_work_item_path,
         "skill_revision_evidence_path": request.skill_revision_evidence_path,

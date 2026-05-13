@@ -13,6 +13,26 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-05-12
+
+### Added
+
+- Added conservative blocked dependency auto-recovery. When a daemon is idle
+  with queued same-lineage execution work stranded behind a blocked predecessor,
+  it can requeue the predecessor only if blocked metadata classifies the latest
+  failure as `network_unavailable`, `provider_unavailable`,
+  `provider_rate_limited`, or `runner_timeout` and cooldown/retry-budget gates
+  pass.
+- Added `millrace queue retry-blocked <TASK_ID> --reason "..."` as an audited
+  manual blocked-task recovery command, with `--root-spec-id` and explicit
+  `--force` override support.
+
+### Changed
+
+- Runner normalization now records blocked recovery metadata such as
+  `blocked_origin`, `failure_scope`, `auto_requeue_candidate`, and a classifier
+  code on failure envelopes.
+
 ## [0.18.3] - 2026-05-12
 
 ### Added
@@ -717,7 +737,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.3...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.4...HEAD
+[0.18.4]: https://github.com/tim-osterhus/millrace/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/tim-osterhus/millrace/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/tim-osterhus/millrace/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/tim-osterhus/millrace/compare/v0.18.0...v0.18.1

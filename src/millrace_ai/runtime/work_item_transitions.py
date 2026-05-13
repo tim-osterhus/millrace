@@ -17,6 +17,7 @@ from millrace_ai.state_store import (
 )
 
 from .active_runs import snapshot_without_active_plane
+from .blocked_recovery import write_blocked_item_metadata
 from .handoff_incidents import enqueue_handoff_incident
 
 if TYPE_CHECKING:
@@ -90,9 +91,7 @@ def apply_idle_router_decision(engine: RuntimeEngine, stage_result: StageResultE
     )
     save_snapshot(engine.paths, engine.snapshot)
     planes_to_idle = (
-        (stage_result.plane,)
-        if engine.snapshot.active_runs_by_plane
-        else (Plane.EXECUTION, Plane.PLANNING, Plane.LEARNING)
+        (stage_result.plane,) if engine.snapshot.active_runs_by_plane else (Plane.EXECUTION, Plane.PLANNING, Plane.LEARNING)
     )
     for plane in planes_to_idle:
         engine._set_plane_status_marker(
@@ -113,16 +112,22 @@ def apply_handoff_router_decision(
     engine: RuntimeEngine,
     decision: RouterDecision,
     stage_result: StageResultEnvelope,
+    *,
+    stage_result_path: Path | None = None,
 ) -> tuple[Path, ...]:
     spawned_paths: list[Path] = []
     if decision.create_incident:
-        spawned_paths.append(
-            enqueue_handoff_incident(engine, decision=decision, stage_result=stage_result)
-        )
+        spawned_paths.append(enqueue_handoff_incident(engine, decision=decision, stage_result=stage_result))
     mark_active_work_item_blocked_with_recovery(
         engine,
         stage_result,
         reason="handoff",
+    )
+    write_blocked_item_metadata(
+        engine.paths,
+        stage_result=stage_result,
+        decision=decision,
+        stage_result_path=stage_result_path,
     )
     engine.snapshot = _cleared_active_snapshot(
         engine,
@@ -143,11 +148,19 @@ def apply_blocked_router_decision(
     engine: RuntimeEngine,
     decision: RouterDecision,
     stage_result: StageResultEnvelope,
+    *,
+    stage_result_path: Path | None = None,
 ) -> None:
     mark_active_work_item_blocked_with_recovery(
         engine,
         stage_result,
         reason="blocked",
+    )
+    write_blocked_item_metadata(
+        engine.paths,
+        stage_result=stage_result,
+        decision=decision,
+        stage_result_path=stage_result_path,
     )
     engine.snapshot = _cleared_active_snapshot(
         engine,

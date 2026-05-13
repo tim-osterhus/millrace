@@ -125,27 +125,19 @@ class SubscriptionQuotaRule(ConfigModel):
 
 class SubscriptionQuotaRulesSection(ConfigModel):
     enabled: bool = False
-    provider: UsageGovernanceSubscriptionProvider = (
-        UsageGovernanceSubscriptionProvider.CODEX_CHATGPT_OAUTH
-    )
+    provider: UsageGovernanceSubscriptionProvider = UsageGovernanceSubscriptionProvider.CODEX_CHATGPT_OAUTH
     degraded_policy: UsageGovernanceDegradedPolicy = UsageGovernanceDegradedPolicy.FAIL_OPEN
     refresh_interval_seconds: int = Field(default=60, gt=0)
-    rules: tuple[SubscriptionQuotaRule, ...] = Field(
-        default_factory=_default_subscription_quota_rules
-    )
+    rules: tuple[SubscriptionQuotaRule, ...] = Field(default_factory=_default_subscription_quota_rules)
 
 
 class UsageGovernanceSection(ConfigModel):
     enabled: bool = False
     auto_resume: bool = True
-    evaluation_boundary: UsageGovernanceEvaluationBoundary = (
-        UsageGovernanceEvaluationBoundary.BETWEEN_STAGES
-    )
+    evaluation_boundary: UsageGovernanceEvaluationBoundary = UsageGovernanceEvaluationBoundary.BETWEEN_STAGES
     calendar_timezone: str = "UTC"
     runtime_token_rules: RuntimeTokenRulesSection = Field(default_factory=RuntimeTokenRulesSection)
-    subscription_quota_rules: SubscriptionQuotaRulesSection = Field(
-        default_factory=SubscriptionQuotaRulesSection
-    )
+    subscription_quota_rules: SubscriptionQuotaRulesSection = Field(default_factory=SubscriptionQuotaRulesSection)
 
 
 class CodexRunnerSection(ConfigModel):
@@ -169,9 +161,7 @@ class CodexRunnerSection(ConfigModel):
         unknown = sorted(set(value) - KNOWN_STAGE_NAMES)
         if unknown:
             names = ", ".join(unknown)
-            raise ValueError(
-                f"unknown stage names in runners.codex.permission_by_stage: {names}"
-            )
+            raise ValueError(f"unknown stage names in runners.codex.permission_by_stage: {names}")
         return value
 
 
@@ -204,8 +194,7 @@ class PiRunnerSection(ConfigModel):
         conflicts = tuple(
             arg
             for arg in value
-            if arg in _PI_RESERVED_ARGS
-            or any(arg.startswith(f"{reserved}=") for reserved in _PI_RESERVED_ARGS)
+            if arg in _PI_RESERVED_ARGS or any(arg.startswith(f"{reserved}=") for reserved in _PI_RESERVED_ARGS)
         )
         if conflicts:
             joined = ", ".join(conflicts)
@@ -224,6 +213,22 @@ class RecoverySection(ConfigModel):
     max_troubleshoot_attempts_before_consult: int = Field(default=2, gt=0)
     max_mechanic_attempts: int = Field(default=2, gt=0)
     stale_state_recovery_enabled: bool = True
+
+
+class AutoRecoverySection(ConfigModel):
+    enabled: bool = True
+    blocked_dependency_retry_enabled: bool = True
+    max_auto_requeues_per_work_item: int = Field(default=3, ge=0)
+    cooldown_seconds: tuple[int, ...] = (300, 900, 3600)
+
+    @field_validator("cooldown_seconds")
+    @classmethod
+    def validate_cooldown_seconds(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if not value:
+            raise ValueError("auto recovery cooldown_seconds must not be empty")
+        if any(seconds < 0 for seconds in value):
+            raise ValueError("auto recovery cooldown_seconds values must be >= 0")
+        return value
 
 
 class WatchersSection(ConfigModel):
@@ -252,16 +257,10 @@ class StageConfig(ConfigModel):
 
     @model_validator(mode="after")
     def normalize_thinking_aliases(self) -> "StageConfig":
-        legacy_value = (
-            self.model_reasoning_effort.value
-            if self.model_reasoning_effort is not None
-            else None
-        )
+        legacy_value = self.model_reasoning_effort.value if self.model_reasoning_effort is not None else None
         if self.thinking_level is not None and legacy_value is not None:
             if self.thinking_level != legacy_value:
-                raise ValueError(
-                    "thinking_level and model_reasoning_effort must match when both are set"
-                )
+                raise ValueError("thinking_level and model_reasoning_effort must match when both are set")
             return self
         if self.thinking_level is None and legacy_value is not None:
             self.thinking_level = legacy_value
@@ -273,6 +272,7 @@ class RuntimeConfig(ConfigModel):
     runners: RunnersSection = Field(default_factory=RunnersSection)
     recovery: RecoverySection = Field(default_factory=RecoverySection)
     watchers: WatchersSection = Field(default_factory=WatchersSection)
+    auto_recovery: AutoRecoverySection = Field(default_factory=AutoRecoverySection)
     usage_governance: UsageGovernanceSection = Field(default_factory=UsageGovernanceSection)
     stages: dict[str, StageConfig] = Field(default_factory=dict)
 
@@ -287,6 +287,7 @@ class RuntimeConfig(ConfigModel):
 
 
 __all__ = [
+    "AutoRecoverySection",
     "CodexPermissionLevel",
     "CodexReasoningEffort",
     "CodexRunnerSection",

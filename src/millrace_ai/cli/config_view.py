@@ -16,6 +16,7 @@ def _render_config_show_lines(paths: WorkspacePaths, config: RuntimeConfig) -> t
         f"run_style: {config.runtime.run_style.value}",
         f"idle_sleep_seconds: {config.runtime.idle_sleep_seconds}",
         f"watchers.enabled: {'true' if config.watchers.enabled else 'false'}",
+        f"auto_recovery.enabled: {'true' if config.auto_recovery.enabled else 'false'}",
         f"usage_governance.enabled: {'true' if config.usage_governance.enabled else 'false'}",
         f"config_version: {snapshot.config_version}",
         f"last_reload_outcome: {_value(snapshot.last_reload_outcome)}",

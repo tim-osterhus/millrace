@@ -87,6 +87,11 @@ It wraps long-horizon work in a runtime with a few hard contracts:
   the compiled plane scheduler. Default modes are serial; learning-enabled
   modes may run one Learning stage alongside one foreground Planning or
   Execution stage.
+- **Bounded autonomous recovery:** when queued same-lineage tasks are stranded
+  behind a blocked predecessor caused by a classified transient runner,
+  network, provider, or timeout failure, the daemon can requeue that dependency
+  through an audited retry path. Semantic blocked states and durable local
+  setup failures still require operator review.
 - **Opt-in quality loops:** integrated Codex modes use a more expensive
   `builder -> integrator -> checker` execution path. Integrator reviews the
   Builder diff, runs explicit or discoverable gates, and writes

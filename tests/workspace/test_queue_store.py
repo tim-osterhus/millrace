@@ -221,6 +221,41 @@ def test_queue_store_facade_is_split_over_workspace_modules() -> None:
     assert hasattr(queue_reconciliation_module, "detect_execution_stale_state")
 
 
+def test_requeue_blocked_task_moves_task_to_queue_and_writes_audit_log(tmp_path: Path) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-retry", created_at=NOW))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-retry")
+
+    destination = queue.requeue_blocked_task(
+        "task-retry",
+        reason="retry after network_unavailable",
+        actor="operator",
+        auto=False,
+        failure_class="network_unavailable",
+        attempt_number=1,
+    )
+
+    assert destination == paths.tasks_queue_dir / "task-retry.md"
+    assert destination.is_file()
+    assert not (paths.tasks_blocked_dir / "task-retry.md").exists()
+    audit_lines = _read_json_lines(paths.tasks_queue_dir / "task-retry.requeue.jsonl")
+    assert audit_lines == [
+        {
+            "at": audit_lines[0]["at"],
+            "actor": "operator",
+            "attempt_number": 1,
+            "auto": False,
+            "destination_state": "queue",
+            "failure_class": "network_unavailable",
+            "kind": "task",
+            "reason": "retry after network_unavailable",
+            "source_state": "blocked",
+        }
+    ]
+
+
 def test_work_documents_round_trip_for_task_spec_and_incident() -> None:
     documents: tuple[TaskDocument | SpecDocument | ProbeDocument | IncidentDocument, ...] = (
         _task_doc("task-roundtrip", created_at=NOW),
@@ -417,9 +452,7 @@ def test_claim_next_execution_task_skips_unmet_dependencies_and_claims_oldest_el
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
     store = QueueStore(paths)
 
-    dependent = _task_doc("task-dependent", created_at=NOW).model_copy(
-        update={"depends_on": ("task-prereq",)}
-    )
+    dependent = _task_doc("task-dependent", created_at=NOW).model_copy(update={"depends_on": ("task-prereq",)})
     prerequisite = _task_doc("task-prereq", created_at=NOW + timedelta(seconds=1))
 
     store.enqueue_task(dependent)

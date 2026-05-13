@@ -29,9 +29,7 @@ def test_runner_module_is_facade_over_runners_package() -> None:
     assert runner_facade.StageRunRequest is requests_module.StageRunRequest
     assert runner_facade.RunnerRawResult is requests_module.RunnerRawResult
     assert runner_facade.normalize_stage_result is normalization_module.normalize_stage_result
-    assert runner_facade.render_stage_request_context_lines is (
-        requests_module.render_stage_request_context_lines
-    )
+    assert runner_facade.render_stage_request_context_lines is (requests_module.render_stage_request_context_lines)
 
 
 def _request(
@@ -397,7 +395,51 @@ def test_normalize_classifies_unreconciled_timeout_even_with_terminal_like_stdou
     assert envelope.terminal_result.value == "BLOCKED"
     assert envelope.result_class is ResultClass.RECOVERABLE_FAILURE
     assert envelope.metadata["failure_class"] == "runner_timeout"
+    assert envelope.metadata["blocked_origin"] == "runner_failure"
+    assert envelope.metadata["failure_scope"] == "environment"
+    assert envelope.metadata["auto_requeue_candidate"] is True
     assert envelope.metadata["valid_terminal_result"] is False
+
+
+def test_normalize_classifies_network_transport_failure_as_auto_requeue_candidate(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path, stage="builder")
+    stderr_path = tmp_path / "runner_stderr.txt"
+    stderr_path.write_text(
+        "error: failed to reach provider: could not resolve host api.openai.com\n",
+        encoding="utf-8",
+    )
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, exit_kind="runner_error", stderr_path=stderr_path, exit_code=1),
+    )
+
+    assert envelope.terminal_result.value == "BLOCKED"
+    assert envelope.metadata["failure_class"] == "network_unavailable"
+    assert envelope.metadata["blocked_origin"] == "runner_failure"
+    assert envelope.metadata["failure_scope"] == "environment"
+    assert envelope.metadata["auto_requeue_candidate"] is True
+
+
+def test_normalize_classifies_missing_runner_binary_as_durable_setup_failure(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path, stage="builder")
+    stderr_path = tmp_path / "runner_stderr.txt"
+    stderr_path.write_text("runner binary not found: codex\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, exit_kind="runner_error", stderr_path=stderr_path, exit_code=127),
+    )
+
+    assert envelope.terminal_result.value == "BLOCKED"
+    assert envelope.metadata["failure_class"] == "runner_binary_missing"
+    assert envelope.metadata["blocked_origin"] == "runner_failure"
+    assert envelope.metadata["failure_scope"] == "local_configuration"
+    assert envelope.metadata["auto_requeue_candidate"] is False
 
 
 def test_normalize_classifies_nonzero_exit_code_for_completed_runs(tmp_path: Path) -> None:
@@ -434,12 +476,8 @@ def test_render_stage_request_context_lines_includes_live_envelope_fields(
 ) -> None:
     request = _request(tmp_path).model_copy(
         update={
-            "required_skill_paths": (
-                "millrace-agents/skills/requesting-code-review/SKILL.md",
-            ),
-            "attached_skill_paths": (
-                "millrace-agents/skills/test-driven-development/SKILL.md",
-            ),
+            "required_skill_paths": ("millrace-agents/skills/requesting-code-review/SKILL.md",),
+            "attached_skill_paths": ("millrace-agents/skills/test-driven-development/SKILL.md",),
         }
     )
 
@@ -465,9 +503,7 @@ def test_render_stage_request_context_lines_includes_skill_revision_evidence_pat
     tmp_path: Path,
 ) -> None:
     evidence_path = tmp_path / "skill_revision_evidence.json"
-    request = _request(tmp_path).model_copy(
-        update={"skill_revision_evidence_path": str(evidence_path)}
-    )
+    request = _request(tmp_path).model_copy(update={"skill_revision_evidence_path": str(evidence_path)})
 
     context = "\n".join(render_stage_request_context_lines(request))
 
@@ -481,11 +517,7 @@ def test_render_stage_request_context_lines_includes_preferred_troubleshoot_repo
     request = StageRunRequest(
         **(
             _request(tmp_path).model_dump(mode="python")
-            | {
-                "preferred_troubleshoot_report_path": str(
-                    tmp_path / "troubleshoot_report.md"
-                )
-            }
+            | {"preferred_troubleshoot_report_path": str(tmp_path / "troubleshoot_report.md")}
         )
     )
 
@@ -504,9 +536,7 @@ def test_render_stage_request_context_lines_includes_runtime_error_context_when_
             | {
                 "runtime_error_code": "planning_work_item_completion_conflict",
                 "runtime_error_report_path": str(tmp_path / "runtime_error_report.md"),
-                "runtime_error_catalog_path": str(
-                    tmp_path / "docs" / "runtime" / "millrace-runtime-error-codes.md"
-                ),
+                "runtime_error_catalog_path": str(tmp_path / "docs" / "runtime" / "millrace-runtime-error-codes.md"),
             }
         )
     )
@@ -619,8 +649,11 @@ def test_normalize_classifies_provider_and_runner_errors(tmp_path: Path) -> None
     provider_error = normalize_stage_result(request, _raw(request, exit_kind="provider_error"))
     runner_error = normalize_stage_result(request, _raw(request, exit_kind="runner_error"))
 
-    assert provider_error.metadata["failure_class"] == "provider_failure"
+    assert provider_error.metadata["failure_class"] == "provider_unavailable"
+    assert provider_error.metadata["failure_scope"] == "provider"
+    assert provider_error.metadata["auto_requeue_candidate"] is True
     assert runner_error.metadata["failure_class"] == "runner_transport_failure"
+    assert runner_error.metadata["auto_requeue_candidate"] is False
 
 
 def test_normalize_output_is_deterministic(tmp_path: Path) -> None:

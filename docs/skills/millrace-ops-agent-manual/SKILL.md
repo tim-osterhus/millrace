@@ -363,6 +363,7 @@ millrace queue add-task <task.md|task.json> --workspace <workspace>
 millrace queue add-probe <probe.md|probe.json> --workspace <workspace>
 millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
 millrace queue add-idea <idea.md> --workspace <workspace>
+millrace queue retry-blocked <task_id> --reason "<reason>" --workspace <workspace>
 millrace control pause --workspace <workspace>
 millrace control resume --workspace <workspace>
 millrace control stop --workspace <workspace>
@@ -462,6 +463,11 @@ Use intervention commands only when the runtime state actually justifies them:
 - `clear-stale-state` to recover stale active files, including older
   closure-target invariant failures that left an unrelated root spec
   half-claimed; preserve the open closure target and avoid manual file moves
+- `queue retry-blocked <TASK_ID> --reason "<reason>"` to requeue one blocked
+  task through the audited recovery path after verifying the blocker is
+  retryable; use `--force` only after inspecting the task and accepting the
+  override. The command refuses a live daemon ownership lock; stop the daemon
+  first or let daemon auto-recovery handle qualifying transient blockers.
 - `queue repair-lineage --root-spec-id <ROOT_SPEC_ID>` to preview a stopped-daemon
   repair when doctor reports `closure_lineage_drift`; add `--apply` only after
   confirming there is no live ownership lock or active stage
@@ -480,6 +486,14 @@ Use intervention commands only when the runtime state actually justifies them:
 - Usage governance is disabled by default. When enabled, it evaluates between
   stages, can pause via the `usage_governance` pause source, and can auto-resume
   only when active governance blockers clear.
+- Blocked dependency auto-recovery is enabled by default but conservative. It
+  acts only when queued same-lineage execution work is stranded behind a
+  blocked predecessor whose latest blocked metadata classifies the failure as
+  `network_unavailable`, `provider_unavailable`, `provider_rate_limited`, or
+  `runner_timeout`, and only after cooldown/budget gates pass. Missing runner
+  binaries, auth failures, malformed terminal output, stage-authored blocked
+  states, and unknown transport failures require operator review or explicit
+  `queue retry-blocked --force`.
 - Governance config changes apply through `config reload`, then become visible
   on the next runtime tick through `millrace status` and basic-monitor
   governance lines. Do not expect `config reload` itself to summarize whether a

@@ -207,9 +207,7 @@ def _inspected_run_summary(
     thinking_level: str | None = None,
     model_reasoning_effort: str | None = None,
 ) -> InspectedRunSummary:
-    artifact_paths = tuple(
-        path for path in (report_artifact, "runner_stdout.txt") if path is not None
-    )
+    artifact_paths = tuple(path for path in (report_artifact, "runner_stdout.txt") if path is not None)
     stage_result = InspectedStageResult(
         stage_result_path="stage_results/request-001.json",
         request_id="request-001",
@@ -556,11 +554,7 @@ def test_skills_install_copies_local_skill_and_updates_workspace_index(tmp_path:
     source_skill = tmp_path / "source-skill"
     source_skill.mkdir()
     source_skill.joinpath("SKILL.md").write_text(
-        "---\n"
-        "name: source-skill\n"
-        "description: A test skill\n"
-        "---\n"
-        "# Source Skill\n",
+        "---\nname: source-skill\ndescription: A test skill\n---\n# Source Skill\n",
         encoding="utf-8",
     )
 
@@ -1453,6 +1447,110 @@ def test_queue_add_commands_and_show_are_available_under_namespaced_surface(tmp_
     assert "work_item_state: queue" in show.output
 
 
+def test_queue_retry_blocked_requeues_retryable_blocked_task(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(TaskDocument.model_validate(_task_payload("task-retry")))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-retry")
+    metadata_dir = paths.runtime_root / "diagnostics" / "blocked"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    (metadata_dir / "task-task-retry.json").write_text(
+        json.dumps(
+            {
+                "work_item_kind": "task",
+                "work_item_id": "task-retry",
+                "blocked_at": NOW.isoformat(),
+                "blocked_origin": "runner_failure",
+                "failure_class": "network_unavailable",
+                "failure_scope": "environment",
+                "auto_requeue_candidate": True,
+                "source_run_id": "run-001",
+                "source_plane": "execution",
+                "source_stage": "builder",
+                "terminal_result": "BLOCKED",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "retry-blocked",
+            "task-retry",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "retry after network outage",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "requeued_task: task-retry" in result.output
+    assert "source_state: blocked" in result.output
+    assert "destination_state: queue" in result.output
+    assert (paths.tasks_queue_dir / "task-retry.md").is_file()
+    assert not (paths.tasks_blocked_dir / "task-retry.md").exists()
+
+
+def test_queue_retry_blocked_refuses_non_retryable_task_without_force(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(TaskDocument.model_validate(_task_payload("task-semantic-blocked")))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-semantic-blocked")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "retry-blocked",
+            "task-semantic-blocked",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "operator wants retry",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "blocked task is not retryable" in result.output
+    assert (paths.tasks_blocked_dir / "task-semantic-blocked.md").is_file()
+
+
+def test_queue_retry_blocked_refuses_live_daemon_ownership_lock(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(TaskDocument.model_validate(_task_payload("task-retry-locked")))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-retry-locked")
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="cli-retry-blocked-lock",
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "retry-blocked",
+            "task-retry-locked",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "retry after network outage",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "active runtime ownership lock prevents blocked retry" in result.output
+    assert (paths.tasks_blocked_dir / "task-retry-locked.md").is_file()
+
+
 def test_queue_add_idea_stages_markdown_in_ideas_inbox(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     idea_doc = tmp_path / "idea-001.md"
@@ -1954,6 +2052,7 @@ def test_config_show_renders_effective_runtime_and_reload_state(tmp_path: Path) 
     assert "default_mode: standard_plain" in result.output
     assert "run_style: daemon" in result.output
     assert "watchers.enabled: true" in result.output
+    assert "auto_recovery.enabled: true" in result.output
     assert "config_version: cfg-active-123" in result.output
     assert "last_reload_outcome: failed_retained_previous_plan" in result.output
     assert "last_reload_error: mode lookup failed" in result.output
@@ -2285,9 +2384,9 @@ def test_upgrade_command_apply_refreshes_managed_assets(
     assert result.exit_code == 0
     assert "applied: true" in result.output
     assert "result_manifest_id:" in result.output
-    assert (
-        paths.runtime_root / "entrypoints" / "execution" / "builder.md"
-    ).read_text(encoding="utf-8") == "candidate builder update\n"
+    assert (paths.runtime_root / "entrypoints" / "execution" / "builder.md").read_text(
+        encoding="utf-8"
+    ) == "candidate builder update\n"
 
 
 def test_upgrade_command_localizes_removed_managed_asset(
@@ -2439,9 +2538,7 @@ def test_main_returns_nonzero_when_typer_app_returns_exit_code(monkeypatch: pyte
     assert exit_code == 3
 
 
-def test_run_once_defaults_config_to_workspace_toml(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_run_once_defaults_config_to_workspace_toml(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     observed: dict[str, object] = {}
 
@@ -2488,9 +2585,7 @@ def test_run_once_defaults_config_to_workspace_toml(
     assert observed["config_path"] == paths.runtime_root / "millrace.toml"
 
 
-def test_run_daemon_defaults_config_to_workspace_toml(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_run_daemon_defaults_config_to_workspace_toml(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     observed: dict[str, object] = {}
 
@@ -2530,9 +2625,7 @@ def test_run_daemon_defaults_config_to_workspace_toml(
     assert observed["config_path"] == paths.runtime_root / "millrace.toml"
 
 
-def test_compile_validate_defaults_config_to_workspace_toml(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_compile_validate_defaults_config_to_workspace_toml(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     observed: dict[str, object] = {}
 

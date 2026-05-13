@@ -324,6 +324,39 @@ Top-level convenience alias:
 - `millrace add-probe <probe.md|probe.json>`
 - `millrace add-idea <idea.md>`
 
+### `millrace queue retry-blocked <TASK_ID> --reason "..."`
+
+Moves one blocked task back to `tasks/queue/` through the supported audited
+transition. This is the manual override for a task that is in
+`tasks/blocked/` after a retryable environmental or provider failure.
+
+```bash
+millrace queue retry-blocked <TASK_ID> --workspace <workspace> --reason "retry after network outage"
+```
+
+The command refuses tasks that are already queued, active, done, missing, not
+retryable, outside the supplied `--root-spec-id`, past the configured retry
+budget, or in a workspace currently owned by a live daemon. Use `--force` only
+when an operator has inspected the blocked task and wants to override
+retryability and budget checks. The command appends
+`tasks/queue/<TASK_ID>.requeue.jsonl`, refreshes queue-depth snapshot fields,
+and emits `blocked_task_requeued`.
+
+Related daemon behavior: when auto-recovery is enabled, an idle daemon can
+autonomously requeue a same-lineage blocked dependency only when the latest
+blocked metadata classifies it as `network_unavailable`,
+`provider_unavailable`, `provider_rate_limited`, or `runner_timeout` and the
+cooldown/budget gates pass. Stage-authored blocked states, auth failures,
+missing runner binaries, malformed terminal output, and unknown transport
+failures remain operator-review states.
+
+Options:
+
+- `--workspace PATH`
+- `--reason TEXT`
+- `--root-spec-id ROOT_SPEC_ID`
+- `--force`
+
 ### `millrace queue repair-lineage --root-spec-id <ROOT_SPEC_ID>`
 
 Previews safe queued/blocked work-document repairs when an open Arbiter closure
@@ -390,8 +423,9 @@ the Learning lane active.
 
 ### `millrace config show`
 
-Prints the effective runtime defaults plus the snapshot-exposed config version and last reload outcome/error state.
-The output includes `usage_governance.enabled`.
+Prints the effective runtime defaults plus the snapshot-exposed config version
+and last reload outcome/error state. The output includes
+`auto_recovery.enabled` and `usage_governance.enabled`.
 
 Usage governance is configured under `[usage_governance]` in
 `millrace-agents/millrace.toml`. It is default-off. When enabled, runtime token
@@ -496,8 +530,28 @@ transitions are legal before inspecting any individual run. Use
 - `millrace compile validate` and `millrace compile show` both persist fresh compile diagnostics.
 - `compile_if_needed` style runtime paths reuse the persisted compiled plan only when its compile-input fingerprint still matches current inputs.
 - Runtime startup and `config reload` refuse to continue on a stale last-known-good plan when compile inputs have changed and recompilation fails.
-- `usage_governance.*` config fields apply on the next tick and do not require
-  a recompile.
+- `usage_governance.*` and `auto_recovery.*` config fields apply on the next
+  tick and do not require a recompile.
+
+## Auto-Recovery Config
+
+Blocked dependency auto-recovery is enabled by default and bounded. It only
+acts when queued same-lineage execution tasks are stranded behind a blocked
+predecessor whose latest blocked metadata classifies the failure as
+`network_unavailable`, `provider_unavailable`, `provider_rate_limited`, or
+`runner_timeout`.
+
+Top-level fields:
+
+- `auto_recovery.enabled`
+- `auto_recovery.blocked_dependency_retry_enabled`
+- `auto_recovery.max_auto_requeues_per_work_item`
+- `auto_recovery.cooldown_seconds`
+
+Default policy allows three automatic requeues per task with cooldowns of
+`300`, `900`, and `3600` seconds. Operators can still use
+`millrace queue retry-blocked --force` after inspecting a blocked task that
+does not qualify for autonomous retry.
 
 ## Usage Governance Config
 

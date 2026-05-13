@@ -20,6 +20,7 @@ from millrace_ai.state_store import save_snapshot
 
 from .activation import activate_claim_for_plane, claim_next_work_item_for_plane
 from .active_runs import active_run_for_plane, snapshot_with_active_run
+from .blocked_recovery import attempt_stranded_dependency_auto_recovery
 from .error_recovery import schedule_post_stage_exception_recovery
 from .learning_promotions import (
     apply_deferred_learning_promotions_if_safe,
@@ -206,9 +207,7 @@ class RuntimeDaemonSupervisor:
         except StageWorkItemOwnershipError as exc:
             handle_stage_work_item_ownership_error(self.engine, error=exc)
             return
-        active_run = active_run.model_copy(
-            update={"running_status_marker": request.running_status_marker}
-        )
+        active_run = active_run.model_copy(update={"running_status_marker": request.running_status_marker})
         assert self.engine.snapshot is not None
         self.engine.snapshot = snapshot_with_active_run(
             self.engine.snapshot,
@@ -273,6 +272,8 @@ class RuntimeDaemonSupervisor:
 
     def _emit_idle_cycle(self) -> None:
         assert self.engine.snapshot is not None
+        if attempt_stranded_dependency_auto_recovery(self.engine) is not None:
+            return
         save_snapshot(self.engine.paths, self.engine.snapshot)
         write_runtime_event(self.engine.paths, event_type="runtime_tick_idle")
         self.engine._emit_monitor_event("runtime_idle", reason="no_work")
@@ -294,11 +295,7 @@ class RuntimeDaemonSupervisor:
 
     def _active_runs_in_dispatch_order(self) -> tuple[ActiveRunState, ...]:
         active_runs = self._active_runs()
-        return tuple(
-            active_runs[plane]
-            for plane in _DISPATCH_ORDER
-            if plane in active_runs and plane not in self._tasks
-        )
+        return tuple(active_runs[plane] for plane in _DISPATCH_ORDER if plane in active_runs and plane not in self._tasks)
 
     def _done_planes(self) -> tuple[Plane, ...]:
         return tuple(plane for plane, task in self._tasks.items() if task.done())
@@ -375,11 +372,7 @@ def apply_stage_completion(
             spawned_work_ref_from_path(
                 path,
                 source_stage_result=stage_result,
-                reason=(
-                    "learning_trigger"
-                    if path in learning_request_paths
-                    else router_decision.reason
-                ),
+                reason=("learning_trigger" if path in learning_request_paths else router_decision.reason),
             )
             for path in (*learning_request_paths, *spawned_paths)
         )
@@ -481,9 +474,7 @@ def _emit_stage_started(engine: RuntimeEngine, request: StageRunRequest) -> None
             "stage_kind_id": request.stage_kind_id,
             "plane": request.plane.value,
             "run_id": request.run_id,
-            "work_item_kind": (
-                request.active_work_item_kind.value if request.active_work_item_kind else None
-            ),
+            "work_item_kind": (request.active_work_item_kind.value if request.active_work_item_kind else None),
             "work_item_id": request.active_work_item_id,
             "troubleshoot_report_path": request.preferred_troubleshoot_report_path,
         },
@@ -509,9 +500,7 @@ def _emit_stage_completed(
             "work_item_id": stage_result.work_item_id,
             "terminal_result": stage_result.terminal_result.value,
             "failure_class": stage_result.metadata.get("failure_class"),
-            "troubleshoot_report_path": (
-                stage_result.report_artifact or request.preferred_troubleshoot_report_path
-            ),
+            "troubleshoot_report_path": (stage_result.report_artifact or request.preferred_troubleshoot_report_path),
         },
     )
     engine._emit_monitor_event(
@@ -528,11 +517,7 @@ def _emit_stage_completed(
         started_at=stage_result.started_at.isoformat(),
         completed_at=stage_result.completed_at.isoformat(),
         duration_seconds=stage_result.duration_seconds,
-        token_usage=(
-            stage_result.token_usage.model_dump(mode="json")
-            if stage_result.token_usage is not None
-            else None
-        ),
+        token_usage=(stage_result.token_usage.model_dump(mode="json") if stage_result.token_usage is not None else None),
     )
 
 
@@ -556,9 +541,7 @@ def _emit_router_decision(
             "stage_kind_id": stage_result.stage_kind_id,
             "terminal_result": stage_result.terminal_result.value,
             "failure_class": stage_result.metadata.get("failure_class"),
-            "troubleshoot_report_path": (
-                stage_result.report_artifact or request.preferred_troubleshoot_report_path
-            ),
+            "troubleshoot_report_path": (stage_result.report_artifact or request.preferred_troubleshoot_report_path),
             "next_stage": router_decision.next_stage.value if router_decision.next_stage else None,
             "next_node_id": router_decision.next_node_id,
             "next_stage_kind_id": router_decision.next_stage_kind_id,

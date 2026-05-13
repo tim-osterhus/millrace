@@ -109,10 +109,20 @@ def apply_router_decision(
         return ()
 
     if decision.action is RouterAction.HANDOFF:
-        return apply_handoff_router_decision(engine, decision, stage_result)
+        return apply_handoff_router_decision(
+            engine,
+            decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
 
     if decision.action is RouterAction.BLOCKED:
-        apply_blocked_router_decision(engine, decision, stage_result)
+        apply_blocked_router_decision(
+            engine,
+            decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
         return ()
 
     raise ValueError(f"Unsupported router action: {decision.action.value}")

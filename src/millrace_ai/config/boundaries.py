@@ -8,6 +8,7 @@ from typing import Any
 
 from .models import (
     KNOWN_STAGE_NAMES,
+    AutoRecoverySection,
     ConfigModel,
     RecoverySection,
     RunnersSection,
@@ -44,6 +45,10 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "recovery.max_troubleshoot_attempts_before_consult": ApplyBoundary.NEXT_TICK,
     "recovery.max_mechanic_attempts": ApplyBoundary.NEXT_TICK,
     "recovery.stale_state_recovery_enabled": ApplyBoundary.NEXT_TICK,
+    "auto_recovery.enabled": ApplyBoundary.NEXT_TICK,
+    "auto_recovery.blocked_dependency_retry_enabled": ApplyBoundary.NEXT_TICK,
+    "auto_recovery.max_auto_requeues_per_work_item": ApplyBoundary.NEXT_TICK,
+    "auto_recovery.cooldown_seconds": ApplyBoundary.NEXT_TICK,
     "watchers.enabled": ApplyBoundary.NEXT_TICK,
     "watchers.debounce_ms": ApplyBoundary.NEXT_TICK,
     "watchers.watch_ideas_inbox": ApplyBoundary.NEXT_TICK,
@@ -68,6 +73,7 @@ _SECTIONS: tuple[tuple[str, type[ConfigModel]], ...] = (
     ("runtime", RuntimeSection),
     ("runners", RunnersSection),
     ("recovery", RecoverySection),
+    ("auto_recovery", AutoRecoverySection),
     ("watchers", WatchersSection),
     ("usage_governance", UsageGovernanceSection),
 )

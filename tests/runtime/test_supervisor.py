@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 
@@ -40,6 +41,44 @@ def _task_doc(task_id: str) -> TaskDocument:
         created_at=NOW,
         created_by="tests",
     )
+
+
+def _task_doc_with_dependency(task_id: str, *, depends_on: tuple[str, ...]) -> TaskDocument:
+    return _task_doc(task_id).model_copy(update={"depends_on": depends_on})
+
+
+def _write_blocked_metadata(
+    paths,
+    task_id: str,
+    *,
+    auto_requeue_candidate: bool,
+    failure_class: str,
+    blocked_at: datetime | None = None,
+) -> Path:
+    metadata_dir = paths.runtime_root / "diagnostics" / "blocked"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = metadata_dir / f"task-{task_id}.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "work_item_kind": "task",
+                "work_item_id": task_id,
+                "root_spec_id": "spec-root-001",
+                "root_idea_id": "idea-001",
+                "blocked_at": (blocked_at or (NOW - timedelta(hours=1))).isoformat(),
+                "blocked_origin": "runner_failure",
+                "failure_class": failure_class,
+                "failure_scope": "environment" if auto_requeue_candidate else "semantic",
+                "auto_requeue_candidate": auto_requeue_candidate,
+                "source_run_id": "run-001",
+                "source_plane": "execution",
+                "source_stage": "builder",
+                "terminal_result": "BLOCKED",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return metadata_path
 
 
 def _spec_doc(spec_id: str) -> SpecDocument:
@@ -129,6 +168,77 @@ def test_supervisor_dispatches_learning_and_execution_before_either_completes(tm
 
         release_workers.set()
         await supervisor.drain_completed(wait=True)
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_auto_requeues_transient_blocked_dependency_on_idle_cycle(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-06"))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-06")
+    _write_blocked_metadata(
+        paths,
+        "task-06",
+        auto_requeue_candidate=True,
+        failure_class="network_unavailable",
+    )
+    queue.enqueue_task(_task_doc_with_dependency("task-07", depends_on=("task-06",)))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError(f"no stage should run before requeue: {request}")
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        completions = await supervisor.run_cycle()
+
+        assert completions == ()
+        assert (paths.tasks_queue_dir / "task-06.md").is_file()
+        assert not (paths.tasks_blocked_dir / "task-06.md").exists()
+        assert (paths.tasks_queue_dir / "task-06.requeue.jsonl").is_file()
+        recovery_reports = tuple((paths.runtime_root / "diagnostics" / "auto-recovery").glob("*task-06.json"))
+        assert len(recovery_reports) == 1
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_does_not_auto_requeue_non_retryable_blocked_dependency(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-06"))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-06")
+    _write_blocked_metadata(
+        paths,
+        "task-06",
+        auto_requeue_candidate=False,
+        failure_class="stage_declared_blocked",
+    )
+    queue.enqueue_task(_task_doc_with_dependency("task-07", depends_on=("task-06",)))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError(f"no stage should run for non-retryable blocked task: {request}")
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        completions = await supervisor.run_cycle()
+
+        assert completions == ()
+        assert (paths.tasks_blocked_dir / "task-06.md").is_file()
+        assert not (paths.tasks_queue_dir / "task-06.md").exists()
         engine.close()
 
     asyncio.run(scenario())

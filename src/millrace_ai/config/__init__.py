@@ -14,6 +14,7 @@ from .loading import fingerprint_runtime_config, load_runtime_config, render_boo
 from .models import (
     DEFAULT_CONFIG_PATH,
     KNOWN_STAGE_NAMES,
+    AutoRecoverySection,
     CodexPermissionLevel,
     CodexReasoningEffort,
     CodexRunnerSection,
@@ -40,6 +41,7 @@ from .models import (
 
 __all__ = [
     "ApplyBoundary",
+    "AutoRecoverySection",
     "CodexPermissionLevel",
     "CodexReasoningEffort",
     "CodexRunnerSection",

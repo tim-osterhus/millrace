@@ -169,6 +169,38 @@ def requeue_task(paths: WorkspacePaths, task_id: str, *, reason: str) -> Path:
     return destination
 
 
+def requeue_blocked_task(
+    paths: WorkspacePaths,
+    task_id: str,
+    *,
+    reason: str,
+    actor: str,
+    auto: bool,
+    failure_class: str | None = None,
+    attempt_number: int | None = None,
+) -> Path:
+    destination = _move_item(
+        source_dir=paths.tasks_blocked_dir,
+        destination_dir=paths.tasks_queue_dir,
+        item_id=task_id,
+        kind=WorkItemKind.TASK,
+        source_state="blocked",
+    )
+    _append_requeue_reason(
+        paths.tasks_queue_dir,
+        task_id,
+        WorkItemKind.TASK,
+        reason,
+        actor=actor,
+        auto=auto,
+        source_state="blocked",
+        destination_state="queue",
+        failure_class=failure_class,
+        attempt_number=attempt_number,
+    )
+    return destination
+
+
 def requeue_spec(paths: WorkspacePaths, spec_id: str, *, reason: str) -> Path:
     destination = _move_item(
         source_dir=paths.specs_active_dir,
@@ -224,10 +256,11 @@ def _move_item(
     destination_dir: Path,
     item_id: str,
     kind: WorkItemKind,
+    source_state: str = "active",
 ) -> Path:
     source = source_dir / f"{item_id}.md"
     if not source.exists():
-        raise QueueStateError(f"{kind.value} {item_id} is not active")
+        raise QueueStateError(f"{kind.value} {item_id} is not {source_state}")
 
     destination = destination_dir / source.name
     if destination.exists():
@@ -242,6 +275,13 @@ def _append_requeue_reason(
     item_id: str,
     kind: WorkItemKind,
     reason: str,
+    *,
+    actor: str | None = None,
+    auto: bool | None = None,
+    source_state: str | None = None,
+    destination_state: str | None = None,
+    failure_class: str | None = None,
+    attempt_number: int | None = None,
 ) -> None:
     cleaned_reason = reason.strip()
     if not cleaned_reason:
@@ -253,6 +293,18 @@ def _append_requeue_reason(
         "kind": kind.value,
         "reason": cleaned_reason,
     }
+    if actor is not None:
+        payload["actor"] = actor
+    if auto is not None:
+        payload["auto"] = auto
+    if source_state is not None:
+        payload["source_state"] = source_state
+    if destination_state is not None:
+        payload["destination_state"] = destination_state
+    if failure_class is not None:
+        payload["failure_class"] = failure_class
+    if attempt_number is not None:
+        payload["attempt_number"] = attempt_number
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, sort_keys=True) + "\n")
 
@@ -354,6 +406,7 @@ __all__ = [
     "mark_spec_done",
     "mark_task_blocked",
     "mark_task_done",
+    "requeue_blocked_task",
     "requeue_incident",
     "requeue_learning_request",
     "requeue_probe",

@@ -63,6 +63,8 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `millrace-agents/state/learning_status.md`
 - `millrace-agents/state/usage_governance_state.json`
 - `millrace-agents/state/usage_governance_ledger.jsonl`
+- `millrace-agents/diagnostics/blocked/*.json`
+- `millrace-agents/diagnostics/auto-recovery/*.json`
 - mailbox envelopes/archives and run-scoped runner artifacts
 
 ### Arbiter-owned completion artifacts
@@ -101,6 +103,9 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
   runtime events and run artifacts.
 - `src/millrace_ai/runtime/tick_cycle.py`: serial one-tick orchestration used by `millrace run once` and compatibility tests.
 - `src/millrace_ai/runtime/supervisor.py`: daemon-mode plane scheduler, worker registry, and serialized completion-application owner.
+- `src/millrace_ai/runtime/blocked_recovery.py`: blocked-work metadata,
+  blocked dependency retryability decisions, manual blocked-task requeue
+  validation, and daemon idle-cycle transient dependency auto-recovery.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
@@ -184,7 +189,12 @@ Per daemon scheduler cycle:
     learning modes.
 13. Worker tasks execute blocking runner adapters from immutable
     `StageRunRequest` inputs and return typed outcomes only.
-14. The supervisor applies completed outcomes serially: normalize, persist,
+14. Before reporting plain no-work idle, inspect stranded queued execution
+    tasks whose dependencies are blocked. If a same-lineage blocked predecessor
+    is classified as a transient environment/provider failure and cooldown plus
+    retry-budget gates pass, requeue it through the audited blocked-task retry
+    transition.
+15. The supervisor applies completed outcomes serially: normalize, persist,
     update `run_trace.json`, route, update queue/snapshot/status/counters, emit
     monitor/runtime events, and evaluate post-stage usage governance.
 
@@ -199,6 +209,13 @@ The implementation mirrors that ordering directly:
 Idle:
 
 - If no claimable work exists and no eligible completion audit exists, runtime emits `no_work` and keeps the daemon loop alive unless stop requested.
+- If queued execution work is stranded behind a same-lineage blocked
+  dependency, runtime distinguishes transient runner/provider blockers from
+  semantic blockers. Transient classes (`network_unavailable`,
+  `provider_unavailable`, `provider_rate_limited`, `runner_timeout`) may be
+  requeued automatically with cooldown and retry-budget diagnostics; semantic
+  blocked states, missing binaries, auth failures, malformed output, and
+  unknown transport failures remain blocked for operator review.
 - If unrelated root specs are queued while a closure target is open, runtime
   emits `closure_target_backpressure`, keeps the daemon alive, and reports
   `planning_root_specs_deferred_by_closure_target` through `millrace status`.

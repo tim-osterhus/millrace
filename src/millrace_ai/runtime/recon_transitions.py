@@ -32,10 +32,7 @@ if TYPE_CHECKING:
 def is_recon_stage_result(stage_result: StageResultEnvelope) -> bool:
     """Return whether a stage result belongs to Recon probe intake."""
 
-    return (
-        stage_result.stage_kind_id == "recon"
-        and stage_result.work_item_kind is WorkItemKind.PROBE
-    )
+    return stage_result.stage_kind_id == "recon" and stage_result.work_item_kind is WorkItemKind.PROBE
 
 
 def apply_recon_router_decision(
@@ -48,16 +45,24 @@ def apply_recon_router_decision(
     """Persist Recon artifacts, enqueue routed work, then finish the active probe."""
 
     terminal_result = PlanningTerminalResult(stage_result.terminal_result)
-    if terminal_result in {
-        PlanningTerminalResult.RECON_TO_EXECUTION,
-        PlanningTerminalResult.RECON_TO_PLANNING,
-        PlanningTerminalResult.RECON_NOOP,
-    } and decision.action is not RouterAction.IDLE:
+    if (
+        terminal_result
+        in {
+            PlanningTerminalResult.RECON_TO_EXECUTION,
+            PlanningTerminalResult.RECON_TO_PLANNING,
+            PlanningTerminalResult.RECON_NOOP,
+        }
+        and decision.action is not RouterAction.IDLE
+    ):
         raise ValueError("successful recon terminal results require an idle router decision")
-    if terminal_result in {
-        PlanningTerminalResult.RECON_BLOCKED,
-        PlanningTerminalResult.BLOCKED,
-    } and decision.action is not RouterAction.BLOCKED:
+    if (
+        terminal_result
+        in {
+            PlanningTerminalResult.RECON_BLOCKED,
+            PlanningTerminalResult.BLOCKED,
+        }
+        and decision.action is not RouterAction.BLOCKED
+    ):
         raise ValueError("blocked recon terminal results require a blocked router decision")
 
     try:
@@ -77,7 +82,12 @@ def apply_recon_router_decision(
             apply_idle_router_decision(engine, stage_result)
             return ()
 
-        apply_blocked_router_decision(engine, decision, stage_result)
+        apply_blocked_router_decision(
+            engine,
+            decision,
+            stage_result,
+            stage_result_path=stage_result_path,
+        )
         return ()
     except Exception as exc:
         return _block_invalid_recon_handoff(
@@ -122,6 +132,7 @@ def _block_invalid_recon_handoff(
             failure_class=RuntimeErrorCode.RECON_HANDOFF_INVALID.value,
         ),
         stage_result,
+        stage_result_path=stage_result_path,
     )
     return ()
 
@@ -263,5 +274,6 @@ def _append_required_references(
         seen.add(reference)
         merged.append(reference)
     return tuple(merged)
+
 
 __all__ = ["apply_recon_router_decision", "is_recon_stage_result"]
