@@ -14,6 +14,17 @@ from millrace_ai.contracts import (
 )
 
 from .initialization import bootstrap_workspace
+from .operator_interventions import (
+    OperatorInterventionResult,
+    TaskSupersedeCascade,
+    archive_blocked_task,
+    archive_invalid_incident_artifact,
+    cancel_incident,
+    cancel_work_item,
+    resolve_incident_by_operator,
+    retarget_queued_task_dependency,
+    supersede_task,
+)
 from .paths import WorkspacePaths, workspace_paths
 from .queue_reconciliation import (
     StaleActiveState,
@@ -147,6 +158,96 @@ class QueueStore:
     def requeue_learning_request(self, learning_request_id: str, *, reason: str) -> Path:
         return requeue_learning_request(self.paths, learning_request_id, reason=reason)
 
+    def cancel_work_item(
+        self,
+        work_item_id: str,
+        *,
+        reason: str,
+        work_item_kind: WorkItemKind | None = None,
+        actor: str = "operator",
+        force: bool = False,
+    ) -> OperatorInterventionResult:
+        return cancel_work_item(
+            self.paths,
+            work_item_id=work_item_id,
+            work_item_kind=work_item_kind,
+            reason=reason,
+            actor=actor,
+            force=force,
+        )
+
+    def archive_blocked_task(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        actor: str = "operator",
+    ) -> OperatorInterventionResult:
+        return archive_blocked_task(self.paths, task_id=task_id, reason=reason, actor=actor)
+
+    def supersede_task(
+        self,
+        old_task_id: str,
+        *,
+        replacement_task_id: str,
+        reason: str,
+        actor: str = "operator",
+        cascade: TaskSupersedeCascade = "none",
+    ) -> OperatorInterventionResult:
+        return supersede_task(
+            self.paths,
+            old_task_id=old_task_id,
+            replacement_task_id=replacement_task_id,
+            reason=reason,
+            actor=actor,
+            cascade=cascade,
+        )
+
+    def retarget_queued_task_dependency(
+        self,
+        task_id: str,
+        *,
+        old_dependency_id: str,
+        new_dependency_id: str,
+        reason: str,
+        actor: str = "operator",
+    ) -> OperatorInterventionResult:
+        return retarget_queued_task_dependency(
+            self.paths,
+            task_id=task_id,
+            old_dependency_id=old_dependency_id,
+            new_dependency_id=new_dependency_id,
+            reason=reason,
+            actor=actor,
+        )
+
+    def resolve_incident_by_operator(
+        self,
+        incident_id: str,
+        *,
+        reason: str,
+        actor: str = "operator",
+    ) -> OperatorInterventionResult:
+        return resolve_incident_by_operator(self.paths, incident_id=incident_id, reason=reason, actor=actor)
+
+    def cancel_incident(
+        self,
+        incident_id: str,
+        *,
+        reason: str,
+        actor: str = "operator",
+    ) -> OperatorInterventionResult:
+        return cancel_incident(self.paths, incident_id=incident_id, reason=reason, actor=actor)
+
+    def archive_invalid_incident_artifact(
+        self,
+        filename: str,
+        *,
+        reason: str,
+        actor: str = "operator",
+    ) -> OperatorInterventionResult:
+        return archive_invalid_incident_artifact(self.paths, filename=filename, reason=reason, actor=actor)
+
     def detect_execution_stale_state(self, *, snapshot_active_task_id: str | None) -> StaleActiveState:
         return detect_execution_stale_state(self.paths, snapshot_active_task_id=snapshot_active_task_id)
 
@@ -163,4 +264,4 @@ class QueueStore:
         )
 
 
-__all__ = ["QueueClaim", "QueueStore", "StaleActiveState"]
+__all__ = ["OperatorInterventionResult", "QueueClaim", "QueueStore", "StaleActiveState"]

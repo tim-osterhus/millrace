@@ -185,6 +185,13 @@ class MailboxCommand(str, Enum):
     ADD_IDEA = "add_idea"
     RETRY_ACTIVE = "retry_active"
     CLEAR_STALE_STATE = "clear_stale_state"
+    CANCEL_WORK_ITEM = "cancel_work_item"
+    ARCHIVE_BLOCKED_TASK = "archive_blocked_task"
+    SUPERSEDE_TASK = "supersede_task"
+    RETARGET_TASK_DEPENDENCY = "retarget_task_dependency"
+    RESOLVE_INCIDENT = "resolve_incident"
+    CANCEL_INCIDENT = "cancel_incident"
+    ARCHIVE_INVALID_INCIDENT = "archive_invalid_incident"
 
 
 class LoopEdgeKind(str, Enum):

@@ -19,6 +19,7 @@ Module entrypoint: `python -m millrace_ai`
 - `millrace status ...`
 - `millrace runs ...`
 - `millrace queue ...`
+- `millrace incident ...`
 - `millrace planning ...`
 - `millrace config ...`
 - `millrace control ...`
@@ -208,7 +209,10 @@ When Arbiter closure is active, status surfaces closure-target backpressure:
 - `closure_target_latest_verdict_path`
 - `closure_target_latest_report_path`
 
-Status also prints `blocked_idle` and `latest_runtime_error_report_path`.
+Status also prints `blocked_idle`, `latest_runtime_error_report_path`, and
+`latest_operator_intervention`. The intervention line shows the latest audited
+operator cleanup event, timestamp, work item id, and archive destination when
+one exists.
 `blocked_idle: true` means the daemon is running, no plane has an active run,
 all queues are empty, an open closure target remains blocked by lineage work,
 and the planning status is `### BLOCKED`. That is a diagnostic state, not
@@ -228,6 +232,7 @@ machine-readable status payload with the same key state, including:
 - `blocked_idle`
 - `current_failure_class`
 - `latest_runtime_error_report_path`
+- `latest_operator_intervention`
 
 ### `millrace status watch`
 
@@ -295,11 +300,16 @@ decisions, for example `builder BUILDER_COMPLETE -> checker` or
 ### `millrace queue ls`
 
 Prints queue/active counts for execution, planning, and learning surfaces,
-including the probe/spec/incident breakdown inside Planning.
+including the probe/spec/incident breakdown inside Planning. It also includes
+terminal intervention counters such as `cancelled_task_count`,
+`superseded_task_count`, `cancelled_incident_count`, and
+`operator_resolved_incident_count`.
 
 ### `millrace queue show <WORK_ITEM_ID>`
 
-Finds and prints one task/probe/spec/incident document summary by ID.
+Finds and prints one task/probe/spec/incident document summary by ID. Lookup
+includes active, queued, done/resolved, blocked, cancelled, superseded, and
+operator-resolved archive records.
 
 ### `millrace queue add-task <task.md|task.json>`
 
@@ -356,6 +366,67 @@ Options:
 - `--reason TEXT`
 - `--root-spec-id ROOT_SPEC_ID`
 - `--force`
+
+### `millrace queue cancel <WORK_ITEM_ID> --reason "..."`
+
+Cancels a queued or blocked task/probe/spec/incident intake document without
+deleting it. The command moves the artifact into a matching `cancelled/`
+archive directory, writes an `interventions.jsonl` audit entry, emits
+`work_item_cancelled`, refreshes queue-depth snapshot fields, and prints the
+control result.
+
+Use `--kind task|probe|spec|incident` when an id is ambiguous across work-item
+kinds. `--force` is reserved for future duplicate/lineage warning overrides;
+it does not bypass live mutation safety.
+
+### `millrace queue archive-blocked <TASK_ID> --reason "..."`
+
+Archives a blocked task that should not be retried. This is the explicit
+operator alternative to `queue retry-blocked` when the task is bad intake or no
+longer valid work.
+
+### `millrace queue supersede <OLD_TASK_ID> --replacement <NEW_TASK_ID>`
+
+Retires a queued or blocked task because an existing queued, active, or done
+replacement task carries the work forward. The old task moves to a
+`superseded/` archive, the intervention record stores the replacement id, and
+the runtime emits `task_superseded`.
+
+Use `--cascade none|retarget|cancel` to choose dependent handling. The default
+`none` reports queued dependents but leaves them untouched. `retarget` rewrites
+queued dependent `depends_on` entries to the replacement task. `cancel` archives
+queued dependents through the same cancellation helper.
+
+### `millrace queue retarget-dependency <TASK_ID> --from <OLD> --to <NEW>`
+
+Rewrites one queued task dependency to point from an old predecessor to an
+existing queued, active, or done replacement task. This is the precise manual
+path when `supersede --cascade retarget` would be too broad.
+
+## Incident Commands
+
+### `millrace incident resolve <INCIDENT_ID> --reason "..."`
+
+Moves an incoming, active, or blocked incident to
+`incidents/resolved/operator/` and emits `incident_resolved_by_operator`. Use
+this when an operator has confirmed no more runtime work is needed.
+
+### `millrace incident cancel <INCIDENT_ID> --reason "..."`
+
+Cancels an incoming, active, or blocked incident without treating it as
+successful planning work. The document moves into a matching `cancelled/`
+archive directory and the runtime emits `incident_cancelled`.
+
+### `millrace incident archive-invalid <FILENAME> --reason "..."`
+
+Archives a single invalid file already present under `incidents/incoming/`.
+The filename must be a single relative filename and either end with `.invalid`
+or appear in `incidents/incoming/invalid-artifacts.jsonl`.
+
+Operator intervention commands use the same control routing as pause/reload:
+when no daemon owns the workspace they apply directly; when a daemon owns the
+workspace they enqueue mailbox commands. A daemon applies them at the beginning
+of a tick only when no active stage worker is currently mutating runtime state.
 
 ### `millrace queue repair-lineage --root-spec-id <ROOT_SPEC_ID>`
 

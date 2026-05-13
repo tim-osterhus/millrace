@@ -17,6 +17,7 @@ from millrace_ai.cli.commands.control import (
     stop,
 )
 from millrace_ai.cli.commands.doctor import doctor
+from millrace_ai.cli.commands.incident import incident_app
 from millrace_ai.cli.commands.init import init_workspace
 from millrace_ai.cli.commands.modes import modes_app
 from millrace_ai.cli.commands.planning import planning_app
@@ -56,6 +57,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(modes_app, name="modes")
 app.add_typer(compile_app, name="compile")
 app.add_typer(skills_app, name="skills")
+app.add_typer(incident_app, name="incident")
 
 app.command("add-task")(add_task)
 app.command("add-probe")(add_probe)

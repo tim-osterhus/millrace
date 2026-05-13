@@ -109,23 +109,38 @@ def _queue_lookup(
         ("task", "active", paths.tasks_active_dir),
         ("task", "done", paths.tasks_done_dir),
         ("task", "blocked", paths.tasks_blocked_dir),
+        ("task", "queue_cancelled", paths.tasks_queue_dir / "cancelled"),
+        ("task", "blocked_cancelled", paths.tasks_blocked_dir / "cancelled"),
+        ("task", "queue_superseded", paths.tasks_queue_dir / "superseded"),
+        ("task", "blocked_superseded", paths.tasks_blocked_dir / "superseded"),
         ("probe", "queue", paths.probes_queue_dir),
         ("probe", "active", paths.probes_active_dir),
         ("probe", "done", paths.probes_done_dir),
         ("probe", "blocked", paths.probes_blocked_dir),
+        ("probe", "queue_cancelled", paths.probes_queue_dir / "cancelled"),
+        ("probe", "blocked_cancelled", paths.probes_blocked_dir / "cancelled"),
         ("spec", "queue", paths.specs_queue_dir),
         ("spec", "active", paths.specs_active_dir),
         ("spec", "done", paths.specs_done_dir),
         ("spec", "blocked", paths.specs_blocked_dir),
+        ("spec", "queue_cancelled", paths.specs_queue_dir / "cancelled"),
+        ("spec", "blocked_cancelled", paths.specs_blocked_dir / "cancelled"),
         ("incident", "incoming", paths.incidents_incoming_dir),
         ("incident", "active", paths.incidents_active_dir),
         ("incident", "resolved", paths.incidents_resolved_dir),
         ("incident", "blocked", paths.incidents_blocked_dir),
+        ("incident", "incoming_cancelled", paths.incidents_incoming_dir / "cancelled"),
+        ("incident", "active_cancelled", paths.incidents_active_dir / "cancelled"),
+        ("incident", "blocked_cancelled", paths.incidents_blocked_dir / "cancelled"),
+        ("incident", "operator_resolved", paths.incidents_resolved_dir / "operator"),
     )
     for kind, state, directory in directories:
         candidate = directory / f"{work_item_id}.md"
         if candidate.is_file():
             return kind, state, candidate
+        archived = sorted(directory.glob(f"{work_item_id}.*.md"))
+        if archived:
+            return kind, state, archived[0]
     return None
 
 

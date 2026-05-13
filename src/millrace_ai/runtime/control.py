@@ -14,11 +14,18 @@ from millrace_ai.contracts import (
     MailboxAddProbePayload,
     MailboxAddSpecPayload,
     MailboxAddTaskPayload,
+    MailboxArchiveBlockedTaskPayload,
+    MailboxArchiveInvalidIncidentPayload,
+    MailboxCancelWorkItemPayload,
     MailboxCommand,
+    MailboxIncidentInterventionPayload,
+    MailboxRetargetTaskDependencyPayload,
+    MailboxSupersedeTaskPayload,
     Plane,
     ProbeDocument,
     SpecDocument,
     TaskDocument,
+    WorkItemKind,
 )
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.state_store import load_snapshot
@@ -196,6 +203,160 @@ class RuntimeControl:
             issuer=issuer,
             payload=payload,
             direct_handler=lambda snapshot: self._mutations.add_idea(snapshot, payload=payload_model),
+        )
+
+    def cancel_work_item(
+        self,
+        *,
+        work_item_id: str,
+        reason: str,
+        work_item_kind: WorkItemKind | None = None,
+        force: bool = False,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxCancelWorkItemPayload(
+            work_item_id=work_item_id,
+            work_item_kind=work_item_kind,
+            reason=reason,
+            force=force,
+        )
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.CANCEL_WORK_ITEM,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.cancel_work_item(
+                snapshot,
+                payload=payload_model,
+            ),
+        )
+
+    def archive_blocked_task(
+        self,
+        *,
+        task_id: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxArchiveBlockedTaskPayload(task_id=task_id, reason=reason)
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.ARCHIVE_BLOCKED_TASK,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.archive_blocked_task(
+                snapshot,
+                payload=payload_model,
+            ),
+        )
+
+    def supersede_task(
+        self,
+        *,
+        old_task_id: str,
+        replacement_task_id: str,
+        reason: str,
+        cascade: str = "none",
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxSupersedeTaskPayload(
+            old_task_id=old_task_id,
+            replacement_task_id=replacement_task_id,
+            reason=reason,
+            cascade=cascade,
+        )
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.SUPERSEDE_TASK,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.supersede_task(
+                snapshot,
+                payload=payload_model,
+            ),
+        )
+
+    def retarget_task_dependency(
+        self,
+        *,
+        task_id: str,
+        old_dependency_id: str,
+        new_dependency_id: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxRetargetTaskDependencyPayload(
+            task_id=task_id,
+            old_dependency_id=old_dependency_id,
+            new_dependency_id=new_dependency_id,
+            reason=reason,
+        )
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.RETARGET_TASK_DEPENDENCY,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.retarget_task_dependency(
+                snapshot,
+                payload=payload_model,
+            ),
+        )
+
+    def resolve_incident(
+        self,
+        *,
+        incident_id: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxIncidentInterventionPayload(incident_id=incident_id, reason=reason)
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.RESOLVE_INCIDENT,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.resolve_incident(
+                snapshot,
+                payload=payload_model,
+            ),
+        )
+
+    def cancel_incident(
+        self,
+        *,
+        incident_id: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxIncidentInterventionPayload(incident_id=incident_id, reason=reason)
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.CANCEL_INCIDENT,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.cancel_incident(
+                snapshot,
+                payload=payload_model,
+            ),
+        )
+
+    def archive_invalid_incident(
+        self,
+        *,
+        filename: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxArchiveInvalidIncidentPayload(filename=filename, reason=reason)
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.ARCHIVE_INVALID_INCIDENT,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.archive_invalid_incident(
+                snapshot,
+                payload=payload_model,
+            ),
         )
 
     @staticmethod

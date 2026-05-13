@@ -51,6 +51,14 @@ hints: `queued`, `active`, `blocked`, and `done`.
 
 JSON imports are still accepted for queue intake, but canonical on-disk queue artifacts are markdown.
 
+Operator intervention archives live below existing lifecycle directories, so
+claimable queue globbing remains unchanged. Examples include
+`tasks/queue/cancelled/`, `tasks/blocked/superseded/`,
+`incidents/active/cancelled/`, `incidents/resolved/operator/`, and
+`incidents/incoming/invalid-archived/`. Each archive directory can carry an
+`interventions.jsonl` audit ledger, and applied interventions also append
+runtime events.
+
 ### JSON runtime/state artifacts
 
 - `millrace-agents/state/runtime_snapshot.json`
@@ -85,6 +93,9 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
 - `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/probe/spec/incident/learning-request documents.
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
+- `src/millrace_ai/workspace/operator_interventions.py`: audited queue and
+  incident cancellation, supersession, dependency retargeting, operator
+  resolution, and invalid-incident archive helpers.
 - `src/millrace_ai/workspace/task_lifecycle_integrity.py`: duplicate task lifecycle detection and safe stale-blocked predecessor retirement when a same-root continuation reaches `done`.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
@@ -130,7 +141,7 @@ JSON imports are still accepted for queue intake, but canonical on-disk queue ar
 - `src/millrace_ai/control.py`: thin public facade that preserves the stable operator control import surface.
 - `src/millrace_ai/runtime/control.py`: public runtime control abstraction that coordinates routing vs direct mutation ownership.
 - `src/millrace_ai/runtime/control_mailbox.py`: mailbox-safe daemon routing, command envelope creation, and control enqueue failure boundaries.
-- `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, pause/resume source handling, requeue/reset helpers, and stale-state clearing behavior.
+- `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, pause/resume source handling, requeue/reset helpers, stale-state clearing behavior, and operator intervention snapshot refreshes.
 - `src/millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
 - `src/millrace_ai/doctor.py`: workspace integrity + lock health checks.
 - `src/millrace_ai/assets/entrypoints/`: packaged entrypoint markdown assets plus the parsing/linting package that validates entrypoint and advisory skill manifests.
@@ -229,6 +240,13 @@ Idle:
   stale predecessor from `tasks/blocked/` into
   `tasks/blocked/superseded/`. The archived copy remains inspectable, but it no
   longer appears in closure readiness scans.
+- If an operator identifies queued/blocked work or an incident as bad intake,
+  the supported path is an audited intervention command: cancel it, supersede
+  it with an existing replacement, retarget queued dependents, resolve/cancel
+  the incident, or archive an invalid incoming incident artifact. These
+  commands archive rather than delete documents. Direct commands refuse live
+  active mutation; daemon-owned workspaces receive mailbox commands that apply
+  only after active stage workers drain and before the next work claim.
 - If queued/active/blocked work shares the open target's root idea but carries
   another effective `Root-Spec-ID`, runtime emits
   `closure_lineage_drift_detected`, writes a diagnostic under

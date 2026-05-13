@@ -14,7 +14,13 @@ from millrace_ai.contracts import (
     MailboxAddProbePayload,
     MailboxAddSpecPayload,
     MailboxAddTaskPayload,
+    MailboxArchiveBlockedTaskPayload,
+    MailboxArchiveInvalidIncidentPayload,
+    MailboxCancelWorkItemPayload,
     MailboxCommandEnvelope,
+    MailboxIncidentInterventionPayload,
+    MailboxRetargetTaskDependencyPayload,
+    MailboxSupersedeTaskPayload,
     Plane,
     ReloadOutcome,
 )
@@ -28,6 +34,16 @@ from millrace_ai.runtime.pause_state import (
     remove_pause_source,
 )
 from millrace_ai.state_store import save_snapshot
+from millrace_ai.workspace.operator_interventions import (
+    OperatorInterventionResult,
+    archive_blocked_task,
+    archive_invalid_incident_artifact,
+    cancel_incident,
+    cancel_work_item,
+    resolve_incident_by_operator,
+    retarget_queued_task_dependency,
+    supersede_task,
+)
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -88,6 +104,27 @@ def handle_mailbox_command(
         return
     if command == "add_idea":
         enqueue_idea_from_mailbox(engine, envelope)
+        return
+    if command == "cancel_work_item":
+        cancel_work_item_from_mailbox(engine, envelope)
+        return
+    if command == "archive_blocked_task":
+        archive_blocked_task_from_mailbox(engine, envelope)
+        return
+    if command == "supersede_task":
+        supersede_task_from_mailbox(engine, envelope)
+        return
+    if command == "retarget_task_dependency":
+        retarget_task_dependency_from_mailbox(engine, envelope)
+        return
+    if command == "resolve_incident":
+        resolve_incident_from_mailbox(engine, envelope)
+        return
+    if command == "cancel_incident":
+        cancel_incident_from_mailbox(engine, envelope)
+        return
+    if command == "archive_invalid_incident":
+        archive_invalid_incident_from_mailbox(engine, envelope)
         return
     raise ControlRoutingError(f"Unsupported mailbox command: {command}")
 
@@ -287,6 +324,179 @@ def enqueue_idea_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnv
     )
 
 
+def cancel_work_item_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxCancelWorkItemPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = cancel_work_item(
+        engine.paths,
+        work_item_id=payload.work_item_id,
+        work_item_kind=payload.work_item_kind,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+        force=payload.force,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def archive_blocked_task_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxArchiveBlockedTaskPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = archive_blocked_task(
+        engine.paths,
+        task_id=payload.task_id,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def supersede_task_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxSupersedeTaskPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = supersede_task(
+        engine.paths,
+        old_task_id=payload.old_task_id,
+        replacement_task_id=payload.replacement_task_id,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        cascade=payload.cascade,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def retarget_task_dependency_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxRetargetTaskDependencyPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = retarget_queued_task_dependency(
+        engine.paths,
+        task_id=payload.task_id,
+        old_dependency_id=payload.old_dependency_id,
+        new_dependency_id=payload.new_dependency_id,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def resolve_incident_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxIncidentInterventionPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = resolve_incident_by_operator(
+        engine.paths,
+        incident_id=payload.incident_id,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def cancel_incident_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxIncidentInterventionPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = cancel_incident(
+        engine.paths,
+        incident_id=payload.incident_id,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def archive_invalid_incident_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxArchiveInvalidIncidentPayload.model_validate(envelope.payload)
+    if _defer_operator_intervention_if_active(engine, envelope):
+        return
+    result = archive_invalid_incident_artifact(
+        engine.paths,
+        filename=payload.filename,
+        reason=payload.reason,
+        actor=envelope.issuer,
+        now=engine._now(),
+        issued_at=envelope.issued_at,
+    )
+    _complete_operator_intervention(engine, envelope, result)
+
+
+def _defer_operator_intervention_if_active(
+    engine: RuntimeEngine,
+    envelope: MailboxCommandEnvelope,
+) -> bool:
+    assert engine.snapshot is not None
+    if not engine.snapshot.active_runs_by_plane and engine.snapshot.active_stage is None:
+        return False
+
+    deferred = envelope.model_copy(
+        update={
+            "command_id": f"{envelope.command.value}-deferred-{uuid4().hex[:8]}",
+        }
+    )
+    write_mailbox_command(engine.paths, deferred)
+    active_planes: list[JsonValue] = [plane.value for plane in engine.snapshot.active_runs_by_plane]
+    engine.snapshot = engine.snapshot.model_copy(update={"updated_at": engine._now()})
+    save_snapshot(engine.paths, engine.snapshot)
+    write_runtime_event(
+        engine.paths,
+        event_type="operator_intervention_deferred",
+        data={
+            "command": envelope.command.value,
+            "reason": "active_runtime_stage",
+            "active_planes": active_planes,
+        },
+    )
+    engine._emit_monitor_event(
+        "operator_intervention_deferred",
+        command=envelope.command.value,
+        reason="active_runtime_stage",
+        active_planes=active_planes,
+    )
+    return True
+
+
+def _complete_operator_intervention(
+    engine: RuntimeEngine,
+    envelope: MailboxCommandEnvelope,
+    result: OperatorInterventionResult,
+) -> None:
+    assert engine.snapshot is not None
+    engine._refresh_runtime_queue_depths()
+    save_snapshot(engine.paths, engine.snapshot)
+    write_runtime_event(
+        engine.paths,
+        event_type="mailbox_operator_intervention_applied",
+        data={
+            "command": envelope.command.value,
+            "work_item_kind": result.work_item_kind.value,
+            "work_item_id": result.work_item_id,
+            "destination_path": str(result.destination_path.relative_to(engine.paths.root)),
+        },
+    )
+
+
 def mailbox_reason(envelope: MailboxCommandEnvelope, *, default: str) -> str:
     value = envelope.payload.get("reason")
     if isinstance(value, str) and value.strip():
@@ -307,6 +517,10 @@ def mailbox_retry_scope(envelope: MailboxCommandEnvelope) -> Plane | None:
 
 
 __all__ = [
+    "archive_blocked_task_from_mailbox",
+    "archive_invalid_incident_from_mailbox",
+    "cancel_incident_from_mailbox",
+    "cancel_work_item_from_mailbox",
     "drain_mailbox",
     "enqueue_idea_from_mailbox",
     "enqueue_probe_from_mailbox",
@@ -316,4 +530,7 @@ __all__ = [
     "mailbox_reason",
     "mailbox_retry_scope",
     "reload_config_from_mailbox",
+    "resolve_incident_from_mailbox",
+    "retarget_task_dependency_from_mailbox",
+    "supersede_task_from_mailbox",
 ]

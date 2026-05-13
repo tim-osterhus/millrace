@@ -364,6 +364,13 @@ millrace queue add-probe <probe.md|probe.json> --workspace <workspace>
 millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
 millrace queue add-idea <idea.md> --workspace <workspace>
 millrace queue retry-blocked <task_id> --reason "<reason>" --workspace <workspace>
+millrace queue cancel <work_item_id> --kind task --reason "<reason>" --workspace <workspace>
+millrace queue archive-blocked <task_id> --reason "<reason>" --workspace <workspace>
+millrace queue supersede <old_task_id> --replacement <new_task_id> --reason "<reason>" --workspace <workspace>
+millrace queue retarget-dependency <task_id> --from <old_dependency_id> --to <new_dependency_id> --reason "<reason>" --workspace <workspace>
+millrace incident resolve <incident_id> --reason "<reason>" --workspace <workspace>
+millrace incident cancel <incident_id> --reason "<reason>" --workspace <workspace>
+millrace incident archive-invalid <filename> --reason "<reason>" --workspace <workspace>
 millrace control pause --workspace <workspace>
 millrace control resume --workspace <workspace>
 millrace control stop --workspace <workspace>
@@ -468,6 +475,32 @@ Use intervention commands only when the runtime state actually justifies them:
   retryable; use `--force` only after inspecting the task and accepting the
   override. The command refuses a live daemon ownership lock; stop the daemon
   first or let daemon auto-recovery handle qualifying transient blockers.
+- `queue cancel <WORK_ITEM_ID> --kind task|probe|spec|incident --reason
+  "<reason>"` when queued or blocked work is bad intake and should not run.
+  This archives the document as cancelled; it is not completion.
+- `queue supersede <OLD_TASK_ID> --replacement <NEW_TASK_ID> --reason
+  "<reason>"` when a corrected queued, active, or done task should carry the
+  work forward. Use `--cascade retarget` only when every queued dependent
+  should point to the replacement; use `--cascade cancel` only when those
+  dependents are also invalid.
+- `queue retarget-dependency <TASK_ID> --from <OLD> --to <NEW> --reason
+  "<reason>"` for one precise queued dependent rewrite.
+- `incident resolve <INCIDENT_ID> --reason "<reason>"` when an operator has
+  confirmed no more planning work is needed for an incoming, active, or blocked
+  incident.
+- `incident cancel <INCIDENT_ID> --reason "<reason>"` when the incident was
+  generated from known-bad intake or is no longer valid planning input.
+- `incident archive-invalid <FILENAME> --reason "<reason>"` for a single
+  invalid incoming incident artifact that cannot be parsed as an incident
+  document.
+- Operator intervention commands archive rather than delete files, append
+  `interventions.jsonl`, emit runtime events, and refresh queue-depth
+  snapshots. When a daemon owns the workspace they mailbox-route and apply at
+  a safe no-active-run boundary; they do not kill a running stage.
+- Bad-intake cleanup flow: pause if needed, add or confirm the corrected
+  replacement task, supersede the bad blocked/queued task, retarget or cancel
+  stale queued dependents, cancel stale planning incidents, inspect `queue ls`
+  and `status`, then resume only when the remaining claimable work is correct.
 - `queue repair-lineage --root-spec-id <ROOT_SPEC_ID>` to preview a stopped-daemon
   repair when doctor reports `closure_lineage_drift`; add `--apply` only after
   confirming there is no live ownership lock or active stage

@@ -738,6 +738,66 @@ def test_add_task_spec_idea_and_reload_use_mailbox_when_daemon_owns_workspace(tm
     assert not (paths.root / "ideas" / "inbox" / "idea-mailbox.md").exists()
 
 
+def test_operator_intervention_controls_are_direct_without_daemon_owner(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-old"))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-old")
+    queue.enqueue_task(_task_doc("task-new"))
+    control = RuntimeControl(paths)
+
+    result = control.supersede_task(
+        old_task_id="task-old",
+        replacement_task_id="task-new",
+        reason="operator corrected task scope",
+    )
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert result.artifact_path is not None
+    assert result.artifact_path.parent == paths.tasks_blocked_dir / "superseded"
+    assert not (paths.tasks_blocked_dir / "task-old.md").exists()
+    snapshot = load_snapshot(paths)
+    assert snapshot.queue_depth_execution == 1
+
+
+def test_operator_intervention_controls_use_mailbox_when_daemon_owns_workspace(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-cancel-mailbox"))
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        snapshot.model_copy(
+            update={
+                "runtime_mode": RuntimeMode.DAEMON,
+                "process_running": True,
+                "updated_at": NOW,
+            }
+        ),
+    )
+    acquire_runtime_ownership_lock(
+        paths,
+        owner_pid=os.getpid(),
+        owner_session_id="operator-intervention-mailbox",
+    )
+    control = RuntimeControl(paths)
+
+    result = control.cancel_work_item(
+        work_item_id="task-cancel-mailbox",
+        work_item_kind=WorkItemKind.TASK,
+        reason="operator cancelled bad intake",
+    )
+
+    assert result.mode == "mailbox"
+    assert result.applied is False
+    assert result.command_id is not None
+    assert (paths.tasks_queue_dir / "task-cancel-mailbox.md").is_file()
+    pending = read_pending_mailbox_commands(paths)
+    assert pending[0].command is MailboxCommand.CANCEL_WORK_ITEM
+    assert pending[0].payload["work_item_id"] == "task-cancel-mailbox"
+
+
 def test_add_task_rejects_unsafe_task_id_shape(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     invalid_payload = _task_doc("task-safe").model_dump(mode="python")

@@ -13,6 +13,17 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.18.5] - 2026-05-12
+
+### Added
+
+- Added audited operator intervention commands for bad intake cleanup:
+  `millrace queue cancel`, `queue archive-blocked`, `queue supersede`,
+  `queue retarget-dependency`, `incident resolve`, `incident cancel`, and
+  `incident archive-invalid`. The commands archive rather than delete runtime
+  artifacts, write intervention ledgers/runtime events, refresh queue-depth
+  snapshots, and mailbox-route when a daemon owns the workspace.
+
 ## [0.18.4] - 2026-05-12
 
 ### Added
@@ -737,7 +748,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.4...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.5...HEAD
+[0.18.5]: https://github.com/tim-osterhus/millrace/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/tim-osterhus/millrace/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/tim-osterhus/millrace/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/tim-osterhus/millrace/compare/v0.18.1...v0.18.2

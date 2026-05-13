@@ -21,8 +21,8 @@ from millrace_ai.cli.shared import (
     _validate_work_item_id,
 )
 from millrace_ai.config import load_runtime_config
-from millrace_ai.contracts import IncidentDocument, ProbeDocument, SpecDocument, TaskDocument
-from millrace_ai.errors import QueueStateError
+from millrace_ai.contracts import IncidentDocument, ProbeDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.errors import ControlRoutingError, QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.runtime.blocked_recovery import retry_blocked_task
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
@@ -53,6 +53,18 @@ def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     planning_active = probe_active + spec_active + incident_active
     learning_active = len(tuple(paths.learning_requests_active_dir.glob("*.md")))
     active_task_count = len(tuple(paths.tasks_active_dir.glob("*.md")))
+    cancelled_task_count = _count_markdown(paths.tasks_queue_dir / "cancelled") + _count_markdown(
+        paths.tasks_blocked_dir / "cancelled"
+    )
+    superseded_task_count = _count_markdown(paths.tasks_queue_dir / "superseded") + _count_markdown(
+        paths.tasks_blocked_dir / "superseded"
+    )
+    cancelled_incident_count = (
+        _count_markdown(paths.incidents_incoming_dir / "cancelled")
+        + _count_markdown(paths.incidents_active_dir / "cancelled")
+        + _count_markdown(paths.incidents_blocked_dir / "cancelled")
+    )
+    operator_resolved_incident_count = _count_markdown(paths.incidents_resolved_dir / "operator")
 
     typer.echo(f"execution_queue_depth: {execution_queue_depth}")
     typer.echo(f"planning_queue_depth: {planning_queue_depth}")
@@ -68,6 +80,10 @@ def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     typer.echo(f"active_spec_count: {spec_active}")
     typer.echo(f"active_incident_count: {incident_active}")
     typer.echo(f"active_learning_request_count: {learning_active}")
+    typer.echo(f"cancelled_task_count: {cancelled_task_count}")
+    typer.echo(f"superseded_task_count: {superseded_task_count}")
+    typer.echo(f"cancelled_incident_count: {cancelled_incident_count}")
+    typer.echo(f"operator_resolved_incident_count: {operator_resolved_incident_count}")
 
 
 @queue_app.command("show")
@@ -202,6 +218,124 @@ def queue_add_idea(
     typer.echo(f"enqueued_idea: {result.artifact_path}")
 
 
+@queue_app.command("cancel")
+def queue_cancel(
+    work_item_id: Annotated[str, typer.Argument(help="Queued or blocked work item ID to cancel.")],
+    workspace: WorkspaceOption = Path("."),
+    kind: Annotated[
+        str | None,
+        typer.Option("--kind", help="Optional work item kind: task, probe, spec, or incident."),
+    ] = None,
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Audit reason for cancelling the work item."),
+    ] = "",
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Reserved override flag for future duplicate/lineage warnings."),
+    ] = False,
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        validated_work_item_id = _validate_work_item_id(work_item_id)
+        work_item_kind = _parse_optional_work_item_kind(kind)
+        result = _cli_api().RuntimeControl(paths).cancel_work_item(
+            work_item_id=validated_work_item_id,
+            work_item_kind=work_item_kind,
+            reason=reason,
+            force=force,
+        )
+    except (OSError, ControlRoutingError, QueueStateError, ValidationError, ValueError) as exc:
+        raise typer.Exit(code=_print_error(f"failed to cancel work item: {exc}")) from exc
+    _print_control_result(result)
+
+
+@queue_app.command("archive-blocked")
+def queue_archive_blocked(
+    task_id: Annotated[str, typer.Argument(help="Blocked task ID to archive without retrying.")],
+    workspace: WorkspaceOption = Path("."),
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Audit reason for archiving the blocked task."),
+    ] = "",
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        validated_task_id = _validate_work_item_id(task_id)
+        result = _cli_api().RuntimeControl(paths).archive_blocked_task(
+            task_id=validated_task_id,
+            reason=reason,
+        )
+    except (OSError, ControlRoutingError, QueueStateError, ValidationError, ValueError) as exc:
+        raise typer.Exit(code=_print_error(f"failed to archive blocked task: {exc}")) from exc
+    _print_control_result(result)
+
+
+@queue_app.command("supersede")
+def queue_supersede(
+    old_task_id: Annotated[str, typer.Argument(help="Queued or blocked task ID to supersede.")],
+    workspace: WorkspaceOption = Path("."),
+    replacement: Annotated[
+        str,
+        typer.Option("--replacement", help="Existing queued, active, or done replacement task ID."),
+    ] = "",
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Audit reason for superseding the task."),
+    ] = "",
+    cascade: Annotated[
+        str,
+        typer.Option("--cascade", help="Dependent handling: none, retarget, or cancel."),
+    ] = "none",
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        validated_old_task_id = _validate_work_item_id(old_task_id)
+        validated_replacement = _validate_work_item_id(replacement)
+        result = _cli_api().RuntimeControl(paths).supersede_task(
+            old_task_id=validated_old_task_id,
+            replacement_task_id=validated_replacement,
+            reason=reason,
+            cascade=cascade,
+        )
+    except (OSError, ControlRoutingError, QueueStateError, ValidationError, ValueError) as exc:
+        raise typer.Exit(code=_print_error(f"failed to supersede task: {exc}")) from exc
+    _print_control_result(result)
+
+
+@queue_app.command("retarget-dependency")
+def queue_retarget_dependency(
+    task_id: Annotated[str, typer.Argument(help="Queued task ID whose dependency should be rewritten.")],
+    workspace: WorkspaceOption = Path("."),
+    old_dependency: Annotated[
+        str,
+        typer.Option("--from", "--old-dependency", help="Existing dependency ID to replace."),
+    ] = "",
+    new_dependency: Annotated[
+        str,
+        typer.Option("--to", "--new-dependency", help="Replacement dependency ID."),
+    ] = "",
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Audit reason for rewriting the dependency."),
+    ] = "",
+) -> None:
+    paths = _require_paths(workspace)
+    try:
+        validated_task_id = _validate_work_item_id(task_id)
+        validated_old_dependency = _validate_work_item_id(old_dependency)
+        validated_new_dependency = _validate_work_item_id(new_dependency)
+        result = _cli_api().RuntimeControl(paths).retarget_task_dependency(
+            task_id=validated_task_id,
+            old_dependency_id=validated_old_dependency,
+            new_dependency_id=validated_new_dependency,
+            reason=reason,
+        )
+    except (OSError, ControlRoutingError, QueueStateError, ValidationError, ValueError) as exc:
+        raise typer.Exit(code=_print_error(f"failed to retarget task dependency: {exc}")) from exc
+    _print_control_result(result)
+
+
 @queue_app.command("retry-blocked")
 def queue_retry_blocked(
     task_id: Annotated[str, typer.Argument(help="Blocked task ID to move back to queue.")],
@@ -321,6 +455,22 @@ def queue_repair_lineage(
         )
     for finding in plan.skipped_findings:
         typer.echo(f"skipped: {finding.work_item_kind.value} {finding.work_item_id} state={finding.state}")
+
+
+def _parse_optional_work_item_kind(value: str | None) -> WorkItemKind | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        work_item_kind = WorkItemKind(value.strip())
+    except ValueError as exc:
+        raise ValueError("kind must be one of: task, probe, spec, incident") from exc
+    if work_item_kind not in {WorkItemKind.TASK, WorkItemKind.PROBE, WorkItemKind.SPEC, WorkItemKind.INCIDENT}:
+        raise ValueError("kind must be one of: task, probe, spec, incident")
+    return work_item_kind
+
+
+def _count_markdown(directory: Path) -> int:
+    return len(tuple(directory.glob("*.md")))
 
 
 def add_task(

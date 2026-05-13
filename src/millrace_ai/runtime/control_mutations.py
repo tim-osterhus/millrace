@@ -10,7 +10,13 @@ from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import (
     ActiveRunState,
     MailboxAddIdeaPayload,
+    MailboxArchiveBlockedTaskPayload,
+    MailboxArchiveInvalidIncidentPayload,
+    MailboxCancelWorkItemPayload,
     MailboxCommand,
+    MailboxIncidentInterventionPayload,
+    MailboxRetargetTaskDependencyPayload,
+    MailboxSupersedeTaskPayload,
     Plane,
     ProbeDocument,
     RecoveryCounters,
@@ -47,6 +53,7 @@ from millrace_ai.state_store import (
     set_learning_status,
     set_planning_status,
 )
+from millrace_ai.workspace.operator_interventions import OperatorInterventionResult
 
 ResultT = TypeVar("ResultT")
 
@@ -145,6 +152,139 @@ class DirectControlMutations(Generic[ResultT]):
             detail="idea staged directly",
             artifact_path=destination,
         )
+
+    def cancel_work_item(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxCancelWorkItemPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.CANCEL_WORK_ITEM,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).cancel_work_item(
+            payload.work_item_id,
+            work_item_kind=payload.work_item_kind,
+            reason=payload.reason,
+            force=payload.force,
+        )
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.CANCEL_WORK_ITEM, result)
+
+    def archive_blocked_task(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxArchiveBlockedTaskPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.ARCHIVE_BLOCKED_TASK,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).archive_blocked_task(payload.task_id, reason=payload.reason)
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.ARCHIVE_BLOCKED_TASK, result)
+
+    def supersede_task(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxSupersedeTaskPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.SUPERSEDE_TASK,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).supersede_task(
+            payload.old_task_id,
+            replacement_task_id=payload.replacement_task_id,
+            reason=payload.reason,
+            cascade=payload.cascade,
+        )
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.SUPERSEDE_TASK, result)
+
+    def retarget_task_dependency(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxRetargetTaskDependencyPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.RETARGET_TASK_DEPENDENCY,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).retarget_queued_task_dependency(
+            payload.task_id,
+            old_dependency_id=payload.old_dependency_id,
+            new_dependency_id=payload.new_dependency_id,
+            reason=payload.reason,
+        )
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.RETARGET_TASK_DEPENDENCY, result)
+
+    def resolve_incident(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxIncidentInterventionPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.RESOLVE_INCIDENT,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).resolve_incident_by_operator(
+            payload.incident_id,
+            reason=payload.reason,
+        )
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.RESOLVE_INCIDENT, result)
+
+    def cancel_incident(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxIncidentInterventionPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.CANCEL_INCIDENT,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).cancel_incident(payload.incident_id, reason=payload.reason)
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.CANCEL_INCIDENT, result)
+
+    def archive_invalid_incident(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxArchiveInvalidIncidentPayload,
+    ) -> ResultT:
+        active_result = self._active_intervention_block(
+            snapshot,
+            action=MailboxCommand.ARCHIVE_INVALID_INCIDENT,
+        )
+        if active_result is not None:
+            return active_result
+        result = QueueStore(self.paths).archive_invalid_incident_artifact(
+            payload.filename,
+            reason=payload.reason,
+        )
+        self._save_queue_depth_snapshot(snapshot)
+        return self._intervention_result(MailboxCommand.ARCHIVE_INVALID_INCIDENT, result)
 
     def pause(self, snapshot: RuntimeSnapshot) -> ResultT:
         changed = not has_pause_source(snapshot, OPERATOR_PAUSE_SOURCE)
@@ -456,6 +596,58 @@ class DirectControlMutations(Generic[ResultT]):
         set_execution_status(self.paths, IDLE_STATUS_MARKER)
         set_planning_status(self.paths, IDLE_STATUS_MARKER)
         set_learning_status(self.paths, IDLE_STATUS_MARKER)
+
+    def _active_intervention_block(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        action: MailboxCommand,
+    ) -> ResultT | None:
+        if snapshot.active_runs_by_plane or snapshot.active_stage is not None:
+            active_planes = ", ".join(plane.value for plane in snapshot.active_runs_by_plane) or "legacy"
+            return self._result_factory(
+                action=action,
+                mode="direct",
+                applied=False,
+                detail=f"active runtime stage prevents operator intervention; active_planes={active_planes}",
+            )
+        return None
+
+    def _save_queue_depth_snapshot(self, snapshot: RuntimeSnapshot) -> None:
+        save_snapshot(
+            self.paths,
+            snapshot.model_copy(
+                update={
+                    "queue_depth_execution": self._execution_queue_depth(),
+                    "queue_depth_planning": self._planning_queue_depth(),
+                    "queue_depth_learning": self._learning_queue_depth(),
+                    "queue_depths_by_plane": {
+                        Plane.EXECUTION: self._execution_queue_depth(),
+                        Plane.PLANNING: self._planning_queue_depth(),
+                        Plane.LEARNING: self._learning_queue_depth(),
+                    },
+                    "updated_at": self._now(),
+                }
+            ),
+        )
+
+    def _intervention_result(
+        self,
+        action: MailboxCommand,
+        result: OperatorInterventionResult,
+    ) -> ResultT:
+        detail = f"{result.event_type}: {result.work_item_kind.value} {result.work_item_id}"
+        if result.replacement_work_item_id is not None:
+            detail += f" replacement={result.replacement_work_item_id}"
+        if result.affected_dependents:
+            detail += f" affected_dependents={','.join(result.affected_dependents)}"
+        return self._result_factory(
+            action=action,
+            mode="direct",
+            applied=True,
+            detail=detail,
+            artifact_path=result.destination_path,
+        )
 
     def _execution_queue_depth(self) -> int:
         return len(tuple(self.paths.tasks_queue_dir.glob("*.md")))

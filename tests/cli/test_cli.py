@@ -915,6 +915,22 @@ def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None
     assert "learning_status_marker: ### ANALYST_COMPLETE" in result.output
 
 
+def test_status_surfaces_latest_operator_intervention(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(TaskDocument.model_validate(_task_payload("task-status-cancel")))
+    cli.RuntimeControl(paths).cancel_work_item(
+        work_item_id="task-status-cancel",
+        work_item_kind=WorkItemKind.TASK,
+        reason="operator cancelled bad intake",
+    )
+
+    result = CliRunner().invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "latest_operator_intervention: event=work_item_cancelled" in result.output
+    assert "work_item_id=task-status-cancel" in result.output
+
+
 def test_status_surfaces_multiple_active_runs_by_plane(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     snapshot = load_snapshot(paths).model_copy(
@@ -1549,6 +1565,103 @@ def test_queue_retry_blocked_refuses_live_daemon_ownership_lock(tmp_path: Path) 
     assert result.exit_code == 1
     assert "active runtime ownership lock prevents blocked retry" in result.output
     assert (paths.tasks_blocked_dir / "task-retry-locked.md").is_file()
+
+
+def test_queue_cancel_command_archives_queued_task(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(TaskDocument.model_validate(_task_payload("task-cancel-cli")))
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "cancel",
+            "task-cancel-cli",
+            "--kind",
+            "task",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "operator cancelled bad intake",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "action: cancel_work_item" in result.output
+    assert "mode: direct" in result.output
+    assert "applied: true" in result.output
+    assert not (paths.tasks_queue_dir / "task-cancel-cli.md").exists()
+    assert tuple((paths.tasks_queue_dir / "cancelled").glob("task-cancel-cli.*.md"))
+
+
+def test_queue_supersede_command_moves_old_task_to_superseded_archive(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(TaskDocument.model_validate(_task_payload("task-old-cli")))
+    assert queue.claim_next_execution_task() is not None
+    queue.mark_task_blocked("task-old-cli")
+    queue.enqueue_task(TaskDocument.model_validate(_task_payload("task-new-cli")))
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "supersede",
+            "task-old-cli",
+            "--replacement",
+            "task-new-cli",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "replacement has corrected scope",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "action: supersede_task" in result.output
+    assert "mode: direct" in result.output
+    assert "applied: true" in result.output
+    assert tuple((paths.tasks_blocked_dir / "superseded").glob("task-old-cli.*.md"))
+
+
+def test_incident_cancel_command_archives_active_incident(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    incident = {
+        "incident_id": "incident-cli",
+        "title": "Incident CLI",
+        "summary": "bad intake incident",
+        "source_stage": "consultant",
+        "source_plane": "execution",
+        "failure_class": "bad_intake",
+        "trigger_reason": "known bad intake",
+        "consultant_decision": "needs_planning",
+        "opened_at": NOW.isoformat(),
+        "opened_by": "tests",
+    }
+    from millrace_ai.contracts import IncidentDocument
+
+    queue = QueueStore(paths)
+    queue.enqueue_incident(IncidentDocument.model_validate(incident))
+    assert queue.claim_next_planning_item() is not None
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "incident",
+            "cancel",
+            "incident-cli",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "incident came from bad intake",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "action: cancel_incident" in result.output
+    assert "mode: direct" in result.output
+    assert "applied: true" in result.output
+    assert tuple((paths.incidents_active_dir / "cancelled").glob("incident-cli.*.md"))
 
 
 def test_queue_add_idea_stages_markdown_in_ideas_inbox(tmp_path: Path) -> None:

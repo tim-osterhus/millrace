@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.contracts import (
+    ActiveRunState,
     ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
@@ -38,7 +39,7 @@ from millrace_ai.contracts import (
 from millrace_ai.control import RuntimeControl
 from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError
 from millrace_ai.events import read_runtime_events
-from millrace_ai.mailbox import write_mailbox_command
+from millrace_ai.mailbox import read_pending_mailbox_commands, write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.recon_packets import render_recon_packet
@@ -3113,6 +3114,127 @@ def test_runtime_mailbox_add_task_spec_and_idea_apply_payloads(tmp_path: Path) -
     snapshot = load_snapshot(paths)
     assert snapshot.queue_depth_execution == 1
     assert snapshot.queue_depth_planning == 1
+
+
+def test_runtime_mailbox_applies_operator_intervention_before_new_work_claim(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-old", created_at=NOW))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+    queue.mark_task_blocked("task-old")
+    queue.enqueue_task(_task_doc("task-new", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    write_mailbox_command(
+        paths,
+        _mailbox_command(
+            "cmd-supersede-task",
+            "supersede_task",
+            payload={
+                "old_task_id": "task-old",
+                "replacement_task_id": "task-new",
+                "reason": "operator corrected bad intake",
+            },
+        ),
+    )
+
+    engine._drain_mailbox()
+
+    assert not (paths.tasks_blocked_dir / "task-old.md").exists()
+    assert tuple((paths.tasks_blocked_dir / "superseded").glob("task-old.*.md"))
+    snapshot = load_snapshot(paths)
+    assert snapshot.queue_depth_execution == 1
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+    assert "task_superseded" in event_types
+
+
+def test_runtime_mailbox_defers_operator_intervention_until_active_run_drains(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-old", created_at=NOW))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+    queue.mark_task_blocked("task-old")
+    queue.enqueue_task(_task_doc("task-new", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    assert engine.snapshot is not None
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.EXECUTION: ActiveRunState(
+                    plane=Plane.EXECUTION,
+                    stage=ExecutionStageName.BUILDER,
+                    node_id="builder",
+                    stage_kind_id="builder",
+                    run_id="run-active",
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.TASK,
+                    work_item_id="task-in-flight",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.BUILDER,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    write_mailbox_command(
+        paths,
+        _mailbox_command(
+            "cmd-supersede-task",
+            "supersede_task",
+            payload={
+                "old_task_id": "task-old",
+                "replacement_task_id": "task-new",
+                "reason": "operator corrected bad intake",
+            },
+        ),
+    )
+
+    engine._drain_mailbox()
+
+    assert (paths.tasks_blocked_dir / "task-old.md").is_file()
+    pending = read_pending_mailbox_commands(paths)
+    assert len(pending) == 1
+    assert pending[0].command.value == "supersede_task"
+    assert pending[0].issued_at == NOW
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+    assert "operator_intervention_deferred" in event_types
+
+    engine.snapshot = load_snapshot(paths).model_copy(
+        update={
+            "active_runs_by_plane": {},
+            "active_plane": None,
+            "active_stage": None,
+            "active_node_id": None,
+            "active_stage_kind_id": None,
+            "active_run_id": None,
+            "active_work_item_kind": None,
+            "active_work_item_id": None,
+            "active_since": None,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    engine._drain_mailbox()
+
+    assert not (paths.tasks_blocked_dir / "task-old.md").exists()
+    assert tuple((paths.tasks_blocked_dir / "superseded").glob("task-old.*.md"))
+    assert not read_pending_mailbox_commands(paths)
 
 
 def test_runtime_mailbox_reload_config_applies_updated_runtime_mode(tmp_path: Path) -> None:

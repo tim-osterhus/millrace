@@ -10,6 +10,7 @@ import typer
 from millrace_ai.compiler import CompiledPlanCurrentness, inspect_workspace_plan_currentness
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import ClosureTargetState
+from millrace_ai.events import RuntimeEventRecord, read_runtime_events
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.runtime.error_recovery import load_runtime_error_context
 from millrace_ai.runtime.pause_state import pause_sources_label
@@ -31,6 +32,7 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
     queue_depths = _queue_depths(paths)
     closure_status = _closure_target_status(paths)
     latest_runtime_error_report_path = _latest_runtime_error_report_path(paths)
+    latest_operator_intervention = _latest_operator_intervention(paths)
     blocked_idle = _blocked_idle(
         process_running=process_running,
         active_run_count=len(snapshot.active_runs_by_plane),
@@ -71,6 +73,8 @@ def _render_status_lines(paths: WorkspacePaths) -> tuple[str, ...]:
         f"learning_status_marker: {snapshot.learning_status_marker}",
         f"blocked_idle: {'true' if blocked_idle else 'false'}",
         f"latest_runtime_error_report_path: {_status_value(latest_runtime_error_report_path)}",
+        "latest_operator_intervention: "
+        f"{_operator_intervention_status_value(latest_operator_intervention)}",
     ]
     lines.extend(_render_active_run_lines(snapshot.active_runs_by_plane))
     lines.extend(_render_baseline_manifest_lines(baseline_manifest))
@@ -98,6 +102,7 @@ def _status_payload(paths: WorkspacePaths) -> dict[str, Any]:
     queue_depths = _queue_depths(paths)
     closure_status = _closure_target_status(paths)
     latest_runtime_error_report_path = _latest_runtime_error_report_path(paths)
+    latest_operator_intervention = _latest_operator_intervention(paths)
     active_run_count = len(snapshot.active_runs_by_plane)
     blocked_idle = _blocked_idle(
         process_running=process_running,
@@ -142,6 +147,7 @@ def _status_payload(paths: WorkspacePaths) -> dict[str, Any]:
         "blocked_idle": blocked_idle,
         "current_failure_class": snapshot.current_failure_class,
         "latest_runtime_error_report_path": latest_runtime_error_report_path,
+        "latest_operator_intervention": _operator_intervention_payload(latest_operator_intervention),
         **closure_status,
     }
 
@@ -168,6 +174,53 @@ def _render_active_run_lines(active_runs_by_plane: object) -> tuple[str, ...]:
             f"run={_short_run_handle(getattr(active_run, 'run_id', None))}"
         )
     return tuple(lines)
+
+
+_OPERATOR_INTERVENTION_EVENT_TYPES = {
+    "work_item_cancelled",
+    "blocked_task_archived",
+    "task_superseded",
+    "task_dependency_retargeted",
+    "incident_resolved_by_operator",
+    "incident_cancelled",
+    "invalid_incident_artifact_archived",
+}
+
+
+def _latest_operator_intervention(paths: WorkspacePaths) -> RuntimeEventRecord | None:
+    events = read_runtime_events(paths)
+    for event in reversed(events):
+        if event.event_type in _OPERATOR_INTERVENTION_EVENT_TYPES:
+            return event
+    return None
+
+
+def _operator_intervention_status_value(event: RuntimeEventRecord | None) -> str:
+    if event is None:
+        return "none"
+    work_item_id = event.data.get("work_item_id")
+    destination_path = event.data.get("destination_path")
+    parts = [
+        f"event={event.event_type}",
+        f"occurred_at={event.occurred_at.isoformat()}",
+    ]
+    if isinstance(work_item_id, str) and work_item_id:
+        parts.append(f"work_item_id={work_item_id}")
+    if isinstance(destination_path, str) and destination_path:
+        parts.append(f"destination_path={destination_path}")
+    return " ".join(parts)
+
+
+def _operator_intervention_payload(event: RuntimeEventRecord | None) -> dict[str, object] | None:
+    if event is None:
+        return None
+    return {
+        "event_type": event.event_type,
+        "occurred_at": event.occurred_at.isoformat(),
+        "work_item_kind": event.data.get("work_item_kind"),
+        "work_item_id": event.data.get("work_item_id"),
+        "destination_path": event.data.get("destination_path"),
+    }
 
 
 def _print_status(paths: WorkspacePaths) -> None:
