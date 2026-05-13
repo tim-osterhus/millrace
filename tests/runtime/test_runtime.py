@@ -2638,6 +2638,36 @@ def test_runtime_normalize_idea_watch_event_writes_root_lineage_fields(tmp_path:
     assert f"Root-Spec-ID: {spec_path.stem}" in spec_text
 
 
+def test_runtime_normalize_idea_watch_event_writes_durable_source_reference(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    idea_markdown = "# Seed Idea\n\nPreserve this exact markdown.\n"
+    idea_path = paths.root / "ideas" / "inbox" / "seed-idea.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text(idea_markdown, encoding="utf-8")
+
+    engine._normalize_idea_watch_event(idea_path)
+
+    durable_source = paths.runtime_root / "intake" / "ideas" / "idea-seed-idea.md"
+    assert durable_source.read_text(encoding="utf-8") == idea_markdown
+
+    queued_specs = sorted(paths.specs_queue_dir.glob("idea-*.md"))
+    assert len(queued_specs) == 1
+    spec = read_work_document_as(queued_specs[0], model=SpecDocument)
+    assert spec.references == (
+        "millrace-agents/intake/ideas/idea-seed-idea.md",
+        "ideas/inbox/seed-idea.md",
+    )
+
+
 def test_watcher_idea_spec_ids_are_idempotent_for_prefixed_filenames() -> None:
     assert safe_spec_id_from_idea_path(Path("seed-idea.md")) == "idea-seed-idea"
     assert (

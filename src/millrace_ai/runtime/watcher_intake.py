@@ -15,6 +15,7 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.state_store import save_snapshot
 from millrace_ai.watchers import WatchEvent, build_watcher_session
 from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.workspace.idea_sources import write_idea_source_artifact
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -96,6 +97,24 @@ def normalize_idea_watch_event(engine: RuntimeEngine, idea_path: Path) -> None:
         idea_reference = str(idea_path.relative_to(engine.paths.root))
     except ValueError:
         idea_reference = idea_path.as_posix()
+    try:
+        source_artifact = write_idea_source_artifact(
+            engine.paths,
+            root_idea_id=spec_id,
+            markdown=content,
+        )
+        source_artifact_reference = str(source_artifact.relative_to(engine.paths.root))
+    except (OSError, ValueError) as exc:
+        write_runtime_event(
+            engine.paths,
+            event_type="idea_source_artifact_write_failed",
+            data={
+                "idea_path": idea_path.as_posix(),
+                "spec_id": spec_id,
+                "error": str(exc),
+            },
+        )
+        return
     if idea_already_represented(engine, spec_id=spec_id, idea_reference=idea_reference):
         write_runtime_event(
             engine.paths,
@@ -118,7 +137,10 @@ def normalize_idea_watch_event(engine: RuntimeEngine, idea_path: Path) -> None:
         goals=(summary,),
         constraints=("generated from ideas/inbox watcher event",),
         acceptance=("planner processes this idea-derived spec",),
-        references=(idea_reference,),
+        references=_idea_references(
+            durable_reference=source_artifact_reference,
+            transient_reference=idea_reference,
+        ),
         created_at=engine._now(),
         created_by="watcher",
     )
@@ -131,7 +153,11 @@ def normalize_idea_watch_event(engine: RuntimeEngine, idea_path: Path) -> None:
     write_runtime_event(
         engine.paths,
         event_type="idea_normalized_to_spec",
-        data={"idea_path": idea_path.as_posix(), "spec_id": spec_id},
+        data={
+            "idea_path": idea_path.as_posix(),
+            "source_artifact": source_artifact_reference,
+            "spec_id": spec_id,
+        },
     )
 
 
@@ -165,6 +191,16 @@ def derive_idea_title_summary(content: str, *, fallback: str) -> tuple[str, str]
     if not summary:
         summary = f"Idea captured from {fallback}"
     return title, summary
+
+
+def _idea_references(
+    *,
+    durable_reference: str,
+    transient_reference: str,
+) -> tuple[str, ...]:
+    if durable_reference == transient_reference:
+        return (durable_reference,)
+    return (durable_reference, transient_reference)
 
 
 def idea_already_represented(

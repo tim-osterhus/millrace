@@ -29,6 +29,7 @@ This document records the post-refactor source layout under `src/millrace_ai/`, 
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
 | `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py`, `src/millrace_ai/workspace/initialization.py` | Root `paths.py` remains a thin compatibility facade for `WorkspacePaths`, `workspace_paths`, and workspace initialization helpers. |
 | workspace initialization/baseline | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/bootstrap_files.py`, `src/millrace_ai/workspace/asset_deployment.py`, `src/millrace_ai/workspace/baseline.py` | Explicit `millrace init`, default runtime file payloads, runtime asset deployment, and managed baseline upgrade classification live in workspace-owned modules with path modeling kept separate from bootstrap behavior. |
+| workspace idea source artifacts | `src/millrace_ai/workspace/idea_sources.py` | Runtime-owned durable source markdown for watcher-seeded idea specs lives under `millrace-agents/intake/ideas/`, separate from transient operator inbox files. |
 | `millrace_ai/runtime_lock.py` | `src/millrace_ai/workspace/runtime_lock.py` | Root `runtime_lock.py` remains a thin compatibility facade. |
 | `millrace_ai/mailbox.py` | `src/millrace_ai/workspace/mailbox.py` | Root `mailbox.py` remains a thin compatibility facade. |
 | `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. |
@@ -91,6 +92,8 @@ cycles:
   construction for newly initialized workspaces.
 - `workspace/asset_deployment.py` owns packaged runtime asset source resolution
   and deployment.
+- `workspace/idea_sources.py` owns durable runtime copies of idea source
+  markdown used by closure-target creation.
 - `workspace/initialization.py` orchestrates initialization and keeps
   `bootstrap_workspace` as the compatibility alias used by older callers.
 - `cli/errors.py` owns operator error output.

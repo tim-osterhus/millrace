@@ -46,6 +46,9 @@ class WorkspacePaths:
     probes_done_dir: Path
     probes_blocked_dir: Path
 
+    intake_dir: Path
+    intake_ideas_dir: Path
+
     recon_dir: Path
     recon_packets_dir: Path
     recon_reports_dir: Path
@@ -133,6 +136,8 @@ class WorkspacePaths:
             self.probes_active_dir,
             self.probes_done_dir,
             self.probes_blocked_dir,
+            self.intake_dir,
+            self.intake_ideas_dir,
             self.recon_dir,
             self.recon_packets_dir,
             self.recon_reports_dir,
@@ -184,6 +189,7 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
     specs_dir = runtime_root / "specs"
     incidents_dir = runtime_root / "incidents"
     probes_dir = runtime_root / "probes"
+    intake_dir = runtime_root / "intake"
     recon_dir = runtime_root / "recon"
     learning_dir = runtime_root / "learning"
     learning_requests_dir = learning_dir / "requests"
@@ -223,6 +229,8 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         probes_active_dir=probes_dir / "active",
         probes_done_dir=probes_dir / "done",
         probes_blocked_dir=probes_dir / "blocked",
+        intake_dir=intake_dir,
+        intake_ideas_dir=intake_dir / "ideas",
         recon_dir=recon_dir,
         recon_packets_dir=recon_dir / "packets",
         recon_reports_dir=recon_dir / "reports",

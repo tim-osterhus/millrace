@@ -19,6 +19,7 @@ from millrace_ai.workspace.arbiter_state import (
     write_canonical_idea_contract,
     write_canonical_root_spec_contract,
 )
+from millrace_ai.workspace.idea_sources import idea_source_artifact_path
 from millrace_ai.workspace.lineage_integrity import (
     LineageDriftDiagnostic,
     scan_closure_lineage_drift,
@@ -42,6 +43,17 @@ class ClosureTargetPreparation:
     target: ClosureTargetState | None = None
     open_root_spec_id: str | None = None
     deferred_root_spec_id: str | None = None
+
+
+class RootIdeaSourceResolutionError(WorkspaceStateError):
+    """Raised when closure-target creation cannot find root idea markdown."""
+
+    def __init__(self, *, root_idea_id: str | None, candidates: tuple[Path, ...]) -> None:
+        self.root_idea_id = root_idea_id
+        self.candidates = candidates
+        super().__init__(
+            f"could not resolve source idea markdown for root_idea_id={root_idea_id}"
+        )
 
 
 def maybe_open_closure_target_for_claim(
@@ -183,7 +195,26 @@ def _recover_or_diagnose_missing_closure_target(
     if existing_target is not None:
         return existing_target if existing_target.closure_open else None
 
-    target = _open_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
+    try:
+        target = _open_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
+    except RootIdeaSourceResolutionError as exc:
+        _mark_completion_behavior_blocked(
+            engine,
+            failure_class="missing_root_idea_source",
+            spec_id=spec.spec_id,
+            spec_path=spec_path,
+        )
+        write_runtime_event(
+            engine.paths,
+            event_type="root_idea_source_missing",
+            data={
+                "root_idea_id": exc.root_idea_id,
+                "spec_id": spec.spec_id,
+                "spec_path": _display_path(engine, spec_path),
+                "candidates": [_display_path(engine, candidate) for candidate in exc.candidates],
+            },
+        )
+        return None
     if target is not None:
         write_runtime_event(
             engine.paths,
@@ -341,16 +372,18 @@ def _has_parent_spec(spec: SpecDocument) -> bool:
 
 
 def _load_root_idea_markdown(engine: RuntimeEngine, spec: SpecDocument) -> str:
-    for candidate in _root_idea_source_candidates(engine, spec):
+    candidates = _root_idea_source_candidates(engine, spec)
+    for candidate in candidates:
         if candidate.is_file():
             return candidate.read_text(encoding="utf-8")
-    raise WorkspaceStateError(
-        f"could not resolve source idea markdown for root_idea_id={spec.root_idea_id}"
-    )
+    raise RootIdeaSourceResolutionError(root_idea_id=spec.root_idea_id, candidates=candidates)
 
 
 def _root_idea_source_candidates(engine: RuntimeEngine, spec: SpecDocument) -> tuple[Path, ...]:
     candidates: list[Path] = []
+    if spec.root_idea_id is not None:
+        durable_source = idea_source_artifact_path(engine.paths, root_idea_id=spec.root_idea_id)
+        candidates.append(durable_source)
     for reference in spec.references:
         resolved = _resolve_reference_path(engine, reference)
         if resolved not in candidates:
@@ -374,6 +407,13 @@ def _resolve_reference_path(engine: RuntimeEngine, reference: str) -> Path:
 
 def _workspace_relative_path(engine: RuntimeEngine, path: Path) -> str:
     return str(path.relative_to(engine.paths.root))
+
+
+def _display_path(engine: RuntimeEngine, path: Path) -> str:
+    try:
+        return str(path.relative_to(engine.paths.root))
+    except ValueError:
+        return path.as_posix()
 
 
 def _mark_completion_behavior_blocked(
@@ -448,6 +488,7 @@ def _mark_lineage_drift_blocked(
 
 __all__ = [
     "ClosureTargetPreparation",
+    "RootIdeaSourceResolutionError",
     "active_closure_target",
     "block_on_closure_lineage_drift_if_present",
     "maybe_activate_completion_stage",

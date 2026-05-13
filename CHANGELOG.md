@@ -13,6 +13,23 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.18.6] - 2026-05-12
+
+### Added
+
+- Watcher-seeded idea specs now preserve the original idea markdown under
+  `millrace-agents/intake/ideas/<root_idea_id>.md` and reference that
+  runtime-owned artifact before transient `ideas/inbox/` source files.
+
+### Fixed
+
+- Closure-target creation now prefers the durable idea source artifact before
+  legacy references, so Arbiter setup no longer depends on an inbox markdown
+  file remaining in place after watcher intake.
+- Backlog-drain closure recovery now marks Planning blocked with
+  `missing_root_idea_source` and emits `root_idea_source_missing` when every
+  source candidate is unavailable, instead of terminating the daemon loop.
+
 ## [0.18.5] - 2026-05-12
 
 ### Added
@@ -748,7 +765,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.5...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.6...HEAD
+[0.18.6]: https://github.com/tim-osterhus/millrace/compare/v0.18.5...v0.18.6
 [0.18.5]: https://github.com/tim-osterhus/millrace/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/tim-osterhus/millrace/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/tim-osterhus/millrace/compare/v0.18.2...v0.18.3

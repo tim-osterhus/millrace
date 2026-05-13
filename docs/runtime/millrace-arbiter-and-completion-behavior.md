@@ -26,6 +26,11 @@ Watcher-seeded root specs are expected to initialize both fields immediately,
 and Planner/Manager are expected to preserve them when refining specs or
 emitting tasks.
 
+Watcher-seeded idea specs also preserve the original idea markdown under
+`millrace-agents/intake/ideas/<root_idea_id>.md`. Generated specs reference
+that runtime-owned copy before the transient `ideas/inbox/` source so closure
+target creation does not depend on an inbox file remaining in place.
+
 ## Canonical Contract Sources
 
 Arbiter judges against canonical copies under its own workspace subtree:
@@ -34,8 +39,12 @@ Arbiter judges against canonical copies under its own workspace subtree:
 - `millrace-agents/arbiter/contracts/root-specs/<root_spec_id>.md`
 
 Those copies are opened when the root spec first enters the managed lineage.
-The runtime snapshots them immediately instead of making Arbiter search the
-operator-authored workspace for mutable source files later.
+The runtime snapshots them immediately from the durable intake copy when one
+exists, then falls back to legacy spec references and inbox paths. Arbiter does
+not search the operator-authored workspace for mutable source files later.
+If none of those sources exists during backlog-drain recovery, Planning is
+marked blocked with `missing_root_idea_source` and the runtime emits a
+`root_idea_source_missing` event instead of terminating the daemon loop.
 
 ## Closure Target State
 

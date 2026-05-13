@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.18.6
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.18.6`.
+
 ## 0.18.5
 
 - Sync the package version and runtime dependency to `millrace-ai>=0.18.5`.

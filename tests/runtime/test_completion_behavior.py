@@ -164,6 +164,38 @@ def test_activate_claim_opens_closure_target_and_snapshots_canonical_contracts(
     )
 
 
+def test_activate_claim_uses_durable_idea_source_when_inbox_source_is_missing(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    root_id = "idea-runtime-persistence-and-reconciliation-foundation"
+    idea_markdown = "# Runtime persistence\n\nDurable copy remains available.\n"
+    durable_source = paths.runtime_root / "intake" / "ideas" / f"{root_id}.md"
+    durable_source.parent.mkdir(parents=True, exist_ok=True)
+    durable_source.write_text(idea_markdown, encoding="utf-8")
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(
+        _root_spec_doc(
+            root_id,
+            root_idea_id=root_id,
+            created_at=NOW,
+            idea_reference="ideas/inbox/runtime-persistence-and-reconciliation-foundation.md",
+        )
+    )
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    engine._activate_claim(claim)
+
+    target = load_closure_target_state(paths, root_spec_id=root_id)
+    assert (paths.root / target.root_idea_path).read_text(encoding="utf-8") == idea_markdown
+
+
 def test_activate_claim_backpressures_second_open_closure_target_without_half_claiming(
     tmp_path: Path,
 ) -> None:
@@ -522,6 +554,44 @@ def test_maybe_activate_completion_stage_blocks_when_root_spec_missing_lineage(
     assert any(
         event.event_type == "completion_behavior_blocked"
         and event.data.get("reason") == "missing_root_lineage"
+        and event.data.get("spec_id") == "spec-root-001"
+        for event in events
+    )
+
+
+def test_maybe_activate_completion_stage_blocks_when_root_idea_source_is_missing(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_spec(
+        _root_spec_doc(
+            "spec-root-001",
+            root_idea_id="idea-001",
+            created_at=NOW,
+            idea_reference="ideas/inbox/idea-001.md",
+        )
+    )
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    queue.mark_spec_done("spec-root-001")
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    snapshot = load_snapshot(paths)
+    events = read_runtime_events(paths)
+
+    assert activated is None
+    assert load_planning_status(paths) == "### BLOCKED"
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "missing_root_idea_source"
+    assert any(
+        event.event_type == "completion_behavior_blocked"
+        and event.data.get("reason") == "missing_root_idea_source"
         and event.data.get("spec_id") == "spec-root-001"
         for event in events
     )
