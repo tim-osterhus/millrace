@@ -110,9 +110,11 @@ It wraps long-horizon work in a runtime with a few hard contracts:
   while unrelated root specs stay backpressured. Arbiter activates only when no
   lineage work remains and closure behavior is ready.
 - **Inspectable governance and evidence:** usage governance can pause and
-  auto-resume between stages when configured quota rules are reached, while
-  typed terminal results, status/monitor output, and persisted run artifacts
-  keep post-run inspection grounded in runtime evidence.
+  auto-resume between stages when configured quota rules are reached. Compiled
+  execution capability grants describe which stage powers are granted, denied,
+  approval-gated, unsupported, enforced, or advisory, while typed terminal
+  results, status/monitor output, and persisted run artifacts keep post-run
+  inspection grounded in runtime evidence.
 
 The shipped core includes separate Planning and Execution loops.
 Learning-enabled modes add Analyst, Professor, Curator, and Librarian stages
@@ -237,7 +239,8 @@ That flow proves seven things quickly:
 - compile output fingerprints the selected mode, runtime config, and packaged
   assets so `compile show` / `status` can report whether the plan is current
   or stale
-- that compiled plan carries node bindings, intake entries, recovery policies, closure-target activation, and post-stage routing
+- that compiled plan carries node bindings, execution capability grants, intake
+  entries, recovery policies, closure-target activation, and post-stage routing
 - `compile graph` exposes that legal topology as a stable compiled-stage-graph
   export, while `runs trace <run_id>` shows the concrete path one run actually
   followed
@@ -278,6 +281,11 @@ persisted stage results, and run inspection. Codex translates it to
 `model_reasoning_effort="<value>"`; Pi translates it to `--thinking <value>`.
 The older `stages.<stage>.model_reasoning_effort` field remains accepted as a
 Codex compatibility alias.
+
+Execution capability policy is configured under `[execution_capabilities]`.
+Grant-affecting changes are recompile changes. Approval-gated grants are handled
+through `millrace approvals ls/show/approve/deny`, and `millrace runs show`
+prints compact per-stage grant/support summaries for completed or blocked runs.
 
 Canonical shipped modes today:
 

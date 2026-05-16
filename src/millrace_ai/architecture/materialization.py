@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from millrace_ai.contracts import (
+    ExecutionCapabilityGrant,
     LearningTriggerRuleDefinition,
     Plane,
     PlaneConcurrencyPolicyDefinition,
@@ -116,6 +117,8 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
     timeout_seconds: int = 0
+    execution_capability_grants: tuple[ExecutionCapabilityGrant, ...] = ()
+    execution_capability_warnings: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_timeout(self) -> "MaterializedGraphNodePlan":
@@ -137,6 +140,7 @@ class FrozenGraphPlanePlan(ArchitectureContractModel):
     compiled_threshold_policies: tuple[CompiledGraphThresholdPolicyPlan, ...] = ()
     terminal_states: tuple[GraphLoopTerminalStateDefinition, ...] = Field(min_length=1)
     completion_behavior: GraphLoopCompletionBehaviorDefinition | None = None
+    execution_capability_summary: dict[str, int | dict[str, int]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_plane_alignment(self) -> "FrozenGraphPlanePlan":
@@ -189,6 +193,7 @@ class CompiledRunPlan(ArchitectureContractModel):
     compiled_at: datetime
     resolved_assets: tuple[ResolvedAssetRef, ...] = ()
     source_refs: tuple[str, ...] = ()
+    execution_capability_summary: dict[str, int | dict[str, int]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_graph_planes(self) -> "CompiledRunPlan":

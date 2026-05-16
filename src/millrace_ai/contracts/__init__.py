@@ -3,6 +3,22 @@
 from __future__ import annotations
 
 from .base import ContractModel as ContractModel
+from .capabilities import (
+    BASE_EXECUTION_CAPABILITY_IDS,
+    ApprovalPolicyRef,
+    CapabilityDecisionState,
+    CapabilityEnforcementMode,
+    CapabilityEvidenceStatus,
+    CapabilityPolicyDecision,
+    CapabilityPolicyOverride,
+    CapabilityRequest,
+    CapabilityScope,
+    CapabilitySupportDecision,
+    CapabilitySupportState,
+    ExecutionCapabilityGrant,
+    capability_grant_fingerprint,
+    normalize_capability_id,
+)
 from .compile_diagnostics import CompileDiagnostics
 from .enums import (  # noqa: F401
     ExecutionStageName,
@@ -47,6 +63,7 @@ from .mailbox import (
     MailboxArchiveInvalidIncidentPayload,
     MailboxCancelWorkItemPayload,
     MailboxCommandEnvelope,
+    MailboxExecutionCapabilityApprovalPayload,
     MailboxIncidentInterventionPayload,
     MailboxRetargetTaskDependencyPayload,
     MailboxSupersedeTaskPayload,
@@ -93,7 +110,19 @@ __all__ = [
     "ContractModel",
     "ActiveRunRequestKind",
     "ActiveRunState",
+    "ApprovalPolicyRef",
+    "BASE_EXECUTION_CAPABILITY_IDS",
+    "CapabilityDecisionState",
+    "CapabilityEnforcementMode",
+    "CapabilityEvidenceStatus",
+    "CapabilityPolicyDecision",
+    "CapabilityPolicyOverride",
+    "CapabilityRequest",
+    "CapabilityScope",
+    "CapabilitySupportDecision",
+    "CapabilitySupportState",
     "ExecutionStageName",
+    "ExecutionCapabilityGrant",
     "ExecutionTerminalResult",
     "GraphExportEdge",
     "GraphExportEntry",
@@ -120,6 +149,7 @@ __all__ = [
     "MailboxArchiveInvalidIncidentPayload",
     "MailboxCancelWorkItemPayload",
     "MailboxCommandEnvelope",
+    "MailboxExecutionCapabilityApprovalPayload",
     "MailboxIncidentInterventionPayload",
     "MailboxRetargetTaskDependencyPayload",
     "MailboxSupersedeTaskPayload",
@@ -159,4 +189,6 @@ __all__ = [
     "TokenUsage",
     "WatcherMode",
     "WorkItemKind",
+    "capability_grant_fingerprint",
+    "normalize_capability_id",
 ]

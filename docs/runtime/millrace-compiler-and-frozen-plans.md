@@ -38,6 +38,7 @@ That compiled plan freezes:
 - selected loop ids by plane
 - per-node `node_id` and `stage_kind_id`
 - per-node entrypoint path, skill bindings, runner, model, and timeout
+- per-node execution capability grants and grant warnings
 - compiled transitions, resume policies, threshold policies, and completion
   behavior
 - learning trigger rules, including direct-Curator destination metadata,
@@ -91,7 +92,9 @@ Read-only commands such as `status`, `runs`, and queue inspection do not
 compile implicitly.
 
 Next-tick runtime config such as `usage_governance.*` does not change the
-compiled plan and does not require recompile.
+compiled plan and does not require recompile. Execution capability policy under
+`execution_capabilities.*` does change the compiled plan and is treated as a
+recompile boundary.
 
 At runtime startup, Millrace invokes the same compiler path used by explicit
 compile commands with `compile_if_needed=True`. If the persisted compiled plan
@@ -191,6 +194,7 @@ mismatched plan is still authoritative.
 - `compiled_plan_id`
 - loop and graph identity
 - stage/node request-binding details, including runner/model/thinking bindings
+- execution capability summaries and per-node grants
 - loop ids by plane
 - concurrency policy and learning trigger rules when present
 - `baseline_manifest_id`

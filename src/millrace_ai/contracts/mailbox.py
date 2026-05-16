@@ -138,6 +138,15 @@ class MailboxArchiveInvalidIncidentPayload(_ReasonedPayload):
         return self
 
 
+class MailboxExecutionCapabilityApprovalPayload(_ReasonedPayload):
+    approval_id: str
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "MailboxExecutionCapabilityApprovalPayload":
+        validate_safe_identifier(self.approval_id, field_name="approval_id")
+        return self
+
+
 __all__ = [
     "MailboxAddIdeaPayload",
     "MailboxAddProbePayload",
@@ -147,6 +156,7 @@ __all__ = [
     "MailboxArchiveInvalidIncidentPayload",
     "MailboxCancelWorkItemPayload",
     "MailboxCommandEnvelope",
+    "MailboxExecutionCapabilityApprovalPayload",
     "MailboxIncidentInterventionPayload",
     "MailboxRetargetTaskDependencyPayload",
     "MailboxSupersedeTaskPayload",

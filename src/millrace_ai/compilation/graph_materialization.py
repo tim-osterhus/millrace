@@ -11,6 +11,7 @@ from millrace_ai.architecture import (
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import ModeDefinition, Plane, StageName
 
+from .capabilities import summarize_execution_capability_grants
 from .completion import compile_graph_completion_entry
 from .node_materialization import materialize_graph_node_plan, stage_name_for_identifier
 from .policies import compile_graph_resume_policies, compile_graph_threshold_policies
@@ -35,6 +36,9 @@ def materialize_graph_plane_plan(
         for node in graph_loop.nodes
     )
     node_plan_by_id = {node.node_id: node for node in node_plans}
+    graph_capability_grants = tuple(
+        grant for node in node_plans for grant in node.execution_capability_grants
+    )
     return FrozenGraphPlanePlan(
         loop_id=graph_loop.loop_id,
         plane=graph_loop.plane,
@@ -68,6 +72,9 @@ def materialize_graph_plane_plan(
         ),
         terminal_states=graph_loop.terminal_states,
         completion_behavior=graph_loop.completion_behavior,
+        execution_capability_summary=summarize_execution_capability_grants(
+            graph_capability_grants
+        ),
     )
 
 

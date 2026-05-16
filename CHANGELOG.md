@@ -13,6 +13,40 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-05-16
+
+### Added
+
+- Added typed execution capability requests and compiled per-stage capability
+  grants. Compiled plans now carry grant decisions, enforcement/advisory state,
+  evidence requirements, and grant warnings for operator inspection.
+- Added runtime pre-dispatch capability gates. Denied or unsupported required
+  grants block before runner invocation, approval-required grants create durable
+  approval objects, and `millrace runs show` reports compact grant/support
+  summaries for completed or blocked stage results.
+- Added `millrace approvals ls/show/approve/deny` for operator-mediated
+  capability decisions, with the same direct-vs-mailbox routing behavior as
+  other runtime control actions.
+- Added documentation for execution capability policy, approval workflows,
+  runner support reporting, compile boundaries, and advisory enforcement
+  language.
+
+### Changed
+
+- Runner adapters now report contextual capability support so Millrace can
+  distinguish runtime-enforced, adapter-enforced, unsupported, and advisory-only
+  boundaries instead of implying stronger enforcement than the selected runner
+  can actually provide.
+- `millrace config show`, `compile show`, run inspection, runtime docs, and the
+  shipped ops skill now surface execution capability state as part of the normal
+  operator evidence trail.
+
+### Fixed
+
+- Capability-gated runs now normalize missing capability evidence into a
+  recoverable runtime failure instead of relying on generic runner-error
+  handling.
+
 ## [0.18.6] - 2026-05-12
 
 ### Added
@@ -765,7 +799,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.18.6...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/tim-osterhus/millrace/compare/v0.18.6...v0.19.0
 [0.18.6]: https://github.com/tim-osterhus/millrace/compare/v0.18.5...v0.18.6
 [0.18.5]: https://github.com/tim-osterhus/millrace/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/tim-osterhus/millrace/compare/v0.18.3...v0.18.4

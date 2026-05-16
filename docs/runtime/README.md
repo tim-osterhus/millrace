@@ -15,6 +15,7 @@ runtime references, start with `../millrace-technical-overview.md`.
 - `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used when narrow evidence is not enough.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
 - `millrace-usage-governance.md`: shipped v1 default-off runtime-owned usage accounting, automatic pause/resume behavior, subscription telemetry, config-reload next-tick behavior, and operator visibility.
+- `millrace-execution-capabilities.md`: typed execution capability grants, runtime pre-dispatch gating, approval-required grants, advisory enforcement language, and inspection output.
 - `millrace-compiler-and-frozen-plans.md`: mode resolution, asset loading, compiled-plan freezing, compile-input fingerprints, current-vs-stale plan status, baseline manifest identity, stale-plan refusal, and `compile validate` / `compile show`.
 - `millrace-compiled-stage-graphs-and-run-traces.md`: compiled topology exports, per-run `run_trace.json` artifacts, CLI trace inspection, fallback behavior for older runs, and Web UI Flow data sources.
 - `millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage topology, opt-in integrated quality loops, learning plane, Librarian optional-skill preparation, no-op learning terminals, compiled concurrency policy, learning triggers, and compile-time stage maps.
@@ -41,7 +42,10 @@ runtime references, start with `../millrace-technical-overview.md`.
   pass after Builder for higher assurance.
 - Use `millrace-workspace-baselines-and-upgrades.md` when you need the explicit `init` / `upgrade` workflow for managed workspace assets.
 - Use `millrace-cli-reference.md` when you need `millrace skills`, daemon
-  monitor, usage-governance, or status command details.
+  monitor, approvals, usage-governance, or status command details.
+- Use `millrace-execution-capabilities.md` when a run blocks before dispatch
+  because a required grant is denied, unsupported, or waiting on operator
+  approval.
 - Use `../../packages/millrace-web/README.md` when you need the optional local
   read-only dashboard. `millrace-web` is a separate package and is not part of
   the base `millrace-ai` wheel.

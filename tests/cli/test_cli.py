@@ -17,8 +17,13 @@ from millrace_ai.compiler import CompileOutcome
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ActiveRunState,
+    ApprovalPolicyRef,
+    CapabilityDecisionState,
+    CapabilityEnforcementMode,
+    CapabilityScope,
     ClosureTargetState,
     CompileDiagnostics,
+    ExecutionCapabilityGrant,
     ExecutionStageName,
     LearningRequestDocument,
     LearningStageName,
@@ -41,6 +46,7 @@ from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.run_inspection import InspectedRunSummary, InspectedStageResult
+from millrace_ai.runtime.approvals import ensure_execution_capability_approval
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent
 from millrace_ai.runtime.usage_governance import (
     SubscriptionQuotaStatus,
@@ -193,6 +199,21 @@ def _pending_commands(paths) -> set[MailboxCommand]:
     return {envelope.command for envelope in read_pending_mailbox_commands(paths)}
 
 
+def _approval_grant() -> ExecutionCapabilityGrant:
+    return ExecutionCapabilityGrant(
+        grant_id="grant-package-install",
+        request_id="request-package-install",
+        capability_id="package.install",
+        access="execute",
+        scope=CapabilityScope(kind="package_manager", value="uv"),
+        decision_state=CapabilityDecisionState.APPROVAL_REQUIRED,
+        enforcement_mode=CapabilityEnforcementMode.NOT_APPLICABLE,
+        approval_policy_ref=ApprovalPolicyRef(policy_id="operator", gate_scope="stage"),
+        decision_reason="package install requires operator approval",
+        resolved_by="runtime_config",
+    )
+
+
 def _inspected_run_summary(
     run_id: str = "run-001",
     *,
@@ -206,6 +227,8 @@ def _inspected_run_summary(
     closure_target_root_spec_id: str | None = None,
     thinking_level: str | None = None,
     model_reasoning_effort: str | None = None,
+    capability_grant_summaries: tuple[str, ...] = (),
+    capability_support_summaries: tuple[str, ...] = (),
 ) -> InspectedRunSummary:
     artifact_paths = tuple(path for path in (report_artifact, "runner_stdout.txt") if path is not None)
     stage_result = InspectedStageResult(
@@ -231,6 +254,8 @@ def _inspected_run_summary(
         model_name="gpt-5.4",
         thinking_level=thinking_level,
         model_reasoning_effort=model_reasoning_effort,
+        capability_grant_summaries=capability_grant_summaries,
+        capability_support_summaries=capability_support_summaries,
         started_at=NOW.isoformat(),
         completed_at=NOW.isoformat(),
         duration_seconds=3.0,
@@ -1269,6 +1294,12 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
             run_id,
             thinking_level="high",
             model_reasoning_effort="high",
+            capability_grant_summaries=(
+                "grant_id=grant-checker-runner capability=runner.invoke decision=granted enforcement=runtime_enforced",
+            ),
+            capability_support_summaries=(
+                "grant_id=grant-checker-runner runner=codex_cli support=supported enforcement=runtime_enforced",
+            ),
         ),
     )
 
@@ -1294,6 +1325,8 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     assert "output_tokens: 12" in result.output
     assert "thinking_tokens: 5" in result.output
     assert "report_artifact: troubleshoot_report.md" in result.output
+    assert "capability_grant: grant_id=grant-checker-runner capability=runner.invoke" in result.output
+    assert "capability_support: grant_id=grant-checker-runner runner=codex_cli" in result.output
 
 
 def test_runs_show_surfaces_closure_target_request_metadata(
@@ -2133,6 +2166,51 @@ def test_reload_config_routes_to_mailbox_when_workspace_has_daemon_owner(tmp_pat
     assert MailboxCommand.RELOAD_CONFIG in _pending_commands(paths)
 
 
+def test_approvals_commands_list_show_and_approve_pending_request(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    approval = ensure_execution_capability_approval(
+        paths,
+        request_id="request-001",
+        run_id="run-001",
+        plane=Plane.EXECUTION,
+        node_id="execution.builder.primary",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        grant=_approval_grant(),
+        now=NOW,
+    )
+
+    runner = CliRunner()
+    list_result = runner.invoke(cli.app, ["approvals", "ls", "--workspace", str(paths.root)])
+    show_result = runner.invoke(
+        cli.app,
+        ["approvals", "show", approval.approval_id, "--workspace", str(paths.root)],
+    )
+    approve_result = runner.invoke(
+        cli.app,
+        [
+            "approvals",
+            "approve",
+            approval.approval_id,
+            "--reason",
+            "operator accepted package install",
+            "--workspace",
+            str(paths.root),
+        ],
+    )
+
+    assert list_result.exit_code == 0
+    assert f"approval_id: {approval.approval_id}" in list_result.output
+    assert "status: pending" in list_result.output
+    assert "capability_id: package.install" in list_result.output
+    assert show_result.exit_code == 0
+    assert '"approval_id":' in show_result.output
+    assert approve_result.exit_code == 0
+    assert "action: approve_execution_capability" in approve_result.output
+    assert "applied: true" in approve_result.output
+
+
 def test_config_show_renders_effective_runtime_and_reload_state(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
@@ -2166,6 +2244,9 @@ def test_config_show_renders_effective_runtime_and_reload_state(tmp_path: Path) 
     assert "run_style: daemon" in result.output
     assert "watchers.enabled: true" in result.output
     assert "auto_recovery.enabled: true" in result.output
+    assert "execution_capabilities.enabled: true" in result.output
+    assert "execution_capabilities.allow_advisory_grants: true" in result.output
+    assert "execution_capabilities.fail_required_advisory: false" in result.output
     assert "config_version: cfg-active-123" in result.output
     assert "last_reload_outcome: failed_retained_previous_plan" in result.output
     assert "last_reload_error: mode lookup failed" in result.output
@@ -2330,6 +2411,16 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         thinking_level="high",
                         model_reasoning_effort="high",
                         timeout_seconds=3600,
+                        execution_capability_grants=(
+                            SimpleNamespace(
+                                grant_id="grant-builder-runner",
+                                capability_id="runner.invoke",
+                                decision_state=SimpleNamespace(value="granted"),
+                                enforcement_mode=SimpleNamespace(value="runtime_enforced"),
+                                required=True,
+                            ),
+                        ),
+                        execution_capability_warnings=("builder:workspace.read is required but advisory_only",),
                     ),
                 ),
                 compiled_entries=(
@@ -2356,6 +2447,8 @@ def test_compile_show_surfaces_compiled_plan_summary(
                         thinking_level=None,
                         model_reasoning_effort=None,
                         timeout_seconds=3600,
+                        execution_capability_grants=(),
+                        execution_capability_warnings=(),
                     ),
                 ),
                 compiled_entries=(
@@ -2433,6 +2526,9 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "thinking_level: high" in result.output
     assert "model_reasoning_effort: high" in result.output
     assert "timeout_seconds: 3600" in result.output
+    assert "execution_capability_grant: grant-builder-runner capability=runner.invoke" in result.output
+    assert "decision=granted enforcement=runtime_enforced required=true" in result.output
+    assert "execution_capability_warning: builder:workspace.read is required but advisory_only" in result.output
     assert "completion_behavior.trigger: backlog_drained" in result.output
     assert "completion_behavior.request_kind: closure_target" in result.output
     assert "completion_behavior.on_gap_terminal_state_id: remediation_needed" in result.output

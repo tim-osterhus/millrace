@@ -35,6 +35,9 @@ contracts:
   Planner or Execution
 - opt-in integrated quality loops that spend extra stage time on post-Builder
   integration evidence before Checker
+- execution capability grants that make runner powers, approvals, advisory
+  boundaries, and blocked pre-dispatch decisions explicit in compiled/runtime
+  evidence
 - optional local observability surfaces that make workspace state visible
   without adding runtime authority or weight to the base deployment package
 
@@ -74,6 +77,23 @@ Expected user impact:
   marker fails
 - stronger confidence that compiler changes still work through at least one
   known-good runner path
+
+### Execution Capability Governance
+
+Millrace now compiles typed execution capability grants onto each stage request
+and evaluates required grants before runner dispatch. The active direction is to
+keep this surface honest about what Millrace can enforce directly, what a runner
+adapter can support, what needs operator approval, and what remains advisory.
+
+Expected user impact:
+
+- clearer pre-dispatch failures when a stage asks for a denied, unsupported, or
+  approval-required capability
+- durable approval artifacts and CLI-mediated approve/deny decisions for
+  sensitive capability requests
+- less ambiguity around broad runner permissions, especially when Codex
+  `maximum` can bypass sandbox boundaries that Millrace can only label as
+  advisory
 
 ### Public Release Documentation
 

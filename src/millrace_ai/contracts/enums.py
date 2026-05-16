@@ -192,6 +192,8 @@ class MailboxCommand(str, Enum):
     RESOLVE_INCIDENT = "resolve_incident"
     CANCEL_INCIDENT = "cancel_incident"
     ARCHIVE_INVALID_INCIDENT = "archive_invalid_incident"
+    APPROVE_EXECUTION_CAPABILITY = "approve_execution_capability"
+    DENY_EXECUTION_CAPABILITY = "deny_execution_capability"
 
 
 class LoopEdgeKind(str, Enum):

@@ -157,7 +157,7 @@ non-blocking Learning work; Planning and Execution do not wait on Librarian.
    need concise live terminal visibility from the daemon itself. The basic
    monitor uses short run handles and compact stage labels for scanning; use
    `millrace runs ls` and `millrace runs show <run_id>` for full run ids,
-   artifacts, and durable details.
+   artifacts, capability grant/support summaries, and durable details.
    The basic monitor prints the first `idle reason=no_work` line immediately,
    then treats repeated `no_work` idles as a 6-hour heartbeat until runtime
    activity or a different idle reason appears.
@@ -233,6 +233,7 @@ Load these on demand when the current task requires them:
 
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
 - `docs/runtime/millrace-compiled-stage-graphs-and-run-traces.md`
+- `docs/runtime/millrace-execution-capabilities.md`
 - `docs/runtime/millrace-runner-architecture.md`
 - `docs/runtime/millrace-runtime-error-codes.md`
 - `docs/runtime/millrace-modes-and-loops.md`
@@ -347,6 +348,10 @@ millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
 millrace runs tail <run_id> --workspace <workspace>
 millrace runs trace <run_id> --workspace <workspace>
+millrace approvals ls --workspace <workspace>
+millrace approvals show <approval_id> --workspace <workspace>
+millrace approvals approve <approval_id> --reason "<reason>" --workspace <workspace>
+millrace approvals deny <approval_id> --reason "<reason>" --workspace <workspace>
 millrace modes list
 millrace modes show <mode_id>
 millrace compile validate --mode default_codex_integrated --workspace <workspace>
@@ -415,6 +420,13 @@ Important monitoring note:
   runner posture, including missing harness binaries and closure lineage drift
 - `millrace status` exposes `pause_sources` and usage-governance blockers when
   usage governance is enabled or has persisted state
+- `millrace runs show <run_id>` exposes compact `capability_grant` and
+  `capability_support` lines when a stage result contains execution capability
+  metadata; full structured details remain in run artifacts
+- `millrace approvals ...` is the supported operator path for
+  approval-required execution capability grants. Approve/deny routes through
+  the mailbox when a daemon owns the workspace and applies directly when no
+  daemon owns it.
 - `millrace status` exposes the open closure target and
   `planning_root_specs_deferred_by_closure_target` when bulk root-spec intake
   is backpressured behind the v1 one-open-target policy
@@ -504,6 +516,9 @@ Use intervention commands only when the runtime state actually justifies them:
 - `queue repair-lineage --root-spec-id <ROOT_SPEC_ID>` to preview a stopped-daemon
   repair when doctor reports `closure_lineage_drift`; add `--apply` only after
   confirming there is no live ownership lock or active stage
+- `approvals approve <APPROVAL_ID> --reason "<reason>"` or
+  `approvals deny <APPROVAL_ID> --reason "<reason>"` only after inspecting the
+  pending execution capability approval and accepting the operator consequence
 - if `doctor` reports `duplicate_task_lifecycle_state`, inspect the named task
   across `tasks/queue/`, `tasks/active/`, `tasks/done/`, and `tasks/blocked/`;
   same-root blocked predecessors are automatically retired only after a same-ID
@@ -531,6 +546,11 @@ Use intervention commands only when the runtime state actually justifies them:
   on the next runtime tick through `millrace status` and basic-monitor
   governance lines. Do not expect `config reload` itself to summarize whether a
   governance pause cleared or remained.
+- Execution capability policy lives under `[execution_capabilities]`.
+  Grant-affecting changes are recompile changes, not next-tick runtime-only
+  changes. Defaults keep rollout compatible: advisory grants are allowed,
+  strict required-advisory failure is disabled, network access is denied, and
+  package install plus git mutate grants require operator approval.
 - Config reload recompiles changes such as `runtime.default_mode` and
   `stages.<stage>.*` on the daemon's next tick when a daemon owns the
   workspace. If the daemon was started with an explicit `--mode`, that override
@@ -554,6 +574,9 @@ Use intervention commands only when the runtime state actually justifies them:
   1. `runners.codex.permission_by_stage`
   2. `runners.codex.permission_by_model`
   3. `runners.codex.permission_default`
+- Do not describe advisory execution capability grants as enforced. Codex
+  `maximum` and broad Pi RPC operation may be operationally powerful without
+  giving Millrace a narrow enforceable boundary.
 
 ## Recovery-Aware Behavior
 

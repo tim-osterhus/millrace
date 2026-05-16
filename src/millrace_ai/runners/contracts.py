@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from millrace_ai.contracts import TokenUsage
 from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
@@ -33,6 +33,8 @@ class RunnerInvocationArtifact(_ArtifactModel):
     command: tuple[str, ...]
     prompt_path: str
     emitted_at: datetime
+    execution_capability_grants: tuple[dict[str, JsonValue], ...] = ()
+    capability_support_decisions: tuple[dict[str, JsonValue], ...] = ()
 
 
 class RunnerCompletionArtifact(_ArtifactModel):
@@ -63,6 +65,11 @@ class RunnerCompletionArtifact(_ArtifactModel):
     notes: tuple[str, ...] = ()
     command: tuple[str, ...]
     emitted_at: datetime
+    failure_capability_class: str | None = None
+    execution_capability_grants: tuple[dict[str, JsonValue], ...] = ()
+    capability_support_decisions: tuple[dict[str, JsonValue], ...] = ()
+    capability_evidence_refs: tuple[str, ...] = ()
+    missing_capability_evidence_refs: tuple[str, ...] = ()
 
 
 def write_runner_invocation(path: Path, artifact: RunnerInvocationArtifact) -> None:
@@ -95,6 +102,13 @@ def invocation_artifact_from_request(
         command=command,
         prompt_path=prompt_path,
         emitted_at=emitted_at,
+        execution_capability_grants=tuple(
+            grant.model_dump(mode="json") for grant in request.execution_capability_grants
+        ),
+        capability_support_decisions=tuple(
+            decision.model_dump(mode="json")
+            for decision in request.capability_support_decisions
+        ),
     )
 
 
@@ -133,6 +147,19 @@ def completion_artifact_from_raw_result(
         notes=notes,
         command=command,
         emitted_at=emitted_at,
+        failure_capability_class=raw_result.failure_class,
+        execution_capability_grants=tuple(
+            grant.model_dump(mode="json") for grant in request.execution_capability_grants
+        ),
+        capability_support_decisions=tuple(
+            decision.model_dump(mode="json")
+            for decision in (
+                raw_result.capability_support_decisions
+                or request.capability_support_decisions
+            )
+        ),
+        capability_evidence_refs=raw_result.capability_evidence_refs,
+        missing_capability_evidence_refs=raw_result.missing_capability_evidence_refs,
     )
 
 

@@ -18,6 +18,15 @@ def _render_config_show_lines(paths: WorkspacePaths, config: RuntimeConfig) -> t
         f"watchers.enabled: {'true' if config.watchers.enabled else 'false'}",
         f"auto_recovery.enabled: {'true' if config.auto_recovery.enabled else 'false'}",
         f"usage_governance.enabled: {'true' if config.usage_governance.enabled else 'false'}",
+        f"execution_capabilities.enabled: {'true' if config.execution_capabilities.enabled else 'false'}",
+        (
+            "execution_capabilities.allow_advisory_grants: "
+            f"{'true' if config.execution_capabilities.allow_advisory_grants else 'false'}"
+        ),
+        (
+            "execution_capabilities.fail_required_advisory: "
+            f"{'true' if config.execution_capabilities.fail_required_advisory else 'false'}"
+        ),
         f"config_version: {snapshot.config_version}",
         f"last_reload_outcome: {_value(snapshot.last_reload_outcome)}",
         f"last_reload_error: {_value(snapshot.last_reload_error)}",

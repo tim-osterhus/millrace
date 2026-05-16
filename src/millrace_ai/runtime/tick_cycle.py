@@ -12,6 +12,12 @@ from millrace_ai.runners import normalize_stage_result
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
 
+from .capability_gates import (
+    capability_gate_failure_result,
+    evaluate_stage_request_capabilities,
+    record_capability_gate_result,
+    support_evaluator_for_request,
+)
 from .error_recovery import schedule_post_stage_exception_recovery
 from .learning_promotions import (
     apply_deferred_learning_promotions_if_safe,
@@ -115,47 +121,63 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
     except StageWorkItemOwnershipError as exc:
         handle_stage_work_item_ownership_error(engine, error=exc)
         return engine._idle_tick_outcome(reason="stage_work_item_ownership_invalid")
-    engine._mark_active_stage_running(
-        plane=request.plane,
-        stage=request.stage,
-        running_status_marker=request.running_status_marker,
-        run_id=request.run_id,
-    )
-    engine._emit_monitor_event(
-        "stage_started",
-        plane=request.plane.value,
-        stage=request.stage.value,
-        node_id=request.node_id,
-        stage_kind_id=request.stage_kind_id,
-        run_id=request.run_id,
-        work_item_kind=(
-            request.active_work_item_kind.value if request.active_work_item_kind else None
-        ),
-        work_item_id=request.active_work_item_id,
-        status_marker=request.running_status_marker,
-    )
-    write_runtime_event(
+    gate_result = evaluate_stage_request_capabilities(
         engine.paths,
-        event_type="stage_started",
-        data={
-            "request_id": request.request_id,
-            "stage": request.stage.value,
-            "node_id": request.node_id,
-            "stage_kind_id": request.stage_kind_id,
-            "plane": request.plane.value,
-            "run_id": request.run_id,
-            "work_item_kind": (
+        request=request,
+        support_evaluator=support_evaluator_for_request(engine.stage_runner, request),
+        now=engine._now,
+    )
+    request = gate_result.request
+    record_capability_gate_result(engine.paths, request=request, gate_result=gate_result)
+
+    if gate_result.allowed:
+        engine._mark_active_stage_running(
+            plane=request.plane,
+            stage=request.stage,
+            running_status_marker=request.running_status_marker,
+            run_id=request.run_id,
+        )
+        engine._emit_monitor_event(
+            "stage_started",
+            plane=request.plane.value,
+            stage=request.stage.value,
+            node_id=request.node_id,
+            stage_kind_id=request.stage_kind_id,
+            run_id=request.run_id,
+            work_item_kind=(
                 request.active_work_item_kind.value if request.active_work_item_kind else None
             ),
-            "work_item_id": request.active_work_item_id,
-            "troubleshoot_report_path": request.preferred_troubleshoot_report_path,
-        },
-    )
+            work_item_id=request.active_work_item_id,
+            status_marker=request.running_status_marker,
+        )
+        write_runtime_event(
+            engine.paths,
+            event_type="stage_started",
+            data={
+                "request_id": request.request_id,
+                "stage": request.stage.value,
+                "node_id": request.node_id,
+                "stage_kind_id": request.stage_kind_id,
+                "plane": request.plane.value,
+                "run_id": request.run_id,
+                "work_item_kind": (
+                    request.active_work_item_kind.value if request.active_work_item_kind else None
+                ),
+                "work_item_id": request.active_work_item_id,
+                "troubleshoot_report_path": request.preferred_troubleshoot_report_path,
+            },
+        )
 
-    try:
-        raw_result = engine.stage_runner(request)
-    except Exception as exc:  # pragma: no cover - defensive path
-        raw_result = engine._runner_failure_result(request, failure_class="runner_error", error=str(exc))
+        try:
+            raw_result = engine.stage_runner(request)
+        except Exception as exc:  # pragma: no cover - defensive path
+            raw_result = engine._runner_failure_result(request, failure_class="runner_error", error=str(exc))
+    else:
+        raw_result = capability_gate_failure_result(
+            request=request,
+            gate_result=gate_result,
+            now=engine._now(),
+        )
 
     stage_result = normalize_stage_result(request, raw_result)
     stage_result_path: Path | None = None

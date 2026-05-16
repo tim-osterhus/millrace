@@ -21,6 +21,7 @@ Module entrypoint: `python -m millrace_ai`
 - `millrace queue ...`
 - `millrace incident ...`
 - `millrace planning ...`
+- `millrace approvals ...`
 - `millrace config ...`
 - `millrace control ...`
 - `millrace compile ...`
@@ -273,6 +274,10 @@ Each stage-result block now includes:
 - `stage_kind_id`
 - `request_kind`
 - `closure_target_root_spec_id`
+- compact `capability_grant` lines when the stage result contains compiled
+  execution grants
+- compact `capability_support` lines when the selected runner reported
+  contextual grant support
 
 ### `millrace runs tail <RUN_ID>`
 
@@ -480,6 +485,30 @@ Pause/resume behavior:
   It requeues active task, probe, spec, incident, and learning-request artifacts,
   clears `active_runs_by_plane`, and preserves the open closure target.
 
+## Approval Commands
+
+Execution capability approvals are runtime control actions for grants that
+compile as `approval_required`.
+
+### `millrace approvals ls`
+
+Lists pending and resolved execution capability approvals for a workspace.
+
+### `millrace approvals show <APPROVAL_ID>`
+
+Prints the full approval object as JSON.
+
+### `millrace approvals approve <APPROVAL_ID> --reason "..."`
+
+Approves one pending capability grant. If a daemon owns the workspace, the
+approval is mailbox-routed and applied at a safe runtime control boundary. If no
+daemon owns the workspace, it applies directly.
+
+### `millrace approvals deny <APPROVAL_ID> --reason "..."`
+
+Denies one pending capability grant through the same direct/mailbox routing
+surface.
+
 ## Planning Commands
 
 ### `millrace planning retry-active --reason "..."`
@@ -496,7 +525,8 @@ the Learning lane active.
 
 Prints the effective runtime defaults plus the snapshot-exposed config version
 and last reload outcome/error state. The output includes
-`auto_recovery.enabled` and `usage_governance.enabled`.
+`auto_recovery.enabled`, `usage_governance.enabled`, and
+`execution_capabilities.*` rollout flags.
 
 Usage governance is configured under `[usage_governance]` in
 `millrace-agents/millrace.toml`. It is default-off. When enabled, runtime token
@@ -504,6 +534,12 @@ rules are evaluated between stages and can automatically pause/resume the
 workspace without changing the compiled plan. See
 `docs/runtime/millrace-usage-governance.md` for the full config shape and
 state artifacts.
+
+Execution capability policy is configured under `[execution_capabilities]`.
+It is enabled by default, with advisory grants allowed and strict
+required-advisory failure disabled for the initial rollout. The default policy
+denies raw network access, requires approval for package install and git mutate
+capabilities, and allows shell run and workspace write capability requests.
 
 ### `millrace config validate [--mode MODE_ID]`
 
@@ -557,6 +593,7 @@ Compiles and prints operator inspectability surface:
 - frozen `completion_behavior.*` fields when the selected planning loop defines one
 - stage ordering
 - per-stage `thinking_level` when configured
+- per-stage execution capability grants and warnings
 - Codex compatibility `model_reasoning_effort` when configured
 - entrypoint path per stage
 - `stage_kind_id`
@@ -603,6 +640,8 @@ transitions are legal before inspecting any individual run. Use
 - Runtime startup and `config reload` refuse to continue on a stale last-known-good plan when compile inputs have changed and recompilation fails.
 - `usage_governance.*` and `auto_recovery.*` config fields apply on the next
   tick and do not require a recompile.
+- `execution_capabilities.*` config fields are recompile boundaries because
+  they change compiled grant decisions.
 
 ## Auto-Recovery Config
 

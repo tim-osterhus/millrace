@@ -21,6 +21,12 @@ from millrace_ai.state_store import save_snapshot
 from .activation import activate_claim_for_plane, claim_next_work_item_for_plane
 from .active_runs import active_run_for_plane, snapshot_with_active_run
 from .blocked_recovery import attempt_stranded_dependency_auto_recovery
+from .capability_gates import (
+    capability_gate_failure_result,
+    evaluate_stage_request_capabilities,
+    record_capability_gate_result,
+    support_evaluator_for_request,
+)
 from .error_recovery import schedule_post_stage_exception_recovery
 from .learning_promotions import (
     apply_deferred_learning_promotions_if_safe,
@@ -207,6 +213,34 @@ class RuntimeDaemonSupervisor:
         except StageWorkItemOwnershipError as exc:
             handle_stage_work_item_ownership_error(self.engine, error=exc)
             return
+        gate_result = evaluate_stage_request_capabilities(
+            self.engine.paths,
+            request=request,
+            support_evaluator=support_evaluator_for_request(self.engine.stage_runner, request),
+            now=self.engine._now,
+        )
+        request = gate_result.request
+        record_capability_gate_result(
+            self.engine.paths,
+            request=request,
+            gate_result=gate_result,
+        )
+        if not gate_result.allowed:
+            now = self.engine._now()
+            raw_result = capability_gate_failure_result(
+                request=request,
+                gate_result=gate_result,
+                now=now,
+            )
+            self._tasks[active_run.plane] = asyncio.create_task(
+                _completed_worker_outcome(
+                    active_run=active_run,
+                    request=request,
+                    raw_result=raw_result,
+                    now=now,
+                )
+            )
+            return
         active_run = active_run.model_copy(update={"running_status_marker": request.running_status_marker})
         assert self.engine.snapshot is not None
         self.engine.snapshot = snapshot_with_active_run(
@@ -331,6 +365,24 @@ async def _run_stage_worker(
         request=request,
         started_at=started_at,
         completed_at=engine._now(),
+        raw_result=raw_result,
+    )
+
+
+async def _completed_worker_outcome(
+    *,
+    active_run: ActiveRunState,
+    request: StageRunRequest,
+    raw_result: RunnerRawResult,
+    now: datetime,
+) -> StageWorkerOutcome:
+    return StageWorkerOutcome(
+        plane=active_run.plane,
+        run_id=active_run.run_id,
+        active_run=active_run,
+        request=request,
+        started_at=now,
+        completed_at=now,
         raw_result=raw_result,
     )
 

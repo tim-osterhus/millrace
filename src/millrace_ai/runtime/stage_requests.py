@@ -139,6 +139,7 @@ def build_stage_run_request(
         thinking_level=stage_plan.thinking_level,
         model_reasoning_effort=stage_plan.model_reasoning_effort,
         timeout_seconds=stage_plan.timeout_seconds,
+        execution_capability_grants=stage_plan.execution_capability_grants,
     )
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
     save_snapshot(engine.paths, engine.snapshot)
@@ -266,6 +267,7 @@ def build_closure_target_stage_run_request(
         thinking_level=stage_plan.thinking_level,
         model_reasoning_effort=stage_plan.model_reasoning_effort,
         timeout_seconds=stage_plan.timeout_seconds,
+        execution_capability_grants=stage_plan.execution_capability_grants,
     )
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
     save_snapshot(engine.paths, engine.snapshot)
@@ -375,7 +377,7 @@ def runner_failure_result(
     failure_class: str,
     error: str,
 ) -> RunnerRawResult:
-    del failure_class, error
+    del error
     current_time = now()
     return RunnerRawResult(
         request_id=request.request_id,
@@ -390,6 +392,7 @@ def runner_failure_result(
         stdout_path=None,
         stderr_path=None,
         terminal_result_path=None,
+        failure_class=failure_class,
         started_at=current_time,
         ended_at=current_time,
     )

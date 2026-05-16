@@ -88,6 +88,14 @@ def normalize_stage_result(
             notes=("runner completed with non-zero exit code",),
             classification=exit_failure,
         )
+    if raw_result.missing_capability_evidence_refs:
+        missing_refs = ", ".join(raw_result.missing_capability_evidence_refs)
+        return _failure_envelope(
+            request,
+            raw_result,
+            failure_class="capability_evidence_missing",
+            notes=(f"missing required capability evidence: {missing_refs}",),
+        )
 
     extraction = _extract_terminal_result(request, raw_result)
     if not extraction.ok:
@@ -147,6 +155,8 @@ def normalize_stage_result(
             "raw_exit_kind": _raw_exit_kind(raw_result),
             "raw_exit_code": _raw_exit_code(raw_result),
             "timeout_reconciled": _timeout_reconciled(raw_result),
+            "capability_evidence_refs": list(raw_result.capability_evidence_refs),
+            "missing_capability_evidence_refs": list(raw_result.missing_capability_evidence_refs),
         },
         started_at=raw_result.started_at,
         completed_at=raw_result.ended_at,
@@ -363,6 +373,8 @@ def _extract_from_stdout_tokens(
 
 
 def _classify_raw_exit_failure(raw_result: RunnerRawResult) -> _FailureClassification | None:
+    if raw_result.failure_class:
+        return _classification_for_failure_class(raw_result.failure_class)
     if raw_result.exit_kind == "completed" and raw_result.exit_code in (None, 0):
         return None
     if raw_result.exit_kind == "timeout":
@@ -547,6 +559,14 @@ def _classification_for_failure_class(failure_class: str) -> _FailureClassificat
             auto_requeue_candidate=False,
             classifier_code=failure_class,
         )
+    if failure_class.startswith("capability_"):
+        return _FailureClassification(
+            failure_class=failure_class,
+            blocked_origin="runtime_capability_gate",
+            failure_scope="runtime_policy",
+            auto_requeue_candidate=False,
+            classifier_code=failure_class,
+        )
     return _FailureClassification(
         failure_class=failure_class,
         blocked_origin="runner_failure",
@@ -627,6 +647,8 @@ def _failure_envelope(
             "raw_exit_kind": _raw_exit_kind(raw_result),
             "raw_exit_code": _raw_exit_code(raw_result),
             "timeout_reconciled": _timeout_reconciled(raw_result),
+            "capability_evidence_refs": list(raw_result.capability_evidence_refs),
+            "missing_capability_evidence_refs": list(raw_result.missing_capability_evidence_refs),
         },
         started_at=raw_result.started_at,
         completed_at=raw_result.ended_at,
@@ -767,6 +789,13 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "skill_revision_evidence_path": request.skill_revision_evidence_path,
         "thinking_level": request.thinking_level,
         "model_reasoning_effort": request.model_reasoning_effort,
+        "execution_capability_grants": [
+            grant.model_dump(mode="json") for grant in request.execution_capability_grants
+        ],
+        "capability_support_decisions": [
+            decision.model_dump(mode="json")
+            for decision in request.capability_support_decisions
+        ],
     }
 
 

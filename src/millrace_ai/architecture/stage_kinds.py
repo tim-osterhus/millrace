@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from millrace_ai.contracts import Plane, ResultClass
+from millrace_ai.contracts import CapabilityRequest, Plane, ResultClass
 
 from .common import (
     dedupe_preserve_order,
@@ -54,6 +54,7 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
     allowed_result_classes_by_outcome: dict[str, tuple[ResultClass, ...]] = Field(min_length=1)
     allowed_input_artifacts: tuple[str, ...] = ()
     declared_output_artifacts: tuple[str, ...] = ()
+    execution_capability_requests: tuple[CapabilityRequest, ...] = ()
     idempotence_policy: StageIdempotencePolicy = StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
     allowed_overrides: tuple[str, ...] = ()
     can_start_tasks: bool = False

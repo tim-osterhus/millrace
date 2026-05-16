@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from millrace_ai.config import RuntimeConfig
+from millrace_ai.config import CodexPermissionLevel, RuntimeConfig
+from millrace_ai.contracts import (
+    CapabilityEnforcementMode,
+    CapabilitySupportDecision,
+    CapabilitySupportState,
+    ExecutionCapabilityGrant,
+)
 from millrace_ai.runners.adapters._prompting import build_stage_prompt
 from millrace_ai.runners.adapters.codex_cli_artifacts import (
     codex_cli_artifact_paths,
@@ -15,7 +22,7 @@ from millrace_ai.runners.adapters.codex_cli_artifacts import (
     persist_event_log,
     reconciled_timeout_terminal_marker,
 )
-from millrace_ai.runners.adapters.codex_cli_command import build_codex_cli_command
+from millrace_ai.runners.adapters.codex_cli_command import build_codex_cli_command, resolve_permission_level
 from millrace_ai.runners.adapters.codex_cli_tokens import extract_token_usage
 from millrace_ai.runners.contracts import (
     completion_artifact_from_raw_result,
@@ -48,6 +55,61 @@ class CodexCliRunnerAdapter:
     @property
     def name(self) -> str:
         return "codex_cli"
+
+    def evaluate_capability_grant(
+        self,
+        grant: ExecutionCapabilityGrant,
+        invocation_context: Mapping[str, object],
+    ) -> CapabilitySupportDecision:
+        stage = str(invocation_context.get("stage") or "")
+        request = invocation_context.get("request")
+        permission_level = (
+            resolve_permission_level(config=self.config, request=request)
+            if isinstance(request, StageRunRequest)
+            else self.config.runners.codex.permission_default
+        )
+        if grant.decision_state.value != "granted":
+            return CapabilitySupportDecision(
+                runner_id=self.name,
+                invocation_context_ref=stage,
+                grant_id=grant.grant_id,
+                support_state=CapabilitySupportState.UNSUPPORTED,
+                enforcement_mode=CapabilityEnforcementMode.NOT_APPLICABLE,
+                reason=f"grant decision is {grant.decision_state.value}",
+            )
+        if grant.capability_id in {"runner.invoke", "artifact.read", "artifact.write", "evidence.emit"}:
+            return CapabilitySupportDecision(
+                runner_id=self.name,
+                invocation_context_ref=stage,
+                grant_id=grant.grant_id,
+                support_state=CapabilitySupportState.SUPPORTED,
+                enforcement_mode=grant.enforcement_mode,
+                evidence_available=("runner_invocation", "runner_completion"),
+                reason="Millrace runtime records runner invocation and artifacts",
+            )
+        if permission_level is CodexPermissionLevel.MAXIMUM:
+            return CapabilitySupportDecision(
+                runner_id=self.name,
+                invocation_context_ref=stage,
+                grant_id=grant.grant_id,
+                support_state=CapabilitySupportState.SUPPORTED,
+                enforcement_mode=CapabilityEnforcementMode.ADVISORY_ONLY,
+                limitations=("codex maximum permission can bypass local sandbox limits",),
+                evidence_available=("runner_invocation", "runner_completion"),
+                reason="codex permission level maximum is advisory for this boundary",
+            )
+        return CapabilitySupportDecision(
+            runner_id=self.name,
+            invocation_context_ref=stage,
+            grant_id=grant.grant_id,
+            support_state=CapabilitySupportState.PARTIALLY_SUPPORTED,
+            enforcement_mode=grant.enforcement_mode
+            if grant.enforcement_mode is not CapabilityEnforcementMode.ADVISORY_ONLY
+            else CapabilityEnforcementMode.ADVISORY_ONLY,
+            limitations=("runner support is bounded by Codex CLI sandbox configuration",),
+            evidence_available=("runner_invocation", "runner_completion"),
+            reason=f"codex permission level {permission_level.value} partially supports this grant",
+        )
 
     def run(self, request: StageRunRequest) -> RunnerRawResult:
         now = datetime.now(timezone.utc)

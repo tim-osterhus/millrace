@@ -46,6 +46,7 @@ def test_runtime_config_schema_uses_draft_categories() -> None:
         "watchers",
         "auto_recovery",
         "usage_governance",
+        "execution_capabilities",
         "stages",
     }
 

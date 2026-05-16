@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from .base import ContractModel
+from .capabilities import CapabilityPolicyOverride, CapabilityRequest
 from .enums import LearningRequestAction, LearningStageName, Plane, StageName
 from .stage_metadata import legal_terminal_results, stage_plane, validate_safe_identifier
 
@@ -94,6 +95,8 @@ class ModeDefinition(ContractModel):
     stage_thinking_bindings: dict[StageName, str | None] = Field(default_factory=dict)
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
+    execution_capability_requests: tuple[CapabilityRequest, ...] = ()
+    execution_capability_policies: tuple[CapabilityPolicyOverride, ...] = ()
 
     @model_validator(mode="before")
     @classmethod

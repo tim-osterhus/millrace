@@ -19,6 +19,7 @@ from millrace_ai.errors import AssetValidationError
 from millrace_ai.paths import WorkspacePaths
 
 from .assets import build_resolved_asset_refs
+from .capabilities import merge_execution_capability_summaries
 from .fingerprints import (
     build_compile_input_fingerprint,
     build_compiled_plan_id,
@@ -222,6 +223,9 @@ def compile_compiled_run_plan(
             mode.mode_id,
             graphs_by_plane,
             has_planning_completion_behavior=planning_graph.completion_behavior is not None,
+        ),
+        execution_capability_summary=merge_execution_capability_summaries(
+            tuple(graph.execution_capability_summary for graph in graphs_by_plane.values())
         ),
     )
 

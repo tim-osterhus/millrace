@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
     MailboxArchiveInvalidIncidentPayload,
     MailboxCancelWorkItemPayload,
     MailboxCommand,
+    MailboxExecutionCapabilityApprovalPayload,
     MailboxIncidentInterventionPayload,
     MailboxRetargetTaskDependencyPayload,
     MailboxSupersedeTaskPayload,
@@ -29,6 +30,10 @@ from millrace_ai.errors import QueueStateError, WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime.active_runs import active_run_for_plane, snapshot_without_active_plane
+from millrace_ai.runtime.approvals import (
+    approve_execution_capability_request,
+    deny_execution_capability_request,
+)
 from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
 from millrace_ai.runtime.pause_state import (
     OPERATOR_PAUSE_SOURCE,
@@ -285,6 +290,50 @@ class DirectControlMutations(Generic[ResultT]):
         )
         self._save_queue_depth_snapshot(snapshot)
         return self._intervention_result(MailboxCommand.ARCHIVE_INVALID_INCIDENT, result)
+
+    def approve_execution_capability(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxExecutionCapabilityApprovalPayload,
+        actor: str = "operator",
+    ) -> ResultT:
+        approval = approve_execution_capability_request(
+            self.paths,
+            payload.approval_id,
+            decided_by=actor,
+            reason=payload.reason,
+            now=self._now(),
+        )
+        save_snapshot(self.paths, snapshot.model_copy(update={"updated_at": self._now()}))
+        return self._result_factory(
+            action=MailboxCommand.APPROVE_EXECUTION_CAPABILITY,
+            mode="direct",
+            applied=True,
+            detail=f"approved execution capability request {approval.approval_id}",
+        )
+
+    def deny_execution_capability(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        payload: MailboxExecutionCapabilityApprovalPayload,
+        actor: str = "operator",
+    ) -> ResultT:
+        approval = deny_execution_capability_request(
+            self.paths,
+            payload.approval_id,
+            decided_by=actor,
+            reason=payload.reason,
+            now=self._now(),
+        )
+        save_snapshot(self.paths, snapshot.model_copy(update={"updated_at": self._now()}))
+        return self._result_factory(
+            action=MailboxCommand.DENY_EXECUTION_CAPABILITY,
+            mode="direct",
+            applied=True,
+            detail=f"denied execution capability request {approval.approval_id}",
+        )
 
     def pause(self, snapshot: RuntimeSnapshot) -> ResultT:
         changed = not has_pause_source(snapshot, OPERATOR_PAUSE_SOURCE)

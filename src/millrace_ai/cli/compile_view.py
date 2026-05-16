@@ -131,6 +131,16 @@ def _render_compile_show_lines(paths: WorkspacePaths, outcome: CompileOutcome) -
                 f"timeout_seconds: {stage_plan.timeout_seconds}",
             )
         )
+        for grant in getattr(stage_plan, "execution_capability_grants", ()):
+            lines.append(
+                "execution_capability_grant: "
+                f"{grant.grant_id} capability={grant.capability_id} "
+                f"decision={grant.decision_state.value} "
+                f"enforcement={grant.enforcement_mode.value} "
+                f"required={'true' if grant.required else 'false'}"
+            )
+        for warning in getattr(stage_plan, "execution_capability_warnings", ()):
+            lines.append(f"execution_capability_warning: {warning}")
     return tuple(lines)
 
 

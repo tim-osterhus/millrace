@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 import millrace_ai
+from millrace_ai.cli.commands.approvals import approvals_app
 from millrace_ai.cli.commands.compile import compile_app
 from millrace_ai.cli.commands.config import config_app
 from millrace_ai.cli.commands.control import (
@@ -48,6 +49,7 @@ def root(
         raise typer.Exit(code=2)
 
 app.add_typer(run_app, name="run")
+app.add_typer(approvals_app, name="approvals")
 app.add_typer(queue_app, name="queue")
 app.add_typer(control_app, name="control")
 app.add_typer(status_app, name="status")

@@ -102,6 +102,8 @@ def _raw(
     token_usage: TokenUsage | None = None,
     observed_exit_kind: str | None = None,
     observed_exit_code: int | None = None,
+    capability_evidence_refs: tuple[str, ...] = (),
+    missing_capability_evidence_refs: tuple[str, ...] = (),
 ) -> RunnerRawResult:
     return RunnerRawResult(
         request_id=request.request_id,
@@ -118,6 +120,8 @@ def _raw(
         token_usage=token_usage,
         observed_exit_kind=observed_exit_kind,
         observed_exit_code=observed_exit_code,
+        capability_evidence_refs=capability_evidence_refs,
+        missing_capability_evidence_refs=missing_capability_evidence_refs,
         started_at=NOW,
         ended_at=NOW + timedelta(seconds=3),
     )
@@ -634,9 +638,11 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "runner_name": "Runner Name:",
         "model_name": "Model Name:",
         "thinking_level": "Thinking Level:",
-        "model_reasoning_effort": "Model Reasoning Effort:",
-        "timeout_seconds": "Timeout Seconds:",
-    }
+            "model_reasoning_effort": "Model Reasoning Effort:",
+            "timeout_seconds": "Timeout Seconds:",
+            "execution_capability_grants": "Execution Capability Grants",
+            "capability_support_decisions": "Capability Support Decisions",
+        }
 
     assert set(field_label_map) == set(StageRunRequest.model_fields)
     for label in field_label_map.values():
@@ -717,3 +723,25 @@ def test_normalize_preserves_token_usage_and_event_log_artifacts(tmp_path: Path)
 
     assert envelope.token_usage == token_usage
     assert str(event_log_path) in envelope.artifact_paths
+
+
+def test_normalize_rejects_completed_result_with_missing_capability_evidence(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path, stage="checker")
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("### CHECKER_PASS\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(
+            request,
+            stdout_path=stdout_path,
+            missing_capability_evidence_refs=("grant-workspace-write",),
+        ),
+    )
+
+    assert envelope.result_class is ResultClass.RECOVERABLE_FAILURE
+    assert envelope.success is False
+    assert envelope.metadata["failure_class"] == "capability_evidence_missing"
+    assert envelope.metadata["missing_capability_evidence_refs"] == ["grant-workspace-write"]

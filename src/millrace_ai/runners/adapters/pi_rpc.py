@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 from millrace_ai.config import PiEventLogPolicy, RuntimeConfig
+from millrace_ai.contracts import (
+    CapabilityEnforcementMode,
+    CapabilitySupportDecision,
+    CapabilitySupportState,
+    ExecutionCapabilityGrant,
+)
 from millrace_ai.runners.adapters._prompting import build_stage_prompt
 from millrace_ai.runners.adapters.pi_rpc_client import PiRpcClient, PiRpcSessionResult
 from millrace_ai.runners.contracts import (
@@ -38,6 +45,42 @@ class PiRpcRunnerAdapter:
     @property
     def name(self) -> str:
         return "pi_rpc"
+
+    def evaluate_capability_grant(
+        self,
+        grant: ExecutionCapabilityGrant,
+        invocation_context: Mapping[str, object],
+    ) -> CapabilitySupportDecision:
+        stage = str(invocation_context.get("stage") or "")
+        if grant.decision_state.value != "granted":
+            return CapabilitySupportDecision(
+                runner_id=self.name,
+                invocation_context_ref=stage,
+                grant_id=grant.grant_id,
+                support_state=CapabilitySupportState.UNSUPPORTED,
+                enforcement_mode=CapabilityEnforcementMode.NOT_APPLICABLE,
+                reason=f"grant decision is {grant.decision_state.value}",
+            )
+        if grant.capability_id in {"runner.invoke", "artifact.read", "artifact.write", "evidence.emit"}:
+            return CapabilitySupportDecision(
+                runner_id=self.name,
+                invocation_context_ref=stage,
+                grant_id=grant.grant_id,
+                support_state=CapabilitySupportState.SUPPORTED,
+                enforcement_mode=grant.enforcement_mode,
+                evidence_available=("runner_invocation", "runner_completion"),
+                reason="Millrace runtime records Pi RPC invocation and artifacts",
+            )
+        return CapabilitySupportDecision(
+            runner_id=self.name,
+            invocation_context_ref=stage,
+            grant_id=grant.grant_id,
+            support_state=CapabilitySupportState.PARTIALLY_SUPPORTED,
+            enforcement_mode=CapabilityEnforcementMode.ADVISORY_ONLY,
+            limitations=("Pi RPC cannot prove filesystem or network enforcement boundaries",),
+            evidence_available=("runner_invocation", "runner_completion"),
+            reason="Pi RPC support is advisory for this capability",
+        )
 
     def run(self, request: StageRunRequest) -> RunnerRawResult:
         now = datetime.now(timezone.utc)

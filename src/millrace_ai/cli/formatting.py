@@ -101,6 +101,10 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
         lines.extend(_render_token_usage_lines(stage_result.token_usage))
         for artifact_path in stage_result.artifact_paths:
             lines.append(f"artifact_path: {artifact_path}")
+        for summary in stage_result.capability_grant_summaries:
+            lines.append(f"capability_grant: {summary}")
+        for summary in stage_result.capability_support_summaries:
+            lines.append(f"capability_support: {summary}")
     return tuple(lines)
 
 

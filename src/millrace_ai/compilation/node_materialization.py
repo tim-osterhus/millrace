@@ -15,6 +15,7 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.contracts.stage_metadata import STAGE_NAME_BY_VALUE, stage_name_for_value
 
+from .capabilities import compile_execution_capability_grants
 from .entrypoint_overrides import validate_entrypoint_override
 
 DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
@@ -96,6 +97,12 @@ def materialize_graph_node_plan(
         if runner_name == "codex_cli" and thinking_level is not None
         else None
     )
+    capability_grants, capability_warnings = compile_execution_capability_grants(
+        node=node,
+        stage_kind=stage_kind,
+        mode=mode,
+        config=config,
+    )
 
     timeout_seconds = (
         node.timeout_seconds
@@ -121,6 +128,8 @@ def materialize_graph_node_plan(
         thinking_level=thinking_level,
         model_reasoning_effort=model_reasoning_effort,
         timeout_seconds=timeout_seconds,
+        execution_capability_grants=capability_grants,
+        execution_capability_warnings=capability_warnings,
     )
 
 

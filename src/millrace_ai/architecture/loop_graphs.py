@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from millrace_ai.contracts import Plane
+from millrace_ai.contracts import CapabilityPolicyOverride, CapabilityRequest, Plane
 
 from .common import (
     dedupe_preserve_order,
@@ -62,6 +62,8 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
     model_name: str | None = None
     thinking_level: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
+    execution_capability_requests: tuple[CapabilityRequest, ...] = ()
+    execution_capability_policies: tuple[CapabilityPolicyOverride, ...] = ()
 
     @field_validator("node_id", "stage_kind_id")
     @classmethod
@@ -119,6 +121,10 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
             overrides.add("thinking_level")
         if self.timeout_seconds is not None:
             overrides.add("timeout_seconds")
+        if self.execution_capability_requests:
+            overrides.add("execution_capability_requests")
+        if self.execution_capability_policies:
+            overrides.add("execution_capability_policies")
         return overrides
 
 

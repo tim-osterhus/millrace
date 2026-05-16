@@ -18,6 +18,7 @@ from millrace_ai.contracts import (
     MailboxArchiveInvalidIncidentPayload,
     MailboxCancelWorkItemPayload,
     MailboxCommand,
+    MailboxExecutionCapabilityApprovalPayload,
     MailboxIncidentInterventionPayload,
     MailboxRetargetTaskDependencyPayload,
     MailboxSupersedeTaskPayload,
@@ -356,6 +357,52 @@ class RuntimeControl:
             direct_handler=lambda snapshot: self._mutations.archive_invalid_incident(
                 snapshot,
                 payload=payload_model,
+            ),
+        )
+
+    def approve_execution_capability(
+        self,
+        *,
+        approval_id: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxExecutionCapabilityApprovalPayload(
+            approval_id=approval_id,
+            reason=reason,
+        )
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.APPROVE_EXECUTION_CAPABILITY,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.approve_execution_capability(
+                snapshot,
+                payload=payload_model,
+                actor=issuer,
+            ),
+        )
+
+    def deny_execution_capability(
+        self,
+        *,
+        approval_id: str,
+        reason: str,
+        issuer: str = "operator",
+    ) -> ControlActionResult:
+        payload_model = MailboxExecutionCapabilityApprovalPayload(
+            approval_id=approval_id,
+            reason=reason,
+        )
+        payload = payload_model.model_dump(mode="json")
+        return self._router.dispatch(
+            command=MailboxCommand.DENY_EXECUTION_CAPABILITY,
+            issuer=issuer,
+            payload=payload,
+            direct_handler=lambda snapshot: self._mutations.deny_execution_capability(
+                snapshot,
+                payload=payload_model,
+                actor=issuer,
             ),
         )
 

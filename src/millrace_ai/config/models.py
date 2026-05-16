@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, PlanningStageName, RuntimeMode
+from millrace_ai.contracts.capabilities import CapabilityPolicyDecision, normalize_capability_id
 
 DEFAULT_CONFIG_PATH = Path("millrace-agents") / "millrace.toml"
 
@@ -138,6 +139,36 @@ class UsageGovernanceSection(ConfigModel):
     calendar_timezone: str = "UTC"
     runtime_token_rules: RuntimeTokenRulesSection = Field(default_factory=RuntimeTokenRulesSection)
     subscription_quota_rules: SubscriptionQuotaRulesSection = Field(default_factory=SubscriptionQuotaRulesSection)
+
+
+def _default_execution_capability_decisions() -> dict[str, CapabilityPolicyDecision]:
+    return {
+        "network.access": CapabilityPolicyDecision.DENY,
+        "package.install": CapabilityPolicyDecision.APPROVAL_REQUIRED,
+        "git.mutate": CapabilityPolicyDecision.APPROVAL_REQUIRED,
+        "shell.run": CapabilityPolicyDecision.ALLOW,
+        "workspace.write": CapabilityPolicyDecision.ALLOW,
+    }
+
+
+class ExecutionCapabilitiesSection(ConfigModel):
+    enabled: bool = True
+    default_unknown_capability: CapabilityPolicyDecision = CapabilityPolicyDecision.DENY
+    allow_advisory_grants: bool = True
+    fail_required_advisory: bool = False
+    defaults: dict[str, CapabilityPolicyDecision] = Field(
+        default_factory=_default_execution_capability_decisions
+    )
+
+    @field_validator("defaults", mode="before")
+    @classmethod
+    def normalize_default_keys(
+        cls,
+        value: dict[str, str | CapabilityPolicyDecision] | None,
+    ) -> dict[str, str | CapabilityPolicyDecision]:
+        if not value:
+            return {}
+        return {normalize_capability_id(str(key)): decision for key, decision in value.items()}
 
 
 class CodexRunnerSection(ConfigModel):
@@ -274,6 +305,7 @@ class RuntimeConfig(ConfigModel):
     watchers: WatchersSection = Field(default_factory=WatchersSection)
     auto_recovery: AutoRecoverySection = Field(default_factory=AutoRecoverySection)
     usage_governance: UsageGovernanceSection = Field(default_factory=UsageGovernanceSection)
+    execution_capabilities: ExecutionCapabilitiesSection = Field(default_factory=ExecutionCapabilitiesSection)
     stages: dict[str, StageConfig] = Field(default_factory=dict)
 
     @field_validator("stages")
@@ -293,6 +325,7 @@ __all__ = [
     "CodexRunnerSection",
     "ConfigModel",
     "DEFAULT_CONFIG_PATH",
+    "ExecutionCapabilitiesSection",
     "KNOWN_STAGE_NAMES",
     "RecoverySection",
     "PiEventLogPolicy",

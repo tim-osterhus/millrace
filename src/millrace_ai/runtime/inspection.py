@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Mapping
 
 from pydantic import ValidationError
 
@@ -50,6 +50,8 @@ class InspectedStageResult:
     duration_seconds: float = 0.0
     token_usage: TokenUsage | None = None
     thinking_level: str | None = None
+    capability_grant_summaries: tuple[str, ...] = ()
+    capability_support_summaries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +183,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 completed_at=stage_result.completed_at.isoformat(),
                 duration_seconds=stage_result.duration_seconds,
                 token_usage=stage_result.token_usage,
+                capability_grant_summaries=_capability_grant_summaries(stage_result),
+                capability_support_summaries=_capability_support_summaries(stage_result),
             )
         )
 
@@ -273,6 +277,66 @@ def _failure_class_from_stage_result(stage_result: StageResultEnvelope) -> str |
 def _string_metadata(stage_result: StageResultEnvelope, key: str) -> str | None:
     value = stage_result.metadata.get(key)
     return value if isinstance(value, str) else None
+
+
+def _capability_grant_summaries(stage_result: StageResultEnvelope) -> tuple[str, ...]:
+    values = stage_result.metadata.get("execution_capability_grants")
+    if not isinstance(values, list):
+        return ()
+    summaries: list[str] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        grant_id = _dict_str(value, "grant_id")
+        capability_id = _dict_str(value, "capability_id")
+        decision = _dict_str(value, "decision_state")
+        enforcement = _dict_str(value, "enforcement_mode")
+        evidence = _dict_str(value, "evidence_status")
+        approval_ref = value.get("approval_policy_ref")
+        approval_policy = (
+            _dict_str(approval_ref, "policy_id") if isinstance(approval_ref, dict) else None
+        )
+        parts = [
+            _prefixed_value("grant_id", grant_id),
+            _prefixed_value("capability", capability_id),
+            _prefixed_value("decision", decision),
+            _prefixed_value("enforcement", enforcement),
+            _prefixed_value("evidence", evidence),
+        ]
+        if approval_policy is not None:
+            parts.append(_prefixed_value("approval_policy", approval_policy))
+        summaries.append(" ".join(part for part in parts if part))
+    return tuple(summaries)
+
+
+def _capability_support_summaries(stage_result: StageResultEnvelope) -> tuple[str, ...]:
+    values = stage_result.metadata.get("capability_support_decisions")
+    if not isinstance(values, list):
+        return ()
+    summaries: list[str] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        parts = [
+            _prefixed_value("grant_id", _dict_str(value, "grant_id")),
+            _prefixed_value("runner", _dict_str(value, "runner_id")),
+            _prefixed_value("support", _dict_str(value, "support_state")),
+            _prefixed_value("enforcement", _dict_str(value, "enforcement_mode")),
+        ]
+        evidence_available = value.get("evidence_available")
+        if isinstance(evidence_available, bool):
+            parts.append(f"evidence_available={str(evidence_available).lower()}")
+        summaries.append(" ".join(part for part in parts if part))
+    return tuple(summaries)
+
+
+def _dict_str(value: Mapping[str, object], key: str) -> str | None:
+    item = value.get(key)
+    return item if isinstance(item, str) and item else None
+
+
+def _prefixed_value(prefix: str, value: str | None) -> str:
+    return f"{prefix}={value}" if value is not None else ""
 
 
 def _aggregate_token_usage(usages: Iterable[TokenUsage | None]) -> TokenUsage | None:

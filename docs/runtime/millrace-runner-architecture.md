@@ -23,7 +23,7 @@ and run inspection carry forward: `mode_id`, `compiled_plan_id`, `node_id`, and
 - `src/millrace_ai/runners/normalization.py`
   - terminal extraction, failure mapping, and `StageResultEnvelope` normalization
 - `src/millrace_ai/runners/base.py`
-  - adapter protocol (`name`, `run(request)`)
+  - adapter protocol (`name`, contextual capability support, `run(request)`)
 - `src/millrace_ai/runners/registry.py`
   - mapping from runner name to adapter
 - `src/millrace_ai/runners/dispatcher.py`
@@ -81,6 +81,10 @@ When no compiled value exists, adapters may still use their runner-global
 defaults, such as `runners.codex.model_reasoning_effort` or
 `runners.pi.thinking`.
 
+Compile also freezes execution capability grants onto each node. Runtime
+dispatch evaluates those grants before runner invocation, then passes the
+satisfied grant set and runner support decisions through `StageRunRequest`.
+
 The shipped canonical modes make that explicit:
 
 - `default_codex` binds every shipped stage to `codex_cli`
@@ -105,6 +109,11 @@ which frozen node contract produced a run.
 - `mode_id`
 - `node_id`
 - `stage_kind_id`
+
+It also carries the active node's `execution_capability_grants` and any
+`capability_support_decisions` produced by the runtime gate. The prompt context
+renders these as structured, prompt-safe summaries so stages can see whether a
+grant is enforced, advisory, denied, unsupported, or approval-gated.
 
 Default running markers, legal terminal markers, and fallback
 `allowed_result_classes_by_outcome` values are derived from
@@ -144,6 +153,8 @@ Operator-facing `runs show` output now carries:
 - per-stage `node_id`
 - per-stage `stage_kind_id`
 - per-stage `request_kind`
+- per-stage execution capability grant summaries
+- per-stage runner support summaries
 
 That makes run inspection line up with the compiled plan and the runtime status
 surface instead of only showing stage names.
@@ -153,6 +164,8 @@ surface instead of only showing stage names.
 Codex adapter:
 
 - builds a deterministic stage prompt from `StageRunRequest`
+- evaluates execution capability support from the current Codex permission
+  posture
 - builds command/permission flags through `codex_cli_command.py`
 - shells out to configured Codex command/args
 - captures stdout/stderr
@@ -186,6 +199,10 @@ runtime less reliable without adding meaningful governance. Operators can still
 reduce permissions deliberately through `permission_default`,
 `permission_by_stage`, or `permission_by_model`.
 
+Because `maximum` grants broad local authority, the Codex adapter reports many
+filesystem, network, package, shell, and git boundaries as advisory rather than
+pretending Millrace can enforce them at the OS boundary.
+
 Permission precedence:
 
 1. stage override (`permission_by_stage`)
@@ -210,6 +227,7 @@ Codex permission mappings:
 Pi adapter:
 
 - shells out to `pi --mode rpc --no-session`
+- evaluates execution capability support conservatively before dispatch
 - sends the same Millrace-owned stage prompt contract used by the Codex path
 - persists streamed Pi events to `runner_events.<request_id>.jsonl` only for
   failed runs by default, or for every run when `event_log_policy = "full"`

@@ -47,7 +47,28 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
         model_name="gpt-5.4",
         thinking_level="high",
         model_reasoning_effort="high",
-        metadata={"failure_class": None, "request_id": "request-001"},
+        metadata={
+            "failure_class": None,
+            "request_id": "request-001",
+            "execution_capability_grants": [
+                {
+                    "grant_id": "grant-checker-runner",
+                    "capability_id": "runner.invoke",
+                    "decision_state": "granted",
+                    "enforcement_mode": "runtime_enforced",
+                    "evidence_status": "pending",
+                }
+            ],
+            "capability_support_decisions": [
+                {
+                    "grant_id": "grant-checker-runner",
+                    "runner_id": "codex_cli",
+                    "support_state": "supported",
+                    "enforcement_mode": "runtime_enforced",
+                    "evidence_available": True,
+                }
+            ],
+        },
         started_at=NOW,
         completed_at=NOW,
     )
@@ -66,6 +87,18 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
     assert summary.stage_results[0].terminal_result == "CHECKER_PASS"
     assert summary.stage_results[0].thinking_level == "high"
     assert summary.stage_results[0].model_reasoning_effort == "high"
+    assert summary.stage_results[0].capability_grant_summaries == (
+        (
+            "grant_id=grant-checker-runner capability=runner.invoke decision=granted "
+            "enforcement=runtime_enforced evidence=pending"
+        ),
+    )
+    assert summary.stage_results[0].capability_support_summaries == (
+        (
+            "grant_id=grant-checker-runner runner=codex_cli support=supported "
+            "enforcement=runtime_enforced evidence_available=true"
+        ),
+    )
     assert summary.primary_stdout_path == "runner_stdout.txt"
     assert summary.troubleshoot_report_path == "troubleshoot_report.md"
 

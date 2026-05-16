@@ -18,6 +18,7 @@ from millrace_ai.contracts import (
     MailboxArchiveInvalidIncidentPayload,
     MailboxCancelWorkItemPayload,
     MailboxCommandEnvelope,
+    MailboxExecutionCapabilityApprovalPayload,
     MailboxIncidentInterventionPayload,
     MailboxRetargetTaskDependencyPayload,
     MailboxSupersedeTaskPayload,
@@ -28,6 +29,10 @@ from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError, Works
 from millrace_ai.events import write_runtime_event
 from millrace_ai.mailbox import drain_incoming_mailbox_commands, write_mailbox_command
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.runtime.approvals import (
+    approve_execution_capability_request,
+    deny_execution_capability_request,
+)
 from millrace_ai.runtime.pause_state import (
     OPERATOR_PAUSE_SOURCE,
     add_pause_source,
@@ -125,6 +130,12 @@ def handle_mailbox_command(
         return
     if command == "archive_invalid_incident":
         archive_invalid_incident_from_mailbox(engine, envelope)
+        return
+    if command == "approve_execution_capability":
+        approve_execution_capability_from_mailbox(engine, envelope)
+        return
+    if command == "deny_execution_capability":
+        deny_execution_capability_from_mailbox(engine, envelope)
         return
     raise ControlRoutingError(f"Unsupported mailbox command: {command}")
 
@@ -442,6 +453,50 @@ def archive_invalid_incident_from_mailbox(engine: RuntimeEngine, envelope: Mailb
     _complete_operator_intervention(engine, envelope, result)
 
 
+def approve_execution_capability_from_mailbox(
+    engine: RuntimeEngine,
+    envelope: MailboxCommandEnvelope,
+) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxExecutionCapabilityApprovalPayload.model_validate(envelope.payload)
+    approval = approve_execution_capability_request(
+        engine.paths,
+        payload.approval_id,
+        decided_by=envelope.issuer,
+        reason=payload.reason,
+        now=engine._now(),
+    )
+    engine.snapshot = engine.snapshot.model_copy(update={"updated_at": engine._now()})
+    save_snapshot(engine.paths, engine.snapshot)
+    write_runtime_event(
+        engine.paths,
+        event_type="execution_capability_approval_approved",
+        data={"approval_id": approval.approval_id, "grant_id": approval.grant_id},
+    )
+
+
+def deny_execution_capability_from_mailbox(
+    engine: RuntimeEngine,
+    envelope: MailboxCommandEnvelope,
+) -> None:
+    assert engine.snapshot is not None
+    payload = MailboxExecutionCapabilityApprovalPayload.model_validate(envelope.payload)
+    approval = deny_execution_capability_request(
+        engine.paths,
+        payload.approval_id,
+        decided_by=envelope.issuer,
+        reason=payload.reason,
+        now=engine._now(),
+    )
+    engine.snapshot = engine.snapshot.model_copy(update={"updated_at": engine._now()})
+    save_snapshot(engine.paths, engine.snapshot)
+    write_runtime_event(
+        engine.paths,
+        event_type="execution_capability_approval_denied",
+        data={"approval_id": approval.approval_id, "grant_id": approval.grant_id},
+    )
+
+
 def _defer_operator_intervention_if_active(
     engine: RuntimeEngine,
     envelope: MailboxCommandEnvelope,
@@ -519,6 +574,7 @@ def mailbox_retry_scope(envelope: MailboxCommandEnvelope) -> Plane | None:
 __all__ = [
     "archive_blocked_task_from_mailbox",
     "archive_invalid_incident_from_mailbox",
+    "approve_execution_capability_from_mailbox",
     "cancel_incident_from_mailbox",
     "cancel_work_item_from_mailbox",
     "drain_mailbox",
@@ -526,6 +582,7 @@ __all__ = [
     "enqueue_probe_from_mailbox",
     "enqueue_spec_from_mailbox",
     "enqueue_task_from_mailbox",
+    "deny_execution_capability_from_mailbox",
     "handle_mailbox_command",
     "mailbox_reason",
     "mailbox_retry_scope",

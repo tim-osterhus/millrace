@@ -9,6 +9,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from millrace_ai.contracts import (
+    CapabilitySupportDecision,
+    ExecutionCapabilityGrant,
     Plane,
     ResultClass,
     StageName,
@@ -82,6 +84,8 @@ class StageRunRequest(BaseModel):
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
     timeout_seconds: int = 0
+    execution_capability_grants: tuple[ExecutionCapabilityGrant, ...] = ()
+    capability_support_decisions: tuple[CapabilitySupportDecision, ...] = ()
 
     @model_validator(mode="after")
     def validate_request_shape(self) -> "StageRunRequest":
@@ -196,6 +200,8 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
     )
     lines.extend(_render_path_list("Required Skill Paths", request.required_skill_paths))
     lines.extend(_render_path_list("Attached Skill Paths", request.attached_skill_paths))
+    lines.extend(_render_capability_grants(request.execution_capability_grants))
+    lines.extend(_render_capability_support_decisions(request.capability_support_decisions))
     lines.extend(
         [
             f"Run Directory: {request.run_dir}",
@@ -243,6 +249,10 @@ class RunnerRawResult(BaseModel):
     terminal_result_path: str | None = None
     event_log_path: str | None = None
     token_usage: TokenUsage | None = None
+    failure_class: str | None = None
+    capability_support_decisions: tuple[CapabilitySupportDecision, ...] = ()
+    capability_evidence_refs: tuple[str, ...] = ()
+    missing_capability_evidence_refs: tuple[str, ...] = ()
 
     started_at: datetime
     ended_at: datetime
@@ -298,6 +308,40 @@ def _render_result_class_policy(
     for outcome, result_classes in policy.items():
         rendered = ", ".join(result_class.value for result_class in result_classes)
         lines.append(f"- {outcome}: {rendered}")
+    return tuple(lines)
+
+
+def _render_capability_grants(
+    grants: tuple[ExecutionCapabilityGrant, ...],
+) -> tuple[str, ...]:
+    if not grants:
+        return ("Execution Capability Grants: none",)
+    lines = ["Execution Capability Grants:"]
+    for grant in grants:
+        approval = (
+            f" approval={grant.approval_policy_ref.policy_id}"
+            if grant.approval_policy_ref is not None
+            else ""
+        )
+        lines.append(
+            f"- {grant.grant_id} {grant.capability_id} "
+            f"decision={grant.decision_state.value} "
+            f"enforcement={grant.enforcement_mode.value}{approval}"
+        )
+    return tuple(lines)
+
+
+def _render_capability_support_decisions(
+    decisions: tuple[CapabilitySupportDecision, ...],
+) -> tuple[str, ...]:
+    if not decisions:
+        return ("Capability Support Decisions: none",)
+    lines = ["Capability Support Decisions:"]
+    for decision in decisions:
+        lines.append(
+            f"- {decision.grant_id} support={decision.support_state.value} "
+            f"enforcement={decision.enforcement_mode.value} runner={decision.runner_id}"
+        )
     return tuple(lines)
 
 

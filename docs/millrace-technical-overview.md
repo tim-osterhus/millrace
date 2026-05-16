@@ -154,8 +154,9 @@ These are machine-owned, typed state and runtime outputs such as:
 - `millrace-agents/state/baseline_manifest.json`
 - `millrace-agents/state/usage_governance_state.json`
 - `millrace-agents/state/usage_governance_ledger.jsonl`
+- execution capability approvals under `millrace-agents/approvals/`
 - mailbox command envelopes and archives
-- run-scoped runner artifacts and stage results
+- run-scoped runner artifacts, capability-gate artifacts, and stage results
 
 Completion behavior adds a third specialized subtree under `millrace-agents/arbiter/`
 for canonical root contracts, closure-target state, rubrics, verdicts, and
@@ -445,9 +446,10 @@ A tick follows this broad order:
 9. if nothing is claimable, evaluate completion behavior
 10. return idle if no stage is active
 11. evaluate usage governance again before dispatching a stage
-12. execute at most one stage through the configured runner
-13. normalize the result and apply the router decision
-14. record post-stage usage and persist snapshot, status markers, counters, and events
+12. evaluate compiled execution capability grants and any pending approvals
+13. dispatch permitted runner work through the compiled plane scheduler
+14. normalize the result and apply the router decision
+15. record post-stage usage and persist snapshot, status markers, counters, and events
 
 In code, that is no longer implemented as one monolithic runtime script.
 `RuntimeEngine` remains the stable stateful façade, while internal collaborators
@@ -456,9 +458,10 @@ orchestration block (`runtime/tick_cycle.py`), and the routed post-stage
 mutation seams (`runtime/result_application.py` plus the counter, transition,
 incident, persistence, and closure-target helper modules beneath it).
 
-Millrace is staged and deterministic by construction. It does not run planning
-and execution as concurrent lanes inside one workspace owner. It serializes
-stage execution under one scheduler.
+Millrace is staged and deterministic by construction. Default modes serialize
+stage execution under one scheduler. Learning-enabled modes may run one
+Learning stage concurrently with one permitted foreground Planning or Execution
+stage, while runtime-owned mutation remains single-writer.
 
 ## Activation, Active State, And Status Surfaces
 
@@ -499,7 +502,14 @@ At execution time the runtime builds a `StageRunRequest` from the active
 compiled node plan and the current active work item or closure target. That request
 includes the deployed entrypoint path, required and attached skill paths, work
 item identity and path when applicable, run directory, status and snapshot
-paths, runtime-error context when present, and runner/model/timeout fields.
+paths, runtime-error context when present, runner/model/timeout fields, and the
+compiled execution capability grants for that node.
+
+Before dispatch, Millrace evaluates required execution capability grants. Denied
+or unsupported required grants block before runner invocation. Approval-required
+grants create or reuse runtime approval objects and block until approved.
+Advisory grants can proceed when policy permits them, but they remain labeled
+as advisory in prompt context, artifacts, events, and inspection output.
 
 Entrypoints are plain markdown files under:
 
@@ -535,6 +545,12 @@ adapter. The runtime boundary is intentionally narrow:
 The built-in shipped adapters are the Codex CLI adapter and the Pi RPC adapter,
 and the architecture is set up so additional adapters can be added later without
 rewriting orchestration.
+
+Runner adapters also report contextual capability support. Codex `maximum`
+permission remains intentionally broad, so boundaries that Millrace cannot
+enforce are marked advisory rather than falsely reported as enforced. The Pi
+adapter is similarly conservative unless a grant maps to a runtime-owned or
+adapter-owned boundary.
 
 Stages support explicit model and runner-neutral thinking selection through
 runtime config. `stages.<stage>.model` sets the model, and
@@ -678,9 +694,10 @@ Consequences:
   ownership locks
 
 Control actions such as pause, resume, stop, retry-active, clear-stale-state,
-and reload-config are exposed through supported CLI commands. If a daemon owns
-the workspace, those commands are mailbox-routed. If no daemon owns the
-workspace, the control layer can apply the action directly.
+execution capability approve/deny, and reload-config are exposed through
+supported CLI commands. If a daemon owns the workspace, those commands are
+mailbox-routed. If no daemon owns the workspace, the control layer can apply
+the action directly.
 
 `process_running` is a runtime truth claim, not a durable wish. Runtime close
 clears it, status reports it as true only while an ownership lock is active,

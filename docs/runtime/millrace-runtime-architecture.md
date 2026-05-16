@@ -73,6 +73,8 @@ runtime events.
 - `millrace-agents/state/usage_governance_ledger.jsonl`
 - `millrace-agents/diagnostics/blocked/*.json`
 - `millrace-agents/diagnostics/auto-recovery/*.json`
+- `millrace-agents/approvals/pending/*.json`
+- `millrace-agents/approvals/resolved/*.json`
 - mailbox envelopes/archives and run-scoped runner artifacts
 
 ### Arbiter-owned completion artifacts
@@ -158,9 +160,10 @@ runtime events.
 Per stage execution:
 
 1. Runtime builds `StageRunRequest` from the compiled plan and active work item.
-2. `StageRunnerDispatcher` resolves adapter by runner name precedence.
-3. Adapter executes (`codex_cli` by default, `pi_rpc` in Pi modes) and returns `RunnerRawResult`.
-4. Runtime normalizes into `StageResultEnvelope`, persists the stage result,
+2. Runtime evaluates compiled execution capability grants and approval gates.
+3. `StageRunnerDispatcher` resolves adapter by runner name precedence.
+4. Adapter executes (`codex_cli` by default, `pi_rpc` in Pi modes) and returns `RunnerRawResult`.
+5. Runtime normalizes into `StageResultEnvelope`, persists the stage result,
    upserts the run-trace node, applies the authoritative router decision, and
    records the run-trace edge.
 
@@ -193,14 +196,16 @@ Per daemon scheduler cycle:
    planning-only remediation loop.
 10. Consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
 11. Re-evaluate usage governance before dispatching active stages.
-12. Dispatch eligible lanes according to the compiled plane concurrency policy.
+12. Evaluate execution capability grants and pending approvals before runner
+    invocation.
+13. Dispatch eligible lanes according to the compiled plane concurrency policy.
     Default modes remain serial. Learning-enabled modes may run one Learning
     stage concurrently with one permitted foreground Planning or Execution
     stage. Execution and Planning remain mutually exclusive in shipped
     learning modes.
-13. Worker tasks execute blocking runner adapters from immutable
+14. Worker tasks execute blocking runner adapters from immutable
     `StageRunRequest` inputs and return typed outcomes only.
-14. Before reporting plain no-work idle, inspect stranded queued execution
+15. Before reporting plain no-work idle, inspect stranded queued execution
     tasks whose dependencies are blocked. If a same-lineage blocked predecessor
     is classified as a transient environment/provider failure and cooldown plus
     retry-budget gates pass, requeue it through the audited blocked-task retry
@@ -273,10 +278,12 @@ Compile notes:
 - `millrace_ai.compiler` is a public facade; the implementation lives under
   `src/millrace_ai/compilation/`
 - that compiled plan carries materialized node plans plus compiled entry,
-  transition, recovery, learning-trigger, concurrency-policy, and
-  closure-activation surfaces
+  transition, recovery, learning-trigger, execution-capability,
+  concurrency-policy, and closure-activation surfaces
 - usage-governance config is next-tick runtime config, not a compile-input
   boundary
+- execution-capability config is a compile-input boundary because it changes
+  sealed node grants
 - compile diagnostics persist separately in `compile_diagnostics.json`
 - failed compile attempts keep the last known-good compiled plan intact when one
   exists
@@ -293,6 +300,7 @@ Run directories hold:
 - `runner_prompt.<request_id>.md`
 - `runner_invocation.<request_id>.json`
 - `runner_completion.<request_id>.json`
+- `capability_gate.<request_id>.json` when runtime grant evaluation runs
 - runner stdout/stderr artifacts where present
 - per-request Codex event logs where present
 - stage-authored reports such as `integration_report.md`,

@@ -10,6 +10,7 @@ from .models import (
     KNOWN_STAGE_NAMES,
     AutoRecoverySection,
     ConfigModel,
+    ExecutionCapabilitiesSection,
     RecoverySection,
     RunnersSection,
     RuntimeConfig,
@@ -59,6 +60,11 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "usage_governance.calendar_timezone": ApplyBoundary.NEXT_TICK,
     "usage_governance.runtime_token_rules": ApplyBoundary.NEXT_TICK,
     "usage_governance.subscription_quota_rules": ApplyBoundary.NEXT_TICK,
+    "execution_capabilities.enabled": ApplyBoundary.RECOMPILE,
+    "execution_capabilities.default_unknown_capability": ApplyBoundary.RECOMPILE,
+    "execution_capabilities.allow_advisory_grants": ApplyBoundary.RECOMPILE,
+    "execution_capabilities.fail_required_advisory": ApplyBoundary.RECOMPILE,
+    "execution_capabilities.defaults": ApplyBoundary.RECOMPILE,
 }
 
 _STAGE_FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
@@ -76,6 +82,7 @@ _SECTIONS: tuple[tuple[str, type[ConfigModel]], ...] = (
     ("auto_recovery", AutoRecoverySection),
     ("watchers", WatchersSection),
     ("usage_governance", UsageGovernanceSection),
+    ("execution_capabilities", ExecutionCapabilitiesSection),
 )
 
 _MISSING = object()
