@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "kind": "work_item_document_adapter",
+  "adapter_id": "blueprint_draft_markdown_v1",
+  "schema_id": "blueprint_draft_document_v1",
+  "supported_file_extensions": [".json"],
+  "family_ids": ["blueprint_draft"],
+  "can_parse": true,
+  "can_render": true,
+  "can_summarize": true,
+  "supports_dependencies": true,
+  "supports_lineage": true
+}

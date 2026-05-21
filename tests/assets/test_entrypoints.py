@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.assets import discover_artifact_contract_definitions
 from millrace_ai.assets.entrypoints import ParsedMarkdownAsset
 from millrace_ai.contracts import (
     ExecutionStageName,
@@ -45,6 +46,9 @@ HYBRID_SKILL_SECTION_TITLES = [
     "Progressive Disclosure",
     "Verification Pattern",
 ]
+ARTIFACT_FILENAME_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?:run_dir/)?(?P<filename>[A-Za-z0-9_./-]+\.(?:json|md|txt))(?![A-Za-z0-9_./-])"
+)
 SKILLS_DIR = REPO_ROOT / "src" / "millrace_ai" / "assets" / "skills"
 CREATOR_PACKAGE_PATH = SKILLS_DIR / "millrace-skill-creator"
 CREATOR_SKILL_PATH = CREATOR_PACKAGE_PATH / "SKILL.md"
@@ -136,12 +140,24 @@ def _extract_h2_headings(body: str) -> list[str]:
     ]
 
 
-def _assert_stage_core_manifest_contract(asset: ParsedMarkdownAsset, *, stage: str) -> None:
+def _mentioned_artifact_filenames(body: str) -> set[str]:
+    return {
+        Path(match.group("filename")).name
+        for match in ARTIFACT_FILENAME_TOKEN.finditer(body)
+    }
+
+
+def _assert_stage_core_manifest_contract(
+    asset: ParsedMarkdownAsset,
+    *,
+    stage: str,
+    skill_id: str | None = None,
+) -> None:
     manifest = asset.manifest
     forbidden_claims = manifest["forbidden_claims"]
 
     assert manifest["asset_type"] == "skill"
-    assert manifest["asset_id"] == f"{stage}-core"
+    assert manifest["asset_id"] == (skill_id or f"{stage}-core")
     assert manifest["advisory_only"] is True
     assert manifest["capability_type"] == "stage_core"
     assert manifest["recommended_for_stages"] == [stage]
@@ -551,6 +567,23 @@ def _expected_stage_result_sets() -> dict[str, set[str]]:
             LearningTerminalResult.LIBRARIAN_NOOP.value,
             LearningTerminalResult.BLOCKED.value,
         },
+        "manager_blueprint": {
+            "MANAGER_BLUEPRINT_COMPLETE",
+            PlanningTerminalResult.BLOCKED.value,
+        },
+        "contractor_blueprint": {
+            "BLUEPRINT_CANDIDATE_READY",
+            PlanningTerminalResult.BLOCKED.value,
+        },
+        "evaluator_blueprint": {
+            "BLUEPRINT_APPROVED",
+            "BLUEPRINT_REJECTED",
+            PlanningTerminalResult.BLOCKED.value,
+        },
+        "mechanic_blueprint": {
+            "MECHANIC_BLUEPRINT_COMPLETE",
+            PlanningTerminalResult.BLOCKED.value,
+        },
     }
 
 
@@ -574,6 +607,10 @@ def _expected_stage_core_skill_ids() -> dict[str, str]:
         LearningStageName.PROFESSOR.value: "professor-core",
         LearningStageName.CURATOR.value: "curator-core",
         LearningStageName.LIBRARIAN.value: "librarian-core",
+        "manager_blueprint": "manager-blueprint-core",
+        "contractor_blueprint": "contractor-blueprint-core",
+        "evaluator_blueprint": "evaluator-blueprint-core",
+        "mechanic_blueprint": "mechanic-blueprint-core",
     }
 
 
@@ -607,6 +644,26 @@ def _expected_stage_core_skill_paths() -> dict[str, Path]:
         LearningStageName.PROFESSOR.value: SKILLS_DIR / "stage" / "learning" / "professor-core" / "SKILL.md",
         LearningStageName.CURATOR.value: SKILLS_DIR / "stage" / "learning" / "curator-core" / "SKILL.md",
         LearningStageName.LIBRARIAN.value: SKILLS_DIR / "stage" / "learning" / "librarian-core" / "SKILL.md",
+        "manager_blueprint": SKILLS_DIR
+        / "stage"
+        / "planning"
+        / "manager-blueprint-core"
+        / "SKILL.md",
+        "contractor_blueprint": SKILLS_DIR
+        / "stage"
+        / "planning"
+        / "contractor-blueprint-core"
+        / "SKILL.md",
+        "evaluator_blueprint": SKILLS_DIR
+        / "stage"
+        / "planning"
+        / "evaluator-blueprint-core"
+        / "SKILL.md",
+        "mechanic_blueprint": SKILLS_DIR
+        / "stage"
+        / "planning"
+        / "mechanic-blueprint-core"
+        / "SKILL.md",
     }
 
 
@@ -664,6 +721,7 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "scope",
             "pass-through",
             "fan-out",
+            "disposition",
         ),
         PlanningStageName.MANAGER.value: (
             "slice",
@@ -705,6 +763,26 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
             "remote skills",
             "installed",
             "up to eight",
+        ),
+        "manager_blueprint": (
+            "manifest",
+            "draft",
+            "strict sequence",
+        ),
+        "contractor_blueprint": (
+            "blueprint packet",
+            "single draft",
+            "critique",
+        ),
+        "evaluator_blueprint": (
+            "evaluation",
+            "critique",
+            "generated task",
+        ),
+        "mechanic_blueprint": (
+            "blueprint",
+            "repair",
+            "evidence",
         ),
     }
 
@@ -913,11 +991,12 @@ def test_runtime_skills_index_stub_has_minimal_shape() -> None:
 
 def test_stage_core_skill_docs_use_hybrid_section_contract_and_shipped_semantics() -> None:
     stage_to_path = _expected_stage_core_skill_paths()
+    stage_to_skill_id = _expected_stage_core_skill_ids()
     stage_to_body: dict[str, str] = {}
 
     for stage, path in stage_to_path.items():
         asset = parse_markdown_asset(path)
-        _assert_stage_core_manifest_contract(asset, stage=stage)
+        _assert_stage_core_manifest_contract(asset, stage=stage, skill_id=stage_to_skill_id[stage])
         stage_to_body[stage] = asset.body
 
     expected_body_keywords = _expected_stage_core_body_keywords()
@@ -1027,10 +1106,21 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "millrace-agents/runs/latest/builder_summary.md" in stage_to_body["builder"]
     assert "millrace-agents/historylog.md" in stage_to_body["builder"]
     assert "millrace-agents/specs/queue/<SPEC_ID>.md" in stage_to_body["planner"]
+    assert "planner_disposition.json" in stage_to_body["planner"]
     assert "millrace-agents/incidents/incoming/<INCIDENT_ID>.md" in stage_to_body["consultant"]
     assert "millrace-agents/incidents/active/<INCIDENT_ID>.md" in stage_to_body["auditor"]
     assert "millrace-agents/arbiter/contracts/root-specs/<ROOT_SPEC_ID>.md" in stage_to_body["arbiter"]
     assert "millrace-agents/arbiter/verdicts/<ROOT_SPEC_ID>.json" in stage_to_body["arbiter"]
+    assert "blueprint_manifest.json" in stage_to_body["manager_blueprint"]
+    assert "blueprint_drafts.json" in stage_to_body["manager_blueprint"]
+    assert "active_work_item_path" in stage_to_body["contractor_blueprint"]
+    assert "blueprint_packet.json" in stage_to_body["contractor_blueprint"]
+    assert "blueprint.md" in stage_to_body["contractor_blueprint"]
+    assert "blueprint_evaluation.json" in stage_to_body["evaluator_blueprint"]
+    assert "blueprint_critique.json" in stage_to_body["evaluator_blueprint"]
+    assert "generated_task.json" in stage_to_body["evaluator_blueprint"]
+    assert "mechanic_report.md" in stage_to_body["mechanic_blueprint"]
+    assert "repaired blueprint packet" in stage_to_body["mechanic_blueprint"].lower()
 
     shipped_skill_ids = _load_shipped_skill_asset_ids()
     assert "skills-readme" in shipped_skill_ids
@@ -1145,6 +1235,122 @@ def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
     assert "LIBRARIAN_NOOP" in librarian
 
 
+def test_blueprint_entrypoints_and_core_skills_back_artifact_contracts() -> None:
+    planning_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning"
+    skills_dir = SKILLS_DIR / "stage" / "planning"
+
+    manager = (planning_dir / "manager_blueprint.md").read_text(encoding="utf-8")
+    contractor = (planning_dir / "contractor_blueprint.md").read_text(encoding="utf-8")
+    evaluator = (planning_dir / "evaluator_blueprint.md").read_text(encoding="utf-8")
+    mechanic = (planning_dir / "mechanic_blueprint.md").read_text(encoding="utf-8")
+
+    assert "blueprint_manifest.json" in manager
+    assert "blueprint_drafts.json" in manager
+    assert "BlueprintManifestDocument" in manager
+    assert "BlueprintDraftDocument" in manager
+
+    assert "blueprint_packet.json" in contractor
+    assert "blueprint.md" in contractor
+    assert "BlueprintPacketDocument" in contractor
+    assert "critique packet" in contractor.lower()
+
+    assert "blueprint_evaluation.json" in evaluator
+    assert "blueprint_critique.json" in evaluator
+    assert "generated_task.json" in evaluator
+    assert "BlueprintEvaluationDocument" in evaluator
+    assert "BlueprintCritiqueDocument" in evaluator
+
+    assert "mechanic_report.md" in mechanic
+    assert "repaired blueprint packet" in mechanic.lower()
+    assert "MECHANIC_BLUEPRINT_COMPLETE" in mechanic
+    assert "inert unless a declared runtime effect consumes them" in mechanic.lower()
+    assert "`resume_stage: manager_blueprint`" in mechanic
+    assert "clean manager blueprint rerun" in mechanic.lower()
+    assert "emit `### blocked`" in mechanic.lower()
+    assert "must not write corrected `blueprint_manifest.json` or `blueprint_drafts.json`" in mechanic
+    assert "request a clean Manager Blueprint rerun" in mechanic
+    assert (
+        "repaired packet/evaluation artifacts are only for contractor/evaluator failure modes"
+        in mechanic.lower()
+    )
+
+    manager_skill = (skills_dir / "manager-blueprint-core" / "SKILL.md").read_text(encoding="utf-8")
+    contractor_skill = (skills_dir / "contractor-blueprint-core" / "SKILL.md").read_text(encoding="utf-8")
+    evaluator_skill = (skills_dir / "evaluator-blueprint-core" / "SKILL.md").read_text(encoding="utf-8")
+    mechanic_skill = (skills_dir / "mechanic-blueprint-core" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "strict sequence" in manager_skill.lower()
+    assert "blueprint_manifest.json" in manager_skill
+    assert "single draft" in contractor_skill.lower()
+    assert "blueprint_packet.json" in contractor_skill
+    assert "generated task" in evaluator_skill.lower()
+    assert "blueprint_evaluation.json" in evaluator_skill
+    assert "repaired blueprint" in mechanic_skill.lower()
+    assert "mechanic_report.md" in mechanic_skill
+    assert "inert unless a declared runtime effect consumes them" in mechanic_skill.lower()
+    assert "`resume_stage: manager_blueprint`" in mechanic_skill
+    assert "clean manager blueprint rerun" in mechanic_skill.lower()
+    assert "emit `### blocked`" in mechanic_skill.lower()
+    assert "must not write corrected `blueprint_manifest.json` or `blueprint_drafts.json`" in mechanic_skill
+    assert "request a clean Manager Blueprint rerun" in mechanic_skill
+    assert (
+        "repaired packet/evaluation artifacts are only for contractor/evaluator failure modes"
+        in mechanic_skill.lower()
+    )
+
+
+def test_evaluator_blueprint_assets_match_artifact_contract_filenames() -> None:
+    planning_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning"
+    skill_path = (
+        SKILLS_DIR
+        / "stage"
+        / "planning"
+        / "evaluator-blueprint-core"
+        / "SKILL.md"
+    )
+    contracts_by_id = {
+        contract.artifact_id: contract
+        for contract in discover_artifact_contract_definitions()
+    }
+    artifact_ids_by_outcome = {
+        "BLUEPRINT_APPROVED": ("blueprint_evaluation", "generated_task"),
+        "BLUEPRINT_REJECTED": ("blueprint_evaluation", "blueprint_critique"),
+    }
+    required_report_artifact_ids = ("blueprint_evaluation_report",)
+    required_artifact_ids = tuple(
+        dict.fromkeys(
+            artifact_id
+            for artifact_ids in artifact_ids_by_outcome.values()
+            for artifact_id in (*artifact_ids, *required_report_artifact_ids)
+        )
+    )
+    expected_filenames = {
+        contracts_by_id[artifact_id].canonical_filename
+        for artifact_id in required_artifact_ids
+    }
+    legacy_filenames = {
+        accepted_filename
+        for artifact_id in required_artifact_ids
+        for accepted_filename in contracts_by_id[artifact_id].accepted_filenames
+    }
+    allowed_non_output_filenames = {
+        "historylog.md",
+        "skills_index.md",
+    }
+    assets = {
+        "evaluator_blueprint.md": (
+            planning_dir / "evaluator_blueprint.md"
+        ).read_text(encoding="utf-8"),
+        "evaluator-blueprint-core/SKILL.md": skill_path.read_text(encoding="utf-8"),
+    }
+
+    for asset_name, body in assets.items():
+        mentioned_filenames = _mentioned_artifact_filenames(body)
+        for legacy_filename in legacy_filenames:
+            assert legacy_filename not in body, asset_name
+        assert mentioned_filenames - allowed_non_output_filenames == expected_filenames, asset_name
+
+
 def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> None:
     manager_body = (
         REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "manager.md"
@@ -1208,12 +1414,19 @@ def test_planner_and_manager_assets_require_root_lineage_preservation() -> None:
     assert "Root-Idea-ID" in planner_body
     assert "Root-Spec-ID" in planner_body
     assert "preserve or repair the active root lineage ids" in planner_body.lower()
+    assert "planner_disposition.json" in planner_body
+    assert "active_source_ready_for_manager" in planner_body
+    assert "emitted_child_specs" in planner_body
+    assert "blocked" in planner_body
 
     assert "Root-Idea-ID" in manager_body
     assert "Root-Spec-ID" in manager_body
     assert "copy the active spec's root lineage ids onto every emitted task" in manager_body.lower()
 
     assert "preserve root lineage ids" in planner_skill.lower()
+    assert "planner_disposition.json" in planner_skill
+    assert "active_source_ready_for_manager" in planner_skill
+    assert "emitted_child_specs" in planner_skill
     assert "preserve root lineage ids on every emitted task" in manager_skill.lower()
 
 

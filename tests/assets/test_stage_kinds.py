@@ -50,6 +50,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         },
         "allowed_input_artifacts": [],
         "declared_output_artifacts": ["stage_result", "report"],
+        "allowed_work_item_families": ["task"],
         "idempotence_policy": "retry_safe_with_key",
         "allowed_overrides": [
             "entrypoint_path",
@@ -155,6 +156,7 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
         "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
     }
     assert builder.can_start_tasks is True
+    assert builder.allowed_work_item_families == ("task",)
     assert builder.idempotence_policy is StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
 
     assert integrator.plane is Plane.EXECUTION
@@ -167,9 +169,22 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
         "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
     }
     assert integrator.can_start_tasks is False
+    assert integrator.allowed_work_item_families == ("task",)
     assert integrator.idempotence_policy is StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
 
+    recon = load_builtin_stage_kind_definition("recon")
+    planner = load_builtin_stage_kind_definition("planner")
+    manager = load_builtin_stage_kind_definition("manager")
+    mechanic = load_builtin_stage_kind_definition("mechanic")
+    auditor = load_builtin_stage_kind_definition("auditor")
+    assert recon.allowed_work_item_families == ("probe",)
+    assert planner.allowed_work_item_families == ("spec", "incident")
+    assert manager.allowed_work_item_families == ("spec", "incident")
+    assert mechanic.allowed_work_item_families == ("spec", "incident")
+    assert auditor.allowed_work_item_families == ("incident",)
+
     assert troubleshooter.recovery_role is RecoveryRole.LOCAL_REPAIR
+    assert troubleshooter.allowed_work_item_families == ("task",)
     assert troubleshooter.running_status_marker == "TROUBLESHOOTER_RUNNING"
     assert troubleshooter.allowed_result_classes_by_outcome["BLOCKED"] == (
         ResultClass.BLOCKED,
@@ -178,6 +193,7 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
 
     assert arbiter.plane is Plane.PLANNING
     assert arbiter.closure_role is True
+    assert arbiter.allowed_work_item_families == ()
     assert arbiter.failure_outcomes == ("REMEDIATION_NEEDED", "BLOCKED")
     assert arbiter.allowed_result_classes_by_outcome["REMEDIATION_NEEDED"] == (
         ResultClass.FOLLOWUP_NEEDED,
@@ -186,6 +202,7 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
 
     assert analyst.plane is Plane.LEARNING
     assert analyst.can_start_learning_requests is True
+    assert analyst.allowed_work_item_families == ("learning_request",)
     assert analyst.required_skill_paths == ("skills/stage/learning/analyst-core/SKILL.md",)
     assert analyst.allowed_result_classes_by_outcome["ANALYST_NOOP"] == (ResultClass.NO_OP,)
     assert "ANALYST_NOOP" not in analyst.success_outcomes
@@ -197,6 +214,9 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert professor.allowed_result_classes_by_outcome["PROFESSOR_NOOP"] == (ResultClass.NO_OP,)
     assert curator.allowed_result_classes_by_outcome["CURATOR_NOOP"] == (ResultClass.NO_OP,)
     assert librarian.plane is Plane.LEARNING
+    assert professor.allowed_work_item_families == ("learning_request",)
+    assert curator.allowed_work_item_families == ("learning_request",)
+    assert librarian.allowed_work_item_families == ("learning_request",)
     assert librarian.default_entrypoint_path == "entrypoints/learning/librarian.md"
     assert librarian.required_skill_paths == ("skills/stage/learning/librarian-core/SKILL.md",)
     assert librarian.allowed_result_classes_by_outcome == {
@@ -205,6 +225,80 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
         "BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
     }
     assert librarian.can_start_learning_requests is True
+
+
+def test_blueprint_stage_kind_assets_load_as_discovered_extensions() -> None:
+    discovered = {stage_kind.stage_kind_id: stage_kind for stage_kind in discover_stage_kind_definitions()}
+
+    for stage_kind_id in (
+        "manager_blueprint",
+        "contractor_blueprint",
+        "evaluator_blueprint",
+        "mechanic_blueprint",
+    ):
+        assert stage_kind_id in discovered
+        assert load_stage_kind_definition(stage_kind_id) == discovered[stage_kind_id]
+
+    manager = discovered["manager_blueprint"]
+    contractor = discovered["contractor_blueprint"]
+    evaluator = discovered["evaluator_blueprint"]
+    mechanic = discovered["mechanic_blueprint"]
+
+    assert manager.plane is Plane.PLANNING
+    assert manager.default_entrypoint_path == "entrypoints/planning/manager_blueprint.md"
+    assert manager.required_skill_paths == (
+        "skills/stage/planning/manager-blueprint-core/SKILL.md",
+    )
+    assert manager.legal_outcomes == ("MANAGER_BLUEPRINT_COMPLETE", "BLOCKED")
+    assert manager.success_outcomes == ("MANAGER_BLUEPRINT_COMPLETE",)
+    assert manager.allowed_work_item_families == ("spec", "incident")
+    assert manager.declared_output_artifacts == (
+        "stage_result",
+        "blueprint_manifest",
+        "blueprint_drafts",
+    )
+
+    assert contractor.default_entrypoint_path == "entrypoints/planning/contractor_blueprint.md"
+    assert contractor.required_skill_paths == (
+        "skills/stage/planning/contractor-blueprint-core/SKILL.md",
+    )
+    assert contractor.legal_outcomes == ("BLUEPRINT_CANDIDATE_READY", "BLOCKED")
+    assert contractor.allowed_work_item_families == ("blueprint_draft",)
+    assert contractor.declared_output_artifacts == (
+        "stage_result",
+        "blueprint_packet",
+        "blueprint_markdown",
+    )
+
+    assert evaluator.default_entrypoint_path == "entrypoints/planning/evaluator_blueprint.md"
+    assert evaluator.required_skill_paths == (
+        "skills/stage/planning/evaluator-blueprint-core/SKILL.md",
+    )
+    assert evaluator.legal_outcomes == ("BLUEPRINT_APPROVED", "BLUEPRINT_REJECTED", "BLOCKED")
+    assert evaluator.success_outcomes == ("BLUEPRINT_APPROVED",)
+    assert evaluator.allowed_result_classes_by_outcome["BLUEPRINT_REJECTED"] == (
+        ResultClass.FOLLOWUP_NEEDED,
+    )
+    assert evaluator.allowed_work_item_families == ("blueprint_draft",)
+    assert evaluator.declared_output_artifacts == (
+        "stage_result",
+        "blueprint_evaluation",
+        "blueprint_critique",
+        "generated_task",
+    )
+
+    assert mechanic.default_entrypoint_path == "entrypoints/planning/mechanic_blueprint.md"
+    assert mechanic.required_skill_paths == (
+        "skills/stage/planning/mechanic-blueprint-core/SKILL.md",
+    )
+    assert mechanic.legal_outcomes == ("MECHANIC_BLUEPRINT_COMPLETE", "BLOCKED")
+    assert mechanic.allowed_work_item_families == ("spec", "incident", "blueprint_draft")
+    assert mechanic.recovery_role is RecoveryRole.LOCAL_REPAIR
+    assert mechanic.declared_output_artifacts == (
+        "stage_result",
+        "mechanic_report",
+        "repaired_blueprint_artifact",
+    )
 
 
 def test_stage_kind_asset_errors_use_project_error_hierarchy() -> None:

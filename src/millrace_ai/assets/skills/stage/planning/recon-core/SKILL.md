@@ -69,7 +69,7 @@ Classify ambiguous probe intake into the smallest safe next runtime action, back
 - Treating Recon like Planner and writing broad design without classifying the request.
 - Treating Recon like Builder and making changes before the runtime has routed work.
 - Emitting generic verification like "run tests" when a focused command can be identified.
-- Emitting `RECON_TO_EXECUTION` with missing required fields in `generated_task.md`.
+- Emitting `RECON_TO_EXECUTION` with missing required fields in `generated_task.json`.
 - Losing probe lineage in generated work, which makes downstream auditability poor.
 - Listing paths without saying why each path matters.
 

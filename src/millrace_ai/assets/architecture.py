@@ -76,6 +76,11 @@ def load_stage_kind_definition(
     return stage_kind
 
 
+def stage_kind_asset_relative_path(stage_kind_id: str, *, assets_root: Path | None = None) -> Path:
+    root = _resolve_assets_root(assets_root)
+    return _resolve_stage_kind_path(stage_kind_id, root).relative_to(root)
+
+
 def discover_stage_kind_definitions(
     *,
     assets_root: Path | None = None,
@@ -111,9 +116,21 @@ def _discover_stage_kind_paths(assets_root: Path) -> tuple[Path, ...]:
 
 def _resolve_stage_kind_path(stage_kind_id: str, assets_root: Path) -> Path:
     relative_path = BUILTIN_STAGE_KIND_PATHS.get(stage_kind_id)
-    if relative_path is None:
+    if relative_path is not None:
+        return assets_root / relative_path
+
+    matches: list[Path] = []
+    for path in _discover_stage_kind_paths(assets_root):
+        payload = _load_json_asset(path, asset_kind="stage kind")
+        if payload.get("stage_kind_id") == stage_kind_id:
+            matches.append(path)
+
+    if len(matches) > 1:
+        joined = ", ".join(str(path) for path in matches)
+        raise ArchitectureAssetError(f"Duplicate stage kind id {stage_kind_id}: {joined}")
+    if not matches:
         raise ArchitectureAssetError(f"Unknown built-in stage kind id: {stage_kind_id}")
-    return assets_root / relative_path
+    return matches[0]
 
 
 def _load_json_asset(path: Path, *, asset_kind: str) -> dict[str, Any]:
@@ -147,7 +164,9 @@ def _load_stage_kind_definition_at_path(path: Path) -> RegisteredStageKindDefini
 def _validate_builtin_stage_kind_matches_metadata(
     stage_kind: RegisteredStageKindDefinition,
 ) -> None:
-    metadata = STAGE_METADATA_BY_VALUE[stage_kind.stage_kind_id]
+    metadata = STAGE_METADATA_BY_VALUE.get(stage_kind.stage_kind_id)
+    if metadata is None:
+        return
     if stage_kind.plane is not metadata.plane:
         raise ArchitectureAssetError(
             f"Stage kind {stage_kind.stage_kind_id} plane does not match stage metadata"
@@ -178,4 +197,5 @@ __all__ = [
     "load_stage_kind_definition",
     "load_builtin_stage_kind_definition",
     "load_builtin_stage_kind_definitions",
+    "stage_kind_asset_relative_path",
 ]

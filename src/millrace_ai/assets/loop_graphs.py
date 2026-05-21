@@ -29,6 +29,7 @@ BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.with_integrator": Path("graphs/execution/with_integrator.json"),
     "learning.standard": Path("graphs/learning/standard.json"),
     "planning.standard": Path("graphs/planning/standard.json"),
+    "planning.blueprint": Path("graphs/planning/blueprint.json"),
 }
 
 SHIPPED_GRAPH_LOOP_IDS: tuple[str, ...] = tuple(BUILTIN_GRAPH_LOOP_PATHS)

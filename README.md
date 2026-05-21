@@ -123,6 +123,12 @@ preparation. Generic success-triggered learning is Analyst-first, Planner
 completion can trigger Librarian to install relevant remote optional skills
 into the workspace, and reviewed no-change learning can close as no-op instead
 of being treated as blocked.
+Blueprint Planning is available through opt-in `blueprint_codex` and
+`blueprint_learning_codex` modes. Both keep implementation inside the standard
+Execution loop, but route Planner output through Manager Blueprint, Contractor
+Blueprint, and Evaluator Blueprint before approved generated tasks enter
+Execution. The learning-enabled variant keeps the normal post-Planner Librarian
+trigger.
 
 For operational details, see `docs/runtime/README.md`,
 `docs/runtime/millrace-cli-reference.md`, and
@@ -227,7 +233,7 @@ export WORKSPACE=/absolute/path/to/your/workspace
 millrace init --workspace "$WORKSPACE"
 millrace compile validate --workspace "$WORKSPACE"
 millrace compile graph --workspace "$WORKSPACE"
-millrace run once --workspace "$WORKSPACE"
+millrace run daemon --max-ticks 1 --workspace "$WORKSPACE"
 millrace status --workspace "$WORKSPACE"
 ```
 
@@ -292,22 +298,30 @@ Canonical shipped modes today:
 - `default_codex`
 - `default_pi`
 - `default_codex_integrated`
+- `blueprint_codex`
 
 Learning-enabled shipped modes:
 
 - `learning_codex`
 - `learning_pi`
 - `learning_codex_integrated`
+- `blueprint_learning_codex`
 
-The learning modes use the same execution and planning topology as the default
-modes, add `learning.standard`, and freeze learning trigger rules into the
-compiled plan.
+The standard learning modes use the same execution and planning topology as
+the default modes, while `blueprint_learning_codex` uses the Blueprint
+Planning topology. All learning-enabled modes add `learning.standard` and
+freeze learning trigger rules into the compiled plan.
 
 The integrated Codex modes are opt-in quality loops. They keep the same
 Planning and optional Learning behavior as their non-integrated counterparts,
 but select `execution.with_integrator` so every successful Builder result runs
 through Integrator before Checker. Existing workspaces receive those managed
 assets with `millrace upgrade --apply` after updating the installed package.
+
+The Blueprint Codex modes are opt-in Planning loops. They select
+`planning.blueprint`, use standard Execution, and validate implementation
+plans before promoting generated tasks. `blueprint_codex` omits Learning;
+`blueprint_learning_codex` adds `learning.standard`.
 
 Compatibility alias:
 
@@ -336,6 +350,7 @@ Start with `docs/millrace-technical-overview.md`.
 
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
 - `docs/runtime/millrace-modes-and-loops.md`
+- `docs/runtime/millrace-blueprint-planning.md`
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
 - `docs/runtime/millrace-runner-architecture.md`
 

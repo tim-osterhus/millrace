@@ -13,6 +13,7 @@ from millrace_ai.contracts import (
     StageName,
     WorkItemKind,
 )
+from millrace_ai.contracts.work_refs import plane_for_work_item_family_id
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueClaim, QueueStore
 from millrace_ai.state_store import save_snapshot
@@ -30,6 +31,7 @@ from .graph_authority import (
     learning_stage_activation_for_graph,
     work_item_activation_for_graph,
 )
+from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
 
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
@@ -39,7 +41,10 @@ def claim_next_work_item(engine: RuntimeEngine) -> None:
         _claim_next_open_closure_lineage_work(engine, queue, root_spec_id=open_target.root_spec_id)
         return
 
-    claim = queue.claim_next_planning_item()
+    claim = queue.claim_next_planning_item(
+        queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
+        work_item_families=_work_item_families_for_engine(engine),
+    )
     if claim is not None:
         activate_claim(engine, claim)
         return
@@ -66,7 +71,10 @@ def claim_next_work_item_for_plane(engine: RuntimeEngine, plane: Plane) -> Queue
             plane=plane,
         )
     if plane is Plane.PLANNING:
-        return queue.claim_next_planning_item()
+        return queue.claim_next_planning_item(
+            queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
+            work_item_families=_work_item_families_for_engine(engine),
+        )
     if plane is Plane.EXECUTION:
         return queue.claim_next_execution_task()
     return queue.claim_next_learning_request()
@@ -74,7 +82,7 @@ def claim_next_work_item_for_plane(engine: RuntimeEngine, plane: Plane) -> Queue
 
 def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
     try:
-        activate_claim_for_plane(engine, claim, _plane_for_claim(claim))
+        activate_claim_for_plane(engine, claim, _plane_for_claim(engine, claim))
     except RuntimeError:
         return
 
@@ -98,7 +106,10 @@ def activate_claim_for_plane(
     active_run = active_run_from_claim(
         activation=activation,
         claim=claim,
+        lane_id=lane_id_for_plane(engine.compiled_plan, activation.plane),
         run_id=engine._new_run_id(),
+        compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+        compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(engine.compiled_plan),
         now=engine._now(),
     )
     engine.snapshot = snapshot_with_active_run(
@@ -122,17 +133,27 @@ def entry_stage_for_kind(work_item_kind: WorkItemKind) -> StageName:
         from millrace_ai.contracts import LearningStageName
 
         return LearningStageName.ANALYST
+    if work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
+        return PlanningStageName.MANAGER
     return PlanningStageName.AUDITOR
+
+
+def entry_stage_for_family_id(family_id: str) -> StageName:
+    legacy_plane = plane_for_work_item_family_id(family_id)
+    if legacy_plane is not None:
+        legacy_kind = WorkItemKind(family_id)
+        return entry_stage_for_kind(legacy_kind)
+    raise ValueError(f"compiled activation is required for custom family `{family_id}`")
 
 
 def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActivationDecision:
     assert engine.compiled_plan is not None
-    if claim.work_item_kind is not WorkItemKind.LEARNING_REQUEST:
-        return work_item_activation_for_graph(engine.compiled_plan, claim.work_item_kind)
+    if claim.family_id != WorkItemKind.LEARNING_REQUEST.value:
+        return work_item_activation_for_graph(engine.compiled_plan, claim.family_id)
 
     document = read_work_document_as(claim.path, model=LearningRequestDocument)
     if document.target_stage is None:
-        return work_item_activation_for_graph(engine.compiled_plan, claim.work_item_kind)
+        return work_item_activation_for_graph(engine.compiled_plan, claim.family_id)
     return learning_stage_activation_for_graph(engine.compiled_plan, document.target_stage)
 
 
@@ -163,7 +184,11 @@ def _claim_next_open_closure_lineage_work(
             return claim
 
     if plane in {None, Plane.PLANNING}:
-        claim = queue.claim_next_planning_item(root_spec_id=root_spec_id)
+        claim = queue.claim_next_planning_item(
+            root_spec_id=root_spec_id,
+            queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
+            work_item_families=_work_item_families_for_engine(engine),
+        )
         if claim is not None:
             if activate:
                 activate_claim(engine, claim)
@@ -171,12 +196,32 @@ def _claim_next_open_closure_lineage_work(
     return None
 
 
-def _plane_for_claim(claim: QueueClaim) -> Plane:
-    if claim.work_item_kind is WorkItemKind.TASK:
-        return Plane.EXECUTION
-    if claim.work_item_kind is WorkItemKind.LEARNING_REQUEST:
-        return Plane.LEARNING
-    return Plane.PLANNING
+def _plane_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> Plane:
+    if claim.plane is not None:
+        return claim.plane
+    if engine.compiled_plan is not None:
+        family = engine.compiled_plan.work_item_families_by_id.get(claim.family_id)
+        if family is not None:
+            return family.plane
+    plane = plane_for_work_item_family_id(claim.family_id)
+    if plane is None:
+        raise ValueError(f"cannot infer plane for work item family {claim.family_id}")
+    return plane
+
+
+def _claim_policy_for_plane(engine: RuntimeEngine, plane: Plane):
+    if engine.compiled_plan is None:
+        return None
+    claim_policy = engine.compiled_plan.queue_claim_policies_by_plane.get(plane)
+    if claim_policy is None:
+        raise ValueError(f"compiled plan missing {plane.value} queue claim policy")
+    return claim_policy
+
+
+def _work_item_families_for_engine(engine: RuntimeEngine):
+    if engine.compiled_plan is None:
+        return None
+    return tuple(engine.compiled_plan.work_item_families_by_id.values())
 
 
 def _backpressure_claim(
@@ -223,5 +268,6 @@ __all__ = [
     "activate_claim_for_plane",
     "claim_next_work_item",
     "claim_next_work_item_for_plane",
+    "entry_stage_for_family_id",
     "entry_stage_for_kind",
 ]

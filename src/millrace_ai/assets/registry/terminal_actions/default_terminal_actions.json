@@ -1,0 +1,81 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "complete_work_item",
+      "terminal_class": "success",
+      "lifecycle_mutation_plan_id": "complete_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "no_op_complete_work_item",
+      "terminal_class": "no_op",
+      "lifecycle_mutation_plan_id": "complete_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "block_work_item",
+      "terminal_class": "blocked",
+      "lifecycle_mutation_plan_id": "block_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "requeue_work_item",
+      "terminal_class": "followup_needed",
+      "lifecycle_mutation_plan_id": "requeue_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "complete_source_after_effect",
+      "terminal_class": "success",
+      "lifecycle_mutation_plan_id": "complete_source_after_effect"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "block_source_after_effect",
+      "terminal_class": "blocked",
+      "lifecycle_mutation_plan_id": "block_source_after_effect"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "closure_pass",
+      "terminal_class": "success",
+      "lifecycle_mutation_plan_id": "complete_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "closure_gap",
+      "terminal_class": "followup_needed",
+      "lifecycle_mutation_plan_id": "complete_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "closure_blocked",
+      "terminal_class": "blocked",
+      "lifecycle_mutation_plan_id": "block_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "escalate_to_planning",
+      "terminal_class": "escalate_planning",
+      "lifecycle_mutation_plan_id": "block_work_item"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "idle_plane",
+      "terminal_class": "no_op",
+      "non_mutating": true
+    }
+  ]
+}

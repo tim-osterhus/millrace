@@ -7,10 +7,11 @@ default runtime configuration:
 - planning loop: `planning.standard`
 - execution loop: `execution.standard`
 
-Learning-enabled modes (`learning_codex`, `learning_pi`, and
-`learning_codex_integrated`) use the same planning topology and add
+Learning-enabled modes (`learning_codex`, `learning_pi`,
+`learning_codex_integrated`, and `blueprint_learning_codex`) add
 `learning.standard`; this default-mode chart omits that optional claim path
-except where noted.
+except where noted. `blueprint_learning_codex` uses `planning.blueprint`
+instead of the standard Planning topology.
 
 The README embeds a simplified version. This file keeps the fuller chart that
 tracks startup, scheduling, result application, recovery routing, and Arbiter
@@ -196,9 +197,9 @@ flowchart LR
   reconcile.
 - Refresh queue depths again before claim or activation.
 - Re-check usage governance immediately before stage dispatch.
-- Daemon mode uses a compiled plane scheduler. Default modes remain serial.
-  Learning-enabled modes may run one Learning stage concurrently with one
-  permitted foreground Planning or Execution stage.
+- Daemon mode uses a compiled lane scheduler. Default modes remain one active
+  lane per plane, and shipped policies keep Planning and Execution mutually
+  exclusive.
 - Usage governance can pause before claim/dispatch and records stage-result
   token usage after routing.
 - Active stages can bypass fresh claim and go straight to request build.

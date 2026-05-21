@@ -1,0 +1,40 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_rule",
+      "rule_id": "planner_disposition_on_complete",
+      "effect_operation_id": "planner_disposition",
+      "source_node_id": "planner",
+      "on_outcomes": ["PLANNER_COMPLETE"],
+      "handler_id": "planner_disposition",
+      "required_run_artifacts": ["planner_disposition"],
+      "destination_family_id": "spec",
+      "creates_work_items": false,
+      "duplicate_policy": "fail",
+      "partial_commit_policy": "block_source",
+      "replay_policy": "resume_idempotently",
+      "lineage_policy": "preserve_root",
+      "applies_before_route": true,
+      "lifecycle_mutation_plan_id": "complete_source_after_effect"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_rule",
+      "rule_id": "planner_disposition_on_blocked",
+      "effect_operation_id": "planner_disposition",
+      "source_node_id": "planner",
+      "on_outcomes": ["BLOCKED"],
+      "handler_id": "planner_disposition",
+      "required_run_artifacts": ["planner_disposition"],
+      "destination_family_id": "spec",
+      "creates_work_items": false,
+      "duplicate_policy": "fail",
+      "partial_commit_policy": "block_source",
+      "replay_policy": "resume_idempotently",
+      "lineage_policy": "preserve_root",
+      "applies_before_route": true,
+      "lifecycle_mutation_plan_id": "block_source_after_effect"
+    }
+  ]
+}

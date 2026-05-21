@@ -613,6 +613,7 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "allowed_result_classes_by_outcome": "Allowed Result Classes By Outcome",
         "entrypoint_path": "Entrypoint Path:",
         "entrypoint_contract_id": "Entrypoint Contract ID:",
+        "active_work_item_family_id": "Active Work Item:",
         "required_skill_paths": "Required Skill Paths",
         "attached_skill_paths": "Attached Skill Paths",
         "active_work_item_kind": "Active Work Item:",
@@ -634,8 +635,13 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "runtime_error_code": "Runtime Error Code:",
         "runtime_error_report_path": "Runtime Error Report Path:",
         "runtime_error_catalog_path": "Runtime Error Catalog Path:",
-        "skill_revision_evidence_path": "Skill Revision Evidence Path:",
-        "runner_name": "Runner Name:",
+            "skill_revision_evidence_path": "Skill Revision Evidence Path:",
+            "request_context_profile_id": "Request Context Profile ID:",
+            "context_bundle_path": "Context Bundle Path:",
+            "context_artifact_refs": "Context Artifact Refs",
+            "context_render_plan_id": "Context Render Plan ID:",
+            "rendered_prompt_context_path": "Rendered Prompt Context Path:",
+            "runner_name": "Runner Name:",
         "model_name": "Model Name:",
         "thinking_level": "Thinking Level:",
             "model_reasoning_effort": "Model Reasoning Effort:",
@@ -649,6 +655,40 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         assert label in context
 
 
+def test_stage_prompt_includes_rendered_request_context(tmp_path: Path) -> None:
+    rendered_context = tmp_path / "prompt_context.md"
+    rendered_context.write_text(
+        "\n".join(
+            [
+                "# Request Context",
+                "",
+                "- visible: draft:blueprint-001",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = StageRunRequest(
+        **(
+            _request(tmp_path).model_dump(mode="python")
+            | {
+                "request_context_profile_id": "builder.default",
+                "context_bundle_path": str(tmp_path / "context.json"),
+                "context_artifact_refs": ("draft:blueprint-001",),
+                "context_render_plan_id": "stage_request.default.v1",
+                "rendered_prompt_context_path": str(rendered_context),
+            }
+        )
+    )
+
+    from millrace_ai.runners.adapters._prompting import build_stage_prompt
+
+    prompt = build_stage_prompt(request)
+
+    assert "Rendered Request Context:" in prompt
+    assert "blueprint-001" in prompt
+
+
 def test_normalize_classifies_provider_and_runner_errors(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="builder")
 
@@ -660,6 +700,43 @@ def test_normalize_classifies_provider_and_runner_errors(tmp_path: Path) -> None
     assert provider_error.metadata["auto_requeue_candidate"] is True
     assert runner_error.metadata["failure_class"] == "runner_transport_failure"
     assert runner_error.metadata["auto_requeue_candidate"] is False
+
+
+def test_normalize_persists_request_context_and_failure_origin_metadata(
+    tmp_path: Path,
+) -> None:
+    request = StageRunRequest(
+        **(
+            _request(tmp_path, stage="builder").model_dump(mode="python")
+            | {
+                "request_context_profile_id": "builder.default",
+                "context_bundle_path": str(tmp_path / "context" / "context.json"),
+                "context_artifact_refs": ("task:task-001", "draft:blueprint-001"),
+                "context_render_plan_id": "stage_request.default.v1",
+                "rendered_prompt_context_path": str(tmp_path / "context" / "prompt_context.md"),
+            }
+        )
+    )
+    stderr_path = tmp_path / "runner_stderr.txt"
+    stderr_path.write_text("network is unreachable\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, exit_kind="runner_error", stderr_path=stderr_path),
+    )
+
+    assert envelope.metadata["failure_class"] == "network_unavailable"
+    assert envelope.metadata["failure_origin"] == "network_unavailable"
+    assert envelope.metadata["request_context_profile_id"] == "builder.default"
+    assert envelope.metadata["context_bundle_path"] == str(tmp_path / "context" / "context.json")
+    assert envelope.metadata["context_render_plan_id"] == "stage_request.default.v1"
+    assert envelope.metadata["rendered_prompt_context_path"] == str(
+        tmp_path / "context" / "prompt_context.md"
+    )
+    assert envelope.metadata["context_artifact_refs"] == [
+        "task:task-001",
+        "draft:blueprint-001",
+    ]
 
 
 def test_normalize_output_is_deterministic(tmp_path: Path) -> None:

@@ -62,6 +62,11 @@ class PlanningTerminalResult(str, Enum):
     RECON_NOOP = "RECON_NOOP"
     PLANNER_COMPLETE = "PLANNER_COMPLETE"
     MANAGER_COMPLETE = "MANAGER_COMPLETE"
+    MANAGER_BLUEPRINT_COMPLETE = "MANAGER_BLUEPRINT_COMPLETE"
+    BLUEPRINT_CANDIDATE_READY = "BLUEPRINT_CANDIDATE_READY"
+    BLUEPRINT_APPROVED = "BLUEPRINT_APPROVED"
+    BLUEPRINT_REJECTED = "BLUEPRINT_REJECTED"
+    MECHANIC_BLUEPRINT_COMPLETE = "MECHANIC_BLUEPRINT_COMPLETE"
     MECHANIC_COMPLETE = "MECHANIC_COMPLETE"
     AUDITOR_COMPLETE = "AUDITOR_COMPLETE"
     ARBITER_COMPLETE = "ARBITER_COMPLETE"
@@ -99,6 +104,7 @@ class WorkItemKind(str, Enum):
     SPEC = "spec"
     INCIDENT = "incident"
     LEARNING_REQUEST = "learning_request"
+    BLUEPRINT_DRAFT = "blueprint_draft"
 
 
 class LearningRequestAction(str, Enum):
@@ -151,7 +157,6 @@ class IncidentDecision(str, Enum):
 
 
 class RuntimeMode(str, Enum):
-    ONCE = "once"
     DAEMON = "daemon"
 
 
@@ -167,8 +172,13 @@ class ReloadOutcome(str, Enum):
 
 
 class RuntimeErrorCode(str, Enum):
+    COMPILED_PLAN_STALE = "compiled_plan_stale"
+    WORKSPACE_INTEGRITY_FAILURE = "workspace_integrity_failure"
     PLANNING_WORK_ITEM_COMPLETION_CONFLICT = "planning_work_item_completion_conflict"
     EXECUTION_WORK_ITEM_COMPLETION_CONFLICT = "execution_work_item_completion_conflict"
+    PLANNING_PRE_DISPATCH_FAILED = "planning_pre_dispatch_failed"
+    EXECUTION_PRE_DISPATCH_FAILED = "execution_pre_dispatch_failed"
+    LEARNING_PRE_DISPATCH_FAILED = "learning_pre_dispatch_failed"
     PLANNING_POST_STAGE_APPLY_FAILED = "planning_post_stage_apply_failed"
     EXECUTION_POST_STAGE_APPLY_FAILED = "execution_post_stage_apply_failed"
     RECON_HANDOFF_INVALID = "recon_handoff_invalid"

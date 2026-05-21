@@ -36,6 +36,7 @@
     "stage_result",
     "integration_report"
   ],
+  "allowed_work_item_families": ["task"],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from millrace_ai.contracts import LearningStageName, ModeDefinition, StageName
+from millrace_ai.contracts import LearningStageName, ModeDefinition, StageMapKey
 
 from .outcomes import CompilerValidationError
 
 
 def validate_learning_trigger_rules(
     mode: ModeDefinition,
-    selected_stages: set[StageName],
+    selected_stages: set[StageMapKey],
 ) -> None:
     for rule in mode.learning_trigger_rules:
         if rule.source_stage not in selected_stages:

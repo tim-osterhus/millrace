@@ -42,6 +42,7 @@ def initialize_workspace(
     """Create the canonical workspace baseline."""
 
     paths = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
+    had_existing_runtime_state = _has_existing_runtime_state(paths)
 
     for directory in paths.directories():
         directory.mkdir(parents=True, exist_ok=True)
@@ -55,6 +56,13 @@ def initialize_workspace(
     deploy_runtime_assets(paths, assets_root=assets_root)
     if not paths.baseline_manifest_file.exists():
         write_baseline_manifest(paths, build_baseline_manifest(paths, assets_root=assets_root))
+    from millrace_ai.workspace.schema_epoch_marker import (
+        workspace_schema_epoch_marker_path,
+        write_workspace_schema_epoch_marker,
+    )
+
+    if not had_existing_runtime_state and not workspace_schema_epoch_marker_path(paths).exists():
+        write_workspace_schema_epoch_marker(paths)
     return paths
 
 
@@ -96,6 +104,12 @@ def ensure_runtime_state_surfaces(target: WorkspacePaths | Path | str) -> Worksp
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(defaults[file_path], encoding="utf-8")
     return paths
+
+
+def _has_existing_runtime_state(paths: WorkspacePaths) -> bool:
+    if any(getattr(paths, attribute_name).exists() for attribute_name in _RUNTIME_STATE_FILES):
+        return True
+    return paths.state_dir.exists() and any(paths.state_dir.iterdir())
 
 
 __all__ = [

@@ -89,14 +89,14 @@ jobs:
           JSON
 
           .publish-smoke/bin/millrace compile validate --workspace "$workspace" > "$RUNNER_TEMP/millrace-compile.txt"
-          .publish-smoke/bin/millrace run once --workspace "$workspace" > "$RUNNER_TEMP/millrace-run-once-no-work.txt"
+          .publish-smoke/bin/millrace run daemon --max-ticks 1 --workspace "$workspace" > "$RUNNER_TEMP/millrace-daemon-no-work.txt"
           .publish-smoke/bin/millrace status --workspace "$workspace" > "$RUNNER_TEMP/millrace-status.txt"
           cat >> "$workspace/millrace-agents/millrace.toml" <<EOF
           command = "$runner_python"
           args = ["$shim_path"]
           EOF
           .publish-smoke/bin/millrace queue add-task "$task_json" --workspace "$workspace" > "$RUNNER_TEMP/millrace-queue-add-task.txt"
-          .publish-smoke/bin/millrace run once --workspace "$workspace" > "$RUNNER_TEMP/millrace-run-once-task.txt"
+          .publish-smoke/bin/millrace run daemon --max-ticks 1 --workspace "$workspace" > "$RUNNER_TEMP/millrace-daemon-task.txt"
           .publish-smoke/bin/millrace runs ls --workspace "$workspace" > "$RUNNER_TEMP/millrace-runs-ls.txt"
           run_id="$(awk -F': ' '/^run_id: / { print $2; exit }' "$RUNNER_TEMP/millrace-runs-ls.txt")"
           test -n "$run_id"
@@ -106,13 +106,12 @@ jobs:
           test -f "$workspace/millrace-agents/state/compiled_plan.json"
           grep -q '^web_app: ok$' "$RUNNER_TEMP/millrace-web-smoke.txt"
           grep -q '^ok: true$' "$RUNNER_TEMP/millrace-compile.txt"
-          grep -q '^tick_reason: no_work$' "$RUNNER_TEMP/millrace-run-once-no-work.txt"
+          grep -q '^run_mode: daemon$' "$RUNNER_TEMP/millrace-daemon-no-work.txt"
+          grep -q '^ticks: 1$' "$RUNNER_TEMP/millrace-daemon-no-work.txt"
           grep -q '^compiled_plan_id: ' "$RUNNER_TEMP/millrace-status.txt"
           grep -q '^enqueued_task: ' "$RUNNER_TEMP/millrace-queue-add-task.txt"
-          grep -q '^tick_reason: ' "$RUNNER_TEMP/millrace-run-once-task.txt"
-          if grep -q '^tick_reason: no_work$' "$RUNNER_TEMP/millrace-run-once-task.txt"; then
-            exit 1
-          fi
+          grep -q '^run_mode: daemon$' "$RUNNER_TEMP/millrace-daemon-task.txt"
+          grep -q '^ticks: 1$' "$RUNNER_TEMP/millrace-daemon-task.txt"
           grep -q '^work_item_id: smoke-task-001$' "$RUNNER_TEMP/millrace-runs-ls.txt"
           grep -q '^work_item_id: smoke-task-001$' "$RUNNER_TEMP/millrace-runs-show.txt"
           grep -q '^stage: builder$' "$RUNNER_TEMP/millrace-runs-show.txt"

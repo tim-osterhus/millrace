@@ -30,6 +30,8 @@ BUILTIN_MODE_PATHS: dict[str, Path] = {
     "learning_pi": Path("modes/learning_pi.json"),
     "default_codex_integrated": Path("modes/default_codex_integrated.json"),
     "learning_codex_integrated": Path("modes/learning_codex_integrated.json"),
+    "blueprint_codex": Path("modes/blueprint_codex.json"),
+    "blueprint_learning_codex": Path("modes/blueprint_learning_codex.json"),
 }
 
 BUILTIN_MODE_ALIASES: dict[str, str] = {
@@ -43,6 +45,8 @@ SHIPPED_MODE_IDS: tuple[str, ...] = (
     "learning_pi",
     "default_codex_integrated",
     "learning_codex_integrated",
+    "blueprint_codex",
+    "blueprint_learning_codex",
 )
 _DEFAULT_MODE_IDS: tuple[str, ...] = ("default_codex", "default_pi")
 

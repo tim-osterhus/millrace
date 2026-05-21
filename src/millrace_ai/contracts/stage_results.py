@@ -11,6 +11,7 @@ from .base import ContractModel
 from .enums import Plane, ResultClass, StageName, TerminalResult, WorkItemKind
 from .stage_metadata import stage_plane
 from .token_usage import TokenUsage
+from .work_refs import coerce_family_and_kind
 
 
 class StageResultEnvelope(ContractModel):
@@ -22,7 +23,8 @@ class StageResultEnvelope(ContractModel):
     stage: StageName
     node_id: str = ""
     stage_kind_id: str = ""
-    work_item_kind: WorkItemKind
+    work_item_family_id: str | None = None
+    work_item_kind: WorkItemKind | None = None
     work_item_id: str
 
     terminal_result: TerminalResult
@@ -55,6 +57,15 @@ class StageResultEnvelope(ContractModel):
 
     @model_validator(mode="after")
     def validate_contract(self) -> "StageResultEnvelope":
+        family_id, work_item_kind = coerce_family_and_kind(
+            family_id=self.work_item_family_id,
+            work_item_kind=self.work_item_kind,
+        )
+        if family_id is None:
+            raise ValueError("stage result requires work_item_family_id or work_item_kind")
+        self.work_item_family_id = family_id
+        self.work_item_kind = work_item_kind
+
         if stage_plane(self.stage) != self.plane:
             raise ValueError("stage must belong to plane")
         if not self.node_id:

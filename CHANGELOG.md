@@ -13,6 +13,100 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-05-21
+
+### Added
+
+- Added compiler-validated workflow primitive assets for work-item families,
+  document adapters, queue claim policies, terminal actions, lifecycle mutation
+  plans, runtime effect handlers, recovery/failure policies, and the workspace
+  schema epoch. Compiled plans now carry those primitives as runtime authority.
+- Added workspace schema epoch markers and archive/reset helpers that refuse
+  daemon-owned workspaces, move old mutable runtime state under
+  `millrace-agents/archives/` without parsing stale JSON, initialize clean
+  state, and recompile before work resumes.
+- Added generic built-in work-item adapters and a queue lifecycle interpreter
+  so terminal source lifecycle movement is applied from runtime-owned intent
+  objects.
+- Added compiler-backed scheduler lanes, durable lane runtime state, lane
+  conflict validation, and lane-keyed daemon dispatch. Runtime status now
+  reports lane state, active-run launch-plan authority, pending compiled plans,
+  and latest runtime failure origin.
+- Added deterministic per-request context bundles and rendered prompt-context
+  artifacts. Runner normalization and `millrace runs show` now surface the
+  context render plan, context bundle path, visible context refs, and failure
+  origin metadata.
+- Added opt-in `blueprint_codex` and `blueprint_learning_codex` modes with
+  Manager/Contractor/Evaluator Blueprint Planning, runtime-owned
+  draft/packet/evaluation/critique/promotion effects, generated task
+  promotion, and Arbiter closure readiness across the full Blueprint lineage.
+  The learning-enabled Blueprint mode keeps the existing Planner-complete
+  Librarian trigger.
+- Added Blueprint operator visibility in `millrace status` and
+  `millrace runs show`, including draft queues, packets, critiques,
+  evaluations, promotions, generated task ids, runtime-effect created paths,
+  and source lifecycle intent.
+- Added run-inspection fields that distinguish artifact parse validity from
+  runtime route/effect outcome. `runs ls/show` keep the compatibility
+  `status` key while adding `artifact_status`, `runtime_outcome`,
+  `runtime_effect_decision`, and runtime-effect failure class.
+- Added family-aware doctor/dashboard visibility for graph-owned work such as
+  Blueprint draft queues and future custom work-item families.
+
+### Changed
+
+- Removed the public `millrace run once` surface. Use
+  `millrace run daemon --max-ticks 1` for bounded one-tick operation.
+- Stage work-item ownership, terminal lifecycle action, queue claim policy, and
+  runtime effect interpretation now come from compiled workflow authority for
+  built-in defaults instead of loose runtime tables.
+- Config reload with active work now preserves each active run's original
+  compiled launch plan and records the newly compiled plan as pending until
+  active work drains.
+
+### Fixed
+
+- Fixed bounded daemon restarts so a selected but not-yet-running next stage is
+  treated as resumable work instead of stale active ownership.
+- Fixed runtime recovery lookup for custom stage kinds, allowing graph-owned
+  stages such as `mechanic_blueprint` to satisfy the canonical planning
+  `mechanic` recovery role.
+- Fixed Blueprint runtime-effect dispatch so effects are selected from the
+  compiled plan's runtime-effect rules instead of a static stage/terminal
+  table.
+- Fixed compiler validation so duplicate runtime-effect bindings and
+  runtime-effect handlers without source-packaged implementations are rejected
+  before a custom workflow configuration can run.
+- Fixed artifact contract drift in Blueprint promotion/rejection effects so
+  canonical JSON outputs are authoritative, malformed canonical outputs block
+  instead of falling back, and declared legacy filenames are only used when the
+  canonical artifact is absent.
+- Fixed Blueprint manifest identity so Arbiter remediation can create a second
+  same-root manifest with a distinct `manifest_id`. New manifests are
+  manifest-id-keyed, legacy root-keyed manifests remain readable by embedded
+  `manifest_id`, Evaluator context resolves manifests from `draft.manifest_id`,
+  and duplicate manifest-id conflicts are reported separately from normal
+  same-root lineage.
+- Fixed Manager Blueprint runtime-effect recovery semantics: recoverable
+  pre-mutation artifact failures route to Mechanic Blueprint, duplicate-id and
+  partial-mutation failures block conservatively with matched policy metadata,
+  idempotent replay can complete after source completion/resolution when
+  durable outputs are equivalent, and Planner disposition prevents emitted
+  child specs from also being decomposed through Manager.
+- Fixed stopped-daemon diagnostics so `doctor` warns when daemon mode is not
+  running while open closure/backlog work still exists.
+
+### Compatibility Notes
+
+- This release intentionally breaks the removed public `millrace run once`
+  command. Use `millrace run daemon --max-ticks 1` for the bounded one-tick
+  path.
+- Workspaces with stale mutable runtime state from older schema epochs must be
+  upgraded or reset through the supported schema epoch/archive flow before
+  daemon startup resumes.
+- `millrace-ai` and `millrace-web` are released together as `0.20.0`;
+  `millrace-web` now depends on `millrace-ai>=0.20.0`.
+
 ## [0.19.0] - 2026-05-16
 
 ### Added
@@ -799,7 +893,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/tim-osterhus/millrace/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/tim-osterhus/millrace/compare/v0.18.6...v0.19.0
 [0.18.6]: https://github.com/tim-osterhus/millrace/compare/v0.18.5...v0.18.6
 [0.18.5]: https://github.com/tim-osterhus/millrace/compare/v0.18.4...v0.18.5

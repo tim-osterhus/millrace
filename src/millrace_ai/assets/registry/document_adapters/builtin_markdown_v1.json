@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "kind": "work_item_document_adapter",
+  "adapter_id": "builtin_markdown_v1",
+  "schema_id": "millrace_markdown_work_document_v1",
+  "supported_file_extensions": [".md"],
+  "family_ids": ["task", "spec", "probe", "incident", "learning_request"],
+  "can_parse": true,
+  "can_render": true,
+  "can_summarize": true,
+  "supports_dependencies": true,
+  "supports_lineage": true
+}

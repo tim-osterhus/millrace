@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import millrace_ai.runtime.completion_behavior as completion_behavior
+import millrace_ai.runtime.supervisor as supervisor_module
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
+    LearningRequestDocument,
+    LearningStageName,
     Plane,
     PlanningStageName,
+    PlanningTerminalResult,
     SpecDocument,
     TaskDocument,
     WorkItemKind,
@@ -19,6 +26,8 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.completion_behavior import maybe_activate_completion_stage
+from millrace_ai.runtime.error_recovery import schedule_pre_dispatch_exception_recovery
+from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
 from millrace_ai.state_store import load_planning_status, load_snapshot
 from millrace_ai.workspace.arbiter_state import (
     load_closure_target_state,
@@ -80,6 +89,17 @@ def _task_doc(
     )
 
 
+def _learning_request_doc(learning_request_id: str = "learn-001") -> LearningRequestDocument:
+    return LearningRequestDocument(
+        learning_request_id=learning_request_id,
+        title="Improve checker skill",
+        requested_action="improve",
+        target_skill_id="checker-core",
+        created_at=NOW,
+        created_by="tests",
+    )
+
+
 def _target_state(*, root_spec_id: str = "spec-root-001", root_idea_id: str = "idea-001") -> ClosureTargetState:
     return ClosureTargetState(
         root_spec_id=root_spec_id,
@@ -101,8 +121,10 @@ def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
 
 
 def _runner_result(request: StageRunRequest, *, terminal: str) -> RunnerRawResult:
-    stdout_path = Path(request.run_dir) / "runner_stdout.txt"
+    run_dir = Path(request.run_dir)
+    stdout_path = run_dir / "runner_stdout.txt"
     stdout_path.write_text(f"### {terminal}\n", encoding="utf-8")
+    _write_default_planner_disposition(request, terminal=terminal, run_dir=run_dir)
     return RunnerRawResult(
         request_id=request.request_id,
         run_id=request.run_id,
@@ -118,6 +140,53 @@ def _runner_result(request: StageRunRequest, *, terminal: str) -> RunnerRawResul
         observed_exit_code=None,
         started_at=NOW,
         ended_at=NOW + timedelta(seconds=1),
+    )
+
+
+def _write_default_planner_disposition(
+    request: StageRunRequest,
+    *,
+    terminal: str,
+    run_dir: Path,
+) -> None:
+    if request.stage is not PlanningStageName.PLANNER:
+        return
+    if terminal not in {
+        PlanningTerminalResult.PLANNER_COMPLETE.value,
+        PlanningTerminalResult.BLOCKED.value,
+    }:
+        return
+    if (run_dir / "planner_disposition.json").exists():
+        return
+    source_family_id = request.active_work_item_family_id
+    if source_family_id is None and request.active_work_item_kind is not None:
+        source_family_id = request.active_work_item_kind.value
+    if source_family_id is None or request.active_work_item_id is None:
+        return
+    disposition = (
+        "blocked"
+        if terminal == PlanningTerminalResult.BLOCKED.value
+        else "active_source_ready_for_manager"
+    )
+    (run_dir / "planner_disposition.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "planner_disposition",
+                "source_work_item_family_id": source_family_id,
+                "source_work_item_id": request.active_work_item_id,
+                "disposition": disposition,
+                "emitted_spec_ids": [],
+                "refined_active_source": False,
+                "recommended_next_action": disposition,
+                "created_at": NOW.isoformat().replace("+00:00", "Z"),
+                "created_by": "planner",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
 
@@ -478,6 +547,291 @@ def test_maybe_activate_completion_stage_sets_snapshot_to_arbiter_when_target_is
     assert engine.snapshot.active_run_id is not None
     assert engine.snapshot.active_work_item_kind is None
     assert engine.snapshot.active_work_item_id is None
+
+
+def test_runtime_tick_reports_closure_readiness_exception_without_raising(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+
+    def fail_readiness(engine: RuntimeEngine, target: ClosureTargetState) -> ClosureTargetState:
+        raise RuntimeError(f"readiness exploded for {target.root_spec_id}")
+
+    monkeypatch.setattr(
+        completion_behavior,
+        "refresh_closure_target_readiness",
+        fail_readiness,
+    )
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+    events = read_runtime_events(paths)
+
+    assert outcome.router_decision.reason == "runtime_exception:planning_pre_dispatch_failed"
+    assert snapshot.active_stage is PlanningStageName.MECHANIC
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "planning_pre_dispatch_failed"
+    assert context["error_code"] == "planning_pre_dispatch_failed"
+    assert context["work_item_family_id"] == "spec"
+    assert context["work_item_id"] == "spec-root-001"
+    assert "readiness exploded for spec-root-001" in context["exception_message"]
+    assert any(
+        event.event_type == "runtime_pre_dispatch_recovery_scheduled"
+        and event.data.get("error_code") == "planning_pre_dispatch_failed"
+        for event in events
+    )
+
+
+def test_daemon_supervisor_reports_closure_request_exception_without_crashing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+        engine.startup()
+
+        def fail_request(stage_plan, target_state):
+            raise RuntimeError(f"closure request exploded for {target_state.root_spec_id}")
+
+        monkeypatch.setattr(engine, "_build_closure_target_stage_run_request", fail_request)
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        snapshot = load_snapshot(paths)
+        context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+        events = read_runtime_events(paths)
+
+        assert dispatched == 0
+        assert supervisor.active_worker_lanes == frozenset()
+        assert snapshot.active_stage is PlanningStageName.MECHANIC
+        assert snapshot.planning_status_marker == "### BLOCKED"
+        assert snapshot.current_failure_class == "planning_pre_dispatch_failed"
+        assert context["error_code"] == "planning_pre_dispatch_failed"
+        assert context["work_item_id"] == "spec-root-001"
+        assert "closure request exploded for spec-root-001" in context["exception_message"]
+        assert any(
+            event.event_type == "runtime_pre_dispatch_recovery_scheduled"
+            and event.data.get("error_code") == "planning_pre_dispatch_failed"
+            for event in events
+        )
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_daemon_supervisor_reports_claim_selection_exception_without_crashing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+        engine.startup()
+
+        def fail_active_closure_target(engine: RuntimeEngine):
+            raise RuntimeError("closure target lookup exploded during claim selection")
+
+        monkeypatch.setattr(
+            completion_behavior,
+            "active_closure_target",
+            fail_active_closure_target,
+        )
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        snapshot = load_snapshot(paths)
+        context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+        events = read_runtime_events(paths)
+
+        assert dispatched == 0
+        assert supervisor.active_worker_lanes == frozenset()
+        assert snapshot.active_stage is PlanningStageName.MECHANIC
+        assert snapshot.planning_status_marker == "### BLOCKED"
+        assert snapshot.current_failure_class == "planning_pre_dispatch_failed"
+        assert context["error_code"] == "planning_pre_dispatch_failed"
+        assert context["work_item_id"] == "runtime-pre-dispatch"
+        assert "closure target lookup exploded during claim selection" in context[
+            "exception_message"
+        ]
+        assert any(
+            event.event_type == "runtime_pre_dispatch_recovery_scheduled"
+            and event.data.get("error_code") == "planning_pre_dispatch_failed"
+            for event in events
+        )
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_daemon_supervisor_reports_execution_claim_selection_with_task_identity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+        engine.startup()
+
+        def fail_execution_claim(engine: RuntimeEngine, plane: Plane):
+            if plane is Plane.EXECUTION:
+                raise RuntimeError("execution claim selection exploded")
+            return None
+
+        monkeypatch.setattr(
+            supervisor_module,
+            "claim_next_work_item_for_plane",
+            fail_execution_claim,
+        )
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        snapshot = load_snapshot(paths)
+        context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+
+        assert dispatched == 0
+        assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
+        assert snapshot.execution_status_marker == "### BLOCKED"
+        assert snapshot.current_failure_class == "execution_pre_dispatch_failed"
+        assert snapshot.active_work_item_family_id == "task"
+        assert snapshot.active_work_item_id == "runtime-pre-dispatch"
+        assert context["error_code"] == "execution_pre_dispatch_failed"
+        assert context["work_item_family_id"] == "task"
+        assert context["work_item_id"] == "runtime-pre-dispatch"
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_daemon_supervisor_reports_learning_request_build_exception_without_crashing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_learning_request(_learning_request_doc())
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(
+            paths,
+            stage_runner=_unused_stage_runner,
+            mode_id="learning_codex",
+        )
+        engine.startup()
+
+        def fail_learning_request(stage_plan):
+            raise RuntimeError("learning request build exploded")
+
+        monkeypatch.setattr(engine, "_build_stage_run_request", fail_learning_request)
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        snapshot = load_snapshot(paths)
+        context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+
+        assert dispatched == 0
+        assert snapshot.active_stage is LearningStageName.LIBRARIAN
+        assert snapshot.learning_status_marker == "### BLOCKED"
+        assert snapshot.current_failure_class == "learning_pre_dispatch_failed"
+        assert snapshot.active_work_item_family_id == "learning_request"
+        assert snapshot.active_work_item_id == "learn-001"
+        assert context["error_code"] == "learning_pre_dispatch_failed"
+        assert context["work_item_family_id"] == "learning_request"
+        assert context["work_item_id"] == "learn-001"
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_tick_reports_learning_request_build_exception_without_misrouting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_learning_request(_learning_request_doc())
+    engine = RuntimeEngine(
+        paths,
+        stage_runner=_unused_stage_runner,
+        mode_id="learning_codex",
+    )
+    engine.startup()
+
+    def fail_learning_request(stage_plan):
+        raise RuntimeError("serial learning request build exploded")
+
+    monkeypatch.setattr(engine, "_build_stage_run_request", fail_learning_request)
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+
+    assert outcome.router_decision.reason == "runtime_exception:learning_pre_dispatch_failed"
+    assert snapshot.active_stage is LearningStageName.LIBRARIAN
+    assert snapshot.learning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "learning_pre_dispatch_failed"
+    assert snapshot.active_work_item_family_id == "learning_request"
+    assert snapshot.active_work_item_id == "learn-001"
+    assert context["error_code"] == "learning_pre_dispatch_failed"
+    assert context["work_item_family_id"] == "learning_request"
+    assert context["work_item_id"] == "learn-001"
+
+
+def test_learning_recovery_request_keeps_runtime_error_context_with_foreground_active_run(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(
+        _task_doc(
+            "task-001",
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            created_at=NOW,
+        )
+    )
+    queue.enqueue_learning_request(_learning_request_doc())
+    engine = RuntimeEngine(
+        paths,
+        stage_runner=_unused_stage_runner,
+        mode_id="learning_codex",
+    )
+    engine.startup()
+    execution_claim = queue.claim_next_execution_task()
+    learning_claim = queue.claim_next_learning_request()
+    assert execution_claim is not None
+    assert learning_claim is not None
+    engine._activate_claim(execution_claim)
+
+    schedule_pre_dispatch_exception_recovery(
+        engine,
+        error=RuntimeError("learning recovery exploded beside foreground work"),
+        plane=Plane.LEARNING,
+        failed_stage=LearningStageName.ANALYST,
+        work_item_family_id=learning_claim.family_id,
+        work_item_kind=learning_claim.work_item_kind,
+        work_item_id=learning_claim.work_item_id,
+    )
+    assert engine.snapshot is not None
+    assert Plane.EXECUTION in engine.snapshot.active_runs_by_plane
+    learning_active_run = engine.snapshot.active_runs_by_plane[Plane.LEARNING]
+
+    request = RuntimeDaemonSupervisor(engine)._request_for_active_run(learning_active_run)
+
+    assert request.stage is LearningStageName.LIBRARIAN
+    assert request.active_work_item_id == "learn-001"
+    assert request.runtime_error_code == "learning_pre_dispatch_failed"
+    assert request.runtime_error_report_path is not None
+    engine.close()
 
 
 def test_maybe_activate_completion_stage_backfills_open_target_from_done_root_spec(

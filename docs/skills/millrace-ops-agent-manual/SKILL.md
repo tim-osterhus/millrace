@@ -123,6 +123,13 @@ Know which shipped harness posture you are validating:
 - `default_codex_integrated` and `learning_codex_integrated` are opt-in
   quality loops. They use Codex and select `execution.with_integrator`, so a
   successful Builder result always runs through Integrator before Checker.
+- `blueprint_codex` is an opt-in Blueprint Planning posture. It keeps standard
+  execution, but routes Planner output through Manager Blueprint, Contractor
+  Blueprint, and Evaluator Blueprint before generated tasks enter Execution.
+  Contractor proposes plans only; it must not implement source changes.
+- `blueprint_learning_codex` keeps that same Blueprint Planning posture and
+  adds the Learning plane. Planner-complete still triggers Librarian before
+  Blueprint Planning continues into Manager Blueprint.
 - probes enter Planning through Recon before becoming generated tasks,
   generated specs, no-ops, or blocked probe artifacts
 - learning requests may close as no-op/done when evidence was reviewed and no
@@ -130,10 +137,10 @@ Know which shipped harness posture you are validating:
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 
-Daemon mode uses a compiled plane scheduler. Default modes remain serial.
-Learning-enabled modes may run one Learning stage concurrently with one
-permitted foreground Planning or Execution stage. Runtime-owned mutation
-remains single-writer and serialized by the daemon supervisor.
+Daemon mode uses a compiled lane scheduler. Default modes remain one active
+lane per plane, and shipped policies keep Planning and Execution mutually
+exclusive. Runtime-owned mutation remains single-writer and serialized by the
+daemon supervisor.
 Generic success-triggered learning starts at Analyst. Direct Curator trigger
 rules are only valid when a compiled mode names a safe destination such as
 `target_skill_id` or `preferred_output_paths`.
@@ -150,9 +157,9 @@ as a clean no-op when no relevant uninstalled remote skill is available. This is
 non-blocking Learning work; Planning and Execution do not wait on Librarian.
 
 6. Intake work only after the workspace is healthy and Millrace use is allowed.
-7. Run `millrace run once --workspace <workspace>` when you want one safe tick,
-   or `millrace run daemon --workspace <workspace>` when long-running operation
-   is actually intended.
+7. Run `millrace run daemon --max-ticks 1 --workspace <workspace>` when you
+   want one bounded safe tick, or `millrace run daemon --workspace <workspace>`
+   when long-running operation is actually intended.
    Use `millrace run daemon --monitor basic --workspace <workspace>` when you
    need concise live terminal visibility from the daemon itself. The basic
    monitor uses short run handles and compact stage labels for scanning; use
@@ -287,9 +294,10 @@ When you use this skill well, your output should include:
 5. If Millrace is warranted and permitted, validate the workspace first.
 6. Intake work through the queue commands, not by dropping ad hoc files into
    runtime-owned folders unless the documented intake path does exactly that.
-7. Choose `run once` for bounded safe progression and `run daemon` only when a
-   longer-running operator posture is actually intended. If daemon persistence
-   matters, launch it inside a `tmux` pane, not as a normal background process.
+7. Choose `run daemon --max-ticks 1` for bounded safe progression and
+   unbounded `run daemon` only when a longer-running operator posture is
+   actually intended. If daemon persistence matters, launch it inside a `tmux`
+   pane, not as a normal background process.
 8. Monitor through status and run-inspection surfaces.
 9. Intervene through control commands when needed.
 10. Report what changed, what the runtime now says, and what the next truthful
@@ -340,7 +348,7 @@ millrace compile graph --workspace <workspace>
 millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 millrace queue show <work_item_id> --workspace <workspace>
-millrace run once --workspace <workspace>
+millrace run daemon --max-ticks 1 --workspace <workspace>
 millrace run daemon --monitor basic --workspace <workspace>
 millrace run daemon --monitor none --monitor-log <path> --workspace <workspace>
 millrace status watch --workspace <workspace>
@@ -355,6 +363,8 @@ millrace approvals deny <approval_id> --reason "<reason>" --workspace <workspace
 millrace modes list
 millrace modes show <mode_id>
 millrace compile validate --mode default_codex_integrated --workspace <workspace>
+millrace compile validate --mode blueprint_codex --workspace <workspace>
+millrace compile validate --mode blueprint_learning_codex --workspace <workspace>
 millrace skills ls --workspace <workspace>
 millrace skills show <skill_id> --workspace <workspace>
 millrace skills search <query> --workspace <workspace>
@@ -427,9 +437,69 @@ Important monitoring note:
   approval-required execution capability grants. Approve/deny routes through
   the mailbox when a daemon owns the workspace and applies directly when no
   daemon owns it.
+
+Blueprint monitoring checklist:
+
+- Use `millrace status --workspace <workspace>` to inspect
+  `blueprint_draft_*`, `blueprint_packet_*`, `blueprint_critique_*`,
+  `blueprint_evaluation_count`, and `blueprint_promotion_count` before opening
+  raw files.
+- Use `millrace runs show <run_id>` on Blueprint stage runs to inspect
+  `runtime_effect_handler_id`, `runtime_effect_decision`,
+  `runtime_effect_failure_class`, `runtime_effect_failure_message`,
+  `runtime_effect_mutation_phase`, `runtime_effect_failure_policy_id`,
+  `runtime_effect_recovery_action`, `runtime_effect_source_lifecycle_*`, and
+  `runtime_effect_created_path` lines.
+- Compare `artifact_status` and `runtime_outcome` before trusting a run as
+  clean. `artifact_status: valid` only means the stage-result artifact parsed;
+  `runtime_outcome: blocked` means routing or a runtime effect still failed.
+- For artifact contract drift, inspect the run directory for the declared
+  canonical filename first. Canonical JSON outputs win over legacy fallback
+  filenames; malformed canonical files are intentional blockers, not a reason
+  to hand-edit fallback markdown into place.
+- Treat Blueprint lineage ids as metadata, not storage keys. New manifests are
+  stored by `manifest_id`; legacy root-keyed manifests are resolved by their
+  embedded `manifest_id`. Same-root remediation manifests are expected when an
+  Arbiter gap triggers another Manager Blueprint pass under the original
+  `root_spec_id`.
+- Diagnose `blueprint_manifest_duplicate` by comparing `manifest_id` and
+  normalized manifest content. Do not block or edit solely because two
+  manifests share `root_spec_id`; that is normal same-lineage remediation.
+- Manager Blueprint runtime-effect failures route by class. Missing,
+  malformed, schema-invalid, or manifest/draft-mismatched pre-mutation outputs
+  route to `mechanic_blueprint`. Duplicate manifest ids, duplicate draft ids,
+  invalid source lifecycle, and partial mutations block conservatively for
+  operator review.
+- Mechanic Blueprint manager-failure recovery is rerun-or-block. It receives
+  the failed Manager run context and may emit `MECHANIC_BLUEPRINT_COMPLETE`
+  with `resume_stage: manager_blueprint` only when a clean Manager rerun is
+  safe. Repaired Manager artifacts are inert unless a declared runtime effect
+  consumes them; unsafe recovery must emit `BLOCKED`.
+- Manager Blueprint replay is idempotent when all durable manifest and draft
+  outputs already exist with equivalent content. If the source spec is already
+  done or the source incident already resolved, the replay is a no-op success;
+  blocked, missing, partial, or divergent state remains an operator-visible
+  failure.
+- Planner disposition controls whether the active source continues to Manager.
+  `active_source_ready_for_manager` continues the same source,
+  `emitted_child_specs` resolves/completes the source after validating child
+  specs exist and does not also send it to Manager, and `blocked` preserves
+  normal blocked recovery. Missing disposition is a source blocker, not an
+  invitation to infer intent from prose.
+- A rejected Blueprint is not a failed daemon run by itself. Evaluator rejection
+  should leave an open critique and route the same active draft back to
+  Contractor for a revised packet.
+- An approved Blueprint should create an approved packet, evaluation,
+  promotion record, and generated task. Arbiter should remain suppressed until
+  that generated task has completed or blocked.
 - `millrace status` exposes the open closure target and
   `planning_root_specs_deferred_by_closure_target` when bulk root-spec intake
   is backpressured behind the v1 one-open-target policy
+- If `millrace doctor` reports `daemon_stopped_with_open_graph_work`, the
+  daemon is stopped while an open closure target still has compiled-family
+  backlog or blockers. Confirm `process_running`, inspect `queue ls` family
+  counters, then restart the daemon unless a separate provider/network outage
+  explains the stop.
 - Consultant `NEEDS_PLANNING` handoffs generated by runtime should now produce
   same-lineage planning incidents under an open closure target. If an older
   workspace idles with a blocked source task and a lineage-less incoming
@@ -438,7 +508,7 @@ Important monitoring note:
   bypass the root.
 - `millrace skills create` and `millrace skills improve` require a
   learning-enabled mode such as `learning_codex`, `learning_pi`, or
-  `learning_codex_integrated`
+  `learning_codex_integrated`, or `blueprint_learning_codex`
 
 ## Monitoring And Intervention
 
@@ -464,9 +534,15 @@ Interpret status markers literally:
   terminal marker or `### IDLE`
 - learning-enabled workspaces also expose learning queue depth and
   `learning_status_marker`
+- `lane: ...` lines show durable scheduler-lane state, including lane plan
+  identity, active run ids, active work refs, last terminal outcome, and
+  pause/drain/stop flags
 - `active_run_count` and `active_run: ...` lines show the canonical active
-  lanes; the older `active_plane`/`active_stage` fields are only the foreground
+  lanes plus the launch-plan id/fingerprint each active run must continue to
+  use; the older `active_plane`/`active_stage` fields are only the foreground
   projection
+- `latest_runtime_failure_origin` is runtime-owned diagnostic evidence for
+  where the latest edge failure appears to have originated
 - `pause_sources: operator` means an operator pause is still in force
 - `pause_sources: usage_governance` means an opt-in usage rule is blocking
   further stage dispatch
@@ -613,10 +689,14 @@ that probe into Planner, Manager, or Mechanic.
 - Acting as if Planning and Execution can overlap in shipped modes; Learning is
   the opportunistic concurrent lane, and only when the compiled policy permits
   it.
+- Treating Contractor Blueprint as an implementation role. Contractor emits a
+  Blueprint packet; Builder performs source edits only after Evaluator approval
+  promotes a generated task into Execution.
 - Starting a daemon as a plain background job when you actually need it to keep
   running; use a `tmux` pane for persistent daemon operation.
 - Treating this repo-local operator skill as a runtime-shipped stage skill.
-- Running a daemon when one explicit `run once` tick is the safer truthful move.
+- Running an unbounded daemon when one explicit `run daemon --max-ticks 1` tick
+  is the safer truthful move.
 - Expecting Librarian-installed optional skills to appear in the base package;
   Librarian installs remote skills into the active workspace only.
 

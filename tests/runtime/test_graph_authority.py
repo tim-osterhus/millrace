@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.architecture import (
+    CompiledGraphEntryPlan,
+    GraphLoopEntryDefinition,
+    WorkItemFamilyDefinition,
+)
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -29,6 +34,7 @@ from millrace_ai.runtime.graph_authority import (
     route_stage_result_from_graph,
     work_item_activation_for_graph,
 )
+from millrace_ai.runtime.graph_authority.counters import counter_attempts, counter_key_from_snapshot
 
 NOW = datetime(2026, 4, 23, tzinfo=timezone.utc)
 
@@ -40,8 +46,89 @@ def test_graph_authority_public_exports_remain_importable() -> None:
         assert hasattr(graph_authority, name), name
 
 
+def test_custom_family_entry_key_can_activate_from_compiled_graph(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+    family = _custom_planning_family()
+    planning_graph = outcome.active_plan.planning_graph
+    updated_planning_graph = planning_graph.model_copy(
+        update={
+            "entry_nodes": (
+                *planning_graph.entry_nodes,
+                GraphLoopEntryDefinition(entry_key="custom_review", node_id="planner"),
+            ),
+            "compiled_entries": (
+                *planning_graph.compiled_entries,
+                CompiledGraphEntryPlan(
+                    entry_key="custom_review",
+                    node_id="planner",
+                    stage_kind_id="planner",
+                    plane=Plane.PLANNING,
+                ),
+            ),
+        }
+    )
+    plan = outcome.active_plan.model_copy(
+        update={
+            "work_item_families_by_id": {
+                **outcome.active_plan.work_item_families_by_id,
+                family.family_id: family,
+            },
+            "planning_graph": updated_planning_graph,
+            "graphs_by_plane": {
+                **outcome.active_plan.graphs_by_plane,
+                Plane.PLANNING: updated_planning_graph,
+            },
+        }
+    )
+
+    activation = work_item_activation_for_graph(plan, "custom_review")
+
+    assert activation.entry_key == "custom_review"
+    assert activation.node_id == "planner"
+    assert activation.stage is PlanningStageName.PLANNER
+
+
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def _custom_planning_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "inspect"),
+    )
 
 
 def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
@@ -52,6 +139,7 @@ def _snapshot(
     *,
     plane: Plane,
     stage: StageName,
+    work_item_family_id: str | None = None,
     work_item_kind: WorkItemKind | None = WorkItemKind.TASK,
     work_item_id: str | None = "task-001",
     fix_cycle_count: int = 0,
@@ -69,6 +157,7 @@ def _snapshot(
         active_plane=plane,
         active_stage=stage,
         active_run_id="run-001",
+        active_work_item_family_id=work_item_family_id,
         active_work_item_kind=work_item_kind,
         active_work_item_id=work_item_id,
         execution_status_marker="### IDLE",
@@ -355,6 +444,33 @@ def test_route_stage_result_from_graph_matches_shipped_default_semantics(
 
     assert decision.action.value == expected_action
     assert decision.next_stage == expected_stage
+
+
+def test_graph_authority_counters_use_family_id_without_legacy_kind() -> None:
+    snapshot = _snapshot(
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.PLANNER,
+        work_item_family_id="custom_review",
+        work_item_kind=None,
+        work_item_id="custom-001",
+        current_failure_class="custom_failure",
+    )
+    counters = RecoveryCounters(
+        entries=(
+            {
+                "failure_class": "custom_failure",
+                "work_item_family_id": "custom_review",
+                "work_item_id": "custom-001",
+                "mechanic_attempt_count": 2,
+                "last_updated_at": NOW,
+            },
+        )
+    )
+
+    assert counter_key_from_snapshot(snapshot, "Custom Failure") == (
+        "custom_review:custom-001:custom_failure"
+    )
+    assert counter_attempts(snapshot, counters, "custom_failure", plane=Plane.PLANNING) == 2
 
 
 @pytest.mark.parametrize(

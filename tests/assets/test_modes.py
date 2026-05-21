@@ -164,6 +164,22 @@ def test_learning_modes_load_learning_plane_without_changing_default_modes() -> 
     )
 
 
+def test_blueprint_learning_codex_mode_selects_blueprint_planning_with_learning() -> None:
+    mode = load_builtin_mode_definition("blueprint_learning_codex")
+    blueprint_mode = load_builtin_mode_definition("blueprint_codex")
+
+    assert blueprint_mode.learning_enabled is False
+    assert mode.mode_id == "blueprint_learning_codex"
+    assert mode.execution_loop_id == "execution.standard"
+    assert mode.planning_loop_id == "planning.blueprint"
+    assert mode.learning_loop_id == "learning.standard"
+    assert mode.learning_enabled is True
+    assert mode.stage_runner_bindings[PlanningStageName.PLANNER] == "codex_cli"
+    assert mode.stage_runner_bindings["manager_blueprint"] == "codex_cli"
+    assert mode.stage_runner_bindings[LearningStageName.LIBRARIAN] == "codex_cli"
+    assert set(mode.stage_runner_bindings.values()) == {"codex_cli"}
+
+
 def test_integrated_codex_modes_load_quality_execution_loop() -> None:
     default_bundle = load_builtin_mode_bundle("default_codex_integrated")
     learning_bundle = load_builtin_mode_bundle("learning_codex_integrated")
@@ -184,9 +200,14 @@ def test_integrated_codex_modes_load_quality_execution_loop() -> None:
 
 
 def test_learning_enabled_modes_trigger_librarian_after_planner_complete() -> None:
-    for mode_id in ("learning_codex", "learning_pi", "learning_codex_integrated"):
-        bundle = load_builtin_mode_bundle(mode_id)
-        rule_by_id = {rule.rule_id: rule for rule in bundle.mode.learning_trigger_rules}
+    for mode_id in (
+        "learning_codex",
+        "learning_pi",
+        "learning_codex_integrated",
+        "blueprint_learning_codex",
+    ):
+        mode = load_builtin_mode_definition(mode_id)
+        rule_by_id = {rule.rule_id: rule for rule in mode.learning_trigger_rules}
 
         rule = rule_by_id["planning.planner.complete-to-librarian"]
         assert rule.source_plane is Plane.PLANNING
@@ -197,12 +218,33 @@ def test_learning_enabled_modes_trigger_librarian_after_planner_complete() -> No
 
 
 def test_default_modes_do_not_trigger_librarian() -> None:
-    for mode_id in ("default_codex", "default_pi", "default_codex_integrated"):
-        bundle = load_builtin_mode_bundle(mode_id)
+    for mode_id in (
+        "default_codex",
+        "default_pi",
+        "default_codex_integrated",
+        "blueprint_codex",
+    ):
+        mode = load_builtin_mode_definition(mode_id)
         assert all(
             rule.target_stage is not LearningStageName.LIBRARIAN
-            for rule in bundle.mode.learning_trigger_rules
+            for rule in mode.learning_trigger_rules
         )
+
+
+def test_blueprint_codex_mode_selects_blueprint_planning_graph_without_changing_defaults() -> None:
+    mode = load_builtin_mode_definition("blueprint_codex")
+    default_mode = load_builtin_mode_definition("default_codex")
+
+    assert mode.mode_id == "blueprint_codex"
+    assert mode.execution_loop_id == "execution.standard"
+    assert mode.planning_loop_id == "planning.blueprint"
+    assert mode.learning_enabled is False
+    assert default_mode.planning_loop_id == "planning.standard"
+    assert mode.stage_runner_bindings["manager_blueprint"] == "codex_cli"
+    assert mode.stage_runner_bindings["contractor_blueprint"] == "codex_cli"
+    assert mode.stage_runner_bindings["evaluator_blueprint"] == "codex_cli"
+    assert mode.stage_runner_bindings["mechanic_blueprint"] == "codex_cli"
+    assert set(mode.stage_runner_bindings.values()) == {"codex_cli"}
 
 
 def test_workspace_local_mode_loads_discovered_loops_and_stage_bindings(tmp_path: Path) -> None:
@@ -288,6 +330,8 @@ def test_shipped_mode_ids_are_stable() -> None:
         "learning_pi",
         "default_codex_integrated",
         "learning_codex_integrated",
+        "blueprint_codex",
+        "blueprint_learning_codex",
     )
 
 
@@ -342,6 +386,66 @@ def test_default_codex_integrated_compiles_for_bootstrapped_workspace(tmp_path: 
         "integrator",
         "checker",
     ]
+    assert all(
+        "blueprint" not in node.stage_kind_id
+        for node in outcome.active_plan.planning_graph.nodes
+    )
+
+
+def test_blueprint_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="blueprint_codex",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "blueprint_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.standard"
+    assert outcome.active_plan.planning_loop_id == "planning.blueprint"
+    assert {entry.entry_key.value: entry.node_id for entry in outcome.active_plan.planning_graph.compiled_entries} == {
+        "probe": "recon",
+        "spec": "planner",
+        "incident": "auditor",
+        "blueprint_draft": "contractor_blueprint",
+    }
+    planning_nodes = {node.stage_kind_id: node for node in outcome.active_plan.planning_graph.nodes}
+    assert planning_nodes["manager_blueprint"].runner_name == "codex_cli"
+    assert planning_nodes["contractor_blueprint"].required_skill_paths == (
+        "skills/stage/planning/contractor-blueprint-core/SKILL.md",
+    )
+    assert planning_nodes["evaluator_blueprint"].allowed_work_item_families == (
+        "blueprint_draft",
+    )
+
+
+def test_blueprint_learning_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="blueprint_learning_codex",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.mode_id == "blueprint_learning_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.standard"
+    assert outcome.active_plan.planning_loop_id == "planning.blueprint"
+    assert outcome.active_plan.learning_loop_id == "learning.standard"
+    assert outcome.active_plan.learning_graph is not None
+    assert {
+        (rule.source_stage.value, rule.on_terminal_results, rule.target_stage.value)
+        for rule in outcome.active_plan.learning_trigger_rules
+    } >= {
+        ("planner", ("PLANNER_COMPLETE",), "librarian"),
+    }
 
 
 def test_learning_codex_integrated_compiles_with_learning_plane(tmp_path: Path) -> None:

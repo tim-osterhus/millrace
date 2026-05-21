@@ -18,6 +18,9 @@ from millrace_ai.runtime_lock import (
 from millrace_ai.state_store import load_recovery_counters, load_snapshot, save_snapshot
 from millrace_ai.workspace.baseline import load_baseline_manifest
 
+from .compiled_plans import archive_compiled_plan
+from .lanes import compiled_plan_fingerprint_for_runtime, ensure_snapshot_lanes
+
 if TYPE_CHECKING:
     from millrace_ai.contracts import RuntimeSnapshot
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -55,8 +58,28 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
             raise RuntimeLifecycleError(errors)
 
         engine.compiled_plan = compiled_plan
+        archive_compiled_plan(engine.paths, compiled_plan)
+        expected_schema_epoch = (
+            compiled_plan.workspace_schema_epoch.epoch_id
+            if compiled_plan.workspace_schema_epoch is not None
+            else None
+        )
+        if expected_schema_epoch is not None:
+            from millrace_ai.workspace.schema_epoch import (
+                SchemaEpochError,
+                ensure_workspace_schema_epoch_current,
+            )
+
+            try:
+                ensure_workspace_schema_epoch_current(
+                    engine.paths,
+                    required_epoch_id=expected_schema_epoch,
+                )
+            except SchemaEpochError as exc:
+                raise RuntimeLifecycleError(str(exc)) from exc
 
         engine.snapshot = load_snapshot(engine.paths)
+        engine.snapshot = ensure_snapshot_lanes(engine.snapshot, compiled_plan)
         engine.counters = load_recovery_counters(engine.paths)
         engine._run_reconciliation_if_needed()
 
@@ -71,6 +94,7 @@ def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
                 "learning_loop_id": compiled_plan.learning_loop_id,
                 "loop_ids_by_plane": compiled_plan.loop_ids_by_plane,
                 "compiled_plan_id": compiled_plan.compiled_plan_id,
+                "compiled_plan_fingerprint": compiled_plan_fingerprint_for_runtime(compiled_plan),
                 "compiled_plan_path": str(
                     (engine.paths.state_dir / "compiled_plan.json").relative_to(engine.paths.root)
                 ),

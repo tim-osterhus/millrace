@@ -43,6 +43,7 @@
     "verdict",
     "report"
   ],
+  "allowed_work_item_families": [],
   "idempotence_policy": "single_attempt_only",
   "allowed_overrides": [
     "entrypoint_path",

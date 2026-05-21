@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.work_refs import coerce_family_and_kind
 from millrace_ai.router import RouterDecision
 from millrace_ai.state_store import save_recovery_counters
 
@@ -28,9 +29,10 @@ def increment_route_counters(
     stage_result: StageResultEnvelope,
 ) -> RuntimeSnapshot:
     assert engine.counters is not None
+    work_item_family_id = snapshot.active_work_item_family_id
     work_item_kind = snapshot.active_work_item_kind
     work_item_id = snapshot.active_work_item_id
-    if work_item_kind is None or work_item_id is None:
+    if work_item_family_id is None or work_item_id is None:
         return snapshot
     if decision.next_stage is ExecutionStageName.TROUBLESHOOTER:
         snapshot = increment_counter_field(
@@ -38,6 +40,7 @@ def increment_route_counters(
             snapshot,
             engine.counters,
             failure_class=decision.failure_class or "recoverable_failure",
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
             field="troubleshoot_attempt_count",
@@ -48,6 +51,7 @@ def increment_route_counters(
             snapshot,
             engine.counters,
             failure_class=decision.failure_class or "recoverable_failure",
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
             field="mechanic_attempt_count",
@@ -58,6 +62,7 @@ def increment_route_counters(
             snapshot,
             engine.counters,
             failure_class=decision.failure_class or "recoverable_failure",
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
             field="consultant_invocations",
@@ -68,6 +73,7 @@ def increment_route_counters(
             snapshot,
             engine.counters,
             failure_class=decision.failure_class or "fix_cycle",
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
             field="fix_cycle_count",
@@ -81,16 +87,23 @@ def increment_counter_field(
     counters: RecoveryCounters,
     *,
     failure_class: str,
-    work_item_kind: WorkItemKind,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | None = None,
     work_item_id: str,
     field: str,
 ) -> RuntimeSnapshot:
+    family_id, work_item_kind = coerce_family_and_kind(
+        family_id=work_item_family_id,
+        work_item_kind=work_item_kind,
+    )
+    if family_id is None:
+        raise ValueError("work_item_family_id or work_item_kind is required")
     timestamp = engine._now()
     mutable_entries = list(counters.entries)
     for index, entry in enumerate(mutable_entries):
         if (
             entry.failure_class == failure_class
-            and entry.work_item_kind is work_item_kind
+            and entry.work_item_family_id == family_id
             and entry.work_item_id == work_item_id
         ):
             mutable_entries[index] = entry.model_copy(
@@ -101,6 +114,7 @@ def increment_counter_field(
         mutable_entries.append(
             RecoveryCounterEntry(
                 failure_class=failure_class,
+                work_item_family_id=family_id,
                 work_item_kind=work_item_kind,
                 work_item_id=work_item_id,
                 troubleshoot_attempt_count=1 if field == "troubleshoot_attempt_count" else 0,

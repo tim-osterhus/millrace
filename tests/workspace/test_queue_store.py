@@ -215,7 +215,7 @@ def test_queue_store_facade_is_split_over_workspace_modules() -> None:
 
     assert queue_facade.QueueStore.__module__ == "millrace_ai.workspace.queue_store"
     assert queue_facade.QueueStore is queue_store_module.QueueStore
-    assert queue_facade.QueueClaim.__module__ == "millrace_ai.workspace.queue_selection"
+    assert queue_facade.QueueClaim.__module__ == "millrace_ai.workspace.queue_claims"
     assert queue_facade.StaleActiveState.__module__ == "millrace_ai.workspace.queue_reconciliation"
     assert hasattr(queue_selection_module, "claim_next_execution_task")
     assert hasattr(queue_reconciliation_module, "detect_execution_stale_state")

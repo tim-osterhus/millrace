@@ -11,7 +11,15 @@ from uuid import uuid4
 
 from pydantic import model_validator
 
+from millrace_ai.architecture import WorkItemFamilyDefinition
+from millrace_ai.assets import load_builtin_workflow_primitives
+from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.contracts import ContractModel, TaskDocument, WorkItemKind
+from millrace_ai.contracts.work_refs import (
+    coerce_family_and_kind,
+    family_id_for_work_item_kind,
+    normalize_work_item_family_id,
+)
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 
@@ -42,7 +50,8 @@ class OperatorInterventionRecord(ContractModel):
     reason: str
     issued_at: datetime
     applied_at: datetime
-    work_item_kind: WorkItemKind
+    work_item_family_id: str | None = None
+    work_item_kind: WorkItemKind | None = None
     work_item_id: str
     source_state: str
     destination_state: str
@@ -53,6 +62,11 @@ class OperatorInterventionRecord(ContractModel):
 
     @model_validator(mode="after")
     def validate_operator_record(self) -> "OperatorInterventionRecord":
+        if self.work_item_family_id is None and self.work_item_kind is not None:
+            self.work_item_family_id = family_id_for_work_item_kind(self.work_item_kind)
+        if self.work_item_family_id is None:
+            raise ValueError("work_item_family_id or work_item_kind is required")
+        self.work_item_family_id = normalize_work_item_family_id(self.work_item_family_id)
         if not self.actor.strip():
             raise ValueError("actor is required")
         if not self.reason.strip():
@@ -70,7 +84,8 @@ class OperatorInterventionResult(ContractModel):
     """In-memory result returned by one operator intervention."""
 
     action: InterventionAction
-    work_item_kind: WorkItemKind
+    work_item_family_id: str
+    work_item_kind: WorkItemKind | None = None
     work_item_id: str
     source_state: str
     destination_state: str
@@ -84,16 +99,20 @@ class OperatorInterventionResult(ContractModel):
 
 @dataclass(frozen=True, slots=True)
 class _LocatedItem:
-    work_item_kind: WorkItemKind
+    work_item_family_id: str
+    work_item_kind: WorkItemKind | None
     work_item_id: str
     state: str
     path: Path
+    cancel_archive_dir: Path | None = None
+    cancel_destination_state: str | None = None
 
 
 def cancel_work_item(
     paths: WorkspacePaths,
     *,
     work_item_id: str,
+    work_item_family_id: str | None = None,
     work_item_kind: WorkItemKind | None = None,
     reason: str,
     actor: str = "operator",
@@ -104,12 +123,21 @@ def cancel_work_item(
     """Cancel one queued or blocked work item without deleting its document."""
 
     del force  # Reserved for duplicate/lineage warning overrides in a later UI.
-    located = _locate_cancelable_work_item(paths, work_item_id=work_item_id, work_item_kind=work_item_kind)
+    work_item_family_id, work_item_kind = coerce_family_and_kind(
+        family_id=work_item_family_id,
+        work_item_kind=work_item_kind,
+    )
+    located = _locate_cancelable_work_item(
+        paths,
+        work_item_id=work_item_id,
+        work_item_family_id=work_item_family_id,
+        work_item_kind=work_item_kind,
+    )
     return _archive_located_item(
         paths,
         located,
         action="cancel",
-        destination_state="cancelled",
+        destination_state=located.cancel_destination_state or "cancelled",
         archive_name="cancelled",
         event_type="work_item_cancelled",
         reason=reason,
@@ -255,6 +283,7 @@ def retarget_queued_task_dependency(
     _emit_event(paths, "task_dependency_retargeted", record)
     return OperatorInterventionResult(
         action="retarget_dependency",
+        work_item_family_id=record.work_item_family_id,
         work_item_kind=WorkItemKind.TASK,
         work_item_id=task_id,
         source_state="queue",
@@ -364,6 +393,7 @@ def archive_invalid_incident_artifact(
     _emit_event(paths, "invalid_incident_artifact_archived", record)
     return OperatorInterventionResult(
         action="archive_invalid_incident",
+        work_item_family_id=record.work_item_family_id,
         work_item_kind=WorkItemKind.INCIDENT,
         work_item_id=source.name,
         source_state="incoming_invalid",
@@ -393,10 +423,15 @@ def _archive_located_item(
 ) -> OperatorInterventionResult:
     applied_at = _coerce_now(now)
     cleaned_reason = _clean_reason(reason)
-    archive_parent = explicit_archive_parent or located.path.parent
-    archive_dir = archive_parent / archive_name
+    if action == "cancel" and located.cancel_archive_dir is not None:
+        archive_dir = located.cancel_archive_dir
+    else:
+        archive_parent = explicit_archive_parent or located.path.parent
+        archive_dir = archive_parent / archive_name
     archive_dir.mkdir(parents=True, exist_ok=True)
-    destination = archive_dir / f"{located.work_item_id}.{_archive_suffix(applied_at)}.{located.state}.md"
+    destination = archive_dir / (
+        f"{located.work_item_id}.{_archive_suffix(applied_at)}.{located.state}{located.path.suffix}"
+    )
     if destination.exists():
         raise QueueStateError(f"archive destination already exists: {destination}")
     located.path.replace(destination)
@@ -404,6 +439,7 @@ def _archive_located_item(
     record = _record(
         paths,
         action=action,
+        work_item_family_id=located.work_item_family_id,
         work_item_kind=located.work_item_kind,
         work_item_id=located.work_item_id,
         source_state=located.state,
@@ -421,6 +457,7 @@ def _archive_located_item(
     _emit_event(paths, event_type, record)
     return OperatorInterventionResult(
         action=action,
+        work_item_family_id=located.work_item_family_id,
         work_item_kind=located.work_item_kind,
         work_item_id=located.work_item_id,
         source_state=located.state,
@@ -438,12 +475,23 @@ def _locate_cancelable_work_item(
     paths: WorkspacePaths,
     *,
     work_item_id: str,
+    work_item_family_id: str | None,
     work_item_kind: WorkItemKind | None,
 ) -> _LocatedItem:
     candidates: list[_LocatedItem] = []
-    kinds = tuple(WorkItemKind) if work_item_kind is None else (work_item_kind,)
-    for kind in kinds:
-        candidates.extend(_locate_cancelable_for_kind(paths, work_item_id=work_item_id, kind=kind))
+    if work_item_family_id is not None:
+        candidates.extend(
+            _locate_cancelable_for_family(
+                paths,
+                work_item_id=work_item_id,
+                family_id=work_item_family_id,
+                work_item_kind=work_item_kind,
+            )
+        )
+    else:
+        kinds = tuple(WorkItemKind) if work_item_kind is None else (work_item_kind,)
+        for kind in kinds:
+            candidates.extend(_locate_cancelable_for_kind(paths, work_item_id=work_item_id, kind=kind))
     if not candidates:
         raise QueueStateError(f"cancelable work item not found: {work_item_id}")
     if len(candidates) > 1:
@@ -461,12 +509,74 @@ def _locate_cancelable_for_kind(paths: WorkspacePaths, *, work_item_id: str, kin
         directories = (("queue", paths.specs_queue_dir), ("blocked", paths.specs_blocked_dir))
     elif kind is WorkItemKind.INCIDENT:
         directories = (("incoming", paths.incidents_incoming_dir), ("blocked", paths.incidents_blocked_dir))
+    elif kind is WorkItemKind.BLUEPRINT_DRAFT:
+        family = _work_item_families_by_id(paths).get(kind.value)
+        if family is None:
+            directories = ()
+        else:
+            return _locate_cancelable_for_family_definition(
+                paths,
+                work_item_id=work_item_id,
+                family=family,
+                work_item_kind=kind,
+            )
     else:
         directories = ()
     return [
-        _LocatedItem(kind, work_item_id, state, directory / f"{work_item_id}.md")
+        _LocatedItem(kind.value, kind, work_item_id, state, directory / f"{work_item_id}.md")
         for state, directory in directories
         if (directory / f"{work_item_id}.md").is_file()
+    ]
+
+
+def _locate_cancelable_for_family(
+    paths: WorkspacePaths,
+    *,
+    work_item_id: str,
+    family_id: str,
+    work_item_kind: WorkItemKind | None,
+) -> list[_LocatedItem]:
+    family = _work_item_families_by_id(paths).get(family_id)
+    if family is None:
+        raise QueueStateError(f"operator cancellation for family {family_id} is not supported")
+    return _locate_cancelable_for_family_definition(
+        paths,
+        work_item_id=work_item_id,
+        family=family,
+        work_item_kind=work_item_kind,
+    )
+
+
+def _locate_cancelable_for_family_definition(
+    paths: WorkspacePaths,
+    *,
+    work_item_id: str,
+    family: WorkItemFamilyDefinition,
+    work_item_kind: WorkItemKind | None,
+) -> list[_LocatedItem]:
+    if "cancel" not in family.operator_capabilities:
+        raise QueueStateError(f"operator cancellation for family {family.family_id} is not supported")
+    directories = (
+        (family.claimable_state, paths.runtime_root / family.queue_dirs.queue),
+        (family.blocked_state, paths.runtime_root / family.queue_dirs.blocked),
+    )
+    cancel_archive_dir = (
+        paths.runtime_root / family.queue_dirs.canceled
+        if family.queue_dirs.canceled is not None
+        else None
+    )
+    return [
+        _LocatedItem(
+            family.family_id,
+            work_item_kind,
+            work_item_id,
+            state,
+            directory / f"{work_item_id}{family.file_extension}",
+            cancel_archive_dir=cancel_archive_dir,
+            cancel_destination_state=family.canceled_state,
+        )
+        for state, directory in directories
+        if (directory / f"{work_item_id}{family.file_extension}").is_file()
     ]
 
 
@@ -478,7 +588,7 @@ def _locate_exact_task(paths: WorkspacePaths, *, task_id: str, states: tuple[str
         "blocked": paths.tasks_blocked_dir,
     }
     candidates = [
-        _LocatedItem(WorkItemKind.TASK, task_id, state, directories[state] / f"{task_id}.md")
+        _LocatedItem(WorkItemKind.TASK.value, WorkItemKind.TASK, task_id, state, directories[state] / f"{task_id}.md")
         for state in states
         if (directories[state] / f"{task_id}.md").is_file()
     ]
@@ -498,7 +608,13 @@ def _locate_incident(paths: WorkspacePaths, *, incident_id: str, states: tuple[s
         "blocked": paths.incidents_blocked_dir,
     }
     candidates = [
-        _LocatedItem(WorkItemKind.INCIDENT, incident_id, state, directories[state] / f"{incident_id}.md")
+        _LocatedItem(
+            WorkItemKind.INCIDENT.value,
+            WorkItemKind.INCIDENT,
+            incident_id,
+            state,
+            directories[state] / f"{incident_id}.md",
+        )
         for state in states
         if (directories[state] / f"{incident_id}.md").is_file()
     ]
@@ -539,7 +655,8 @@ def _record(
     paths: WorkspacePaths,
     *,
     action: InterventionAction,
-    work_item_kind: WorkItemKind,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | None,
     work_item_id: str,
     source_state: str,
     destination_state: str,
@@ -558,6 +675,7 @@ def _record(
         reason=reason,
         issued_at=issued_at,
         applied_at=applied_at,
+        work_item_family_id=work_item_family_id,
         work_item_kind=work_item_kind,
         work_item_id=work_item_id,
         source_state=source_state,
@@ -567,6 +685,16 @@ def _record(
         replacement_work_item_id=replacement_work_item_id,
         affected_dependents=affected_dependents,
     )
+
+
+def _work_item_families_by_id(paths: WorkspacePaths) -> dict[str, WorkItemFamilyDefinition]:
+    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
+    if compiled_plan is not None and compiled_plan.work_item_families_by_id:
+        return dict(compiled_plan.work_item_families_by_id)
+    return {
+        family.family_id: family
+        for family in load_builtin_workflow_primitives().work_item_families
+    }
 
 
 def _append_record(path: Path, record: OperatorInterventionRecord) -> None:

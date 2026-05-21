@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "blueprint_codex",
+  "loop_ids_by_plane": {
+    "execution": "execution.standard",
+    "planning": "planning.blueprint"
+  },
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "builder": "codex_cli",
+    "checker": "codex_cli",
+    "fixer": "codex_cli",
+    "doublechecker": "codex_cli",
+    "updater": "codex_cli",
+    "troubleshooter": "codex_cli",
+    "consultant": "codex_cli",
+    "recon": "codex_cli",
+    "planner": "codex_cli",
+    "manager_blueprint": "codex_cli",
+    "contractor_blueprint": "codex_cli",
+    "evaluator_blueprint": "codex_cli",
+    "mechanic_blueprint": "codex_cli",
+    "auditor": "codex_cli",
+    "arbiter": "codex_cli"
+  }
+}

@@ -36,8 +36,38 @@ Required deliverables:
 - either:
   - refinement of the active spec at `active_work_item_path`, or
   - one or more additional coherent spec artifacts only when true fan-out is required
+- `run_dir/planner_disposition.json`, declaring how the runtime should treat the
+  active source after Planner finishes
 - a planner summary that names the input, emitted specs, major assumptions, and
   the exact generated or refined spec paths that downstream stages should read
+
+### Planner Disposition Contract (required)
+
+Write `run_dir/planner_disposition.json` before the terminal marker. It must be a
+JSON object with exactly these fields:
+
+- `schema_version`: `"1.0"`
+- `kind`: `"planner_disposition"`
+- `source_work_item_family_id`: `"spec"` or `"incident"`
+- `source_work_item_id`: the active source id from the request
+- `disposition`: one of:
+  - `"active_source_ready_for_manager"`: the active source is ready for Manager
+  - `"emitted_child_specs"`: Planner emitted child specs and the active source
+    should resolve without Manager decomposing it
+  - `"blocked"`: Planner cannot produce trustworthy planning output
+- `emitted_spec_ids`: the emitted child spec ids; empty unless disposition is
+  `"emitted_child_specs"`
+- `refined_active_source`: `true` if Planner edited `active_work_item_path`,
+  otherwise `false`
+- `recommended_next_action`: concise operator-readable next action
+- `created_at`: ISO-8601 timestamp
+- `created_by`: `"planner"`
+
+Disposition rules:
+- Use `"active_source_ready_for_manager"` for pass-through and refine-in-place.
+- Use `"emitted_child_specs"` only after all listed specs exist under
+  `millrace-agents/specs/queue/<SPEC_ID>.md`.
+- Use `"blocked"` with `### BLOCKED`; do not use it with `### PLANNER_COMPLETE`.
 
 ### Pass-Through Decision Rule (high priority)
 
@@ -45,12 +75,16 @@ When the active planning input already provides a clear, bounded, execution-read
 
 In that case:
 - treat planner as a no-op refinement pass
+- write `planner_disposition.json` with
+  `disposition: "active_source_ready_for_manager"` and no emitted specs
 - write the planner summary and history entry
 - emit `### PLANNER_COMPLETE`
 
 When refinement is needed for an active spec, prefer editing `active_work_item_path` in place so the immediately following Manager stage decomposes the refined active spec directly.
 
 Only emit additional spec artifacts in `millrace-agents/specs/queue/` when true fan-out is required (multiple independent downstream specs are genuinely needed).
+When you do, write `planner_disposition.json` with
+`disposition: "emitted_child_specs"` and every emitted spec id.
 
 ### Strict Work Document Contract (must follow exactly for spec edits or new spec files)
 

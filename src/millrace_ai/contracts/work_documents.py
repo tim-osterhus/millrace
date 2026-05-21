@@ -19,8 +19,10 @@ from .enums import (
     RootIntakeKind,
     StageName,
     TaskStatusHint,
+    WorkItemKind,
 )
 from .stage_metadata import stage_plane, validate_safe_identifier
+from .work_refs import coerce_family_and_kind, normalize_work_item_family_id
 
 
 class TaskDocument(ContractModel):
@@ -120,6 +122,47 @@ class SpecDocument(ContractModel):
             validate_safe_identifier(self.source_id, field_name="source_id")
         if self.parent_spec_id is not None:
             validate_safe_identifier(self.parent_spec_id, field_name="parent_spec_id")
+        return self
+
+
+PlannerDispositionValue = Literal[
+    "active_source_ready_for_manager",
+    "emitted_child_specs",
+    "blocked",
+]
+PlannerDispositionSourceFamily = Literal["spec", "incident"]
+
+
+class PlannerDispositionDocument(ContractModel):
+    schema_version: Literal["1.0"]
+    kind: Literal["planner_disposition"]
+
+    source_work_item_family_id: PlannerDispositionSourceFamily
+    source_work_item_id: str
+    disposition: PlannerDispositionValue
+    emitted_spec_ids: tuple[str, ...]
+    refined_active_source: bool
+    recommended_next_action: str
+    created_at: datetime
+    created_by: Literal["planner"]
+
+    @model_validator(mode="after")
+    def validate_disposition(self) -> "PlannerDispositionDocument":
+        validate_safe_identifier(
+            self.source_work_item_id,
+            field_name="source_work_item_id",
+        )
+        for spec_id in self.emitted_spec_ids:
+            validate_safe_identifier(spec_id, field_name="emitted_spec_ids")
+        if len(set(self.emitted_spec_ids)) != len(self.emitted_spec_ids):
+            raise ValueError("emitted_spec_ids must be unique")
+        if not self.recommended_next_action.strip():
+            raise ValueError("recommended_next_action is required")
+        if self.disposition == "emitted_child_specs":
+            if not self.emitted_spec_ids:
+                raise ValueError("emitted_child_specs requires emitted_spec_ids")
+        elif self.emitted_spec_ids:
+            raise ValueError("emitted_spec_ids are only valid for emitted_child_specs")
         return self
 
 
@@ -238,6 +281,52 @@ class LearningRequestDocument(ContractModel):
         return self
 
 
+ClosureBlockingWorkRefType = Literal[
+    "work_item",
+    "blueprint_draft",
+    "blueprint_candidate",
+    "blueprint_promotion",
+    "blueprint_approved",
+    "blueprint_invalid",
+]
+
+
+class ClosureBlockingWorkRef(ContractModel):
+    blocker_type: ClosureBlockingWorkRefType
+    reason: str
+    work_item_family_id: str | None = None
+    work_item_kind: WorkItemKind | None = None
+    work_item_id: str | None = None
+    state: str | None = None
+    root_spec_id: str | None = None
+    root_idea_id: str | None = None
+    artifact_path: str | None = None
+    detail: str | None = None
+
+    @model_validator(mode="after")
+    def validate_ref(self) -> "ClosureBlockingWorkRef":
+        validate_safe_identifier(self.reason, field_name="reason")
+        family_id, work_item_kind = coerce_family_and_kind(
+            family_id=self.work_item_family_id,
+            work_item_kind=self.work_item_kind,
+        )
+        if family_id is None and self.work_item_family_id is not None:
+            family_id = normalize_work_item_family_id(self.work_item_family_id)
+        self.work_item_family_id = family_id
+        self.work_item_kind = work_item_kind
+        if self.work_item_id is not None:
+            validate_safe_identifier(self.work_item_id, field_name="work_item_id")
+        if self.state is not None:
+            validate_safe_identifier(self.state, field_name="state")
+        if self.root_spec_id is not None:
+            validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
+        if self.root_idea_id is not None:
+            validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.work_item_id is None and self.artifact_path is None:
+            raise ValueError("closure blocker refs require work_item_id or artifact_path")
+        return self
+
+
 class ClosureTargetState(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["closure_target_state"] = "closure_target_state"
@@ -254,9 +343,35 @@ class ClosureTargetState(ContractModel):
     closure_open: bool = True
     closure_blocked_by_lineage_work: bool = False
     blocking_work_ids: tuple[str, ...] = ()
+    blocking_work_refs: tuple[ClosureBlockingWorkRef, ...] = ()
     opened_at: datetime
     closed_at: datetime | None = None
     last_arbiter_run_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_blocking_work_ids(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        raw_ids = tuple(str(item) for item in payload.get("blocking_work_ids") or ())
+        safe_ids: list[str] = []
+        migrated_refs: list[dict[str, object]] = []
+        for raw_id in raw_ids:
+            if _is_safe_identifier(raw_id):
+                safe_ids.append(raw_id.strip())
+                continue
+            migrated = _legacy_blocking_work_ref(raw_id)
+            if migrated is not None:
+                migrated_refs.append(migrated)
+        payload["blocking_work_ids"] = tuple(dict.fromkeys(safe_ids))
+        if migrated_refs:
+            payload["blocking_work_refs"] = (
+                *(payload.get("blocking_work_refs") or ()),
+                *migrated_refs,
+            )
+            payload["closure_blocked_by_lineage_work"] = True
+        return payload
 
     @model_validator(mode="after")
     def validate_target_state(self) -> "ClosureTargetState":
@@ -272,15 +387,91 @@ class ClosureTargetState(ContractModel):
             raise ValueError("closed_at cannot precede opened_at")
         if self.closed_at is not None and self.closure_open:
             raise ValueError("closed closure target cannot remain open")
-        if self.blocking_work_ids and not self.closure_blocked_by_lineage_work:
-            raise ValueError("blocking_work_ids require closure_blocked_by_lineage_work=true")
+        if (
+            self.blocking_work_ids or self.blocking_work_refs
+        ) and not self.closure_blocked_by_lineage_work:
+            raise ValueError("blocking work requires closure_blocked_by_lineage_work=true")
         return self
 
 
+def _is_safe_identifier(value: str) -> bool:
+    try:
+        validate_safe_identifier(value, field_name="blocking_work_ids")
+    except ValueError:
+        return False
+    return True
+
+
+def _legacy_blocking_work_ref(value: str) -> dict[str, object] | None:
+    prefix, separator, rest = value.partition(":")
+    if not separator:
+        return {
+            "blocker_type": "blueprint_invalid",
+            "reason": "legacy_unsafe_blocking_work_id",
+            "artifact_path": value,
+            "detail": "legacy blocking_work_ids entry was not a safe identifier",
+        }
+    if prefix == "blueprint_draft" and _is_safe_identifier(rest):
+        return {
+            "blocker_type": "blueprint_draft",
+            "reason": "open_blueprint_draft",
+            "work_item_family_id": WorkItemKind.BLUEPRINT_DRAFT.value,
+            "work_item_kind": WorkItemKind.BLUEPRINT_DRAFT.value,
+            "work_item_id": rest,
+        }
+    if prefix == "blueprint_candidate" and _is_safe_identifier(rest):
+        return {
+            "blocker_type": "blueprint_candidate",
+            "reason": "candidate_packet",
+            "work_item_family_id": "blueprint_packet",
+            "work_item_id": rest,
+            "state": "candidates",
+        }
+    if prefix == "blueprint_approved":
+        blueprint_id, marker_separator, marker = rest.partition(":")
+        if marker_separator and marker == "missing_promotion" and _is_safe_identifier(blueprint_id):
+            return {
+                "blocker_type": "blueprint_approved",
+                "reason": "missing_promotion",
+                "work_item_family_id": "blueprint_packet",
+                "work_item_id": blueprint_id,
+                "state": "approved",
+            }
+    if prefix == "blueprint_promotion":
+        promotion_id, marker_separator, marker = rest.partition(":")
+        if (
+            marker_separator
+            and marker == "missing_generated_task"
+            and _is_safe_identifier(promotion_id)
+        ):
+            return {
+                "blocker_type": "blueprint_promotion",
+                "reason": "missing_generated_task",
+                "work_item_family_id": "blueprint_promotion",
+                "work_item_id": promotion_id,
+            }
+    if prefix == "blueprint_invalid":
+        return {
+            "blocker_type": "blueprint_invalid",
+            "reason": "invalid_artifact",
+            "artifact_path": rest,
+        }
+    return {
+        "blocker_type": "blueprint_invalid",
+        "reason": "legacy_unsafe_blocking_work_id",
+        "artifact_path": value,
+        "detail": "legacy blocking_work_ids entry was not a recognized packed blocker",
+    }
+
+
 __all__ = [
+    "ClosureBlockingWorkRef",
     "ClosureTargetState",
     "IncidentDocument",
     "LearningRequestDocument",
+    "PlannerDispositionDocument",
+    "PlannerDispositionSourceFamily",
+    "PlannerDispositionValue",
     "ProbeDocument",
     "SpecDocument",
     "TaskDocument",

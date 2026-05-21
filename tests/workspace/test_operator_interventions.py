@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.architecture import WorkItemFamilyDefinition
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ExecutionStageName,
     IncidentDecision,
@@ -72,6 +75,60 @@ def _json_lines(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _custom_planning_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "inspect"),
+    )
+
+
+def _persist_custom_family(paths, family: WorkItemFamilyDefinition) -> None:
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+    updated = outcome.active_plan.model_copy(
+        update={
+            "work_item_families_by_id": {
+                **outcome.active_plan.work_item_families_by_id,
+                family.family_id: family,
+            }
+        }
+    )
+    (paths.state_dir / "compiled_plan.json").write_text(
+        updated.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_cancel_queued_task_archives_document_and_writes_audit_event(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     QueueStore(paths).enqueue_task(_task_doc("task-cancel"))
@@ -102,6 +159,38 @@ def test_cancel_queued_task_archives_document_and_writes_audit_event(tmp_path: P
     events = read_runtime_events(paths)
     assert events[-1].event_type == "work_item_cancelled"
     assert events[-1].data["work_item_id"] == "task-cancel"
+
+
+def test_cancel_custom_family_uses_persisted_family_contract(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    family = _custom_planning_family()
+    _persist_custom_family(paths, family)
+    queue_dir = paths.runtime_root / family.queue_dirs.queue
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    source = queue_dir / "custom-001.json"
+    source.write_text('{"custom_id":"custom-001"}\n', encoding="utf-8")
+
+    result = cancel_work_item(
+        paths,
+        work_item_id="custom-001",
+        work_item_family_id="custom_review",
+        reason="custom graph work was superseded",
+        actor="operator",
+        now=NOW,
+    )
+
+    assert result.action == "cancel"
+    assert result.work_item_family_id == "custom_review"
+    assert result.work_item_kind is None
+    assert result.source_state == "queue"
+    assert result.destination_state == "canceled"
+    assert result.destination_path.parent == paths.runtime_root / family.queue_dirs.canceled
+    assert result.destination_path.suffix == ".json"
+    assert result.destination_path.is_file()
+    assert not source.exists()
+    audit = _json_lines(result.destination_path.parent / "interventions.jsonl")
+    assert audit[0]["work_item_family_id"] == "custom_review"
+    assert audit[0]["work_item_kind"] is None
 
 
 def test_supersede_blocked_task_can_retarget_queued_dependents(tmp_path: Path) -> None:

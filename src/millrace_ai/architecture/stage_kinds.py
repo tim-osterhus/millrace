@@ -54,6 +54,7 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
     allowed_result_classes_by_outcome: dict[str, tuple[ResultClass, ...]] = Field(min_length=1)
     allowed_input_artifacts: tuple[str, ...] = ()
     declared_output_artifacts: tuple[str, ...] = ()
+    allowed_work_item_families: tuple[str, ...]
     execution_capability_requests: tuple[CapabilityRequest, ...] = ()
     idempotence_policy: StageIdempotencePolicy = StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
     allowed_overrides: tuple[str, ...] = ()
@@ -152,6 +153,20 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
         if not value:
             return ()
         normalized = [normalize_canonical_id(str(item), field_label="artifact name") for item in value]
+        return dedupe_preserve_order(normalized)
+
+    @field_validator("allowed_work_item_families", mode="before")
+    @classmethod
+    def normalize_allowed_work_item_families(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized = [
+            normalize_canonical_id(str(item), field_label="allowed work item family")
+            for item in value
+        ]
         return dedupe_preserve_order(normalized)
 
     @field_validator("allowed_overrides", mode="before")

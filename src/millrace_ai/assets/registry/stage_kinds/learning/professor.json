@@ -43,6 +43,7 @@
     "stage_result",
     "skill_candidate"
   ],
+  "allowed_work_item_families": ["learning_request"],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

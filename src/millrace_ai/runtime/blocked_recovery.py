@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import ValidationError
+from pydantic import ValidationError, model_validator
 
+from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import RuntimeSnapshot, StageResultEnvelope, TaskDocument, WorkItemKind
+from millrace_ai.contracts import Plane, RuntimeSnapshot, StageResultEnvelope, TaskDocument, WorkItemKind
 from millrace_ai.contracts.base import ContractModel
+from millrace_ai.contracts.work_refs import family_id_for_work_item_kind, normalize_work_item_family_id
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
@@ -19,6 +21,7 @@ from millrace_ai.state_store import load_snapshot, save_snapshot
 from millrace_ai.workspace.lineage_integrity import effective_root_spec_id
 from millrace_ai.workspace.paths import WorkspacePaths
 from millrace_ai.workspace.work_documents import parse_work_document_as
+from millrace_ai.workspace.work_inventory import queue_depths_by_plane
 
 if TYPE_CHECKING:
     from millrace_ai.router import RouterDecision
@@ -51,7 +54,8 @@ AUTO_REQUEUE_FAILURE_CLASSES = frozenset(
 
 
 class BlockedItemMetadata(ContractModel):
-    work_item_kind: WorkItemKind
+    work_item_family_id: str | None = None
+    work_item_kind: WorkItemKind | None = None
     work_item_id: str
     root_spec_id: str | None = None
     root_idea_id: str | None = None
@@ -67,6 +71,15 @@ class BlockedItemMetadata(ContractModel):
     stage_result_path: str | None = None
     stdout_path: str | None = None
     stderr_path: str | None = None
+
+    @model_validator(mode="after")
+    def validate_work_ref(self) -> "BlockedItemMetadata":
+        if self.work_item_family_id is None and self.work_item_kind is not None:
+            self.work_item_family_id = family_id_for_work_item_kind(self.work_item_kind)
+        if self.work_item_family_id is None:
+            raise ValueError("work_item_family_id or work_item_kind is required")
+        self.work_item_family_id = normalize_work_item_family_id(self.work_item_family_id)
+        return self
 
 
 class BlockedTaskRequeueResult(ContractModel):
@@ -90,8 +103,18 @@ class StrandedBlockedDependency(ContractModel):
     metadata: BlockedItemMetadata | None = None
 
 
-def blocked_metadata_path(paths: WorkspacePaths, *, kind: WorkItemKind, work_item_id: str) -> Path:
-    return paths.runtime_root / "diagnostics" / "blocked" / f"{kind.value}-{work_item_id}.json"
+def blocked_metadata_path(
+    paths: WorkspacePaths,
+    *,
+    kind: WorkItemKind | None = None,
+    family_id: str | None = None,
+    work_item_id: str,
+) -> Path:
+    metadata_family_id = normalize_work_item_family_id(
+        family_id or family_id_for_work_item_kind(kind) or "",
+        field_name="work_item_family_id",
+    )
+    return paths.runtime_root / "diagnostics" / "blocked" / f"{metadata_family_id}-{work_item_id}.json"
 
 
 def write_blocked_item_metadata(
@@ -112,6 +135,7 @@ def write_blocked_item_metadata(
     destination = blocked_metadata_path(
         paths,
         kind=metadata.work_item_kind,
+        family_id=metadata.work_item_family_id,
         work_item_id=metadata.work_item_id,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +144,8 @@ def write_blocked_item_metadata(
         paths,
         event_type="blocked_item_metadata_written",
         data={
-            "work_item_kind": metadata.work_item_kind.value,
+            "work_item_family_id": metadata.work_item_family_id,
+            "work_item_kind": metadata.work_item_kind.value if metadata.work_item_kind is not None else None,
             "work_item_id": metadata.work_item_id,
             "failure_class": metadata.failure_class,
             "failure_scope": metadata.failure_scope,
@@ -149,6 +174,7 @@ def build_blocked_item_metadata(
         bool(stage_result.metadata.get("auto_requeue_candidate")) and failure_class in AUTO_REQUEUE_FAILURE_CLASSES
     )
     return BlockedItemMetadata(
+        work_item_family_id=stage_result.work_item_family_id,
         work_item_kind=stage_result.work_item_kind,
         work_item_id=stage_result.work_item_id,
         root_spec_id=root_spec_id,
@@ -426,13 +452,14 @@ def _refresh_snapshot_queue_depths(paths: WorkspacePaths) -> None:
         snapshot = load_snapshot(paths)
     except Exception:
         return
+    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
+    queue_depths = queue_depths_by_plane(paths, compiled_plan=compiled_plan)
     updated = snapshot.model_copy(
         update={
-            "queue_depth_execution": len(tuple(paths.tasks_queue_dir.glob("*.md"))),
-            "queue_depth_planning": len(tuple(paths.specs_queue_dir.glob("*.md")))
-            + len(tuple(paths.probes_queue_dir.glob("*.md")))
-            + len(tuple(paths.incidents_incoming_dir.glob("*.md"))),
-            "queue_depth_learning": len(tuple(paths.learning_requests_queue_dir.glob("*.md"))),
+            "queue_depth_execution": queue_depths[Plane.EXECUTION],
+            "queue_depth_planning": queue_depths[Plane.PLANNING],
+            "queue_depth_learning": queue_depths[Plane.LEARNING],
+            "queue_depths_by_plane": queue_depths,
             "updated_at": datetime.now(timezone.utc),
         }
     )
@@ -508,11 +535,31 @@ def _blocked_work_item_lineage(
     paths: WorkspacePaths,
     stage_result: StageResultEnvelope,
 ) -> tuple[str | None, str | None]:
-    if stage_result.work_item_kind is not WorkItemKind.TASK:
+    if stage_result.work_item_kind is WorkItemKind.TASK:
+        return _blocked_task_lineage(paths, stage_result.work_item_id)
+    family_id = stage_result.work_item_family_id or (
+        stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+    )
+    if family_id is None:
         return None, None
-    path = paths.tasks_blocked_dir / f"{stage_result.work_item_id}.md"
+    for path in _candidate_blocked_lineage_paths(
+        paths,
+        family_id=family_id,
+        work_item_id=stage_result.work_item_id,
+    ):
+        lineage = _lineage_from_artifact(path)
+        if lineage != (None, None):
+            return lineage
+    return None, None
+
+
+def _blocked_task_lineage(
+    paths: WorkspacePaths,
+    task_id: str,
+) -> tuple[str | None, str | None]:
+    path = paths.tasks_blocked_dir / f"{task_id}.md"
     if not path.is_file():
-        path = paths.tasks_active_dir / f"{stage_result.work_item_id}.md"
+        path = paths.tasks_active_dir / f"{task_id}.md"
     if not path.is_file():
         return None, None
     try:
@@ -520,6 +567,80 @@ def _blocked_work_item_lineage(
     except (OSError, ValidationError, ValueError):
         return None, None
     return task.root_idea_id, effective_root_spec_id(task)
+
+
+def _candidate_blocked_lineage_paths(
+    paths: WorkspacePaths,
+    *,
+    family_id: str,
+    work_item_id: str,
+) -> tuple[Path, ...]:
+    family = _work_item_family_for_lineage(paths, family_id)
+    if family is None:
+        if family_id == WorkItemKind.BLUEPRINT_DRAFT.value:
+            return tuple(
+                paths.runtime_root / "blueprints" / "drafts" / state / f"{work_item_id}.json"
+                for state in ("blocked", "active", "queue")
+            )
+        return ()
+    candidates: list[Path] = []
+    for dir_key in ("blocked", "active", "queue"):
+        relative = getattr(family.queue_dirs, dir_key)
+        if relative is None:
+            continue
+        candidates.append(paths.runtime_root / relative / f"{work_item_id}{family.file_extension}")
+    return tuple(candidates)
+
+
+def _work_item_family_for_lineage(paths: WorkspacePaths, family_id: str):
+    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
+    if compiled_plan is not None:
+        family = compiled_plan.work_item_families_by_id.get(family_id)
+        if family is not None:
+            return family
+    try:
+        from millrace_ai.assets import load_builtin_workflow_primitives
+    except Exception:
+        return None
+    return next(
+        (
+            family
+            for family in load_builtin_workflow_primitives().work_item_families
+            if family.family_id == family_id
+        ),
+        None,
+    )
+
+
+def _lineage_from_artifact(path: Path) -> tuple[str | None, str | None]:
+    if not path.is_file():
+        return None, None
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None, None
+    if path.suffix == ".json":
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None, None
+        if not isinstance(payload, dict):
+            return None, None
+        return _metadata_string(payload.get("root_idea_id")), _metadata_string(
+            payload.get("root_spec_id")
+        )
+    return _lineage_from_markdown(raw)
+
+
+def _lineage_from_markdown(raw: str) -> tuple[str | None, str | None]:
+    root_idea_id: str | None = None
+    root_spec_id: str | None = None
+    for line in raw.splitlines():
+        if line.startswith("Root-Idea-ID:"):
+            root_idea_id = line.removeprefix("Root-Idea-ID:").strip() or None
+        if line.startswith("Root-Spec-ID:"):
+            root_spec_id = line.removeprefix("Root-Spec-ID:").strip() or None
+    return root_idea_id, root_spec_id
 
 
 def _blocked_origin_for_stage_result(stage_result: StageResultEnvelope) -> BlockedOrigin:

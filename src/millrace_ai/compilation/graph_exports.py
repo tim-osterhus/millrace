@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan
+from millrace_ai.architecture.loop_graphs import graph_loop_entry_key_value
 from millrace_ai.contracts import Plane
 from millrace_ai.contracts.graph_exports import (
     CompiledStageGraphExport,
@@ -84,7 +85,7 @@ def _export_graph(
         ),
         entries=tuple(
             GraphExportEntry(
-                entry_key=entry.entry_key.value,
+                entry_key=graph_loop_entry_key_value(entry.entry_key),
                 node_id=entry.node_id,
                 stage_kind_id=entry.stage_kind_id,
                 plane=entry.plane,

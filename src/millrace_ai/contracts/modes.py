@@ -8,8 +8,22 @@ from pydantic import Field, field_validator, model_validator
 
 from .base import ContractModel
 from .capabilities import CapabilityPolicyOverride, CapabilityRequest
-from .enums import LearningRequestAction, LearningStageName, Plane, StageName
-from .stage_metadata import legal_terminal_results, stage_plane, validate_safe_identifier
+from .enums import (
+    ExecutionStageName,
+    LearningRequestAction,
+    LearningStageName,
+    Plane,
+    PlanningStageName,
+    StageName,
+)
+from .stage_metadata import (
+    legal_terminal_results,
+    stage_name_for_value,
+    stage_plane,
+    validate_safe_identifier,
+)
+
+StageMapKey = StageName | str
 
 
 class LearningTriggerRuleDefinition(ContractModel):
@@ -88,12 +102,13 @@ class ModeDefinition(ContractModel):
     mode_id: str
     loop_ids_by_plane: dict[Plane, str]
 
-    stage_entrypoint_overrides: dict[StageName, str] = Field(default_factory=dict)
-    stage_skill_additions: dict[StageName, tuple[str, ...]] = Field(default_factory=dict)
-    stage_model_bindings: dict[StageName, str] = Field(default_factory=dict)
-    stage_runner_bindings: dict[StageName, str] = Field(default_factory=dict)
-    stage_thinking_bindings: dict[StageName, str | None] = Field(default_factory=dict)
+    stage_entrypoint_overrides: dict[StageMapKey, str] = Field(default_factory=dict)
+    stage_skill_additions: dict[StageMapKey, tuple[str, ...]] = Field(default_factory=dict)
+    stage_model_bindings: dict[StageMapKey, str] = Field(default_factory=dict)
+    stage_runner_bindings: dict[StageMapKey, str] = Field(default_factory=dict)
+    stage_thinking_bindings: dict[StageMapKey, str | None] = Field(default_factory=dict)
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
+    lane_conflict_policies: tuple[dict[str, object], ...] | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
     execution_capability_requests: tuple[CapabilityRequest, ...] = ()
     execution_capability_policies: tuple[CapabilityPolicyOverride, ...] = ()
@@ -117,13 +132,27 @@ class ModeDefinition(ContractModel):
             payload["loop_ids_by_plane"] = loop_ids
         return payload
 
+    @field_validator(
+        "stage_entrypoint_overrides",
+        "stage_skill_additions",
+        "stage_model_bindings",
+        "stage_runner_bindings",
+        "stage_thinking_bindings",
+        mode="before",
+    )
+    @classmethod
+    def normalize_stage_map_keys(cls, value: object) -> object:
+        if value is None or not isinstance(value, dict):
+            return value
+        return {_normalize_stage_map_key(key): map_value for key, map_value in value.items()}
+
     @field_validator("stage_thinking_bindings")
     @classmethod
     def validate_stage_thinking_bindings(
         cls,
-        value: dict[StageName, str | None],
-    ) -> dict[StageName, str | None]:
-        normalized: dict[StageName, str | None] = {}
+        value: dict[StageMapKey, str | None],
+    ) -> dict[StageMapKey, str | None]:
+        normalized: dict[StageMapKey, str | None] = {}
         for stage, thinking_level in value.items():
             if thinking_level is None:
                 normalized[stage] = None
@@ -171,4 +200,16 @@ __all__ = [
     "LearningTriggerRuleDefinition",
     "ModeDefinition",
     "PlaneConcurrencyPolicyDefinition",
+    "StageMapKey",
 ]
+
+
+def _normalize_stage_map_key(value: object) -> StageMapKey:
+    raw = value.value if isinstance(value, (ExecutionStageName, LearningStageName, PlanningStageName)) else str(value)
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError("stage map keys must not be empty")
+    try:
+        return stage_name_for_value(stripped)
+    except ValueError:
+        return validate_safe_identifier(stripped, field_name="stage map key")

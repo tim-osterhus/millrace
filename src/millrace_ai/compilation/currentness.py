@@ -12,6 +12,7 @@ from .fingerprints import build_existing_plan_input_fingerprint
 from .mode_resolution import resolve_compile_assets_root, resolve_mode_id, resolve_paths
 from .outcomes import CompiledPlanCurrentness
 from .persistence import load_existing_plan
+from .plan_authority import has_required_workflow_authority
 
 
 def inspect_workspace_plan_currentness(
@@ -45,11 +46,11 @@ def inspect_workspace_plan_currentness(
         paths=paths,
         assets_root=resolve_compile_assets_root(paths, assets_root),
     )
-    state = (
-        "current"
-        if persisted_plan.compile_input_fingerprint == expected_fingerprint
-        else "stale"
-    )
+    state = "current"
+    if persisted_plan.compile_input_fingerprint != expected_fingerprint:
+        state = "stale"
+    elif not has_required_workflow_authority(persisted_plan):
+        state = "stale"
     return CompiledPlanCurrentness(
         state=state,
         expected_fingerprint=expected_fingerprint,

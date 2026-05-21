@@ -32,7 +32,8 @@ def _snapshot(
     *,
     plane: Plane,
     stage: StageName,
-    work_item_kind: WorkItemKind = WorkItemKind.TASK,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | None = WorkItemKind.TASK,
     work_item_id: str = "task-001",
     fix_cycle_count: int = 0,
     current_failure_class: str | None = None,
@@ -49,6 +50,7 @@ def _snapshot(
         active_plane=plane,
         active_stage=stage,
         active_run_id="run-001",
+        active_work_item_family_id=work_item_family_id,
         active_work_item_kind=work_item_kind,
         active_work_item_id=work_item_id,
         execution_status_marker="### IDLE",
@@ -80,7 +82,8 @@ def _stage_result(
     *,
     stage: StageName,
     terminal_result: TerminalResult,
-    work_item_kind: WorkItemKind = WorkItemKind.TASK,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | None = WorkItemKind.TASK,
     work_item_id: str = "task-001",
     metadata: dict[str, object] | None = None,
 ) -> StageResultEnvelope:
@@ -94,6 +97,7 @@ def _stage_result(
         run_id="run-001",
         plane=plane,
         stage=stage,
+        work_item_family_id=work_item_family_id,
         work_item_kind=work_item_kind,
         work_item_id=work_item_id,
         terminal_result=terminal_result,
@@ -461,6 +465,26 @@ def test_execution_router_rejects_stage_result_identity_mismatch() -> None:
         next_execution_step(snapshot, stage_result, RecoveryCounters())
 
 
+def test_planning_router_rejects_custom_family_identity_mismatch_without_legacy_kind() -> None:
+    snapshot = _snapshot(
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.PLANNER,
+        work_item_family_id="custom_review",
+        work_item_kind=None,
+        work_item_id="custom-001",
+    )
+    stage_result = _stage_result(
+        stage=PlanningStageName.PLANNER,
+        terminal_result=PlanningTerminalResult.BLOCKED,
+        work_item_family_id="other_custom_review",
+        work_item_kind=None,
+        work_item_id="custom-001",
+    )
+
+    with pytest.raises(ValueError, match="work_item_family_id"):
+        next_planning_step(snapshot, stage_result, RecoveryCounters())
+
+
 def test_planning_router_rejects_stage_result_stage_mismatch() -> None:
     snapshot = _snapshot(
         plane=Plane.PLANNING,
@@ -488,5 +512,5 @@ def test_execution_router_rejects_stage_result_work_item_mismatch() -> None:
         work_item_id="spec-001",
     )
 
-    with pytest.raises(ValueError, match="work_item_kind"):
+    with pytest.raises(ValueError, match="work_item_family_id"):
         next_execution_step(snapshot, stage_result, RecoveryCounters())

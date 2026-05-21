@@ -236,6 +236,14 @@ def test_load_runtime_config_precedence_cli_over_mailbox_over_file_over_defaults
     assert config.runtime.run_style.value == "daemon"
 
 
+def test_load_runtime_config_rejects_legacy_run_once_style(tmp_path: Path) -> None:
+    config_path = tmp_path / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="run_style.*once.*daemon"):
+        load_runtime_config(config_path=config_path)
+
+
 def test_each_config_field_has_an_apply_boundary() -> None:
     config = RuntimeConfig(
         stages={

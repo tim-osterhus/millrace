@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from millrace_ai.contracts import (
     ExecutionCapabilityGrant,
@@ -22,16 +22,43 @@ from .loop_graphs import (
     GraphLoopEdgeKind,
     GraphLoopEntryDefinition,
     GraphLoopEntryKey,
+    GraphLoopEntryKeyValue,
     GraphLoopTerminalStateDefinition,
+    normalize_graph_loop_entry_key,
 )
 from .stage_kinds import ArchitectureContractModel
+from .workflow_primitives import (
+    ArtifactContractDefinition,
+    LaneConflictPolicyDefinition,
+    LifecycleMutationPlanDefinition,
+    PlaneQueueClaimPolicyDefinition,
+    RuntimeEffectHandlerDefinition,
+    RuntimeEffectRuleDefinition,
+    RuntimeFailurePolicyDefinition,
+    TerminalActionDefinition,
+    WorkflowPlaneSchedulerPolicyDefinition,
+    WorkflowRecoveryPolicyDefinition,
+    WorkItemDocumentAdapterDefinition,
+    WorkItemFamilyDefinition,
+    WorkspaceSchemaEpochDefinition,
+)
 
 
 class CompiledGraphEntryPlan(ArchitectureContractModel):
-    entry_key: GraphLoopEntryKey
+    entry_key: GraphLoopEntryKeyValue
     node_id: str
     stage_kind_id: str
     plane: Plane
+
+    @field_validator("entry_key", mode="before")
+    @classmethod
+    def validate_entry_key(cls, value: object) -> GraphLoopEntryKeyValue:
+        return normalize_graph_loop_entry_key(value)
+
+    @field_validator("entry_key", mode="after")
+    @classmethod
+    def coerce_known_entry_key(cls, value: GraphLoopEntryKeyValue) -> GraphLoopEntryKeyValue:
+        return normalize_graph_loop_entry_key(value)
 
 
 class CompiledGraphCompletionEntryPlan(ArchitectureContractModel):
@@ -110,6 +137,7 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     running_status_marker: str
     allowed_result_classes_by_outcome: dict[str, tuple[ResultClass, ...]]
     declared_output_artifacts: tuple[str, ...] = ()
+    allowed_work_item_families: tuple[str, ...] = ()
     required_skill_paths: tuple[str, ...] = ()
     attached_skill_additions: tuple[str, ...] = ()
     runner_name: str | None = None
@@ -190,6 +218,20 @@ class CompiledRunPlan(ArchitectureContractModel):
     learning_graph: FrozenGraphPlanePlan | None = None
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
+    artifact_contracts_by_id: dict[str, ArtifactContractDefinition] = Field(default_factory=dict)
+    artifact_contracts: tuple[ArtifactContractDefinition, ...] = ()
+    work_item_families_by_id: dict[str, WorkItemFamilyDefinition] = Field(default_factory=dict)
+    document_adapters_by_id: dict[str, WorkItemDocumentAdapterDefinition] = Field(default_factory=dict)
+    queue_claim_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition] = Field(default_factory=dict)
+    terminal_actions_by_id: dict[str, TerminalActionDefinition] = Field(default_factory=dict)
+    lifecycle_mutation_plans_by_id: dict[str, LifecycleMutationPlanDefinition] = Field(default_factory=dict)
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition] = Field(default_factory=dict)
+    workflow_recovery_policies_by_id: dict[str, WorkflowRecoveryPolicyDefinition] = Field(default_factory=dict)
+    runtime_failure_policies_by_id: dict[str, RuntimeFailurePolicyDefinition] = Field(default_factory=dict)
+    runtime_effect_rules: tuple[RuntimeEffectRuleDefinition, ...] = ()
+    scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition | None = None
+    lane_conflict_policies_by_id: dict[str, LaneConflictPolicyDefinition] = Field(default_factory=dict)
+    workspace_schema_epoch: WorkspaceSchemaEpochDefinition | None = None
     compiled_at: datetime
     resolved_assets: tuple[ResolvedAssetRef, ...] = ()
     source_refs: tuple[str, ...] = ()
@@ -230,7 +272,25 @@ class CompiledRunPlan(ArchitectureContractModel):
             raise ValueError("learning graph binding requires learning_graph")
         if self.learning_trigger_rules and self.learning_graph is None:
             raise ValueError("learning_trigger_rules require learning_graph")
+        self._validate_artifact_contract_surfaces()
         return self
+
+    def _validate_artifact_contract_surfaces(self) -> None:
+        if not self.artifact_contracts_by_id and not self.artifact_contracts:
+            return
+
+        tuple_contracts_by_id = {
+            contract.artifact_id: contract
+            for contract in self.artifact_contracts
+        }
+        if len(tuple_contracts_by_id) != len(self.artifact_contracts):
+            raise ValueError("artifact_contracts contains duplicate artifact id")
+        if set(self.artifact_contracts_by_id) != set(tuple_contracts_by_id):
+            raise ValueError("artifact_contracts_by_id must match artifact_contracts")
+
+        for artifact_id, contract in self.artifact_contracts_by_id.items():
+            if contract != tuple_contracts_by_id[artifact_id]:
+                raise ValueError("artifact_contracts_by_id must match artifact_contracts")
 
 
 __all__ = [

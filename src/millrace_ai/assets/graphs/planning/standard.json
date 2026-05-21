@@ -35,8 +35,8 @@
     {"edge_id": "arbiter-blocked-to-terminal-blocked", "from_node_id": "arbiter", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"}
   ],
   "terminal_states": [
-    {"terminal_state_id": "recon_to_execution", "terminal_class": "success", "writes_status": "RECON_TO_EXECUTION", "emits_artifacts": ["stage_result", "recon_packet", "task"]},
-    {"terminal_state_id": "recon_to_planning", "terminal_class": "success", "writes_status": "RECON_TO_PLANNING", "emits_artifacts": ["stage_result", "recon_packet", "spec"]},
+    {"terminal_state_id": "recon_to_execution", "terminal_class": "success", "writes_status": "RECON_TO_EXECUTION", "emits_artifacts": ["stage_result", "recon_packet", "generated_task"]},
+    {"terminal_state_id": "recon_to_planning", "terminal_class": "success", "writes_status": "RECON_TO_PLANNING", "emits_artifacts": ["stage_result", "recon_packet", "generated_spec"]},
     {"terminal_state_id": "recon_noop", "terminal_class": "no_op", "writes_status": "RECON_NOOP", "emits_artifacts": ["stage_result", "recon_packet"]},
     {"terminal_state_id": "recon_blocked", "terminal_class": "blocked", "writes_status": "RECON_BLOCKED", "emits_artifacts": ["stage_result", "recon_packet", "report"]},
     {"terminal_state_id": "manager_complete", "terminal_class": "success", "writes_status": "MANAGER_COMPLETE", "emits_artifacts": ["stage_result", "task_cards"]},

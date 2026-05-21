@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from millrace_ai.contracts import (
     ActiveRunState,
+    BlueprintDraftDocument,
     ClosureTargetState,
     ExecutionStageName,
     LearningRequestDocument,
@@ -30,6 +31,10 @@ from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.runner import RunnerRawResult, StageRunRequest
+from millrace_ai.runtime import RuntimeEngine
+from millrace_ai.runtime.activation import activate_claim_for_plane
+from millrace_ai.runtime.mailbox_intake import reload_config_from_mailbox
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import (
     load_execution_status,
@@ -44,12 +49,34 @@ from millrace_ai.state_store import (
     set_planning_status,
 )
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
+from millrace_ai.workspace.blueprint_state import claim_next_blueprint_draft, enqueue_blueprint_draft, read_blueprint_draft
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
+    raise AssertionError(f"stage runner should not be called in control tests: {request.stage.value}")
+
+
+def _write_default_mode_config(paths, mode_id: str) -> None:
+    (paths.runtime_root / "millrace.toml").write_text(
+        "\n".join(
+            [
+                "[runtime]",
+                f'default_mode = "{mode_id}"',
+                'run_style = "daemon"',
+                "",
+                "[runners.codex]",
+                'permission_default = "maximum"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def _task_doc(task_id: str) -> TaskDocument:
@@ -64,6 +91,28 @@ def _task_doc(task_id: str) -> TaskDocument:
         risk=["runtime control drift"],
         created_at=NOW,
         created_by="tests",
+    )
+
+
+def _blueprint_draft_doc(draft_id: str = "draft-001") -> BlueprintDraftDocument:
+    return BlueprintDraftDocument(
+        draft_id=draft_id,
+        manifest_id="manifest-001",
+        root_spec_id="spec-root-001",
+        root_idea_id="idea-001",
+        source_spec_id="spec-root-001",
+        draft_index=1,
+        title="Blueprint Draft",
+        summary="Blueprint retry fixture.",
+        scope=("src/millrace_ai/runtime/",),
+        target_paths=("src/millrace_ai/runtime/",),
+        acceptance_intent=("Retry active supports blueprint drafts.",),
+        verification_intent=("pytest tests/runtime/test_control.py -q",),
+        integration_boundary_notes=("Fixture only.",),
+        context_excerpt="Retry fixture.",
+        current_revision=0,
+        references=("tests/runtime/test_control.py",),
+        created_at=NOW,
     )
 
 
@@ -145,6 +194,13 @@ def _activate_spec(paths, spec_id: str) -> None:
     assert claim.work_item_id == spec_id
 
 
+def _activate_blueprint_draft(paths, draft_id: str) -> None:
+    enqueue_blueprint_draft(paths, _blueprint_draft_doc(draft_id))
+    claim = claim_next_blueprint_draft(paths)
+    assert claim is not None
+    assert claim.work_item_id == draft_id
+
+
 def _save_active_spec_snapshot(
     paths,
     *,
@@ -165,6 +221,34 @@ def _save_active_spec_snapshot(
                 "active_run_id": "run-active-planning",
                 "active_work_item_kind": WorkItemKind.SPEC,
                 "active_work_item_id": spec_id,
+                "active_since": NOW,
+                "updated_at": NOW,
+            }
+        ),
+    )
+
+
+def _save_active_blueprint_snapshot(
+    paths,
+    *,
+    draft_id: str,
+    daemon_running: bool,
+) -> None:
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        snapshot.model_copy(
+            update={
+                "runtime_mode": RuntimeMode.DAEMON,
+                "process_running": daemon_running,
+                "paused": False,
+                "stop_requested": False,
+                "active_plane": Plane.PLANNING,
+                "active_stage": PlanningStageName.MANAGER,
+                "active_run_id": "run-active-blueprint",
+                "active_work_item_family_id": "blueprint_draft",
+                "active_work_item_kind": WorkItemKind.BLUEPRINT_DRAFT,
+                "active_work_item_id": draft_id,
                 "active_since": NOW,
                 "updated_at": NOW,
             }
@@ -395,10 +479,13 @@ def test_retry_active_unscoped_rejects_multiple_active_planes(tmp_path: Path) ->
         {
             Plane.EXECUTION: ActiveRunState(
                 plane=Plane.EXECUTION,
+                lane_id="execution.main",
                 stage=ExecutionStageName.BUILDER,
                 node_id="builder",
                 stage_kind_id="builder",
                 run_id="run-execution",
+                compiled_plan_id="bootstrap",
+                compiled_plan_fingerprint="bootstrap",
                 request_kind="active_work_item",
                 work_item_kind=WorkItemKind.TASK,
                 work_item_id="task-001",
@@ -406,10 +493,13 @@ def test_retry_active_unscoped_rejects_multiple_active_planes(tmp_path: Path) ->
             ),
             Plane.LEARNING: ActiveRunState(
                 plane=Plane.LEARNING,
+                lane_id="learning.main",
                 stage=LearningStageName.CURATOR,
                 node_id="curator",
                 stage_kind_id="curator",
                 run_id="run-learning",
+                compiled_plan_id="bootstrap",
+                compiled_plan_fingerprint="bootstrap",
                 request_kind="learning_request",
                 work_item_kind=WorkItemKind.LEARNING_REQUEST,
                 work_item_id="learn-001",
@@ -445,6 +535,23 @@ def test_retry_active_planning_requeues_active_spec_when_daemon_is_not_running(
     assert (paths.specs_queue_dir / "spec-001.md").is_file()
 
 
+def test_retry_active_planning_requeues_active_blueprint_draft(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    _activate_blueprint_draft(paths, "draft-001")
+    _save_active_blueprint_snapshot(paths, draft_id="draft-001", daemon_running=False)
+    control = RuntimeControl(paths)
+
+    result = control.retry_active_planning(reason="operator requested planning retry")
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert "blueprint_draft draft-001" in result.detail
+    assert not (paths.runtime_root / "blueprints/drafts/active/draft-001.json").exists()
+    queued = paths.runtime_root / "blueprints/drafts/queue/draft-001.json"
+    assert queued.is_file()
+    assert read_blueprint_draft(queued).status == "queued"
+
+
 def test_retry_active_planning_preserves_other_active_planes(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     _activate_spec(paths, "spec-001")
@@ -456,10 +563,13 @@ def test_retry_active_planning_preserves_other_active_planes(tmp_path: Path) -> 
         {
             Plane.PLANNING: ActiveRunState(
                 plane=Plane.PLANNING,
+                lane_id="planning.main",
                 stage=PlanningStageName.PLANNER,
                 node_id="planner",
                 stage_kind_id="planner",
                 run_id="run-planning",
+                compiled_plan_id="bootstrap",
+                compiled_plan_fingerprint="bootstrap",
                 request_kind="active_work_item",
                 work_item_kind=WorkItemKind.SPEC,
                 work_item_id="spec-001",
@@ -467,10 +577,13 @@ def test_retry_active_planning_preserves_other_active_planes(tmp_path: Path) -> 
             ),
             Plane.LEARNING: ActiveRunState(
                 plane=Plane.LEARNING,
+                lane_id="learning.main",
                 stage=LearningStageName.CURATOR,
                 node_id="curator",
                 stage_kind_id="curator",
                 run_id="run-learning",
+                compiled_plan_id="bootstrap",
+                compiled_plan_fingerprint="bootstrap",
                 request_kind="learning_request",
                 work_item_kind=WorkItemKind.LEARNING_REQUEST,
                 work_item_id="learn-001",
@@ -610,6 +723,22 @@ def test_clear_stale_state_requeues_half_claimed_spec_and_preserves_open_closure
     assert snapshot.active_work_item_id is None
 
 
+def test_clear_stale_state_requeues_active_blueprint_draft(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    _activate_blueprint_draft(paths, "draft-stale")
+    _save_active_blueprint_snapshot(paths, draft_id="draft-stale", daemon_running=False)
+    control = RuntimeControl(paths)
+
+    result = control.clear_stale_state(reason="operator clear stale")
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert not (paths.runtime_root / "blueprints/drafts/active/draft-stale.json").exists()
+    queued = paths.runtime_root / "blueprints/drafts/queue/draft-stale.json"
+    assert queued.is_file()
+    assert read_blueprint_draft(queued).status == "queued"
+
+
 def test_clear_stale_state_uses_mailbox_when_daemon_is_running(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     _activate_task(paths, "task-001")
@@ -736,6 +865,55 @@ def test_add_task_spec_idea_and_reload_use_mailbox_when_daemon_owns_workspace(tm
     assert not (paths.tasks_queue_dir / "task-add-mailbox.md").exists()
     assert not (paths.specs_queue_dir / "spec-add-mailbox.md").exists()
     assert not (paths.root / "ideas" / "inbox" / "idea-mailbox.md").exists()
+
+
+def test_direct_reload_applies_new_plan_when_no_work_is_active(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    _write_default_mode_config(paths, "default_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    initial = engine.startup()
+    engine.close()
+    _write_default_mode_config(paths, "learning_codex")
+
+    result = RuntimeControl(paths).reload_config()
+    snapshot = load_snapshot(paths)
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert snapshot.compiled_plan_id != initial.compiled_plan_id
+    assert snapshot.pending_compiled_plan_id is None
+    assert snapshot.learning_loop_id == "learning.standard"
+
+
+def test_mailbox_reload_preserves_active_lane_launch_plan_and_records_pending_plan(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    _write_default_mode_config(paths, "default_codex")
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001"))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    initial = engine.startup()
+    active_run = activate_claim_for_plane(engine, claim, Plane.EXECUTION)
+    _write_default_mode_config(paths, "learning_codex")
+
+    reload_config_from_mailbox(engine)
+    snapshot = load_snapshot(paths)
+
+    assert snapshot.active_runs_by_plane[Plane.EXECUTION].run_id == active_run.run_id
+    assert snapshot.active_runs_by_plane[Plane.EXECUTION].compiled_plan_id == initial.compiled_plan_id
+    assert (
+        snapshot.active_runs_by_plane[Plane.EXECUTION].compiled_plan_fingerprint
+        == active_run.compiled_plan_fingerprint
+    )
+    assert snapshot.lanes_by_id["execution.main"].compiled_plan_id == initial.compiled_plan_id
+    assert snapshot.pending_compiled_plan_id is not None
+    assert snapshot.pending_compiled_plan_id != initial.compiled_plan_id
+    assert snapshot.compiled_plan_id == initial.compiled_plan_id
+    assert snapshot.last_reload_outcome == "applied"
+    engine.close()
 
 
 def test_operator_intervention_controls_are_direct_without_daemon_owner(tmp_path: Path) -> None:

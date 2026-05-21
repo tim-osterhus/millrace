@@ -42,8 +42,12 @@ That compiled plan freezes:
 - compiled transitions, resume policies, threshold policies, and completion
   behavior
 - learning trigger rules, including direct-Curator destination metadata,
-  Planner-to-Librarian optional-skill preparation, and plane concurrency policy
-  when the selected mode declares them
+  Planner-to-Librarian optional-skill preparation, and scheduler
+  lane/concurrency policy when the selected mode declares them
+- workflow primitives: work-item families, document adapters, queue claim
+  policies, terminal actions, lifecycle mutation plans, runtime effect handlers,
+  recovery policies, runtime failure policies, runtime effect rules, and the
+  active workspace schema epoch
 - resolved asset references and content hashes
 
 The runtime then consumes that compiled authority during startup, routing,
@@ -64,6 +68,12 @@ Current compile authority comes from:
 - `modes/`
 - `graphs/`
 - `registry/stage_kinds/`
+- workflow primitive registry assets under `registry/work_item_families/`,
+  `registry/document_adapters/`, `registry/queue_claim_policies/`,
+  `registry/terminal_actions/`, `registry/lifecycle_mutation_plans/`,
+  `registry/runtime_effect_handlers/`, `registry/recovery_policies/`,
+  `registry/runtime_failure_policies/`, and
+  `registry/workspace_schema_epochs/`
 - `entrypoints/`
 - `skills/`
 
@@ -84,7 +94,6 @@ Explicit operator commands:
 
 Runtime-owned compile-if-needed surfaces:
 
-- `millrace run once`
 - `millrace run daemon`
 - daemon-safe config reload
 
@@ -100,6 +109,57 @@ At runtime startup, Millrace invokes the same compiler path used by explicit
 compile commands with `compile_if_needed=True`. If the persisted compiled plan
 still matches current compile inputs, startup reuses it. If inputs changed,
 startup recompiles before execution continues.
+
+## Workflow Primitive Authority
+
+Workflow primitives are data-driven runtime contracts, not advisory docs.
+Their built-in assets define the work-item families Millrace can claim, the
+document adapters used to parse them, per-plane queue claim policies, legal
+terminal actions, source lifecycle mutation plans, runtime effect handlers, and
+failure/recovery policy hooks. Artifact contracts are part of that same
+authority surface: each declares an artifact id, canonical filename, accepted
+legacy filenames, parser/schema, required outcomes, and consuming runtime
+effect. Request-context rendering and runtime effects use those declarations
+instead of stage-specific hard-coded filenames.
+
+The architecture rationale is recorded in
+`docs/adr/0010-compiler-validated-workflow-primitives-as-runtime-authority.md`.
+
+The compiler loads those assets from the active asset root, includes their
+content hashes in `resolved_assets`, validates cross-references, and persists
+the selected primitive definitions into `compiled_plan.json`. Runtime modules
+then read the compiled plan instead of maintaining separate hard-coded tables
+for stage work-item ownership, queue claim policy, terminal lifecycle intent,
+or effect-handler lookup.
+
+Invalid primitive graphs fail at compile time. Examples include a queue claim
+policy that references an unknown work-item family, a terminal action that
+names a missing lifecycle plan or effect handler, a runtime effect rule that
+targets a missing handler, an artifact contract referenced by an effect handler
+but not declared, a runtime-effect failure policy that targets a node outside
+the source plane, or a graph entry whose stage kind cannot own the declared
+work-item family.
+
+The compiler validates structure and cross-references. The runtime still owns
+dynamic checks that require actual run artifacts or mutable queue state, such
+as malformed canonical output files, partial effect mutations, stopped daemon
+health, and closure blockers discovered after a stage finishes.
+
+## Workspace Schema Epoch
+
+Initialized workspaces carry a schema epoch marker at
+`millrace-agents/state/workspace_schema_epoch.json`. The current compiled plan
+also carries the active `workspace_schema_epoch` primitive. Runtime startup
+checks the marker against the compiled epoch before loading mutable runtime
+state.
+
+If an old mutable state tree must cross an epoch boundary, the schema reset
+helper refuses daemon-owned workspaces, moves mutable runtime directories under
+`millrace-agents/archives/` by filesystem rename without parsing old JSON,
+writes an archive manifest, initializes clean runtime state, writes the current
+epoch marker atomically, and then compiles the active mode. If that post-reset
+compile fails, the clean state and epoch marker remain inspectable and startup
+still refuses to run invalid authority.
 
 ## Compile Input Fingerprint
 
@@ -196,7 +256,8 @@ mismatched plan is still authoritative.
 - stage/node request-binding details, including runner/model/thinking bindings
 - execution capability summaries and per-node grants
 - loop ids by plane
-- concurrency policy and learning trigger rules when present
+- scheduler lane policy, lane conflict policy, concurrency policy, and learning
+  trigger rules when present
 - `baseline_manifest_id`
 - `compiled_plan_currentness`
 - `completion_behavior.*` when present
@@ -210,11 +271,21 @@ for one concrete run.
 `millrace status` prints the live snapshot plus:
 
 - `compiled_plan_id`
+- `compiled_plan_fingerprint`
+- pending compiled-plan identity when reload has compiled a plan that cannot
+  yet replace active launch authority
 - `compiled_plan_currentness`
+- durable lane state and active-run launch-plan identity
 - `active_node_id`
 - `active_stage_kind_id`
 - `compile_input.*`
 - `persisted_compile_input.*`
+
+Active runs keep the compiled-plan id and compact compile-input fingerprint
+from the plan that launched them. If config reload compiles a newer plan while
+work is active, that newer plan is recorded as pending and the active run
+continues to route against its launch plan until it drains. That keeps result
+application tied to the contract that produced the stage request.
 
 ## Why This Split Exists
 
@@ -225,6 +296,6 @@ The product contract is:
 
 - workspace assets form the mutable deployed baseline
 - the compiler decides whether that baseline and config produce a valid
-  compiled plan
+  compiled plan, including coherent workflow primitives
 - the runtime executes from that compiled plan
 - stale compile authority is refused instead of being treated as good enough

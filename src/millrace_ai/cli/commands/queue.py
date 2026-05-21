@@ -20,8 +20,9 @@ from millrace_ai.cli.shared import (
     _require_paths,
     _validate_work_item_id,
 )
+from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.config import load_runtime_config
-from millrace_ai.contracts import IncidentDocument, ProbeDocument, SpecDocument, TaskDocument, WorkItemKind
+from millrace_ai.contracts import IncidentDocument, Plane, ProbeDocument, SpecDocument, TaskDocument, WorkItemKind
 from millrace_ai.errors import ControlRoutingError, QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.runtime.blocked_recovery import retry_blocked_task
@@ -34,25 +35,56 @@ from millrace_ai.workspace.lineage_integrity import (
     build_lineage_repair_plan,
     write_lineage_repair_report,
 )
+from millrace_ai.workspace.work_inventory import active_counts_by_plane, family_counts, queue_depths_by_plane
 
 queue_app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+_BUILTIN_QUEUE_LS_FAMILIES = {
+    "task",
+    "probe",
+    "spec",
+    "incident",
+    "learning_request",
+    "blueprint_draft",
+}
 
 
 @queue_app.command("ls")
 def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     paths = _require_paths(workspace)
-    execution_queue_depth = len(tuple(paths.tasks_queue_dir.glob("*.md")))
-    probe_queue_depth = len(tuple(paths.probes_queue_dir.glob("*.md")))
-    spec_queue_depth = len(tuple(paths.specs_queue_dir.glob("*.md")))
-    incident_queue_depth = len(tuple(paths.incidents_incoming_dir.glob("*.md")))
-    planning_queue_depth = probe_queue_depth + spec_queue_depth + incident_queue_depth
-    execution_active = len(tuple(paths.tasks_active_dir.glob("*.md")))
-    probe_active = len(tuple(paths.probes_active_dir.glob("*.md")))
-    spec_active = len(tuple(paths.specs_active_dir.glob("*.md")))
-    incident_active = len(tuple(paths.incidents_active_dir.glob("*.md")))
-    planning_active = probe_active + spec_active + incident_active
-    learning_active = len(tuple(paths.learning_requests_active_dir.glob("*.md")))
-    active_task_count = len(tuple(paths.tasks_active_dir.glob("*.md")))
+    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
+    counts = family_counts(paths, compiled_plan=compiled_plan)
+    queue_depths = queue_depths_by_plane(
+        paths,
+        compiled_plan=compiled_plan,
+        family_counts_by_id=counts,
+    )
+    active_counts = active_counts_by_plane(
+        paths,
+        compiled_plan=compiled_plan,
+        family_counts_by_id=counts,
+    )
+    execution_queue_depth = queue_depths[Plane.EXECUTION]
+    planning_queue_depth = queue_depths[Plane.PLANNING]
+    learning_queue_depth = queue_depths[Plane.LEARNING]
+    task_counts = counts.get("task", {})
+    probe_counts = counts.get("probe", {})
+    spec_counts = counts.get("spec", {})
+    incident_counts = counts.get("incident", {})
+    learning_counts = counts.get("learning_request", {})
+    blueprint_counts = counts.get("blueprint_draft", {})
+    probe_queue_depth = probe_counts.get("queue", 0)
+    spec_queue_depth = spec_counts.get("queue", 0)
+    incident_queue_depth = incident_counts.get("queue", 0)
+    blueprint_queue_depth = blueprint_counts.get("queue", 0)
+    execution_active = active_counts[Plane.EXECUTION]
+    probe_active = probe_counts.get("active", 0)
+    spec_active = spec_counts.get("active", 0)
+    incident_active = incident_counts.get("active", 0)
+    blueprint_active = blueprint_counts.get("active", 0)
+    planning_active = active_counts[Plane.PLANNING]
+    learning_active = active_counts[Plane.LEARNING]
+    active_task_count = task_counts.get("active", 0)
     cancelled_task_count = _count_markdown(paths.tasks_queue_dir / "cancelled") + _count_markdown(
         paths.tasks_blocked_dir / "cancelled"
     )
@@ -68,10 +100,11 @@ def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
 
     typer.echo(f"execution_queue_depth: {execution_queue_depth}")
     typer.echo(f"planning_queue_depth: {planning_queue_depth}")
-    typer.echo(f"learning_queue_depth: {len(tuple(paths.learning_requests_queue_dir.glob('*.md')))}")
+    typer.echo(f"learning_queue_depth: {learning_queue_depth}")
     typer.echo(f"probe_queue_depth: {probe_queue_depth}")
     typer.echo(f"spec_queue_depth: {spec_queue_depth}")
     typer.echo(f"incident_queue_depth: {incident_queue_depth}")
+    typer.echo(f"blueprint_draft_queue_depth: {blueprint_queue_depth}")
     typer.echo(f"execution_active: {execution_active}")
     typer.echo(f"planning_active: {planning_active}")
     typer.echo(f"learning_active: {learning_active}")
@@ -79,7 +112,13 @@ def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     typer.echo(f"active_probe_count: {probe_active}")
     typer.echo(f"active_spec_count: {spec_active}")
     typer.echo(f"active_incident_count: {incident_active}")
-    typer.echo(f"active_learning_request_count: {learning_active}")
+    typer.echo(f"active_blueprint_draft_count: {blueprint_active}")
+    typer.echo(f"active_learning_request_count: {learning_counts.get('active', 0)}")
+    for family_id in sorted(set(counts) - _BUILTIN_QUEUE_LS_FAMILIES):
+        family_state_counts = counts[family_id]
+        typer.echo(f"{family_id}_queue_depth: {family_state_counts.get('queue', 0)}")
+        typer.echo(f"active_{family_id}_count: {family_state_counts.get('active', 0)}")
+        typer.echo(f"blocked_{family_id}_count: {family_state_counts.get('blocked', 0)}")
     typer.echo(f"cancelled_task_count: {cancelled_task_count}")
     typer.echo(f"superseded_task_count: {superseded_task_count}")
     typer.echo(f"cancelled_incident_count: {cancelled_incident_count}")
@@ -224,7 +263,11 @@ def queue_cancel(
     workspace: WorkspaceOption = Path("."),
     kind: Annotated[
         str | None,
-        typer.Option("--kind", help="Optional work item kind: task, probe, spec, or incident."),
+        typer.Option("--kind", help="Optional legacy work item kind."),
+    ] = None,
+    family: Annotated[
+        str | None,
+        typer.Option("--family", help="Optional graph work item family id."),
     ] = None,
     reason: Annotated[
         str,
@@ -241,6 +284,7 @@ def queue_cancel(
         work_item_kind = _parse_optional_work_item_kind(kind)
         result = _cli_api().RuntimeControl(paths).cancel_work_item(
             work_item_id=validated_work_item_id,
+            work_item_family_id=family,
             work_item_kind=work_item_kind,
             reason=reason,
             force=force,
@@ -420,11 +464,14 @@ def queue_repair_lineage(
         if snapshot.active_stage is not None:
             raise typer.Exit(code=_print_error("active runtime stage prevents lineage repair"))
         repaired_count = apply_lineage_repair_plan(paths, plan)
+        compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
+        queue_depths = queue_depths_by_plane(paths, compiled_plan=compiled_plan)
         snapshot = load_snapshot(paths).model_copy(
             update={
-                "queue_depth_execution": len(tuple(paths.tasks_queue_dir.glob("*.md"))),
-                "queue_depth_planning": len(tuple(paths.specs_queue_dir.glob("*.md")))
-                + len(tuple(paths.incidents_incoming_dir.glob("*.md"))),
+                "queue_depth_execution": queue_depths[Plane.EXECUTION],
+                "queue_depth_planning": queue_depths[Plane.PLANNING],
+                "queue_depth_learning": queue_depths[Plane.LEARNING],
+                "queue_depths_by_plane": queue_depths,
             }
         )
         save_snapshot(paths, snapshot)
@@ -461,12 +508,10 @@ def _parse_optional_work_item_kind(value: str | None) -> WorkItemKind | None:
     if value is None or not value.strip():
         return None
     try:
-        work_item_kind = WorkItemKind(value.strip())
+        return WorkItemKind(value.strip())
     except ValueError as exc:
-        raise ValueError("kind must be one of: task, probe, spec, incident") from exc
-    if work_item_kind not in {WorkItemKind.TASK, WorkItemKind.PROBE, WorkItemKind.SPEC, WorkItemKind.INCIDENT}:
-        raise ValueError("kind must be one of: task, probe, spec, incident")
-    return work_item_kind
+        allowed = ", ".join(kind.value for kind in WorkItemKind)
+        raise ValueError(f"kind must be one of: {allowed}") from exc
 
 
 def _count_markdown(directory: Path) -> int:

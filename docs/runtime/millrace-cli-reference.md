@@ -46,6 +46,10 @@ Creates the canonical workspace baseline under `<workspace>/millrace-agents/`.
 This is explicit now: most operator commands require an initialized workspace
 and will tell you to run `millrace init --workspace <path>` first if the
 baseline is missing.
+Initialization also writes the current workspace schema epoch marker under
+`millrace-agents/state/`. Runtime startup refuses an initialized workspace
+whose mutable runtime state is missing that marker or carries an incompatible
+epoch.
 
 Options:
 
@@ -95,19 +99,12 @@ Options:
 
 ## Run Commands
 
-### `millrace run once`
-
-Runs one deterministic startup+tick cycle.
-
-Options:
-
-- `--workspace PATH`
-- `--mode MODE_ID`
-- `--config PATH`
-
 ### `millrace run daemon`
 
 Runs repeated ticks until stop/interrupt, or until `--max-ticks` is reached.
+For bounded one-off execution, use `millrace run daemon --max-ticks 1`.
+The former public `millrace run once` surface has been removed; bounded daemon
+ticks are the supported one-off operation.
 
 Options:
 
@@ -122,11 +119,10 @@ The default monitor mode is `none`; `millrace run daemon` does not print live
 monitor lines unless `--monitor basic` is passed explicitly. The existing
 daemon summary output remains unchanged.
 
-Daemon mode uses a compiled plane scheduler. Default modes remain serial.
-Learning-enabled modes may run one Learning stage concurrently with one
-permitted foreground Planning or Execution stage. Runtime-owned queue,
-snapshot, counter, status, and router mutation remains single-writer and
-serialized by the daemon supervisor.
+Daemon mode uses a compiled lane scheduler. Default modes remain one active
+lane per plane, and shipped policies keep Planning and Execution mutually
+exclusive. Runtime-owned queue, snapshot, counter, status, and router mutation
+remains single-writer and serialized by the daemon supervisor.
 In learning-enabled modes, successful Planner runs can trigger Librarian on the
 Learning plane to install relevant remote optional skills into the workspace
 without blocking foreground work.
@@ -134,6 +130,9 @@ Integrated Codex modes remain opt-in: `default_codex_integrated` and
 `learning_codex_integrated` select `execution.with_integrator`, so every
 successful Builder run goes through Integrator before Checker. The integrated
 learning mode keeps the same Learning concurrency policy as `learning_codex`.
+`blueprint_learning_codex` keeps the standard execution loop, selects
+`planning.blueprint`, and uses the same Learning concurrency and
+Planner-to-Librarian trigger policy as `learning_codex`.
 
 `--monitor basic` prints a compact terminal stream for visible daemon sessions:
 startup lifecycle context, baseline/currentness identity, loop and concurrency
@@ -165,8 +164,9 @@ Explicit subcommand form: `millrace status show`
 ### `millrace status`
 
 `millrace status` prints both the legacy foreground active projection and the
-canonical `active_run` lines for every active plane. When Learning is running
-beside a foreground lane, expect `active_run_count: 2` plus one line per plane.
+canonical lane/`active_run` lines for every active lane. When Learning is
+running beside a foreground lane, expect `active_run_count: 2`, one lane line
+per declared scheduler lane, and one active-run line per active lane.
 
 Prints runtime snapshot and queue depth for one workspace.
 When a failure class is active, status also shows the current failure class plus non-zero retry counters.
@@ -181,6 +181,10 @@ When a learning-enabled mode is active, status also includes
 Status now also surfaces compiled-plan and managed-baseline identity:
 
 - `compiled_plan_id`
+- `compiled_plan_fingerprint`
+- `pending_compiled_plan_id`
+- `pending_compiled_plan_fingerprint`
+- `pending_compiled_plan_path`
 - `compiled_plan_currentness` (`current`, `stale`, `missing`, or `unknown`)
 - `active_node_id`
 - `active_stage_kind_id`
@@ -210,10 +214,15 @@ When Arbiter closure is active, status surfaces closure-target backpressure:
 - `closure_target_latest_verdict_path`
 - `closure_target_latest_report_path`
 
-Status also prints `blocked_idle`, `latest_runtime_error_report_path`, and
-`latest_operator_intervention`. The intervention line shows the latest audited
-operator cleanup event, timestamp, work item id, and archive destination when
-one exists.
+Status also prints `blocked_idle`, `latest_runtime_error_report_path`,
+`latest_runtime_failure_origin`, and `latest_operator_intervention`. The
+intervention line shows the latest audited operator cleanup event, timestamp,
+work item id, and archive destination when one exists.
+Lane lines include lane id, plane, lane status, lane plan/fingerprint,
+active-run ids, active work refs, last terminal outcome, and lane-level
+pause/drain/stop requests. Active-run lines include the lane id and the
+launch-plan id/fingerprint that remain authoritative for that active run even
+when a reload has compiled a newer pending plan.
 `blocked_idle: true` means the daemon is running, no plane has an active run,
 all queues are empty, an open closure target remains blocked by lineage work,
 and the planning status is `### BLOCKED`. That is a diagnostic state, not
@@ -224,13 +233,20 @@ normal no-work idleness.
 machine-readable status payload with the same key state, including:
 
 - `process_running`
+- `compiled_plan_fingerprint`
+- `pending_compiled_plan_id`
+- `pending_compiled_plan_fingerprint`
+- `pending_compiled_plan_path`
 - `active_run_count`
+- `lanes_by_id`
+- `active_runs_by_plane`
 - `execution_queue_depth`
 - `planning_queue_depth`
 - `learning_queue_depth`
 - `closure_target_open`
 - `closure_target_blocked_by_lineage_work`
 - `blocked_idle`
+- `latest_runtime_failure_origin`
 - `current_failure_class`
 - `latest_runtime_error_report_path`
 - `latest_operator_intervention`
@@ -252,6 +268,12 @@ Options:
 ### `millrace runs ls`
 
 Lists persisted run summaries from `millrace-agents/runs/`.
+The `status` field is retained as the artifact-parse status for compatibility.
+Use `artifact_status` for the stage-result parse/validation state and
+`runtime_outcome` for the route/effect outcome derived from `run_trace.json`
+when present. A run can therefore show `artifact_status: valid` and
+`runtime_outcome: blocked` when a schema-valid stage result failed during a
+runtime effect or recovery route.
 
 ### `millrace runs show <RUN_ID>`
 
@@ -261,10 +283,17 @@ stdout/stderr paths, and troubleshoot report path when present.
 
 Top-level run fields now include:
 
+- `status` (compatibility alias for artifact status)
+- `artifact_status`
+- `runtime_outcome`
 - `compiled_plan_id`
 - `mode_id`
 - `request_kind`
 - `closure_target_root_spec_id`
+- `runtime_effect_decision`
+- `runtime_effect_failure_class`
+- `runtime_effect_failure_message`
+- `runtime_effect_failure_policy_id`
 
 Each stage-result block now includes:
 
@@ -274,10 +303,30 @@ Each stage-result block now includes:
 - `stage_kind_id`
 - `request_kind`
 - `closure_target_root_spec_id`
+- `runtime_effect_handler_id`
+- `runtime_effect_decision`
+- `runtime_effect_failure_class`
+- `runtime_effect_failure_message`
+- `runtime_effect_mutation_phase`
+- `runtime_effect_failure_policy_id`
+- `runtime_effect_recovery_action`
+- `runtime_effect_source_lifecycle_plan_id`
+- `runtime_effect_source_lifecycle_action`
+- `runtime_effect_created_path`
 - compact `capability_grant` lines when the stage result contains compiled
   execution grants
 - compact `capability_support` lines when the selected runner reported
   contextual grant support
+
+For Manager Blueprint failures, diagnose duplicate ids separately from
+same-root lineage. Same-root remediation is expected when two manifests share
+`root_spec_id` but have different `manifest_id` values. A
+`blueprint_manifest_duplicate` failure means a manifest id conflict or
+divergent duplicate file, not merely another manifest under the same root.
+Malformed or missing Manager artifacts normally show a matched recovery action
+of `route_to_node` toward `mechanic_blueprint`; duplicate-id, invalid-source,
+and partial-mutation failures show conservative block or require-operator
+metadata.
 
 ### `millrace runs tail <RUN_ID>`
 
@@ -309,6 +358,10 @@ including the probe/spec/incident breakdown inside Planning. It also includes
 terminal intervention counters such as `cancelled_task_count`,
 `superseded_task_count`, `cancelled_incident_count`, and
 `operator_resolved_incident_count`.
+For compiled graph-owned work-item families beyond the built-in task/spec/probe
+surfaces, `queue ls` also prints family-specific queue/active/blocked counters,
+for example `blueprint_draft_queue_depth` and
+`active_blueprint_draft_count`.
 
 ### `millrace queue show <WORK_ITEM_ID>`
 
@@ -475,9 +528,9 @@ Pause/resume behavior:
 - `reload-config` does not print a governance-specific cleared/remained
   summary. Governance changes are evaluated on the next runtime tick and are
   visible through `millrace status` and the basic daemon monitor.
-- `reload-config` is deferred while active planes exist; the daemon requeues
-  the reload command and applies it at the next safe boundary after active
-  runs drain.
+- `reload-config` compiles the requested config immediately. If active runs
+  exist, the active runs keep their launch-plan authority and the newly
+  compiled plan is recorded as pending until active runs drain.
 - unscoped `retry-active` is valid only when exactly one retryable active work
   item exists. If multiple planes are active, use a plane-scoped retry surface.
 - `clear-stale-state` is the supported recovery command after an old
@@ -560,9 +613,11 @@ or was newly applied.
 
 Config changes that affect compile inputs, including `runtime.default_mode`
 and `stages.<stage>.*`, are recompile changes. When a daemon owns the
-workspace, `millrace config reload` is mailbox-routed and the daemon applies
-the new compiled plan on the next tick. If the daemon was started with an
-explicit `--mode`, that mode override remains pinned across reloads; start
+workspace, `millrace config reload` is mailbox-routed. If no active runs exist,
+the daemon can apply the new compiled plan on the next tick. If active runs
+exist, those runs keep their launch-plan authority and the newly compiled plan
+is recorded as pending until active runs drain. If the daemon was started with
+an explicit `--mode`, that mode override remains pinned across reloads; start
 without `--mode`, or with the intended mode, when config-driven mode selection
 should take effect.
 
@@ -710,6 +765,8 @@ Lists built-in modes and loop references. Current packaged modes are:
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`
+- `blueprint_codex`
+- `blueprint_learning_codex`
 
 ### `millrace modes show MODE_ID`
 
@@ -826,9 +883,9 @@ Command summary:
 - `millrace skills export <SKILL_ID>`
 
 Create/improve workflows require a learning-enabled mode such as
-`learning_codex`, `learning_pi`, or `learning_codex_integrated` because they
-enqueue learning requests for the Analyst/Professor/Curator skill-improvement
-path.
+`learning_codex`, `learning_pi`, `learning_codex_integrated`, or
+`blueprint_learning_codex` because they enqueue learning requests for the
+Analyst/Professor/Curator skill-improvement path.
 Install/list/show/search/refresh can be used for the deployed skill surface
 without changing the active runtime mode, and Librarian uses the same remote
 index/install surface after Planner in learning-enabled modes.
@@ -843,3 +900,14 @@ same-root queued/active/blocked work under a different effective root spec.
 Doctor reports `duplicate_task_lifecycle_state` when the same task ID appears
 in more than one task lifecycle directory (`queue`, `active`, `done`, or
 `blocked`).
+Doctor validates every compiled work-item family queue with the family-declared
+document adapter where possible, including Blueprint draft queues and custom
+JSON/markdown graph-owned families. It warns with
+`daemon_stopped_with_open_graph_work` when daemon mode is stopped unexpectedly
+while an open closure target still has graph-owned backlog or blockers; restart
+is normally the supported recovery path for that warning.
+Same-root Blueprint manifests are not unhealthy by themselves. Doctor and
+operator inspection should flag unresolved draft-to-manifest references,
+divergent duplicate `manifest_id` content, missing manifest draft ids, and
+manifest/draft lineage mismatches rather than treating root-lineage reuse as an
+error.

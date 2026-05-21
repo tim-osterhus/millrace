@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "kind": "registered_stage_kind",
+  "stage_kind_id": "contractor_blueprint",
+  "plane": "planning",
+  "display_name": "Contractor Blueprint",
+  "default_entrypoint_path": "entrypoints/planning/contractor_blueprint.md",
+  "required_skill_paths": [
+    "skills/stage/planning/contractor-blueprint-core/SKILL.md"
+  ],
+  "suggested_skill_paths": [],
+  "running_status_marker": "CONTRACTOR_BLUEPRINT_RUNNING",
+  "legal_outcomes": [
+    "BLUEPRINT_CANDIDATE_READY",
+    "BLOCKED"
+  ],
+  "success_outcomes": [
+    "BLUEPRINT_CANDIDATE_READY"
+  ],
+  "failure_outcomes": [
+    "BLOCKED"
+  ],
+  "allowed_result_classes_by_outcome": {
+    "BLUEPRINT_CANDIDATE_READY": [
+      "success"
+    ],
+    "BLOCKED": [
+      "blocked",
+      "recoverable_failure"
+    ]
+  },
+  "allowed_input_artifacts": [
+    "active_blueprint_draft",
+    "blueprint_critique"
+  ],
+  "declared_output_artifacts": [
+    "stage_result",
+    "blueprint_packet",
+    "blueprint_markdown"
+  ],
+  "allowed_work_item_families": ["blueprint_draft"],
+  "idempotence_policy": "retry_safe_with_key",
+  "allowed_overrides": [
+    "entrypoint_path",
+    "runner_name",
+    "model_name",
+    "thinking_level",
+    "timeout_seconds",
+    "attached_skill_additions"
+  ],
+  "can_start_tasks": false,
+  "can_start_specs": false,
+  "can_start_incidents": false,
+  "recovery_role": null,
+  "closure_role": false
+}

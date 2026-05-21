@@ -3,6 +3,17 @@
 from __future__ import annotations
 
 from .base import ContractModel as ContractModel
+from .blueprint import (
+    BlueprintCritiqueDocument,
+    BlueprintDraftDocument,
+    BlueprintDraftStatus,
+    BlueprintEvaluationDecision,
+    BlueprintEvaluationDocument,
+    BlueprintManifestDocument,
+    BlueprintPacketDocument,
+    BlueprintPromotionRecord,
+    BlueprintSourceWorkItemKind,
+)
 from .capabilities import (
     BASE_EXECUTION_CAPABILITY_IDS,
     ApprovalPolicyRef,
@@ -72,6 +83,7 @@ from .modes import (  # noqa: F401
     LearningTriggerRuleDefinition,
     ModeDefinition,
     PlaneConcurrencyPolicyDefinition,
+    StageMapKey,
 )
 from .recon import (
     ReconConfidence,
@@ -89,20 +101,38 @@ from .run_trace import (
     RunTraceNode,
     RunTraceSpawnedWorkRef,
 )
-from .runtime_errors import RuntimeErrorContext
-from .runtime_snapshot import ActiveRunRequestKind, ActiveRunState, RuntimeSnapshot
+from .runtime_errors import RuntimeErrorContext, RuntimeFailureOrigin
+from .runtime_snapshot import (
+    ActiveRunRequestKind,
+    ActiveRunState,
+    LaneRuntimeState,
+    LaneRuntimeStatus,
+    RuntimeSnapshot,
+)
 from .stage_results import StageResultEnvelope
 from .token_usage import TokenUsage
 from .work_documents import (  # noqa: F401
+    ClosureBlockingWorkRef,
     ClosureTargetState,
     IncidentDocument,
     LearningRequestDocument,
+    PlannerDispositionDocument,
+    PlannerDispositionSourceFamily,
+    PlannerDispositionValue,
     ProbeDocument,
     SpecDocument,
     TaskDocument,
 )
+from .work_refs import (
+    coerce_family_and_kind,
+    family_id_for_work_item_kind,
+    legacy_work_item_kind_for_family_id,
+    normalize_work_item_family_id,
+    plane_for_work_item_family_id,
+)
 
 __all__ = [
+    "ClosureBlockingWorkRef",
     "ClosureTargetState",
     "CompileDiagnostics",
     "CompiledStageGraphExport",
@@ -112,6 +142,15 @@ __all__ = [
     "ActiveRunState",
     "ApprovalPolicyRef",
     "BASE_EXECUTION_CAPABILITY_IDS",
+    "BlueprintCritiqueDocument",
+    "BlueprintDraftDocument",
+    "BlueprintDraftStatus",
+    "BlueprintEvaluationDecision",
+    "BlueprintEvaluationDocument",
+    "BlueprintManifestDocument",
+    "BlueprintPacketDocument",
+    "BlueprintPromotionRecord",
+    "BlueprintSourceWorkItemKind",
     "CapabilityDecisionState",
     "CapabilityEnforcementMode",
     "CapabilityEvidenceStatus",
@@ -136,6 +175,8 @@ __all__ = [
     "LearningRequestDocument",
     "LearningStageName",
     "LearningTerminalResult",
+    "LaneRuntimeState",
+    "LaneRuntimeStatus",
     "LearningTriggerRuleDefinition",
     "LoopConfigDefinition",
     "LoopEdgeDefinition",
@@ -156,6 +197,9 @@ __all__ = [
     "ModeDefinition",
     "Plane",
     "PlaneConcurrencyPolicyDefinition",
+    "PlannerDispositionDocument",
+    "PlannerDispositionSourceFamily",
+    "PlannerDispositionValue",
     "PlanningStageName",
     "PlanningTerminalResult",
     "ProbeDocument",
@@ -174,6 +218,7 @@ __all__ = [
     "RuntimeMode",
     "RuntimeErrorCode",
     "RuntimeErrorContext",
+    "RuntimeFailureOrigin",
     "RuntimeSnapshot",
     "RunTraceArtifactRef",
     "RunTraceEdge",
@@ -182,6 +227,7 @@ __all__ = [
     "RunTraceSpawnedWorkRef",
     "SpecDocument",
     "StageName",
+    "StageMapKey",
     "StageResultEnvelope",
     "TaskDocument",
     "TaskStatusHint",
@@ -190,5 +236,10 @@ __all__ = [
     "WatcherMode",
     "WorkItemKind",
     "capability_grant_fingerprint",
+    "coerce_family_and_kind",
+    "family_id_for_work_item_kind",
+    "legacy_work_item_kind_for_family_id",
     "normalize_capability_id",
+    "normalize_work_item_family_id",
+    "plane_for_work_item_family_id",
 ]

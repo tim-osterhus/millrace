@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
     RuntimeSnapshot,
     WorkItemKind,
 )
+from millrace_ai.contracts.work_refs import coerce_family_and_kind
 from millrace_ai.errors import WorkspaceStateError
 
 from .paths import WorkspacePaths, workspace_paths
@@ -124,7 +125,8 @@ def _update_counter_entries(
     entries: tuple[RecoveryCounterEntry, ...],
     *,
     failure_class: str,
-    work_item_kind: WorkItemKind,
+    work_item_family_id: str,
+    work_item_kind: WorkItemKind | None,
     work_item_id: str,
     now: datetime,
 ) -> tuple[tuple[RecoveryCounterEntry, ...], RecoveryCounterEntry]:
@@ -134,7 +136,7 @@ def _update_counter_entries(
     for index, entry in enumerate(mutable_entries):
         if (
             entry.failure_class == failure_class
-            and entry.work_item_kind == work_item_kind
+            and entry.work_item_family_id == work_item_family_id
             and entry.work_item_id == work_item_id
         ):
             updated_entry = entry.model_copy(
@@ -149,6 +151,7 @@ def _update_counter_entries(
     if updated_entry is None:
         updated_entry = RecoveryCounterEntry(
             failure_class=failure_class,
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
             troubleshoot_attempt_count=1,
@@ -163,18 +166,25 @@ def increment_troubleshoot_attempt(
     target: WorkspacePaths | Path | str,
     *,
     failure_class: str,
-    work_item_kind: WorkItemKind | str,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | str | None = None,
     work_item_id: str,
     now: datetime | None = None,
 ) -> RecoveryCounterEntry:
     paths = _resolve_paths(target)
     counters = load_recovery_counters(paths)
     timestamp = now or datetime.now(timezone.utc)
-    kind = WorkItemKind(work_item_kind)
+    family_id, kind = coerce_family_and_kind(
+        family_id=work_item_family_id,
+        work_item_kind=work_item_kind,
+    )
+    if family_id is None:
+        raise ValueError("work_item_family_id or work_item_kind is required")
 
     updated_entries, updated_entry = _update_counter_entries(
         counters.entries,
         failure_class=failure_class,
+        work_item_family_id=family_id,
         work_item_kind=kind,
         work_item_id=work_item_id,
         now=timestamp,
@@ -186,17 +196,23 @@ def increment_troubleshoot_attempt(
 def reset_forward_progress_counters(
     target: WorkspacePaths | Path | str,
     *,
-    work_item_kind: WorkItemKind | str,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | str | None = None,
     work_item_id: str,
 ) -> None:
     paths = _resolve_paths(target)
     counters = load_recovery_counters(paths)
-    kind = WorkItemKind(work_item_kind)
+    family_id, _kind = coerce_family_and_kind(
+        family_id=work_item_family_id,
+        work_item_kind=work_item_kind,
+    )
+    if family_id is None:
+        raise ValueError("work_item_family_id or work_item_kind is required")
 
     remaining = tuple(
         entry
         for entry in counters.entries
-        if not (entry.work_item_kind == kind and entry.work_item_id == work_item_id)
+        if not (entry.work_item_family_id == family_id and entry.work_item_id == work_item_id)
     )
     save_recovery_counters(paths, RecoveryCounters(entries=remaining))
 

@@ -94,6 +94,10 @@ The shipped canonical modes make that explicit:
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
   while selecting the quality-first `execution.with_integrator` loop
+- `blueprint_codex` binds Codex stages while selecting the Blueprint Planning
+  loop and standard execution
+- `blueprint_learning_codex` binds Codex stages while selecting the Blueprint
+  Planning loop, standard execution, and the Learning plane
 - `standard_plain` remains accepted only as a compatibility alias for
   `default_codex`
 
@@ -114,6 +118,20 @@ It also carries the active node's `execution_capability_grants` and any
 `capability_support_decisions` produced by the runtime gate. The prompt context
 renders these as structured, prompt-safe summaries so stages can see whether a
 grant is enforced, advisory, denied, unsupported, or approval-gated.
+
+Every runtime-built request also gets a deterministic request-context render
+plan. The renderer writes:
+
+- `context/context.json`: machine-readable context bundle
+- `context/prompt_context.md`: prompt-safe rendered context included by the
+  shared prompt builder
+- `context/render_manifest.json`: visible refs, redacted operator-only refs,
+  omitted providers, and content hash evidence
+
+`StageRunRequest` carries the context profile id, render plan id, bundle path,
+rendered prompt-context path, and visible context artifact refs. Normalization
+persists those fields into stage-result metadata so `millrace runs show` can
+explain which context the stage actually saw.
 
 Default running markers, legal terminal markers, and fallback
 `allowed_result_classes_by_outcome` values are derived from
@@ -153,6 +171,9 @@ Operator-facing `runs show` output now carries:
 - per-stage `node_id`
 - per-stage `stage_kind_id`
 - per-stage `request_kind`
+- per-stage request-context profile, render plan, context bundle, and visible
+  context refs
+- per-stage `failure_origin` when a runtime/runner boundary can classify one
 - per-stage execution capability grant summaries
 - per-stage runner support summaries
 

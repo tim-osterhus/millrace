@@ -9,7 +9,7 @@ from millrace_ai.architecture import (
     RegisteredStageKindDefinition,
 )
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import ModeDefinition, Plane, StageName
+from millrace_ai.contracts import ModeDefinition, Plane, StageMapKey
 
 from .capabilities import summarize_execution_capability_grants
 from .completion import compile_graph_completion_entry
@@ -78,13 +78,12 @@ def materialize_graph_plane_plan(
     )
 
 
-def selected_stages_for_graph_loops(*graph_loops: GraphLoopDefinition) -> set[StageName]:
-    selected_stages: set[StageName] = set()
+def selected_stages_for_graph_loops(*graph_loops: GraphLoopDefinition) -> set[StageMapKey]:
+    selected_stages: set[StageMapKey] = set()
     for graph_loop in graph_loops:
         for node in graph_loop.nodes:
             stage_name = stage_name_for_identifier(node.stage_kind_id)
-            if stage_name is not None:
-                selected_stages.add(stage_name)
+            selected_stages.add(stage_name or node.stage_kind_id)
     return selected_stages
 
 

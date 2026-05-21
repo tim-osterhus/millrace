@@ -15,6 +15,13 @@ from millrace_ai.contracts import (
 from millrace_ai.queue_store import QueueClaim
 from millrace_ai.runtime.graph_authority import GraphActivationDecision
 
+from .lanes import (
+    default_lane_id_for_plane,
+    snapshot_with_lane_active_run,
+    snapshot_without_lane_active_run,
+    snapshot_without_lane_active_runs,
+)
+
 
 def active_run_for_plane(snapshot: RuntimeSnapshot, plane: Plane) -> ActiveRunState | None:
     active_run = snapshot.active_runs_by_plane.get(plane)
@@ -22,19 +29,23 @@ def active_run_for_plane(snapshot: RuntimeSnapshot, plane: Plane) -> ActiveRunSt
         return active_run
     if snapshot.active_plane is not plane or snapshot.active_stage is None or snapshot.active_run_id is None:
         return None
-    if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+    if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return None
     return ActiveRunState(
         plane=plane,
+        lane_id=default_lane_id_for_plane(plane),
         stage=snapshot.active_stage,
         node_id=snapshot.active_node_id or snapshot.active_stage.value,
         stage_kind_id=snapshot.active_stage_kind_id or snapshot.active_stage.value,
         run_id=snapshot.active_run_id,
+        compiled_plan_id=snapshot.compiled_plan_id,
+        compiled_plan_fingerprint=snapshot.compiled_plan_fingerprint,
         request_kind=(
             "learning_request"
-            if snapshot.active_work_item_kind is WorkItemKind.LEARNING_REQUEST
+            if snapshot.active_work_item_family_id == WorkItemKind.LEARNING_REQUEST.value
             else "active_work_item"
         ),
+        work_item_family_id=snapshot.active_work_item_family_id,
         work_item_kind=snapshot.active_work_item_kind,
         work_item_id=snapshot.active_work_item_id,
         active_since=snapshot.active_since or snapshot.updated_at,
@@ -45,20 +56,27 @@ def active_run_from_claim(
     *,
     activation: GraphActivationDecision,
     claim: QueueClaim,
+    lane_id: str,
     run_id: str,
+    compiled_plan_id: str,
+    compiled_plan_fingerprint: str,
     now: datetime,
 ) -> ActiveRunState:
     return ActiveRunState(
         plane=activation.plane,
+        lane_id=lane_id,
         stage=activation.stage,
         node_id=activation.node_id,
         stage_kind_id=activation.stage_kind_id,
         run_id=run_id,
+        compiled_plan_id=compiled_plan_id,
+        compiled_plan_fingerprint=compiled_plan_fingerprint,
         request_kind=(
             "learning_request"
-            if claim.work_item_kind is WorkItemKind.LEARNING_REQUEST
+            if claim.family_id == WorkItemKind.LEARNING_REQUEST.value
             else "active_work_item"
         ),
+        work_item_family_id=claim.family_id,
         work_item_kind=claim.work_item_kind,
         work_item_id=claim.work_item_id,
         active_since=now,
@@ -69,15 +87,21 @@ def active_run_from_closure_target(
     *,
     activation: GraphActivationDecision,
     target: ClosureTargetState,
+    lane_id: str,
     run_id: str,
+    compiled_plan_id: str,
+    compiled_plan_fingerprint: str,
     now: datetime,
 ) -> ActiveRunState:
     return ActiveRunState(
         plane=activation.plane,
+        lane_id=lane_id,
         stage=activation.stage,
         node_id=activation.node_id,
         stage_kind_id=activation.stage_kind_id,
         run_id=run_id,
+        compiled_plan_id=compiled_plan_id,
+        compiled_plan_fingerprint=compiled_plan_fingerprint,
         request_kind="closure_target",
         closure_target_root_spec_id=target.root_spec_id,
         closure_target_root_idea_id=target.root_idea_id,
@@ -100,7 +124,7 @@ def snapshot_with_active_run(
         "updated_at": now,
     }
     update.update(_legacy_projection_update(active_runs))
-    return snapshot.model_copy(update=update)
+    return snapshot_with_lane_active_run(snapshot.model_copy(update=update), active_run)
 
 
 def snapshot_with_next_stage_for_plane(
@@ -122,6 +146,7 @@ def snapshot_with_next_stage_for_plane(
             "node_id": node_id,
             "stage_kind_id": stage_kind_id,
             "active_since": now,
+            "running_status_marker": None,
         }
     )
     return snapshot_with_active_run(
@@ -143,6 +168,7 @@ def snapshot_projected_to_plane(snapshot: RuntimeSnapshot, plane: Plane) -> Runt
             "active_node_id": active_run.node_id,
             "active_stage_kind_id": active_run.stage_kind_id,
             "active_run_id": active_run.run_id,
+            "active_work_item_family_id": active_run.work_item_family_id,
             "active_work_item_kind": active_run.work_item_kind,
             "active_work_item_id": active_run.work_item_id,
             "active_since": active_run.active_since,
@@ -157,6 +183,7 @@ def snapshot_without_active_plane(
     now: datetime,
     current_failure_class: str | None,
 ) -> RuntimeSnapshot:
+    active_run = active_run_for_plane(snapshot, plane)
     active_runs = dict(snapshot.active_runs_by_plane)
     active_runs.pop(plane, None)
     update: dict[str, object] = {
@@ -165,7 +192,10 @@ def snapshot_without_active_plane(
         "updated_at": now,
     }
     update.update(_legacy_projection_update(active_runs))
-    return snapshot.model_copy(update=update)
+    updated = snapshot.model_copy(update=update)
+    if active_run is None:
+        return updated
+    return snapshot_without_lane_active_run(updated, active_run=active_run)
 
 
 def snapshot_without_active_runs(
@@ -181,7 +211,7 @@ def snapshot_without_active_runs(
     }
     empty_active_runs: dict[Plane, ActiveRunState] = {}
     update.update(_legacy_projection_update(empty_active_runs))
-    return snapshot.model_copy(update=update)
+    return snapshot_without_lane_active_runs(snapshot.model_copy(update=update))
 
 
 def _legacy_projection_update(active_runs: dict[Plane, ActiveRunState]) -> dict[str, object]:
@@ -193,6 +223,7 @@ def _legacy_projection_update(active_runs: dict[Plane, ActiveRunState]) -> dict[
             "active_stage_kind_id": None,
             "active_run_id": None,
             "active_work_item_kind": None,
+            "active_work_item_family_id": None,
             "active_work_item_id": None,
             "active_since": None,
         }
@@ -203,6 +234,7 @@ def _legacy_projection_update(active_runs: dict[Plane, ActiveRunState]) -> dict[
         "active_node_id": active_run.node_id,
         "active_stage_kind_id": active_run.stage_kind_id,
         "active_run_id": active_run.run_id,
+        "active_work_item_family_id": active_run.work_item_family_id,
         "active_work_item_kind": active_run.work_item_kind,
         "active_work_item_id": active_run.work_item_id,
         "active_since": active_run.active_since,

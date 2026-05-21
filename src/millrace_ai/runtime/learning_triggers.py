@@ -98,9 +98,15 @@ def _trigger_metadata(
         "source_stage_kind_id": stage_result.stage_kind_id,
         "terminal_result": stage_result.terminal_result.value,
         "run_id": stage_result.run_id,
-        "work_item_kind": stage_result.work_item_kind.value,
+        "work_item_family_id": stage_result.work_item_family_id,
+        "work_item_kind": (
+            stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+        ),
         "work_item_id": stage_result.work_item_id,
-        "source_work_item_kind": stage_result.work_item_kind.value,
+        "source_work_item_family_id": stage_result.work_item_family_id,
+        "source_work_item_kind": (
+            stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+        ),
         "source_work_item_id": stage_result.work_item_id,
         "source_active_work_item_path": _string_metadata(stage_result, "active_work_item_path"),
     }

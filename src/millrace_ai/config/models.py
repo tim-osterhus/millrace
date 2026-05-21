@@ -28,6 +28,16 @@ class RuntimeSection(ConfigModel):
     run_style: RuntimeMode = RuntimeMode.DAEMON
     idle_sleep_seconds: float = Field(default=1.0, gt=0)
 
+    @field_validator("run_style", mode="before")
+    @classmethod
+    def reject_legacy_run_once_style(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip().lower() == "once":
+            raise ValueError(
+                "runtime.run_style = 'once' was removed; use run_style = 'daemon' "
+                "with millrace run daemon --max-ticks N for bounded execution"
+            )
+        return value
+
 
 class CodexPermissionLevel(str, Enum):
     BASIC = "basic"

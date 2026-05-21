@@ -179,23 +179,30 @@ The compiler resolves:
 - whether learning trigger rules or plane-concurrency policy exist
 - which shipped stage-kind and graph-loop assets materialize into the graph
   control-flow plan
+- which workflow primitive assets define work-item families, document adapters,
+  queue claim policy, terminal lifecycle actions, runtime effects, recovery and
+  failure policies, and workspace schema epoch compatibility
 
 `compiled_plan.json` materializes the stage-kind registry and graph-loop assets
 into explicit node plans, raw transitions, normalized compiled intake entries,
 a normalized closure-target activation entry, compiled resume and threshold
-recovery policies, and explicit terminal semantics. The live runtime executes
-stage-request construction, claim activation, closure-target activation,
-recovery, and post-stage routing from that compiled plan.
+recovery policies, compiled workflow primitives, scheduler lane policy, and
+explicit terminal semantics. The live runtime executes stage-request
+construction, claim activation, closure-target activation, recovery, runtime
+effect dispatch, source lifecycle mutation, and post-stage routing from that
+compiled plan.
 
-The compiler currently ships with baseline and learning-enabled built-in modes:
+The compiler currently ships with baseline, learning-enabled, integrated, and
+Blueprint built-in modes:
 
 - baseline modes: `default_codex`, `default_pi`
 - learning-enabled modes: `learning_codex`, `learning_pi`,
-  `learning_codex_integrated`
+  `learning_codex_integrated`, `blueprint_learning_codex`
 - integrated quality modes: `default_codex_integrated`,
   `learning_codex_integrated`
+- Blueprint Planning modes: `blueprint_codex`, `blueprint_learning_codex`
 - execution loops: `execution.standard`, `execution.with_integrator`
-- planning loop: `planning.standard`
+- planning loops: `planning.standard`, `planning.blueprint`
 - learning loop: `learning.standard`
 
 `standard_plain` remains accepted as a compatibility alias that canonicalizes to
@@ -257,7 +264,7 @@ add compile-time overrides such as:
 - stage skill additions
 - stage model bindings
 - stage runner bindings
-- plane concurrency policy
+- scheduler lane and concurrency policy
 - learning trigger rules
 
 In the shipped baseline, that runner binding map is how harness choice is
@@ -270,9 +277,14 @@ expressed:
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
   while selecting `execution.with_integrator`
+- `blueprint_codex` binds Codex stages while selecting `planning.blueprint`
+  and standard execution
+- `blueprint_learning_codex` binds Codex stages while selecting
+  `planning.blueprint`, `learning.standard`, and standard execution
 
 The loop topology does not fork just because the harness changes. It forks only
-when the operator intentionally selects an integrated quality mode.
+when the operator intentionally selects an integrated quality mode or the
+Blueprint Planning posture.
 
 Integrated Codex modes are quality-first and more expensive. Their execution
 path is:
@@ -285,14 +297,14 @@ Integrator inspects Builder evidence and the implementation diff, runs explicit
 or discoverable integration gates, checks changed docs/config/assets when
 relevant, and writes `integration_report.md` before Checker performs normal QA.
 
-The learning modes preserve execution/planning mutual exclusion and freeze a
-plane concurrency policy into the compiled plan. Daemon mode enforces that
-policy through the plane scheduler: default modes remain serial, while
-learning-enabled modes may run one Learning stage concurrently with one
-permitted foreground Planning or Execution stage. Runtime-owned mutation stays
-single-writer and serialized by the supervisor. Learning trigger rules can
-enqueue targeted learning requests from runtime evidence. Built-in success
-learning starts at Analyst; learning-enabled shipped modes trigger Librarian
+The learning modes preserve execution/planning mutual exclusion and freeze
+scheduler lane/concurrency policy into the compiled plan. Daemon mode enforces
+that policy through lane-keyed dispatch: default modes remain one active lane
+per plane, while experimental multi-lane policy must declare valid conflict
+coverage before it can run. Runtime-owned mutation stays single-writer and
+serialized by the supervisor. Learning trigger rules can enqueue targeted
+learning requests from runtime evidence. Built-in success learning starts at
+Analyst; learning-enabled shipped modes trigger Librarian
 after Planner completes so relevant remote optional skills can be installed
 into the workspace while foreground work continues. Direct Curator trigger
 rules are reserved for custom modes that name a concrete destination.
@@ -378,8 +390,8 @@ The current learning loop is:
 - `curator`
 - `librarian`
 
-Learning is opt-in through `learning_codex`, `learning_pi`, or
-`learning_codex_integrated`. Its normal path is
+Learning is opt-in through `learning_codex`, `learning_pi`,
+`learning_codex_integrated`, or `blueprint_learning_codex`. Its normal path is
 Analyst evidence analysis, Professor synthesis, then Curator acceptance and
 skill-update curation. Librarian is a targeted one-off Learning stage that runs
 after Planner in learning-enabled modes, checks Planner output against local and
@@ -430,8 +442,8 @@ ambient Pi project state.
 
 ## Deterministic Tick Lifecycle
 
-The runtime engine runs one deterministic tick at a time. In daemon mode it
-repeats those ticks; in `run once` mode it performs startup plus a single tick.
+The runtime engine runs one deterministic tick at a time. Daemon mode repeats
+those ticks; bounded one-off operation uses `millrace run daemon --max-ticks 1`.
 
 A tick follows this broad order:
 
@@ -447,7 +459,7 @@ A tick follows this broad order:
 10. return idle if no stage is active
 11. evaluate usage governance again before dispatching a stage
 12. evaluate compiled execution capability grants and any pending approvals
-13. dispatch permitted runner work through the compiled plane scheduler
+13. dispatch permitted runner work through the compiled lane scheduler
 14. normalize the result and apply the router decision
 15. record post-stage usage and persist snapshot, status markers, counters, and events
 
@@ -459,9 +471,9 @@ mutation seams (`runtime/result_application.py` plus the counter, transition,
 incident, persistence, and closure-target helper modules beneath it).
 
 Millrace is staged and deterministic by construction. Default modes serialize
-stage execution under one scheduler. Learning-enabled modes may run one
-Learning stage concurrently with one permitted foreground Planning or Execution
-stage, while runtime-owned mutation remains single-writer.
+stage execution under one scheduler lane per plane. Experimental multi-lane
+policy is compile-validated before it can dispatch, and runtime-owned mutation
+remains single-writer.
 
 ## Activation, Active State, And Status Surfaces
 
@@ -474,8 +486,15 @@ snapshot:
 - `active_work_item_kind`
 - `active_work_item_id`
 - `active_since`
+- `active_runs_by_plane`
+- `lanes_by_id`
 
-Those fields are authoritative for in-flight ownership.
+The legacy foreground active fields remain a projection. Canonical in-flight
+ownership lives in `active_runs_by_plane`; lane status, active run ids, active
+work refs, and lane plan/fingerprint identity live in `lanes_by_id`. Each
+active run records the compiled-plan id and fingerprint that launched it, so
+result application can keep routing against the launch contract even when a
+config reload has compiled a newer pending plan.
 
 Millrace also maintains plane status markers:
 
@@ -504,6 +523,10 @@ includes the deployed entrypoint path, required and attached skill paths, work
 item identity and path when applicable, run directory, status and snapshot
 paths, runtime-error context when present, runner/model/timeout fields, and the
 compiled execution capability grants for that node.
+Runtime-built requests also include deterministic request-context artifacts
+under the run directory. The prompt adapter includes the rendered prompt
+context, while the bundle and render manifest preserve visible refs,
+operator-only redactions, omitted providers, and content hashes for inspection.
 
 Before dispatch, Millrace evaluates required execution capability grants. Denied
 or unsupported required grants block before runner invocation. Approval-required

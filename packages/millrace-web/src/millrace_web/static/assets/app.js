@@ -7,6 +7,14 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const baseQueueKeys = ["tasks", "specs", "incidents", "learning", "blueprint_drafts"];
+const graphFamilyAliases = new Map([
+  ["task", "tasks"],
+  ["spec", "specs"],
+  ["incident", "incidents"],
+  ["learning_request", "learning"],
+  ["blueprint_draft", "blueprint_drafts"],
+]);
 
 function setView(view) {
   state.view = view;
@@ -130,8 +138,8 @@ function governanceFields(governance) {
 }
 
 function queueRows(queues) {
-  return Object.entries(queues)
-    .map(([kind, bucket]) => `<tr><td>${kind}</td><td>${bucket.incoming}</td><td>${bucket.active}</td><td>${bucket.done}</td><td>${bucket.blocked}</td></tr>`)
+  return queueBucketsForDisplay(queues)
+    .map(([kind, bucket]) => `<tr><td>${escapeHtml(kind)}</td><td>${bucket.incoming}</td><td>${bucket.active}</td><td>${bucket.done}</td><td>${bucket.blocked}</td></tr>`)
     .join("");
 }
 
@@ -285,7 +293,41 @@ function renderEvents(events) {
 }
 
 function totalIncoming(queues) {
-  return Object.values(queues).reduce((total, bucket) => total + bucket.incoming, 0);
+  return queueBucketsForDisplay(queues).reduce((total, [, bucket]) => total + bucket.incoming, 0);
+}
+
+function queueBucketsForDisplay(queues) {
+  const rows = [];
+  const seenKeys = new Set();
+  baseQueueKeys.forEach((key) => {
+    if (isQueueBucket(queues[key])) {
+      rows.push([key, normalizeQueueBucket(queues[key])]);
+      seenKeys.add(key);
+    }
+  });
+  Object.entries(queues.graph_owned_families || {}).forEach(([familyId, bucket]) => {
+    const alias = graphFamilyAliases.get(familyId);
+    if (alias && seenKeys.has(alias)) {
+      return;
+    }
+    if (isQueueBucket(bucket)) {
+      rows.push([familyId, normalizeQueueBucket(bucket)]);
+    }
+  });
+  return rows;
+}
+
+function isQueueBucket(value) {
+  return Boolean(value) && typeof value === "object" && ["incoming", "active", "done", "blocked"].some((key) => key in value);
+}
+
+function normalizeQueueBucket(bucket) {
+  return {
+    incoming: Number(bucket.incoming || 0),
+    active: Number(bucket.active || 0),
+    done: Number(bucket.done || 0),
+    blocked: Number(bucket.blocked || 0),
+  };
 }
 
 function totalTokens(runs) {

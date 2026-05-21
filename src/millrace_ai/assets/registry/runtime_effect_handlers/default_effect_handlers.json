@@ -1,0 +1,99 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "planner_disposition",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["spec", "incident"],
+      "destination_kinds": ["spec"],
+      "required_artifacts": ["planner_disposition"],
+      "optional_artifacts": [],
+      "returns_source_lifecycle_intent": true,
+      "requires_lifecycle_mutation_plan": true,
+      "creates_work_items": false,
+      "failure_classes": [
+        "planner_disposition_missing",
+        "planner_disposition_invalid",
+        "planner_disposition_source_mismatch",
+        "planner_disposition_terminal_mismatch",
+        "planner_disposition_child_spec_missing",
+        "planner_disposition_blocked"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["spec", "incident"],
+      "destination_kinds": ["blueprint_draft"],
+      "required_artifacts": ["blueprint_manifest", "blueprint_drafts"],
+      "optional_artifacts": ["manager_blueprint_report"],
+      "returns_source_lifecycle_intent": true,
+      "requires_lifecycle_mutation_plan": true,
+      "creates_work_items": true,
+      "failure_classes": [
+        "blueprint_manifest_missing",
+        "blueprint_manifest_parse_error",
+        "blueprint_manifest_schema_invalid",
+        "blueprint_drafts_missing",
+        "blueprint_drafts_parse_error",
+        "blueprint_drafts_schema_invalid",
+        "blueprint_manifest_draft_mismatch",
+        "blueprint_manifest_duplicate",
+        "blueprint_draft_duplicate",
+        "blueprint_source_lifecycle_invalid",
+        "blueprint_partial_mutation"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "contractor_blueprint_candidate_persist",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["blueprint_draft"],
+      "destination_kinds": [],
+      "required_artifacts": ["blueprint_packet", "blueprint_markdown"],
+      "returns_source_lifecycle_intent": true,
+      "requires_lifecycle_mutation_plan": true,
+      "creates_work_items": false,
+      "failure_classes": ["blueprint_candidate_invalid", "blueprint_partial_mutation"]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "evaluator_blueprint_approved_to_task",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["blueprint_draft"],
+      "destination_kinds": ["task"],
+      "required_artifacts": ["blueprint_evaluation", "generated_task"],
+      "optional_artifacts": ["blueprint_evaluation_report"],
+      "returns_source_lifecycle_intent": true,
+      "requires_lifecycle_mutation_plan": true,
+      "creates_work_items": true,
+      "failure_classes": [
+        "blueprint_evaluation_invalid",
+        "generated_task_missing",
+        "generated_task_invalid",
+        "blueprint_task_promotion_invalid",
+        "blueprint_task_duplicate",
+        "blueprint_partial_mutation"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "evaluator_blueprint_rejected_to_draft_revision",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["blueprint_draft"],
+      "destination_kinds": [],
+      "required_artifacts": ["blueprint_evaluation", "blueprint_critique"],
+      "optional_artifacts": ["blueprint_evaluation_report"],
+      "returns_source_lifecycle_intent": true,
+      "requires_lifecycle_mutation_plan": true,
+      "creates_work_items": false,
+      "failure_classes": ["blueprint_critique_invalid", "blueprint_rejection_duplicate", "blueprint_partial_mutation"]
+    }
+  ]
+}

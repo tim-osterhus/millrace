@@ -25,7 +25,11 @@ pre-packaging draft tree for entrypoints.
 - `src/millrace_ai/assets/entrypoints/planning/recon.md` -> `millrace-agents/entrypoints/planning/recon.md`
 - `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
 - `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
+- `src/millrace_ai/assets/entrypoints/planning/manager_blueprint.md` -> `millrace-agents/entrypoints/planning/manager_blueprint.md`
+- `src/millrace_ai/assets/entrypoints/planning/contractor_blueprint.md` -> `millrace-agents/entrypoints/planning/contractor_blueprint.md`
+- `src/millrace_ai/assets/entrypoints/planning/evaluator_blueprint.md` -> `millrace-agents/entrypoints/planning/evaluator_blueprint.md`
 - `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
+- `src/millrace_ai/assets/entrypoints/planning/mechanic_blueprint.md` -> `millrace-agents/entrypoints/planning/mechanic_blueprint.md`
 - `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
 - `src/millrace_ai/assets/entrypoints/planning/arbiter.md` -> `millrace-agents/entrypoints/planning/arbiter.md`
 

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan, MaterializedGraphNodePlan
 from millrace_ai.contracts import (
+    BlueprintDraftDocument,
+    BlueprintManifestDocument,
     ExecutionStageName,
     ExecutionTerminalResult,
     LearningStageName,
@@ -19,6 +23,8 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.errors import WorkspaceStateError
+
+from .paths import WorkspacePaths
 
 _IDLE_MARKER = "### IDLE"
 _INVALID_MARKER = "### INVALID_STATUS_MARKER"
@@ -135,6 +141,29 @@ class ReconciliationSignal:
     message: str
 
 
+@dataclass(frozen=True, slots=True)
+class BlueprintManifestDiagnostic:
+    """Read-only diagnostic for malformed Blueprint manifest/draft state."""
+
+    code: str
+    message: str
+    path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ManifestEntry:
+    path: Path
+    manifest: BlueprintManifestDocument
+    normalized_payload: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DraftEntry:
+    state: str
+    path: Path
+    draft: BlueprintDraftDocument
+
+
 def normalize_execution_status_marker(marker: str) -> str:
     return _validate_status_marker_shape(marker, label="execution status")
 
@@ -149,6 +178,95 @@ def normalize_learning_status_marker(marker: str) -> str:
 
 def running_status_marker_for_stage(stage: StageName) -> str:
     return _RUNNING_MARKER_BY_STAGE[stage.value]
+
+
+def collect_blueprint_manifest_diagnostics(
+    paths: WorkspacePaths,
+) -> tuple[BlueprintManifestDiagnostic, ...]:
+    """Collect read-only diagnostics for Blueprint manifest/draft consistency."""
+
+    diagnostics: list[BlueprintManifestDiagnostic] = []
+    manifest_entries = _blueprint_manifest_entries(paths, diagnostics)
+    draft_entries = _blueprint_draft_entries(paths)
+
+    entries_by_manifest_id: dict[str, list[_ManifestEntry]] = {}
+    for entry in manifest_entries:
+        entries_by_manifest_id.setdefault(entry.manifest.manifest_id, []).append(entry)
+        if _is_legacy_root_keyed_manifest(entry):
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_legacy_root_keyed",
+                    message=(
+                        f"manifest {entry.manifest.manifest_id} is stored under root key "
+                        f"{entry.manifest.root_spec_id}; canonical filename is "
+                        f"{entry.manifest.manifest_id}.json"
+                    ),
+                    path=entry.path,
+                )
+            )
+
+    _append_duplicate_manifest_diagnostics(entries_by_manifest_id, diagnostics)
+
+    draft_refs = {(entry.draft.manifest_id, entry.draft.draft_id) for entry in draft_entries}
+    for entries in entries_by_manifest_id.values():
+        manifest_entry = _preferred_manifest_entry(entries)
+        for draft_id in manifest_entry.manifest.draft_ids:
+            if (manifest_entry.manifest.manifest_id, draft_id) in draft_refs:
+                continue
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_draft_missing",
+                    message=(
+                        f"manifest {manifest_entry.manifest.manifest_id} references draft "
+                        f"{draft_id}, but no Blueprint draft lifecycle artifact contains it"
+                    ),
+                    path=manifest_entry.path,
+                )
+            )
+
+    for draft_entry in draft_entries:
+        manifest_entries_for_draft = entries_by_manifest_id.get(draft_entry.draft.manifest_id)
+        if not manifest_entries_for_draft:
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_draft_manifest_unresolved",
+                    message=(
+                        f"draft {draft_entry.draft.draft_id} references manifest "
+                        f"{draft_entry.draft.manifest_id}, but no Blueprint manifest artifact "
+                        "declares that manifest_id"
+                    ),
+                    path=draft_entry.path,
+                )
+            )
+            continue
+        manifest_entry = _preferred_manifest_entry(manifest_entries_for_draft)
+        if _draft_lineage_matches_manifest(draft_entry.draft, manifest_entry.manifest):
+            continue
+        diagnostics.append(
+            BlueprintManifestDiagnostic(
+                code="blueprint_manifest_draft_lineage_mismatch",
+                message=(
+                    f"draft {draft_entry.draft.draft_id} lineage does not match manifest "
+                    f"{manifest_entry.manifest.manifest_id}: "
+                    f"manifest root_spec_id={manifest_entry.manifest.root_spec_id} "
+                    f"root_idea_id={manifest_entry.manifest.root_idea_id}; "
+                    f"draft root_spec_id={draft_entry.draft.root_spec_id} "
+                    f"root_idea_id={draft_entry.draft.root_idea_id}"
+                ),
+                path=draft_entry.path,
+            )
+        )
+
+    return tuple(
+        sorted(
+            diagnostics,
+            key=lambda diagnostic: (
+                "" if diagnostic.path is None else diagnostic.path.as_posix(),
+                diagnostic.code,
+                diagnostic.message,
+            ),
+        )
+    )
 
 
 def collect_reconciliation_signals(
@@ -166,7 +284,12 @@ def collect_reconciliation_signals(
 
     signals: list[ReconciliationSignal] = []
 
-    if snapshot.active_stage is not None and not snapshot.process_running:
+    if snapshot.active_stage is not None and not snapshot.process_running and _active_stage_appears_running(
+        snapshot,
+        execution_marker=execution_marker,
+        planning_marker=planning_marker,
+        compiled_plan=compiled_plan,
+    ):
         signals.append(
             ReconciliationSignal(
                 code="stale_active_ownership",
@@ -215,6 +338,112 @@ def collect_reconciliation_signals(
             signals.append(orphaned)
 
     return tuple(signals)
+
+
+def _blueprint_manifest_entries(
+    paths: WorkspacePaths,
+    diagnostics: list[BlueprintManifestDiagnostic],
+) -> tuple[_ManifestEntry, ...]:
+    entries: list[_ManifestEntry] = []
+    for path in _json_files(paths.runtime_root / "blueprints" / "manifests"):
+        try:
+            manifest = BlueprintManifestDocument.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_invalid",
+                    message=f"Blueprint manifest artifact is not parseable: {exc}",
+                    path=path,
+                )
+            )
+            continue
+        entries.append(
+            _ManifestEntry(
+                path=path,
+                manifest=manifest,
+                normalized_payload=_normalized_blueprint_manifest_payload(manifest),
+            )
+        )
+    return tuple(entries)
+
+
+def _blueprint_draft_entries(paths: WorkspacePaths) -> tuple[_DraftEntry, ...]:
+    entries: list[_DraftEntry] = []
+    for state in _blueprint_draft_lifecycle_states():
+        for path in _json_files(paths.runtime_root / "blueprints" / "drafts" / state):
+            try:
+                draft = BlueprintDraftDocument.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            entries.append(_DraftEntry(state=state, path=path, draft=draft))
+    return tuple(entries)
+
+
+def _append_duplicate_manifest_diagnostics(
+    entries_by_manifest_id: dict[str, list[_ManifestEntry]],
+    diagnostics: list[BlueprintManifestDiagnostic],
+) -> None:
+    for manifest_id, entries in sorted(entries_by_manifest_id.items()):
+        normalized_payloads = {entry.normalized_payload for entry in entries}
+        if len(normalized_payloads) <= 1:
+            continue
+        for entry in entries[1:]:
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_duplicate",
+                    message=(
+                        f"manifest_id {manifest_id} has multiple non-equivalent "
+                        "Blueprint manifest artifacts"
+                    ),
+                    path=entry.path,
+                )
+            )
+
+
+def _preferred_manifest_entry(entries: list[_ManifestEntry]) -> _ManifestEntry:
+    for entry in entries:
+        if entry.path.stem == entry.manifest.manifest_id:
+            return entry
+    return entries[0]
+
+
+def _is_legacy_root_keyed_manifest(entry: _ManifestEntry) -> bool:
+    return (
+        entry.path.stem == entry.manifest.root_spec_id
+        and entry.path.stem != entry.manifest.manifest_id
+    )
+
+
+def _draft_lineage_matches_manifest(
+    draft: BlueprintDraftDocument,
+    manifest: BlueprintManifestDocument,
+) -> bool:
+    return (
+        draft.root_spec_id == manifest.root_spec_id
+        and draft.root_idea_id == manifest.root_idea_id
+    )
+
+
+def _normalized_blueprint_manifest_payload(manifest: BlueprintManifestDocument) -> str:
+    return json.dumps(
+        manifest.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _blueprint_draft_lifecycle_states() -> tuple[str, ...]:
+    return ("queue", "active", "approved", "blocked", "canceled", "superseded", "rejected")
+
+
+def _json_files(directory: Path) -> tuple[Path, ...]:
+    if not directory.exists():
+        return ()
+    return tuple(sorted(path for path in directory.iterdir() if path.is_file() and path.suffix == ".json"))
 
 
 def _normalize_marker(marker: str, *, label: str) -> str:
@@ -266,13 +495,49 @@ def _has_impossible_marker_for_active_stage(
             if marker == running_marker:
                 return False
             return marker not in allowed and marker not in inbound
-    allowed = _STAGE_ALLOWED_MARKERS[snapshot.active_stage.value]
-    inbound = _STAGE_INBOUND_MARKERS[snapshot.active_stage.value]
+    allowed = _STAGE_ALLOWED_MARKERS.get(snapshot.active_stage.value)
+    inbound = _STAGE_INBOUND_MARKERS.get(snapshot.active_stage.value)
+    if allowed is None or inbound is None:
+        return False
     if marker == _IDLE_MARKER:
         return False
     if marker == running_status_marker_for_stage(snapshot.active_stage):
         return False
     return marker not in allowed and marker not in inbound
+
+
+def _active_stage_appears_running(
+    snapshot: RuntimeSnapshot,
+    *,
+    execution_marker: str,
+    planning_marker: str,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> bool:
+    if snapshot.active_stage is None or snapshot.active_plane is None:
+        return False
+    active_run = snapshot.active_runs_by_plane.get(snapshot.active_plane)
+    if active_run is not None and active_run.running_status_marker:
+        return True
+
+    marker = execution_marker if snapshot.active_plane is Plane.EXECUTION else planning_marker
+    return marker == _active_stage_running_marker(snapshot, compiled_plan=compiled_plan)
+
+
+def _active_stage_running_marker(
+    snapshot: RuntimeSnapshot,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> str:
+    if snapshot.active_stage is None:
+        return ""
+    if compiled_plan is not None and snapshot.active_plane is not None:
+        graph = _graph_for_plane(compiled_plan, snapshot.active_plane)
+        if graph is not None:
+            node_id = snapshot.active_node_id or snapshot.active_stage.value
+            node = _compiled_node_for_id(graph, node_id)
+            if node is not None:
+                return f"### {node.running_status_marker}"
+    return running_status_marker_for_stage(snapshot.active_stage)
 
 
 def _stale_signal_recommended_stage(
@@ -283,11 +548,11 @@ def _stale_signal_recommended_stage(
         return PlanningStageName.MECHANIC
 
     attempts = 0
-    if snapshot.active_work_item_kind and snapshot.active_work_item_id:
+    if snapshot.active_work_item_family_id and snapshot.active_work_item_id:
         for entry in counters.entries:
             if (
                 entry.failure_class == _STALE_ACTIVE_FAILURE_CLASS
-                and entry.work_item_kind == snapshot.active_work_item_kind
+                and entry.work_item_family_id == snapshot.active_work_item_family_id
                 and entry.work_item_id == snapshot.active_work_item_id
             ):
                 attempts = max(attempts, entry.troubleshoot_attempt_count)
@@ -391,7 +656,9 @@ def _compiled_inbound_markers(
 
 
 __all__ = [
+    "BlueprintManifestDiagnostic",
     "ReconciliationSignal",
+    "collect_blueprint_manifest_diagnostics",
     "collect_reconciliation_signals",
     "normalize_execution_status_marker",
     "normalize_learning_status_marker",

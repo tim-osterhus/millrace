@@ -191,17 +191,33 @@ Compile currentness answers:
 - does the persisted compiled plan still match the current config and asset
   inputs?
 
+Schema epoch identity answers:
+
+- can the current runtime safely read this workspace's mutable runtime state?
+- if not, has old mutable state been archived and clean state initialized for
+  the current epoch?
+
 After `upgrade --apply`, the workspace baseline may be newer than the persisted
 compiled plan. In that case, `millrace status` will report the compiled plan as
 `stale` until the workspace is recompiled.
 New packaged modes, graph assets, entrypoints, or stage-core skills, such as
 `default_codex_integrated`, `learning_codex_integrated`,
-`execution.with_integrator`, and Librarian's learning assets, are managed
-workspace assets. Existing workspaces must apply the baseline refresh before
-those managed ids and entrypoints are available from the workspace runtime asset
-root. Librarian may then install remote optional skills into the workspace
+`blueprint_learning_codex`, `execution.with_integrator`, and Librarian's
+learning assets, are managed workspace assets. Existing workspaces must apply
+the baseline refresh before those managed ids and entrypoints are available
+from the workspace runtime asset root. Librarian may then install remote
+optional skills into the workspace
 through the supported `millrace skills` commands; those downloaded optional
 skill payloads are workspace-local content, not base package assets.
+
+The v0.20 runtime writes
+`millrace-agents/state/workspace_schema_epoch.json` during fresh initialization
+and after schema archive/reset. Runtime startup refuses to load mutable state
+when that marker is missing or incompatible with the compiled plan's workspace
+schema epoch. The archive/reset helper moves mutable runtime directories under
+`millrace-agents/archives/` by filesystem rename without parsing old JSON,
+writes a manifest, reinitializes clean runtime state, writes the marker
+atomically, and recompiles the active mode before work resumes.
 
 ## Recommended Operator Flow
 
@@ -210,7 +226,7 @@ For a fresh workspace:
 ```bash
 millrace init --workspace /absolute/path/to/workspace
 millrace compile validate --workspace /absolute/path/to/workspace
-millrace run once --workspace /absolute/path/to/workspace
+millrace run daemon --max-ticks 1 --workspace /absolute/path/to/workspace
 ```
 
 For an existing workspace that needs a packaged baseline refresh:

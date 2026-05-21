@@ -54,6 +54,8 @@ Turn rough inputs into explicit, testable planning work. This skill keeps planni
 - Explicit assumptions, risks, and scope boundaries.
 - A clear statement when the work is pass-through versus when refinement is needed.
 - Additional child specs only when the work truly fans out.
+- `planner_disposition.json` declaring one runtime-visible disposition:
+  `active_source_ready_for_manager`, `emitted_child_specs`, or `blocked`.
 
 ## Procedure
 
@@ -64,6 +66,10 @@ Turn rough inputs into explicit, testable planning work. This skill keeps planni
 5. Refine scope before decomposition.
 6. Split only when justified and the resulting pieces are clearly independent and testable.
 7. Write the smallest spec set that still exposes the checks a downstream stage needs.
+8. Write `planner_disposition.json`:
+   - `active_source_ready_for_manager` when the active source should continue to Manager.
+   - `emitted_child_specs` when all emitted child specs exist in `specs/queue` and the active source should resolve.
+   - `blocked` only with a `### BLOCKED` terminal result.
 
 ## Pitfalls And Gotchas
 
@@ -72,6 +78,7 @@ Turn rough inputs into explicit, testable planning work. This skill keeps planni
 - Treating incomplete evidence as if it were complete.
 - Rewriting a healthy active spec just to make Planner look productive.
 - Smuggling implementation details into a planning pass.
+- Emitting child specs without the matching `emitted_child_specs` disposition.
 
 ## Progressive Disclosure
 

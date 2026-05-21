@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import Plane, StageResultEnvelope, WorkItemKind
+from millrace_ai.contracts import Plane, StageResultEnvelope
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.queue_store import QueueStore
 from millrace_ai.router import RouterDecision
 from millrace_ai.state_store import (
     load_recovery_counters,
@@ -18,7 +17,9 @@ from millrace_ai.state_store import (
 
 from .active_runs import snapshot_without_active_plane
 from .blocked_recovery import write_blocked_item_metadata
+from .effects import SourceLifecycleAction, SourceLifecycleIntent
 from .handoff_incidents import enqueue_handoff_incident
+from .lifecycle_interpreter import apply_source_lifecycle_intent
 
 if TYPE_CHECKING:
     from millrace_ai.contracts import RuntimeSnapshot
@@ -26,39 +27,31 @@ if TYPE_CHECKING:
 
 
 def mark_active_work_item_complete(engine: RuntimeEngine, stage_result: StageResultEnvelope) -> None:
-    queue = QueueStore(engine.paths)
-    if stage_result.work_item_kind is WorkItemKind.TASK:
-        queue.mark_task_done(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.SPEC:
-        queue.mark_spec_done(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.PROBE:
-        queue.mark_probe_done(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.INCIDENT:
-        queue.mark_incident_resolved(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.LEARNING_REQUEST:
-        queue.mark_learning_request_done(stage_result.work_item_id)
+    apply_source_lifecycle_intent(
+        engine.paths,
+        SourceLifecycleIntent(
+            lifecycle_plan_id="complete_work_item",
+            action=SourceLifecycleAction.COMPLETE,
+            work_item_family_id=stage_result.work_item_family_id,
+            work_item_kind=stage_result.work_item_kind,
+            work_item_id=stage_result.work_item_id,
+        ),
+        compiled_plan=engine.compiled_plan,
+    )
 
 
 def mark_active_work_item_blocked(engine: RuntimeEngine, stage_result: StageResultEnvelope) -> None:
-    queue = QueueStore(engine.paths)
-    if stage_result.work_item_kind is WorkItemKind.TASK:
-        queue.mark_task_blocked(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.SPEC:
-        queue.mark_spec_blocked(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.PROBE:
-        queue.mark_probe_blocked(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.INCIDENT:
-        queue.mark_incident_blocked(stage_result.work_item_id)
-        return
-    if stage_result.work_item_kind is WorkItemKind.LEARNING_REQUEST:
-        queue.mark_learning_request_blocked(stage_result.work_item_id)
+    apply_source_lifecycle_intent(
+        engine.paths,
+        SourceLifecycleIntent(
+            lifecycle_plan_id="block_work_item",
+            action=SourceLifecycleAction.BLOCK,
+            work_item_family_id=stage_result.work_item_family_id,
+            work_item_kind=stage_result.work_item_kind,
+            work_item_id=stage_result.work_item_id,
+        ),
+        compiled_plan=engine.compiled_plan,
+    )
 
 
 def mark_active_work_item_blocked_with_recovery(
@@ -75,8 +68,12 @@ def mark_active_work_item_blocked_with_recovery(
             event_type="runtime_blocked_mark_failed",
             data={
                 "reason": reason,
-                "work_item_kind": stage_result.work_item_kind.value,
+                "work_item_family_id": stage_result.work_item_family_id,
+                "work_item_kind": (
+                    stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+                ),
                 "work_item_id": stage_result.work_item_id,
+                "lifecycle_plan_id": "block_work_item",
                 "error": str(exc),
             },
         )
@@ -102,6 +99,7 @@ def apply_idle_router_decision(engine: RuntimeEngine, stage_result: StageResultE
         )
     reset_forward_progress_counters(
         engine.paths,
+        work_item_family_id=stage_result.work_item_family_id,
         work_item_kind=stage_result.work_item_kind,
         work_item_id=stage_result.work_item_id,
     )
@@ -137,6 +135,7 @@ def apply_handoff_router_decision(
     save_snapshot(engine.paths, engine.snapshot)
     reset_forward_progress_counters(
         engine.paths,
+        work_item_family_id=stage_result.work_item_family_id,
         work_item_kind=stage_result.work_item_kind,
         work_item_id=stage_result.work_item_id,
     )
@@ -170,6 +169,7 @@ def apply_blocked_router_decision(
     save_snapshot(engine.paths, engine.snapshot)
     reset_forward_progress_counters(
         engine.paths,
+        work_item_family_id=stage_result.work_item_family_id,
         work_item_kind=stage_result.work_item_kind,
         work_item_id=stage_result.work_item_id,
     )

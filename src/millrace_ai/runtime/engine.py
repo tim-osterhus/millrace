@@ -33,7 +33,7 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
-from millrace_ai.queue_store import QueueClaim, QueueStore
+from millrace_ai.queue_store import QueueClaim
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime.active_runs import active_run_for_plane, snapshot_without_active_plane
@@ -50,6 +50,7 @@ from millrace_ai.state_store import (
     set_planning_status,
 )
 from millrace_ai.watchers import WatcherSession, WatchEvent
+from millrace_ai.workspace.queue_lifecycle import requeue_active_work_item, requeue_all_active_work_items
 
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
 
@@ -192,7 +193,10 @@ class RuntimeEngine:
         active_node_id = self.snapshot.active_node_id or self.snapshot.active_stage.value
         if active_node_id != completion.node_id:
             return False
-        return self.snapshot.active_work_item_kind is None and self.snapshot.active_work_item_id is None
+        return (
+            self.snapshot.active_work_item_family_id is None
+            and self.snapshot.active_work_item_id is None
+        )
 
     def _activate_claim(self, claim: QueueClaim) -> None:
         activation.activate_claim(self, claim)
@@ -214,7 +218,18 @@ class RuntimeEngine:
     ) -> RuntimeSnapshot:
         return reconciliation.set_recovery_counters(self, snapshot, counters, failure_class, stage)
 
-    def _route_stage_result(self, stage_result: StageResultEnvelope) -> RouterDecision:
+    def _route_stage_result(
+        self,
+        stage_result: StageResultEnvelope,
+        *,
+        compiled_plan: CompiledRunPlan | None = None,
+    ) -> RouterDecision:
+        if compiled_plan is not None:
+            return result_application.route_stage_result_with_plan(
+                self,
+                stage_result,
+                compiled_plan=compiled_plan,
+            )
         return result_application.route_stage_result(self, stage_result)
 
     def _apply_router_decision(
@@ -223,12 +238,14 @@ class RuntimeEngine:
         stage_result: StageResultEnvelope,
         *,
         stage_result_path: Path | None = None,
+        compiled_plan: CompiledRunPlan | None = None,
     ) -> tuple[Path, ...]:
         return result_application.apply_router_decision(
             self,
             decision,
             stage_result,
             stage_result_path=stage_result_path,
+            compiled_plan=compiled_plan,
         )
 
     def _increment_route_counters(
@@ -245,7 +262,8 @@ class RuntimeEngine:
         counters: RecoveryCounters,
         *,
         failure_class: str,
-        work_item_kind: WorkItemKind,
+        work_item_family_id: str | None = None,
+        work_item_kind: WorkItemKind | None = None,
         work_item_id: str,
         field: str,
     ) -> RuntimeSnapshot:
@@ -254,6 +272,7 @@ class RuntimeEngine:
             snapshot,
             counters,
             failure_class=failure_class,
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
             field=field,
@@ -343,12 +362,18 @@ class RuntimeEngine:
         self,
         work_item_kind: WorkItemKind | None,
         work_item_id: str | None,
+        *,
+        work_item_family_id: str | None = None,
     ) -> Path | None:
-        return stage_requests.active_work_item_path(self, work_item_kind, work_item_id)
+        return stage_requests.active_work_item_path(
+            self,
+            work_item_kind,
+            work_item_id,
+            work_item_family_id=work_item_family_id,
+        )
 
     def _clear_stale_state(self, *, reason: str = "runtime stale-state clear") -> None:
-        queue = QueueStore(self.paths)
-        self._requeue_all_active_items(queue, reason=reason)
+        self._requeue_all_active_items(reason=reason)
         self._reset_runtime_to_idle(
             process_running=True,
             clear_stop_requested=True,
@@ -365,17 +390,16 @@ class RuntimeEngine:
         if scope is None and len(self.snapshot.active_runs_by_plane) > 1:
             self._emit_retry_active_skipped(scope=scope, reason="multiple_active_planes")
             return
-        if active_run.work_item_kind is None or active_run.work_item_id is None:
+        if active_run.work_item_family_id is None or active_run.work_item_id is None:
             self._emit_retry_active_skipped(scope=scope, reason="non_retryable_active_run")
             return
 
-        queue = QueueStore(self.paths)
-        work_item_kind = active_run.work_item_kind
+        work_item_family_id = active_run.work_item_family_id
         work_item_id = active_run.work_item_id
         try:
             self._requeue_active_item(
-                queue,
-                work_item_kind=work_item_kind,
+                work_item_family_id=work_item_family_id,
+                work_item_kind=active_run.work_item_kind,
                 work_item_id=work_item_id,
                 reason=reason,
             )
@@ -385,7 +409,8 @@ class RuntimeEngine:
         self._clear_retry_active_plane(active_run.plane)
         reset_forward_progress_counters(
             self.paths,
-            work_item_kind=work_item_kind,
+            work_item_family_id=work_item_family_id,
+            work_item_kind=active_run.work_item_kind,
             work_item_id=work_item_id,
         )
         self.counters = load_recovery_counters(self.paths)
@@ -440,61 +465,34 @@ class RuntimeEngine:
             source="retry_active",
         )
 
-    def _requeue_all_active_items(self, queue: QueueStore, *, reason: str) -> int:
-        requeued_count = 0
-        for path in sorted(self.paths.tasks_active_dir.glob("*.md")):
-            try:
-                queue.requeue_task(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.specs_active_dir.glob("*.md")):
-            try:
-                queue.requeue_spec(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.probes_active_dir.glob("*.md")):
-            try:
-                queue.requeue_probe(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
-            try:
-                queue.requeue_incident(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.learning_requests_active_dir.glob("*.md")):
-            try:
-                queue.requeue_learning_request(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        return requeued_count
+    def _requeue_all_active_items(self, *, reason: str) -> int:
+        return requeue_all_active_work_items(
+            self.paths,
+            reason=reason,
+            work_item_families=self._work_item_families_for_lifecycle(),
+        )
 
     def _requeue_active_item(
         self,
-        queue: QueueStore,
         *,
-        work_item_kind: WorkItemKind,
+        work_item_family_id: str,
+        work_item_kind: WorkItemKind | None,
         work_item_id: str,
         reason: str,
     ) -> None:
-        if work_item_kind is WorkItemKind.TASK:
-            queue.requeue_task(work_item_id, reason=reason)
-            return
-        if work_item_kind is WorkItemKind.SPEC:
-            queue.requeue_spec(work_item_id, reason=reason)
-            return
-        if work_item_kind is WorkItemKind.PROBE:
-            queue.requeue_probe(work_item_id, reason=reason)
-            return
-        if work_item_kind is WorkItemKind.LEARNING_REQUEST:
-            queue.requeue_learning_request(work_item_id, reason=reason)
-            return
-        queue.requeue_incident(work_item_id, reason=reason)
+        requeue_active_work_item(
+            self.paths,
+            work_item_family_id=work_item_family_id,
+            work_item_kind=work_item_kind,
+            work_item_id=work_item_id,
+            reason=reason,
+            work_item_families=self._work_item_families_for_lifecycle(),
+        )
+
+    def _work_item_families_for_lifecycle(self):
+        if self.compiled_plan is None:
+            return None
+        return tuple(self.compiled_plan.work_item_families_by_id.values())
 
     def _reset_runtime_to_idle(
         self,

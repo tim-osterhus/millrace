@@ -18,7 +18,6 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
-from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 from millrace_ai.errors import StageWorkItemOwnershipError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
@@ -26,35 +25,19 @@ from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.requests import RequestKind
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
+from millrace_ai.workspace.work_inventory import queue_depths_by_plane
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 from .active_runs import active_run_for_plane
 from .error_recovery import build_runtime_error_request_fields
+from .graph_authority.stage_mapping import stage_for_stage_kind
+from .request_context import attach_default_request_context
 from .skill_evidence import write_skill_revision_evidence
 
 _STATUS_IDLE = "### IDLE"
 _STAGE_WORK_ITEM_OWNERSHIP_INVALID = "stage_work_item_ownership_invalid"
-_STAGE_WORK_ITEM_OWNERSHIP: dict[str, frozenset[WorkItemKind]] = {
-    "builder": frozenset({WorkItemKind.TASK}),
-    "integrator": frozenset({WorkItemKind.TASK}),
-    "checker": frozenset({WorkItemKind.TASK}),
-    "fixer": frozenset({WorkItemKind.TASK}),
-    "doublechecker": frozenset({WorkItemKind.TASK}),
-    "updater": frozenset({WorkItemKind.TASK}),
-    "troubleshooter": frozenset({WorkItemKind.TASK}),
-    "consultant": frozenset({WorkItemKind.TASK}),
-    "recon": frozenset({WorkItemKind.PROBE}),
-    "planner": frozenset({WorkItemKind.SPEC, WorkItemKind.INCIDENT}),
-    "manager": frozenset({WorkItemKind.SPEC, WorkItemKind.INCIDENT}),
-    "auditor": frozenset({WorkItemKind.INCIDENT}),
-    "mechanic": frozenset({WorkItemKind.SPEC, WorkItemKind.INCIDENT}),
-    "analyst": frozenset({WorkItemKind.LEARNING_REQUEST}),
-    "professor": frozenset({WorkItemKind.LEARNING_REQUEST}),
-    "curator": frozenset({WorkItemKind.LEARNING_REQUEST}),
-    "librarian": frozenset({WorkItemKind.LEARNING_REQUEST}),
-}
 
 
 def build_stage_run_request(
@@ -66,28 +49,37 @@ def build_stage_run_request(
     active_work_item_kind = (
         active_run.work_item_kind if active_run is not None else engine.snapshot.active_work_item_kind
     )
+    active_work_item_family_id = (
+        active_run.work_item_family_id
+        if active_run is not None
+        else engine.snapshot.active_work_item_family_id
+    )
     active_work_item_id = (
         active_run.work_item_id if active_run is not None else engine.snapshot.active_work_item_id
     )
     request_kind = (
         active_run.request_kind
         if active_run is not None
-        else _request_kind_for_active_kind(engine.snapshot.active_work_item_kind)
+        else _request_kind_for_active_family(engine.snapshot.active_work_item_family_id)
     )
     active_path = active_work_item_path(
         engine,
         active_work_item_kind,
         active_work_item_id,
+        work_item_family_id=active_work_item_family_id,
     )
     validate_stage_work_item_ownership(
         stage_plan,
         request_kind=request_kind,
-        active_work_item_kind=active_work_item_kind,
+        active_work_item_family_id=active_work_item_family_id,
     )
     run_id = active_run.run_id if active_run is not None else engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    runtime_error_fields = build_runtime_error_request_fields(engine)
+    runtime_error_fields = build_runtime_error_request_fields(
+        engine,
+        plane=stage_plan.plane,
+    )
     stage_name = _stage_name_for_node_plan(stage_plan)
     request_id = new_request_id()
     required_skill_paths = tuple(
@@ -109,7 +101,9 @@ def build_stage_run_request(
         plane=stage_plan.plane,
         stage=stage_name,
         mode_id=engine.snapshot.active_mode_id,
-        compiled_plan_id=engine.snapshot.compiled_plan_id,
+        compiled_plan_id=(
+            active_run.compiled_plan_id if active_run is not None else engine.snapshot.compiled_plan_id
+        ),
         node_id=stage_plan.node_id,
         stage_kind_id=stage_plan.stage_kind_id,
         running_status_marker=stage_plan.running_status_marker,
@@ -120,6 +114,7 @@ def build_stage_run_request(
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
         attached_skill_paths=attached_skill_paths,
+        active_work_item_family_id=active_work_item_family_id,
         active_work_item_kind=active_work_item_kind,
         active_work_item_id=active_work_item_id,
         active_work_item_path=str(active_path) if active_path is not None else None,
@@ -141,6 +136,11 @@ def build_stage_run_request(
         timeout_seconds=stage_plan.timeout_seconds,
         execution_capability_grants=stage_plan.execution_capability_grants,
     )
+    request = attach_default_request_context(
+        workspace_root=engine.paths.root,
+        request=request,
+        compiled_plan=engine.compiled_plan,
+    )
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
     save_snapshot(engine.paths, engine.snapshot)
     return request
@@ -150,20 +150,24 @@ def validate_stage_work_item_ownership(
     stage_plan: MaterializedGraphNodePlan,
     *,
     request_kind: RequestKind,
-    active_work_item_kind: WorkItemKind | None,
+    active_work_item_family_id: str | None = None,
+    active_work_item_kind: WorkItemKind | None = None,
 ) -> None:
     """Fail before runner invocation if a stage would receive the wrong work item."""
 
     if request_kind != "active_work_item":
         return
-    allowed = _STAGE_WORK_ITEM_OWNERSHIP.get(stage_plan.stage_kind_id)
-    if allowed is None or active_work_item_kind in allowed:
+    allowed = set(stage_plan.allowed_work_item_families)
+    active_family = active_work_item_family_id or (
+        active_work_item_kind.value if active_work_item_kind is not None else None
+    )
+    if active_family in allowed:
         return
-    actual = active_work_item_kind.value if active_work_item_kind is not None else "none"
-    expected = ", ".join(sorted(kind.value for kind in allowed))
+    actual = active_family or "none"
+    expected = ", ".join(sorted(allowed)) if allowed else "none"
     raise StageWorkItemOwnershipError(
-        f"stage kind {stage_plan.stage_kind_id} requires work item kind "
-        f"{expected}; active work item kind is {actual}"
+        f"stage kind {stage_plan.stage_kind_id} requires work item family "
+        f"{expected}; active work item family is {actual}"
     )
 
 
@@ -190,6 +194,7 @@ def handle_stage_work_item_ownership_error(
             "active_work_item_kind": engine.snapshot.active_work_item_kind.value
             if engine.snapshot.active_work_item_kind is not None
             else None,
+            "active_work_item_family_id": engine.snapshot.active_work_item_family_id,
             "active_work_item_id": engine.snapshot.active_work_item_id,
             "error": str(error),
         },
@@ -236,7 +241,9 @@ def build_closure_target_stage_run_request(
         stage=stage_name,
         request_kind="closure_target",
         mode_id=engine.snapshot.active_mode_id,
-        compiled_plan_id=engine.snapshot.compiled_plan_id,
+        compiled_plan_id=(
+            active_run.compiled_plan_id if active_run is not None else engine.snapshot.compiled_plan_id
+        ),
         node_id=stage_plan.node_id,
         stage_kind_id=stage_plan.stage_kind_id,
         running_status_marker=stage_plan.running_status_marker,
@@ -269,6 +276,11 @@ def build_closure_target_stage_run_request(
         timeout_seconds=stage_plan.timeout_seconds,
         execution_capability_grants=stage_plan.execution_capability_grants,
     )
+    request = attach_default_request_context(
+        workspace_root=engine.paths.root,
+        request=request,
+        compiled_plan=engine.compiled_plan,
+    )
     engine.snapshot = engine.snapshot.model_copy(update={"active_run_id": request.run_id})
     save_snapshot(engine.paths, engine.snapshot)
     return request
@@ -297,6 +309,9 @@ def stage_plan_for(
                 return node
     for node in graph.nodes:
         if node.plane is plane and node.stage_kind_id == stage.value:
+            return node
+    for node in graph.nodes:
+        if node.plane is plane and stage_for_stage_kind(plane, node.stage_kind_id) == stage:
             return node
     raise KeyError(f"No compiled graph node plan for {plane.value}:{stage.value}")
 
@@ -342,8 +357,16 @@ def active_work_item_path(
     engine: RuntimeEngine,
     work_item_kind: WorkItemKind | None,
     work_item_id: str | None,
+    *,
+    work_item_family_id: str | None = None,
 ) -> Path | None:
-    if work_item_kind is None or work_item_id is None:
+    if work_item_id is None:
+        return None
+    if work_item_family_id is not None and engine.compiled_plan is not None:
+        family = engine.compiled_plan.work_item_families_by_id.get(work_item_family_id)
+        if family is not None:
+            return engine.paths.runtime_root / family.queue_dirs.active / f"{work_item_id}{family.file_extension}"
+    if work_item_kind is None:
         return None
     if work_item_kind is WorkItemKind.TASK:
         return engine.paths.tasks_active_dir / f"{work_item_id}.md"
@@ -353,22 +376,30 @@ def active_work_item_path(
         return engine.paths.specs_active_dir / f"{work_item_id}.md"
     if work_item_kind is WorkItemKind.LEARNING_REQUEST:
         return engine.paths.learning_requests_active_dir / f"{work_item_id}.md"
+    if work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
+        return engine.paths.runtime_root / "blueprints" / "drafts" / "active" / f"{work_item_id}.json"
     return engine.paths.incidents_active_dir / f"{work_item_id}.md"
 
 
 def execution_queue_depth(engine: RuntimeEngine) -> int:
-    return len(list(engine.paths.tasks_queue_dir.glob("*.md")))
+    return queue_depths_by_plane(
+        engine.paths,
+        compiled_plan=getattr(engine, "compiled_plan", None),
+    )[Plane.EXECUTION]
 
 
 def planning_queue_depth(engine: RuntimeEngine) -> int:
-    probe_depth = len(list(engine.paths.probes_queue_dir.glob("*.md")))
-    spec_depth = len(list(engine.paths.specs_queue_dir.glob("*.md")))
-    incident_depth = len(list(engine.paths.incidents_incoming_dir.glob("*.md")))
-    return probe_depth + spec_depth + incident_depth
+    return queue_depths_by_plane(
+        engine.paths,
+        compiled_plan=getattr(engine, "compiled_plan", None),
+    )[Plane.PLANNING]
 
 
 def learning_queue_depth(engine: RuntimeEngine) -> int:
-    return len(list(engine.paths.learning_requests_queue_dir.glob("*.md")))
+    return queue_depths_by_plane(
+        engine.paths,
+        compiled_plan=getattr(engine, "compiled_plan", None),
+    )[Plane.LEARNING]
 
 
 def runner_failure_result(
@@ -411,7 +442,7 @@ def now() -> datetime:
 
 
 def _stage_name_for_node_plan(stage_plan: MaterializedGraphNodePlan) -> StageName:
-    return stage_name_for_plane(stage_plan.plane, stage_plan.stage_kind_id)
+    return stage_for_stage_kind(stage_plan.plane, stage_plan.stage_kind_id)
 
 
 def _status_file_for_plane(engine: RuntimeEngine, plane: Plane) -> Path:
@@ -452,8 +483,8 @@ def _write_skill_revision_evidence_if_enabled(
     )
 
 
-def _request_kind_for_active_kind(work_item_kind: WorkItemKind | None) -> RequestKind:
-    if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+def _request_kind_for_active_family(work_item_family_id: str | None) -> RequestKind:
+    if work_item_family_id == WorkItemKind.LEARNING_REQUEST.value:
         return "learning_request"
     return "active_work_item"
 

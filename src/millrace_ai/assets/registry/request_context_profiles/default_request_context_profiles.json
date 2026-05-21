@@ -1,0 +1,135 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "builder.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item"],
+      "output_path_preferences": {"builder_summary": "builder_summary.md"},
+      "visibility_policy": "active_item_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "checker.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item"],
+      "output_path_preferences": {"report": "report.md"},
+      "visibility_policy": "active_item_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "integrator.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item"],
+      "output_path_preferences": {"integration_report": "integration_report.md"},
+      "visibility_policy": "active_item_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "recon.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item"],
+      "output_path_preferences": {
+        "recon_packet": "recon_packet.md",
+        "generated_task": "generated_task.json",
+        "generated_spec": "generated_spec.json"
+      },
+      "visibility_policy": "active_item_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "planner.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item"],
+      "output_path_preferences": {
+        "planner_disposition": "planner_disposition.json"
+      },
+      "visibility_policy": "active_item_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "arbiter.default",
+      "request_kind": "closure_target",
+      "required_providers": ["closure_target"],
+      "output_path_preferences": {
+        "rubric": "rubric.md",
+        "verdict": "verdict.json",
+        "report": "arbiter_report.md"
+      },
+      "visibility_policy": "closure_target"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "manager_blueprint.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_source_work_item", "root_lineage"],
+      "output_path_preferences": {
+        "blueprint_manifest": "blueprint_manifest.json",
+        "blueprint_drafts": "blueprint_drafts.json",
+        "manager_blueprint_report": "manager_blueprint_report.md"
+      },
+      "visibility_policy": "lineage_summary"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "contractor_blueprint.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_blueprint_draft"],
+      "output_path_preferences": {
+        "blueprint_packet": "blueprint_packet.json",
+        "blueprint_markdown": "blueprint.md",
+        "report": "contractor_blueprint_report.md"
+      },
+      "visibility_policy": "lineage_summary"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "evaluator_blueprint.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_blueprint_draft", "candidate_blueprint"],
+      "output_path_preferences": {
+        "blueprint_evaluation": "blueprint_evaluation.json",
+        "blueprint_critique": "blueprint_critique.json",
+        "generated_task": "generated_task.json",
+        "blueprint_evaluation_report": "evaluator_blueprint_report.md"
+      },
+      "visibility_policy": "lineage_full"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "mechanic_blueprint.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item", "runtime_failure_context"],
+      "output_path_preferences": {
+        "repaired_blueprint_artifact": "repaired_blueprint_artifact.md",
+        "mechanic_report": "mechanic_report.md"
+      },
+      "visibility_policy": "active_item_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_profile",
+      "profile_id": "learning.default",
+      "request_kind": "active_work_item",
+      "required_providers": ["active_work_item"],
+      "output_path_preferences": {
+        "research_packet": "analyst_research_packet.md",
+        "skill_candidate": "professor_skill_candidate",
+        "curator_decision": "curator_decision.md",
+        "skill_update": "curator_skill_update_summary.md",
+        "skill_install_report": "librarian_selection_report.md"
+      },
+      "visibility_policy": "active_item_only"
+    }
+  ]
+}

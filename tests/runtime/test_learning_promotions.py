@@ -64,10 +64,13 @@ def test_curator_promotion_defers_until_foreground_planes_drain(tmp_path) -> Non
             "active_runs_by_plane": {
                 Plane.EXECUTION: ActiveRunState(
                     plane=Plane.EXECUTION,
+                    lane_id="execution.main",
                     stage=ExecutionStageName.BUILDER,
                     node_id="builder",
                     stage_kind_id="builder",
                     run_id="run-execution",
+                    compiled_plan_id=engine.snapshot.compiled_plan_id,
+                    compiled_plan_fingerprint=engine.snapshot.compiled_plan_fingerprint,
                     request_kind="active_work_item",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-001",
@@ -75,10 +78,13 @@ def test_curator_promotion_defers_until_foreground_planes_drain(tmp_path) -> Non
                 ),
                 Plane.LEARNING: ActiveRunState(
                     plane=Plane.LEARNING,
+                    lane_id="learning.main",
                     stage=LearningStageName.CURATOR,
                     node_id="curator",
                     stage_kind_id="curator",
                     run_id="run-learning",
+                    compiled_plan_id=engine.snapshot.compiled_plan_id,
+                    compiled_plan_fingerprint=engine.snapshot.compiled_plan_fingerprint,
                     request_kind="learning_request",
                     work_item_kind=WorkItemKind.LEARNING_REQUEST,
                     work_item_id="learn-001",

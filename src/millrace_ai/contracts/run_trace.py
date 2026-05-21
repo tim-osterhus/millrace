@@ -10,8 +10,9 @@ from pydantic import model_validator
 from .base import ContractModel
 from .enums import Plane, ResultClass
 from .token_usage import TokenUsage
+from .work_refs import legacy_work_item_kind_for_family_id, normalize_work_item_family_id
 
-RunTraceSpawnedWorkKind = Literal["task", "spec", "incident", "learning_request"]
+RunTraceSpawnedWorkKind = str
 RunTraceStatus = Literal["active", "complete", "blocked", "handoff", "incomplete", "malformed"]
 
 
@@ -23,12 +24,27 @@ class RunTraceArtifactRef(ContractModel):
 
 
 class RunTraceSpawnedWorkRef(ContractModel):
-    kind: RunTraceSpawnedWorkKind
+    family_id: str | None = None
+    kind: RunTraceSpawnedWorkKind | None = None
     item_id: str
     path: str | None = None
     reason: str | None = None
     source_stage_node_id: str | None = None
     source_terminal_result: str | None = None
+
+    @model_validator(mode="after")
+    def validate_family_id(self) -> "RunTraceSpawnedWorkRef":
+        if self.family_id is None and self.kind is not None:
+            self.family_id = self.kind
+        if self.family_id is not None:
+            self.family_id = normalize_work_item_family_id(self.family_id, field_name="family_id")
+            if self.kind is None:
+                legacy_kind = legacy_work_item_kind_for_family_id(self.family_id)
+                if legacy_kind is not None:
+                    self.kind = legacy_kind.value
+        if self.family_id is None:
+            raise ValueError("spawned work ref requires family_id or kind")
+        return self
 
 
 class RunTraceNode(ContractModel):
@@ -42,6 +58,7 @@ class RunTraceNode(ContractModel):
     compiled_plan_id: str | None = None
     mode_id: str | None = None
     request_kind: str | None = None
+    work_item_family_id: str | None = None
     work_item_kind: str | None = None
     work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
@@ -57,6 +74,17 @@ class RunTraceNode(ContractModel):
     duration_seconds: float
     token_usage: TokenUsage | None = None
     artifacts: tuple[RunTraceArtifactRef, ...] = ()
+
+    @model_validator(mode="after")
+    def normalize_work_family(self) -> "RunTraceNode":
+        if self.work_item_family_id is None and self.work_item_kind is not None:
+            self.work_item_family_id = self.work_item_kind
+        if self.work_item_family_id is not None:
+            self.work_item_family_id = normalize_work_item_family_id(
+                self.work_item_family_id,
+                field_name="work_item_family_id",
+            )
+        return self
 
 
 class RunTraceEdge(ContractModel):
@@ -80,6 +108,7 @@ class RunTraceGraph(ContractModel):
     compiled_plan_id: str | None = None
     mode_id: str | None = None
     request_kind: str | None = None
+    work_item_family_id: str | None = None
     work_item_kind: str | None = None
     work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
@@ -94,6 +123,13 @@ class RunTraceGraph(ContractModel):
 
     @model_validator(mode="after")
     def validate_edge_refs(self) -> "RunTraceGraph":
+        if self.work_item_family_id is None and self.work_item_kind is not None:
+            self.work_item_family_id = self.work_item_kind
+        if self.work_item_family_id is not None:
+            self.work_item_family_id = normalize_work_item_family_id(
+                self.work_item_family_id,
+                field_name="work_item_family_id",
+            )
         node_ids = {node.trace_node_id for node in self.nodes}
         for edge in self.edges:
             if edge.source_trace_node_id not in node_ids:

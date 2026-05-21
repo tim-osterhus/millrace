@@ -34,6 +34,7 @@
     "stage_result",
     "task_cards"
   ],
+  "allowed_work_item_families": ["spec", "incident"],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

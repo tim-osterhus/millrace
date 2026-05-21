@@ -25,7 +25,7 @@ from millrace_ai.contracts import (
     Plane,
     ReloadOutcome,
 )
-from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError, WorkspaceStateError
+from millrace_ai.errors import ControlRoutingError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.mailbox import drain_incoming_mailbox_commands, write_mailbox_command
 from millrace_ai.queue_store import QueueStore
@@ -33,6 +33,8 @@ from millrace_ai.runtime.approvals import (
     approve_execution_capability_request,
     deny_execution_capability_request,
 )
+from millrace_ai.runtime.compiled_plans import archive_compiled_plan, relative_plan_path
+from millrace_ai.runtime.lanes import compiled_plan_fingerprint_for_runtime, ensure_snapshot_lanes
 from millrace_ai.runtime.pause_state import (
     OPERATOR_PAUSE_SOURCE,
     add_pause_source,
@@ -145,38 +147,37 @@ def reload_config_from_mailbox(
     envelope: MailboxCommandEnvelope | None = None,
 ) -> None:
     assert engine.snapshot is not None
-    if engine.snapshot.active_runs_by_plane:
-        if envelope is not None:
-            deferred = envelope.model_copy(
-                update={
-                    "command_id": f"{envelope.command.value}-deferred-{uuid4().hex[:8]}",
-                    "issued_at": engine._now(),
-                }
-            )
-            write_mailbox_command(engine.paths, deferred)
+    del envelope
+    if engine.compiled_plan is not None:
+        archive_compiled_plan(engine.paths, engine.compiled_plan)
+    try:
+        reloaded_config = load_runtime_config(engine.config_path)
+    except ValueError as exc:
+        errors = str(exc)
         engine.snapshot = engine.snapshot.model_copy(
             update={
-                "last_reload_error": "deferred until active planes drain",
+                "last_reload_outcome": ReloadOutcome.FAILED_RETAINED_PREVIOUS_PLAN,
+                "last_reload_error": errors,
                 "updated_at": engine._now(),
             }
         )
         save_snapshot(engine.paths, engine.snapshot)
-        active_planes: list[JsonValue] = [plane.value for plane in engine.snapshot.active_runs_by_plane]
         write_runtime_event(
             engine.paths,
-            event_type="runtime_config_reload_deferred",
+            event_type="runtime_config_reload_failed",
             data={
-                "reason": "active_planes",
-                "active_planes": active_planes,
+                "error": errors,
+                "retained_previous_plan": True,
+                "compiled_plan_id": engine.snapshot.compiled_plan_id,
             },
         )
         engine._emit_monitor_event(
-            "runtime_config_reload_deferred",
-            reason="active_planes",
-            active_planes=active_planes,
+            "runtime_config_reload_failed",
+            error=errors,
+            retained_previous_plan=True,
         )
         return
-    reloaded_config = load_runtime_config(engine.config_path)
+
     compile_outcome = compile_and_persist_workspace_plan(
         engine.paths,
         config=reloaded_config,
@@ -192,8 +193,6 @@ def reload_config_from_mailbox(
             update={
                 "last_reload_outcome": ReloadOutcome.FAILED_RETAINED_PREVIOUS_PLAN,
                 "last_reload_error": errors,
-                "process_running": False,
-                "stop_requested": True,
                 "updated_at": engine._now(),
             }
         )
@@ -203,10 +202,11 @@ def reload_config_from_mailbox(
             event_type="runtime_config_reload_failed",
             data={
                 "error": errors,
-                "retained_previous_plan": False,
+                "retained_previous_plan": True,
+                "compiled_plan_id": engine.snapshot.compiled_plan_id,
             },
         )
-        raise RuntimeLifecycleError(errors)
+        return
 
     if not compile_outcome.diagnostics.ok:
         errors = ", ".join(compile_outcome.diagnostics.errors) or "compile failed"
@@ -231,7 +231,45 @@ def reload_config_from_mailbox(
 
     engine.config = reloaded_config
     engine._rebuild_watcher_session()
+    archive_path = archive_compiled_plan(engine.paths, active_plan)
+    active_plan_fingerprint = compiled_plan_fingerprint_for_runtime(active_plan)
+    if engine.snapshot.active_runs_by_plane:
+        active_planes: list[JsonValue] = [plane.value for plane in engine.snapshot.active_runs_by_plane]
+        engine.snapshot = engine.snapshot.model_copy(
+            update={
+                "runtime_mode": reloaded_config.runtime.run_style,
+                "pending_compiled_plan_id": active_plan.compiled_plan_id,
+                "pending_compiled_plan_path": relative_plan_path(engine.paths, archive_path),
+                "pending_compiled_plan_fingerprint": active_plan_fingerprint,
+                "config_version": fingerprint_runtime_config(reloaded_config),
+                "watcher_mode": engine._watcher_mode_value(),
+                "last_reload_outcome": ReloadOutcome.APPLIED,
+                "last_reload_error": None,
+                "updated_at": engine._now(),
+            }
+        )
+        save_snapshot(engine.paths, engine.snapshot)
+        write_runtime_event(
+            engine.paths,
+            event_type="runtime_config_reload_pending",
+            data={
+                "mode_id": active_plan.mode_id,
+                "compiled_plan_id": engine.snapshot.compiled_plan_id,
+                "pending_compiled_plan_id": active_plan.compiled_plan_id,
+                "active_planes": active_planes,
+            },
+        )
+        engine._emit_monitor_event(
+            "runtime_config_reload_pending",
+            mode_id=active_plan.mode_id,
+            compiled_plan_id=engine.snapshot.compiled_plan_id,
+            pending_compiled_plan_id=active_plan.compiled_plan_id,
+            active_planes=active_planes,
+        )
+        return
+
     engine.compiled_plan = active_plan
+    engine.snapshot = ensure_snapshot_lanes(engine.snapshot, active_plan)
     engine.snapshot = engine.snapshot.model_copy(
         update={
             "runtime_mode": reloaded_config.runtime.run_style,
@@ -241,7 +279,11 @@ def reload_config_from_mailbox(
             "learning_loop_id": active_plan.learning_loop_id,
             "loop_ids_by_plane": active_plan.loop_ids_by_plane,
             "compiled_plan_id": active_plan.compiled_plan_id,
+            "compiled_plan_fingerprint": active_plan_fingerprint,
             "compiled_plan_path": str((engine.paths.state_dir / "compiled_plan.json").relative_to(engine.paths.root)),
+            "pending_compiled_plan_id": None,
+            "pending_compiled_plan_path": None,
+            "pending_compiled_plan_fingerprint": None,
             "queue_depth_learning": engine._learning_queue_depth(),
             "queue_depths_by_plane": {
                 Plane.EXECUTION: engine._execution_queue_depth(),
@@ -343,6 +385,7 @@ def cancel_work_item_from_mailbox(engine: RuntimeEngine, envelope: MailboxComman
     result = cancel_work_item(
         engine.paths,
         work_item_id=payload.work_item_id,
+        work_item_family_id=payload.work_item_family_id,
         work_item_kind=payload.work_item_kind,
         reason=payload.reason,
         actor=envelope.issuer,
@@ -545,7 +588,8 @@ def _complete_operator_intervention(
         event_type="mailbox_operator_intervention_applied",
         data={
             "command": envelope.command.value,
-            "work_item_kind": result.work_item_kind.value,
+            "work_item_family_id": result.work_item_family_id,
+            "work_item_kind": result.work_item_kind.value if result.work_item_kind is not None else None,
             "work_item_id": result.work_item_id,
             "destination_path": str(result.destination_path.relative_to(engine.paths.root)),
         },

@@ -9,6 +9,7 @@ from typing import Iterable
 
 from pydantic import ValidationError
 
+from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import StageResultEnvelope
 from millrace_ai.contracts.run_trace import (
     RunTraceArtifactRef,
@@ -101,6 +102,7 @@ def derive_run_trace_from_stage_results(
         compiled_plan_id=latest.compiled_plan_id if latest else None,
         mode_id=latest.mode_id if latest else None,
         request_kind=latest.request_kind if latest else None,
+        work_item_family_id=latest.work_item_family_id if latest else None,
         work_item_kind=latest.work_item_kind if latest else None,
         work_item_id=latest.work_item_id if latest else None,
         closure_target_root_spec_id=latest.closure_target_root_spec_id if latest else None,
@@ -199,10 +201,17 @@ def spawned_work_ref_from_path(
     *,
     source_stage_result: StageResultEnvelope,
     reason: str,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> RunTraceSpawnedWorkRef:
     item_id = path.stem
+    family_id = _spawned_kind_from_effect_rule(
+        path,
+        source_stage_result,
+        compiled_plan=compiled_plan,
+    ) or _spawned_kind_from_path(path, compiled_plan=compiled_plan)
     return RunTraceSpawnedWorkRef(
-        kind=_spawned_kind_from_path(path),
+        family_id=family_id,
+        kind=family_id,
         item_id=item_id,
         path=path.as_posix(),
         reason=reason,
@@ -248,7 +257,10 @@ def _node_from_stage_result(
         compiled_plan_id=_string_metadata(stage_result, "compiled_plan_id"),
         mode_id=_string_metadata(stage_result, "mode_id"),
         request_kind=_string_metadata(stage_result, "request_kind"),
-        work_item_kind=stage_result.work_item_kind.value,
+        work_item_family_id=stage_result.work_item_family_id,
+        work_item_kind=(
+            stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+        ),
         work_item_id=stage_result.work_item_id,
         closure_target_root_spec_id=_string_metadata(
             stage_result,
@@ -320,13 +332,28 @@ def _edge_from_decision(
         ),
         source_trace_node_id=source_trace_node_id,
         outcome=stage_result.terminal_result.value,
-        edge_kind=decision.action.value,
+        edge_kind=_edge_kind_from_decision(stage_result, decision),
         target_node_id=target_node_id,
         terminal_state_id=terminal_state_id,
         spawned_work=spawned_work,
         decision_reason=decision.reason,
         decided_at=stage_result.completed_at,
     )
+
+
+def _edge_kind_from_decision(
+    stage_result: StageResultEnvelope,
+    decision: RouterDecision,
+) -> str:
+    if (
+        decision.action is RouterAction.RUN_STAGE
+        and (
+            stage_result.metadata.get("runtime_effect_recovery_action") == "route_to_node"
+            or decision.reason.startswith("runtime_effect_failure:")
+        )
+    ):
+        return "runtime_effect_recovery"
+    return decision.action.value
 
 
 def _trace_with(
@@ -347,7 +374,10 @@ def _trace_with(
             or trace.compiled_plan_id,
             "mode_id": _string_metadata(stage_result, "mode_id") or trace.mode_id,
             "request_kind": _string_metadata(stage_result, "request_kind") or trace.request_kind,
-            "work_item_kind": stage_result.work_item_kind.value,
+            "work_item_family_id": stage_result.work_item_family_id,
+            "work_item_kind": (
+                stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+            ),
             "work_item_id": stage_result.work_item_id,
             "closure_target_root_spec_id": _string_metadata(
                 stage_result,
@@ -408,8 +438,33 @@ def _link_edge_target(edge: RunTraceEdge, node: RunTraceNode) -> RunTraceEdge:
     return edge
 
 
-def _spawned_kind_from_path(path: Path) -> RunTraceSpawnedWorkKind:
+def _spawned_kind_from_path(
+    path: Path,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RunTraceSpawnedWorkKind:
+    if compiled_plan is not None:
+        resolved_path = path.resolve()
+        matches: list[tuple[int, str]] = []
+        for family in compiled_plan.work_item_families_by_id.values():
+            for relative_dir in (
+                family.queue_dirs.queue,
+                family.queue_dirs.active,
+                family.queue_dirs.done,
+                family.queue_dirs.blocked,
+                family.queue_dirs.canceled,
+                family.queue_dirs.superseded,
+            ):
+                if relative_dir is None:
+                    continue
+                marker = Path(relative_dir)
+                if marker.parts and _path_has_relative_suffix(resolved_path, marker):
+                    matches.append((len(marker.parts), family.family_id))
+        if matches:
+            return sorted(matches, reverse=True)[0][1]
     parts = set(path.parts)
+    if "blueprints" in parts and "drafts" in parts:
+        return "blueprint_draft"
     if "learning" in parts:
         return "learning_request"
     if "incidents" in parts:
@@ -417,6 +472,55 @@ def _spawned_kind_from_path(path: Path) -> RunTraceSpawnedWorkKind:
     if "specs" in parts:
         return "spec"
     return "task"
+
+
+def _spawned_kind_from_effect_rule(
+    path: Path,
+    stage_result: StageResultEnvelope,
+    *,
+    compiled_plan: CompiledRunPlan | None,
+) -> RunTraceSpawnedWorkKind | None:
+    if compiled_plan is None:
+        return None
+    handler_id = stage_result.metadata.get("runtime_effect_handler_id")
+    if not isinstance(handler_id, str):
+        return None
+    terminal_result = stage_result.terminal_result.value
+    for rule in getattr(compiled_plan, "runtime_effect_rules", ()):
+        if getattr(rule, "handler_id", None) != handler_id:
+            continue
+        if terminal_result not in getattr(rule, "on_outcomes", ()):
+            continue
+        destination_family_id = getattr(rule, "destination_family_id", None)
+        if destination_family_id and _path_matches_family_queue(
+            path,
+            compiled_plan=compiled_plan,
+            family_id=str(destination_family_id),
+        ):
+            return str(destination_family_id)
+    return None
+
+
+def _path_matches_family_queue(
+    path: Path,
+    *,
+    compiled_plan: CompiledRunPlan,
+    family_id: str,
+) -> bool:
+    family = compiled_plan.work_item_families_by_id.get(family_id)
+    if family is None:
+        return False
+    return _path_has_relative_suffix(path.resolve(), Path(family.queue_dirs.queue))
+
+
+def _path_has_relative_suffix(path: Path, relative: Path) -> bool:
+    relative_parts = relative.parts
+    if not relative_parts or len(path.parts) < len(relative_parts):
+        return False
+    for index in range(0, len(path.parts) - len(relative_parts) + 1):
+        if path.parts[index : index + len(relative_parts)] == relative_parts:
+            return True
+    return False
 
 
 def _artifact_kind(path: str) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -105,6 +106,8 @@ def _runner_result(
     stdout_path = run_dir / "runner_stdout.txt"
     stdout_payload = "no terminal token\n" if terminal is None else f"### {terminal}\n"
     stdout_path.write_text(stdout_payload, encoding="utf-8")
+    if terminal is not None:
+        _write_default_planner_disposition(request, terminal=terminal, run_dir=run_dir, now=now)
 
     return RunnerRawResult(
         request_id=request.request_id,
@@ -119,6 +122,54 @@ def _runner_result(
         terminal_result_path=None,
         started_at=now,
         ended_at=now + timedelta(seconds=1),
+    )
+
+
+def _write_default_planner_disposition(
+    request: StageRunRequest,
+    *,
+    terminal: str,
+    run_dir: Path,
+    now: datetime,
+) -> None:
+    if request.stage is not PlanningStageName.PLANNER:
+        return
+    if terminal not in {
+        PlanningTerminalResult.PLANNER_COMPLETE.value,
+        PlanningTerminalResult.BLOCKED.value,
+    }:
+        return
+    if (run_dir / "planner_disposition.json").exists():
+        return
+    source_family_id = request.active_work_item_family_id
+    if source_family_id is None and request.active_work_item_kind is not None:
+        source_family_id = request.active_work_item_kind.value
+    if source_family_id is None or request.active_work_item_id is None:
+        return
+    disposition = (
+        "blocked"
+        if terminal == PlanningTerminalResult.BLOCKED.value
+        else "active_source_ready_for_manager"
+    )
+    (run_dir / "planner_disposition.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "planner_disposition",
+                "source_work_item_family_id": source_family_id,
+                "source_work_item_id": request.active_work_item_id,
+                "disposition": disposition,
+                "emitted_spec_ids": [],
+                "refined_active_source": False,
+                "recommended_next_action": disposition,
+                "created_at": now.isoformat().replace("+00:00", "Z"),
+                "created_by": "planner",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
 

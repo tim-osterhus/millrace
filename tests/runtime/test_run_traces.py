@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
+from millrace_ai.architecture import WorkItemFamilyDefinition
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
@@ -237,3 +239,181 @@ def test_record_router_decision_trace_includes_spawned_learning_request(
     assert trace.edges[0].spawned_work[0].kind == "learning_request"
     assert trace.edges[0].spawned_work[0].item_id == "learn-001"
     assert trace.edges[0].spawned_work[0].reason == "learning_trigger"
+
+
+def test_spawned_work_ref_from_path_preserves_blueprint_draft_family(tmp_path: Path) -> None:
+    stage_result = StageResultEnvelope(
+        run_id="run-blueprint",
+        plane="execution",
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    path = tmp_path / "millrace-agents" / "blueprints" / "drafts" / "queue" / "draft-001.json"
+
+    ref = spawned_work_ref_from_path(
+        path,
+        source_stage_result=stage_result,
+        reason="manager_blueprint",
+    )
+
+    assert ref.family_id == "blueprint_draft"
+    assert ref.kind == "blueprint_draft"
+
+
+def test_legacy_run_trace_spawned_work_kind_backfills_family_id(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-legacy-spawned-work"
+    payload = {
+        "schema_version": "1.0",
+        "kind": "run_trace_graph",
+        "run_id": "run-legacy-spawned-work",
+        "run_dir": str(run_dir),
+        "status": "complete",
+        "nodes": [
+            {
+                "trace_node_id": "request-001",
+                "run_id": "run-legacy-spawned-work",
+                "request_id": "request-001",
+                "plane": "planning",
+                "stage": "manager",
+                "node_id": "manager",
+                "stage_kind_id": "manager",
+                "terminal_result": "MANAGER_COMPLETE",
+                "result_class": "success",
+                "started_at": NOW.isoformat(),
+                "completed_at": NOW.isoformat(),
+                "duration_seconds": 0.0,
+            },
+        ],
+        "edges": [
+            {
+                "trace_edge_id": "request-001--MANAGER_COMPLETE--terminal:manager_complete",
+                "source_trace_node_id": "request-001",
+                "outcome": "MANAGER_COMPLETE",
+                "edge_kind": "complete",
+                "terminal_state_id": "manager_complete",
+                "spawned_work": [
+                    {
+                        "kind": "task",
+                        "item_id": "task-001",
+                        "path": "millrace-agents/tasks/queue/task-001.md",
+                        "reason": "legacy_path_inferred",
+                    }
+                ],
+                "decided_at": NOW.isoformat(),
+            }
+        ],
+        "generated_at": NOW.isoformat(),
+    }
+
+    trace = RunTraceGraph.model_validate(payload)
+
+    assert trace.edges[0].spawned_work[0].family_id == "task"
+    assert trace.edges[0].spawned_work[0].kind == "task"
+
+
+def test_spawned_work_ref_from_path_uses_compiled_custom_family_paths(tmp_path: Path) -> None:
+    stage_result = StageResultEnvelope(
+        run_id="run-custom",
+        plane="execution",
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    family = WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane="planning",
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        default_entry_key="custom_review",
+    )
+    compiled_plan = SimpleNamespace(work_item_families_by_id={"custom_review": family})
+    path = tmp_path / "millrace-agents" / "custom" / "reviews" / "queue" / "custom-001.json"
+
+    ref = spawned_work_ref_from_path(
+        path,
+        source_stage_result=stage_result,
+        reason="custom_effect",
+        compiled_plan=compiled_plan,
+    )
+
+    assert ref.family_id == "custom_review"
+    assert ref.kind == "custom_review"
+
+
+def test_spawned_work_ref_from_path_uses_runtime_effect_rule_destination_family(
+    tmp_path: Path,
+) -> None:
+    stage_result = StageResultEnvelope(
+        run_id="run-custom",
+        plane="execution",
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        metadata={"runtime_effect_handler_id": "custom_review_promotion"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_rules=(
+            SimpleNamespace(
+                handler_id="custom_review_promotion",
+                on_outcomes=("BUILDER_COMPLETE",),
+                destination_family_id="custom_review",
+            ),
+        ),
+        work_item_families_by_id={
+            "custom_review": SimpleNamespace(
+                queue_dirs=SimpleNamespace(queue="millrace-agents/reviews/queue")
+            )
+        },
+    )
+    path = tmp_path / "millrace-agents" / "reviews" / "queue" / "custom-001.json"
+
+    ref = spawned_work_ref_from_path(
+        path,
+        source_stage_result=stage_result,
+        reason="runtime_effect",
+        compiled_plan=compiled_plan,
+    )
+
+    assert ref.family_id == "custom_review"
+    assert ref.kind == "custom_review"

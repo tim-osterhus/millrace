@@ -55,6 +55,7 @@ def enqueue_handoff_incident(
         if is_closure_target and lineage.root_spec_id is not None
         else f"incident-{stage_result.work_item_id}-{uuid4().hex[:8]}"
     )
+    source_family_id = stage_result.work_item_family_id
     evidence_paths = list(stage_result.artifact_paths)
     for key in ("preferred_rubric_path", "preferred_verdict_path", "preferred_report_path"):
         value = _metadata_string(stage_result, key)
@@ -65,7 +66,7 @@ def enqueue_handoff_incident(
         title=(
             f"Arbiter remediation for {lineage.root_spec_id}"
             if is_closure_target and lineage.root_spec_id is not None
-            else f"Planning handoff for {stage_result.work_item_kind.value} {stage_result.work_item_id}"
+            else f"Planning handoff for {source_family_id} {stage_result.work_item_id}"
         ),
         summary=(
             (
@@ -109,7 +110,10 @@ def enqueue_handoff_incident(
         event_type="runtime_handoff_incident_enqueued",
         data={
             "incident_id": incident_id,
-            "source_work_item_kind": stage_result.work_item_kind.value,
+            "source_work_item_family_id": source_family_id,
+            "source_work_item_kind": (
+                stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None
+            ),
             "source_work_item_id": stage_result.work_item_id,
             "root_idea_id": lineage.root_idea_id,
             "root_spec_id": lineage.root_spec_id,

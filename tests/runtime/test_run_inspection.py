@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from millrace_ai.contracts import StageResultEnvelope, TokenUsage
+from millrace_ai.contracts import RunTraceGraph, RunTraceNode, StageResultEnvelope, TokenUsage
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.run_inspection import inspect_run, inspect_run_id, list_runs
 
@@ -273,3 +273,292 @@ def test_inspect_run_surfaces_closure_target_request_metadata(tmp_path: Path) ->
     assert summary.closure_target_root_spec_id == "spec-root-001"
     assert summary.stage_results[0].request_kind == "closure_target"
     assert summary.stage_results[0].closure_target_root_spec_id == "spec-root-001"
+
+
+def test_inspect_run_surfaces_context_and_failure_origin_metadata(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-context"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-context",
+        plane="execution",
+        stage="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BLOCKED",
+        result_class="recoverable_failure",
+        summary_status_marker="### BLOCKED",
+        success=False,
+        metadata={
+            "failure_class": "network_unavailable",
+            "failure_origin": "network_unavailable",
+            "request_context_profile_id": "builder.default",
+            "context_bundle_path": str(run_dir / "context" / "context.json"),
+            "context_render_plan_id": "stage_request.default.v1",
+            "rendered_prompt_context_path": str(run_dir / "context" / "prompt_context.md"),
+            "context_artifact_refs": ["task:task-001", "draft:blueprint-001"],
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.failure_class == "network_unavailable"
+    assert summary.failure_origin == "network_unavailable"
+    assert summary.stage_results[0].failure_origin == "network_unavailable"
+    assert summary.stage_results[0].request_context_profile_id == "builder.default"
+    assert summary.stage_results[0].context_bundle_path == "context/context.json"
+    assert summary.stage_results[0].context_render_plan_id == "stage_request.default.v1"
+    assert summary.stage_results[0].rendered_prompt_context_path == "context/prompt_context.md"
+    assert summary.stage_results[0].context_artifact_refs == (
+        "task:task-001",
+        "draft:blueprint-001",
+    )
+
+
+def test_inspect_run_surfaces_runtime_effect_metadata(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-blueprint"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-blueprint",
+        plane="planning",
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class="success",
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        artifact_paths=(
+            "millrace-agents/blueprints/evaluations/evaluation-blueprint-001.json",
+            "millrace-agents/tasks/queue/task-blueprint-001.md",
+        ),
+        metadata={
+            "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_decision": "request_complete_source",
+            "runtime_effect_failure_class": "generated_task_missing",
+            "runtime_effect_failure_message": "generated_task.json is missing",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_created_paths": [
+                "millrace-agents/blueprints/evaluations/evaluation-blueprint-001.json",
+                "millrace-agents/tasks/queue/task-blueprint-001.md",
+            ],
+            "runtime_effect_source_lifecycle_plan_id": "approve_blueprint_draft_after_effect",
+            "runtime_effect_source_lifecycle_action": "complete",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+    inspected = summary.stage_results[0]
+
+    assert summary.failure_class == "generated_task_missing"
+    assert inspected.runtime_effect_handler_id == "evaluator_blueprint_approved_to_task"
+    assert inspected.runtime_effect_decision == "request_complete_source"
+    assert inspected.runtime_effect_failure_class == "generated_task_missing"
+    assert inspected.runtime_effect_failure_message == "generated_task.json is missing"
+    assert inspected.runtime_effect_mutation_phase == "pre_mutation"
+    assert inspected.runtime_effect_created_paths == (
+        "millrace-agents/blueprints/evaluations/evaluation-blueprint-001.json",
+        "millrace-agents/tasks/queue/task-blueprint-001.md",
+    )
+    assert inspected.runtime_effect_source_lifecycle_plan_id == (
+        "approve_blueprint_draft_after_effect"
+    )
+    assert inspected.runtime_effect_source_lifecycle_action == "complete"
+
+
+def test_inspect_run_uses_blocked_run_trace_outcome_when_stage_result_is_schema_valid(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run-blueprint-blocked"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-blueprint-blocked",
+        plane="planning",
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class="success",
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        metadata={
+            "compiled_plan_id": "plan-blueprint",
+            "mode_id": "blueprint_codex",
+            "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_missing",
+            "runtime_effect_failure_message": "generated_task.json is missing",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    trace = RunTraceGraph(
+        run_id="run-blueprint-blocked",
+        run_dir=str(run_dir),
+        compiled_plan_id="plan-blueprint",
+        mode_id="blueprint_codex",
+        work_item_family_id="blueprint_draft",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        status="blocked",
+        started_at=NOW,
+        completed_at=NOW,
+        duration_seconds=0.0,
+        nodes=(
+            RunTraceNode(
+                trace_node_id="request-001",
+                run_id="run-blueprint-blocked",
+                request_id="request-001",
+                plane="planning",
+                stage="manager",
+                node_id="evaluator_blueprint",
+                stage_kind_id="evaluator_blueprint",
+                compiled_plan_id="plan-blueprint",
+                mode_id="blueprint_codex",
+                work_item_family_id="blueprint_draft",
+                work_item_kind="blueprint_draft",
+                work_item_id="draft-blueprint-001",
+                terminal_result="BLUEPRINT_APPROVED",
+                result_class="success",
+                started_at=NOW,
+                completed_at=NOW,
+                duration_seconds=0.0,
+            ),
+        ),
+        notes=("runtime effect blocked source work item",),
+        generated_at=NOW,
+    )
+    (run_dir / "run_trace.json").write_text(trace.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    summary = inspect_run(run_dir)
+
+    assert summary.artifact_status == "valid"
+    assert summary.runtime_outcome == "blocked"
+    assert summary.runtime_effect_decision == "request_block_source"
+    assert summary.runtime_effect_failure_class == "generated_task_missing"
+    assert summary.failure_class == "generated_task_missing"
+
+
+def test_inspect_run_degrades_runtime_outcome_when_legacy_run_has_no_trace(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run-legacy-no-trace"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    stage_result = StageResultEnvelope(
+        run_id="run-legacy-no-trace",
+        plane="planning",
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class="success",
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        metadata={"request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.artifact_status == "valid"
+    assert summary.runtime_outcome == "incomplete"
+
+
+def test_inspect_run_uses_blocked_trace_even_without_runtime_effect_metadata(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run-legacy-blocked-trace"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    stage_result = StageResultEnvelope(
+        run_id="run-legacy-blocked-trace",
+        plane="planning",
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class="success",
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        metadata={"request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    trace = RunTraceGraph(
+        run_id="run-legacy-blocked-trace",
+        run_dir=str(run_dir),
+        work_item_family_id="blueprint_draft",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        status="blocked",
+        started_at=NOW,
+        completed_at=NOW,
+        duration_seconds=0.0,
+        nodes=(
+            RunTraceNode(
+                trace_node_id="request-001",
+                run_id="run-legacy-blocked-trace",
+                request_id="request-001",
+                plane="planning",
+                stage="manager",
+                node_id="evaluator_blueprint",
+                stage_kind_id="evaluator_blueprint",
+                work_item_family_id="blueprint_draft",
+                work_item_kind="blueprint_draft",
+                work_item_id="draft-blueprint-001",
+                terminal_result="BLUEPRINT_APPROVED",
+                result_class="success",
+                started_at=NOW,
+                completed_at=NOW,
+                duration_seconds=0.0,
+            ),
+        ),
+        notes=("legacy trace blocked after runtime effect failure",),
+        generated_at=NOW,
+    )
+    (run_dir / "run_trace.json").write_text(trace.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    summary = inspect_run(run_dir)
+
+    assert summary.artifact_status == "valid"
+    assert summary.runtime_outcome == "blocked"
+    assert summary.runtime_effect_failure_class is None

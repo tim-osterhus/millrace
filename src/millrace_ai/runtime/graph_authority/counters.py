@@ -28,12 +28,12 @@ def matching_counter_entry(
     counters: RecoveryCounters,
     failure_class: str,
 ) -> RecoveryCounterEntry | None:
-    if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+    if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return None
 
     normalized_failure_class = normalize_failure_class(failure_class)
     for entry in counters.entries:
-        if entry.work_item_kind is not snapshot.active_work_item_kind:
+        if entry.work_item_family_id != snapshot.active_work_item_family_id:
             continue
         if entry.work_item_id != snapshot.active_work_item_id:
             continue
@@ -44,9 +44,10 @@ def matching_counter_entry(
 
 
 def counter_key_from_snapshot(snapshot: RuntimeSnapshot, failure_class: str) -> str | None:
-    if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+    if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return None
     return counter_key_for_failure_class(
+        work_item_family_id=snapshot.active_work_item_family_id,
         work_item_kind=snapshot.active_work_item_kind,
         work_item_id=snapshot.active_work_item_id,
         failure_class=failure_class,

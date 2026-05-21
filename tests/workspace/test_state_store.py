@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from millrace_ai.contracts import (
     ExecutionStageName,
-    ExecutionTerminalResult,
     Plane,
     PlanningStageName,
     RecoveryCounters,
@@ -218,7 +217,7 @@ def test_collect_reconciliation_signals_detects_stale_execution_ownership(
     signals = collect_reconciliation_signals(
         snapshot=snapshot,
         counters=RecoveryCounters(),
-        execution_status_marker=f"### {ExecutionTerminalResult.CHECKER_PASS.value}",
+        execution_status_marker="### CHECKER_RUNNING",
         planning_status_marker="### IDLE",
     )
 
@@ -261,7 +260,7 @@ def test_collect_reconciliation_signals_escalates_repeated_execution_stale_state
     signals = collect_reconciliation_signals(
         snapshot=snapshot,
         counters=counters,
-        execution_status_marker=f"### {ExecutionTerminalResult.CHECKER_PASS.value}",
+        execution_status_marker="### CHECKER_RUNNING",
         planning_status_marker="### IDLE",
     )
 
@@ -393,6 +392,35 @@ def test_collect_reconciliation_signals_allows_expected_execution_transition_mar
         planning_status_marker="### IDLE",
     )
 
+    assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
+
+
+def test_collect_reconciliation_signals_allows_ready_stage_after_bounded_shutdown(
+    tmp_path: Path,
+) -> None:
+    paths = _bootstrap(tmp_path)
+    snapshot = RuntimeSnapshot.model_validate(
+        {
+            **load_snapshot(paths).model_dump(mode="python"),
+            "process_running": False,
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.CHECKER,
+            "active_run_id": "run-001",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    signals = collect_reconciliation_signals(
+        snapshot=snapshot,
+        counters=RecoveryCounters(),
+        execution_status_marker="### BUILDER_COMPLETE",
+        planning_status_marker="### IDLE",
+    )
+
+    assert all(signal.code != "stale_active_ownership" for signal in signals)
     assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
 
 

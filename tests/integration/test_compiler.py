@@ -5,7 +5,11 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from millrace_ai.architecture import CompiledRunPlan
+from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import (
     CompilerValidationError,
     compile_and_persist_workspace_plan,
@@ -39,6 +43,72 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
     return copied_root
+
+
+def _write_custom_family_assets(assets_root: Path) -> None:
+    family_dir = assets_root / "registry" / "work_item_families"
+    adapter_dir = assets_root / "registry" / "document_adapters"
+    family_dir.mkdir(parents=True, exist_ok=True)
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    (family_dir / "custom_review.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "work_item_family",
+                "family_id": "custom_review",
+                "plane": "planning",
+                "entry_key": "custom_review",
+                "display_name": "Custom Review",
+                "document_kind": "custom_review",
+                "runtime_relative_dir": "custom/reviews",
+                "file_extension": ".json",
+                "schema_id": "custom_review_document_v1",
+                "document_adapter_id": "custom_review_json_v1",
+                "queue_dirs": {
+                    "queue": "custom/reviews/queue",
+                    "active": "custom/reviews/active",
+                    "done": "custom/reviews/done",
+                    "blocked": "custom/reviews/blocked",
+                    "canceled": "custom/reviews/canceled",
+                },
+                "lifecycle_states": ["queue", "active", "done", "blocked", "canceled"],
+                "claimable_state": "queue",
+                "active_state": "active",
+                "done_state": "done",
+                "blocked_state": "blocked",
+                "canceled_state": "canceled",
+                "closure_blocking_states": ["queue", "active", "blocked"],
+                "default_entry_key": "custom_review",
+                "id_field": "custom_id",
+                "created_at_field": "created_at",
+                "lineage_fields": ["root_spec_id"],
+                "operator_capabilities": ["cancel", "inspect"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (adapter_dir / "custom_review_json_v1.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "work_item_document_adapter",
+                "adapter_id": "custom_review_json_v1",
+                "schema_id": "custom_review_document_v1",
+                "supported_file_extensions": [".json"],
+                "family_ids": ["custom_review"],
+                "can_parse": True,
+                "can_render": True,
+                "can_summarize": True,
+                "supports_dependencies": False,
+                "supports_lineage": True,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_workspace_local_graph_mode_assets(assets_root: Path) -> None:
@@ -116,6 +186,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         },
         "allowed_input_artifacts": [],
         "declared_output_artifacts": ["stage_result", "report"],
+        "allowed_work_item_families": ["task"],
         "idempotence_policy": "retry_safe_with_key",
         "allowed_overrides": [
             "entrypoint_path",
@@ -222,6 +293,33 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     assert persisted_plan.learning_graph is None
     assert persisted_plan.learning_trigger_rules == ()
     assert persisted_plan.resolved_assets
+    assert set(persisted_plan.work_item_families_by_id) == {
+        "task",
+        "spec",
+        "probe",
+        "incident",
+        "learning_request",
+        "blueprint_draft",
+    }
+    assert persisted_plan.work_item_families_by_id["task"].default_entry_key == "task"
+    assert persisted_plan.document_adapters_by_id["builtin_markdown_v1"].supports_lineage is True
+    assert persisted_plan.document_adapters_by_id["blueprint_draft_markdown_v1"].supports_lineage is True
+    assert persisted_plan.queue_claim_policies_by_plane[Plane.EXECUTION].family_order == ("task",)
+    assert persisted_plan.queue_claim_policies_by_plane[Plane.PLANNING].family_order == (
+        "incident",
+        "blueprint_draft",
+        "probe",
+        "spec",
+    )
+    assert {"complete_work_item", "block_work_item"}.issubset(persisted_plan.terminal_actions_by_id)
+    assert "complete_work_item" in persisted_plan.lifecycle_mutation_plans_by_id
+    assert "evaluator_blueprint_approved_to_task" in persisted_plan.runtime_effect_handlers_by_id
+    assert "generated_task" in persisted_plan.artifact_contracts_by_id
+    assert persisted_plan.artifact_contracts_by_id["generated_task"].canonical_filename == "generated_task.json"
+    assert "generated_task.md" in persisted_plan.artifact_contracts_by_id["generated_task"].accepted_filenames
+    assert any(contract.artifact_id == "blueprint_critique" for contract in persisted_plan.artifact_contracts)
+    assert persisted_plan.workspace_schema_epoch is not None
+    assert persisted_plan.workspace_schema_epoch.epoch_id == "v0.20"
     assert {entry.entry_key.value: entry.node_id for entry in persisted_plan.execution_graph.compiled_entries} == {
         "task": "builder"
     }
@@ -233,8 +331,213 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     assert persisted_plan.planning_graph.compiled_completion_entry is not None
     assert persisted_plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
     assert any(ref.startswith("graph_completion_behavior:") for ref in persisted_plan.source_refs)
+    assert any(ref.logical_id == "work_item_family:task" for ref in persisted_plan.resolved_assets)
+    assert any(ref.logical_id == "terminal_action:complete_work_item" for ref in persisted_plan.resolved_assets)
+    assert any(ref.logical_id == "workspace_schema_epoch:v0.20" for ref in persisted_plan.resolved_assets)
     assert persisted_diagnostics.ok is True
     assert persisted_diagnostics.mode_id == "default_codex"
+
+
+def test_load_existing_plan_accepts_legacy_plan_without_artifact_contract_fields(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("artifact_contracts_by_id")
+    payload.pop("artifact_contracts")
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = load_existing_plan(compiled_plan_path)
+
+    assert loaded is not None
+    assert loaded.artifact_contracts_by_id == {}
+    assert loaded.artifact_contracts == ()
+
+
+def test_legacy_plan_without_artifact_authority_is_stale_and_recompiled(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+
+    initial = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=paths.runtime_root,
+    )
+    assert initial.diagnostics.ok is True
+    assert initial.active_plan is not None
+
+    compiled_plan_path = paths.state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("artifact_contracts_by_id")
+    payload.pop("artifact_contracts")
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=paths.runtime_root,
+    )
+    assert currentness.state == "stale"
+
+    recompiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=paths.runtime_root,
+        compile_if_needed=True,
+    )
+
+    assert recompiled.diagnostics.ok is True
+    assert recompiled.active_plan is not None
+    assert recompiled.active_plan.artifact_contracts_by_id
+    assert recompiled.active_plan.artifact_contracts
+    assert recompiled.active_plan.artifact_contracts_by_id["generated_task"].canonical_filename == (
+        "generated_task.json"
+    )
+
+
+def test_compiled_plan_rejects_mismatched_artifact_contract_surfaces(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    payload = outcome.active_plan.model_dump(mode="json")
+    payload["artifact_contracts_by_id"] = {}
+
+    with pytest.raises(ValidationError, match="artifact_contracts_by_id must match artifact_contracts"):
+        CompiledRunPlan.model_validate(payload)
+
+
+def test_compiled_plan_rejects_duplicate_artifact_contract_tuple_entries(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    payload = outcome.active_plan.model_dump(mode="json")
+    payload["artifact_contracts"].append(payload["artifact_contracts"][0])
+
+    with pytest.raises(ValidationError, match="artifact_contracts contains duplicate artifact id"):
+        CompiledRunPlan.model_validate(payload)
+
+
+def test_compile_includes_custom_work_item_family_assets(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    assets_root = _copy_builtin_assets(tmp_path)
+    _write_custom_family_assets(assets_root)
+    bootstrap_workspace(workspace_root, assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=workspace_root / "millrace-agents",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert "custom_review" in outcome.active_plan.work_item_families_by_id
+    assert "custom_review_json_v1" in outcome.active_plan.document_adapters_by_id
+
+
+def test_compile_blueprint_codex_mode_materializes_custom_planning_graph(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="blueprint_codex",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+    assert plan.mode_id == "blueprint_codex"
+    assert plan.planning_loop_id == "planning.blueprint"
+    assert {entry.entry_key.value: entry.node_id for entry in plan.planning_graph.compiled_entries} == {
+        "probe": "recon",
+        "spec": "planner",
+        "incident": "auditor",
+        "blueprint_draft": "contractor_blueprint",
+    }
+    stage_kind_ids = {node.stage_kind_id for node in plan.planning_graph.nodes}
+    assert {
+        "manager_blueprint",
+        "contractor_blueprint",
+        "evaluator_blueprint",
+        "mechanic_blueprint",
+    }.issubset(stage_kind_ids)
+    assert any(ref.logical_id == "mode:blueprint_codex" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "stage_kind:evaluator_blueprint" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "work_item_family:blueprint_draft" for ref in plan.resolved_assets)
+
+
+def test_compile_blueprint_learning_codex_materializes_blueprint_and_learning_graphs(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="blueprint_learning_codex",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+    assert plan.mode_id == "blueprint_learning_codex"
+    assert plan.loop_ids_by_plane == {
+        Plane.EXECUTION: "execution.standard",
+        Plane.PLANNING: "planning.blueprint",
+        Plane.LEARNING: "learning.standard",
+    }
+    assert plan.learning_graph is not None
+    assert {node.node_id for node in plan.learning_graph.nodes} == {
+        "analyst",
+        "professor",
+        "curator",
+        "librarian",
+    }
+    assert any(ref.logical_id == "mode:blueprint_learning_codex" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "graph_loop:learning.standard" for ref in plan.resolved_assets)
+    assert {
+        (rule.source_stage.value, rule.on_terminal_results, rule.target_stage.value)
+        for rule in plan.learning_trigger_rules
+    } >= {
+        ("planner", ("PLANNER_COMPLETE",), "librarian"),
+    }
 
 
 def test_compile_materializes_compiled_plan_graph_surface(tmp_path: Path) -> None:
@@ -693,6 +996,31 @@ def test_compile_rejects_stage_thinking_binding_outside_selected_loops(tmp_path:
     assert outcome.diagnostics.ok is False
     assert outcome.diagnostics.errors == (
         "Mode map `stage_thinking_bindings` references stage outside selected loops: professor",
+    )
+
+
+def test_compile_rejects_custom_stage_entrypoint_override_outside_selected_loops(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    mode_path = assets_root / "modes" / "default_codex.json"
+    mode = json.loads(mode_path.read_text(encoding="utf-8"))
+    mode["stage_entrypoint_overrides"] = {"not_a_stage": "entrypoints/planning/planner.md"}
+    mode_path.write_text(json.dumps(mode, indent=2) + "\n", encoding="utf-8")
+
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+        assets_root=assets_root,
+    )
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.diagnostics.errors == (
+        "Mode map `stage_entrypoint_overrides` references stage outside selected loops: not_a_stage",
     )
 
 

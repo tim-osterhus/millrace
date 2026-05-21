@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from millrace_ai.architecture.loop_graphs import graph_loop_entry_key_value
 from millrace_ai.compiler import CompiledPlanCurrentness, CompileOutcome
 from millrace_ai.contracts import CompileDiagnostics
 from millrace_ai.paths import WorkspacePaths
@@ -71,15 +72,17 @@ def _render_compile_show_lines(paths: WorkspacePaths, outcome: CompileOutcome) -
             )
         )
     for entry in plan.execution_graph.compiled_entries:
-        lines.append(f"entry: execution.{entry.entry_key.value} -> {entry.node_id}")
+        lines.append(f"entry: execution.{graph_loop_entry_key_value(entry.entry_key)} -> {entry.node_id}")
     for entry in plan.planning_graph.compiled_entries:
-        lines.append(f"entry: planning.{entry.entry_key.value} -> {entry.node_id}")
+        lines.append(f"entry: planning.{graph_loop_entry_key_value(entry.entry_key)} -> {entry.node_id}")
     if learning_graph is not None:
         for entry in learning_graph.compiled_entries:
-            lines.append(f"entry: learning.{entry.entry_key.value} -> {entry.node_id}")
+            lines.append(f"entry: learning.{graph_loop_entry_key_value(entry.entry_key)} -> {entry.node_id}")
     completion_entry = plan.planning_graph.compiled_completion_entry
     if completion_entry is not None:
-        lines.append(f"completion: {completion_entry.entry_key.value} -> {completion_entry.node_id}")
+        lines.append(
+            f"completion: {graph_loop_entry_key_value(completion_entry.entry_key)} -> {completion_entry.node_id}"
+        )
 
     completion_behavior = getattr(plan.planning_graph, "completion_behavior", None)
     if completion_behavior is not None:

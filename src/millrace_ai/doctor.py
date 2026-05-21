@@ -11,6 +11,11 @@ from typing import TypeAlias
 
 from pydantic import ValidationError
 
+from millrace_ai.architecture import (
+    CompiledRunPlan,
+    WorkItemDocumentAdapterDefinition,
+    WorkItemFamilyDefinition,
+)
 from millrace_ai.assets import (
     BUILTIN_LOOP_PATHS,
     BUILTIN_MODE_PATHS,
@@ -19,17 +24,23 @@ from millrace_ai.assets import (
     lint_asset_manifests,
     load_builtin_loop_definition,
     load_builtin_mode_definition,
+    load_builtin_workflow_primitives,
     validate_shipped_mode_same_graph,
 )
 from millrace_ai.compilation.mode_resolution import resolve_mode_id
 from millrace_ai.compilation.outcomes import CompilerValidationError
+from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compilation.workspace_plan import compile_compiled_run_plan
 from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.contracts import (
+    BlueprintDraftDocument,
     ExecutionStageName,
     IncidentDocument,
+    LearningRequestDocument,
     PlanningStageName,
+    ProbeDocument,
     RecoveryCounters,
+    RuntimeMode,
     RuntimeSnapshot,
     SpecDocument,
     TaskDocument,
@@ -48,10 +59,26 @@ from millrace_ai.work_documents import read_work_document_as
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
 from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
+from millrace_ai.workspace.state_reconciliation import collect_blueprint_manifest_diagnostics
 from millrace_ai.workspace.task_lifecycle_integrity import find_duplicate_task_lifecycle_ids
+from millrace_ai.workspace.work_inventory import build_work_inventory
 
-DoctorModel: TypeAlias = type[TaskDocument] | type[SpecDocument] | type[IncidentDocument]
-WorkDocument: TypeAlias = TaskDocument | SpecDocument | IncidentDocument
+DoctorModel: TypeAlias = (
+    type[TaskDocument]
+    | type[SpecDocument]
+    | type[ProbeDocument]
+    | type[IncidentDocument]
+    | type[LearningRequestDocument]
+    | type[BlueprintDraftDocument]
+)
+WorkDocument: TypeAlias = (
+    TaskDocument
+    | SpecDocument
+    | ProbeDocument
+    | IncidentDocument
+    | LearningRequestDocument
+    | BlueprintDraftDocument
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +118,7 @@ def run_workspace_doctor(
     planning_marker = _validate_planning_status(paths, errors)
     snapshot = _validate_snapshot(paths, errors)
     counters = _validate_recovery_counters(paths, errors)
+    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
 
     if (
         execution_marker is not None
@@ -103,13 +131,22 @@ def run_workspace_doctor(
             counters=counters,
             execution_marker=execution_marker,
             planning_marker=planning_marker,
+            compiled_plan=compiled_plan,
             errors=errors,
         )
 
     _validate_runtime_ownership_lock(paths, errors, warnings)
-    _validate_queue_parseability(paths, errors)
+    _validate_queue_parseability(paths, errors, compiled_plan=compiled_plan)
+    _validate_blueprint_manifest_diagnostics(paths, errors)
     _validate_task_lifecycle_uniqueness(paths, errors)
     _validate_closure_lineage_integrity(paths, errors)
+    if snapshot is not None:
+        _validate_stopped_daemon_with_open_graph_work(
+            paths,
+            snapshot=snapshot,
+            compiled_plan=compiled_plan,
+            warnings=warnings,
+        )
     if baseline_manifest is not None:
         _validate_manifest_tracked_managed_files(paths, baseline_manifest, errors)
 
@@ -323,6 +360,7 @@ def _validate_snapshot_reconciliation(
     counters: RecoveryCounters,
     execution_marker: str,
     planning_marker: str,
+    compiled_plan: CompiledRunPlan | None,
     errors: list[DoctorIssue],
 ) -> None:
     signals = collect_reconciliation_signals(
@@ -330,6 +368,7 @@ def _validate_snapshot_reconciliation(
         counters=counters,
         execution_status_marker=execution_marker,
         planning_status_marker=planning_marker,
+        compiled_plan=compiled_plan,
     )
     for signal in signals:
         errors.append(
@@ -378,35 +417,255 @@ def _validate_runtime_ownership_lock(
     )
 
 
-def _validate_queue_parseability(paths: WorkspacePaths, errors: list[DoctorIssue]) -> None:
-    targets: tuple[tuple[Path, DoctorModel], ...] = (
-        (paths.tasks_queue_dir, TaskDocument),
-        (paths.tasks_active_dir, TaskDocument),
-        (paths.specs_queue_dir, SpecDocument),
-        (paths.specs_active_dir, SpecDocument),
-        (paths.incidents_incoming_dir, IncidentDocument),
-        (paths.incidents_active_dir, IncidentDocument),
+def _validate_queue_parseability(
+    paths: WorkspacePaths,
+    errors: list[DoctorIssue],
+    *,
+    compiled_plan: CompiledRunPlan | None,
+) -> None:
+    adapters_by_id = _document_adapters_by_id(compiled_plan)
+    for family in _work_item_families(compiled_plan):
+        adapter = adapters_by_id.get(family.document_adapter_id)
+        for directory in _family_state_dirs(paths, family):
+            for path in sorted(
+                directory.glob(f"*{family.file_extension}"),
+                key=lambda item: item.name,
+            ):
+                if not path.is_file():
+                    continue
+                try:
+                    model = _known_document_model_for_family(family)
+                    document = _read_queue_document(
+                        path=path,
+                        model=model,
+                        family=family,
+                        adapter=adapter,
+                    )
+                    document_id = _work_document_id(document, family=family, path=path)
+                    if path.stem != document_id:
+                        id_field = family.id_field or f"{family.document_kind}_id"
+                        raise WorkspaceStateError(
+                            f"filename stem does not match {id_field}: expected {document_id}, found {path.stem}"
+                        )
+                except (OSError, WorkspaceStateError, ValidationError, ValueError) as exc:
+                    errors.append(
+                        DoctorIssue(
+                            code="queue_artifact_invalid",
+                            message=(
+                                f"{family.family_id} via {family.document_adapter_id}: {exc}"
+                            ),
+                            path=path,
+                        )
+                    )
+
+
+def _validate_blueprint_manifest_diagnostics(
+    paths: WorkspacePaths,
+    errors: list[DoctorIssue],
+) -> None:
+    for diagnostic in collect_blueprint_manifest_diagnostics(paths):
+        errors.append(
+            DoctorIssue(
+                code=diagnostic.code,
+                message=diagnostic.message,
+                path=diagnostic.path,
+            )
+        )
+
+
+def _work_item_families(
+    compiled_plan: CompiledRunPlan | None,
+) -> tuple[WorkItemFamilyDefinition, ...]:
+    if compiled_plan is not None and compiled_plan.work_item_families_by_id:
+        return tuple(compiled_plan.work_item_families_by_id.values())
+    return load_builtin_workflow_primitives().work_item_families
+
+
+def _document_adapters_by_id(
+    compiled_plan: CompiledRunPlan | None,
+) -> dict[str, WorkItemDocumentAdapterDefinition]:
+    if compiled_plan is not None and compiled_plan.document_adapters_by_id:
+        return dict(compiled_plan.document_adapters_by_id)
+    return {
+        adapter.adapter_id: adapter
+        for adapter in load_builtin_workflow_primitives().document_adapters
+    }
+
+
+def _family_state_dirs(
+    paths: WorkspacePaths,
+    family: WorkItemFamilyDefinition,
+) -> tuple[Path, ...]:
+    directories: list[Path] = []
+    for dir_key in ("queue", "active", "done", "blocked", "canceled", "superseded"):
+        relative = getattr(family.queue_dirs, dir_key)
+        if relative is None:
+            continue
+        directories.append(paths.runtime_root / relative)
+    return tuple(directories)
+
+
+def _known_document_model_for_family(family: WorkItemFamilyDefinition) -> DoctorModel | None:
+    models_by_schema_id: dict[str, DoctorModel] = {
+        "task_document_v1": TaskDocument,
+        "spec_document_v1": SpecDocument,
+        "probe_document_v1": ProbeDocument,
+        "incident_document_v1": IncidentDocument,
+        "learning_request_document_v1": LearningRequestDocument,
+        "blueprint_draft_document_v1": BlueprintDraftDocument,
+    }
+    return models_by_schema_id.get(family.schema_id)
+
+
+def _validate_stopped_daemon_with_open_graph_work(
+    paths: WorkspacePaths,
+    *,
+    snapshot: RuntimeSnapshot,
+    compiled_plan: CompiledRunPlan | None,
+    warnings: list[DoctorIssue],
+) -> None:
+    if snapshot.runtime_mode is not RuntimeMode.DAEMON:
+        return
+    if snapshot.process_running or snapshot.stop_requested:
+        return
+    try:
+        open_targets = list_open_closure_target_states(paths)
+    except (OSError, ValidationError, json.JSONDecodeError, WorkspaceStateError):
+        return
+    for target in open_targets:
+        inventory = build_work_inventory(
+            paths,
+            compiled_plan=compiled_plan,
+            root_spec_id=target.root_spec_id,
+        )
+        refs = inventory.closure_blocking_refs
+        if not refs:
+            continue
+        warnings.append(
+            DoctorIssue(
+                code="daemon_stopped_with_open_graph_work",
+                message=(
+                    "daemon is stopped with open closure work; restart can recover "
+                    f"root_spec_id={target.root_spec_id} "
+                    f"work={_format_inventory_refs(refs)}"
+                ),
+                path=paths.runtime_snapshot_file,
+            )
+        )
+
+
+def _format_inventory_refs(refs: tuple[object, ...]) -> str:
+    return ",".join(
+        f"{getattr(ref, 'family_id')}:{getattr(ref, 'work_item_id')}"
+        f"({getattr(ref, 'state')})"
+        for ref in refs
     )
 
-    for directory, model in targets:
-        for path in sorted(directory.glob("*.md"), key=lambda item: item.name):
-            if not path.is_file():
-                continue
-            try:
-                document = _read_queue_document(path=path, model=model)
-                document_id = _work_document_id(document)
-                if path.stem != document_id:
-                    raise WorkspaceStateError(
-                        f"filename stem does not match {document.kind}_id: expected {document_id}, found {path.stem}"
-                    )
-            except (OSError, WorkspaceStateError, ValidationError) as exc:
-                errors.append(
-                    DoctorIssue(
-                        code="queue_artifact_invalid",
-                        message=f"{model.__name__}: {exc}",
-                        path=path,
-                    )
-                )
+
+def _read_queue_document(
+    *,
+    path: Path,
+    model: DoctorModel | None,
+    family: WorkItemFamilyDefinition,
+    adapter: WorkItemDocumentAdapterDefinition | None,
+) -> WorkDocument | dict[str, object]:
+    _validate_declared_adapter_accepts_path(path=path, family=family, adapter=adapter)
+    if family.document_adapter_id == "builtin_markdown_v1":
+        if model is None:
+            return _read_generic_markdown_queue_document(path)
+        return read_work_document_as(path, model=model)
+    if family.document_adapter_id == "blueprint_draft_markdown_v1":
+        if model is not BlueprintDraftDocument:
+            raise WorkspaceStateError("blueprint_draft adapter requires BlueprintDraftDocument")
+        return BlueprintDraftDocument.model_validate_json(path.read_text(encoding="utf-8"))
+    if path.suffix == ".json":
+        if model is not None:
+            return model.model_validate_json(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise WorkspaceStateError("generic JSON queue artifact must be an object")
+        return payload
+    if model is None:
+        return _read_generic_markdown_queue_document(path)
+    return read_work_document_as(path, model=model)
+
+
+def _validate_declared_adapter_accepts_path(
+    *,
+    path: Path,
+    family: WorkItemFamilyDefinition,
+    adapter: WorkItemDocumentAdapterDefinition | None,
+) -> None:
+    if adapter is None:
+        raise WorkspaceStateError(
+            f"family {family.family_id!r} references unknown document adapter "
+            f"{family.document_adapter_id!r}"
+        )
+    if not adapter.can_parse:
+        raise WorkspaceStateError(
+            f"document adapter {adapter.adapter_id!r} for family {family.family_id!r} "
+            "does not declare parse support"
+        )
+    if path.suffix not in adapter.supported_file_extensions:
+        supported = ",".join(adapter.supported_file_extensions)
+        raise WorkspaceStateError(
+            f"document adapter {adapter.adapter_id!r} does not support extension "
+            f"{path.suffix!r}; supported={supported}"
+        )
+
+
+def _read_generic_markdown_queue_document(path: Path) -> dict[str, object]:
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        raise WorkspaceStateError("generic markdown queue artifact is empty")
+    fields: dict[str, object] = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        label, raw_value = stripped.split(":", 1)
+        field_name = _generic_markdown_field_name(label)
+        value = raw_value.strip()
+        if field_name and value:
+            fields[field_name] = value
+    return fields
+
+
+def _generic_markdown_field_name(label: str) -> str:
+    normalized = label.strip().lower().replace("-", "_").replace(" ", "_")
+    return "".join(char for char in normalized if char.isalnum() or char == "_")
+
+
+def _work_document_id(
+    document: WorkDocument | dict[str, object],
+    *,
+    family: WorkItemFamilyDefinition,
+    path: Path,
+) -> str:
+    if family.id_field is not None:
+        value = (
+            document.get(family.id_field)
+            if isinstance(document, dict)
+            else getattr(document, family.id_field, None)
+        )
+        if isinstance(value, str):
+            return value
+        raise WorkspaceStateError(
+            f"queue artifact is missing string id field {family.id_field!r}"
+        )
+    if isinstance(document, dict):
+        return path.stem
+    if isinstance(document, TaskDocument):
+        return document.task_id
+    if isinstance(document, SpecDocument):
+        return document.spec_id
+    if isinstance(document, ProbeDocument):
+        return document.probe_id
+    if isinstance(document, IncidentDocument):
+        return document.incident_id
+    if isinstance(document, LearningRequestDocument):
+        return document.learning_request_id
+    return document.draft_id
 
 
 def _validate_task_lifecycle_uniqueness(paths: WorkspacePaths, errors: list[DoctorIssue]) -> None:
@@ -422,22 +681,6 @@ def _validate_task_lifecycle_uniqueness(paths: WorkspacePaths, errors: list[Doct
                 path=primary_path,
             )
         )
-
-
-def _read_queue_document(*, path: Path, model: DoctorModel) -> WorkDocument:
-    if model is TaskDocument:
-        return read_work_document_as(path, model=TaskDocument)
-    if model is SpecDocument:
-        return read_work_document_as(path, model=SpecDocument)
-    return read_work_document_as(path, model=IncidentDocument)
-
-
-def _work_document_id(document: WorkDocument) -> str:
-    if isinstance(document, TaskDocument):
-        return document.task_id
-    if isinstance(document, SpecDocument):
-        return document.spec_id
-    return document.incident_id
 
 
 def _workspace_relative_path(paths: WorkspacePaths, path: Path) -> str:

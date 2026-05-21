@@ -35,6 +35,7 @@ Today the shipped loop ids are:
 - `execution.standard`
 - `execution.with_integrator`
 - `planning.standard`
+- `planning.blueprint`
 - `learning.standard`
 
 The shipped canonical mode ids are:
@@ -45,6 +46,8 @@ The shipped canonical mode ids are:
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`
+- `blueprint_codex`
+- `blueprint_learning_codex`
 
 Compatibility alias:
 
@@ -230,6 +233,63 @@ The phase-1 graph-loop asset makes the planning intake split explicit through
 That means the graph surface models the shipped incident intake behavior more
 directly than the legacy single-`entry_stage` loop schema.
 
+## Blueprint Planning Loop
+
+`planning.blueprint` is an opt-in Planning graph selected by `blueprint_codex`
+and `blueprint_learning_codex`. It keeps `execution.standard` unchanged, but
+replaces the standard Planner-to-Manager handoff with a Blueprint preparation
+loop:
+
+```text
+planner -> manager_blueprint -> contractor_blueprint -> evaluator_blueprint
+```
+
+Use `docs/runtime/millrace-blueprint-planning.md` for the dedicated runtime
+reference covering Blueprint artifacts, runtime effects, closure suppression,
+and operator inspection.
+
+The runtime maps the custom Blueprint stage kinds onto concrete Planning stage
+identities for runner compatibility, while preserving the compiled node id and
+stage kind id for routing and inspection. The role boundaries are:
+
+- `manager_blueprint` turns a Planner-completed spec or Auditor-completed
+  incident into a manifest plus strict-sequence draft records. It does not
+  create execution tasks directly.
+- `contractor_blueprint` proposes one Blueprint packet for one active draft.
+  It can revise a packet after an Evaluator critique, but it does not edit the
+  source repo.
+- `evaluator_blueprint` either approves the packet and emits one generated
+  task, or rejects it with a critique packet that routes the same draft back to
+  Contractor.
+- `mechanic_blueprint` is the Planning recovery role for blocked Blueprint
+  stages.
+
+Runtime effects own all durable mutation after those stages finish:
+
+- `MANAGER_BLUEPRINT_COMPLETE` persists the manifest and queues draft records,
+  then completes the source spec or incident.
+- `BLUEPRINT_CANDIDATE_READY` persists the candidate packet and routes to
+  Evaluator.
+- `BLUEPRINT_REJECTED` persists the evaluation and critique, marks the draft
+  revision state, and routes back to Contractor.
+- `BLUEPRINT_APPROVED` moves the packet to approved, persists the evaluation
+  and promotion record, enqueues the generated execution task, and approves the
+  source draft.
+
+Those effects consume graph-owned artifact contracts. Canonical JSON artifacts
+such as `generated_task.json` and `blueprint_critique.json` win over accepted
+legacy fallback filenames; malformed canonical files fail the effect instead of
+silently falling back. When a recoverable runtime-effect failure occurs before
+mutation, the compiled effect-failure policy can route the source family to a
+recovery node such as `mechanic_blueprint`. Partial-mutation failures remain
+blocked for operator inspection.
+
+Blueprint drafts are same-lineage Planning work. While a closure target is
+open, the runtime may execute an approved generated task before claiming the
+next eligible Blueprint draft, and Arbiter remains suppressed until queued,
+active, blocked, candidate, approved-unpromoted, and generated-task Blueprint
+lineage work has drained.
+
 ## Shipped Learning Loop
 
 `learning.standard` currently declares these stages:
@@ -307,7 +367,12 @@ Integrated Codex modes point execution at:
 
 - `loop_ids_by_plane.execution = execution.with_integrator`
 
-The learning-enabled modes also point at:
+Blueprint Codex modes point Planning at:
+
+- `loop_ids_by_plane.planning = planning.blueprint`
+
+The learning-enabled modes, including `blueprint_learning_codex`, also point
+at:
 
 - `loop_ids_by_plane.learning = learning.standard`
 
@@ -322,6 +387,10 @@ The mode families differ primarily in `stage_runner_bindings`:
   `codex_cli`
 - `learning_codex_integrated` binds execution with Integrator, planning, and
   learning to `codex_cli`
+- `blueprint_codex` binds execution and Blueprint Planning stages to
+  `codex_cli`
+- `blueprint_learning_codex` binds execution, Blueprint Planning, and learning
+  stages to `codex_cli`
 
 Entrypoint, skill-addition, and model maps otherwise remain empty in the
 baseline. Harness-only presets keep topology identical; integrated presets
@@ -429,7 +498,7 @@ handoff.
 intake entries, normalized closure-target activation entry when completion
 behavior is present, normalized compiled transition indexes, compiled resume and
 threshold recovery policies, terminal states, loop ids by plane, optional
-learning trigger rules, and optional plane concurrency policy.
+learning trigger rules, and optional scheduler lane/concurrency policy.
 
 For operator inspection, `millrace compile graph --workspace <workspace>` exports
 the selected compiled topology as stable graph contracts. That output describes
@@ -459,10 +528,10 @@ Those are the fields that change the compiled runtime plan.
 Fields such as `usage_governance.*` are next-tick runtime settings and do not
 change selected modes, loops, or compiled node bindings.
 
-Use `learning_codex`, `learning_pi`, or `learning_codex_integrated` only when
-the workspace should opt into runtime learning requests, the
-Analyst/Professor/Curator flow, and Planner-triggered Librarian optional-skill
-preparation.
+Use `learning_codex`, `learning_pi`, `learning_codex_integrated`, or
+`blueprint_learning_codex` only when the workspace should opt into runtime
+learning requests, the Analyst/Professor/Curator flow, and Planner-triggered
+Librarian optional-skill preparation.
 
 ## Operator View
 

@@ -66,6 +66,7 @@ runtime events.
 - `millrace-agents/state/compiled_plan.json`
 - `millrace-agents/state/compile_diagnostics.json`
 - `millrace-agents/state/baseline_manifest.json`
+- `millrace-agents/state/workspace_schema_epoch.json`
 - `millrace-agents/state/execution_status.md`
 - `millrace-agents/state/planning_status.md`
 - `millrace-agents/state/learning_status.md`
@@ -76,6 +77,19 @@ runtime events.
 - `millrace-agents/approvals/pending/*.json`
 - `millrace-agents/approvals/resolved/*.json`
 - mailbox envelopes/archives and run-scoped runner artifacts
+- `millrace-agents/blueprints/manifests/*.json`, keyed by manifest id for new
+  writes while still accepting legacy root-keyed filenames by embedded
+  `manifest_id`
+- `millrace-agents/blueprints/drafts/{queue,active,approved,blocked,canceled,superseded}/*.json`
+- `millrace-agents/blueprints/packets/{candidates,approved,rejected,superseded}/*.json`
+- `millrace-agents/blueprints/{critiques,evaluations,promotions}/**/*.json`
+
+Storage identity belongs to the artifact or work-item id, not to lineage.
+`root_spec_id` and `root_idea_id` are closure and inventory metadata. Multiple
+Blueprint manifests may share the same root lineage during Arbiter remediation
+as long as their `manifest_id` values differ. A same-root manifest is valid
+lineage; a duplicate manifest is the same `manifest_id` with divergent
+normalized content.
 
 ### Arbiter-owned completion artifacts
 
@@ -95,12 +109,22 @@ runtime events.
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
 - `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/probe/spec/incident/learning-request documents.
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
+- `src/millrace_ai/workspace/work_item_adapters.py`: family-aware document
+  adapters for built-in queue work documents.
+- `src/millrace_ai/workspace/queue_lifecycle.py`: interpreter that applies
+  compiled source lifecycle intents to active queue documents.
+- `src/millrace_ai/workspace/blueprint_state.py`: durable Blueprint manifest,
+  draft, packet, critique, evaluation, and promotion state helpers. Manifest
+  reads resolve both new manifest-id-keyed paths and legacy root-keyed paths by
+  embedded `manifest_id`; root lineage listing can return multiple manifests.
 - `src/millrace_ai/workspace/operator_interventions.py`: audited queue and
   incident cancellation, supersession, dependency retargeting, operator
   resolution, and invalid-incident archive helpers.
 - `src/millrace_ai/workspace/task_lifecycle_integrity.py`: duplicate task lifecycle detection and safe stale-blocked predecessor retirement when a same-root continuation reaches `done`.
 - `src/millrace_ai/workspace/state_store.py`: snapshot/status/counter persistence facade.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
+- `src/millrace_ai/workspace/schema_epoch.py`: workspace schema epoch marker,
+  daemon-owned reset refusal, archive manifest, and clean-state reset helpers.
 - `src/millrace_ai/contracts/`: public typed contract facade plus owned contract families for enums, stage metadata, work documents, stage results, loop/mode definitions, compiler diagnostics, runtime snapshots, runtime error contexts, mailbox payloads, and recovery counters. `contracts/stage_metadata.py` is the single registry for stage plane membership, legal terminal results, running markers, prompt markers, and result-class policy.
 - `src/millrace_ai/compiler.py`: stable public facade for mode+graph-loop compile, graph preview, currentness inspection, and diagnostics.
 - `src/millrace_ai/compilation/`: compiler internals for workspace compile orchestration, mode/path resolution, graph and node materialization, transition/completion/policy compilation, learning-trigger validation, entrypoint override validation, asset resolution, fingerprints, persistence, and currentness inspection.
@@ -110,12 +134,34 @@ runtime events.
 - `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
 - `src/millrace_ai/runtime/outcomes.py`: runtime tick outcome contract shared by the engine and tick/request helpers without creating an engine import cycle.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
+- `src/millrace_ai/runtime/effects.py`: runtime effect result contracts,
+  source lifecycle intent creation, destination-existence checks, and
+  effect-result application.
+- `src/millrace_ai/runtime/effect_execution.py`: compiled runtime-effect
+  dispatch, failure-policy interpretation, matched-policy metadata, and
+  source-lifecycle application after runtime-owned mutation.
+- `src/millrace_ai/runtime/failure_policy.py`: runtime failure-origin
+  classification plus runtime-effect failure policy matching, including
+  Manager Blueprint route, block, and require-operator outcomes.
+- `src/millrace_ai/runtime/blueprint_effects.py`: Blueprint-specific runtime
+  effects for manifest/draft promotion, packet persistence, evaluator
+  approval/rejection, idempotent Manager replay, and precise Blueprint failure
+  classes.
+- `src/millrace_ai/runtime/planner_effects.py`: Planner disposition handling
+  for active-source continuation, emitted-child-spec completion/resolution, and
+  blocked Planner outcomes.
+- `src/millrace_ai/runtime/request_context.py`: deterministic context bundles,
+  including Blueprint manifest resolution by `draft.manifest_id` and Mechanic
+  Blueprint context for Manager runtime-effect failures.
+- `src/millrace_ai/runtime/lifecycle_interpreter.py`: runtime-facing bridge from
+  source lifecycle intent to the workspace queue lifecycle interpreter.
 - `src/millrace_ai/runtime/monitoring.py`: runtime monitor event protocol and null monitor sink.
 - `src/millrace_ai/cli/monitoring.py`: basic terminal monitor renderer for the
   concise human-facing daemon stream; full ids and details stay in persisted
   runtime events and run artifacts.
-- `src/millrace_ai/runtime/tick_cycle.py`: serial one-tick orchestration used by `millrace run once` and compatibility tests.
-- `src/millrace_ai/runtime/supervisor.py`: daemon-mode plane scheduler, worker registry, and serialized completion-application owner.
+- `src/millrace_ai/runtime/tick_cycle.py`: serial one-tick orchestration used by
+  bounded daemon execution and compatibility tests.
+- `src/millrace_ai/runtime/supervisor.py`: daemon-mode lane scheduler, lane-keyed worker registry, and serialized completion-application owner.
 - `src/millrace_ai/runtime/blocked_recovery.py`: blocked-work metadata,
   blocked dependency retryability decisions, manual blocked-task requeue
   validation, and daemon idle-cycle transient dependency auto-recovery.
@@ -175,8 +221,10 @@ Startup:
 
 1. Require an initialized workspace baseline under `millrace-agents/`; use `millrace init` to create it.
 2. Load config and compile or reuse the current active mode plan.
-3. Acquire daemon ownership lock (daemon mode).
-4. Reconcile stale/impossible runtime state.
+3. Check the workspace schema epoch marker against the compiled plan's schema
+   epoch before loading mutable runtime state.
+4. Acquire daemon ownership lock.
+5. Reconcile stale/impossible runtime state.
 
 Per daemon scheduler cycle:
 
@@ -198,11 +246,11 @@ Per daemon scheduler cycle:
 11. Re-evaluate usage governance before dispatching active stages.
 12. Evaluate execution capability grants and pending approvals before runner
     invocation.
-13. Dispatch eligible lanes according to the compiled plane concurrency policy.
-    Default modes remain serial. Learning-enabled modes may run one Learning
-    stage concurrently with one permitted foreground Planning or Execution
-    stage. Execution and Planning remain mutually exclusive in shipped
-    learning modes.
+13. Dispatch eligible lanes according to the compiled scheduler policy.
+    Default modes remain one active lane per plane and shipped modes keep
+    Planning and Execution mutually exclusive. Experimental multi-lane policy
+    requires compiler-validated lane conflict coverage before the daemon can
+    dispatch more than one lane in the same plane.
 14. Worker tasks execute blocking runner adapters from immutable
     `StageRunRequest` inputs and return typed outcomes only.
 15. Before reporting plain no-work idle, inspect stranded queued execution
@@ -210,17 +258,22 @@ Per daemon scheduler cycle:
     is classified as a transient environment/provider failure and cooldown plus
     retry-budget gates pass, requeue it through the audited blocked-task retry
     transition.
-15. The supervisor applies completed outcomes serially: normalize, persist,
+16. The supervisor applies completed outcomes serially: normalize, persist,
     update `run_trace.json`, route, update queue/snapshot/status/counters, emit
     monitor/runtime events, and evaluate post-stage usage governance.
 
 The implementation mirrors that ordering directly:
 
 - `RuntimeEngine` holds state and exposes the stable methods
-- `runtime/tick_cycle.py` owns the serial `run once` orchestration block
-- `runtime/supervisor.py` owns daemon dispatch, concurrent worker tracking, and
-  serialized result application
+- `runtime/tick_cycle.py` owns the serial one-tick orchestration block used by
+  bounded daemon operation
+- `runtime/supervisor.py` owns daemon dispatch, lane-keyed worker tracking,
+  compiled lane conflict checks, and serialized result application
+- `runtime/lanes.py` owns durable lane projection and launch-plan fingerprints
+  on active runs
 - `runtime/result_application.py` delegates routed mutation into owned collaborators for counters, work-item movement, incident creation, persistence, and closure-target handling
+- `runtime/effects.py` and `workspace/queue_lifecycle.py` keep terminal
+  lifecycle effects behind runtime-owned intent objects and queue interpreters
 
 Idle:
 
@@ -279,7 +332,10 @@ Compile notes:
   `src/millrace_ai/compilation/`
 - that compiled plan carries materialized node plans plus compiled entry,
   transition, recovery, learning-trigger, execution-capability,
-  concurrency-policy, and closure-activation surfaces
+  concurrency-policy, workflow-primitive, and closure-activation surfaces
+- built-in stage work-item ownership, queue claim order, terminal lifecycle
+  intent, and runtime effect handler lookup are read from compiled workflow
+  authority rather than prompt prose or loose runtime tables
 - usage-governance config is next-tick runtime config, not a compile-input
   boundary
 - execution-capability config is a compile-input boundary because it changes
@@ -298,6 +354,9 @@ Run directories hold:
 
 - `stage_results/*.json`
 - `runner_prompt.<request_id>.md`
+- `context/context.json`
+- `context/prompt_context.md`
+- `context/render_manifest.json`
 - `runner_invocation.<request_id>.json`
 - `runner_completion.<request_id>.json`
 - `capability_gate.<request_id>.json` when runtime grant evaluation runs
@@ -306,7 +365,13 @@ Run directories hold:
 - stage-authored reports such as `integration_report.md`,
   `troubleshoot_report.md`, or `arbiter_report.md` when emitted
 
-The operator-facing `millrace runs ls/show/tail` commands inspect these persisted artifacts without taking runtime ownership.
+The request-context artifacts are deterministic runtime-owned inputs. The
+prompt adapter reads `context/prompt_context.md`, while `context/context.json`
+and `context/render_manifest.json` preserve visible refs, omitted providers,
+operator-only redactions, and content hashes for later inspection.
+
+The operator-facing `millrace runs ls/show/tail` commands inspect these
+persisted artifacts without taking runtime ownership.
 
 ## Entrypoint + Skills Contract
 

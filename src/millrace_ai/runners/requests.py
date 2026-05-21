@@ -23,6 +23,7 @@ from millrace_ai.contracts.stage_metadata import (
     running_status_marker,
     stage_plane,
 )
+from millrace_ai.contracts.work_refs import coerce_family_and_kind
 
 RunnerExitKind = Literal[
     "completed",
@@ -57,6 +58,7 @@ class StageRunRequest(BaseModel):
     required_skill_paths: tuple[str, ...] = ()
     attached_skill_paths: tuple[str, ...] = ()
 
+    active_work_item_family_id: str | None = None
     active_work_item_kind: WorkItemKind | None = None
     active_work_item_id: str | None = None
     active_work_item_path: str | None = None
@@ -78,6 +80,11 @@ class StageRunRequest(BaseModel):
     runtime_error_report_path: str | None = None
     runtime_error_catalog_path: str | None = None
     skill_revision_evidence_path: str | None = None
+    request_context_profile_id: str | None = None
+    context_bundle_path: str | None = None
+    context_artifact_refs: tuple[str, ...] = ()
+    context_render_plan_id: str | None = None
+    rendered_prompt_context_path: str | None = None
 
     runner_name: str | None = None
     model_name: str | None = None
@@ -115,11 +122,18 @@ class StageRunRequest(BaseModel):
         if not self.running_status_marker.strip():
             raise ValueError("running_status_marker is required")
 
-        has_kind = self.active_work_item_kind is not None
+        family_id, work_item_kind = coerce_family_and_kind(
+            family_id=self.active_work_item_family_id,
+            work_item_kind=self.active_work_item_kind,
+        )
+        self.active_work_item_family_id = family_id
+        self.active_work_item_kind = work_item_kind
+
+        has_family = self.active_work_item_family_id is not None
         has_id = self.active_work_item_id is not None
-        if has_kind != has_id:
+        if has_family != has_id:
             raise ValueError(
-                "active_work_item_kind and active_work_item_id must be set together"
+                "active_work_item_family_id and active_work_item_id must be set together"
             )
 
         closure_fields = (
@@ -138,7 +152,7 @@ class StageRunRequest(BaseModel):
                     "active_work_item requests cannot declare closure target fields"
                 )
         elif self.request_kind == "closure_target":
-            if has_kind or self.active_work_item_path is not None:
+            if has_family or self.active_work_item_path is not None:
                 raise ValueError(
                     "closure_target requests cannot declare active work item fields"
                 )
@@ -147,7 +161,7 @@ class StageRunRequest(BaseModel):
         else:
             if self.plane is not Plane.LEARNING:
                 raise ValueError("learning_request requests must run on the learning plane")
-            if self.active_work_item_kind is not WorkItemKind.LEARNING_REQUEST:
+            if self.active_work_item_family_id != WorkItemKind.LEARNING_REQUEST.value:
                 raise ValueError("learning_request requests require learning_request work item kind")
             if self.active_work_item_path is None:
                 raise ValueError("learning_request requests require active_work_item_path")
@@ -156,6 +170,19 @@ class StageRunRequest(BaseModel):
 
         if self.timeout_seconds < 0:
             raise ValueError("timeout_seconds must be >= 0")
+        context_required_fields = (
+            self.request_context_profile_id,
+            self.context_bundle_path,
+            self.context_render_plan_id,
+            self.rendered_prompt_context_path,
+        )
+        has_context = any(field is not None for field in context_required_fields) or bool(
+            self.context_artifact_refs
+        )
+        if has_context and any(field is None for field in context_required_fields):
+            raise ValueError("request context fields must be set together")
+        if not has_context and self.context_artifact_refs:
+            raise ValueError("context_artifact_refs require request context fields")
 
         return self
 
@@ -178,7 +205,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
         f"Entrypoint Contract ID: {request.entrypoint_contract_id or 'none'}",
         (
             "Active Work Item: "
-            f"{request.active_work_item_kind.value if request.active_work_item_kind else 'none'} "
+            f"{_active_work_item_family_label(request)} "
             f"{request.active_work_item_id or 'none'}"
         ),
         f"Active Work Item Path: {request.active_work_item_path or 'none'}",
@@ -216,6 +243,11 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
             f"Runtime Error Report Path: {request.runtime_error_report_path or 'none'}",
             f"Runtime Error Catalog Path: {request.runtime_error_catalog_path or 'none'}",
             f"Skill Revision Evidence Path: {request.skill_revision_evidence_path or 'none'}",
+            f"Request Context Profile ID: {request.request_context_profile_id or 'none'}",
+            f"Context Bundle Path: {request.context_bundle_path or 'none'}",
+            f"Context Render Plan ID: {request.context_render_plan_id or 'none'}",
+            f"Rendered Prompt Context Path: {request.rendered_prompt_context_path or 'none'}",
+            *(_render_value_list("Context Artifact Refs", request.context_artifact_refs)),
             f"Runner Name: {request.runner_name or 'none'}",
             f"Model Name: {request.model_name or 'none'}",
             f"Thinking Level: {request.thinking_level or 'none'}",
@@ -309,6 +341,12 @@ def _render_result_class_policy(
         rendered = ", ".join(result_class.value for result_class in result_classes)
         lines.append(f"- {outcome}: {rendered}")
     return tuple(lines)
+
+
+def _active_work_item_family_label(request: StageRunRequest) -> str:
+    if request.active_work_item_id is None:
+        return "none"
+    return request.active_work_item_family_id or "none"
 
 
 def _render_capability_grants(

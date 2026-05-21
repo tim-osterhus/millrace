@@ -104,6 +104,7 @@ def apply_reconciliation_signals(
             "stage_kind_id": stage_kind_id,
             "run_id": engine._new_run_id(),
             "active_since": now,
+            "running_status_marker": None,
         }
     )
     updated = snapshot_with_active_run(
@@ -122,13 +123,14 @@ def set_recovery_counters(
     failure_class: str,
     stage: StageName,
 ) -> RuntimeSnapshot:
-    if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+    if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return snapshot
     if isinstance(stage, ExecutionStageName) and stage is ExecutionStageName.TROUBLESHOOTER:
         return engine._increment_counter_field(
             snapshot,
             counters,
             failure_class=failure_class,
+            work_item_family_id=snapshot.active_work_item_family_id,
             work_item_kind=snapshot.active_work_item_kind,
             work_item_id=snapshot.active_work_item_id,
             field="troubleshoot_attempt_count",
@@ -138,6 +140,7 @@ def set_recovery_counters(
             snapshot,
             counters,
             failure_class=failure_class,
+            work_item_family_id=snapshot.active_work_item_family_id,
             work_item_kind=snapshot.active_work_item_kind,
             work_item_id=snapshot.active_work_item_id,
             field="mechanic_attempt_count",

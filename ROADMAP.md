@@ -38,6 +38,12 @@ contracts:
 - execution capability grants that make runner powers, approvals, advisory
   boundaries, and blocked pre-dispatch decisions explicit in compiled/runtime
   evidence
+- workflow primitive authority that moves queue families, claim policy,
+  terminal lifecycle actions, runtime effects, and schema epoch compatibility
+  into compiler-validated assets
+- opt-in Blueprint Planning that decomposes a spec into strict draft packets,
+  critiques Blueprint plans before task promotion, and keeps implementation
+  inside the Execution plane
 - optional local observability surfaces that make workspace state visible
   without adding runtime authority or weight to the base deployment package
 
@@ -47,13 +53,26 @@ contracts:
 
 The compiler is being hardened as the source of runtime structure. The goal is
 for activation, request binding, recovery policy, completion behavior, and
-post-stage routing to come from one compiled graph plan instead of scattered
-runtime tables or prompt prose.
+post-stage routing to come from one compiled graph plan plus compiled workflow
+primitive authority instead of scattered runtime tables or prompt prose.
 
 The current implementation direction exposes that topology through
 `millrace compile graph` and records concrete execution evidence through
 per-run `run_trace.json` artifacts. The compiled stage graph remains authority;
 the run trace is inspection evidence.
+Workflow primitives now cover built-in work-item families, document adapters,
+queue claim policies, terminal actions, lifecycle mutation plans, runtime
+effect handlers, recovery/failure policy hooks, and workspace schema epoch
+compatibility. Scheduler lanes now give the runtime durable per-lane state,
+lane conflict validation, launch-plan authority, and request-context evidence.
+Blueprint Planning now exercises that foundation through opt-in Blueprint modes
+with custom Planning stage kinds and runtime-owned effects for draft, packet,
+evaluation, critique, promotion, and generated-task lifecycle. Runtime
+artifacts and operator surfaces follow the same authority model: artifact
+contracts declare canonical and legacy outputs, runtime-effect failure policy
+can route recoverable pre-mutation failures, queue inventory is family-aware,
+and `doctor`/`runs` distinguish parse-valid artifacts from blocked route/effect
+outcomes.
 
 Expected user impact:
 
@@ -249,6 +268,13 @@ Millrace's public runtime shape needs to be cemented before `v1.0.0`. That
 means deciding which CLI surfaces, workspace contracts, package assets, runner
 contracts, compiler outputs, and documentation promises are stable enough to
 carry forward.
+
+After `0.20.0`, the main validation work is to prove the workflow primitive,
+lane, request-context, schema-epoch, and Blueprint Planning surfaces across
+longer real workspaces before declaring them stable. The release is allowed to
+break pre-1.0 compatibility, but v1.0.0 should only keep surfaces that have
+survived source tests, packaged-install smoke tests, and operator-facing E2E
+evidence without special state surgery.
 
 Expected user impact:
 

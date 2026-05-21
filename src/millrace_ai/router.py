@@ -19,6 +19,7 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.work_refs import coerce_family_and_kind
 
 DEFAULT_MAX_FIX_CYCLES = 2
 DEFAULT_MAX_TROUBLESHOOT_ATTEMPTS_BEFORE_CONSULT = 2
@@ -61,17 +62,23 @@ _PLANNING_SUCCESS_TRANSITIONS: dict[PlanningTerminalResult, PlanningStageName] =
 
 def counter_key_for_failure_class(
     *,
-    work_item_kind: WorkItemKind | str,
+    work_item_family_id: str | None = None,
+    work_item_kind: WorkItemKind | str | None = None,
     work_item_id: str,
     failure_class: str,
 ) -> str:
-    kind = WorkItemKind(work_item_kind)
+    family_id, _kind = coerce_family_and_kind(
+        family_id=work_item_family_id,
+        work_item_kind=work_item_kind,
+    )
+    if family_id is None:
+        raise ValueError("work_item_family_id or work_item_kind is required")
     normalized_id = work_item_id.strip()
     if not normalized_id:
         raise ValueError("work_item_id cannot be empty")
 
     normalized_failure_class = _normalize_failure_class(failure_class)
-    return f"{kind.value}:{normalized_id}:{normalized_failure_class}"
+    return f"{family_id}:{normalized_id}:{normalized_failure_class}"
 
 
 def next_execution_step(
@@ -385,12 +392,12 @@ def _matching_counter_entry(
     counters: RecoveryCounters,
     failure_class: str,
 ) -> RecoveryCounterEntry | None:
-    if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+    if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return None
 
     normalized_failure_class = _normalize_failure_class(failure_class)
     for entry in counters.entries:
-        if entry.work_item_kind is not snapshot.active_work_item_kind:
+        if entry.work_item_family_id != snapshot.active_work_item_family_id:
             continue
         if entry.work_item_id != snapshot.active_work_item_id:
             continue
@@ -401,9 +408,10 @@ def _matching_counter_entry(
 
 
 def _counter_key_from_snapshot(snapshot: RuntimeSnapshot, failure_class: str) -> str | None:
-    if snapshot.active_work_item_kind is None or snapshot.active_work_item_id is None:
+    if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return None
     return counter_key_for_failure_class(
+        work_item_family_id=snapshot.active_work_item_family_id,
         work_item_kind=snapshot.active_work_item_kind,
         work_item_id=snapshot.active_work_item_id,
         failure_class=failure_class,
@@ -437,7 +445,11 @@ def _validate_stage_result_matches_snapshot(
     if snapshot.active_run_id is None or snapshot.active_run_id != stage_result.run_id:
         raise ValueError("stage_result run_id does not match runtime snapshot active_run_id")
     if stage_result.metadata.get("request_kind") == "closure_target":
-        if snapshot.active_work_item_kind is not None or snapshot.active_work_item_id is not None:
+        if (
+            snapshot.active_work_item_family_id is not None
+            or snapshot.active_work_item_kind is not None
+            or snapshot.active_work_item_id is not None
+        ):
             raise ValueError("closure_target stage_result cannot use active work item snapshot identity")
         if stage_result.work_item_kind is not WorkItemKind.SPEC:
             raise ValueError("closure_target stage_result must normalize onto a spec identity")
@@ -447,7 +459,13 @@ def _validate_stage_result_matches_snapshot(
         if closure_target_root_spec_id != stage_result.work_item_id:
             raise ValueError("closure_target_root_spec_id must match stage_result work_item_id")
         return
-    if snapshot.active_work_item_kind != stage_result.work_item_kind:
+    if snapshot.active_work_item_family_id != stage_result.work_item_family_id:
+        raise ValueError("stage_result work_item_family_id does not match runtime snapshot active item")
+    if (
+        snapshot.active_work_item_kind is not None
+        and stage_result.work_item_kind is not None
+        and snapshot.active_work_item_kind != stage_result.work_item_kind
+    ):
         raise ValueError("stage_result work_item_kind does not match runtime snapshot active item")
     if snapshot.active_work_item_id != stage_result.work_item_id:
         raise ValueError("stage_result work_item_id does not match runtime snapshot active item")

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypeVar
 
 from millrace_ai.contracts import (
     IncidentDocument,
@@ -18,152 +17,130 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import QueueStateError
 
 from .paths import WorkspacePaths
-from .task_lifecycle_integrity import retire_stale_blocked_task_duplicate_after_done
-from .work_documents import render_work_document
-
-_DocT = TypeVar(
-    "_DocT",
-    TaskDocument,
-    ProbeDocument,
-    SpecDocument,
-    IncidentDocument,
-    LearningRequestDocument,
+from .work_item_adapters import (
+    adapter_for_kind,
+    enqueue_with_adapter,
+    move_active_with_adapter,
+    move_with_adapter,
 )
 
 
 def enqueue_task(paths: WorkspacePaths, doc: TaskDocument) -> Path:
-    _ensure_unique_task_id(paths, doc.task_id)
-    destination = paths.tasks_queue_dir / f"{doc.task_id}.md"
-    _write_model(destination, doc)
-    return destination
+    return enqueue_with_adapter(paths, adapter_for_kind(WorkItemKind.TASK), doc)
 
 
 def enqueue_spec(paths: WorkspacePaths, doc: SpecDocument) -> Path:
-    _ensure_unique_spec_id(paths, doc.spec_id)
-    destination = paths.specs_queue_dir / f"{doc.spec_id}.md"
-    _write_model(destination, doc)
-    return destination
+    return enqueue_with_adapter(paths, adapter_for_kind(WorkItemKind.SPEC), doc)
 
 
 def enqueue_probe(paths: WorkspacePaths, doc: ProbeDocument) -> Path:
-    _ensure_unique_probe_id(paths, doc.probe_id)
-    destination = paths.probes_queue_dir / f"{doc.probe_id}.md"
-    _write_model(destination, doc)
-    return destination
+    return enqueue_with_adapter(paths, adapter_for_kind(WorkItemKind.PROBE), doc)
 
 
 def enqueue_incident(paths: WorkspacePaths, doc: IncidentDocument) -> Path:
-    _ensure_unique_incident_id(paths, doc.incident_id)
-    destination = paths.incidents_incoming_dir / f"{doc.incident_id}.md"
-    _write_model(destination, doc)
-    return destination
+    return enqueue_with_adapter(paths, adapter_for_kind(WorkItemKind.INCIDENT), doc)
 
 
 def enqueue_learning_request(paths: WorkspacePaths, doc: LearningRequestDocument) -> Path:
-    _ensure_unique_learning_request_id(paths, doc.learning_request_id)
-    destination = paths.learning_requests_queue_dir / f"{doc.learning_request_id}.md"
-    _write_model(destination, doc)
-    return destination
+    return enqueue_with_adapter(paths, adapter_for_kind(WorkItemKind.LEARNING_REQUEST), doc)
 
 
 def mark_task_done(paths: WorkspacePaths, task_id: str) -> Path:
-    destination = _move_item(
-        source_dir=paths.tasks_active_dir,
-        destination_dir=paths.tasks_done_dir,
-        item_id=task_id,
-        kind=WorkItemKind.TASK,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.TASK),
+        task_id,
+        target_state="done",
     )
-    retire_stale_blocked_task_duplicate_after_done(paths, task_id=task_id)
-    return destination
 
 
 def mark_task_blocked(paths: WorkspacePaths, task_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.tasks_active_dir,
-        destination_dir=paths.tasks_blocked_dir,
-        item_id=task_id,
-        kind=WorkItemKind.TASK,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.TASK),
+        task_id,
+        target_state="blocked",
     )
 
 
 def mark_spec_done(paths: WorkspacePaths, spec_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.specs_active_dir,
-        destination_dir=paths.specs_done_dir,
-        item_id=spec_id,
-        kind=WorkItemKind.SPEC,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.SPEC),
+        spec_id,
+        target_state="done",
     )
 
 
 def mark_spec_blocked(paths: WorkspacePaths, spec_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.specs_active_dir,
-        destination_dir=paths.specs_blocked_dir,
-        item_id=spec_id,
-        kind=WorkItemKind.SPEC,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.SPEC),
+        spec_id,
+        target_state="blocked",
     )
 
 
 def mark_probe_done(paths: WorkspacePaths, probe_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.probes_active_dir,
-        destination_dir=paths.probes_done_dir,
-        item_id=probe_id,
-        kind=WorkItemKind.PROBE,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.PROBE),
+        probe_id,
+        target_state="done",
     )
 
 
 def mark_probe_blocked(paths: WorkspacePaths, probe_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.probes_active_dir,
-        destination_dir=paths.probes_blocked_dir,
-        item_id=probe_id,
-        kind=WorkItemKind.PROBE,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.PROBE),
+        probe_id,
+        target_state="blocked",
     )
 
 
 def mark_incident_resolved(paths: WorkspacePaths, incident_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.incidents_active_dir,
-        destination_dir=paths.incidents_resolved_dir,
-        item_id=incident_id,
-        kind=WorkItemKind.INCIDENT,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.INCIDENT),
+        incident_id,
+        target_state="done",
     )
 
 
 def mark_incident_blocked(paths: WorkspacePaths, incident_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.incidents_active_dir,
-        destination_dir=paths.incidents_blocked_dir,
-        item_id=incident_id,
-        kind=WorkItemKind.INCIDENT,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.INCIDENT),
+        incident_id,
+        target_state="blocked",
     )
 
 
 def mark_learning_request_done(paths: WorkspacePaths, learning_request_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.learning_requests_active_dir,
-        destination_dir=paths.learning_requests_done_dir,
-        item_id=learning_request_id,
-        kind=WorkItemKind.LEARNING_REQUEST,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.LEARNING_REQUEST),
+        learning_request_id,
+        target_state="done",
     )
 
 
 def mark_learning_request_blocked(paths: WorkspacePaths, learning_request_id: str) -> Path:
-    return _move_item(
-        source_dir=paths.learning_requests_active_dir,
-        destination_dir=paths.learning_requests_blocked_dir,
-        item_id=learning_request_id,
-        kind=WorkItemKind.LEARNING_REQUEST,
+    return move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.LEARNING_REQUEST),
+        learning_request_id,
+        target_state="blocked",
     )
 
 
 def requeue_task(paths: WorkspacePaths, task_id: str, *, reason: str) -> Path:
-    destination = _move_item(
-        source_dir=paths.tasks_active_dir,
-        destination_dir=paths.tasks_queue_dir,
-        item_id=task_id,
-        kind=WorkItemKind.TASK,
+    destination = move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.TASK),
+        task_id,
+        target_state="queue",
     )
     _append_requeue_reason(paths.tasks_queue_dir, task_id, WorkItemKind.TASK, reason)
     return destination
@@ -179,11 +156,12 @@ def requeue_blocked_task(
     failure_class: str | None = None,
     attempt_number: int | None = None,
 ) -> Path:
-    destination = _move_item(
+    adapter = adapter_for_kind(WorkItemKind.TASK)
+    destination = move_with_adapter(
+        adapter,
         source_dir=paths.tasks_blocked_dir,
         destination_dir=paths.tasks_queue_dir,
         item_id=task_id,
-        kind=WorkItemKind.TASK,
         source_state="blocked",
     )
     _append_requeue_reason(
@@ -202,44 +180,44 @@ def requeue_blocked_task(
 
 
 def requeue_spec(paths: WorkspacePaths, spec_id: str, *, reason: str) -> Path:
-    destination = _move_item(
-        source_dir=paths.specs_active_dir,
-        destination_dir=paths.specs_queue_dir,
-        item_id=spec_id,
-        kind=WorkItemKind.SPEC,
+    destination = move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.SPEC),
+        spec_id,
+        target_state="queue",
     )
     _append_requeue_reason(paths.specs_queue_dir, spec_id, WorkItemKind.SPEC, reason)
     return destination
 
 
 def requeue_probe(paths: WorkspacePaths, probe_id: str, *, reason: str) -> Path:
-    destination = _move_item(
-        source_dir=paths.probes_active_dir,
-        destination_dir=paths.probes_queue_dir,
-        item_id=probe_id,
-        kind=WorkItemKind.PROBE,
+    destination = move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.PROBE),
+        probe_id,
+        target_state="queue",
     )
     _append_requeue_reason(paths.probes_queue_dir, probe_id, WorkItemKind.PROBE, reason)
     return destination
 
 
 def requeue_incident(paths: WorkspacePaths, incident_id: str, *, reason: str) -> Path:
-    destination = _move_item(
-        source_dir=paths.incidents_active_dir,
-        destination_dir=paths.incidents_incoming_dir,
-        item_id=incident_id,
-        kind=WorkItemKind.INCIDENT,
+    destination = move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.INCIDENT),
+        incident_id,
+        target_state="queue",
     )
     _append_requeue_reason(paths.incidents_incoming_dir, incident_id, WorkItemKind.INCIDENT, reason)
     return destination
 
 
 def requeue_learning_request(paths: WorkspacePaths, learning_request_id: str, *, reason: str) -> Path:
-    destination = _move_item(
-        source_dir=paths.learning_requests_active_dir,
-        destination_dir=paths.learning_requests_queue_dir,
-        item_id=learning_request_id,
-        kind=WorkItemKind.LEARNING_REQUEST,
+    destination = move_active_with_adapter(
+        paths,
+        adapter_for_kind(WorkItemKind.LEARNING_REQUEST),
+        learning_request_id,
+        target_state="queue",
     )
     _append_requeue_reason(
         paths.learning_requests_queue_dir,
@@ -247,26 +225,6 @@ def requeue_learning_request(paths: WorkspacePaths, learning_request_id: str, *,
         WorkItemKind.LEARNING_REQUEST,
         reason,
     )
-    return destination
-
-
-def _move_item(
-    *,
-    source_dir: Path,
-    destination_dir: Path,
-    item_id: str,
-    kind: WorkItemKind,
-    source_state: str = "active",
-) -> Path:
-    source = source_dir / f"{item_id}.md"
-    if not source.exists():
-        raise QueueStateError(f"{kind.value} {item_id} is not {source_state}")
-
-    destination = destination_dir / source.name
-    if destination.exists():
-        raise QueueStateError(f"{kind.value} {item_id} already exists at destination")
-
-    source.replace(destination)
     return destination
 
 
@@ -307,89 +265,6 @@ def _append_requeue_reason(
         payload["attempt_number"] = attempt_number
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, sort_keys=True) + "\n")
-
-
-def _ensure_unique_task_id(paths: WorkspacePaths, task_id: str) -> None:
-    _ensure_unique_id(
-        work_item_id=task_id,
-        directories=(
-            paths.tasks_queue_dir,
-            paths.tasks_active_dir,
-            paths.tasks_done_dir,
-            paths.tasks_blocked_dir,
-        ),
-        kind=WorkItemKind.TASK,
-    )
-
-
-def _ensure_unique_spec_id(paths: WorkspacePaths, spec_id: str) -> None:
-    _ensure_unique_id(
-        work_item_id=spec_id,
-        directories=(
-            paths.specs_queue_dir,
-            paths.specs_active_dir,
-            paths.specs_done_dir,
-            paths.specs_blocked_dir,
-        ),
-        kind=WorkItemKind.SPEC,
-    )
-
-
-def _ensure_unique_probe_id(paths: WorkspacePaths, probe_id: str) -> None:
-    _ensure_unique_id(
-        work_item_id=probe_id,
-        directories=(
-            paths.probes_queue_dir,
-            paths.probes_active_dir,
-            paths.probes_done_dir,
-            paths.probes_blocked_dir,
-        ),
-        kind=WorkItemKind.PROBE,
-    )
-
-
-def _ensure_unique_incident_id(paths: WorkspacePaths, incident_id: str) -> None:
-    _ensure_unique_id(
-        work_item_id=incident_id,
-        directories=(
-            paths.incidents_incoming_dir,
-            paths.incidents_active_dir,
-            paths.incidents_resolved_dir,
-            paths.incidents_blocked_dir,
-        ),
-        kind=WorkItemKind.INCIDENT,
-    )
-
-
-def _ensure_unique_learning_request_id(paths: WorkspacePaths, learning_request_id: str) -> None:
-    _ensure_unique_id(
-        work_item_id=learning_request_id,
-        directories=(
-            paths.learning_requests_queue_dir,
-            paths.learning_requests_active_dir,
-            paths.learning_requests_done_dir,
-            paths.learning_requests_blocked_dir,
-        ),
-        kind=WorkItemKind.LEARNING_REQUEST,
-    )
-
-
-def _ensure_unique_id(
-    *,
-    work_item_id: str,
-    directories: tuple[Path, ...],
-    kind: WorkItemKind,
-) -> None:
-    filename = f"{work_item_id}.md"
-    for directory in directories:
-        if (directory / filename).exists():
-            raise QueueStateError(f"{kind.value} {work_item_id} already exists")
-
-
-def _write_model(destination: Path, document: _DocT) -> None:
-    destination.write_text(render_work_document(document), encoding="utf-8")
-
-
 __all__ = [
     "enqueue_incident",
     "enqueue_learning_request",

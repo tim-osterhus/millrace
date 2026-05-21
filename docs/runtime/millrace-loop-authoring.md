@@ -8,6 +8,7 @@ Use it when you need to change:
 - legacy loop JSON under `src/millrace_ai/assets/loops/`
 - graph-loop JSON under `src/millrace_ai/assets/graphs/`
 - stage-kind JSON under `src/millrace_ai/assets/registry/stage_kinds/`
+- workflow primitive JSON under `src/millrace_ai/assets/registry/`
 - mode JSON under `src/millrace_ai/assets/modes/`
 - stage entrypoint selection behavior
 - per-stage model or runner bindings that should be frozen by compile
@@ -21,6 +22,7 @@ The authoritative sources are:
 - `src/millrace_ai/contracts/`
 - `src/millrace_ai/architecture/stage_kinds.py`
 - `src/millrace_ai/architecture/loop_graphs.py`
+- `src/millrace_ai/architecture/workflow_primitives.py`
 - `src/millrace_ai/architecture/materialization.py`
 - `src/millrace_ai/compiler.py`
 - `src/millrace_ai/assets/modes.py`
@@ -31,28 +33,44 @@ The authoritative sources are:
 - `src/millrace_ai/assets/graphs/execution/standard.json`
 - `src/millrace_ai/assets/graphs/execution/with_integrator.json`
 - `src/millrace_ai/assets/graphs/planning/standard.json`
+- `src/millrace_ai/assets/graphs/planning/blueprint.json`
 - `src/millrace_ai/assets/graphs/learning/standard.json`
 - `src/millrace_ai/assets/registry/stage_kinds/`
+- `src/millrace_ai/assets/registry/work_item_families/`
+- `src/millrace_ai/assets/registry/document_adapters/`
+- `src/millrace_ai/assets/registry/queue_claim_policies/`
+- `src/millrace_ai/assets/registry/terminal_actions/`
+- `src/millrace_ai/assets/registry/lifecycle_mutation_plans/`
+- `src/millrace_ai/assets/registry/runtime_effect_handlers/`
+- `src/millrace_ai/assets/registry/recovery_policies/`
+- `src/millrace_ai/assets/registry/runtime_failure_policies/`
+- `src/millrace_ai/assets/registry/workspace_schema_epochs/`
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
 - `src/millrace_ai/assets/modes/learning_codex.json`
 - `src/millrace_ai/assets/modes/learning_pi.json`
 - `src/millrace_ai/assets/modes/default_codex_integrated.json`
 - `src/millrace_ai/assets/modes/learning_codex_integrated.json`
+- `src/millrace_ai/assets/modes/blueprint_codex.json`
+- `src/millrace_ai/assets/modes/blueprint_learning_codex.json`
 
 Loop and mode docs should describe those contracts, not override them.
+For the architecture decision behind workflow primitive authority, read
+`docs/adr/0010-compiler-validated-workflow-primitives-as-runtime-authority.md`.
 
-## Two Shipped Authoring Surfaces
+## Shipped Authoring Surfaces
 
-Millrace currently ships two loop-description layers that must not drift apart:
+Millrace currently ships three authoring layers that must not drift apart:
 
 1. legacy loop assets under `src/millrace_ai/assets/loops/`
 2. graph-loop and stage-kind assets under
    `src/millrace_ai/assets/graphs/` and
    `src/millrace_ai/assets/registry/stage_kinds/`
+3. workflow primitive assets under the registry folders listed above
 
 Today the runtime executes request binding and control flow from
-`compiled_plan.json`, which is built from graph loops and stage kinds.
+`compiled_plan.json`, which is built from graph loops, stage kinds, and
+workflow primitives.
 
 The graph-loop path exists to:
 
@@ -63,8 +81,11 @@ The graph-loop path exists to:
 - support preview materialization of discovered graph loops without modifying
   the shipped runtime plan contract
 
-For shipped defaults, maintainers should keep both surfaces aligned even though
-the graph surface is the canonical runtime source of truth.
+For shipped defaults, maintainers should keep all three surfaces aligned even
+though the graph surface is the canonical topology source of truth.
+Workflow primitive assets are also canonical runtime authority once compiled:
+they define queue families, document adapters, claim policy, terminal actions,
+lifecycle mutation, runtime effects, and schema epoch compatibility.
 
 ## Legacy Loop JSON Rules
 
@@ -131,6 +152,8 @@ For shipped defaults, that means at minimum:
 
 - plane membership is declared there, not inferred from prose
 - legal outcomes must cover the outcomes used by any graph edges that leave the node
+- `allowed_work_item_families` declares the work-item families that nodes of
+  that stage kind may own
 - default entrypoint and required stage-core skills must remain real packaged assets
 
 A graph-loop asset must validate as `GraphLoopDefinition`.
@@ -143,6 +166,44 @@ That means:
 - planning intake can be modeled through multiple `entry_nodes`
 - learning intake is modeled through `learning_request`
 - completion behavior may target only a closure-role stage kind
+
+Blueprint graph authoring has two additional invariants:
+
+- custom Blueprint stage kinds must keep their runtime role narrow. Manager
+  emits manifests/drafts, Contractor emits candidate packets, Evaluator emits
+  evaluations plus either critiques or generated tasks, and no Blueprint stage
+  directly mutates queues.
+- every Blueprint terminal outcome that creates durable work must have a
+  matching runtime effect rule and lifecycle mutation plan. The compiler can
+  validate cross-references, but the runtime effect handler still owns
+  destination-before-source ordering.
+
+## Workflow Primitive Rules
+
+Workflow primitive assets must validate against the primitive definition models
+in
+`src/millrace_ai/architecture/workflow_primitives.py`.
+
+For the shipped foundation slice, primitives define:
+
+- work-item families for task, probe, spec, incident, and learning request
+- document adapters that map those families to the built-in markdown document
+  contracts
+- plane queue claim policies that decide which families a plane may claim and
+  in what order
+- terminal actions and lifecycle mutation plans that explain how terminal
+  outcomes become source lifecycle intents
+- runtime effect handlers and effect rules that let terminal results request
+  additional runtime-owned effects without mutating queues directly from stage
+  code
+- recovery and failure policies used by compiler validation and future runtime
+  interpretation
+- the active workspace schema epoch
+
+The compiler validates primitive cross-references before any runtime start. A
+mode or graph is invalid if an entry, stage kind, terminal action, lifecycle
+plan, queue policy, runtime effect rule, or schema epoch reference cannot be
+resolved coherently.
 
 ## Entrypoint Override Rules
 

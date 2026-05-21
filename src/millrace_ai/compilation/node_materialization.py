@@ -54,43 +54,40 @@ def materialize_graph_node_plan(
 ) -> MaterializedGraphNodePlan:
     stage_kind = stage_kinds[node.stage_kind_id]
     stage_name = stage_name_for_identifier(node.stage_kind_id)
+    stage_key = stage_name or node.stage_kind_id
     stage_config = config.stages.get(node.stage_kind_id)
 
     entrypoint_path = stage_kind.default_entrypoint_path
     if node.entrypoint_path is not None:
         entrypoint_path = node.entrypoint_path
-    if stage_name is not None:
-        entrypoint_override = mode.stage_entrypoint_overrides.get(stage_name)
-        if entrypoint_override is not None:
-            entrypoint_path = validate_entrypoint_override(node.node_id, entrypoint_override)
+    entrypoint_override = mode.stage_entrypoint_overrides.get(stage_key)
+    if entrypoint_override is not None:
+        entrypoint_path = validate_entrypoint_override(node.node_id, entrypoint_override)
 
     attached_skill_additions = tuple(node.attached_skill_additions)
-    if stage_name is not None:
-        attached_skill_additions = dedupe_preserve_order(
-            [*attached_skill_additions, *mode.stage_skill_additions.get(stage_name, ())]
-        )
+    attached_skill_additions = dedupe_preserve_order(
+        [*attached_skill_additions, *mode.stage_skill_additions.get(stage_key, ())]
+    )
 
     runner_name = node.runner_name
     if stage_config is not None and stage_config.runner is not None:
         runner_name = stage_config.runner
-    if stage_name is not None:
-        mode_runner = mode.stage_runner_bindings.get(stage_name)
-        if mode_runner is not None:
-            runner_name = mode_runner
+    mode_runner = mode.stage_runner_bindings.get(stage_key)
+    if mode_runner is not None:
+        runner_name = mode_runner
 
     model_name = node.model_name
     if stage_config is not None and stage_config.model is not None:
         model_name = stage_config.model
-    if stage_name is not None:
-        mode_model = mode.stage_model_bindings.get(stage_name)
-        if mode_model is not None:
-            model_name = mode_model
+    mode_model = mode.stage_model_bindings.get(stage_key)
+    if mode_model is not None:
+        model_name = mode_model
 
     thinking_level = node.thinking_level
     if stage_config is not None and stage_config.thinking_level is not None:
         thinking_level = stage_config.thinking_level
-    if stage_name is not None and stage_name in mode.stage_thinking_bindings:
-        thinking_level = mode.stage_thinking_bindings[stage_name]
+    if stage_key in mode.stage_thinking_bindings:
+        thinking_level = mode.stage_thinking_bindings[stage_key]
 
     model_reasoning_effort = (
         thinking_level
@@ -121,6 +118,7 @@ def materialize_graph_node_plan(
         running_status_marker=stage_kind.running_status_marker,
         allowed_result_classes_by_outcome=stage_kind.allowed_result_classes_by_outcome,
         declared_output_artifacts=stage_kind.declared_output_artifacts,
+        allowed_work_item_families=stage_kind.allowed_work_item_families,
         required_skill_paths=stage_kind.required_skill_paths,
         attached_skill_additions=attached_skill_additions,
         runner_name=runner_name,

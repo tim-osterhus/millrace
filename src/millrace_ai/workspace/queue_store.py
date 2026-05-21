@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from millrace_ai.architecture import PlaneQueueClaimPolicyDefinition, WorkItemFamilyDefinition
 from millrace_ai.contracts import (
     IncidentDocument,
     LearningRequestDocument,
@@ -26,13 +27,13 @@ from .operator_interventions import (
     supersede_task,
 )
 from .paths import WorkspacePaths, workspace_paths
+from .queue_claims import QueueClaim
 from .queue_reconciliation import (
     StaleActiveState,
     detect_execution_stale_state,
     detect_planning_stale_state,
 )
 from .queue_selection import (
-    QueueClaim,
     claim_next_execution_task,
     claim_next_learning_request,
     claim_next_planning_item,
@@ -87,8 +88,19 @@ class QueueStore:
     def claim_next_execution_task(self, *, root_spec_id: str | None = None) -> QueueClaim | None:
         return claim_next_execution_task(self.paths, root_spec_id=root_spec_id)
 
-    def claim_next_planning_item(self, *, root_spec_id: str | None = None) -> QueueClaim | None:
-        return claim_next_planning_item(self.paths, root_spec_id=root_spec_id)
+    def claim_next_planning_item(
+        self,
+        *,
+        root_spec_id: str | None = None,
+        queue_claim_policy: PlaneQueueClaimPolicyDefinition | None = None,
+        work_item_families: tuple[WorkItemFamilyDefinition, ...] | None = None,
+    ) -> QueueClaim | None:
+        return claim_next_planning_item(
+            self.paths,
+            root_spec_id=root_spec_id,
+            queue_claim_policy=queue_claim_policy,
+            work_item_families=work_item_families,
+        )
 
     def claim_next_learning_request(self) -> QueueClaim | None:
         return claim_next_learning_request(self.paths)
@@ -163,6 +175,7 @@ class QueueStore:
         work_item_id: str,
         *,
         reason: str,
+        work_item_family_id: str | None = None,
         work_item_kind: WorkItemKind | None = None,
         actor: str = "operator",
         force: bool = False,
@@ -170,6 +183,7 @@ class QueueStore:
         return cancel_work_item(
             self.paths,
             work_item_id=work_item_id,
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             reason=reason,
             actor=actor,

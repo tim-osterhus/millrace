@@ -6,26 +6,11 @@ from pathlib import Path
 
 import typer
 
-from millrace_ai.contracts import ResultClass, TokenUsage
+from millrace_ai.contracts import TokenUsage
 from millrace_ai.contracts.graph_exports import CompiledStageGraphExport
 from millrace_ai.contracts.run_trace import RunTraceGraph
 from millrace_ai.control import ControlActionResult
 from millrace_ai.run_inspection import InspectedRunSummary
-from millrace_ai.runtime import RuntimeTickOutcome
-
-
-def _run_once_exit_code(outcome: RuntimeTickOutcome) -> int:
-    failure_class = outcome.stage_result.metadata.get("failure_class")
-    if isinstance(failure_class, str) and failure_class in {
-        "runner_transport_failure",
-        "provider_failure",
-    }:
-        return 1
-
-    if outcome.stage_result.result_class is ResultClass.RECOVERABLE_FAILURE:
-        return 1
-
-    return 0
 
 
 def _value(value: object) -> str:
@@ -54,6 +39,8 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
     lines = [
         f"run_id: {summary.run_id}",
         f"status: {summary.status}",
+        f"artifact_status: {summary.artifact_status}",
+        f"runtime_outcome: {summary.runtime_outcome}",
         f"compiled_plan_id: {_value(summary.compiled_plan_id)}",
         f"mode_id: {_value(summary.mode_id)}",
         f"request_kind: {_value(summary.request_kind)}",
@@ -61,6 +48,17 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
         f"work_item_kind: {_value(summary.work_item_kind)}",
         f"work_item_id: {_value(summary.work_item_id)}",
         f"failure_class: {_value(summary.failure_class)}",
+        f"failure_origin: {_value(summary.failure_origin)}",
+        f"runtime_effect_handler_id: {_value(summary.runtime_effect_handler_id)}",
+        f"runtime_effect_decision: {_value(summary.runtime_effect_decision)}",
+        f"runtime_effect_failure_class: {_value(summary.runtime_effect_failure_class)}",
+        f"runtime_effect_failure_message: {_value(summary.runtime_effect_failure_message)}",
+        f"runtime_effect_mutation_phase: {_value(summary.runtime_effect_mutation_phase)}",
+        (
+            "runtime_effect_failure_policy_id: "
+            f"{_value(summary.runtime_effect_failure_policy_id)}"
+        ),
+        f"runtime_effect_recovery_action: {_value(summary.runtime_effect_recovery_action)}",
         f"started_at: {_value(summary.started_at)}",
         f"completed_at: {_value(summary.completed_at)}",
         f"duration_seconds: {_value(summary.duration_seconds)}",
@@ -86,6 +84,51 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
                 f"closure_target_root_spec_id: {_value(stage_result.closure_target_root_spec_id)}",
                 f"terminal_result: {stage_result.terminal_result}",
                 f"result_class: {stage_result.result_class}",
+                f"failure_class: {_value(stage_result.failure_class)}",
+                f"failure_origin: {_value(stage_result.failure_origin)}",
+                (
+                    "request_context_profile_id: "
+                    f"{_value(stage_result.request_context_profile_id)}"
+                ),
+                f"context_bundle_path: {_value(stage_result.context_bundle_path)}",
+                f"context_render_plan_id: {_value(stage_result.context_render_plan_id)}",
+                (
+                    "rendered_prompt_context_path: "
+                    f"{_value(stage_result.rendered_prompt_context_path)}"
+                ),
+                (
+                    "runtime_effect_handler_id: "
+                    f"{_value(stage_result.runtime_effect_handler_id)}"
+                ),
+                f"runtime_effect_decision: {_value(stage_result.runtime_effect_decision)}",
+                (
+                    "runtime_effect_failure_class: "
+                    f"{_value(stage_result.runtime_effect_failure_class)}"
+                ),
+                (
+                    "runtime_effect_failure_message: "
+                    f"{_value(stage_result.runtime_effect_failure_message)}"
+                ),
+                (
+                    "runtime_effect_mutation_phase: "
+                    f"{_value(stage_result.runtime_effect_mutation_phase)}"
+                ),
+                (
+                    "runtime_effect_failure_policy_id: "
+                    f"{_value(stage_result.runtime_effect_failure_policy_id)}"
+                ),
+                (
+                    "runtime_effect_recovery_action: "
+                    f"{_value(stage_result.runtime_effect_recovery_action)}"
+                ),
+                (
+                    "runtime_effect_source_lifecycle_plan_id: "
+                    f"{_value(stage_result.runtime_effect_source_lifecycle_plan_id)}"
+                ),
+                (
+                    "runtime_effect_source_lifecycle_action: "
+                    f"{_value(stage_result.runtime_effect_source_lifecycle_action)}"
+                ),
                 f"runner_name: {_value(stage_result.runner_name)}",
                 f"model_name: {_value(stage_result.model_name)}",
                 f"thinking_level: {_value(stage_result.thinking_level)}",
@@ -101,6 +144,10 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
         lines.extend(_render_token_usage_lines(stage_result.token_usage))
         for artifact_path in stage_result.artifact_paths:
             lines.append(f"artifact_path: {artifact_path}")
+        for context_ref in stage_result.context_artifact_refs:
+            lines.append(f"context_artifact_ref: {context_ref}")
+        for path in stage_result.runtime_effect_created_paths:
+            lines.append(f"runtime_effect_created_path: {path}")
         for summary in stage_result.capability_grant_summaries:
             lines.append(f"capability_grant: {summary}")
         for summary in stage_result.capability_support_summaries:
@@ -187,6 +234,5 @@ __all__ = [
     "_render_run_show_lines",
     "_render_run_trace_lines",
     "_resolve_run_artifact_path",
-    "_run_once_exit_code",
     "_value",
 ]

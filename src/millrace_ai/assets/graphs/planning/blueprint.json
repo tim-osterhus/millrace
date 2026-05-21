@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "kind": "graph_loop",
+  "loop_id": "planning.blueprint",
+  "plane": "planning",
+  "nodes": [
+    {"node_id": "recon", "stage_kind_id": "recon"},
+    {"node_id": "planner", "stage_kind_id": "planner"},
+    {"node_id": "manager_blueprint", "stage_kind_id": "manager_blueprint"},
+    {"node_id": "contractor_blueprint", "stage_kind_id": "contractor_blueprint"},
+    {"node_id": "evaluator_blueprint", "stage_kind_id": "evaluator_blueprint"},
+    {"node_id": "mechanic_blueprint", "stage_kind_id": "mechanic_blueprint"},
+    {"node_id": "auditor", "stage_kind_id": "auditor"},
+    {"node_id": "arbiter", "stage_kind_id": "arbiter"}
+  ],
+  "entry_nodes": [
+    {"entry_key": "probe", "node_id": "recon"},
+    {"entry_key": "spec", "node_id": "planner"},
+    {"entry_key": "incident", "node_id": "auditor"},
+    {"entry_key": "blueprint_draft", "node_id": "contractor_blueprint"}
+  ],
+  "edges": [
+    {"edge_id": "planner-complete-to-manager-blueprint", "from_node_id": "planner", "to_node_id": "manager_blueprint", "on_outcomes": ["PLANNER_COMPLETE"]},
+    {"edge_id": "recon-to-execution-to-terminal-recon-to-execution", "from_node_id": "recon", "terminal_state_id": "recon_to_execution", "on_outcomes": ["RECON_TO_EXECUTION"], "kind": "terminal"},
+    {"edge_id": "recon-to-planning-to-terminal-recon-to-planning", "from_node_id": "recon", "terminal_state_id": "recon_to_planning", "on_outcomes": ["RECON_TO_PLANNING"], "kind": "terminal"},
+    {"edge_id": "recon-noop-to-terminal-recon-noop", "from_node_id": "recon", "terminal_state_id": "recon_noop", "on_outcomes": ["RECON_NOOP"], "kind": "terminal"},
+    {"edge_id": "recon-blocked-to-terminal-recon-blocked", "from_node_id": "recon", "terminal_state_id": "recon_blocked", "on_outcomes": ["RECON_BLOCKED"], "kind": "terminal"},
+    {"edge_id": "recon-generic-blocked-to-terminal-recon-blocked", "from_node_id": "recon", "terminal_state_id": "recon_blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"},
+    {"edge_id": "planner-blocked-to-mechanic-blueprint", "from_node_id": "planner", "to_node_id": "mechanic_blueprint", "on_outcomes": ["BLOCKED"]},
+    {"edge_id": "manager-blueprint-complete-to-terminal", "from_node_id": "manager_blueprint", "terminal_state_id": "manager_blueprint_complete", "on_outcomes": ["MANAGER_BLUEPRINT_COMPLETE"], "kind": "terminal"},
+    {"edge_id": "manager-blueprint-blocked-to-mechanic-blueprint", "from_node_id": "manager_blueprint", "to_node_id": "mechanic_blueprint", "on_outcomes": ["BLOCKED"]},
+    {"edge_id": "contractor-candidate-ready-to-evaluator", "from_node_id": "contractor_blueprint", "to_node_id": "evaluator_blueprint", "on_outcomes": ["BLUEPRINT_CANDIDATE_READY"]},
+    {"edge_id": "contractor-blocked-to-mechanic-blueprint", "from_node_id": "contractor_blueprint", "to_node_id": "mechanic_blueprint", "on_outcomes": ["BLOCKED"]},
+    {"edge_id": "evaluator-approved-to-terminal", "from_node_id": "evaluator_blueprint", "terminal_state_id": "blueprint_approved", "on_outcomes": ["BLUEPRINT_APPROVED"], "kind": "terminal"},
+    {"edge_id": "evaluator-rejected-to-contractor", "from_node_id": "evaluator_blueprint", "to_node_id": "contractor_blueprint", "on_outcomes": ["BLUEPRINT_REJECTED"]},
+    {"edge_id": "evaluator-blocked-to-mechanic-blueprint", "from_node_id": "evaluator_blueprint", "to_node_id": "mechanic_blueprint", "on_outcomes": ["BLOCKED"]},
+    {"edge_id": "mechanic-blueprint-complete-to-planner", "from_node_id": "mechanic_blueprint", "to_node_id": "planner", "on_outcomes": ["MECHANIC_BLUEPRINT_COMPLETE"]},
+    {"edge_id": "mechanic-blueprint-blocked-to-mechanic-blueprint", "from_node_id": "mechanic_blueprint", "to_node_id": "mechanic_blueprint", "on_outcomes": ["BLOCKED"]},
+    {"edge_id": "auditor-complete-to-planner", "from_node_id": "auditor", "to_node_id": "planner", "on_outcomes": ["AUDITOR_COMPLETE"]},
+    {"edge_id": "auditor-blocked-to-mechanic-blueprint", "from_node_id": "auditor", "to_node_id": "mechanic_blueprint", "on_outcomes": ["BLOCKED"]},
+    {"edge_id": "arbiter-complete-to-terminal-arbiter-complete", "from_node_id": "arbiter", "terminal_state_id": "arbiter_complete", "on_outcomes": ["ARBITER_COMPLETE"], "kind": "terminal"},
+    {"edge_id": "arbiter-remediation-needed-to-terminal-remediation-needed", "from_node_id": "arbiter", "terminal_state_id": "remediation_needed", "on_outcomes": ["REMEDIATION_NEEDED"], "kind": "terminal"},
+    {"edge_id": "arbiter-blocked-to-terminal-blocked", "from_node_id": "arbiter", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"}
+  ],
+  "terminal_states": [
+    {"terminal_state_id": "recon_to_execution", "terminal_class": "success", "writes_status": "RECON_TO_EXECUTION", "emits_artifacts": ["stage_result", "recon_packet", "generated_task"]},
+    {"terminal_state_id": "recon_to_planning", "terminal_class": "success", "writes_status": "RECON_TO_PLANNING", "emits_artifacts": ["stage_result", "recon_packet", "generated_spec"]},
+    {"terminal_state_id": "recon_noop", "terminal_class": "no_op", "writes_status": "RECON_NOOP", "emits_artifacts": ["stage_result", "recon_packet"]},
+    {"terminal_state_id": "recon_blocked", "terminal_class": "blocked", "writes_status": "RECON_BLOCKED", "emits_artifacts": ["stage_result", "recon_packet", "report"]},
+    {"terminal_state_id": "manager_blueprint_complete", "terminal_class": "success", "writes_status": "MANAGER_BLUEPRINT_COMPLETE", "emits_artifacts": ["stage_result", "blueprint_manifest", "blueprint_drafts"]},
+    {"terminal_state_id": "blueprint_approved", "terminal_class": "success", "writes_status": "BLUEPRINT_APPROVED", "emits_artifacts": ["stage_result", "blueprint_evaluation", "generated_task"]},
+    {"terminal_state_id": "arbiter_complete", "terminal_class": "success", "writes_status": "ARBITER_COMPLETE", "emits_artifacts": ["stage_result", "verdict", "report"]},
+    {"terminal_state_id": "remediation_needed", "terminal_class": "followup_needed", "writes_status": "REMEDIATION_NEEDED", "emits_artifacts": ["stage_result", "incident_report", "verdict", "report"]},
+    {"terminal_state_id": "blocked", "terminal_class": "blocked", "writes_status": "BLOCKED", "emits_artifacts": ["stage_result", "report"]}
+  ],
+  "dynamic_policies": {
+    "resume_policies": [
+      {
+        "policy_id": "planning.blueprint.mechanic.resume",
+        "source_node_id": "mechanic_blueprint",
+        "on_outcome": "MECHANIC_BLUEPRINT_COMPLETE",
+        "default_target_node_id": "planner",
+        "metadata_stage_keys": ["resume_stage"],
+        "disallowed_target_node_ids": ["mechanic_blueprint"]
+      }
+    ],
+    "threshold_policies": [
+      {
+        "policy_id": "planning.blueprint.blocked.recovery",
+        "source_node_ids": [
+          "planner",
+          "manager_blueprint",
+          "contractor_blueprint",
+          "evaluator_blueprint",
+          "auditor",
+          "mechanic_blueprint"
+        ],
+        "on_outcome": "BLOCKED",
+        "counter_name": "mechanic_attempt_count",
+        "threshold": 2,
+        "exhausted_terminal_state_id": "blocked"
+      }
+    ]
+  },
+  "completion_behavior": {
+    "trigger": "backlog_drained",
+    "readiness_rule": "no_open_lineage_work",
+    "target_node_id": "arbiter",
+    "request_kind": "closure_target",
+    "target_selector": "active_closure_target",
+    "rubric_policy": "reuse_or_create",
+    "blocked_work_policy": "suppress",
+    "skip_if_already_closed": true,
+    "on_pass_terminal_state_id": "arbiter_complete",
+    "on_gap_terminal_state_id": "remediation_needed",
+    "create_incident_on_gap": true
+  }
+}

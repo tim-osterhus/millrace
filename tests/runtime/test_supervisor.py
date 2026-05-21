@@ -15,6 +15,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
 )
+from millrace_ai.events import read_runtime_events
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
@@ -163,8 +164,18 @@ def test_supervisor_dispatches_learning_and_execution_before_either_completes(tm
         await asyncio.wait_for(asyncio.to_thread(both_started.wait), timeout=5)
 
         assert dispatched == 2
+        assert supervisor.active_worker_lanes == frozenset({"execution.main", "learning.main"})
         assert set(started_planes) == {Plane.EXECUTION, Plane.LEARNING}
         assert set(engine.snapshot.active_runs_by_plane) == {Plane.EXECUTION, Plane.LEARNING}
+        stage_started = [
+            event
+            for event in read_runtime_events(paths)
+            if event.event_type == "stage_started"
+        ]
+        assert {event.data.get("lane_id") for event in stage_started} >= {
+            "execution.main",
+            "learning.main",
+        }
 
         release_workers.set()
         await supervisor.drain_completed(wait=True)
@@ -305,9 +316,35 @@ def test_supervisor_workers_return_typed_outcomes(tmp_path: Path) -> None:
 
         assert isinstance(outcome, StageWorkerOutcome)
         assert outcome.plane is Plane.LEARNING
+        assert outcome.lane_id == "learning.main"
         assert outcome.raw_result is not None
 
         await supervisor.drain_completed(wait=False)
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_updates_plane_indexed_queue_depths_after_completion(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(_learning_request_doc("learn-001"))
+    queue.enqueue_learning_request(_learning_request_doc("learn-002"))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(request, terminal=LearningTerminalResult.CURATOR_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        await supervisor.drain_completed(wait=True)
+
+        assert engine.snapshot.queue_depth_learning == 1
+        assert engine.snapshot.queue_depths_by_plane[Plane.LEARNING] == 1
         engine.close()
 
     asyncio.run(scenario())

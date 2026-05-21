@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
     LearningTerminalResult,
     PlanningTerminalResult,
     ResultClass,
+    RuntimeFailureOrigin,
     StageResultEnvelope,
     TerminalResult,
     WorkItemKind,
@@ -57,7 +58,7 @@ def normalize_stage_result(
 ) -> StageResultEnvelope:
     """Normalize one runner output into a deterministic stage result envelope."""
 
-    work_item_kind, work_item_id = _request_result_identity(request)
+    work_item_family_id, work_item_kind, work_item_id = _request_result_identity(request)
 
     identity_notes = _identity_mismatch_notes(request, raw_result)
     if identity_notes:
@@ -123,6 +124,7 @@ def normalize_stage_result(
         stage=request.stage,
         node_id=request.node_id,
         stage_kind_id=request.stage_kind_id,
+        work_item_family_id=work_item_family_id,
         work_item_kind=work_item_kind,
         work_item_id=work_item_id,
         terminal_result=terminal_result,
@@ -151,6 +153,7 @@ def normalize_stage_result(
             **_request_metadata(request),
             "normalization_source": ("structured_result_file" if raw_result.terminal_result_path else "stdout_terminal_token"),
             "failure_class": None,
+            "failure_origin": None,
             "valid_terminal_result": True,
             "raw_exit_kind": _raw_exit_kind(raw_result),
             "raw_exit_code": _raw_exit_code(raw_result),
@@ -601,7 +604,7 @@ def _failure_envelope(
     classification: _FailureClassification | None = None,
 ) -> StageResultEnvelope:
     blocked_terminal = blocked_terminal_for_plane(request.plane)
-    work_item_kind, work_item_id = _request_result_identity(request)
+    work_item_family_id, work_item_kind, work_item_id = _request_result_identity(request)
     report_artifact = _resolved_report_artifact(request)
 
     failure_classification = classification or _classification_for_failure_class(failure_class)
@@ -611,6 +614,7 @@ def _failure_envelope(
         stage=request.stage,
         node_id=request.node_id,
         stage_kind_id=request.stage_kind_id,
+        work_item_family_id=work_item_family_id,
         work_item_kind=work_item_kind,
         work_item_id=work_item_id,
         terminal_result=blocked_terminal,
@@ -639,6 +643,9 @@ def _failure_envelope(
             **_request_metadata(request),
             "normalization_source": "failure",
             "failure_class": failure_classification.failure_class,
+            "failure_origin": _failure_origin_for_failure_class(
+                failure_classification.failure_class,
+            ),
             "blocked_origin": failure_classification.blocked_origin,
             "failure_scope": failure_classification.failure_scope,
             "auto_requeue_candidate": failure_classification.auto_requeue_candidate,
@@ -727,19 +734,29 @@ def _resolved_report_artifact(request: StageRunRequest) -> str | None:
     return None
 
 
-def _request_result_identity(request: StageRunRequest) -> tuple[WorkItemKind, str]:
+def _request_result_identity(request: StageRunRequest) -> tuple[str, WorkItemKind | None, str]:
     if request.request_kind == "closure_target":
         if request.closure_target_root_spec_id is None:
             raise ValueError("closure_target_root_spec_id is required for closure_target requests")
-        return (WorkItemKind.SPEC, request.closure_target_root_spec_id)
+        return (WorkItemKind.SPEC.value, WorkItemKind.SPEC, request.closure_target_root_spec_id)
     if request.request_kind == "learning_request":
         if request.active_work_item_id is None:
             raise ValueError("active_work_item_id is required for learning_request requests")
-        return (WorkItemKind.LEARNING_REQUEST, request.active_work_item_id)
+        return (
+            WorkItemKind.LEARNING_REQUEST.value,
+            WorkItemKind.LEARNING_REQUEST,
+            request.active_work_item_id,
+        )
 
-    if request.active_work_item_kind is None or request.active_work_item_id is None:
-        raise ValueError("active_work_item_kind and active_work_item_id are required to normalize stage results")
-    return (request.active_work_item_kind, request.active_work_item_id)
+    if request.active_work_item_family_id is None or request.active_work_item_id is None:
+        raise ValueError(
+            "active_work_item_family_id and active_work_item_id are required to normalize stage results"
+        )
+    return (
+        request.active_work_item_family_id,
+        request.active_work_item_kind,
+        request.active_work_item_id,
+    )
 
 
 def _merge_artifact_paths(
@@ -783,10 +800,16 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "preferred_rubric_path": request.preferred_rubric_path,
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,
+        "active_work_item_family_id": request.active_work_item_family_id,
         "active_work_item_kind": request.active_work_item_kind.value if request.active_work_item_kind is not None else None,
         "active_work_item_id": request.active_work_item_id,
         "active_work_item_path": request.active_work_item_path,
         "skill_revision_evidence_path": request.skill_revision_evidence_path,
+        "request_context_profile_id": request.request_context_profile_id,
+        "context_bundle_path": request.context_bundle_path,
+        "context_artifact_refs": list(request.context_artifact_refs),
+        "context_render_plan_id": request.context_render_plan_id,
+        "rendered_prompt_context_path": request.rendered_prompt_context_path,
         "thinking_level": request.thinking_level,
         "model_reasoning_effort": request.model_reasoning_effort,
         "execution_capability_grants": [
@@ -797,6 +820,20 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
             for decision in request.capability_support_decisions
         ],
     }
+
+
+def _failure_origin_for_failure_class(failure_class: str) -> str | None:
+    mapped_failure_classes = {
+        "provider_unavailable": RuntimeFailureOrigin.MODEL_PROVIDER_UNAVAILABLE,
+        "provider_rate_limited": RuntimeFailureOrigin.MODEL_PROVIDER_UNAVAILABLE,
+    }
+    mapped = mapped_failure_classes.get(failure_class)
+    if mapped is not None:
+        return mapped.value
+    try:
+        return RuntimeFailureOrigin(failure_class).value
+    except ValueError:
+        return None
 
 
 __all__ = ["normalize_stage_result"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from millrace_ai.architecture import CompiledGraphTransitionPlan, FrozenGraphPlanePlan
+from millrace_ai.architecture.loop_graphs import GraphLoopTerminalClass
 from millrace_ai.contracts import (
     Plane,
     PlanningStageName,
@@ -35,7 +36,7 @@ def route_planning_stage_result_from_graph(
     max_mechanic_attempts: int,
 ) -> RouterDecision:
     validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.PLANNING)
-    source_stage = PlanningStageName(stage_result.stage_kind_id)
+    source_stage = PlanningStageName(stage_result.stage)
     outcome = PlanningTerminalResult(stage_result.terminal_result)
     source_node_id = stage_result.node_id
 
@@ -196,6 +197,36 @@ def decision_from_planning_transition(
             next_plane=None,
             next_stage=None,
             reason="arbiter_blocked",
+            failure_class=failure_class,
+        )
+    if terminal_state.terminal_class in {
+        GraphLoopTerminalClass.SUCCESS,
+        GraphLoopTerminalClass.NO_OP,
+    }:
+        return RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason=f"{stage_result.node_id}:{terminal_result.value}",
+        )
+    if terminal_state.terminal_class is GraphLoopTerminalClass.FOLLOWUP_NEEDED:
+        return RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason=f"{stage_result.node_id}:{terminal_result.value}",
+        )
+    if terminal_state.terminal_class is GraphLoopTerminalClass.BLOCKED:
+        failure_class = resolve_failure_class(
+            snapshot,
+            stage_result,
+            default=f"{stage_result.stage_kind_id}_blocked",
+        )
+        return RouterDecision(
+            action=RouterAction.BLOCKED,
+            next_plane=None,
+            next_stage=None,
+            reason=f"{stage_result.stage_kind_id}_blocked",
             failure_class=failure_class,
         )
     raise ValueError(

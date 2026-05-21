@@ -22,6 +22,7 @@ def build_compiled_plan_id(
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     concurrency_policy: object,
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...],
+    workflow_authority: object | None = None,
 ) -> str:
     payload = {
         "mode_id": mode_id,
@@ -42,10 +43,23 @@ def build_compiled_plan_id(
             rule.model_dump(mode="json")
             for rule in learning_trigger_rules
         ],
+        "workflow_authority": _jsonable(workflow_authority),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
     return f"plan-{mode_id}-{digest}"
+
+
+def _jsonable(value: object) -> object:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")  # type: ignore[no-any-return, attr-defined]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item) for item in value]
+    return value
 
 
 def build_compile_input_fingerprint(

@@ -1,0 +1,31 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "plane_queue_claim_policy",
+      "policy_id": "execution.default",
+      "plane": "execution",
+      "family_order": ["task"],
+      "closure_lineage_policy": "defer_unrelated",
+      "empty_behavior": "idle"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "plane_queue_claim_policy",
+      "policy_id": "planning.default",
+      "plane": "planning",
+      "family_order": ["incident", "blueprint_draft", "probe", "spec"],
+      "closure_lineage_policy": "defer_unrelated",
+      "empty_behavior": "check_completion"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "plane_queue_claim_policy",
+      "policy_id": "learning.default",
+      "plane": "learning",
+      "family_order": ["learning_request"],
+      "closure_lineage_policy": "allow_unrelated",
+      "empty_behavior": "idle"
+    }
+  ]
+}

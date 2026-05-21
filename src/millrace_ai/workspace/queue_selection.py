@@ -3,26 +3,31 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
+from millrace_ai.architecture import PlaneQueueClaimPolicyDefinition, WorkItemFamilyDefinition
+from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.contracts import (
     IncidentDocument,
     LearningRequestDocument,
+    Plane,
     ProbeDocument,
     SpecDocument,
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.work_refs import legacy_work_item_kind_for_family_id
 from millrace_ai.errors import QueueStateError
 
 from .lineage_integrity import effective_root_spec_id
 from .paths import WorkspacePaths
+from .queue_claims import QueueClaim
 from .work_documents import parse_work_document_as
+from .work_item_adapters import WorkItemDocumentAdapter, adapter_for_kind, parse_with_adapter
 
 _DocT = TypeVar(
     "_DocT",
@@ -33,14 +38,7 @@ _DocT = TypeVar(
     LearningRequestDocument,
 )
 
-
-@dataclass(frozen=True, slots=True)
-class QueueClaim:
-    """Represents ownership of a newly-claimed work item."""
-
-    work_item_kind: WorkItemKind
-    work_item_id: str
-    path: Path
+_DEFAULT_PLANNING_FAMILY_ORDER = ("incident", "blueprint_draft", "probe", "spec")
 
 
 def claim_next_execution_task(
@@ -65,56 +63,60 @@ def claim_next_execution_task(
             source.replace(destination)
         except FileNotFoundError:
             continue
-        return QueueClaim(work_item_kind=WorkItemKind.TASK, work_item_id=task_id, path=destination)
+        return QueueClaim(
+            work_item_kind=WorkItemKind.TASK,
+            work_item_id=task_id,
+            path=destination,
+            source_state="queue",
+            source_path=source,
+        )
 
 
 def claim_next_planning_item(
     paths: WorkspacePaths,
     *,
     root_spec_id: str | None = None,
+    queue_claim_policy: PlaneQueueClaimPolicyDefinition | None = None,
+    work_item_families: tuple[WorkItemFamilyDefinition, ...] | None = None,
 ) -> QueueClaim | None:
-    active_specs = _list_markdown_files(paths.specs_active_dir)
-    active_probes = _list_markdown_files(paths.probes_active_dir)
-    active_incidents = _list_markdown_files(paths.incidents_active_dir)
-    if len(active_specs) + len(active_probes) + len(active_incidents) > 1:
+    families_by_id = _families_by_id(work_item_families)
+    family_order = (
+        queue_claim_policy.family_order
+        if queue_claim_policy is not None
+        else _DEFAULT_PLANNING_FAMILY_ORDER
+    )
+    active_count = _active_planning_item_count(
+        paths,
+        family_order=family_order,
+        families_by_id=families_by_id,
+    )
+    if active_count > 1:
         raise QueueStateError("Multiple active planning items found")
-    if active_specs or active_probes or active_incidents:
+    if active_count:
         return None
 
     while True:
-        incident_candidate = _select_oldest_incident(
-            paths.incidents_incoming_dir,
-            root_spec_id=root_spec_id,
-        )
-        if incident_candidate is not None:
-            incident_id, source = incident_candidate
-            destination = paths.incidents_active_dir / source.name
-            try:
-                source.replace(destination)
-            except FileNotFoundError:
-                continue
-            return QueueClaim(
-                work_item_kind=WorkItemKind.INCIDENT,
-                work_item_id=incident_id,
-                path=destination,
+        raced = False
+        for claim_order, family_id in enumerate(family_order):
+            claim, family_raced = _claim_next_planning_family(
+                paths,
+                family_id=family_id,
+                root_spec_id=root_spec_id,
+                families_by_id=families_by_id,
+                claim_policy_id=(
+                    queue_claim_policy.policy_id
+                    if queue_claim_policy is not None
+                    else "planning.builtin_fallback"
+                ),
+                claim_order=claim_order,
             )
-
-        work_candidate = _select_oldest_probe_or_spec(paths, root_spec_id=root_spec_id)
-        if work_candidate is None:
+            if claim is not None:
+                return claim
+            if family_raced:
+                raced = True
+                break
+        if not raced:
             return None
-
-        work_item_kind, item_id, source = work_candidate
-        destination_dir = (
-            paths.probes_active_dir
-            if work_item_kind is WorkItemKind.PROBE
-            else paths.specs_active_dir
-        )
-        destination = destination_dir / source.name
-        try:
-            source.replace(destination)
-        except FileNotFoundError:
-            continue
-        return QueueClaim(work_item_kind=work_item_kind, work_item_id=item_id, path=destination)
 
 
 def claim_next_learning_request(paths: WorkspacePaths) -> QueueClaim | None:
@@ -139,15 +141,15 @@ def claim_next_learning_request(paths: WorkspacePaths) -> QueueClaim | None:
             work_item_kind=WorkItemKind.LEARNING_REQUEST,
             work_item_id=learning_request_id,
             path=destination,
+            source_state="queue",
+            source_path=source,
         )
 
 
 def _select_oldest_task(directory: Path) -> tuple[str, Path] | None:
     candidate = _select_oldest_document_candidate(
         directory=directory,
-        model=TaskDocument,
-        id_attr="task_id",
-        timestamp_attr="created_at",
+        adapter=adapter_for_kind(WorkItemKind.TASK),
     )
     if candidate is None:
         return None
@@ -164,9 +166,9 @@ def _select_oldest_eligible_task(
     candidates: list[tuple[datetime, str, Path]] = []
     for path in _list_markdown_files(paths.tasks_queue_dir):
         try:
-            document = parse_work_document_as(
+            document = parse_with_adapter(
+                adapter_for_kind(WorkItemKind.TASK),
                 path.read_text(encoding="utf-8"),
-                model=TaskDocument,
                 path=path,
             )
         except FileNotFoundError:
@@ -203,9 +205,7 @@ def _select_oldest_spec(
 ) -> tuple[str, Path] | None:
     candidate = _select_oldest_document_candidate(
         directory=directory,
-        model=SpecDocument,
-        id_attr="spec_id",
-        timestamp_attr="created_at",
+        adapter=adapter_for_kind(WorkItemKind.SPEC),
         root_spec_id=root_spec_id,
     )
     if candidate is None:
@@ -225,18 +225,14 @@ def _select_oldest_probe_or_spec(
     if root_spec_id is None:
         probe_candidate = _select_oldest_document_candidate(
             directory=paths.probes_queue_dir,
-            model=ProbeDocument,
-            id_attr="probe_id",
-            timestamp_attr="created_at",
+            adapter=adapter_for_kind(WorkItemKind.PROBE),
         )
         if probe_candidate is not None:
             timestamp, item_id, path = probe_candidate
             candidates.append((timestamp, WorkItemKind.PROBE, item_id, path))
     spec_candidate = _select_oldest_document_candidate(
         directory=paths.specs_queue_dir,
-        model=SpecDocument,
-        id_attr="spec_id",
-        timestamp_attr="created_at",
+        adapter=adapter_for_kind(WorkItemKind.SPEC),
         root_spec_id=root_spec_id,
     )
     if spec_candidate is not None:
@@ -249,6 +245,200 @@ def _select_oldest_probe_or_spec(
     return work_item_kind, item_id, path
 
 
+def _claim_next_planning_family(
+    paths: WorkspacePaths,
+    *,
+    family_id: str,
+    root_spec_id: str | None,
+    families_by_id: dict[str, WorkItemFamilyDefinition],
+    claim_policy_id: str,
+    claim_order: int,
+) -> tuple[QueueClaim | None, bool]:
+    if family_id == WorkItemKind.INCIDENT.value:
+        incident_candidate = _select_oldest_incident(
+            paths.incidents_incoming_dir,
+            root_spec_id=root_spec_id,
+        )
+        if incident_candidate is None:
+            return None, False
+        incident_id, source = incident_candidate
+        destination = paths.incidents_active_dir / source.name
+        try:
+            source.replace(destination)
+        except FileNotFoundError:
+            return None, True
+        return (
+            QueueClaim(
+                work_item_kind=WorkItemKind.INCIDENT,
+                work_item_id=incident_id,
+                path=destination,
+                source_state="incoming",
+                source_path=source,
+                claim_policy_id=claim_policy_id,
+                claim_order=claim_order,
+            ),
+            False,
+        )
+
+    if family_id == WorkItemKind.BLUEPRINT_DRAFT.value:
+        from .blueprint_state import claim_next_blueprint_draft
+
+        return (
+            claim_next_blueprint_draft(
+                paths,
+                root_spec_id=root_spec_id,
+                claim_policy_id=claim_policy_id,
+                claim_order=claim_order,
+            ),
+            False,
+        )
+
+    if family_id == WorkItemKind.PROBE.value:
+        if root_spec_id is not None:
+            return None, False
+        probe_candidate = _select_oldest_document_candidate(
+            directory=paths.probes_queue_dir,
+            adapter=adapter_for_kind(WorkItemKind.PROBE),
+        )
+        if probe_candidate is None:
+            return None, False
+        _timestamp, probe_id, source = probe_candidate
+        destination = paths.probes_active_dir / source.name
+        try:
+            source.replace(destination)
+        except FileNotFoundError:
+            return None, True
+        return (
+            QueueClaim(
+                work_item_kind=WorkItemKind.PROBE,
+                work_item_id=probe_id,
+                path=destination,
+                source_state="queue",
+                source_path=source,
+                claim_policy_id=claim_policy_id,
+                claim_order=claim_order,
+            ),
+            False,
+        )
+
+    if family_id == WorkItemKind.SPEC.value:
+        spec_candidate = _select_oldest_spec(paths.specs_queue_dir, root_spec_id=root_spec_id)
+        if spec_candidate is None:
+            return None, False
+        spec_id, source = spec_candidate
+        destination = paths.specs_active_dir / source.name
+        try:
+            source.replace(destination)
+        except FileNotFoundError:
+            return None, True
+        return (
+            QueueClaim(
+                work_item_kind=WorkItemKind.SPEC,
+                work_item_id=spec_id,
+                path=destination,
+                source_state="queue",
+                source_path=source,
+                claim_policy_id=claim_policy_id,
+                claim_order=claim_order,
+            ),
+            False,
+        )
+
+    family = families_by_id.get(family_id)
+    if family is not None and family.plane is Plane.PLANNING:
+        return _claim_next_generic_planning_family(
+            paths,
+            family=family,
+            root_spec_id=root_spec_id,
+            claim_policy_id=claim_policy_id,
+            claim_order=claim_order,
+        )
+
+    raise QueueStateError(f"unsupported planning queue family in claim policy: {family_id}")
+
+
+def _claim_next_generic_planning_family(
+    paths: WorkspacePaths,
+    *,
+    family: WorkItemFamilyDefinition,
+    root_spec_id: str | None,
+    claim_policy_id: str,
+    claim_order: int,
+) -> tuple[QueueClaim | None, bool]:
+    candidate = _select_oldest_generic_family_candidate(
+        paths,
+        family=family,
+        root_spec_id=root_spec_id,
+    )
+    if candidate is None:
+        return None, False
+    _timestamp, work_item_id, source = candidate
+    destination = paths.runtime_root / family.queue_dirs.active / source.name
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+    except FileNotFoundError:
+        return None, True
+    return (
+        QueueClaim(
+            family_id=family.family_id,
+            work_item_kind=legacy_work_item_kind_for_family_id(family.family_id),
+            work_item_id=work_item_id,
+            path=destination,
+            plane=family.plane,
+            source_state=family.claimable_state,
+            source_path=source,
+            claim_policy_id=claim_policy_id,
+            claim_order=claim_order,
+        ),
+        False,
+    )
+
+
+def _select_oldest_generic_family_candidate(
+    paths: WorkspacePaths,
+    *,
+    family: WorkItemFamilyDefinition,
+    root_spec_id: str | None,
+) -> tuple[datetime, str, Path] | None:
+    directory = paths.runtime_root / family.queue_dirs.queue
+    candidates: list[tuple[datetime, str, Path]] = []
+    for path in _list_family_files(directory, family):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        payload = _generic_json_payload(directory, path, raw, family)
+        if payload is _INVALID_GENERIC_PAYLOAD:
+            continue
+        if not _generic_document_matches_root_spec_id(
+            raw=raw,
+            payload=payload,
+            family=family,
+            root_spec_id=root_spec_id,
+        ):
+            continue
+        item_id = _generic_work_item_id(path, payload=payload, family=family)
+        if path.stem != item_id:
+            _quarantine_invalid_artifact(
+                directory,
+                path,
+                f"filename stem does not match {family.id_field}: expected {item_id}, found {path.stem}",
+            )
+            continue
+        candidates.append((_generic_sort_timestamp(path, payload=payload, family=family), item_id, path))
+
+    if not candidates:
+        return None
+
+    reverse = family.sort_policy == "created_at_desc"
+    if family.sort_policy == "lexical_path":
+        candidates.sort(key=lambda item: (item[2].name, item[1]))
+    else:
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=reverse)
+    return candidates[0]
+
+
 def _select_oldest_incident(
     directory: Path,
     *,
@@ -256,9 +446,7 @@ def _select_oldest_incident(
 ) -> tuple[str, Path] | None:
     candidate = _select_oldest_document_candidate(
         directory=directory,
-        model=IncidentDocument,
-        id_attr="incident_id",
-        timestamp_attr="opened_at",
+        adapter=adapter_for_kind(WorkItemKind.INCIDENT),
         root_spec_id=root_spec_id,
     )
     if candidate is None:
@@ -267,12 +455,125 @@ def _select_oldest_incident(
     return item_id, path
 
 
+def _families_by_id(
+    work_item_families: tuple[WorkItemFamilyDefinition, ...] | None,
+) -> dict[str, WorkItemFamilyDefinition]:
+    families = (
+        work_item_families
+        if work_item_families is not None
+        else load_builtin_workflow_primitives().work_item_families
+    )
+    return {family.family_id: family for family in families}
+
+
+def _active_planning_item_count(
+    paths: WorkspacePaths,
+    *,
+    family_order: tuple[str, ...],
+    families_by_id: dict[str, WorkItemFamilyDefinition],
+) -> int:
+    count = 0
+    for family_id in family_order:
+        family = families_by_id.get(family_id)
+        if family is None or family.plane is not Plane.PLANNING:
+            continue
+        active_dir = paths.runtime_root / family.queue_dirs.active
+        count += len(_list_family_files(active_dir, family))
+    return count
+
+
+_INVALID_GENERIC_PAYLOAD = object()
+
+
+def _generic_json_payload(
+    directory: Path,
+    path: Path,
+    raw: str,
+    family: WorkItemFamilyDefinition,
+) -> dict[str, Any] | object | None:
+    if family.file_extension != ".json":
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        _quarantine_invalid_artifact(directory, path, str(exc))
+        return _INVALID_GENERIC_PAYLOAD
+    if not isinstance(payload, dict):
+        _quarantine_invalid_artifact(directory, path, "JSON work item artifact must be an object")
+        return _INVALID_GENERIC_PAYLOAD
+    return payload
+
+
+def _generic_document_matches_root_spec_id(
+    *,
+    raw: str,
+    payload: dict[str, Any] | object | None,
+    family: WorkItemFamilyDefinition,
+    root_spec_id: str | None,
+) -> bool:
+    if root_spec_id is None or not family.lineage_fields:
+        return True
+    if isinstance(payload, dict):
+        lineage_values = [
+            payload.get(field)
+            for field in (*family.lineage_fields, "root_spec_id")
+            if isinstance(payload.get(field), str) and payload.get(field)
+        ]
+        if not lineage_values:
+            return True
+        return root_spec_id in lineage_values
+
+    root_line_prefix = "Root-Spec-ID:"
+    for line in raw.splitlines():
+        if not line.startswith(root_line_prefix):
+            continue
+        value = line.removeprefix(root_line_prefix).strip()
+        return not value or value == root_spec_id
+    return True
+
+
+def _generic_work_item_id(
+    path: Path,
+    *,
+    payload: dict[str, Any] | object | None,
+    family: WorkItemFamilyDefinition,
+) -> str:
+    if family.id_field is not None and isinstance(payload, dict):
+        value = payload.get(family.id_field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return path.stem
+
+
+def _generic_sort_timestamp(
+    path: Path,
+    *,
+    payload: dict[str, Any] | object | None,
+    family: WorkItemFamilyDefinition,
+) -> datetime:
+    if isinstance(payload, dict):
+        value = payload.get(family.created_at_field)
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return datetime.now(timezone.utc)
+
+
+def _list_family_files(directory: Path, family: WorkItemFamilyDefinition) -> list[Path]:
+    if not directory.exists():
+        return []
+    return sorted(path for path in directory.glob(f"*{family.file_extension}") if path.is_file())
+
+
 def _select_oldest_learning_request(directory: Path) -> tuple[str, Path] | None:
     candidate = _select_oldest_document_candidate(
         directory=directory,
-        model=LearningRequestDocument,
-        id_attr="learning_request_id",
-        timestamp_attr="created_at",
+        adapter=adapter_for_kind(WorkItemKind.LEARNING_REQUEST),
     )
     if candidate is None:
         return None
@@ -283,17 +584,15 @@ def _select_oldest_learning_request(directory: Path) -> tuple[str, Path] | None:
 def _select_oldest_document_candidate(
     *,
     directory: Path,
-    model: type[_DocT],
-    id_attr: str,
-    timestamp_attr: str,
+    adapter: WorkItemDocumentAdapter[_DocT],
     root_spec_id: str | None = None,
 ) -> tuple[datetime, str, Path] | None:
     candidates: list[tuple[datetime, str, Path]] = []
     for path in _list_markdown_files(directory):
         try:
-            document = parse_work_document_as(
+            document = parse_with_adapter(
+                adapter,
                 path.read_text(encoding="utf-8"),
-                model=model,
                 path=path,
             )
         except FileNotFoundError:
@@ -301,21 +600,22 @@ def _select_oldest_document_candidate(
         except (ValidationError, ValueError) as exc:
             _quarantine_invalid_artifact(directory, path, str(exc))
             continue
-        item_id = str(getattr(document, id_attr))
+        item_id = adapter.item_id(document)
         if path.stem != item_id:
             _quarantine_invalid_artifact(
                 directory,
                 path,
-                f"filename stem does not match {id_attr}: expected {item_id}, found {path.stem}",
+                f"filename stem does not match {adapter.id_attr}: expected {item_id}, found {path.stem}",
             )
             continue
         if (
             root_spec_id is not None
+            and adapter.supports_root_filter
             and isinstance(document, (TaskDocument, SpecDocument, IncidentDocument))
             and effective_root_spec_id(document) != root_spec_id
         ):
             continue
-        timestamp = getattr(document, timestamp_attr)
+        timestamp = adapter.timestamp(document)
         candidates.append((timestamp, item_id, path))
 
     if not candidates:
@@ -327,6 +627,16 @@ def _select_oldest_document_candidate(
 
 def _list_markdown_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.glob("*.md") if path.is_file())
+
+
+def _list_json_files(directory: Path) -> list[Path]:
+    if not directory.exists():
+        return []
+    return sorted(path for path in directory.glob("*.json") if path.is_file())
+
+
+def _blueprint_drafts_dir(paths: WorkspacePaths, state: str) -> Path:
+    return paths.runtime_root / "blueprints" / "drafts" / state
 
 
 def _task_dependencies_satisfied(task: TaskDocument, completed_task_ids: set[str]) -> bool:

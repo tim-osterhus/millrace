@@ -27,8 +27,27 @@ class GraphLoopEntryKey(str, Enum):
     PROBE = "probe"
     SPEC = "spec"
     INCIDENT = "incident"
+    BLUEPRINT_DRAFT = "blueprint_draft"
     CLOSURE_TARGET = "closure_target"
     LEARNING_REQUEST = "learning_request"
+
+
+GraphLoopEntryKeyValue = GraphLoopEntryKey | str
+
+
+def graph_loop_entry_key_value(value: GraphLoopEntryKeyValue) -> str:
+    raw_value = value.value if isinstance(value, GraphLoopEntryKey) else getattr(value, "value", value)
+    return str(raw_value)
+
+
+def normalize_graph_loop_entry_key(value: object) -> GraphLoopEntryKeyValue:
+    if isinstance(value, GraphLoopEntryKey):
+        return value
+    normalized = normalize_canonical_id(str(value), field_label="entry_key")
+    try:
+        return GraphLoopEntryKey(normalized)
+    except ValueError:
+        return normalized
 
 
 class GraphLoopEdgeKind(str, Enum):
@@ -129,8 +148,18 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
 
 
 class GraphLoopEntryDefinition(ArchitectureContractModel):
-    entry_key: GraphLoopEntryKey
+    entry_key: GraphLoopEntryKeyValue
     node_id: str
+
+    @field_validator("entry_key", mode="before")
+    @classmethod
+    def validate_entry_key(cls, value: object) -> GraphLoopEntryKeyValue:
+        return normalize_graph_loop_entry_key(value)
+
+    @field_validator("entry_key", mode="after")
+    @classmethod
+    def coerce_known_entry_key(cls, value: GraphLoopEntryKeyValue) -> GraphLoopEntryKeyValue:
+        return normalize_graph_loop_entry_key(value)
 
     @field_validator("node_id")
     @classmethod
@@ -398,7 +427,8 @@ class GraphLoopDefinition(ArchitectureContractModel):
         for entry in self.entry_nodes:
             if entry.node_id not in node_id_set:
                 raise ValueError(
-                    f"entry key {entry.entry_key.value} references unknown node_id {entry.node_id}"
+                    f"entry key {graph_loop_entry_key_value(entry.entry_key)} "
+                    f"references unknown node_id {entry.node_id}"
                 )
 
         for edge in self.edges:
@@ -528,6 +558,7 @@ __all__ = [
     "GraphLoopEdgeKind",
     "GraphLoopEntryDefinition",
     "GraphLoopEntryKey",
+    "GraphLoopEntryKeyValue",
     "GraphLoopNodeDefinition",
     "GraphLoopResumePolicyDefinition",
     "GraphLoopThresholdPolicyDefinition",

@@ -121,6 +121,8 @@ def _render_event_lines(
         return (prefix + f"paused reason={_string(event.payload.get('reason'))}",)
     if event.event_type == "runtime_stopped":
         return (prefix + f"stopped reason={_string(event.payload.get('reason'))}",)
+    if event.event_type == "runtime_unexpected_exit":
+        return (prefix + _render_runtime_unexpected_exit(event.payload),)
     if event.event_type == "runtime_config_reload_deferred":
         active_planes = event.payload.get("active_planes")
         if isinstance(active_planes, (list, tuple)):
@@ -184,6 +186,15 @@ def _render_runtime_started(payload: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _render_runtime_unexpected_exit(payload: Mapping[str, object]) -> str:
+    return (
+        "unexpected daemon exit "
+        f"phase={_string(payload.get('phase'))} "
+        f"exception={_string(payload.get('exception_type'))} "
+        f"error={_string(payload.get('error'))}"
+    )
+
+
 def _render_resumed_active_run(
     payload: Mapping[str, object],
     display_ids: _DisplayIdRegistry,
@@ -240,6 +251,7 @@ def _render_stage_completed(
     token_usage = _format_token_usage(payload.get("token_usage"))
     if token_usage is not None:
         parts.append(f"tokens={token_usage}")
+    parts.extend(_runtime_effect_parts(payload))
     return " ".join(parts)
 
 
@@ -401,6 +413,29 @@ def _format_token_usage(token_usage: object) -> str | None:
         f"think={_int_value(token_usage.get('thinking_tokens'))} "
         f"total={_int_value(token_usage.get('total_tokens'))}"
     )
+
+
+def _runtime_effect_parts(payload: Mapping[str, object]) -> list[str]:
+    parts: list[str] = []
+    handler_id = _optional_string(payload.get("runtime_effect_handler_id"))
+    if handler_id is not None:
+        parts.append(f"effect={handler_id}")
+    failure_class = _optional_string(payload.get("runtime_effect_failure_class"))
+    if failure_class is not None:
+        parts.append(f"failure={failure_class}")
+    failure_message = _optional_string(payload.get("runtime_effect_failure_message"))
+    if failure_message is not None:
+        parts.append(f"message={failure_message}")
+    mutation_phase = _optional_string(payload.get("runtime_effect_mutation_phase"))
+    if mutation_phase is not None:
+        parts.append(f"phase={mutation_phase}")
+    policy_id = _optional_string(payload.get("runtime_effect_failure_policy_id"))
+    if policy_id is not None:
+        parts.append(f"policy={policy_id}")
+    recovery_action = _optional_string(payload.get("runtime_effect_recovery_action"))
+    if recovery_action is not None:
+        parts.append(f"recovery={recovery_action}")
+    return parts
 
 
 def _stage_ref_from_payload(payload: Mapping[str, object]) -> str:

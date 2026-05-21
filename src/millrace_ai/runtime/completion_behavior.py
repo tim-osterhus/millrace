@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.architecture import GraphLoopCompletionBehaviorDefinition
-from millrace_ai.contracts import ClosureTargetState, Plane, SpecDocument, WorkItemKind
+from millrace_ai.contracts import (
+    ClosureBlockingWorkRef,
+    ClosureTargetState,
+    Plane,
+    SpecDocument,
+    WorkItemKind,
+)
+from millrace_ai.contracts.stage_metadata import validate_safe_identifier
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueClaim
@@ -19,20 +26,22 @@ from millrace_ai.workspace.arbiter_state import (
     write_canonical_idea_contract,
     write_canonical_root_spec_contract,
 )
+from millrace_ai.workspace.blueprint_state import list_open_blueprint_lineage_work_refs
 from millrace_ai.workspace.idea_sources import idea_source_artifact_path
 from millrace_ai.workspace.lineage_integrity import (
     LineageDriftDiagnostic,
     scan_closure_lineage_drift,
     write_lineage_drift_diagnostic,
 )
-from millrace_ai.workspace.queue_selection import list_open_lineage_work_ids
 from millrace_ai.workspace.work_documents import parse_work_document_as
+from millrace_ai.workspace.work_inventory import WorkInventoryItemRef, closure_blocking_refs
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 from .active_runs import active_run_from_closure_target, snapshot_with_active_run
 from .graph_authority import completion_activation_for_graph
+from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +113,10 @@ def maybe_activate_completion_stage(engine: RuntimeEngine) -> ClosureTargetState
     active_run = active_run_from_closure_target(
         activation=activation,
         target=target,
+        lane_id=lane_id_for_plane(engine.compiled_plan, activation.plane),
         run_id=engine._new_run_id(),
+        compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+        compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(engine.compiled_plan),
         now=engine._now(),
     )
     engine.snapshot = snapshot_with_active_run(
@@ -131,18 +143,102 @@ def refresh_closure_target_readiness(
     engine: RuntimeEngine,
     target: ClosureTargetState,
 ) -> ClosureTargetState:
-    blocking_work_ids = list_open_lineage_work_ids(
+    normal_refs = _closure_blocking_refs_from_inventory(
+        engine.paths,
+        root_spec_id=target.root_spec_id,
+        compiled_plan=engine.compiled_plan,
+    )
+    blueprint_refs = list_open_blueprint_lineage_work_refs(
         engine.paths,
         root_spec_id=target.root_spec_id,
     )
+    blocking_work_refs = _unique_blocking_refs((*normal_refs, *blueprint_refs))
+    blocking_work_ids = _safe_bare_work_ids(blocking_work_refs)
     updated = target.model_copy(
         update={
-            "closure_blocked_by_lineage_work": bool(blocking_work_ids),
+            "closure_blocked_by_lineage_work": bool(blocking_work_refs),
             "blocking_work_ids": blocking_work_ids,
+            "blocking_work_refs": blocking_work_refs,
         }
     )
     save_closure_target_state(engine.paths, updated)
     return updated
+
+
+def _closure_blocking_refs_from_inventory(
+    paths,
+    *,
+    root_spec_id: str,
+    compiled_plan,
+) -> tuple[ClosureBlockingWorkRef, ...]:
+    refs = closure_blocking_refs(
+        paths,
+        root_spec_id=root_spec_id,
+        compiled_plan=compiled_plan,
+    )
+    return tuple(
+        _blocking_ref_from_inventory(paths, ref)
+        for ref in refs
+        if ref.family_id != WorkItemKind.BLUEPRINT_DRAFT.value
+    )
+
+
+def _blocking_ref_from_inventory(paths, ref: WorkInventoryItemRef) -> ClosureBlockingWorkRef:
+    return ClosureBlockingWorkRef(
+        blocker_type="work_item",
+        reason="open_lineage_work",
+        work_item_family_id=ref.family_id,
+        work_item_id=ref.work_item_id,
+        state=ref.state,
+        artifact_path=_runtime_relative_path(paths, ref.path),
+    )
+
+
+def _safe_bare_work_ids(refs: tuple[ClosureBlockingWorkRef, ...]) -> tuple[str, ...]:
+    return _unique_ids(
+        (
+            ref.work_item_id
+            for ref in refs
+            if ref.blocker_type == "work_item"
+            and ref.work_item_id is not None
+            and _is_safe_identifier(ref.work_item_id)
+        )
+    )
+
+
+def _unique_blocking_refs(
+    refs: tuple[ClosureBlockingWorkRef, ...],
+) -> tuple[ClosureBlockingWorkRef, ...]:
+    unique: list[ClosureBlockingWorkRef] = []
+    seen: set[tuple[object, ...]] = set()
+    for ref in refs:
+        key = (
+            ref.blocker_type,
+            ref.work_item_family_id,
+            ref.work_item_id,
+            ref.reason,
+            ref.artifact_path,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(ref)
+    return tuple(unique)
+
+
+def _is_safe_identifier(value: str) -> bool:
+    try:
+        validate_safe_identifier(value, field_name="blocking_work_ids")
+    except ValueError:
+        return False
+    return True
+
+
+def _runtime_relative_path(paths, path: Path) -> str:
+    try:
+        return path.relative_to(paths.runtime_root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def block_on_closure_lineage_drift_if_present(
@@ -285,6 +381,10 @@ def _actionable_open_closure_targets(
     return tuple(
         target for target in open_targets if not target.closure_blocked_by_lineage_work
     )
+
+
+def _unique_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
 
 
 def _create_closure_target_for_spec(
@@ -461,10 +561,24 @@ def _mark_lineage_drift_blocked(
     diagnostic_path: Path,
 ) -> None:
     blocking_work_ids = tuple(finding.work_item_id for finding in diagnostic.findings)
+    blocking_work_refs = tuple(
+        ClosureBlockingWorkRef(
+            blocker_type="work_item",
+            reason="closure_lineage_drift",
+            work_item_family_id=finding.work_item_kind.value,
+            work_item_kind=finding.work_item_kind,
+            work_item_id=finding.work_item_id,
+            root_spec_id=finding.actual_root_spec_id or finding.expected_root_spec_id,
+            artifact_path=finding.path,
+            detail=f"expected_root_spec_id={finding.expected_root_spec_id}",
+        )
+        for finding in diagnostic.findings
+    )
     updated_target = target.model_copy(
         update={
             "closure_blocked_by_lineage_work": True,
             "blocking_work_ids": blocking_work_ids,
+            "blocking_work_refs": blocking_work_refs,
         }
     )
     save_closure_target_state(engine.paths, updated_target)

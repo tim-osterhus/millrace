@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.20.0
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.20.0`.
+- Keep the optional dashboard sidecar release aligned with Millrace v0.20.0
+  runtime workflow primitive, lane, and Blueprint Planning metadata.
+
 ## 0.19.0
 
 - Sync the package version and runtime dependency to `millrace-ai>=0.19.0`.

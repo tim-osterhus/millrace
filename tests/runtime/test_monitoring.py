@@ -10,7 +10,11 @@ from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
-from millrace_ai.runtime.monitoring import RuntimeMonitorEvent, RuntimeMonitorSink
+from millrace_ai.runtime.monitoring import (
+    RuntimeMonitorEvent,
+    RuntimeMonitorSink,
+    runtime_effect_monitor_payload,
+)
 
 NOW = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -161,6 +165,36 @@ def test_runtime_tick_emits_stage_router_and_status_events(tmp_path: Path) -> No
     assert completed.payload["run_id"]
     assert completed.payload["duration_seconds"] == 1.0
     assert completed.payload["summary_status_marker"] == "### BUILDER_COMPLETE"
+
+
+def test_runtime_effect_monitor_payload_preserves_operator_diagnostic_fields() -> None:
+    payload = runtime_effect_monitor_payload(
+        {
+            "runtime_effect_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "blueprint_manifest_parse_error",
+            "runtime_effect_failure_message": "blueprint_manifest.json is malformed",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": "manager_blueprint_pre_mutation_artifact_repair",
+            "runtime_effect_recovery_action": "route_to_node",
+            "runtime_effect_created_paths": [
+                "millrace-agents/blueprints/manifests/manifest-001.json"
+            ],
+        }
+    )
+
+    assert payload == {
+        "runtime_effect_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
+        "runtime_effect_decision": "request_block_source",
+        "runtime_effect_failure_class": "blueprint_manifest_parse_error",
+        "runtime_effect_failure_message": "blueprint_manifest.json is malformed",
+        "runtime_effect_mutation_phase": "pre_mutation",
+        "runtime_effect_failure_policy_id": "manager_blueprint_pre_mutation_artifact_repair",
+        "runtime_effect_recovery_action": "route_to_node",
+        "runtime_effect_created_paths": (
+            "millrace-agents/blueprints/manifests/manifest-001.json",
+        ),
+    }
 
 
 def test_runtime_learning_stage_monitor_event_includes_learning_identity(tmp_path: Path) -> None:

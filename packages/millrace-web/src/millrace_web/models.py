@@ -82,6 +82,8 @@ class QueueSummary(WebModel):
     specs: QueueBucket = Field(default_factory=QueueBucket)
     incidents: QueueBucket = Field(default_factory=QueueBucket)
     learning: QueueBucket = Field(default_factory=QueueBucket)
+    blueprint_drafts: QueueBucket = Field(default_factory=QueueBucket)
+    graph_owned_families: dict[str, QueueBucket] = Field(default_factory=dict)
 
 
 class UsageGovernanceSummary(WebModel):

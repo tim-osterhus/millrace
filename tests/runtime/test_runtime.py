@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from millrace_ai.architecture import WorkItemFamilyDefinition
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ActiveRunState,
     ClosureTargetState,
@@ -117,6 +120,60 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
     )
 
 
+def _custom_planning_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "inspect"),
+    )
+
+
+def _persist_custom_family(paths, family: WorkItemFamilyDefinition) -> None:
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+    updated = outcome.active_plan.model_copy(
+        update={
+            "work_item_families_by_id": {
+                **outcome.active_plan.work_item_families_by_id,
+                family.family_id: family,
+            }
+        }
+    )
+    (paths.state_dir / "compiled_plan.json").write_text(
+        updated.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _probe_doc(probe_id: str, *, created_at: datetime) -> ProbeDocument:
     return ProbeDocument(
         probe_id=probe_id,
@@ -221,6 +278,7 @@ def _runner_result(
     stdout_path = run_dir / "runner_stdout.txt"
     stdout_payload = "no terminal token\n" if terminal is None else f"### {terminal}\n"
     stdout_path.write_text(stdout_payload, encoding="utf-8")
+    _write_default_planner_disposition(request, terminal=terminal, run_dir=run_dir, now=now)
 
     return RunnerRawResult(
         request_id=request.request_id,
@@ -237,6 +295,54 @@ def _runner_result(
         observed_exit_code=observed_exit_code,
         started_at=now,
         ended_at=now + timedelta(seconds=1),
+    )
+
+
+def _write_default_planner_disposition(
+    request: StageRunRequest,
+    *,
+    terminal: str | None,
+    run_dir: Path,
+    now: datetime,
+) -> None:
+    if request.stage is not PlanningStageName.PLANNER:
+        return
+    if terminal not in {
+        PlanningTerminalResult.PLANNER_COMPLETE.value,
+        PlanningTerminalResult.BLOCKED.value,
+    }:
+        return
+    if (run_dir / "planner_disposition.json").exists():
+        return
+    source_family_id = request.active_work_item_family_id
+    if source_family_id is None and request.active_work_item_kind is not None:
+        source_family_id = request.active_work_item_kind.value
+    if source_family_id is None or request.active_work_item_id is None:
+        return
+    disposition = (
+        "blocked"
+        if terminal == PlanningTerminalResult.BLOCKED.value
+        else "active_source_ready_for_manager"
+    )
+    (run_dir / "planner_disposition.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "planner_disposition",
+                "source_work_item_family_id": source_family_id,
+                "source_work_item_id": request.active_work_item_id,
+                "disposition": disposition,
+                "emitted_spec_ids": [],
+                "refined_active_source": False,
+                "recommended_next_action": disposition,
+                "created_at": now.isoformat().replace("+00:00", "Z"),
+                "created_by": "planner",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
 
@@ -428,6 +534,48 @@ def test_runtime_tick_claim_activation_uses_compiled_plan_authority(
     assert snapshot.active_stage_kind_id == "updater"
 
 
+def test_runtime_tick_routes_missing_compiled_planning_queue_claim_policy_to_recovery(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_spec(_spec_doc("spec-001", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError(f"stage runner should not be called: {request}")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    assert engine.compiled_plan is not None
+    engine.compiled_plan = engine.compiled_plan.model_copy(
+        update={
+            "queue_claim_policies_by_plane": {
+                plane: policy
+                for plane, policy in engine.compiled_plan.queue_claim_policies_by_plane.items()
+                if plane is not Plane.PLANNING
+            }
+        }
+    )
+
+    outcome = engine.tick()
+    snapshot = load_snapshot(paths)
+    context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+    events = read_runtime_events(paths)
+
+    assert outcome.router_decision.reason == "runtime_exception:planning_pre_dispatch_failed"
+    assert snapshot.active_stage is PlanningStageName.MECHANIC
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "planning_pre_dispatch_failed"
+    assert context["error_code"] == "planning_pre_dispatch_failed"
+    assert context["work_item_family_id"] == "spec"
+    assert context["work_item_id"] == "runtime-pre-dispatch"
+    assert "compiled plan missing planning queue claim policy" in context["exception_message"]
+    assert any(
+        event.event_type == "runtime_pre_dispatch_recovery_scheduled"
+        and event.data.get("error_code") == "planning_pre_dispatch_failed"
+        for event in events
+    )
+
+
 def test_learning_mode_stage_requests_persist_skill_revision_evidence(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -582,6 +730,12 @@ def test_learning_mode_planner_complete_triggers_librarian_request_with_planner_
         )
         stdout_path = run_dir / "runner_stdout.txt"
         stdout_path.write_text("### PLANNER_COMPLETE\n", encoding="utf-8")
+        _write_default_planner_disposition(
+            request,
+            terminal=PlanningTerminalResult.PLANNER_COMPLETE.value,
+            run_dir=run_dir,
+            now=NOW,
+        )
         return RunnerRawResult(
             request_id=request.request_id,
             run_id=request.run_id,
@@ -1574,7 +1728,7 @@ def test_runtime_claims_generated_spec_after_recon_to_planning_handoff(
                 emitted_spec_id="spec-from-probe",
             )
             (run_dir / "recon_packet.md").write_text(render_recon_packet(packet), encoding="utf-8")
-            (run_dir / "generated_spec.md").write_text(
+            (run_dir / "generated_spec.json").write_text(
                 _generated_probe_spec().model_dump_json(indent=2),
                 encoding="utf-8",
             )
@@ -2003,7 +2157,7 @@ def test_runtime_startup_reconciles_stale_state_to_recovery_stage(tmp_path: Path
         }
     )
     save_snapshot(paths, stale_snapshot)
-    set_execution_status(paths, "### CHECKER_PASS")
+    set_execution_status(paths, "### CHECKER_RUNNING")
 
     seen_stages: list[str] = []
 
@@ -2079,7 +2233,7 @@ def test_runtime_tick_reconciles_execution_anomaly_before_stage_execution(
     )
     save_snapshot(paths, stale_snapshot)
     engine.snapshot = stale_snapshot
-    set_execution_status(paths, "### CHECKER_PASS")
+    set_execution_status(paths, "### CHECKER_RUNNING")
 
     outcome = engine.tick()
 
@@ -2283,7 +2437,7 @@ def test_runtime_tick_stale_execution_anomaly_escalates_to_consultant(
     save_snapshot(paths, stale_snapshot)
     engine.snapshot = stale_snapshot
     engine.counters = load_recovery_counters(paths)
-    set_execution_status(paths, "### CHECKER_PASS")
+    set_execution_status(paths, "### CHECKER_RUNNING")
 
     outcome = engine.tick()
 
@@ -2541,7 +2695,10 @@ def test_runtime_tick_applies_mailbox_then_watcher_before_no_work_idle(tmp_path:
     engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
     engine.startup()
 
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text(
+        "[runtime]\nrun_style = 'daemon'\nidle_sleep_seconds = 2.0\n",
+        encoding="utf-8",
+    )
     write_mailbox_command(paths, _mailbox_command("cmd-reload-idle-order", "reload_config"))
 
     ignored_path = paths.root / "ignored.target"
@@ -2577,7 +2734,7 @@ def test_runtime_tick_applies_mailbox_then_watcher_before_no_work_idle(tmp_path:
     event_types = [event.event_type for event in read_runtime_events(paths)]
 
     assert outcome.router_decision.reason == "no_work"
-    assert snapshot.runtime_mode is RuntimeMode.ONCE
+    assert snapshot.runtime_mode is RuntimeMode.DAEMON
     assert snapshot.last_reload_outcome == "applied"
     assert event_types.index("runtime_config_reloaded") < event_types.index("watcher_event_ignored")
     assert event_types.index("watcher_event_ignored") < event_types.index("watcher_events_consumed")
@@ -2710,7 +2867,7 @@ def test_runtime_tick_handles_active_stage_without_work_item_identity(tmp_path: 
 def test_runtime_startup_projects_config_runtime_mode(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
         return _runner_result(
@@ -2722,7 +2879,7 @@ def test_runtime_startup_projects_config_runtime_mode(tmp_path: Path) -> None:
     engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
     snapshot = engine.startup()
 
-    assert snapshot.runtime_mode.value == "once"
+    assert snapshot.runtime_mode.value == "daemon"
 
 
 def test_runtime_startup_preserves_pause_flag_across_restart(tmp_path: Path) -> None:
@@ -3184,6 +3341,93 @@ def test_runtime_mailbox_applies_operator_intervention_before_new_work_claim(tmp
     assert "task_superseded" in event_types
 
 
+def test_runtime_mailbox_cancel_supports_custom_family(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    family = _custom_planning_family()
+    _persist_custom_family(paths, family)
+    queue_dir = paths.runtime_root / family.queue_dirs.queue
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    source = queue_dir / "custom-001.json"
+    source.write_text('{"custom_id":"custom-001"}\n', encoding="utf-8")
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    write_mailbox_command(
+        paths,
+        _mailbox_command(
+            "cmd-cancel-custom",
+            "cancel_work_item",
+            payload={
+                "work_item_id": "custom-001",
+                "work_item_family_id": "custom_review",
+                "reason": "operator cancelled custom item",
+            },
+        ),
+    )
+
+    engine._drain_mailbox()
+
+    assert not source.exists()
+    assert tuple((paths.runtime_root / family.queue_dirs.canceled).glob("custom-001.*.json"))
+    events = read_runtime_events(paths)
+    applied = [event for event in events if event.event_type == "mailbox_operator_intervention_applied"]
+    assert applied[-1].data["work_item_family_id"] == "custom_review"
+    assert applied[-1].data["work_item_kind"] is None
+
+
+def test_retry_active_planning_supports_custom_family_without_kind(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    family = _custom_planning_family()
+    _persist_custom_family(paths, family)
+    active_dir = paths.runtime_root / family.queue_dirs.active
+    active_dir.mkdir(parents=True, exist_ok=True)
+    active = active_dir / "custom-active.json"
+    active.write_text('{"custom_id":"custom-active"}\n', encoding="utf-8")
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        snapshot.model_copy(
+            update={
+                "runtime_mode": RuntimeMode.DAEMON,
+                "process_running": False,
+                "active_runs_by_plane": {
+                    Plane.PLANNING: ActiveRunState(
+                        plane=Plane.PLANNING,
+                        lane_id="planning.main",
+                        stage=PlanningStageName.PLANNER,
+                        node_id="planner",
+                        stage_kind_id="planner",
+                        run_id="run-custom-active",
+                        compiled_plan_id="bootstrap",
+                        compiled_plan_fingerprint="bootstrap",
+                        request_kind="active_work_item",
+                        work_item_family_id="custom_review",
+                        work_item_id="custom-active",
+                        active_since=NOW,
+                    )
+                },
+                "active_plane": Plane.PLANNING,
+                "active_stage": PlanningStageName.PLANNER,
+                "active_run_id": "run-custom-active",
+                "active_work_item_family_id": "custom_review",
+                "active_work_item_id": "custom-active",
+                "updated_at": NOW,
+            }
+        ),
+    )
+
+    result = RuntimeControl(paths).retry_active_planning(reason="operator requested retry")
+
+    assert result.applied is True
+    assert "custom_review custom-active" in result.detail
+    assert not active.exists()
+    assert (paths.runtime_root / family.queue_dirs.queue / "custom-active.json").is_file()
+
+
 def test_runtime_mailbox_defers_operator_intervention_until_active_run_drains(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -3204,10 +3448,13 @@ def test_runtime_mailbox_defers_operator_intervention_until_active_run_drains(tm
             "active_runs_by_plane": {
                 Plane.EXECUTION: ActiveRunState(
                     plane=Plane.EXECUTION,
+                    lane_id="execution.main",
                     stage=ExecutionStageName.BUILDER,
                     node_id="builder",
                     stage_kind_id="builder",
                     run_id="run-active",
+                    compiled_plan_id=engine.snapshot.compiled_plan_id,
+                    compiled_plan_fingerprint=engine.snapshot.compiled_plan_fingerprint,
                     request_kind="active_work_item",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-in-flight",
@@ -3267,7 +3514,7 @@ def test_runtime_mailbox_defers_operator_intervention_until_active_run_drains(tm
     assert not read_pending_mailbox_commands(paths)
 
 
-def test_runtime_mailbox_reload_config_applies_updated_runtime_mode(tmp_path: Path) -> None:
+def test_runtime_mailbox_reload_config_rejects_legacy_run_once_style(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
     config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
@@ -3283,11 +3530,15 @@ def test_runtime_mailbox_reload_config_applies_updated_runtime_mode(tmp_path: Pa
     engine._drain_mailbox()
 
     assert engine.config is not None
-    assert engine.config.runtime.run_style is RuntimeMode.ONCE
+    assert engine.config.runtime.run_style is RuntimeMode.DAEMON
     snapshot = load_snapshot(paths)
-    assert snapshot.runtime_mode is RuntimeMode.ONCE
-    assert snapshot.last_reload_outcome == "applied"
-    assert snapshot.last_reload_error is None
+    assert snapshot.runtime_mode is RuntimeMode.DAEMON
+    assert snapshot.last_reload_outcome == "failed_retained_previous_plan"
+    assert snapshot.last_reload_error is not None
+    assert "run_style" in snapshot.last_reload_error
+    assert "once" in snapshot.last_reload_error
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+    assert "runtime_config_reload_failed" in event_types
 
 
 def test_runtime_mailbox_reload_config_rejects_stale_previous_plan_on_compile_failure(
@@ -3311,8 +3562,8 @@ def test_runtime_mailbox_reload_config_rejects_stale_previous_plan_on_compile_fa
     reloaded_snapshot = load_snapshot(paths)
     assert reloaded_snapshot.compiled_plan_id == original_compiled_plan_id
     assert reloaded_snapshot.active_mode_id == "default_codex"
-    assert reloaded_snapshot.process_running is False
-    assert reloaded_snapshot.stop_requested is True
+    assert reloaded_snapshot.process_running is True
+    assert reloaded_snapshot.stop_requested is False
     assert reloaded_snapshot.last_reload_outcome == "failed_retained_previous_plan"
     assert reloaded_snapshot.last_reload_error is not None
     assert "missing_mode" in reloaded_snapshot.last_reload_error
@@ -3460,10 +3711,10 @@ def test_runtime_startup_allows_independent_daemon_ownership_per_workspace(tmp_p
     assert workspace_b.runtime_lock_file.is_file()
 
 
-def test_runtime_once_startup_acquires_lock_and_close_releases_it(tmp_path: Path) -> None:
+def test_runtime_daemon_startup_acquires_lock_and_close_releases_it(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
         return _runner_result(
@@ -3480,10 +3731,10 @@ def test_runtime_once_startup_acquires_lock_and_close_releases_it(tmp_path: Path
     assert paths.runtime_lock_file.exists() is False
 
 
-def test_runtime_startup_rejects_run_once_when_workspace_lock_is_already_held(tmp_path: Path) -> None:
+def test_runtime_startup_rejects_daemon_when_workspace_lock_is_already_held(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
     acquire_runtime_ownership_lock(
         paths,
         owner_pid=os.getpid(),
@@ -3505,10 +3756,10 @@ def test_runtime_startup_rejects_run_once_when_workspace_lock_is_already_held(tm
     assert isinstance(excinfo.value.__cause__, RuntimeOwnershipLockError)
 
 
-def test_runtime_run_once_lock_contention_does_not_rewrite_compile_artifacts(tmp_path: Path) -> None:
+def test_runtime_daemon_lock_contention_does_not_rewrite_compile_artifacts(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
         return _runner_result(
@@ -3566,7 +3817,7 @@ def test_runtime_tick_stop_without_owned_lock_does_not_release_external_lock(
 ) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
         raise AssertionError("stage_runner should not be called")
@@ -3592,7 +3843,9 @@ def test_runtime_tick_stop_without_owned_lock_does_not_release_external_lock(
     assert paths.runtime_lock_file.is_file()
 
 
-def test_runtime_mailbox_reload_config_retains_lock_when_switching_to_once(tmp_path: Path) -> None:
+def test_runtime_mailbox_reload_config_retains_lock_when_rejecting_legacy_run_once(
+    tmp_path: Path,
+) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
     config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
@@ -3610,13 +3863,16 @@ def test_runtime_mailbox_reload_config_retains_lock_when_switching_to_once(tmp_p
 
     assert paths.runtime_lock_file.is_file()
     snapshot = load_snapshot(paths)
-    assert snapshot.runtime_mode is RuntimeMode.ONCE
+    assert snapshot.runtime_mode is RuntimeMode.DAEMON
+    assert snapshot.last_reload_outcome == "failed_retained_previous_plan"
+    assert snapshot.last_reload_error is not None
+    assert "run_style" in snapshot.last_reload_error
 
 
-def test_runtime_mailbox_reload_config_retains_lock_when_switching_to_daemon(tmp_path: Path) -> None:
+def test_runtime_mailbox_reload_config_retains_lock_when_reloading_daemon_config(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     config_path = paths.runtime_root / "millrace.toml"
-    config_path.write_text("[runtime]\nrun_style = 'once'\n", encoding="utf-8")
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
 
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
         raise AssertionError("stage_runner should not be called")
@@ -3625,11 +3881,16 @@ def test_runtime_mailbox_reload_config_retains_lock_when_switching_to_daemon(tmp
     engine.startup()
     assert paths.runtime_lock_file.is_file()
 
-    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
+    config_path.write_text(
+        "[runtime]\nrun_style = 'daemon'\nidle_sleep_seconds = 2.0\n",
+        encoding="utf-8",
+    )
     write_mailbox_command(paths, _mailbox_command("cmd-reload-daemon", "reload_config"))
     engine._drain_mailbox()
 
     assert paths.runtime_lock_file.is_file()
+    assert engine.config is not None
+    assert engine.config.runtime.idle_sleep_seconds == 2.0
     snapshot = load_snapshot(paths)
     assert snapshot.runtime_mode is RuntimeMode.DAEMON
 

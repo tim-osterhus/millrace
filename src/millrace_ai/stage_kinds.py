@@ -9,6 +9,7 @@ from millrace_ai.assets.architecture import (
     load_builtin_stage_kind_definition,
     load_builtin_stage_kind_definitions,
     load_stage_kind_definition,
+    stage_kind_asset_relative_path,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "load_stage_kind_definition",
     "load_builtin_stage_kind_definition",
     "load_builtin_stage_kind_definitions",
+    "stage_kind_asset_relative_path",
 ]

@@ -54,6 +54,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         },
         "allowed_input_artifacts": [],
         "declared_output_artifacts": ["stage_result", "report"],
+        "allowed_work_item_families": ["task"],
         "idempotence_policy": "retry_safe_with_key",
         "allowed_overrides": [
             "entrypoint_path",
@@ -155,6 +156,7 @@ def test_shipped_graph_loop_ids_are_stable() -> None:
         "execution.with_integrator",
         "learning.standard",
         "planning.standard",
+        "planning.blueprint",
     )
 
 
@@ -271,6 +273,50 @@ def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:
         for state in learning.terminal_states
         if state.terminal_state_id.endswith("_noop")
     } == {GraphLoopTerminalClass.NO_OP}
+
+
+def test_blueprint_planning_graph_routes_drafts_through_contract_review() -> None:
+    planning = load_builtin_graph_loop_definition("planning.blueprint")
+    entry_nodes = {entry.entry_key.value: entry.node_id for entry in planning.entry_nodes}
+    nodes = {node.node_id: node for node in planning.nodes}
+    edges = {edge.edge_id: edge for edge in planning.edges}
+    terminal_states = {state.terminal_state_id: state for state in planning.terminal_states}
+
+    assert planning.plane is Plane.PLANNING
+    assert entry_nodes == {
+        "probe": "recon",
+        "spec": "planner",
+        "incident": "auditor",
+        "blueprint_draft": "contractor_blueprint",
+    }
+    assert nodes["manager_blueprint"].stage_kind_id == "manager_blueprint"
+    assert nodes["contractor_blueprint"].stage_kind_id == "contractor_blueprint"
+    assert nodes["evaluator_blueprint"].stage_kind_id == "evaluator_blueprint"
+    assert nodes["mechanic_blueprint"].stage_kind_id == "mechanic_blueprint"
+
+    assert edges["planner-complete-to-manager-blueprint"].to_node_id == "manager_blueprint"
+    assert edges["manager-blueprint-complete-to-terminal"].terminal_state_id == (
+        "manager_blueprint_complete"
+    )
+    assert edges["contractor-candidate-ready-to-evaluator"].to_node_id == "evaluator_blueprint"
+    assert edges["evaluator-approved-to-terminal"].terminal_state_id == "blueprint_approved"
+    assert edges["evaluator-rejected-to-contractor"].to_node_id == "contractor_blueprint"
+    assert edges["evaluator-blocked-to-mechanic-blueprint"].to_node_id == "mechanic_blueprint"
+
+    assert terminal_states["manager_blueprint_complete"].terminal_class is GraphLoopTerminalClass.SUCCESS
+    assert terminal_states["manager_blueprint_complete"].emits_artifacts == (
+        "stage_result",
+        "blueprint_manifest",
+        "blueprint_drafts",
+    )
+    assert terminal_states["blueprint_approved"].terminal_class is GraphLoopTerminalClass.SUCCESS
+    assert terminal_states["blueprint_approved"].emits_artifacts == (
+        "stage_result",
+        "blueprint_evaluation",
+        "generated_task",
+    )
+    assert planning.completion_behavior is not None
+    assert planning.completion_behavior.target_node_id == "arbiter"
 
 
 def test_graph_loop_node_declares_thinking_level_override() -> None:

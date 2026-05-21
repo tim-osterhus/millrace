@@ -2,45 +2,35 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.paths import workspace_paths
+from millrace_ai.workspace.work_inventory import family_counts
 
 from millrace_web.models import QueueBucket, QueueSummary, WorkspaceRef
 
 
 def read_queue_summary(workspace: WorkspaceRef) -> QueueSummary:
     paths = workspace_paths(workspace.path)
+    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
+    counts_by_family = family_counts(paths, compiled_plan=compiled_plan)
+    graph_owned_families = {
+        family_id: _bucket_from_counts(counts)
+        for family_id, counts in sorted(counts_by_family.items())
+    }
     return QueueSummary(
-        tasks=QueueBucket(
-            incoming=_count_files(paths.tasks_queue_dir),
-            active=_count_files(paths.tasks_active_dir),
-            done=_count_files(paths.tasks_done_dir),
-            blocked=_count_files(paths.tasks_blocked_dir),
-        ),
-        specs=QueueBucket(
-            incoming=_count_files(paths.specs_queue_dir),
-            active=_count_files(paths.specs_active_dir),
-            done=_count_files(paths.specs_done_dir),
-            blocked=_count_files(paths.specs_blocked_dir),
-        ),
-        incidents=QueueBucket(
-            incoming=_count_files(paths.incidents_incoming_dir),
-            active=_count_files(paths.incidents_active_dir),
-            done=_count_files(paths.incidents_resolved_dir),
-            blocked=_count_files(paths.incidents_blocked_dir),
-        ),
-        learning=QueueBucket(
-            incoming=_count_files(paths.learning_requests_queue_dir),
-            active=_count_files(paths.learning_requests_active_dir),
-            done=_count_files(paths.learning_requests_done_dir),
-            blocked=_count_files(paths.learning_requests_blocked_dir),
-        ),
+        tasks=graph_owned_families.get("task", QueueBucket()),
+        specs=graph_owned_families.get("spec", QueueBucket()),
+        incidents=graph_owned_families.get("incident", QueueBucket()),
+        learning=graph_owned_families.get("learning_request", QueueBucket()),
+        blueprint_drafts=graph_owned_families.get("blueprint_draft", QueueBucket()),
+        graph_owned_families=graph_owned_families,
     )
 
 
-def _count_files(path: Path) -> int:
-    if not path.is_dir():
-        return 0
-    return sum(1 for item in path.iterdir() if item.is_file() and not item.name.startswith("."))
-
+def _bucket_from_counts(counts: dict[str, int]) -> QueueBucket:
+    return QueueBucket(
+        incoming=counts.get("queue", 0),
+        active=counts.get("active", 0),
+        done=counts.get("done", 0),
+        blocked=counts.get("blocked", 0),
+    )

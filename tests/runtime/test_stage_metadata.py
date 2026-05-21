@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+from millrace_ai.architecture import MaterializedGraphNodePlan
 from millrace_ai.assets import load_builtin_stage_kind_definitions
 from millrace_ai.contracts import (
     ExecutionStageName,
     LearningStageName,
     Plane,
     PlanningStageName,
+    ResultClass,
+    WorkItemKind,
 )
 from millrace_ai.contracts.stage_metadata import (
     STAGE_METADATA_BY_VALUE,
@@ -22,7 +25,9 @@ from millrace_ai.contracts.stage_metadata import (
     stage_plane,
     terminal_result_for_plane,
 )
+from millrace_ai.errors import StageWorkItemOwnershipError
 from millrace_ai.runners import StageRunRequest
+from millrace_ai.runtime.stage_requests import validate_stage_work_item_ownership
 
 
 def _all_stage_values() -> set[str]:
@@ -76,6 +81,62 @@ def test_stage_run_request_prompt_defaults_stay_metadata_driven() -> None:
     assert request.legal_terminal_markers == legal_terminal_markers(ExecutionStageName.BUILDER)
     assert request.allowed_result_classes_by_outcome == allowed_result_classes_by_outcome(
         ExecutionStageName.BUILDER
+    )
+
+
+def _compiled_node_plan(
+    *,
+    stage_kind_id: str,
+    allowed_work_item_families: tuple[str, ...],
+) -> MaterializedGraphNodePlan:
+    return MaterializedGraphNodePlan(
+        node_id=stage_kind_id,
+        stage_kind_id=stage_kind_id,
+        plane=Plane.PLANNING,
+        entrypoint_path="entrypoints/planning/planner.md",
+        running_status_marker="PLANNER_RUNNING",
+        allowed_result_classes_by_outcome={"PLANNER_COMPLETE": (ResultClass.SUCCESS,)},
+        allowed_work_item_families=allowed_work_item_families,
+    )
+
+
+def test_stage_work_item_ownership_uses_compiled_node_allowed_families() -> None:
+    plan = _compiled_node_plan(
+        stage_kind_id=PlanningStageName.MANAGER.value,
+        allowed_work_item_families=("probe",),
+    )
+
+    validate_stage_work_item_ownership(
+        plan,
+        request_kind="active_work_item",
+        active_work_item_kind=WorkItemKind.PROBE,
+    )
+
+
+def test_stage_work_item_ownership_rejects_families_missing_from_compiled_node() -> None:
+    plan = _compiled_node_plan(
+        stage_kind_id=PlanningStageName.MANAGER.value,
+        allowed_work_item_families=("spec", "incident"),
+    )
+
+    with pytest.raises(StageWorkItemOwnershipError, match="requires work item family incident, spec"):
+        validate_stage_work_item_ownership(
+            plan,
+            request_kind="active_work_item",
+            active_work_item_kind=WorkItemKind.PROBE,
+        )
+
+
+def test_stage_work_item_ownership_skips_non_active_work_item_requests() -> None:
+    plan = _compiled_node_plan(
+        stage_kind_id=PlanningStageName.ARBITER.value,
+        allowed_work_item_families=(),
+    )
+
+    validate_stage_work_item_ownership(
+        plan,
+        request_kind="closure_target",
+        active_work_item_kind=None,
     )
 
 

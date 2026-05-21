@@ -17,7 +17,11 @@ recommended_for_stages:
   - recon
   - planner
   - manager
+  - manager_blueprint
+  - contractor_blueprint
+  - evaluator_blueprint
   - mechanic
+  - mechanic_blueprint
   - auditor
   - arbiter
   - analyst
@@ -70,7 +74,11 @@ entrypoint explicitly assigns them.
 | `recon-core` | Recon posture for grounded probe classification and downstream handoff context. | `planning`, `stage-core` | `skills/stage/planning/recon-core/SKILL.md` | shipped |
 | `planner-core` | Planner synthesis posture, assumption marking, and spec focus. | `planning`, `stage-core` | `skills/stage/planning/planner-core/SKILL.md` | shipped |
 | `manager-core` | Manager decomposition posture, ordering, and task-verifiability habits. | `planning`, `stage-core` | `skills/stage/planning/manager-core/SKILL.md` | shipped |
+| `manager-blueprint-core` | Manager Blueprint posture for strict-sequence manifest and draft generation. | `planning`, `stage-core`, `blueprint` | `skills/stage/planning/manager-blueprint-core/SKILL.md` | shipped |
+| `contractor-blueprint-core` | Contractor Blueprint posture for one-draft implementation blueprints. | `planning`, `stage-core`, `blueprint` | `skills/stage/planning/contractor-blueprint-core/SKILL.md` | shipped |
+| `evaluator-blueprint-core` | Evaluator Blueprint posture for approval, critique, and generated task readiness. | `planning`, `stage-core`, `blueprint` | `skills/stage/planning/evaluator-blueprint-core/SKILL.md` | shipped |
 | `mechanic-core` | Mechanic repair posture for planning-side inconsistencies. | `planning`, `stage-core` | `skills/stage/planning/mechanic-core/SKILL.md` | shipped |
+| `mechanic-blueprint-core` | Mechanic Blueprint posture for narrow Blueprint loop repair. | `planning`, `stage-core`, `blueprint` | `skills/stage/planning/mechanic-blueprint-core/SKILL.md` | shipped |
 | `auditor-core` | Auditor intake posture, evidence linkage, and incident normalization habits. | `planning`, `stage-core` | `skills/stage/planning/auditor-core/SKILL.md` | shipped |
 | `arbiter-core` | Arbiter rubric discipline, parity judgment, and remediation handoff posture. | `planning`, `stage-core` | `skills/stage/planning/arbiter-core/SKILL.md` | shipped |
 | `analyst-core` | Analyst research posture for skill learning requests and evidence packets. | `learning`, `stage-core` | `skills/stage/learning/analyst-core/SKILL.md` | shipped |

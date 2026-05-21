@@ -127,12 +127,14 @@ def _exercise_minimum_functionality_workspace(
         str(workspace),
         cwd=cwd,
     )
-    no_work_run_once = _run_cli(
+    no_work_bounded_daemon = _run_cli(
         command_prefix,
         "run",
-        "once",
+        "daemon",
         "--workspace",
         str(workspace),
+        "--max-ticks",
+        "1",
         cwd=cwd,
     )
     status = _run_cli(
@@ -146,11 +148,12 @@ def _exercise_minimum_functionality_workspace(
     assert init.returncode == 0, init.stderr or init.stdout
     assert compile_validate.returncode == 0, compile_validate.stderr or compile_validate.stdout
     assert compile_show.returncode == 0, compile_show.stderr or compile_show.stdout
-    assert no_work_run_once.returncode == 0, no_work_run_once.stderr or no_work_run_once.stdout
+    assert no_work_bounded_daemon.returncode == 0, no_work_bounded_daemon.stderr or no_work_bounded_daemon.stdout
     assert status.returncode == 0, status.stderr or status.stdout
     assert (workspace / "millrace-agents" / "millrace.toml").is_file()
     assert "completion_behavior.request_kind: closure_target" in compile_show.stdout
-    assert "tick_reason: no_work" in no_work_run_once.stdout
+    assert "run_mode: daemon" in no_work_bounded_daemon.stdout
+    assert "ticks: 1" in no_work_bounded_daemon.stdout
     assert "compiled_plan_id:" in status.stdout
 
     _configure_codex_smoke_runner(workspace, runner_python=runner_python)
@@ -166,12 +169,14 @@ def _exercise_minimum_functionality_workspace(
         str(workspace),
         cwd=cwd,
     )
-    queued_run_once = _run_cli(
+    queued_bounded_daemon = _run_cli(
         command_prefix,
         "run",
-        "once",
+        "daemon",
         "--workspace",
         str(workspace),
+        "--max-ticks",
+        "1",
         cwd=cwd,
     )
     runs_ls = _run_cli(
@@ -184,11 +189,11 @@ def _exercise_minimum_functionality_workspace(
     )
 
     assert queue_add_task.returncode == 0, queue_add_task.stderr or queue_add_task.stdout
-    assert queued_run_once.returncode == 0, queued_run_once.stderr or queued_run_once.stdout
+    assert queued_bounded_daemon.returncode == 0, queued_bounded_daemon.stderr or queued_bounded_daemon.stdout
     assert runs_ls.returncode == 0, runs_ls.stderr or runs_ls.stdout
     assert "enqueued_task:" in queue_add_task.stdout
-    assert "tick_reason:" in queued_run_once.stdout
-    assert "tick_reason: no_work" not in queued_run_once.stdout
+    assert "run_mode: daemon" in queued_bounded_daemon.stdout
+    assert "ticks: 1" in queued_bounded_daemon.stdout
     assert f"work_item_id: {SMOKE_TASK_ID}" in runs_ls.stdout
 
     run_id = next(

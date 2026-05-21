@@ -16,7 +16,7 @@ Allowed:
 - read the assigned probe at `active_work_item_path`
 - inspect relevant files, tests, docs, and recent runtime artifacts
 - create `recon_packet.md` in `run_dir`
-- create either `generated_task.md` or `generated_spec.md` in `run_dir` when routing onward
+- create either `generated_task.json` or `generated_spec.json` in `run_dir` when routing onward
 - explain uncertainty, risk, and verification requirements
 
 Not allowed:
@@ -37,10 +37,10 @@ Always write:
 - `run_dir/recon_packet.md`
 
 For `### RECON_TO_EXECUTION`, also write:
-- `run_dir/generated_task.md`
+- `run_dir/generated_task.json`
 
 For `### RECON_TO_PLANNING`, also write:
-- `run_dir/generated_spec.md`
+- `run_dir/generated_spec.json`
 
 For `### RECON_NOOP` or `### RECON_BLOCKED`, do not write generated task/spec artifacts.
 
@@ -107,7 +107,8 @@ Allowed `Decision` values:
 
 ## Generated Task Contract
 
-For execution-ready probes, write a task document as markdown or JSON at `run_dir/generated_task.md`.
+For execution-ready probes, write a task document as JSON at `run_dir/generated_task.json`.
+Legacy markdown at `run_dir/generated_task.md` is accepted only when the canonical JSON file is absent.
 The generated task must be schema-valid for the installed `TaskDocument`
 contract before the runtime can enqueue it. Do not emit `### RECON_TO_EXECUTION`
 with a partial task document.
@@ -138,7 +139,8 @@ invalid execution handoff.
 
 ## Generated Spec Contract
 
-For probes that need planning, write a spec document as markdown or JSON at `run_dir/generated_spec.md`.
+For probes that need planning, write a spec document as JSON at `run_dir/generated_spec.json`.
+Legacy markdown at `run_dir/generated_spec.md` is accepted only when the canonical JSON file is absent.
 
 Requirements:
 - set `Spec-ID` to the same value as `Emitted-Spec-ID`

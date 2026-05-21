@@ -20,6 +20,7 @@ from millrace_ai.runtime.run_traces import (
 )
 
 RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
+RunRuntimeOutcome = Literal["active", "complete", "blocked", "handoff", "incomplete", "malformed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,22 @@ class InspectedStageResult:
     thinking_level: str | None = None
     capability_grant_summaries: tuple[str, ...] = ()
     capability_support_summaries: tuple[str, ...] = ()
+    failure_origin: str | None = None
+    request_context_profile_id: str | None = None
+    context_bundle_path: str | None = None
+    context_artifact_refs: tuple[str, ...] = ()
+    context_render_plan_id: str | None = None
+    rendered_prompt_context_path: str | None = None
+    runtime_effect_handler_id: str | None = None
+    runtime_effect_decision: str | None = None
+    runtime_effect_failure_class: str | None = None
+    runtime_effect_failure_message: str | None = None
+    runtime_effect_mutation_phase: str | None = None
+    runtime_effect_created_paths: tuple[str, ...] = ()
+    runtime_effect_source_lifecycle_plan_id: str | None = None
+    runtime_effect_source_lifecycle_action: str | None = None
+    runtime_effect_failure_policy_id: str | None = None
+    runtime_effect_recovery_action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +76,8 @@ class InspectedRunSummary:
     run_id: str
     run_dir: str
     status: RunInspectionStatus
+    artifact_status: RunInspectionStatus
+    runtime_outcome: RunRuntimeOutcome
     compiled_plan_id: str | None
     mode_id: str | None
     request_kind: str | None
@@ -75,6 +94,14 @@ class InspectedRunSummary:
     completed_at: str | None = None
     duration_seconds: float | None = None
     token_usage: TokenUsage | None = None
+    failure_origin: str | None = None
+    runtime_effect_handler_id: str | None = None
+    runtime_effect_decision: str | None = None
+    runtime_effect_failure_class: str | None = None
+    runtime_effect_failure_message: str | None = None
+    runtime_effect_mutation_phase: str | None = None
+    runtime_effect_failure_policy_id: str | None = None
+    runtime_effect_recovery_action: str | None = None
 
 
 def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
@@ -87,10 +114,13 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
     status: RunInspectionStatus = "valid"
 
     if not stage_results_dir.exists():
+        runtime_outcome = _runtime_outcome_for_missing_stage_results(resolved_run_dir)
         return InspectedRunSummary(
             run_id=resolved_run_dir.name,
             run_dir=str(resolved_run_dir),
             status="incomplete",
+            artifact_status="incomplete",
+            runtime_outcome=runtime_outcome,
             compiled_plan_id=None,
             mode_id=None,
             request_kind=None,
@@ -109,10 +139,13 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         path for path in stage_results_dir.iterdir() if path.is_file() and path.suffix == ".json"
     )
     if not stage_result_paths:
+        runtime_outcome = _runtime_outcome_for_missing_stage_results(resolved_run_dir)
         return InspectedRunSummary(
             run_id=resolved_run_dir.name,
             run_dir=str(resolved_run_dir),
             status="incomplete",
+            artifact_status="incomplete",
+            runtime_outcome=runtime_outcome,
             compiled_plan_id=None,
             mode_id=None,
             request_kind=None,
@@ -161,6 +194,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 work_item_kind=stage_result.work_item_kind,
                 work_item_id=stage_result.work_item_id,
                 failure_class=_failure_class_from_stage_result(stage_result),
+                failure_origin=_string_metadata(stage_result, "failure_origin"),
                 stdout_path=_normalize_optional_run_relative_path(
                     resolved_run_dir, stage_result.stdout_path
                 ),
@@ -185,6 +219,66 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 token_usage=stage_result.token_usage,
                 capability_grant_summaries=_capability_grant_summaries(stage_result),
                 capability_support_summaries=_capability_support_summaries(stage_result),
+                request_context_profile_id=_string_metadata(
+                    stage_result,
+                    "request_context_profile_id",
+                ),
+                context_bundle_path=_normalize_optional_run_relative_path(
+                    resolved_run_dir,
+                    _string_metadata(stage_result, "context_bundle_path"),
+                ),
+                context_artifact_refs=_tuple_str_metadata(
+                    stage_result,
+                    "context_artifact_refs",
+                ),
+                context_render_plan_id=_string_metadata(
+                    stage_result,
+                    "context_render_plan_id",
+                ),
+                rendered_prompt_context_path=_normalize_optional_run_relative_path(
+                    resolved_run_dir,
+                    _string_metadata(stage_result, "rendered_prompt_context_path"),
+                ),
+                runtime_effect_handler_id=_string_metadata(
+                    stage_result,
+                    "runtime_effect_handler_id",
+                ),
+                runtime_effect_decision=_string_metadata(
+                    stage_result,
+                    "runtime_effect_decision",
+                ),
+                runtime_effect_failure_class=_string_metadata(
+                    stage_result,
+                    "runtime_effect_failure_class",
+                ),
+                runtime_effect_failure_message=_string_metadata(
+                    stage_result,
+                    "runtime_effect_failure_message",
+                ),
+                runtime_effect_mutation_phase=_string_metadata(
+                    stage_result,
+                    "runtime_effect_mutation_phase",
+                ),
+                runtime_effect_created_paths=_tuple_str_metadata(
+                    stage_result,
+                    "runtime_effect_created_paths",
+                ),
+                runtime_effect_source_lifecycle_plan_id=_string_metadata(
+                    stage_result,
+                    "runtime_effect_source_lifecycle_plan_id",
+                ),
+                runtime_effect_source_lifecycle_action=_string_metadata(
+                    stage_result,
+                    "runtime_effect_source_lifecycle_action",
+                ),
+                runtime_effect_failure_policy_id=_string_metadata(
+                    stage_result,
+                    "runtime_effect_failure_policy_id",
+                ),
+                runtime_effect_recovery_action=_string_metadata(
+                    stage_result,
+                    "runtime_effect_recovery_action",
+                ),
             )
         )
 
@@ -197,10 +291,16 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
 
     latest_stage_result = inspected_stage_results[-1] if inspected_stage_results else None
     first_stage_result = inspected_stage_results[0] if inspected_stage_results else None
+    latest_runtime_effect_stage_result = _latest_runtime_effect_stage_result(
+        inspected_stage_results
+    )
+    runtime_outcome = _runtime_outcome_for_run(resolved_run_dir, latest_stage_result, status)
     return InspectedRunSummary(
         run_id=resolved_run_dir.name,
         run_dir=str(resolved_run_dir),
         status=status,
+        artifact_status=status,
+        runtime_outcome=runtime_outcome,
         compiled_plan_id=latest_stage_result.compiled_plan_id if latest_stage_result else None,
         mode_id=latest_stage_result.mode_id if latest_stage_result else None,
         request_kind=latest_stage_result.request_kind if latest_stage_result else None,
@@ -210,6 +310,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         work_item_kind=latest_stage_result.work_item_kind if latest_stage_result else None,
         work_item_id=latest_stage_result.work_item_id if latest_stage_result else None,
         failure_class=latest_stage_result.failure_class if latest_stage_result else None,
+        failure_origin=latest_stage_result.failure_origin if latest_stage_result else None,
         troubleshoot_report_path=(
             latest_stage_result.report_artifact if latest_stage_result else None
         ),
@@ -221,6 +322,41 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         completed_at=latest_stage_result.completed_at if latest_stage_result else None,
         duration_seconds=_run_duration_seconds(first_stage_result, latest_stage_result),
         token_usage=_aggregate_token_usage(stage_result.token_usage for stage_result in inspected_stage_results),
+        runtime_effect_decision=(
+            latest_runtime_effect_stage_result.runtime_effect_decision
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_handler_id=(
+            latest_runtime_effect_stage_result.runtime_effect_handler_id
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_failure_class=(
+            latest_runtime_effect_stage_result.runtime_effect_failure_class
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_failure_message=(
+            latest_runtime_effect_stage_result.runtime_effect_failure_message
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_mutation_phase=(
+            latest_runtime_effect_stage_result.runtime_effect_mutation_phase
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_failure_policy_id=(
+            latest_runtime_effect_stage_result.runtime_effect_failure_policy_id
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_recovery_action=(
+            latest_runtime_effect_stage_result.runtime_effect_recovery_action
+            if latest_runtime_effect_stage_result
+            else None
+        ),
     )
 
 
@@ -271,12 +407,76 @@ def select_primary_run_artifact(summary: InspectedRunSummary) -> str | None:
 
 def _failure_class_from_stage_result(stage_result: StageResultEnvelope) -> str | None:
     value = stage_result.metadata.get("failure_class")
-    return value if isinstance(value, str) else None
+    if isinstance(value, str):
+        return value
+    runtime_effect_value = stage_result.metadata.get("runtime_effect_failure_class")
+    return runtime_effect_value if isinstance(runtime_effect_value, str) else None
+
+
+def _latest_runtime_effect_stage_result(
+    stage_results: list[InspectedStageResult],
+) -> InspectedStageResult | None:
+    for stage_result in reversed(stage_results):
+        if _stage_result_has_runtime_effect_metadata(stage_result):
+            return stage_result
+    return None
+
+
+def _stage_result_has_runtime_effect_metadata(stage_result: InspectedStageResult) -> bool:
+    return any(
+        (
+            stage_result.runtime_effect_handler_id,
+            stage_result.runtime_effect_decision,
+            stage_result.runtime_effect_failure_class,
+            stage_result.runtime_effect_failure_message,
+            stage_result.runtime_effect_mutation_phase,
+            stage_result.runtime_effect_created_paths,
+            stage_result.runtime_effect_source_lifecycle_plan_id,
+            stage_result.runtime_effect_source_lifecycle_action,
+            stage_result.runtime_effect_failure_policy_id,
+            stage_result.runtime_effect_recovery_action,
+        )
+    )
+
+
+def _runtime_outcome_for_missing_stage_results(run_dir: Path) -> RunRuntimeOutcome:
+    trace_path = run_dir / "run_trace.json"
+    if not trace_path.is_file():
+        return "incomplete"
+    return _inspect_run_trace(run_dir).status
+
+
+def _runtime_outcome_for_run(
+    run_dir: Path,
+    latest_stage_result: InspectedStageResult | None,
+    artifact_status: RunInspectionStatus,
+) -> RunRuntimeOutcome:
+    trace_path = run_dir / "run_trace.json"
+    if trace_path.is_file():
+        return _inspect_run_trace(run_dir).status
+    if latest_stage_result is None:
+        return artifact_status
+    if artifact_status == "malformed":
+        return "malformed"
+    if latest_stage_result.result_class != "success":
+        return "blocked"
+    if latest_stage_result.terminal_result == "BLOCKED":
+        return "blocked"
+    if latest_stage_result.runtime_effect_failure_class is not None:
+        return "blocked"
+    return "incomplete"
 
 
 def _string_metadata(stage_result: StageResultEnvelope, key: str) -> str | None:
     value = stage_result.metadata.get(key)
     return value if isinstance(value, str) else None
+
+
+def _tuple_str_metadata(stage_result: StageResultEnvelope, key: str) -> tuple[str, ...]:
+    value = stage_result.metadata.get(key)
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
 def _capability_grant_summaries(stage_result: StageResultEnvelope) -> tuple[str, ...]:
@@ -409,6 +609,7 @@ __all__ = [
     "InspectedRunSummary",
     "InspectedStageResult",
     "RunInspectionStatus",
+    "RunRuntimeOutcome",
     "inspect_run_id",
     "inspect_run_trace",
     "inspect_run_trace_id",

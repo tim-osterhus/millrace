@@ -211,12 +211,14 @@ class RuntimeControl:
         *,
         work_item_id: str,
         reason: str,
+        work_item_family_id: str | None = None,
         work_item_kind: WorkItemKind | None = None,
         force: bool = False,
         issuer: str = "operator",
     ) -> ControlActionResult:
         payload_model = MailboxCancelWorkItemPayload(
             work_item_id=work_item_id,
+            work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             reason=reason,
             force=force,

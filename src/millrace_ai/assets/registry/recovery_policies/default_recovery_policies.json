@@ -1,0 +1,28 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "workflow_recovery_policy",
+      "policy_id": "execution.blocked_recovery",
+      "source_node_ids": ["builder", "integrator", "checker", "fixer", "doublechecker", "updater"],
+      "on_outcomes": ["BLOCKED"],
+      "counter_name": "troubleshoot_attempt_count",
+      "threshold": 3,
+      "retry_target_node_id": "troubleshooter",
+      "exhausted_target_node_id": "consultant",
+      "failure_class_template": "blocked_recovery_exhausted"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "workflow_recovery_policy",
+      "policy_id": "planning.blocked_recovery",
+      "source_node_ids": ["planner", "manager", "mechanic", "auditor", "recon"],
+      "on_outcomes": ["BLOCKED"],
+      "counter_name": "mechanic_attempt_count",
+      "threshold": 2,
+      "retry_target_node_id": "mechanic",
+      "exhausted_terminal_state_id": "blocked",
+      "failure_class_template": "planning_blocked_recovery_exhausted"
+    }
+  ]
+}

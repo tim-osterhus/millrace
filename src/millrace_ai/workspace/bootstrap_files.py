@@ -42,6 +42,7 @@ def _default_runtime_snapshot_payload(paths: WorkspacePaths) -> str:
             Plane.PLANNING: "planning.standard",
         },
         compiled_plan_id="bootstrap",
+        compiled_plan_fingerprint="bootstrap",
         compiled_plan_path=str((paths.state_dir / "compiled_plan.json").relative_to(paths.root)),
         execution_status_marker=_IDLE_MARKER.strip(),
         planning_status_marker=_IDLE_MARKER.strip(),

@@ -13,6 +13,7 @@ from millrace_ai.contracts import (
     CompletionBehaviorDefinition,
     ExecutionStageName,
     IncidentDocument,
+    LaneRuntimeState,
     LearningRequestDocument,
     LearningStageName,
     LearningTerminalResult,
@@ -20,6 +21,7 @@ from millrace_ai.contracts import (
     MailboxCommandEnvelope,
     ModeDefinition,
     Plane,
+    PlannerDispositionDocument,
     PlanningStageName,
     PlanningTerminalResult,
     RecoveryCounters,
@@ -87,6 +89,72 @@ def test_spec_document_valid_minimal_payload() -> None:
     )
 
     assert doc.kind == "spec"
+
+
+def test_planner_disposition_document_validates_child_spec_semantics() -> None:
+    doc = PlannerDispositionDocument(
+        schema_version="1.0",
+        kind="planner_disposition",
+        source_work_item_family_id="incident",
+        source_work_item_id="incident-001",
+        disposition="emitted_child_specs",
+        emitted_spec_ids=["spec-child-001"],
+        refined_active_source=False,
+        recommended_next_action="resolve incident and schedule emitted child specs",
+        created_at=NOW,
+        created_by="planner",
+    )
+
+    assert doc.kind == "planner_disposition"
+    assert doc.emitted_spec_ids == ("spec-child-001",)
+
+    with pytest.raises(ValidationError, match="emitted_child_specs requires emitted_spec_ids"):
+        PlannerDispositionDocument(
+            schema_version="1.0",
+            kind="planner_disposition",
+            source_work_item_family_id="incident",
+            source_work_item_id="incident-001",
+            disposition="emitted_child_specs",
+            emitted_spec_ids=[],
+            refined_active_source=False,
+            recommended_next_action="missing emitted ids",
+            created_at=NOW,
+            created_by="planner",
+        )
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    (
+        "schema_version",
+        "kind",
+        "source_work_item_family_id",
+        "source_work_item_id",
+        "disposition",
+        "emitted_spec_ids",
+        "refined_active_source",
+        "recommended_next_action",
+        "created_at",
+        "created_by",
+    ),
+)
+def test_planner_disposition_document_requires_declared_fields(missing_field: str) -> None:
+    payload = {
+        "schema_version": "1.0",
+        "kind": "planner_disposition",
+        "source_work_item_family_id": "spec",
+        "source_work_item_id": "spec-001",
+        "disposition": "active_source_ready_for_manager",
+        "emitted_spec_ids": [],
+        "refined_active_source": False,
+        "recommended_next_action": "continue to manager",
+        "created_at": NOW,
+        "created_by": "planner",
+    }
+    payload.pop(missing_field)
+
+    with pytest.raises(ValidationError):
+        PlannerDispositionDocument.model_validate(payload)
 
 
 def test_learning_request_document_valid_payload() -> None:
@@ -325,6 +393,7 @@ def test_runtime_snapshot_migrates_legacy_active_state_to_active_runs_by_plane()
         execution_loop_id="execution.standard",
         planning_loop_id="planning.standard",
         compiled_plan_id="plan-001",
+        compiled_plan_fingerprint="fingerprint-001",
         compiled_plan_path="state/compiled_plan.json",
         active_plane="execution",
         active_stage="builder",
@@ -347,6 +416,9 @@ def test_runtime_snapshot_migrates_legacy_active_state_to_active_runs_by_plane()
     assert active.work_item_kind is WorkItemKind.TASK
     assert active.work_item_id == "task-001"
     assert active.run_id == "run-001"
+    assert active.lane_id == "execution.main"
+    assert active.compiled_plan_id == "plan-001"
+    assert active.compiled_plan_fingerprint == "fingerprint-001"
 
 
 def test_runtime_snapshot_projects_multiple_active_runs_into_legacy_foreground_fields() -> None:
@@ -359,14 +431,18 @@ def test_runtime_snapshot_projects_multiple_active_runs_into_legacy_foreground_f
         planning_loop_id="planning.standard",
         learning_loop_id="learning.standard",
         compiled_plan_id="plan-001",
+        compiled_plan_fingerprint="fingerprint-001",
         compiled_plan_path="state/compiled_plan.json",
         active_runs_by_plane={
             "execution": {
                 "plane": "execution",
+                "lane_id": "execution.main",
                 "stage": "builder",
                 "node_id": "builder",
                 "stage_kind_id": "builder",
                 "run_id": "run-exec",
+                "compiled_plan_id": "plan-001",
+                "compiled_plan_fingerprint": "fingerprint-001",
                 "request_kind": "active_work_item",
                 "work_item_kind": "task",
                 "work_item_id": "task-001",
@@ -374,10 +450,13 @@ def test_runtime_snapshot_projects_multiple_active_runs_into_legacy_foreground_f
             },
             "learning": {
                 "plane": "learning",
+                "lane_id": "learning.main",
                 "stage": "analyst",
                 "node_id": "analyst",
                 "stage_kind_id": "analyst",
                 "run_id": "run-learn",
+                "compiled_plan_id": "plan-001",
+                "compiled_plan_fingerprint": "fingerprint-001",
                 "request_kind": "learning_request",
                 "work_item_kind": "learning_request",
                 "work_item_id": "learn-001",
@@ -409,14 +488,18 @@ def test_runtime_snapshot_rejects_active_run_key_plane_mismatch() -> None:
             planning_loop_id="planning.standard",
             learning_loop_id="learning.standard",
             compiled_plan_id="plan-001",
+            compiled_plan_fingerprint="fingerprint-001",
             compiled_plan_path="state/compiled_plan.json",
             active_runs_by_plane={
                 "execution": {
                     "plane": "learning",
+                    "lane_id": "learning.main",
                     "stage": "analyst",
                     "node_id": "analyst",
                     "stage_kind_id": "analyst",
                     "run_id": "run-learn",
+                    "compiled_plan_id": "plan-001",
+                    "compiled_plan_fingerprint": "fingerprint-001",
                     "request_kind": "learning_request",
                     "work_item_kind": "learning_request",
                     "work_item_id": "learn-001",
@@ -434,10 +517,13 @@ def test_runtime_snapshot_rejects_active_run_key_plane_mismatch() -> None:
 def test_active_run_state_models_closure_target_identity() -> None:
     active = ActiveRunState(
         plane="planning",
+        lane_id="planning.main",
         stage="arbiter",
         node_id="arbiter",
         stage_kind_id="arbiter",
         run_id="run-arbiter",
+        compiled_plan_id="plan-001",
+        compiled_plan_fingerprint="fingerprint-001",
         request_kind="closure_target",
         closure_target_root_spec_id="spec-root-001",
         closure_target_root_idea_id="idea-001",
@@ -454,16 +540,65 @@ def test_active_run_state_rejects_work_item_identity_for_closure_target() -> Non
     with pytest.raises(ValidationError):
         ActiveRunState(
             plane="planning",
+            lane_id="planning.main",
             stage="arbiter",
             node_id="arbiter",
             stage_kind_id="arbiter",
             run_id="run-arbiter",
+            compiled_plan_id="plan-001",
+            compiled_plan_fingerprint="fingerprint-001",
             request_kind="closure_target",
             work_item_kind="spec",
             work_item_id="spec-root-001",
             closure_target_root_spec_id="spec-root-001",
             active_since=NOW,
         )
+
+
+def test_active_run_state_requires_launch_plan_identity() -> None:
+    with pytest.raises(ValidationError, match="launch compiled_plan_id"):
+        ActiveRunState(
+            plane="execution",
+            lane_id="execution.main",
+            stage="builder",
+            node_id="builder",
+            stage_kind_id="builder",
+            run_id="run-001",
+            request_kind="active_work_item",
+            work_item_kind="task",
+            work_item_id="task-001",
+            active_since=NOW,
+        )
+
+
+def test_runtime_snapshot_persists_lane_state() -> None:
+    snapshot = RuntimeSnapshot(
+        runtime_mode="daemon",
+        process_running=True,
+        paused=False,
+        active_mode_id="standard_plain",
+        execution_loop_id="execution.standard",
+        planning_loop_id="planning.standard",
+        compiled_plan_id="plan-001",
+        compiled_plan_fingerprint="fingerprint-001",
+        compiled_plan_path="state/compiled_plan.json",
+        lanes_by_id={
+            "execution.main": LaneRuntimeState(
+                lane_id="execution.main",
+                plane="execution",
+                status="idle",
+                compiled_plan_id="plan-001",
+                compiled_plan_fingerprint="fingerprint-001",
+            )
+        },
+        execution_status_marker="### IDLE",
+        planning_status_marker="### IDLE",
+        config_version="cfg-001",
+        watcher_mode="watch",
+        updated_at=NOW,
+    )
+
+    assert snapshot.lanes_by_id["execution.main"].compiled_plan_id == "plan-001"
 
 
 def test_recovery_counters_valid_payload() -> None:
@@ -586,13 +721,24 @@ def test_loop_config_definition_accepts_typed_completion_behavior_for_arbiter() 
     assert loop.completion_behavior.on_gap_terminal_result is PlanningTerminalResult.REMEDIATION_NEEDED
 
 
-def test_mode_definition_rejects_unknown_stage_key() -> None:
+def test_mode_definition_accepts_safe_custom_stage_key_for_compiler_validation() -> None:
+    mode = ModeDefinition(
+        mode_id="standard_plain",
+        execution_loop_id="execution.standard",
+        planning_loop_id="planning.standard",
+        stage_entrypoint_overrides={"manager_blueprint": "assets/foo.md"},
+    )
+
+    assert mode.stage_entrypoint_overrides == {"manager_blueprint": "assets/foo.md"}
+
+
+def test_mode_definition_rejects_unsafe_stage_key() -> None:
     with pytest.raises(ValidationError):
         ModeDefinition(
             mode_id="standard_plain",
             execution_loop_id="execution.standard",
             planning_loop_id="planning.standard",
-            stage_entrypoint_overrides={"not_a_stage": "assets/foo.md"},
+            stage_entrypoint_overrides={"../not-a-stage": "assets/foo.md"},
         )
 
 

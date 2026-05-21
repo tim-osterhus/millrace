@@ -1,9 +1,10 @@
 # Millrace Arbiter And Completion Behavior
 
 This document describes the shipped completion model for modes that select
-`planning.standard`, including `default_codex`, `default_pi`, `learning_codex`,
-`learning_pi`, `default_codex_integrated`, and
-`learning_codex_integrated`.
+`planning.standard` or `planning.blueprint`, including `default_codex`,
+`default_pi`, `learning_codex`, `learning_pi`, `default_codex_integrated`,
+`learning_codex_integrated`, `blueprint_codex`, and
+`blueprint_learning_codex`.
 
 Millrace no longer treats backlog drain as automatic completion. When a root
 lineage has an open closure target and no queued, active, or blocked work
@@ -83,7 +84,10 @@ Runtime behavior is:
 4. locate the single open closure target
 5. if no open target exists, try to backfill one from the latest root spec that
    already carries root-lineage ids
-6. scan queued, active, and blocked work for matching `root_spec_id`
+6. scan queued, active, and blocked work for matching `root_spec_id`, including
+   Blueprint drafts, candidate packets, approved-unpromoted packets, promotion
+   records, and generated tasks when the selected Planning graph uses
+   `planning.blueprint`
 7. suppress Arbiter if lineage work still remains
 8. dispatch Arbiter when the target is eligible
 
@@ -178,8 +182,11 @@ The current operator-facing surfaces expose this behavior directly:
 
 - `millrace compile show` prints frozen `completion_behavior`
 - `millrace status` prints the active open closure target, deferred-root count,
-  and latest verdict/report paths
-- `millrace runs show` prints request kind and closure-target lineage for Arbiter runs
+  latest verdict/report paths, and Blueprint draft/packet/critique/evaluation
+  and promotion summaries when those artifacts exist
+- `millrace runs show` prints request kind, closure-target lineage for Arbiter
+  runs, and runtime-effect lifecycle intent plus created paths for Blueprint
+  stages
 
 Use those surfaces before opening raw JSON files unless you need the full
 artifact payload.

@@ -18,14 +18,18 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.recon_packets import read_recon_packet, render_recon_packet
+from millrace_ai.recon_packets import render_recon_packet
 from millrace_ai.router import RouterAction, RouterDecision
-from millrace_ai.work_documents import parse_work_document_as
 
+from .artifact_contracts import (
+    parse_resolved_run_artifact_as,
+    resolve_run_artifact,
+)
 from .error_recovery import record_post_stage_exception_context
 from .work_item_transitions import apply_blocked_router_decision, apply_idle_router_decision
 
 if TYPE_CHECKING:
+    from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
 
 
@@ -41,6 +45,7 @@ def apply_recon_router_decision(
     stage_result: StageResultEnvelope,
     *,
     stage_result_path: Path | None = None,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> tuple[Path, ...]:
     """Persist Recon artifacts, enqueue routed work, then finish the active probe."""
 
@@ -66,16 +71,30 @@ def apply_recon_router_decision(
         raise ValueError("blocked recon terminal results require a blocked router decision")
 
     try:
-        packet = _read_and_persist_packet(engine, stage_result)
+        packet = _read_and_persist_packet(engine, stage_result, compiled_plan=compiled_plan)
         _validate_packet_for_stage_result(packet, stage_result, terminal_result)
 
         spawned: tuple[Path, ...] = ()
         if terminal_result is PlanningTerminalResult.RECON_TO_EXECUTION:
-            spawned = (_enqueue_generated_task(engine, stage_result, packet),)
+            spawned = (
+                _enqueue_generated_task(
+                    engine,
+                    stage_result,
+                    packet,
+                    compiled_plan=compiled_plan,
+                ),
+            )
             apply_idle_router_decision(engine, stage_result)
             return spawned
         if terminal_result is PlanningTerminalResult.RECON_TO_PLANNING:
-            spawned = (_enqueue_generated_spec(engine, stage_result, packet),)
+            spawned = (
+                _enqueue_generated_spec(
+                    engine,
+                    stage_result,
+                    packet,
+                    compiled_plan=compiled_plan,
+                ),
+            )
             apply_idle_router_decision(engine, stage_result)
             return spawned
         if terminal_result is PlanningTerminalResult.RECON_NOOP:
@@ -140,10 +159,14 @@ def _block_invalid_recon_handoff(
 def _read_and_persist_packet(
     engine: RuntimeEngine,
     stage_result: StageResultEnvelope,
+    *,
+    compiled_plan: CompiledRunPlan | None,
 ) -> ReconPacketDocument:
     run_dir = engine.paths.runs_dir / stage_result.run_id
-    source = run_dir / "recon_packet.md"
-    packet = read_recon_packet(source)
+    packet = parse_resolved_run_artifact_as(
+        resolve_run_artifact(compiled_plan, "recon_packet", run_dir),
+        ReconPacketDocument,
+    )
     destination = engine.paths.recon_packets_dir / f"{packet.recon_packet_id}.md"
     if destination.exists():
         raise ValueError(f"recon packet already exists: {destination}")
@@ -173,11 +196,16 @@ def _enqueue_generated_task(
     engine: RuntimeEngine,
     stage_result: StageResultEnvelope,
     packet: ReconPacketDocument,
+    *,
+    compiled_plan: CompiledRunPlan | None,
 ) -> Path:
     if packet.emitted_task_id is None:
         raise ValueError("recon execution route requires emitted_task_id")
-    source = engine.paths.runs_dir / stage_result.run_id / "generated_task.md"
-    task = _read_task_artifact(source)
+    run_dir = engine.paths.runs_dir / stage_result.run_id
+    task = parse_resolved_run_artifact_as(
+        resolve_run_artifact(compiled_plan, "generated_task", run_dir),
+        TaskDocument,
+    )
     if task.task_id != packet.emitted_task_id:
         raise ValueError("generated task id must match recon packet emitted_task_id")
     task = _with_probe_task_lineage(task, packet)
@@ -188,29 +216,20 @@ def _enqueue_generated_spec(
     engine: RuntimeEngine,
     stage_result: StageResultEnvelope,
     packet: ReconPacketDocument,
+    *,
+    compiled_plan: CompiledRunPlan | None,
 ) -> Path:
     if packet.emitted_spec_id is None:
         raise ValueError("recon planning route requires emitted_spec_id")
-    source = engine.paths.runs_dir / stage_result.run_id / "generated_spec.md"
-    spec = _read_spec_artifact(source)
+    run_dir = engine.paths.runs_dir / stage_result.run_id
+    spec = parse_resolved_run_artifact_as(
+        resolve_run_artifact(compiled_plan, "generated_spec", run_dir),
+        SpecDocument,
+    )
     if spec.spec_id != packet.emitted_spec_id:
         raise ValueError("generated spec id must match recon packet emitted_spec_id")
     spec = _with_probe_spec_lineage(spec, packet)
     return QueueStore(engine.paths).enqueue_spec(spec)
-
-
-def _read_task_artifact(path: Path) -> TaskDocument:
-    raw = path.read_text(encoding="utf-8")
-    if raw.lstrip().startswith("{"):
-        return TaskDocument.model_validate_json(raw)
-    return parse_work_document_as(raw, model=TaskDocument, path=path)
-
-
-def _read_spec_artifact(path: Path) -> SpecDocument:
-    raw = path.read_text(encoding="utf-8")
-    if raw.lstrip().startswith("{"):
-        return SpecDocument.model_validate_json(raw)
-    return parse_work_document_as(raw, model=SpecDocument, path=path)
 
 
 def _with_probe_task_lineage(

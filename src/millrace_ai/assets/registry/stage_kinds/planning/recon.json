@@ -49,10 +49,11 @@
   "declared_output_artifacts": [
     "stage_result",
     "recon_packet",
-    "task",
-    "spec",
+    "generated_task",
+    "generated_spec",
     "report"
   ],
+  "allowed_work_item_families": ["probe"],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

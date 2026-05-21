@@ -89,6 +89,43 @@ def test_basic_terminal_monitor_renders_stage_done_and_run_update_lines() -> Non
     assert "run execution run=run-123 elapsed=39.2s" in output
 
 
+def test_basic_terminal_monitor_renders_runtime_effect_failure_metadata() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW,
+            payload={
+                "plane": "planning",
+                "stage": "manager",
+                "node_id": "manager_blueprint",
+                "stage_kind_id": "manager_blueprint",
+                "run_id": "run-123",
+                "terminal_result": "MANAGER_BLUEPRINT_COMPLETE",
+                "summary_status_marker": "### MANAGER_BLUEPRINT_COMPLETE",
+                "duration_seconds": 4.0,
+                "started_at": NOW.isoformat(),
+                "completed_at": (NOW + timedelta(seconds=4)).isoformat(),
+                "runtime_effect_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
+                "runtime_effect_failure_class": "blueprint_manifest_parse_error",
+                "runtime_effect_failure_message": "blueprint_manifest.json is malformed",
+                "runtime_effect_mutation_phase": "pre_mutation",
+                "runtime_effect_failure_policy_id": "manager_blueprint_pre_mutation_artifact_repair",
+                "runtime_effect_recovery_action": "route_to_node",
+            },
+        )
+    )
+
+    output = stream.getvalue()
+    assert "effect=manager_blueprint_manifest_to_blueprint_drafts" in output
+    assert "failure=blueprint_manifest_parse_error" in output
+    assert "message=blueprint_manifest.json is malformed" in output
+    assert "phase=pre_mutation" in output
+    assert "policy=manager_blueprint_pre_mutation_artifact_repair" in output
+    assert "recovery=route_to_node" in output
+
+
 def test_basic_terminal_monitor_compacts_stage_start_identity_and_run_id() -> None:
     stream = StringIO()
     monitor = BasicTerminalMonitor(stream=stream)

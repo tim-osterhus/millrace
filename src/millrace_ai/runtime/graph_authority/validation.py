@@ -27,9 +27,16 @@ def validate_stage_result_matches_snapshot(
     if snapshot.active_run_id is None or snapshot.active_run_id != stage_result.run_id:
         raise ValueError("stage_result run_id does not match runtime snapshot active_run_id")
     if stage_result.metadata.get("request_kind") == "closure_target":
-        if snapshot.active_work_item_kind is not None or snapshot.active_work_item_id is not None:
+        if (
+            snapshot.active_work_item_family_id is not None
+            or snapshot.active_work_item_kind is not None
+            or snapshot.active_work_item_id is not None
+        ):
             raise ValueError("closure_target stage_result cannot use active work item snapshot identity")
-        if stage_result.work_item_kind is not WorkItemKind.SPEC:
+        if (
+            stage_result.work_item_family_id != WorkItemKind.SPEC.value
+            or stage_result.work_item_kind is not WorkItemKind.SPEC
+        ):
             raise ValueError("closure_target stage_result must normalize onto a spec identity")
         closure_target_root_spec_id = stage_result.metadata.get("closure_target_root_spec_id")
         if not isinstance(closure_target_root_spec_id, str) or not closure_target_root_spec_id:
@@ -37,8 +44,8 @@ def validate_stage_result_matches_snapshot(
         if closure_target_root_spec_id != stage_result.work_item_id:
             raise ValueError("closure_target_root_spec_id must match stage_result work_item_id")
         return
-    if snapshot.active_work_item_kind != stage_result.work_item_kind:
-        raise ValueError("stage_result work_item_kind does not match runtime snapshot active item")
+    if snapshot.active_work_item_family_id != stage_result.work_item_family_id:
+        raise ValueError("stage_result work_item_family_id does not match runtime snapshot active item")
     if snapshot.active_work_item_id != stage_result.work_item_id:
         raise ValueError("stage_result work_item_id does not match runtime snapshot active item")
 

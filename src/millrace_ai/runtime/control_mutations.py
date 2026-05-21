@@ -6,7 +6,9 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Generic, TypeVar
 
-from millrace_ai.config import load_runtime_config
+from millrace_ai.compilation.persistence import load_existing_plan
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import fingerprint_runtime_config, load_runtime_config
 from millrace_ai.contracts import (
     ActiveRunState,
     MailboxAddIdeaPayload,
@@ -21,6 +23,7 @@ from millrace_ai.contracts import (
     Plane,
     ProbeDocument,
     RecoveryCounters,
+    ReloadOutcome,
     RuntimeSnapshot,
     SpecDocument,
     TaskDocument,
@@ -34,7 +37,9 @@ from millrace_ai.runtime.approvals import (
     approve_execution_capability_request,
     deny_execution_capability_request,
 )
+from millrace_ai.runtime.compiled_plans import archive_compiled_plan, relative_plan_path
 from millrace_ai.runtime.control_mailbox import ControlActionResultFactory
+from millrace_ai.runtime.lanes import compiled_plan_fingerprint_for_runtime, ensure_snapshot_lanes
 from millrace_ai.runtime.pause_state import (
     OPERATOR_PAUSE_SOURCE,
     USAGE_GOVERNANCE_PAUSE_SOURCE,
@@ -59,6 +64,8 @@ from millrace_ai.state_store import (
     set_planning_status,
 )
 from millrace_ai.workspace.operator_interventions import OperatorInterventionResult
+from millrace_ai.workspace.queue_lifecycle import requeue_active_work_item, requeue_all_active_work_items
+from millrace_ai.workspace.work_inventory import queue_depths_by_plane
 
 ResultT = TypeVar("ResultT")
 
@@ -79,15 +86,7 @@ class DirectControlMutations(Generic[ResultT]):
 
     def add_task(self, snapshot: RuntimeSnapshot, *, document: TaskDocument) -> ResultT:
         destination = QueueStore(self.paths).enqueue_task(document)
-        save_snapshot(
-            self.paths,
-            snapshot.model_copy(
-                update={
-                    "queue_depth_execution": self._execution_queue_depth(),
-                    "updated_at": self._now(),
-                }
-            ),
-        )
+        self._save_queue_depth_snapshot(snapshot)
         return self._result_factory(
             action=MailboxCommand.ADD_TASK,
             mode="direct",
@@ -98,15 +97,7 @@ class DirectControlMutations(Generic[ResultT]):
 
     def add_spec(self, snapshot: RuntimeSnapshot, *, document: SpecDocument) -> ResultT:
         destination = QueueStore(self.paths).enqueue_spec(document)
-        save_snapshot(
-            self.paths,
-            snapshot.model_copy(
-                update={
-                    "queue_depth_planning": self._planning_queue_depth(),
-                    "updated_at": self._now(),
-                }
-            ),
-        )
+        self._save_queue_depth_snapshot(snapshot)
         return self._result_factory(
             action=MailboxCommand.ADD_SPEC,
             mode="direct",
@@ -117,15 +108,7 @@ class DirectControlMutations(Generic[ResultT]):
 
     def add_probe(self, snapshot: RuntimeSnapshot, *, document: ProbeDocument) -> ResultT:
         destination = QueueStore(self.paths).enqueue_probe(document)
-        save_snapshot(
-            self.paths,
-            snapshot.model_copy(
-                update={
-                    "queue_depth_planning": self._planning_queue_depth(),
-                    "updated_at": self._now(),
-                }
-            ),
-        )
+        self._save_queue_depth_snapshot(snapshot)
         return self._result_factory(
             action=MailboxCommand.ADD_PROBE,
             mode="direct",
@@ -141,15 +124,7 @@ class DirectControlMutations(Generic[ResultT]):
         if destination.exists():
             raise WorkspaceStateError(f"idea document already exists: {destination}")
         destination.write_text(payload.markdown, encoding="utf-8")
-        save_snapshot(
-            self.paths,
-            snapshot.model_copy(
-                update={
-                    "queue_depth_planning": self._planning_queue_depth(),
-                    "updated_at": self._now(),
-                }
-            ),
-        )
+        self._save_queue_depth_snapshot(snapshot)
         return self._result_factory(
             action=MailboxCommand.ADD_IDEA,
             mode="direct",
@@ -172,6 +147,7 @@ class DirectControlMutations(Generic[ResultT]):
             return active_result
         result = QueueStore(self.paths).cancel_work_item(
             payload.work_item_id,
+            work_item_family_id=payload.work_item_family_id,
             work_item_kind=payload.work_item_kind,
             reason=payload.reason,
             force=payload.force,
@@ -425,7 +401,7 @@ class DirectControlMutations(Generic[ResultT]):
                 applied=False,
                 detail="multiple active planes; retry-active requires a plane scope",
             )
-        if active_run.work_item_kind is None or active_run.work_item_id is None:
+        if active_run.work_item_family_id is None or active_run.work_item_id is None:
             return self._result_factory(
                 action=MailboxCommand.RETRY_ACTIVE,
                 mode="direct",
@@ -433,14 +409,13 @@ class DirectControlMutations(Generic[ResultT]):
                 detail=f"active {active_run.plane.value} run is not a retryable work item",
             )
 
-        queue = QueueStore(self.paths)
-        work_item_kind = active_run.work_item_kind
+        work_item_family_id = active_run.work_item_family_id
         work_item_id = active_run.work_item_id
 
         try:
             self._requeue_active_item(
-                queue,
-                work_item_kind=work_item_kind,
+                work_item_family_id=work_item_family_id,
+                work_item_kind=active_run.work_item_kind,
                 work_item_id=work_item_id,
                 reason=reason,
             )
@@ -455,14 +430,15 @@ class DirectControlMutations(Generic[ResultT]):
         self._clear_retry_active_run(snapshot, active_run.plane)
         reset_forward_progress_counters(
             self.paths,
-            work_item_kind=work_item_kind,
+            work_item_family_id=work_item_family_id,
+            work_item_kind=active_run.work_item_kind,
             work_item_id=work_item_id,
         )
         return self._result_factory(
             action=MailboxCommand.RETRY_ACTIVE,
             mode="direct",
             applied=True,
-            detail=f"active {work_item_kind.value} {work_item_id} requeued",
+            detail=f"active {work_item_family_id} {work_item_id} requeued",
         )
 
     def _retry_active_run(
@@ -524,8 +500,7 @@ class DirectControlMutations(Generic[ResultT]):
             set_learning_status(self.paths, IDLE_STATUS_MARKER)
 
     def clear_stale(self, snapshot: RuntimeSnapshot, *, reason: str) -> ResultT:
-        queue = QueueStore(self.paths)
-        requeued_count = self._requeue_all_active_items(queue, reason=reason)
+        requeued_count = self._requeue_all_active_items(reason=reason)
         had_counters = bool(load_recovery_counters(self.paths).entries)
         lock_clear_result = clear_stale_runtime_ownership_lock(self.paths)
 
@@ -557,69 +532,125 @@ class DirectControlMutations(Generic[ResultT]):
         )
 
     def reload_config(self, snapshot: RuntimeSnapshot) -> ResultT:
-        del snapshot
+        try:
+            reloaded_config = load_runtime_config(self.paths.runtime_root / "millrace.toml")
+        except ValueError as exc:
+            updated = snapshot.model_copy(
+                update={
+                    "last_reload_outcome": ReloadOutcome.FAILED_RETAINED_PREVIOUS_PLAN,
+                    "last_reload_error": str(exc),
+                    "updated_at": self._now(),
+                }
+            )
+            save_snapshot(self.paths, updated)
+            return self._result_factory(
+                action=MailboxCommand.RELOAD_CONFIG,
+                mode="direct",
+                applied=False,
+                detail=f"reload failed; retained previous plan: {exc}",
+            )
+
+        compile_outcome = compile_and_persist_workspace_plan(
+            self.paths,
+            config=reloaded_config,
+            requested_mode_id=None,
+            assets_root=self.paths.runtime_root,
+            compile_if_needed=True,
+            refuse_stale_last_known_good=True,
+        )
+        active_plan = compile_outcome.active_plan
+        if active_plan is None or not compile_outcome.diagnostics.ok:
+            errors = ", ".join(compile_outcome.diagnostics.errors) or "compile failed"
+            updated = snapshot.model_copy(
+                update={
+                    "last_reload_outcome": ReloadOutcome.FAILED_RETAINED_PREVIOUS_PLAN,
+                    "last_reload_error": errors,
+                    "updated_at": self._now(),
+                }
+            )
+            save_snapshot(self.paths, updated)
+            return self._result_factory(
+                action=MailboxCommand.RELOAD_CONFIG,
+                mode="direct",
+                applied=False,
+                detail=f"reload failed; retained previous plan: {errors}",
+            )
+
+        archive_path = archive_compiled_plan(self.paths, active_plan)
+        plan_fingerprint = compiled_plan_fingerprint_for_runtime(active_plan)
+        if snapshot.active_runs_by_plane:
+            updated = snapshot.model_copy(
+                update={
+                    "runtime_mode": reloaded_config.runtime.run_style,
+                    "pending_compiled_plan_id": active_plan.compiled_plan_id,
+                    "pending_compiled_plan_path": relative_plan_path(self.paths, archive_path),
+                    "pending_compiled_plan_fingerprint": plan_fingerprint,
+                    "config_version": fingerprint_runtime_config(reloaded_config),
+                    "last_reload_outcome": ReloadOutcome.APPLIED,
+                    "last_reload_error": None,
+                    "updated_at": self._now(),
+                }
+            )
+            save_snapshot(self.paths, updated)
+            return self._result_factory(
+                action=MailboxCommand.RELOAD_CONFIG,
+                mode="direct",
+                applied=True,
+                detail=f"reload compiled pending plan {active_plan.compiled_plan_id}",
+            )
+
+        updated = ensure_snapshot_lanes(snapshot, active_plan).model_copy(
+            update={
+                **self._queue_depth_update(compiled_plan=active_plan),
+                "runtime_mode": reloaded_config.runtime.run_style,
+                "active_mode_id": active_plan.mode_id,
+                "execution_loop_id": active_plan.execution_loop_id,
+                "planning_loop_id": active_plan.planning_loop_id,
+                "learning_loop_id": active_plan.learning_loop_id,
+                "loop_ids_by_plane": active_plan.loop_ids_by_plane,
+                "compiled_plan_id": active_plan.compiled_plan_id,
+                "compiled_plan_fingerprint": plan_fingerprint,
+                "compiled_plan_path": str((self.paths.state_dir / "compiled_plan.json").relative_to(self.paths.root)),
+                "pending_compiled_plan_id": None,
+                "pending_compiled_plan_path": None,
+                "pending_compiled_plan_fingerprint": None,
+                "config_version": fingerprint_runtime_config(reloaded_config),
+                "last_reload_outcome": ReloadOutcome.APPLIED,
+                "last_reload_error": None,
+                "updated_at": self._now(),
+            }
+        )
+        save_snapshot(self.paths, updated)
         return self._result_factory(
             action=MailboxCommand.RELOAD_CONFIG,
             mode="direct",
-            applied=False,
-            detail="no daemon running; reload request not enqueued",
+            applied=True,
+            detail=f"reload applied plan {active_plan.compiled_plan_id}",
         )
 
-    def _requeue_all_active_items(self, queue: QueueStore, *, reason: str) -> int:
-        requeued_count = 0
-        for path in sorted(self.paths.tasks_active_dir.glob("*.md")):
-            try:
-                queue.requeue_task(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.specs_active_dir.glob("*.md")):
-            try:
-                queue.requeue_spec(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.probes_active_dir.glob("*.md")):
-            try:
-                queue.requeue_probe(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.incidents_active_dir.glob("*.md")):
-            try:
-                queue.requeue_incident(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        for path in sorted(self.paths.learning_requests_active_dir.glob("*.md")):
-            try:
-                queue.requeue_learning_request(path.stem, reason=reason)
-            except QueueStateError:
-                continue
-            requeued_count += 1
-        return requeued_count
+    def _requeue_all_active_items(self, *, reason: str) -> int:
+        return requeue_all_active_work_items(
+            self.paths,
+            reason=reason,
+            work_item_families=self._work_item_families_for_inventory(),
+        )
 
     def _requeue_active_item(
         self,
-        queue: QueueStore,
         *,
-        work_item_kind: WorkItemKind,
+        work_item_family_id: str,
+        work_item_kind: WorkItemKind | None,
         work_item_id: str,
         reason: str,
     ) -> None:
-        if work_item_kind is WorkItemKind.TASK:
-            queue.requeue_task(work_item_id, reason=reason)
-            return
-        if work_item_kind is WorkItemKind.SPEC:
-            queue.requeue_spec(work_item_id, reason=reason)
-            return
-        if work_item_kind is WorkItemKind.PROBE:
-            queue.requeue_probe(work_item_id, reason=reason)
-            return
-        if work_item_kind is WorkItemKind.LEARNING_REQUEST:
-            queue.requeue_learning_request(work_item_id, reason=reason)
-            return
-        queue.requeue_incident(work_item_id, reason=reason)
+        requeue_active_work_item(
+            self.paths,
+            work_item_family_id=work_item_family_id,
+            work_item_kind=work_item_kind,
+            work_item_id=work_item_id,
+            reason=reason,
+            work_item_families=self._work_item_families_for_inventory(),
+        )
 
     def _reset_runtime_to_idle(
         self,
@@ -629,16 +660,19 @@ class DirectControlMutations(Generic[ResultT]):
         clear_stop_requested: bool,
         clear_paused: bool,
     ) -> None:
+        queue_depths = self._queue_depths()
         updated = snapshot.model_copy(
-            update=idle_snapshot_update(
-                now=self._now(),
-                process_running=process_running,
-                queue_depth_execution=self._execution_queue_depth(),
-                queue_depth_planning=self._planning_queue_depth(),
-                queue_depth_learning=self._learning_queue_depth(),
-                clear_stop_requested=clear_stop_requested,
-                clear_paused=clear_paused,
-            )
+            update={
+                **idle_snapshot_update(
+                    now=self._now(),
+                    process_running=process_running,
+                    queue_depth_execution=queue_depths[Plane.EXECUTION],
+                    queue_depth_planning=queue_depths[Plane.PLANNING],
+                    queue_depth_learning=queue_depths[Plane.LEARNING],
+                    clear_stop_requested=clear_stop_requested,
+                    clear_paused=clear_paused,
+                )
+            }
         )
 
         save_snapshot(self.paths, updated)
@@ -663,18 +697,15 @@ class DirectControlMutations(Generic[ResultT]):
         return None
 
     def _save_queue_depth_snapshot(self, snapshot: RuntimeSnapshot) -> None:
+        queue_depths = self._queue_depths()
         save_snapshot(
             self.paths,
             snapshot.model_copy(
                 update={
-                    "queue_depth_execution": self._execution_queue_depth(),
-                    "queue_depth_planning": self._planning_queue_depth(),
-                    "queue_depth_learning": self._learning_queue_depth(),
-                    "queue_depths_by_plane": {
-                        Plane.EXECUTION: self._execution_queue_depth(),
-                        Plane.PLANNING: self._planning_queue_depth(),
-                        Plane.LEARNING: self._learning_queue_depth(),
-                    },
+                    "queue_depth_execution": queue_depths[Plane.EXECUTION],
+                    "queue_depth_planning": queue_depths[Plane.PLANNING],
+                    "queue_depth_learning": queue_depths[Plane.LEARNING],
+                    "queue_depths_by_plane": queue_depths,
                     "updated_at": self._now(),
                 }
             ),
@@ -685,7 +716,7 @@ class DirectControlMutations(Generic[ResultT]):
         action: MailboxCommand,
         result: OperatorInterventionResult,
     ) -> ResultT:
-        detail = f"{result.event_type}: {result.work_item_kind.value} {result.work_item_id}"
+        detail = f"{result.event_type}: {result.work_item_family_id} {result.work_item_id}"
         if result.replacement_work_item_id is not None:
             detail += f" replacement={result.replacement_work_item_id}"
         if result.affected_dependents:
@@ -698,17 +729,37 @@ class DirectControlMutations(Generic[ResultT]):
             artifact_path=result.destination_path,
         )
 
+    def _compiled_plan_for_inventory(self):
+        return load_existing_plan(self.paths.state_dir / "compiled_plan.json")
+
+    def _work_item_families_for_inventory(self):
+        compiled_plan = self._compiled_plan_for_inventory()
+        if compiled_plan is None:
+            return None
+        return tuple(compiled_plan.work_item_families_by_id.values())
+
+    def _queue_depths(self, *, compiled_plan=None) -> dict[Plane, int]:
+        if compiled_plan is None:
+            compiled_plan = self._compiled_plan_for_inventory()
+        return queue_depths_by_plane(self.paths, compiled_plan=compiled_plan)
+
+    def _queue_depth_update(self, *, compiled_plan=None) -> dict[str, object]:
+        queue_depths = self._queue_depths(compiled_plan=compiled_plan)
+        return {
+            "queue_depth_execution": queue_depths[Plane.EXECUTION],
+            "queue_depth_planning": queue_depths[Plane.PLANNING],
+            "queue_depth_learning": queue_depths[Plane.LEARNING],
+            "queue_depths_by_plane": queue_depths,
+        }
+
     def _execution_queue_depth(self) -> int:
-        return len(tuple(self.paths.tasks_queue_dir.glob("*.md")))
+        return self._queue_depths()[Plane.EXECUTION]
 
     def _planning_queue_depth(self) -> int:
-        probes = len(tuple(self.paths.probes_queue_dir.glob("*.md")))
-        specs = len(tuple(self.paths.specs_queue_dir.glob("*.md")))
-        incidents = len(tuple(self.paths.incidents_incoming_dir.glob("*.md")))
-        return probes + specs + incidents
+        return self._queue_depths()[Plane.PLANNING]
 
     def _learning_queue_depth(self) -> int:
-        return len(tuple(self.paths.learning_requests_queue_dir.glob("*.md")))
+        return self._queue_depths()[Plane.LEARNING]
 
 
 __all__ = ["DirectControlMutations"]

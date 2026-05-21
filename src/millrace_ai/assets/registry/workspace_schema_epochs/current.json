@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "kind": "workspace_schema_epoch",
+  "epoch_id": "v0.20",
+  "minimum_supported_epoch_id": "v0.20",
+  "archive_required_from_epoch_ids": ["v0.19"],
+  "reset_command": "workspace reset-schema",
+  "compatibility_notes": [
+    "v0.20 introduces compiled workflow primitive authority."
+  ]
+}

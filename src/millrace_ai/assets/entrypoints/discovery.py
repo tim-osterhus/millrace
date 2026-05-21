@@ -7,10 +7,18 @@ from pathlib import Path
 from millrace_ai.contracts import Plane
 from millrace_ai.contracts.stage_metadata import known_stage_values, known_stage_values_for_plane
 
+CUSTOM_PLANNING_STAGES = frozenset(
+    {
+        "manager_blueprint",
+        "contractor_blueprint",
+        "evaluator_blueprint",
+        "mechanic_blueprint",
+    }
+)
 KNOWN_EXECUTION_STAGES = known_stage_values_for_plane(Plane.EXECUTION)
-KNOWN_PLANNING_STAGES = known_stage_values_for_plane(Plane.PLANNING)
+KNOWN_PLANNING_STAGES = known_stage_values_for_plane(Plane.PLANNING) | CUSTOM_PLANNING_STAGES
 KNOWN_LEARNING_STAGES = known_stage_values_for_plane(Plane.LEARNING)
-KNOWN_STAGES = known_stage_values()
+KNOWN_STAGES = known_stage_values() | CUSTOM_PLANNING_STAGES
 KNOWN_PLANES = {plane.value for plane in Plane}
 KNOWN_ASSET_TYPES = {"entrypoint", "skill"}
 
@@ -50,5 +58,6 @@ __all__ = [
     "KNOWN_PLANES",
     "KNOWN_PLANNING_STAGES",
     "KNOWN_STAGES",
+    "CUSTOM_PLANNING_STAGES",
     "infer_entrypoint_path_target",
 ]

@@ -16,6 +16,8 @@ status payload does not include `runtime_error_code` or
 | `planning_post_stage_apply_failed` | A planning-stage run returned a legal terminal result, but another runtime-owned post-stage step failed after normalization. | Read `runtime_error_report_path`, then inspect the named exception, router action, and referenced stage-result artifact. |
 | `execution_post_stage_apply_failed` | An execution-stage run returned a legal terminal result, but another runtime-owned post-stage step failed after normalization. | Read `runtime_error_report_path`, then inspect the named exception, router action, and referenced stage-result artifact. |
 | `recon_handoff_invalid` | Recon returned a handoff terminal result, but the required `recon_packet.md` or generated task/spec artifact was missing, malformed, or inconsistent with the terminal result. The runtime blocks the active probe instead of routing that probe into Planner, Manager, or Mechanic. | Run `millrace status show --format json`, read `latest_runtime_error_report_path`, inspect the run's `recon_packet.md` and generated artifact, then fix the probe/request or rerun Recon. |
+| `compiled_plan_stale` | Result application found an active-run launch plan that is no longer available or no longer matches the launch fingerprint. | Inspect the active run's `compiled_plan_id` and `compiled_plan_fingerprint`, then inspect archived compiled plans under runtime state. |
+| `workspace_integrity_failure` | Runtime-owned workspace authority, launch-plan identity, or persisted state invariants are inconsistent enough that routing cannot continue safely. | Read `latest_runtime_error_report_path`, inspect the cited active run, lane state, snapshot, and archived compiled plan. |
 
 ## Interpretation Notes
 
@@ -23,7 +25,41 @@ status payload does not include `runtime_error_code` or
 - The stage itself may still have exited `0` and emitted a valid terminal marker.
 - The recovery-stage prompt should treat `runtime_error_report_path` as the primary evidence source.
 - The code narrows the diagnosis; the report provides the concrete run-specific details.
+- `millrace status` and `millrace status show --format json` also surface the
+  latest `failure_origin` when one is known.
 - `recon_handoff_invalid` is intentionally not auto-routed into Mechanic. Recon
   handoff artifacts are ownership boundaries; invalid handoff output should
   block the probe with evidence rather than mutate it into unrelated planning
   work.
+
+## Failure Origins
+
+`failure_origin` is a lower-level classifier for where the runtime believes an
+edge failure came from. It is not a replacement for `RuntimeErrorCode`; it is a
+diagnostic dimension used in runtime events, runtime error context, normalized
+stage results, and operator status output.
+
+Current origins:
+
+- `model_provider_unavailable`
+- `network_unavailable`
+- `request_context_provider_failure`
+- `prompt_render_failure`
+- `runtime_primitive_exception`
+- `document_adapter_parse_failure`
+- `document_adapter_validation_failure`
+- `filesystem_io_failure`
+- `workspace_integrity_failure`
+
+## Runtime Effect Failure Classes
+
+Workflow primitive runtime effects can also return failure classes that are not
+members of the stable `RuntimeErrorCode` enum. The current foundation failure
+class is `runtime_effect_destination_missing`: it is emitted as a runtime event
+when an effect handler claims it created a destination artifact but that path is
+missing before source lifecycle mutation. The runtime then requests recovery
+instead of moving the source work item to done or blocked.
+
+Treat these failure classes as runtime-owned diagnostics. They describe a
+failed effect application boundary, not a legal stage terminal result and not a
+new queue state.

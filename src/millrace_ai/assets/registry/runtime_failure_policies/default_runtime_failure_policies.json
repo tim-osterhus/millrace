@@ -1,0 +1,117 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "runner_timeout",
+      "applies_to_origins": ["runner_timeout"],
+      "applies_to_planes": ["execution", "planning", "learning"],
+      "action": "block_source_work_item",
+      "threshold": 1,
+      "counter_name": "runner_timeout",
+      "failure_class_template": "runner_timeout"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "model_provider_unavailable",
+      "applies_to_origins": ["model_provider_unavailable", "network_unavailable"],
+      "applies_to_planes": ["execution", "planning", "learning"],
+      "action": "pause_plane",
+      "threshold": 1,
+      "counter_name": "provider_unavailable",
+      "failure_class_template": "provider_unavailable"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "workspace_schema_incompatible",
+      "applies_to_origins": ["workspace_schema_incompatible", "compiled_plan_stale"],
+      "applies_to_planes": ["execution", "planning", "learning"],
+      "action": "refuse_startup",
+      "failure_class_template": "workspace_startup_refused"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "manager_blueprint_pre_mutation_artifact_repair",
+      "applies_to_origins": ["runtime_effect"],
+      "applies_to_planes": ["planning"],
+      "applies_to_families": ["spec", "incident"],
+      "applies_to_failure_classes": [
+        "blueprint_manifest_missing",
+        "blueprint_manifest_parse_error",
+        "blueprint_manifest_schema_invalid",
+        "blueprint_drafts_missing",
+        "blueprint_drafts_parse_error",
+        "blueprint_drafts_schema_invalid",
+        "blueprint_manifest_draft_mismatch"
+      ],
+      "applies_to_mutation_phases": ["pre_mutation"],
+      "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
+      "applies_to_source_node_ids": ["manager_blueprint"],
+      "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
+      "action": "route_to_node",
+      "target_node_id": "mechanic_blueprint",
+      "failure_class_template": "runtime_effect_failure"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "manager_blueprint_pre_mutation_conservative_block",
+      "applies_to_origins": ["runtime_effect"],
+      "applies_to_planes": ["planning"],
+      "applies_to_families": ["spec", "incident"],
+      "applies_to_failure_classes": [
+        "blueprint_manifest_duplicate",
+        "blueprint_draft_duplicate",
+        "blueprint_source_lifecycle_invalid"
+      ],
+      "applies_to_mutation_phases": ["pre_mutation"],
+      "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
+      "applies_to_source_node_ids": ["manager_blueprint"],
+      "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
+      "action": "block_source_work_item",
+      "failure_class_template": "runtime_effect_failure"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "manager_blueprint_partial_mutation_conservative_block",
+      "applies_to_origins": ["runtime_effect"],
+      "applies_to_planes": ["planning"],
+      "applies_to_families": ["spec", "incident"],
+      "applies_to_failure_classes": [
+        "blueprint_manifest_duplicate",
+        "blueprint_draft_duplicate",
+        "blueprint_source_lifecycle_invalid",
+        "blueprint_partial_mutation"
+      ],
+      "applies_to_mutation_phases": ["partial_mutation"],
+      "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
+      "applies_to_source_node_ids": ["manager_blueprint"],
+      "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
+      "action": "block_source_work_item",
+      "failure_class_template": "runtime_effect_failure"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_failure_policy",
+      "policy_id": "blueprint_approval_pre_mutation_effect_validation",
+      "applies_to_origins": ["runtime_effect"],
+      "applies_to_planes": ["planning"],
+      "applies_to_families": ["blueprint_draft"],
+      "applies_to_failure_classes": [
+        "generated_task_missing",
+        "generated_task_invalid",
+        "blueprint_task_promotion_invalid"
+      ],
+      "applies_to_mutation_phases": ["pre_mutation"],
+      "applies_to_handler_ids": ["evaluator_blueprint_approved_to_task"],
+      "applies_to_source_node_ids": ["evaluator_blueprint"],
+      "action": "route_to_node",
+      "target_node_id": "mechanic_blueprint",
+      "failure_class_template": "runtime_effect_failure"
+    }
+  ]
+}
