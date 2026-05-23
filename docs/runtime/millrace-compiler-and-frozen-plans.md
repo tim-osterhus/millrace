@@ -12,9 +12,10 @@ This document describes the compiler-owned authority model for Millrace:
 - the `millrace_ai.compiler` public facade over `src/millrace_ai/compilation/`
   internals
 
-Use `docs/runtime/millrace-cli-reference.md` for command syntax and
-`docs/runtime/millrace-modes-and-loops.md` for the shipped mode and graph
-surfaces that feed the compiler.
+Use `docs/runtime/millrace-cli-reference.md` for command syntax,
+`docs/runtime/millrace-modes-and-loops.md` for the shipped mode model, and
+`docs/graphs/graphs-index.md` for shipped graph configurations that feed the
+compiler.
 
 The stable import surface is `millrace_ai.compiler`. Internally, compiler
 ownership is split under `src/millrace_ai/compilation/`: workspace-plan

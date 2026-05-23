@@ -846,6 +846,7 @@ Use this document as the front door, then drop into the narrower references when
 needed:
 
 - `README.md` for the public landing-page framing
+- `docs/doc-index.md` for the complete documentation map
 - `docs/skills/millrace-autonomous-delegation/SKILL.md` if you are an external
   agent authorized to decide whether substantial work should use Millrace
 - `docs/skills/millrace-ops-agent-manual/SKILL.md` if you are an external
@@ -853,6 +854,8 @@ needed:
 - `docs/runtime/millrace-runtime-architecture.md` for the runtime/storage model
 - `docs/runtime/millrace-compiler-and-frozen-plans.md` for compile semantics
 - `docs/runtime/millrace-modes-and-loops.md` for loop topology and mode maps
+- `docs/graphs/graphs-index.md` for shipped mode-to-plane graph
+  configurations and per-plane graph references
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md` for true closure
 - `docs/runtime/millrace-cli-reference.md` for operator commands
 - `docs/runtime/millrace-runner-architecture.md` for harness dispatch

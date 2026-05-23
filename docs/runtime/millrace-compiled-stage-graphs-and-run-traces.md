@@ -8,6 +8,10 @@ asset inputs. It lives inside `<workspace>/millrace-agents/state/compiled_plan.j
 and remains the runtime authority for activation, request binding, recovery,
 completion behavior, plane concurrency, and post-stage routing.
 
+Use `docs/graphs/graphs-index.md` for the shipped mode-to-plane graph
+configurations and per-plane topology references. Use this document for the
+compiled export and per-run trace inspection surfaces.
+
 The run trace graph is historical evidence for one concrete run. It records
 which stage-request instances ran, which terminal outcomes they produced, which
 runtime routing decision was applied, which artifacts were written, and which

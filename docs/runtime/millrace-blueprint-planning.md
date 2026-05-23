@@ -293,6 +293,8 @@ Important operator expectations:
 
 ## Related Docs
 
+- `docs/graphs/planning-blueprint.md`
+- `docs/graphs/graphs-index.md`
 - `docs/runtime/millrace-modes-and-loops.md`
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
 - `docs/runtime/millrace-loop-authoring.md`

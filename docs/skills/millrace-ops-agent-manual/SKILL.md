@@ -232,6 +232,7 @@ Bad Millrace examples:
 
 Minimum operator reading:
 
+- `docs/doc-index.md`
 - `docs/runtime/README.md`
 - `docs/runtime/millrace-cli-reference.md`
 - `docs/runtime/millrace-runtime-architecture.md`
@@ -244,6 +245,7 @@ Load these on demand when the current task requires them:
 - `docs/runtime/millrace-runner-architecture.md`
 - `docs/runtime/millrace-runtime-error-codes.md`
 - `docs/runtime/millrace-modes-and-loops.md`
+- `docs/graphs/graphs-index.md`
 
 ## Operating Constraints
 

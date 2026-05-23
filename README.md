@@ -130,7 +130,8 @@ Blueprint, and Evaluator Blueprint before approved generated tasks enter
 Execution. The learning-enabled variant keeps the normal post-Planner Librarian
 trigger.
 
-For operational details, see `docs/runtime/README.md`,
+For the full documentation map, see `docs/doc-index.md`. For operational
+details, see `docs/runtime/README.md`,
 `docs/runtime/millrace-cli-reference.md`, and
 `docs/runtime/millrace-workspace-baselines-and-upgrades.md`.
 
@@ -334,6 +335,7 @@ Start with `docs/millrace-technical-overview.md`.
 
 ### Start Here
 
+- `docs/doc-index.md`
 - `docs/runtime/README.md`
 - `docs/skills/millrace-autonomous-delegation/SKILL.md` if you are authorized
   to decide whether substantial work should use Millrace
@@ -350,6 +352,7 @@ Start with `docs/millrace-technical-overview.md`.
 
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
 - `docs/runtime/millrace-modes-and-loops.md`
+- `docs/graphs/graphs-index.md`
 - `docs/runtime/millrace-blueprint-planning.md`
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
 - `docs/runtime/millrace-runner-architecture.md`
