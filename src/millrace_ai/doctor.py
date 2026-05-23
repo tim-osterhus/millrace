@@ -47,6 +47,10 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.errors import AssetValidationError, WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths, workspace_paths
+from millrace_ai.runtime.blueprint_recovery_diagnostics import (
+    latest_runtime_effect_stage_result,
+    runtime_effect_status_metadata_from_stage_result,
+)
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import (
     collect_reconciliation_signals,
@@ -145,6 +149,11 @@ def run_workspace_doctor(
             paths,
             snapshot=snapshot,
             compiled_plan=compiled_plan,
+            warnings=warnings,
+        )
+        _validate_blueprint_runtime_effect_recovery_context(
+            paths,
+            snapshot=snapshot,
             warnings=warnings,
         )
     if baseline_manifest is not None:
@@ -471,6 +480,35 @@ def _validate_blueprint_manifest_diagnostics(
                 path=diagnostic.path,
             )
         )
+
+
+def _validate_blueprint_runtime_effect_recovery_context(
+    paths: WorkspacePaths,
+    *,
+    snapshot: RuntimeSnapshot,
+    warnings: list[DoctorIssue],
+) -> None:
+    latest = latest_runtime_effect_stage_result(paths, snapshot.last_stage_result_path)
+    if latest is None:
+        return
+    metadata = runtime_effect_status_metadata_from_stage_result(latest.stage_result)
+    context = metadata.get("latest_blueprint_repair_context")
+    contract = metadata.get("latest_blueprint_repair_contract")
+    conflicts = metadata.get("latest_blueprint_replay_conflict_classes")
+    inert_guard = metadata.get("latest_blueprint_inert_artifact_guard")
+    ownership = metadata.get("latest_blueprint_runtime_ownership_boundary")
+    if not all((context, contract, conflicts, inert_guard, ownership)):
+        return
+    warnings.append(
+        DoctorIssue(
+            code="blueprint_runtime_effect_recovery_context",
+            message=(
+                f"{context}; {contract}; replay_conflicts={conflicts}; "
+                f"inert_artifact_guard={inert_guard}; {ownership}"
+            ),
+            path=latest.path,
+        )
+    )
 
 
 def _work_item_families(

@@ -582,6 +582,7 @@ class RuntimeEffectHandlerDefinition(ArchitectureContractModel):
     creates_work_items: bool
     creates_incidents: bool = False
     creates_closure_targets: bool = False
+    declared_capabilities: tuple[str, ...] = ()
     failure_classes: tuple[str, ...] = Field(min_length=1)
 
     @field_validator("handler_id")
@@ -594,6 +595,7 @@ class RuntimeEffectHandlerDefinition(ArchitectureContractModel):
         "destination_kinds",
         "required_artifacts",
         "optional_artifacts",
+        "declared_capabilities",
         "failure_classes",
         mode="before",
     )
@@ -624,6 +626,7 @@ class RuntimeEffectRuleDefinition(ArchitectureContractModel):
     required_run_artifacts: tuple[str, ...] = ()
     destination_family_id: WorkItemFamilyId | None = None
     creates_work_items: bool = False
+    required_handler_capabilities: tuple[str, ...] = ()
     duplicate_policy: Literal["fail", "supersede", "idempotent"]
     partial_commit_policy: Literal["block_source", "pause_lane", "stop_daemon", "require_operator"]
     replay_policy: Literal["resume_idempotently", "fail_if_seen", "require_operator"]
@@ -654,6 +657,15 @@ class RuntimeEffectRuleDefinition(ArchitectureContractModel):
     @classmethod
     def normalize_required_run_artifacts(cls, value: object) -> tuple[str, ...]:
         return _normalize_unique_id_tuple(value, field_label="required_run_artifacts", allow_empty=True)
+
+    @field_validator("required_handler_capabilities", mode="before")
+    @classmethod
+    def normalize_required_handler_capabilities(cls, value: object) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label="required_handler_capabilities",
+            allow_empty=True,
+        )
 
     @model_validator(mode="after")
     def validate_destination(self) -> "RuntimeEffectRuleDefinition":

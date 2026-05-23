@@ -297,7 +297,8 @@ def test_blueprint_stage_kind_assets_load_as_discovered_extensions() -> None:
     assert mechanic.declared_output_artifacts == (
         "stage_result",
         "mechanic_report",
-        "repaired_blueprint_artifact",
+        "blueprint_repair_decision",
+        "repaired_generated_task",
     )
 
 

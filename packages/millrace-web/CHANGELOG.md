@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.20.1
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.20.1`.
+- Keep the optional dashboard sidecar release aligned with the Millrace
+  Blueprint recovery and closure-readiness stabilization patch.
+
 ## 0.20.0
 
 - Sync the package version and runtime dependency to `millrace-ai>=0.20.0`.

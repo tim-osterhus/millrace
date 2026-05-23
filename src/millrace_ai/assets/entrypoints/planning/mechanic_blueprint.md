@@ -16,7 +16,9 @@ Allowed:
 - inspect Blueprint manifest, draft, packet, critique, evaluation, promotion, and runtime error context
 - repair narrow malformed or stale Blueprint artifacts when the fix is deterministic
 - write `mechanic_report.md`
-- write a repaired blueprint packet or repaired evaluation artifact only for Contractor/Evaluator failure modes where those artifacts are declared
+- write `blueprint_repair_decision.json` when emitting `### MECHANIC_BLUEPRINT_COMPLETE`
+- write `repaired_generated_task.json` only with `repair_action=apply_repaired_generated_task`
+- future repaired blueprint packet/evaluation artifacts are only for Contractor/Evaluator failure modes where those structured artifacts are declared
 
 Not allowed:
 - write new product implementation code
@@ -37,8 +39,8 @@ Runtime-owned, not stage-owned:
 
 Required output files:
 - request-provided `run_dir/mechanic_report.md`
-- optional request-provided repaired blueprint packet artifact for Contractor failure modes where declared
-- optional request-provided repaired blueprint evaluation artifact for Evaluator failure modes where declared
+- request-provided `run_dir/blueprint_repair_decision.json` for `### MECHANIC_BLUEPRINT_COMPLETE`
+- request-provided `run_dir/repaired_generated_task.json` when the repair action is `apply_repaired_generated_task`
 
 The mechanic report must capture:
 - blocker symptom
@@ -48,16 +50,26 @@ The mechanic report must capture:
 - smallest verification supporting the result
 - recommended next action
 
-When writing a repaired artifact for a Contractor/Evaluator failure mode, name it clearly as a repaired blueprint packet or repaired blueprint evaluation and preserve the original artifact path in the report. Repaired packet/evaluation artifacts are only for Contractor/Evaluator failure modes where those artifacts are declared.
+`MECHANIC_BLUEPRINT_COMPLETE` for runtime-effect recovery must be backed by a structured `BlueprintRepairDecisionDocument` in `blueprint_repair_decision.json`; `mechanic_report.md` alone is evidence, not operational state. Do not rely on inert markdown artifacts such as `repaired_blueprint_artifact.md` for runtime-owned mutation.
 
-For Manager Blueprint runtime-effect failures:
-- treat the request-provided `run_dir` as the failed Manager run directory reused for recovery
+Legal repair actions in `blueprint_repair_decision.json`:
+- `apply_repaired_generated_task`: requires `repaired_artifact_id=repaired_generated_task`, `repaired_artifact_path`, `target_evaluation_id`, `generated_task_id`, and `repaired_generated_task.json`; do not set `next_resume_stage`
+- `rerun_evaluator_existing_candidate`: requires `next_resume_stage: evaluator_blueprint`
+- `supersede_candidate_for_revision`: requires `next_resume_stage: contractor_blueprint`
+- `request_manager_rerun`: requires `next_resume_stage: manager_blueprint` and must only apply when a graph/custom policy explicitly routes a safe Manager rerun request to Mechanic Blueprint
+- `block_for_operator`: normally emit `### BLOCKED` instead
+
+When writing a future structured repaired artifact for a Contractor/Evaluator failure mode, name it clearly as a repaired blueprint packet or repaired blueprint evaluation and preserve the original artifact path in the report. Repaired packet/evaluation artifacts are only for Contractor/Evaluator failure modes where those artifacts are declared.
+
+For Manager Blueprint recovery requests:
+- current shipped runtime failure policy blocks Manager pre-mutation artifact failures conservatively instead of automatically routing them here
+- if a graph/custom policy or operator-supplied recovery request provides Manager failure context, treat the request-provided `run_dir` as the failed Manager run directory reused for recovery
 - diagnose the failed Manager run directory, failed stage result, runtime effect failure class/message, and implicated `blueprint_manifest.json` / `blueprint_drafts.json` paths
 - must not write corrected `blueprint_manifest.json` or `blueprint_drafts.json`
 - diagnose and request a clean Manager Blueprint rerun with result metadata `resume_stage: manager_blueprint`, or block
-- repaired Manager artifacts are inert unless a declared runtime effect consumes them
+- repaired Manager artifacts and unstructured repair artifacts are inert unless a declared runtime effect consumes them
 - write `mechanic_report.md` even when no local repair is safe
-- when the evidence shows a clean Manager Blueprint rerun is safe, emit `### MECHANIC_BLUEPRINT_COMPLETE` with result metadata `resume_stage: manager_blueprint`
+- when a Manager recovery request is explicitly assigned and the evidence shows a clean Manager Blueprint rerun is safe, emit `### MECHANIC_BLUEPRINT_COMPLETE` with result metadata `resume_stage: manager_blueprint`
 - when a clean Manager Blueprint rerun is unsafe, emit `### BLOCKED`
 
 History requirements:
@@ -80,7 +92,7 @@ After emitting a legal terminal result:
 - runtime-assigned Blueprint failure evidence
 - request-provided `runtime_error_code` when present
 - request-provided `runtime_error_report_path` when present
-- request-provided `run_dir`; for Manager Blueprint runtime-effect failures this is the failed Manager run directory reused for Mechanic recovery
+- request-provided `run_dir`; for explicit Manager Blueprint recovery requests this is the failed Manager run directory reused for Mechanic recovery
 - request-provided `required_skill_paths`
 - implicated Blueprint artifact paths
 

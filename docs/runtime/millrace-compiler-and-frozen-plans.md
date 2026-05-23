@@ -280,6 +280,12 @@ for one concrete run.
 - `active_stage_kind_id`
 - `compile_input.*`
 - `persisted_compile_input.*`
+- latest runtime-effect metadata when present. For recoverable Blueprint
+  Evaluator approval generated-task failures, status also prints the structured
+  repair contract, replay conflict classes, inert-artifact guard, and runtime
+  ownership boundary. These diagnostics describe the Mechanic repair artifact
+  contract; they do not grant Mechanic direct queue or canonical Blueprint
+  mutation authority.
 
 Active runs keep the compiled-plan id and compact compile-input fingerprint
 from the plan that launched them. If config reload compiles a newer plan while

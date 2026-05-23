@@ -26,6 +26,7 @@ from .compiled_plans import CompiledPlanAuthorityError, load_compiled_plan_by_id
 from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
 from .error_recovery import clear_runtime_error_context
 from .graph_authority import route_stage_result_from_graph
+from .graph_authority.stage_mapping import node_plan_by_id
 from .handoff_incidents import enqueue_handoff_incident
 from .lanes import compiled_plan_fingerprint_for_runtime
 from .recon_transitions import apply_recon_router_decision, is_recon_stage_result
@@ -164,6 +165,12 @@ def apply_router_decision(
             current_failure_class=decision.failure_class,
         )
         engine.snapshot = increment_route_counters(engine, updated, decision, stage_result)
+        _write_next_stage_running_status(
+            engine,
+            decision,
+            stage_result,
+            compiled_plan=compiled_plan,
+        )
         return ()
 
     if decision.action is RouterAction.IDLE:
@@ -200,6 +207,34 @@ def _is_closure_target_result(stage_result: StageResultEnvelope) -> bool:
 
 def _plane_for_stage(stage: StageName) -> Plane:
     return stage_plane(stage)
+
+
+def _write_next_stage_running_status(
+    engine: RuntimeEngine,
+    decision: RouterDecision,
+    stage_result: StageResultEnvelope,
+    *,
+    compiled_plan: CompiledRunPlan | None,
+) -> None:
+    effective_plan = compiled_plan or engine.compiled_plan
+    if effective_plan is None or decision.next_node_id is None:
+        return
+    graph = effective_plan.graphs_by_plane.get(stage_result.plane)
+    if graph is None:
+        return
+    try:
+        next_node = node_plan_by_id(graph, decision.next_node_id)
+    except ValueError:
+        return
+    marker = next_node.running_status_marker
+    if not marker:
+        return
+    engine._mark_active_stage_running(
+        plane=stage_result.plane,
+        stage=decision.next_stage or stage_result.stage,
+        running_status_marker=marker,
+        run_id=stage_result.run_id,
+    )
 
 
 __all__ = [

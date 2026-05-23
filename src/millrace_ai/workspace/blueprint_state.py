@@ -213,8 +213,33 @@ def persist_blueprint_packet(
     *,
     packet_state: PacketState = "candidates",
 ) -> Path:
-    destination = _blueprints_dir(paths) / "packets" / packet_state / f"{packet.blueprint_id}.json"
+    destination = blueprint_packet_path(
+        paths,
+        packet.blueprint_id,
+        packet_state=packet_state,
+    )
     return _write_unique_document(destination, packet)
+
+
+def blueprint_packet_path(
+    paths: WorkspacePaths,
+    blueprint_id: str,
+    *,
+    packet_state: PacketState = "candidates",
+) -> Path:
+    return _blueprints_dir(paths) / "packets" / packet_state / f"{blueprint_id}.json"
+
+
+def read_blueprint_packet(
+    paths: WorkspacePaths,
+    blueprint_id: str,
+    *,
+    packet_state: PacketState = "candidates",
+) -> BlueprintPacketDocument:
+    source = blueprint_packet_path(paths, blueprint_id, packet_state=packet_state)
+    if not source.exists():
+        raise QueueStateError(f"blueprint packet {blueprint_id} not found")
+    return BlueprintPacketDocument.model_validate_json(source.read_text(encoding="utf-8"))
 
 
 def move_candidate_blueprint_packet(
@@ -667,6 +692,7 @@ __all__ = [
     "block_active_blueprint_draft",
     "blueprint_artifact_ref",
     "blueprint_manifest_path",
+    "blueprint_packet_path",
     "cancel_blueprint_draft",
     "claim_next_blueprint_draft",
     "enqueue_blueprint_draft",
@@ -682,6 +708,7 @@ __all__ = [
     "read_active_blueprint_draft",
     "read_blueprint_draft",
     "read_blueprint_manifest",
+    "read_blueprint_packet",
     "requeue_active_blueprint_draft",
     "resolve_blueprint_manifest_path",
     "update_active_blueprint_draft",

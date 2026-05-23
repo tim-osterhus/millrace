@@ -1299,6 +1299,25 @@ def test_blueprint_entrypoints_and_core_skills_back_artifact_contracts() -> None
     )
 
 
+def test_mechanic_blueprint_repair_decision_guidance_uses_next_resume_stage() -> None:
+    def legal_action_block(body: str) -> str:
+        marker = "Legal repair actions in `blueprint_repair_decision.json`:"
+        _, remainder = body.split(marker, maxsplit=1)
+        return remainder.split("\n\n", maxsplit=1)[0]
+
+    planning_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning"
+    mechanic = (planning_dir / "mechanic_blueprint.md").read_text(encoding="utf-8")
+    mechanic_skill = (
+        SKILLS_DIR / "stage" / "planning" / "mechanic-blueprint-core" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    for guidance in (legal_action_block(mechanic), legal_action_block(mechanic_skill)):
+        assert "next_resume_stage: evaluator_blueprint" in guidance
+        assert "next_resume_stage: contractor_blueprint" in guidance
+        assert "next_resume_stage: manager_blueprint" in guidance
+        assert re.search(r"(?<!next_)resume_stage", guidance) is None
+
+
 def test_evaluator_blueprint_assets_match_artifact_contract_filenames() -> None:
     planning_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning"
     skill_path = (

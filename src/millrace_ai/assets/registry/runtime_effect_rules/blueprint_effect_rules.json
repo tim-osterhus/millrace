@@ -11,6 +11,13 @@
       "required_run_artifacts": ["blueprint_manifest", "blueprint_drafts"],
       "destination_family_id": "blueprint_draft",
       "creates_work_items": true,
+      "required_handler_capabilities": [
+        "replay.blueprint_manifest_equivalent",
+        "replay.blueprint_manifest_legacy_identity",
+        "replay.blueprint_drafts_equivalent",
+        "duplicate.blueprint_manifest_same_id",
+        "duplicate.blueprint_draft_same_id"
+      ],
       "duplicate_policy": "fail",
       "partial_commit_policy": "block_source",
       "replay_policy": "resume_idempotently",
@@ -28,6 +35,10 @@
       "handler_id": "contractor_blueprint_candidate_persist",
       "required_run_artifacts": ["blueprint_packet", "blueprint_markdown"],
       "creates_work_items": false,
+      "required_handler_capabilities": [
+        "replay.blueprint_candidate_equivalent",
+        "duplicate.blueprint_candidate_same_id"
+      ],
       "duplicate_policy": "fail",
       "partial_commit_policy": "block_source",
       "replay_policy": "resume_idempotently",
@@ -46,6 +57,10 @@
       "required_run_artifacts": ["blueprint_evaluation", "generated_task"],
       "destination_family_id": "task",
       "creates_work_items": true,
+      "required_handler_capabilities": [
+        "replay.blueprint_approval_equivalent",
+        "duplicate.generated_task_same_id"
+      ],
       "duplicate_policy": "fail",
       "partial_commit_policy": "block_source",
       "replay_policy": "resume_idempotently",
@@ -63,12 +78,43 @@
       "handler_id": "evaluator_blueprint_rejected_to_draft_revision",
       "required_run_artifacts": ["blueprint_evaluation", "blueprint_critique"],
       "creates_work_items": false,
+      "required_handler_capabilities": [
+        "replay.blueprint_rejection_equivalent",
+        "duplicate.blueprint_rejection_same_id"
+      ],
       "duplicate_policy": "fail",
       "partial_commit_policy": "block_source",
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
       "lifecycle_mutation_plan_id": null
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_rule",
+      "rule_id": "mechanic_blueprint_repair_apply",
+      "effect_operation_id": "mechanic_blueprint_repair_apply",
+      "source_node_id": "mechanic_blueprint",
+      "on_outcomes": ["MECHANIC_BLUEPRINT_COMPLETE"],
+      "handler_id": "mechanic_blueprint_repair_apply",
+      "required_run_artifacts": [
+        "blueprint_repair_decision",
+        "mechanic_report",
+        "repaired_generated_task"
+      ],
+      "destination_family_id": "task",
+      "creates_work_items": true,
+      "required_handler_capabilities": [
+        "repair.apply_repaired_generated_task",
+        "repair.generated_task_missing",
+        "repair.generated_task_invalid"
+      ],
+      "duplicate_policy": "fail",
+      "partial_commit_policy": "block_source",
+      "replay_policy": "resume_idempotently",
+      "lineage_policy": "preserve_root",
+      "applies_before_route": true,
+      "lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect"
     }
   ]
 }

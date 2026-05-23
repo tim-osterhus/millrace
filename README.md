@@ -93,10 +93,10 @@ It wraps long-horizon work in a runtime with a few hard contracts:
   through an audited retry path. Semantic blocked states and durable local
   setup failures still require operator review.
 - **Audited operator intervention:** when work is bad intake rather than a
-  retryable failure, operators can cancel, supersede, retarget, resolve, or
-  archive queue and incident artifacts through CLI/control commands. Live
-  daemons receive those changes through the mailbox and apply them only at safe
-  no-active-run mutation boundaries.
+  retryable failure, operators can cancel, supersede, retarget, resolve,
+  archive, or retry supported blocked work items through CLI/control commands.
+  Live daemons receive those changes through the mailbox and apply them only at
+  safe no-active-run mutation boundaries.
 - **Opt-in quality loops:** integrated Codex modes use a more expensive
   `builder -> integrator -> checker` execution path. Integrator reviews the
   Builder diff, runs explicit or discoverable gates, and writes

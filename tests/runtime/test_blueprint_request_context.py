@@ -639,7 +639,97 @@ def test_mechanic_blueprint_context_includes_manager_runtime_effect_failure_evid
     ) in refs
     assert f"failed_manager_artifact:{manifest_path.relative_to(paths.root).as_posix()}" in refs
     assert f"failed_manager_artifact:{drafts_path.relative_to(paths.root).as_posix()}" in refs
+    assert f"preferred_output:{(run_dir / 'blueprint_repair_decision.json').as_posix()}" in refs
+    assert f"preferred_output:{(run_dir / 'repaired_generated_task.json').as_posix()}" in refs
     assert f"preferred_output:{(run_dir / 'mechanic_report.md').as_posix()}" in refs
+    assert not any("repaired_blueprint_artifact" in ref for ref in refs)
+    assert "queue_mutation_authority" in manifest["omitted_provider_ids"]
+    assert manifest["output_artifact_contract_ids"] == [
+        "blueprint_repair_decision",
+        "repaired_generated_task",
+        "mechanic_report",
+    ]
+
+
+def test_mechanic_blueprint_context_includes_evaluator_runtime_effect_failure_evidence(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    run_dir = paths.runs_dir / "run-mechanic-evaluator-recovery"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    evaluation_path = run_dir / "blueprint_evaluation.json"
+    generated_task_path = run_dir / "generated_task.md"
+    evaluation_path.write_text('{"evaluation_id":"evaluation-001"}\n', encoding="utf-8")
+    generated_task_path.write_text(
+        "# Invalid generated task\n\nTask-ID: task-draft-001\n",
+        encoding="utf-8",
+    )
+    failed_stage_result = StageResultEnvelope(
+        run_id="run-mechanic-evaluator-recovery",
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.MANAGER,
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-001",
+        terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        artifact_paths=("blueprint_evaluation.json", "generated_task.md"),
+        metadata={
+            "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_invalid",
+            "runtime_effect_failure_message": "generated_task.md failed schema validation",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": (
+                "blueprint_approval_pre_mutation_effect_validation"
+            ),
+            "runtime_effect_recovery_action": "route_to_node",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    stage_result_path = run_dir / "stage_results" / "request-evaluator.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+    stage_result_path.write_text(
+        failed_stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    request = _request(
+        paths,
+        stage_kind_id="mechanic_blueprint",
+        active_work_item_id="draft-001",
+        active_work_item_family_id=WorkItemKind.BLUEPRINT_DRAFT.value,
+        active_work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        active_work_item_path=paths.runtime_root / "blueprints/drafts/active/draft-001.json",
+    ).model_copy(update={"run_id": "run-mechanic-evaluator-recovery", "run_dir": str(run_dir)})
+    request = attach_default_request_context(workspace_root=paths.root, request=request)
+    manifest = _manifest_for_request(request)
+    refs = set(request.context_artifact_refs)
+
+    assert "evaluator_runtime_effect_failure_context" in manifest["included_provider_ids"]
+    assert f"failed_evaluator_run_dir:{run_dir.relative_to(paths.root).as_posix()}" in refs
+    assert f"failed_stage_result:{stage_result_path.relative_to(paths.root).as_posix()}" in refs
+    assert "runtime_effect_handler_id:evaluator_blueprint_approved_to_task" in refs
+    assert "runtime_effect_failure_class:generated_task_invalid" in refs
+    assert "runtime_effect_mutation_phase:pre_mutation" in refs
+    assert (
+        "runtime_effect_failure_policy_id:"
+        "blueprint_approval_pre_mutation_effect_validation"
+    ) in refs
+    assert "runtime_effect_recovery_action:route_to_node" in refs
+    assert f"failed_evaluator_artifact:{evaluation_path.relative_to(paths.root).as_posix()}" in refs
+    assert f"failed_evaluator_artifact:{generated_task_path.relative_to(paths.root).as_posix()}" in refs
+    assert "required_repair_action:apply_repaired_generated_task" in refs
+    assert "runtime_owns_blueprint_state:true" in refs
+    assert f"preferred_output:{(run_dir / 'blueprint_repair_decision.json').as_posix()}" in refs
+    assert f"preferred_output:{(run_dir / 'repaired_generated_task.json').as_posix()}" in refs
+    assert f"preferred_output:{(run_dir / 'mechanic_report.md').as_posix()}" in refs
+    assert not any("repaired_blueprint_artifact" in ref for ref in refs)
+    assert "queue_mutation_authority" in manifest["omitted_provider_ids"]
 
 
 def test_mechanic_blueprint_context_prefers_manager_failure_matching_request(

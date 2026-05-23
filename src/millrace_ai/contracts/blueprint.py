@@ -9,6 +9,7 @@ from pydantic import AliasChoices, Field, model_validator
 
 from .base import ContractModel
 from .stage_metadata import validate_safe_identifier
+from .work_documents import TaskDocument
 
 BlueprintDraftStatus = Literal[
     "queued",
@@ -21,7 +22,22 @@ BlueprintDraftStatus = Literal[
     "superseded",
 ]
 BlueprintEvaluationDecision = Literal["approved", "rejected", "blocked"]
+BlueprintRepairAction = Literal[
+    "apply_repaired_generated_task",
+    "rerun_evaluator_existing_candidate",
+    "supersede_candidate_for_revision",
+    "request_manager_rerun",
+    "block_for_operator",
+]
+BlueprintRepairMutationPhase = Literal["pre_mutation", "partial_mutation", "unknown"]
 BlueprintSourceWorkItemKind = Literal["spec", "incident"]
+
+_BLUEPRINT_REPAIR_HANDLER_IDS = {
+    "contractor_blueprint_candidate_persist",
+    "evaluator_blueprint_approved_to_task",
+    "evaluator_blueprint_rejected_to_draft_revision",
+    "manager_blueprint_manifest_to_blueprint_drafts",
+}
 
 
 class BlueprintManifestDocument(ContractModel):
@@ -398,6 +414,151 @@ class BlueprintPromotionRecord(ContractModel):
         _ensure_equal("root_idea_id", self.root_idea_id, evaluation.root_idea_id)
 
 
+class BlueprintRepairDecisionDocument(ContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["blueprint_repair_decision"] = "blueprint_repair_decision"
+
+    repair_id: str
+    failed_handler_id: str
+    failed_run_id: str
+    failed_stage_kind_id: str
+    failed_node_id: str
+    failed_terminal_result: str
+    failure_class: str
+    mutation_phase: BlueprintRepairMutationPhase
+    work_item_family_id: str
+    work_item_id: str
+    draft_id: str
+    manifest_id: str
+    root_spec_id: str
+    root_idea_id: str
+    repair_action: BlueprintRepairAction
+    target_blueprint_id: str
+    target_revision: int = Field(ge=1)
+
+    target_evaluation_id: str | None = None
+    generated_task_id: str | None = None
+    repaired_artifact_id: str | None = None
+    repaired_artifact_path: str | None = None
+    superseded_blueprint_id: str | None = None
+    next_resume_stage: str | None = None
+    operator_reason: str | None = None
+
+    reason: str
+    verified_invariants: tuple[str, ...] = Field(min_length=1)
+    references: tuple[str, ...] = ()
+
+    created_at: datetime
+    created_by: Literal["mechanic_blueprint"] = "mechanic_blueprint"
+
+    @model_validator(mode="after")
+    def validate_repair_decision(self) -> "BlueprintRepairDecisionDocument":
+        _validate_identifiers(
+            repair_id=self.repair_id,
+            failed_handler_id=self.failed_handler_id,
+            failed_run_id=self.failed_run_id,
+            failed_stage_kind_id=self.failed_stage_kind_id,
+            failed_node_id=self.failed_node_id,
+            work_item_family_id=self.work_item_family_id,
+            work_item_id=self.work_item_id,
+            draft_id=self.draft_id,
+            manifest_id=self.manifest_id,
+            root_spec_id=self.root_spec_id,
+            root_idea_id=self.root_idea_id,
+            target_blueprint_id=self.target_blueprint_id,
+        )
+        for field_name in (
+            "target_evaluation_id",
+            "generated_task_id",
+            "repaired_artifact_id",
+            "superseded_blueprint_id",
+            "next_resume_stage",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_safe_identifier(value, field_name=field_name)
+        if self.failed_handler_id not in _BLUEPRINT_REPAIR_HANDLER_IDS:
+            raise ValueError("failed_handler_id is not Blueprint-repairable")
+        _require_nonempty_text(
+            failed_terminal_result=self.failed_terminal_result,
+            failure_class=self.failure_class,
+            reason=self.reason,
+        )
+        _require_nonempty_items(self.verified_invariants, field_name="verified_invariants")
+        self._validate_action_requirements()
+        return self
+
+    def _validate_action_requirements(self) -> None:
+        if self.repair_action == "apply_repaired_generated_task":
+            if self.failed_handler_id != "evaluator_blueprint_approved_to_task":
+                raise ValueError(
+                    "apply_repaired_generated_task requires failed_handler_id "
+                    "evaluator_blueprint_approved_to_task"
+                )
+            if self.failure_class not in {"generated_task_missing", "generated_task_invalid"}:
+                raise ValueError(
+                    "apply_repaired_generated_task requires generated task failure_class"
+                )
+            if self.mutation_phase != "pre_mutation":
+                raise ValueError("apply_repaired_generated_task requires pre_mutation")
+            if self.work_item_family_id != "blueprint_draft":
+                raise ValueError("apply_repaired_generated_task requires blueprint_draft family")
+            if self.target_evaluation_id is None:
+                raise ValueError("target_evaluation_id is required")
+            if self.generated_task_id is None:
+                raise ValueError("generated_task_id is required")
+            if self.repaired_artifact_id != "repaired_generated_task":
+                raise ValueError("repaired_artifact_id must be repaired_generated_task")
+            if not (self.repaired_artifact_path or "").strip():
+                raise ValueError("repaired_artifact_path is required")
+            if self.next_resume_stage is not None:
+                raise ValueError("apply_repaired_generated_task must not set next_resume_stage")
+            return
+        if self.repair_action == "rerun_evaluator_existing_candidate":
+            _ensure_equal("next_resume_stage", self.next_resume_stage, "evaluator_blueprint")
+            return
+        if self.repair_action == "supersede_candidate_for_revision":
+            _ensure_equal("next_resume_stage", self.next_resume_stage, "contractor_blueprint")
+            return
+        if self.repair_action == "request_manager_rerun":
+            _ensure_equal("next_resume_stage", self.next_resume_stage, "manager_blueprint")
+            if self.failed_handler_id != "manager_blueprint_manifest_to_blueprint_drafts":
+                raise ValueError(
+                    "request_manager_rerun requires failed_handler_id "
+                    "manager_blueprint_manifest_to_blueprint_drafts"
+                )
+            return
+        if not (self.operator_reason or "").strip():
+            raise ValueError("block_for_operator requires operator_reason")
+
+    def ensure_matches_packet(self, packet: BlueprintPacketDocument) -> None:
+        _ensure_equal("blueprint_id", self.target_blueprint_id, packet.blueprint_id)
+        _ensure_equal("draft_id", self.draft_id, packet.draft_id)
+        _ensure_equal("manifest_id", self.manifest_id, packet.manifest_id)
+        _ensure_equal("root_spec_id", self.root_spec_id, packet.root_spec_id)
+        _ensure_equal("root_idea_id", self.root_idea_id, packet.root_idea_id)
+        _ensure_equal("target_revision", self.target_revision, packet.revision)
+
+    def ensure_matches_evaluation(self, evaluation: BlueprintEvaluationDocument) -> None:
+        if self.target_evaluation_id is not None:
+            _ensure_equal("evaluation_id", self.target_evaluation_id, evaluation.evaluation_id)
+        _ensure_equal("blueprint_id", self.target_blueprint_id, evaluation.blueprint_id)
+        _ensure_equal("draft_id", self.draft_id, evaluation.draft_id)
+        _ensure_equal("manifest_id", self.manifest_id, evaluation.manifest_id)
+        _ensure_equal("root_spec_id", self.root_spec_id, evaluation.root_spec_id)
+        _ensure_equal("root_idea_id", self.root_idea_id, evaluation.root_idea_id)
+        if self.repair_action == "apply_repaired_generated_task":
+            _ensure_equal("decision", evaluation.decision, "approved")
+
+    def ensure_matches_repaired_generated_task(self, task: TaskDocument) -> None:
+        if self.generated_task_id is not None:
+            _ensure_equal("task_id", self.generated_task_id, task.task_id)
+        _ensure_equal("root_spec_id", self.root_spec_id, task.root_spec_id)
+        _ensure_equal("root_idea_id", self.root_idea_id, task.root_idea_id)
+        if task.spec_id is not None:
+            _ensure_equal("spec_id", self.root_spec_id, task.spec_id)
+
+
 def _validate_identifiers(**values: str) -> None:
     for field_name, value in values.items():
         validate_safe_identifier(value, field_name=field_name)
@@ -449,5 +610,8 @@ __all__ = [
     "BlueprintManifestDocument",
     "BlueprintPacketDocument",
     "BlueprintPromotionRecord",
+    "BlueprintRepairAction",
+    "BlueprintRepairDecisionDocument",
+    "BlueprintRepairMutationPhase",
     "BlueprintSourceWorkItemKind",
 ]

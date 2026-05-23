@@ -253,7 +253,14 @@ class _ManagerRuntimeEffectFailure:
     stage_result: StageResultEnvelope
 
 
+@dataclass(frozen=True, slots=True)
+class _EvaluatorRuntimeEffectFailure:
+    stage_result_path: Path
+    stage_result: StageResultEnvelope
+
+
 _MANAGER_BLUEPRINT_RUNTIME_EFFECT_HANDLER_ID = "manager_blueprint_manifest_to_blueprint_drafts"
+_EVALUATOR_BLUEPRINT_RUNTIME_EFFECT_HANDLER_ID = "evaluator_blueprint_approved_to_task"
 
 
 def _manager_blueprint_context_plan(
@@ -410,8 +417,16 @@ def _mechanic_blueprint_context_plan(
         compiled_plan,
         request_compiled_plan_id=request.compiled_plan_id,
     )
-    output_artifact_ids = ("mechanic_report", "repaired_blueprint_artifact")
+    output_artifact_ids = (
+        "blueprint_repair_decision",
+        "repaired_generated_task",
+        "mechanic_report",
+    )
     manager_failure_refs = _manager_runtime_effect_failure_refs_from_recovery_run_dir(
+        paths,
+        request,
+    )
+    evaluator_failure_refs = _evaluator_runtime_effect_failure_refs_from_recovery_run_dir(
         paths,
         request,
     )
@@ -427,9 +442,13 @@ def _mechanic_blueprint_context_plan(
     if manager_failure_refs:
         included_provider_ids.append("manager_runtime_effect_failure_context")
         inline_sections.append("manager_runtime_effect_failure_context")
+    if evaluator_failure_refs:
+        included_provider_ids.append("evaluator_runtime_effect_failure_context")
+        inline_sections.append("evaluator_runtime_effect_failure_context")
     visible_refs = [
         *_visible_artifact_refs(request),
         *manager_failure_refs,
+        *evaluator_failure_refs,
         *_preferred_blueprint_contract_output_refs(
             request,
             output_artifact_ids,
@@ -558,6 +577,46 @@ def _manager_runtime_effect_failure_refs_from_recovery_run_dir(
     return _unique_tuple(tuple(refs))
 
 
+def _evaluator_runtime_effect_failure_refs_from_recovery_run_dir(
+    paths: WorkspacePaths,
+    request: StageRunRequest,
+) -> tuple[str, ...]:
+    run_dir = Path(request.run_dir)
+    failure = _evaluator_runtime_effect_failure_from_recovery_run_dir(
+        request=request,
+        run_dir=run_dir,
+    )
+    if failure is None:
+        return ()
+
+    refs = [
+        f"failed_evaluator_run_dir:{_artifact_ref(paths, run_dir)}",
+        f"failed_stage_result:{_artifact_ref(paths, failure.stage_result_path)}",
+    ]
+    for key in (
+        "runtime_effect_handler_id",
+        "runtime_effect_failure_class",
+        "runtime_effect_failure_message",
+        "runtime_effect_mutation_phase",
+        "runtime_effect_failure_policy_id",
+        "runtime_effect_recovery_action",
+    ):
+        value = _string_metadata(failure.stage_result, key)
+        if value is not None:
+            refs.append(f"{key}:{value}")
+    refs.extend(
+        f"failed_evaluator_artifact:{_artifact_ref(paths, run_dir / filename)}"
+        for filename in ("blueprint_evaluation.json", "generated_task.md")
+    )
+    refs.extend(
+        (
+            "required_repair_action:apply_repaired_generated_task",
+            "runtime_owns_blueprint_state:true",
+        )
+    )
+    return _unique_tuple(tuple(refs))
+
+
 def _manager_runtime_effect_failure_from_recovery_run_dir(
     *,
     request: StageRunRequest,
@@ -598,6 +657,40 @@ def _manager_runtime_effect_failure_from_recovery_run_dir(
     return _latest_completed_manager_failure(candidates)
 
 
+def _evaluator_runtime_effect_failure_from_recovery_run_dir(
+    *,
+    request: StageRunRequest,
+    run_dir: Path,
+) -> _EvaluatorRuntimeEffectFailure | None:
+    stage_results_dir = run_dir / "stage_results"
+    candidates: list[_EvaluatorRuntimeEffectFailure] = []
+    for path in _json_files(stage_results_dir):
+        try:
+            stage_result = StageResultEnvelope.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except ValueError:
+            continue
+        if not _is_evaluator_runtime_effect_failure(stage_result):
+            continue
+        candidates.append(
+            _EvaluatorRuntimeEffectFailure(
+                stage_result_path=path,
+                stage_result=stage_result,
+            )
+        )
+    if not candidates:
+        return None
+    exact_matches = [
+        failure
+        for failure in candidates
+        if _stage_result_matches_recovery_request(failure.stage_result, request)
+    ]
+    if exact_matches:
+        return _latest_completed_evaluator_failure(exact_matches)
+    return _latest_completed_evaluator_failure(candidates)
+
+
 def _is_manager_runtime_effect_failure(stage_result: StageResultEnvelope) -> bool:
     if stage_result.stage_kind_id != "manager_blueprint":
         return False
@@ -611,6 +704,22 @@ def _is_manager_runtime_effect_failure(stage_result: StageResultEnvelope) -> boo
     if stage_result.metadata.get("runtime_effect_decision") != "request_block_source":
         return False
     return _string_metadata(stage_result, "runtime_effect_failure_class") is not None
+
+
+def _is_evaluator_runtime_effect_failure(stage_result: StageResultEnvelope) -> bool:
+    if stage_result.stage_kind_id != "evaluator_blueprint":
+        return False
+    if stage_result.terminal_result.value != "BLUEPRINT_APPROVED":
+        return False
+    if (
+        stage_result.metadata.get("runtime_effect_handler_id")
+        != _EVALUATOR_BLUEPRINT_RUNTIME_EFFECT_HANDLER_ID
+    ):
+        return False
+    if stage_result.metadata.get("runtime_effect_decision") != "request_block_source":
+        return False
+    failure_class = _string_metadata(stage_result, "runtime_effect_failure_class")
+    return failure_class in {"generated_task_invalid", "generated_task_missing"}
 
 
 def _stage_result_matches_recovery_request(
@@ -627,6 +736,20 @@ def _stage_result_matches_recovery_request(
 def _latest_completed_manager_failure(
     failures: list[_ManagerRuntimeEffectFailure],
 ) -> _ManagerRuntimeEffectFailure:
+    return max(
+        failures,
+        key=lambda failure: (
+            failure.stage_result.completed_at,
+            failure.stage_result.run_id,
+            failure.stage_result.work_item_id,
+            failure.stage_result_path.as_posix(),
+        ),
+    )
+
+
+def _latest_completed_evaluator_failure(
+    failures: list[_EvaluatorRuntimeEffectFailure],
+) -> _EvaluatorRuntimeEffectFailure:
     return max(
         failures,
         key=lambda failure: (

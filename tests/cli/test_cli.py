@@ -145,6 +145,72 @@ def _write_runtime_effect_then_recovery_stage_results(paths, run_id: str) -> tup
     return effect_result_path, recovery_result_path
 
 
+def _write_blueprint_repair_failure_then_apply_stage_results(
+    paths,
+    run_id: str,
+) -> tuple[Path, Path]:
+    stage_results_dir = paths.runs_dir / run_id / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    failure_result_path = stage_results_dir / "request-001.json"
+    repair_result_path = stage_results_dir / "request-002.json"
+    failure_result = StageResultEnvelope(
+        run_id=run_id,
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.MANAGER,
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-blueprint-001",
+        terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        metadata={
+            "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_invalid",
+            "runtime_effect_failure_message": "generated_task.md failed schema validation",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": (
+                "blueprint_approval_pre_mutation_effect_validation"
+            ),
+            "runtime_effect_recovery_action": "route_to_node",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    repair_result = StageResultEnvelope(
+        run_id=run_id,
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.MECHANIC,
+        node_id="mechanic_blueprint",
+        stage_kind_id="mechanic_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-blueprint-001",
+        terminal_result=PlanningTerminalResult.MECHANIC_BLUEPRINT_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### MECHANIC_BLUEPRINT_COMPLETE",
+        success=True,
+        metadata={
+            "runtime_effect_handler_id": "mechanic_blueprint_repair_apply",
+            "runtime_effect_decision": "request_complete_source",
+            "runtime_effect_failure_message": "promoted blueprint to repaired task",
+            "runtime_effect_mutation_phase": "unknown",
+        },
+        started_at=NOW,
+        completed_at=datetime(2026, 4, 15, 12, 0, 1, tzinfo=timezone.utc),
+    )
+    failure_result_path.write_text(
+        failure_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    repair_result_path.write_text(
+        repair_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return failure_result_path, repair_result_path
+
+
 def test_init_command_creates_workspace_baseline(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
 
@@ -1472,6 +1538,130 @@ def test_status_surfaces_latest_runtime_effect_failure_metadata(tmp_path: Path) 
     assert "latest_runtime_effect_recovery_action: route_to_node" in result.output
 
 
+def test_status_surfaces_blueprint_repair_runtime_effect_diagnostics(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    stage_result_path = paths.runs_dir / "run-effect" / "stage_results" / "request-approval.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+    stage_result = StageResultEnvelope(
+        run_id="run-effect",
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.MANAGER,
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-blueprint-001",
+        terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        metadata={
+            "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_invalid",
+            "runtime_effect_failure_message": "generated_task.md failed schema validation",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": (
+                "blueprint_approval_pre_mutation_effect_validation"
+            ),
+            "runtime_effect_recovery_action": "route_to_node",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    stage_result_path.write_text(stage_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "last_stage_result_path": str(stage_result_path.relative_to(paths.root)),
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    result = CliRunner().invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "latest_runtime_effect_failure_class: generated_task_invalid" in result.output
+    assert (
+        "latest_blueprint_repair_context: "
+        "failed_handler=evaluator_blueprint_approved_to_task "
+        "failure_class=generated_task_invalid "
+        "mutation_phase=pre_mutation "
+        "policy=blueprint_approval_pre_mutation_effect_validation "
+        "recovery_action=route_to_node"
+    ) in result.output
+    assert (
+        "latest_blueprint_repair_contract: "
+        "action=apply_repaired_generated_task "
+        "artifacts=blueprint_repair_decision,repaired_generated_task,mechanic_report "
+        "repaired_artifact=repaired_generated_task"
+    ) in result.output
+    assert (
+        "latest_blueprint_replay_conflict_classes: "
+        "candidate=blueprint_candidate_duplicate_conflict,blueprint_candidate_markdown_conflict "
+        "approval=blueprint_evaluation_duplicate_conflict,blueprint_approved_packet_conflict,"
+        "blueprint_approved_markdown_conflict,blueprint_task_duplicate,"
+        "blueprint_promotion_duplicate_conflict"
+    ) in result.output
+    assert (
+        "latest_blueprint_inert_artifact_guard: "
+        "repaired_blueprint_artifact.md ignored; mechanic_report.md evidence only"
+    ) in result.output
+    assert (
+        "latest_blueprint_runtime_ownership_boundary: "
+        "mechanic writes repair artifacts only; runtime owns queues and canonical Blueprint state"
+    ) in result.output
+
+
+def test_status_keeps_blueprint_repair_diagnostics_after_mechanic_apply_runtime_effect(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    _, repair_result_path = _write_blueprint_repair_failure_then_apply_stage_results(
+        paths,
+        "run-effect-recovery",
+    )
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "last_stage_result_path": str(repair_result_path.relative_to(paths.root)),
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    result = CliRunner().invoke(cli.app, ["status", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert (
+        "latest_runtime_effect_handler_id: evaluator_blueprint_approved_to_task"
+        in result.output
+    )
+    assert "latest_runtime_effect_decision: request_block_source" in result.output
+    assert "latest_runtime_effect_failure_class: generated_task_invalid" in result.output
+    assert (
+        "latest_runtime_effect_failure_message: generated_task.md failed schema validation"
+        in result.output
+    )
+    assert "latest_runtime_effect_mutation_phase: pre_mutation" in result.output
+    assert (
+        "latest_runtime_effect_failure_policy_id: "
+        "blueprint_approval_pre_mutation_effect_validation"
+    ) in result.output
+    assert "latest_runtime_effect_recovery_action: route_to_node" in result.output
+    assert (
+        "latest_blueprint_repair_context: "
+        "failed_handler=evaluator_blueprint_approved_to_task "
+        "failure_class=generated_task_invalid "
+        "mutation_phase=pre_mutation "
+        "policy=blueprint_approval_pre_mutation_effect_validation "
+        "recovery_action=route_to_node"
+    ) in result.output
+    assert "latest_blueprint_repair_contract: action=apply_repaired_generated_task" in (
+        result.output
+    )
+
+
 def test_status_uses_latest_prior_runtime_effect_metadata_when_last_stage_is_recovery(
     tmp_path: Path,
 ) -> None:
@@ -1841,6 +2031,57 @@ def test_runs_ls_and_show_use_latest_prior_runtime_effect_metadata_after_recover
         "runtime_effect_failure_policy_id: manager_blueprint_pre_mutation_artifact_repair"
         in summary_block
     )
+    assert "runtime_effect_recovery_action: route_to_node" in summary_block
+
+
+def test_runs_ls_and_show_keep_blueprint_failure_metadata_after_repair_apply_runtime_effect(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    _write_blueprint_repair_failure_then_apply_stage_results(paths, "run-effect-recovery")
+
+    runner = CliRunner()
+    list_result = runner.invoke(cli.app, ["runs", "ls", "--workspace", str(paths.root)])
+    show_result = runner.invoke(
+        cli.app,
+        ["runs", "show", "run-effect-recovery", "--workspace", str(paths.root)],
+    )
+
+    assert list_result.exit_code == 0
+    assert (
+        "runtime_effect_handler_id: evaluator_blueprint_approved_to_task"
+        in list_result.output
+    )
+    assert "runtime_effect_decision: request_block_source" in list_result.output
+    assert "runtime_effect_failure_class: generated_task_invalid" in list_result.output
+    assert (
+        "runtime_effect_failure_message: generated_task.md failed schema validation"
+        in list_result.output
+    )
+    assert "runtime_effect_mutation_phase: pre_mutation" in list_result.output
+    assert (
+        "runtime_effect_failure_policy_id: "
+        "blueprint_approval_pre_mutation_effect_validation"
+    ) in list_result.output
+    assert "runtime_effect_recovery_action: route_to_node" in list_result.output
+
+    assert show_result.exit_code == 0
+    summary_block = show_result.output.split("stage_result_path:", 1)[0]
+    assert (
+        "runtime_effect_handler_id: evaluator_blueprint_approved_to_task"
+        in summary_block
+    )
+    assert "runtime_effect_decision: request_block_source" in summary_block
+    assert "runtime_effect_failure_class: generated_task_invalid" in summary_block
+    assert (
+        "runtime_effect_failure_message: generated_task.md failed schema validation"
+        in summary_block
+    )
+    assert "runtime_effect_mutation_phase: pre_mutation" in summary_block
+    assert (
+        "runtime_effect_failure_policy_id: "
+        "blueprint_approval_pre_mutation_effect_validation"
+    ) in summary_block
     assert "runtime_effect_recovery_action: route_to_node" in summary_block
 
 
@@ -2272,6 +2513,39 @@ def test_queue_retry_blocked_requeues_retryable_blocked_task(tmp_path: Path) -> 
     assert "destination_state: queue" in result.output
     assert (paths.tasks_queue_dir / "task-retry.md").is_file()
     assert not (paths.tasks_blocked_dir / "task-retry.md").exists()
+
+
+def test_queue_retry_blocked_requeues_family_selected_blocked_spec(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_spec(SpecDocument.model_validate(_spec_payload("spec-retry")))
+    assert queue.claim_next_planning_item() is not None
+    queue.mark_spec_blocked("spec-retry")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "queue",
+            "retry-blocked",
+            "spec-retry",
+            "--family",
+            "spec",
+            "--workspace",
+            str(paths.root),
+            "--reason",
+            "operator retry after fixing input",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "requeued_work_item: spec-retry" in result.output
+    assert "work_item_family_id: spec" in result.output
+    assert "work_item_kind: spec" in result.output
+    assert "source_state: blocked" in result.output
+    assert "destination_state: queue" in result.output
+    assert (paths.specs_queue_dir / "spec-retry.md").is_file()
+    assert not (paths.specs_blocked_dir / "spec-retry.md").exists()
 
 
 def test_queue_retry_blocked_refuses_non_retryable_task_without_force(tmp_path: Path) -> None:
@@ -3308,6 +3582,91 @@ def test_doctor_command_surfaces_workspace_diagnostics(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "ok: true" in result.output
+
+
+def test_doctor_warns_on_latest_blueprint_repair_runtime_effect_context(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    stage_result_path = paths.runs_dir / "run-effect" / "stage_results" / "request-approval.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+    stage_result = StageResultEnvelope(
+        run_id="run-effect",
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.MANAGER,
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-blueprint-001",
+        terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        metadata={
+            "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_invalid",
+            "runtime_effect_failure_message": "generated_task.md failed schema validation",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": (
+                "blueprint_approval_pre_mutation_effect_validation"
+            ),
+            "runtime_effect_recovery_action": "route_to_node",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    stage_result_path.write_text(stage_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "last_stage_result_path": str(stage_result_path.relative_to(paths.root)),
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    result = CliRunner().invoke(cli.app, ["doctor", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "ok: true" in result.output
+    assert "warning: blueprint_runtime_effect_recovery_context" in result.output
+    assert "failed_handler=evaluator_blueprint_approved_to_task" in result.output
+    assert "failure_class=generated_task_invalid" in result.output
+    assert "action=apply_repaired_generated_task" in result.output
+    assert "blueprint_repair_decision,repaired_generated_task,mechanic_report" in result.output
+    assert "blueprint_candidate_duplicate_conflict" in result.output
+    assert "repaired_blueprint_artifact.md ignored" in result.output
+    assert "mechanic writes repair artifacts only" in result.output
+
+
+def test_doctor_keeps_blueprint_repair_context_after_mechanic_apply_runtime_effect(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    _, repair_result_path = _write_blueprint_repair_failure_then_apply_stage_results(
+        paths,
+        "run-effect-recovery",
+    )
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "last_stage_result_path": str(repair_result_path.relative_to(paths.root)),
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    result = CliRunner().invoke(cli.app, ["doctor", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "ok: true" in result.output
+    assert "warning: blueprint_runtime_effect_recovery_context" in result.output
+    assert "failed_handler=evaluator_blueprint_approved_to_task" in result.output
+    assert "failure_class=generated_task_invalid" in result.output
+    assert "action=apply_repaired_generated_task" in result.output
+    assert "blueprint_repair_decision,repaired_generated_task,mechanic_report" in result.output
+    assert "blueprint_candidate_duplicate_conflict" in result.output
+    assert "repaired_blueprint_artifact.md ignored" in result.output
+    assert "mechanic writes repair artifacts only" in result.output
 
 
 def test_upgrade_command_previews_three_way_classification(

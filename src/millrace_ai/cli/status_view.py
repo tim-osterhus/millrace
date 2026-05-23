@@ -21,6 +21,9 @@ from millrace_ai.contracts.blueprint import (
 )
 from millrace_ai.events import RuntimeEventRecord, read_runtime_events
 from millrace_ai.paths import WorkspacePaths
+from millrace_ai.runtime.blueprint_recovery_diagnostics import (
+    latest_runtime_effect_status_metadata,
+)
 from millrace_ai.runtime.error_recovery import load_runtime_error_context
 from millrace_ai.runtime.pause_state import pause_sources_label
 from millrace_ai.runtime.usage_governance import load_usage_governance_state
@@ -47,6 +50,11 @@ _LATEST_RUNTIME_EFFECT_STATUS_KEYS = (
     "latest_runtime_effect_mutation_phase",
     "latest_runtime_effect_failure_policy_id",
     "latest_runtime_effect_recovery_action",
+    "latest_blueprint_repair_context",
+    "latest_blueprint_repair_contract",
+    "latest_blueprint_replay_conflict_classes",
+    "latest_blueprint_inert_artifact_guard",
+    "latest_blueprint_runtime_ownership_boundary",
 )
 
 
@@ -330,18 +338,7 @@ def _latest_runtime_effect_metadata(
     paths: WorkspacePaths,
     stage_result_path: str | None,
 ) -> dict[str, str]:
-    if stage_result_path is None:
-        return {}
-    path = Path(stage_result_path)
-    if not path.is_absolute():
-        path = paths.root / path
-    stage_result = _load_stage_result(path)
-    if stage_result is None:
-        return {}
-    metadata = _runtime_effect_metadata_from_stage_result(stage_result)
-    if metadata:
-        return metadata
-    return _latest_sibling_runtime_effect_metadata(path, stage_result)
+    return latest_runtime_effect_status_metadata(paths, stage_result_path)
 
 
 def _load_stage_result(path: Path) -> StageResultEnvelope | None:

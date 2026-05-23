@@ -142,17 +142,22 @@ normalized content.
   source-lifecycle application after runtime-owned mutation.
 - `src/millrace_ai/runtime/failure_policy.py`: runtime failure-origin
   classification plus runtime-effect failure policy matching, including
-  Manager Blueprint route, block, and require-operator outcomes.
+  conservative Blueprint blocks and recoverable Mechanic Blueprint routes.
 - `src/millrace_ai/runtime/blueprint_effects.py`: Blueprint-specific runtime
   effects for manifest/draft promotion, packet persistence, evaluator
-  approval/rejection, idempotent Manager replay, and precise Blueprint failure
-  classes.
+  approval/rejection, idempotent Manager replay, Contractor candidate replay,
+  Evaluator approval replay, Mechanic repaired-task application, and precise
+  Blueprint failure classes.
+- `src/millrace_ai/runtime/blueprint_recovery_diagnostics.py`: shared
+  Blueprint runtime-effect repair diagnostics used by status and doctor to
+  expose the structured repair contract, replay conflict classes,
+  inert-artifact guard, and runtime ownership boundary.
 - `src/millrace_ai/runtime/planner_effects.py`: Planner disposition handling
   for active-source continuation, emitted-child-spec completion/resolution, and
   blocked Planner outcomes.
 - `src/millrace_ai/runtime/request_context.py`: deterministic context bundles,
   including Blueprint manifest resolution by `draft.manifest_id` and Mechanic
-  Blueprint context for Manager runtime-effect failures.
+  Blueprint repair output refs for recoverable runtime-effect failures.
 - `src/millrace_ai/runtime/lifecycle_interpreter.py`: runtime-facing bridge from
   source lifecycle intent to the workspace queue lifecycle interpreter.
 - `src/millrace_ai/runtime/monitoring.py`: runtime monitor event protocol and null monitor sink.
@@ -163,8 +168,8 @@ normalized content.
   bounded daemon execution and compatibility tests.
 - `src/millrace_ai/runtime/supervisor.py`: daemon-mode lane scheduler, lane-keyed worker registry, and serialized completion-application owner.
 - `src/millrace_ai/runtime/blocked_recovery.py`: blocked-work metadata,
-  blocked dependency retryability decisions, manual blocked-task requeue
-  validation, and daemon idle-cycle transient dependency auto-recovery.
+  blocked dependency retryability decisions, family-aware manual blocked
+  retry validation, and daemon idle-cycle transient dependency auto-recovery.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
@@ -256,8 +261,8 @@ Per daemon scheduler cycle:
 15. Before reporting plain no-work idle, inspect stranded queued execution
     tasks whose dependencies are blocked. If a same-lineage blocked predecessor
     is classified as a transient environment/provider failure and cooldown plus
-    retry-budget gates pass, requeue it through the audited blocked-task retry
-    transition.
+    retry-budget gates pass, requeue it through the audited blocked work-item
+    retry transition while preserving the task compatibility event.
 16. The supervisor applies completed outcomes serially: normalize, persist,
     update `run_trace.json`, route, update queue/snapshot/status/counters, emit
     monitor/runtime events, and evaluate post-stage usage governance.
@@ -271,7 +276,10 @@ The implementation mirrors that ordering directly:
   compiled lane conflict checks, and serialized result application
 - `runtime/lanes.py` owns durable lane projection and launch-plan fingerprints
   on active runs
-- `runtime/result_application.py` delegates routed mutation into owned collaborators for counters, work-item movement, incident creation, persistence, and closure-target handling
+- `runtime/result_application.py` delegates routed mutation into owned
+  collaborators for counters, work-item movement, incident creation,
+  persistence, closure-target handling, and next-stage running status-marker
+  updates after compiled `RUN_STAGE` decisions
 - `runtime/effects.py` and `workspace/queue_lifecycle.py` keep terminal
   lifecycle effects behind runtime-owned intent objects and queue interpreters
 
@@ -285,6 +293,13 @@ Idle:
   requeued automatically with cooldown and retry-budget diagnostics; semantic
   blocked states, missing binaries, auth failures, malformed output, and
   unknown transport failures remain blocked for operator review.
+- Manual `queue retry-blocked` uses the same blocked-work retry validator for
+  task, probe, spec, incident, learning-request, and parseable graph-owned
+  families. It requires an offline workspace, validates the blocked artifact
+  before movement, enforces destination-collision and root-spec guards, writes
+  a family audit log, refreshes snapshot queue depths, and emits a runtime
+  event. Operators should cancel bad blocked work and intake a corrected item
+  when replaying the original artifact would repeat a semantic failure.
 - If unrelated root specs are queued while a closure target is open, runtime
   emits `closure_target_backpressure`, keeps the daemon alive, and reports
   `planning_root_specs_deferred_by_closure_target` through `millrace status`.

@@ -256,6 +256,45 @@ def test_requeue_blocked_task_moves_task_to_queue_and_writes_audit_log(tmp_path:
     ]
 
 
+def test_requeue_blocked_work_item_moves_spec_to_queue_and_writes_family_audit_log(tmp_path: Path) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-retry", created_at=NOW))
+    assert queue.claim_next_planning_item() is not None
+    queue.mark_spec_blocked("spec-retry")
+
+    destination = queue.requeue_blocked_work_item(
+        work_item_family_id="spec",
+        work_item_kind=WorkItemKind.SPEC,
+        work_item_id="spec-retry",
+        reason="retry after contract repair",
+        actor="operator",
+        auto=False,
+        failure_class="provider_unavailable",
+        attempt_number=2,
+    )
+
+    assert destination == paths.specs_queue_dir / "spec-retry.md"
+    assert destination.is_file()
+    assert not (paths.specs_blocked_dir / "spec-retry.md").exists()
+    audit_lines = _read_json_lines(paths.specs_queue_dir / "spec-retry.requeue.jsonl")
+    assert audit_lines == [
+        {
+            "at": audit_lines[0]["at"],
+            "actor": "operator",
+            "attempt_number": 2,
+            "auto": False,
+            "destination_state": "queue",
+            "failure_class": "provider_unavailable",
+            "kind": "spec",
+            "reason": "retry after contract repair",
+            "source_state": "blocked",
+            "work_item_family_id": "spec",
+            "work_item_id": "spec-retry",
+        }
+    ]
+
+
 def test_work_documents_round_trip_for_task_spec_and_incident() -> None:
     documents: tuple[TaskDocument | SpecDocument | ProbeDocument | IncidentDocument, ...] = (
         _task_doc("task-roundtrip", created_at=NOW),

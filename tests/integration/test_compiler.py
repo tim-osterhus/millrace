@@ -494,6 +494,22 @@ def test_compile_blueprint_codex_mode_materializes_custom_planning_graph(tmp_pat
         "evaluator_blueprint",
         "mechanic_blueprint",
     }.issubset(stage_kind_ids)
+    assert "mechanic_blueprint_repair_apply" in plan.runtime_effect_handlers_by_id
+    repair_rule = next(
+        rule
+        for rule in plan.runtime_effect_rules
+        if rule.rule_id == "mechanic_blueprint_repair_apply"
+    )
+    assert repair_rule.source_node_id == "mechanic_blueprint"
+    assert repair_rule.on_outcomes == ("MECHANIC_BLUEPRINT_COMPLETE",)
+    approval_policy = plan.runtime_failure_policies_by_id[
+        "blueprint_approval_pre_mutation_effect_validation"
+    ]
+    assert approval_policy.target_node_id == "mechanic_blueprint"
+    assert approval_policy.applies_to_failure_classes == (
+        "generated_task_missing",
+        "generated_task_invalid",
+    )
     assert any(ref.logical_id == "mode:blueprint_codex" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "stage_kind:evaluator_blueprint" for ref in plan.resolved_assets)

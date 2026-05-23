@@ -12,6 +12,12 @@ from pydantic import ValidationError
 
 from millrace_ai.contracts import RunTraceGraph, StageResultEnvelope, TokenUsage, WorkItemKind
 from millrace_ai.paths import WorkspacePaths, workspace_paths
+from millrace_ai.runtime.blueprint_recovery_diagnostics import (
+    BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES,
+    BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
+    BLUEPRINT_APPROVAL_REPAIR_POLICY_ID,
+    BLUEPRINT_REPAIR_APPLY_HANDLER_ID,
+)
 from millrace_ai.runtime.run_traces import (
     inspect_run_trace as _inspect_run_trace,
 )
@@ -418,8 +424,43 @@ def _latest_runtime_effect_stage_result(
 ) -> InspectedStageResult | None:
     for stage_result in reversed(stage_results):
         if _stage_result_has_runtime_effect_metadata(stage_result):
+            if _is_blueprint_repair_apply_stage_result(stage_result):
+                repair_context = _latest_blueprint_approval_repair_stage_result(
+                    stage_results
+                )
+                if repair_context is not None:
+                    return repair_context
             return stage_result
     return None
+
+
+def _latest_blueprint_approval_repair_stage_result(
+    stage_results: list[InspectedStageResult],
+) -> InspectedStageResult | None:
+    for stage_result in reversed(stage_results):
+        if _is_blueprint_approval_repair_stage_result(stage_result):
+            return stage_result
+    return None
+
+
+def _is_blueprint_repair_apply_stage_result(stage_result: InspectedStageResult) -> bool:
+    return (
+        stage_result.runtime_effect_handler_id == BLUEPRINT_REPAIR_APPLY_HANDLER_ID
+        and stage_result.runtime_effect_decision == "request_complete_source"
+    )
+
+
+def _is_blueprint_approval_repair_stage_result(stage_result: InspectedStageResult) -> bool:
+    return (
+        stage_result.runtime_effect_handler_id == BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID
+        and stage_result.runtime_effect_decision == "request_block_source"
+        and stage_result.runtime_effect_failure_class
+        in BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES
+        and stage_result.runtime_effect_mutation_phase == "pre_mutation"
+        and stage_result.runtime_effect_failure_policy_id
+        == BLUEPRINT_APPROVAL_REPAIR_POLICY_ID
+        and stage_result.runtime_effect_recovery_action == "route_to_node"
+    )
 
 
 def _stage_result_has_runtime_effect_metadata(stage_result: InspectedStageResult) -> bool:

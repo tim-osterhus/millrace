@@ -711,10 +711,8 @@ def test_manager_blueprint_malformed_artifact_routes_through_runtime_failure_pol
         stage_result_path=stage_result_path,
     )
 
-    assert application.router_decision.action is RouterAction.RUN_STAGE
-    assert application.router_decision.next_stage is PlanningStageName.MECHANIC
-    assert application.router_decision.next_node_id == "mechanic_blueprint"
-    assert application.router_decision.next_stage_kind_id == "mechanic_blueprint"
+    assert application.router_decision.action is RouterAction.BLOCKED
+    assert application.router_decision.next_node_id is None
     assert application.router_decision.failure_class == "blueprint_manifest_parse_error"
     persisted = StageResultEnvelope.model_validate_json(
         stage_result_path.read_text(encoding="utf-8")
@@ -722,7 +720,10 @@ def test_manager_blueprint_malformed_artifact_routes_through_runtime_failure_pol
     assert persisted.metadata["runtime_effect_failure_policy_id"] == (
         "manager_blueprint_pre_mutation_artifact_repair"
     )
-    assert persisted.metadata["runtime_effect_recovery_action"] == "route_to_node"
+    assert persisted.metadata["runtime_effect_recovery_action"] == "block_source_work_item"
+    assert persisted.metadata["runtime_effect_failure_class"] == (
+        "blueprint_manifest_parse_error"
+    )
 
 
 @pytest.mark.parametrize(

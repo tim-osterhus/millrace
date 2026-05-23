@@ -1379,7 +1379,7 @@ def test_runtime_writes_running_status_marker_while_stage_runner_is_active(tmp_p
 
     assert observed_execution_status == "### BUILDER_RUNNING"
     assert observed_snapshot_marker == "### BUILDER_RUNNING"
-    assert load_execution_status(paths) == "### BUILDER_COMPLETE"
+    assert load_execution_status(paths) == "### CHECKER_RUNNING"
 
 
 def test_runtime_can_build_closure_target_request_without_active_work_item(tmp_path: Path) -> None:
@@ -1578,7 +1578,7 @@ def test_runtime_routes_malformed_stage_exit_into_recovery(tmp_path: Path) -> No
     snapshot = load_snapshot(paths)
     assert snapshot.active_stage == ExecutionStageName.TROUBLESHOOTER
     assert snapshot.current_failure_class == "missing_terminal_result"
-    assert load_execution_status(paths) == "### BLOCKED"
+    assert load_execution_status(paths) == "### TROUBLESHOOTER_RUNNING"
 
 
 def test_runtime_routes_post_stage_planning_completion_conflict_into_mechanic(

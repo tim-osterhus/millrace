@@ -29,8 +29,20 @@ _RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS = frozenset(
         "contractor_blueprint_candidate_persist",
         "evaluator_blueprint_approved_to_task",
         "evaluator_blueprint_rejected_to_draft_revision",
+        "mechanic_blueprint_repair_apply",
     }
 )
+_MECHANIC_BLUEPRINT_NODE_ID = "mechanic_blueprint"
+_MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID = "mechanic_blueprint_repair_apply"
+_MECHANIC_BLUEPRINT_REPAIR_OUTCOME = "MECHANIC_BLUEPRINT_COMPLETE"
+_MECHANIC_BLUEPRINT_REPAIR_ARTIFACTS = frozenset(
+    {
+        "blueprint_repair_decision",
+        "mechanic_report",
+        "repaired_generated_task",
+    }
+)
+_MECHANIC_BLUEPRINT_REPAIR_CAPABILITY = "repair.apply_repaired_generated_task"
 _BUILT_IN_ARTIFACT_ADAPTER_IDS = frozenset(
     {
         "builtin.json",
@@ -177,6 +189,7 @@ def validate_workflow_primitives(
         workflow_primitives=workflow_primitives,
         families_by_id=families_by_id,
         runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
+        runtime_effect_rules_by_id=runtime_effect_rules_by_id,
         graphs_by_plane=graphs_by_plane,
         stage_kinds_by_node_id=stage_kinds_by_node_id,
         stage_kinds=stage_kinds,
@@ -657,6 +670,13 @@ def _validate_runtime_effect_rules(
         handler_declared_artifacts = handler_required_artifacts | set(
             getattr(handler, "optional_artifacts")
         )
+        handler_capabilities = set(getattr(handler, "declared_capabilities"))
+        for capability in getattr(rule, "required_handler_capabilities"):
+            if capability not in handler_capabilities:
+                raise CompilerValidationError(
+                    f"runtime effect rule {rule_id} requires handler capability "
+                    f"{capability} not declared by handler {handler_id}"
+                )
         rule_required_artifacts = set(getattr(rule, "required_run_artifacts"))
         for artifact_id in getattr(rule, "required_run_artifacts"):
             if artifact_id not in artifact_contracts_by_id:
@@ -752,6 +772,7 @@ def _validate_runtime_failure_policies(
     workflow_primitives: WorkflowPrimitiveBundle,
     families_by_id: dict[str, WorkItemFamilyDefinition],
     runtime_effect_handlers_by_id: dict[str, object],
+    runtime_effect_rules_by_id: dict[str, object],
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
@@ -838,6 +859,14 @@ def _validate_runtime_failure_policies(
                 terminal_state_ids_by_plane=terminal_state_ids_by_plane,
                 role="source",
             )
+            _validate_blueprint_recovery_route_closure(
+                policy,
+                active_planes=active_planes,
+                runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
+                runtime_effect_rules_by_id=runtime_effect_rules_by_id,
+                graphs_by_plane=graphs_by_plane,
+                graph_node_ids_by_plane=graph_node_ids_by_plane,
+            )
         if policy.recovery_node_id is not None:
             _validate_runtime_failure_policy_node_reference(
                 policy.recovery_node_id,
@@ -887,6 +916,141 @@ def _validate_runtime_failure_policies(
                 terminal_state_ids_by_plane=terminal_state_ids_by_plane,
                 role="target",
             )
+
+
+def _validate_blueprint_recovery_route_closure(
+    policy: object,
+    *,
+    active_planes: tuple[Plane, ...],
+    runtime_effect_handlers_by_id: dict[str, object],
+    runtime_effect_rules_by_id: dict[str, object],
+    graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
+    graph_node_ids_by_plane: dict[Plane, set[str]],
+) -> None:
+    if getattr(policy, "action") != "route_to_node":
+        return
+    if getattr(policy, "target_node_id") != _MECHANIC_BLUEPRINT_NODE_ID:
+        return
+    if not any(
+        _MECHANIC_BLUEPRINT_NODE_ID in graph_node_ids_by_plane.get(plane, set())
+        for plane in active_planes
+    ):
+        return
+
+    repair_rule = _mechanic_blueprint_repair_rule(runtime_effect_rules_by_id)
+    if repair_rule is None:
+        raise CompilerValidationError(
+            f"runtime failure policy {getattr(policy, 'policy_id')} routes to "
+            f"{_MECHANIC_BLUEPRINT_NODE_ID} but recovery node lacks closed repair effect "
+            f"on {_MECHANIC_BLUEPRINT_REPAIR_OUTCOME}"
+        )
+
+    _validate_mechanic_blueprint_resume_guard(
+        policy,
+        active_planes=active_planes,
+        graphs_by_plane=graphs_by_plane,
+        graph_node_ids_by_plane=graph_node_ids_by_plane,
+    )
+    _validate_mechanic_blueprint_repair_rule_artifacts(policy, repair_rule)
+    _validate_mechanic_blueprint_repair_capabilities(
+        policy,
+        repair_rule=repair_rule,
+        runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
+    )
+
+
+def _mechanic_blueprint_repair_rule(
+    runtime_effect_rules_by_id: dict[str, object],
+) -> object | None:
+    for rule in runtime_effect_rules_by_id.values():
+        if getattr(rule, "source_node_id") != _MECHANIC_BLUEPRINT_NODE_ID:
+            continue
+        if getattr(rule, "handler_id") != _MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID:
+            continue
+        if _MECHANIC_BLUEPRINT_REPAIR_OUTCOME not in getattr(rule, "on_outcomes"):
+            continue
+        return rule
+    return None
+
+
+def _validate_mechanic_blueprint_resume_guard(
+    policy: object,
+    *,
+    active_planes: tuple[Plane, ...],
+    graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
+    graph_node_ids_by_plane: dict[Plane, set[str]],
+) -> None:
+    for plane in active_planes:
+        if _MECHANIC_BLUEPRINT_NODE_ID not in graph_node_ids_by_plane.get(plane, set()):
+            continue
+        graph = graphs_by_plane[plane]
+        if any(
+            resume.source_node_id == _MECHANIC_BLUEPRINT_NODE_ID
+            and resume.on_outcome == _MECHANIC_BLUEPRINT_REPAIR_OUTCOME
+            and "resume_stage" in resume.metadata_stage_keys
+            and _MECHANIC_BLUEPRINT_NODE_ID in resume.disallowed_target_node_ids
+            for resume in graph.compiled_resume_policies
+        ):
+            return
+    raise CompilerValidationError(
+        f"runtime failure policy {getattr(policy, 'policy_id')} routes to "
+        f"{_MECHANIC_BLUEPRINT_NODE_ID} but recovery node lacks resume guard for "
+        f"{_MECHANIC_BLUEPRINT_REPAIR_OUTCOME}"
+    )
+
+
+def _validate_mechanic_blueprint_repair_rule_artifacts(
+    policy: object,
+    repair_rule: object,
+) -> None:
+    required_artifacts = set(getattr(repair_rule, "required_run_artifacts"))
+    missing = sorted(_MECHANIC_BLUEPRINT_REPAIR_ARTIFACTS - required_artifacts)
+    if missing:
+        missing_text = ", ".join(missing)
+        raise CompilerValidationError(
+            f"runtime failure policy {getattr(policy, 'policy_id')} routes to "
+            f"{_MECHANIC_BLUEPRINT_NODE_ID} but repair effect "
+            f"{getattr(repair_rule, 'rule_id')} is missing required artifact "
+            f"{missing_text}"
+        )
+
+
+def _validate_mechanic_blueprint_repair_capabilities(
+    policy: object,
+    *,
+    repair_rule: object,
+    runtime_effect_handlers_by_id: dict[str, object],
+) -> None:
+    repair_handler = runtime_effect_handlers_by_id.get(_MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID)
+    if repair_handler is None:
+        raise CompilerValidationError(
+            f"runtime failure policy {getattr(policy, 'policy_id')} routes to "
+            f"{_MECHANIC_BLUEPRINT_NODE_ID} but repair handler "
+            f"{_MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID} is not declared"
+        )
+    handler_capabilities = set(getattr(repair_handler, "declared_capabilities"))
+    if _MECHANIC_BLUEPRINT_REPAIR_CAPABILITY not in handler_capabilities:
+        raise CompilerValidationError(
+            f"runtime failure policy {getattr(policy, 'policy_id')} routes to "
+            f"{_MECHANIC_BLUEPRINT_NODE_ID} but repair effect "
+            f"{getattr(repair_rule, 'rule_id')} lacks capability "
+            f"{_MECHANIC_BLUEPRINT_REPAIR_CAPABILITY}"
+        )
+    failure_classes = tuple(getattr(policy, "applies_to_failure_classes"))
+    if not failure_classes:
+        raise CompilerValidationError(
+            f"runtime failure policy {getattr(policy, 'policy_id')} routes to "
+            f"{_MECHANIC_BLUEPRINT_NODE_ID} without declared runtime effect failure classes"
+        )
+    for failure_class in failure_classes:
+        capability = f"repair.{failure_class}"
+        if capability in handler_capabilities:
+            continue
+        raise CompilerValidationError(
+            f"runtime failure policy {getattr(policy, 'policy_id')} routes "
+            f"{failure_class} to {_MECHANIC_BLUEPRINT_NODE_ID} but repair effect "
+            f"{getattr(repair_rule, 'rule_id')} lacks capability {capability}"
+        )
 
 
 def _runtime_failure_policy_active_planes(

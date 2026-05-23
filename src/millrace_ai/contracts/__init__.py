@@ -12,6 +12,9 @@ from .blueprint import (
     BlueprintManifestDocument,
     BlueprintPacketDocument,
     BlueprintPromotionRecord,
+    BlueprintRepairAction,
+    BlueprintRepairDecisionDocument,
+    BlueprintRepairMutationPhase,
     BlueprintSourceWorkItemKind,
 )
 from .capabilities import (
@@ -150,6 +153,9 @@ __all__ = [
     "BlueprintManifestDocument",
     "BlueprintPacketDocument",
     "BlueprintPromotionRecord",
+    "BlueprintRepairAction",
+    "BlueprintRepairDecisionDocument",
+    "BlueprintRepairMutationPhase",
     "BlueprintSourceWorkItemKind",
     "CapabilityDecisionState",
     "CapabilityEnforcementMode",

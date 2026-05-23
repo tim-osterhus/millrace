@@ -179,6 +179,46 @@ def requeue_blocked_task(
     return destination
 
 
+def requeue_blocked_work_item(
+    paths: WorkspacePaths,
+    *,
+    work_item_family_id: str,
+    work_item_kind: WorkItemKind | None,
+    work_item_id: str,
+    blocked_dir: Path,
+    queue_dir: Path,
+    file_extension: str,
+    reason: str,
+    actor: str,
+    auto: bool,
+    failure_class: str | None = None,
+    attempt_number: int | None = None,
+) -> Path:
+    source = blocked_dir / f"{work_item_id}{file_extension}"
+    if not source.exists():
+        raise QueueStateError(f"{work_item_family_id} {work_item_id} is not blocked")
+    destination = queue_dir / source.name
+    if destination.exists():
+        raise QueueStateError(f"{work_item_family_id} {work_item_id} already exists at destination")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source.replace(destination)
+    _append_requeue_reason(
+        queue_dir,
+        work_item_id,
+        work_item_kind,
+        reason,
+        actor=actor,
+        auto=auto,
+        source_state="blocked",
+        destination_state="queue",
+        failure_class=failure_class,
+        attempt_number=attempt_number,
+        work_item_family_id=work_item_family_id,
+        work_item_id=work_item_id,
+    )
+    return destination
+
+
 def requeue_spec(paths: WorkspacePaths, spec_id: str, *, reason: str) -> Path:
     destination = move_active_with_adapter(
         paths,
@@ -231,7 +271,7 @@ def requeue_learning_request(paths: WorkspacePaths, learning_request_id: str, *,
 def _append_requeue_reason(
     destination_dir: Path,
     item_id: str,
-    kind: WorkItemKind,
+    kind: WorkItemKind | None,
     reason: str,
     *,
     actor: str | None = None,
@@ -240,6 +280,8 @@ def _append_requeue_reason(
     destination_state: str | None = None,
     failure_class: str | None = None,
     attempt_number: int | None = None,
+    work_item_family_id: str | None = None,
+    work_item_id: str | None = None,
 ) -> None:
     cleaned_reason = reason.strip()
     if not cleaned_reason:
@@ -248,9 +290,14 @@ def _append_requeue_reason(
     log_path = destination_dir / f"{item_id}.requeue.jsonl"
     payload = {
         "at": datetime.now(timezone.utc).isoformat(),
-        "kind": kind.value,
         "reason": cleaned_reason,
     }
+    if kind is not None:
+        payload["kind"] = kind.value
+    if work_item_family_id is not None:
+        payload["work_item_family_id"] = work_item_family_id
+    if work_item_id is not None:
+        payload["work_item_id"] = work_item_id
     if actor is not None:
         payload["actor"] = actor
     if auto is not None:
@@ -282,6 +329,7 @@ __all__ = [
     "mark_task_blocked",
     "mark_task_done",
     "requeue_blocked_task",
+    "requeue_blocked_work_item",
     "requeue_incident",
     "requeue_learning_request",
     "requeue_probe",

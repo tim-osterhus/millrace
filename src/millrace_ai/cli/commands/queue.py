@@ -25,7 +25,7 @@ from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import IncidentDocument, Plane, ProbeDocument, SpecDocument, TaskDocument, WorkItemKind
 from millrace_ai.errors import ControlRoutingError, QueueStateError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.runtime.blocked_recovery import retry_blocked_task
+from millrace_ai.runtime.blocked_recovery import retry_blocked_work_item
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
 from millrace_ai.work_documents import parse_work_document_as
@@ -382,15 +382,23 @@ def queue_retarget_dependency(
 
 @queue_app.command("retry-blocked")
 def queue_retry_blocked(
-    task_id: Annotated[str, typer.Argument(help="Blocked task ID to move back to queue.")],
+    work_item_id: Annotated[str, typer.Argument(help="Blocked work item ID to move back to queue.")],
     workspace: WorkspaceOption = Path("."),
+    kind: Annotated[
+        str | None,
+        typer.Option("--kind", help="Optional built-in work item kind."),
+    ] = None,
+    family: Annotated[
+        str | None,
+        typer.Option("--family", help="Optional graph work item family id."),
+    ] = None,
     reason: Annotated[
         str,
-        typer.Option("--reason", help="Audit reason for retrying the blocked task."),
+        typer.Option("--reason", help="Audit reason for retrying the blocked work item."),
     ] = "",
     root_spec_id: Annotated[
         str,
-        typer.Option("--root-spec-id", help="Optional root-spec guard for the blocked task."),
+        typer.Option("--root-spec-id", help="Optional root-spec guard for the blocked work item."),
     ] = "",
     force: Annotated[
         bool,
@@ -399,15 +407,18 @@ def queue_retry_blocked(
 ) -> None:
     paths = _require_paths(workspace)
     try:
-        validated_task_id = _validate_work_item_id(task_id)
+        validated_work_item_id = _validate_work_item_id(work_item_id)
         validated_root_spec_id = _validate_work_item_id(root_spec_id) if root_spec_id.strip() else None
+        work_item_kind = _parse_optional_work_item_kind(kind)
         lock_status = inspect_runtime_ownership_lock(paths)
         if lock_status.state == "active":
             raise QueueStateError("active runtime ownership lock prevents blocked retry")
         config = load_runtime_config(paths.runtime_root / "millrace.toml")
-        result = retry_blocked_task(
+        result = retry_blocked_work_item(
             paths,
-            task_id=validated_task_id,
+            work_item_id=validated_work_item_id,
+            work_item_family_id=family,
+            work_item_kind=work_item_kind,
             reason=reason,
             actor="operator",
             auto=False,
@@ -416,9 +427,23 @@ def queue_retry_blocked(
             config=config,
         )
     except (OSError, QueueStateError, ValidationError, ValueError) as exc:
-        raise typer.Exit(code=_print_error(f"failed to retry blocked task: {exc}")) from exc
+        raise typer.Exit(code=_print_error(f"failed to retry blocked work item: {exc}")) from exc
 
-    typer.echo(f"requeued_task: {result.task_id}")
+    if result.work_item_family_id == WorkItemKind.TASK.value:
+        typer.echo(f"requeued_task: {result.work_item_id}")
+        typer.echo(f"source_state: {result.source_state}")
+        typer.echo(f"destination_state: {result.destination_state}")
+        typer.echo(f"source_path: {result.source_path}")
+        typer.echo(f"destination_path: {result.destination_path}")
+        typer.echo(f"actor: {result.actor}")
+        typer.echo(f"auto: {'true' if result.auto else 'false'}")
+        typer.echo(f"attempt_number: {result.attempt_number}")
+        typer.echo(f"failure_class: {result.failure_class or 'none'}")
+        return
+
+    typer.echo(f"requeued_work_item: {result.work_item_id}")
+    typer.echo(f"work_item_family_id: {result.work_item_family_id}")
+    typer.echo(f"work_item_kind: {result.work_item_kind.value if result.work_item_kind is not None else 'none'}")
     typer.echo(f"source_state: {result.source_state}")
     typer.echo(f"destination_state: {result.destination_state}")
     typer.echo(f"source_path: {result.source_path}")

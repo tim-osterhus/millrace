@@ -54,6 +54,7 @@ _HANDLERS_BY_ID: dict[str, RuntimeEffectHandler] = {
     "evaluator_blueprint_rejected_to_draft_revision": (
         blueprint_effects.evaluator_blueprint_rejected_to_draft_revision
     ),
+    "mechanic_blueprint_repair_apply": blueprint_effects.mechanic_blueprint_repair_apply,
 }
 
 

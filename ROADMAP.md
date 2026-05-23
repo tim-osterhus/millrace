@@ -269,7 +269,7 @@ means deciding which CLI surfaces, workspace contracts, package assets, runner
 contracts, compiler outputs, and documentation promises are stable enough to
 carry forward.
 
-After `0.20.0`, the main validation work is to prove the workflow primitive,
+After `0.20.1`, the main validation work is to prove the workflow primitive,
 lane, request-context, schema-epoch, and Blueprint Planning surfaces across
 longer real workspaces before declaring them stable. The release is allowed to
 break pre-1.0 compatibility, but v1.0.0 should only keep surfaces that have

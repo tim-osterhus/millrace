@@ -111,7 +111,8 @@
       "request_kind": "active_work_item",
       "required_providers": ["active_work_item", "runtime_failure_context"],
       "output_path_preferences": {
-        "repaired_blueprint_artifact": "repaired_blueprint_artifact.md",
+        "blueprint_repair_decision": "blueprint_repair_decision.json",
+        "repaired_generated_task": "repaired_generated_task.json",
         "mechanic_report": "mechanic_report.md"
       },
       "visibility_policy": "active_item_only"

@@ -55,6 +55,7 @@ from .queue_transitions import (
     mark_task_blocked,
     mark_task_done,
     requeue_blocked_task,
+    requeue_blocked_work_item,
     requeue_incident,
     requeue_learning_request,
     requeue_probe,
@@ -151,6 +152,44 @@ class QueueStore:
         return requeue_blocked_task(
             self.paths,
             task_id,
+            reason=reason,
+            actor=actor,
+            auto=auto,
+            failure_class=failure_class,
+            attempt_number=attempt_number,
+        )
+
+    def requeue_blocked_work_item(
+        self,
+        *,
+        work_item_family_id: str,
+        work_item_kind: WorkItemKind | None,
+        work_item_id: str,
+        reason: str,
+        actor: str,
+        auto: bool,
+        failure_class: str | None = None,
+        attempt_number: int | None = None,
+        blocked_dir: Path | None = None,
+        queue_dir: Path | None = None,
+        file_extension: str = ".md",
+    ) -> Path:
+        if blocked_dir is None or queue_dir is None:
+            from .work_item_adapters import adapter_for_family_id
+
+            adapter = adapter_for_family_id(work_item_family_id)
+            blocked_dir = adapter.blocked_dir(self.paths)
+            queue_dir = adapter.queue_dir(self.paths)
+            work_item_kind = work_item_kind or adapter.work_item_kind
+            file_extension = ".md"
+        return requeue_blocked_work_item(
+            self.paths,
+            work_item_family_id=work_item_family_id,
+            work_item_kind=work_item_kind,
+            work_item_id=work_item_id,
+            blocked_dir=blocked_dir,
+            queue_dir=queue_dir,
+            file_extension=file_extension,
             reason=reason,
             actor=actor,
             auto=auto,

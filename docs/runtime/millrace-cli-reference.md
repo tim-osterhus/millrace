@@ -218,6 +218,11 @@ Status also prints `blocked_idle`, `latest_runtime_error_report_path`,
 `latest_runtime_failure_origin`, and `latest_operator_intervention`. The
 intervention line shows the latest audited operator cleanup event, timestamp,
 work item id, and archive destination when one exists.
+For repairable Blueprint Evaluator approval generated-task failures, status
+also prints the latest runtime-effect metadata plus the structured repair
+contract, replay conflict classes, inert-artifact guard, and runtime ownership
+boundary. If a later `mechanic_blueprint_repair_apply` effect succeeds in the
+same run, status keeps the original repairable Evaluator failure context.
 Lane lines include lane id, plane, lane status, lane plan/fingerprint,
 active-run ids, active work refs, last terminal outcome, and lane-level
 pause/drain/stop requests. Active-run lines include the lane id and the
@@ -250,6 +255,18 @@ machine-readable status payload with the same key state, including:
 - `current_failure_class`
 - `latest_runtime_error_report_path`
 - `latest_operator_intervention`
+- `latest_runtime_effect_handler_id`
+- `latest_runtime_effect_decision`
+- `latest_runtime_effect_failure_class`
+- `latest_runtime_effect_failure_message`
+- `latest_runtime_effect_mutation_phase`
+- `latest_runtime_effect_failure_policy_id`
+- `latest_runtime_effect_recovery_action`
+- `latest_blueprint_repair_context`
+- `latest_blueprint_repair_contract`
+- `latest_blueprint_replay_conflict_classes`
+- `latest_blueprint_inert_artifact_guard`
+- `latest_blueprint_runtime_ownership_boundary`
 
 ### `millrace status watch`
 
@@ -318,15 +335,17 @@ Each stage-result block now includes:
 - compact `capability_support` lines when the selected runner reported
   contextual grant support
 
-For Manager Blueprint failures, diagnose duplicate ids separately from
-same-root lineage. Same-root remediation is expected when two manifests share
+For Blueprint failures, diagnose duplicate ids separately from same-root
+lineage. Same-root remediation is expected when two manifests share
 `root_spec_id` but have different `manifest_id` values. A
 `blueprint_manifest_duplicate` failure means a manifest id conflict or
 divergent duplicate file, not merely another manifest under the same root.
-Malformed or missing Manager artifacts normally show a matched recovery action
-of `route_to_node` toward `mechanic_blueprint`; duplicate-id, invalid-source,
-and partial-mutation failures show conservative block or require-operator
-metadata.
+The shipped policy blocks Manager Blueprint runtime-effect failures
+conservatively. Only Evaluator approval pre-mutation
+`generated_task_missing` and `generated_task_invalid` failures route to
+`mechanic_blueprint` automatically. For that repairable approval context,
+`runs ls` and `runs show` preserve the original Evaluator failure metadata
+even after a later successful `mechanic_blueprint_repair_apply` runtime effect.
 
 ### `millrace runs tail <RUN_ID>`
 
@@ -392,23 +411,33 @@ Top-level convenience alias:
 - `millrace add-probe <probe.md|probe.json>`
 - `millrace add-idea <idea.md>`
 
-### `millrace queue retry-blocked <TASK_ID> --reason "..."`
+### `millrace queue retry-blocked <WORK_ITEM_ID> --reason "..."`
 
-Moves one blocked task back to `tasks/queue/` through the supported audited
-transition. This is the manual override for a task that is in
-`tasks/blocked/` after a retryable environmental or provider failure.
+Moves one blocked work item back to its family queue through the supported
+audited transition. Built-in families are `task`, `probe`, `spec`, `incident`,
+and `learning_request`; compiled graph families such as `blueprint_draft` are
+supported only when their family definition declares queue and blocked
+directories plus a parse-capable document adapter for the artifact extension.
 
 ```bash
 millrace queue retry-blocked <TASK_ID> --workspace <workspace> --reason "retry after network outage"
+millrace queue retry-blocked <SPEC_ID> --family spec --workspace <workspace> --reason "retry after spec repair" --force
 ```
 
-The command refuses tasks that are already queued, active, done, missing, not
-retryable, outside the supplied `--root-spec-id`, past the configured retry
-budget, or in a workspace currently owned by a live daemon. Use `--force` only
-when an operator has inspected the blocked task and wants to override
-retryability and budget checks. The command appends
-`tasks/queue/<TASK_ID>.requeue.jsonl`, refreshes queue-depth snapshot fields,
-and emits `blocked_task_requeued`.
+When no selector is supplied, task-only usage remains compatible if the blocked
+id is unambiguous. Use `--family` as the primary selector for non-task or graph
+families; `--kind` remains available for built-in compatibility.
+
+The command refuses work items that are already queued, active, done, missing,
+ambiguous without `--family`, malformed, outside the supplied `--root-spec-id`,
+not retryable, past the configured retry budget, or in a workspace currently
+owned by a live daemon. Stop the daemon first, or cancel the blocked item and
+intake fresh corrected work when a retry would replay bad input. Use `--force`
+only after inspecting the blocked artifact and accepting that retryability and
+budget checks are being overridden. The command appends
+`<family-queue>/<WORK_ITEM_ID>.requeue.jsonl`, refreshes queue-depth snapshot
+fields, emits `blocked_work_item_requeued`, and still emits
+`blocked_task_requeued` for task compatibility.
 
 Related daemon behavior: when auto-recovery is enabled, an idle daemon can
 autonomously requeue a same-lineage blocked dependency only when the latest
@@ -421,6 +450,8 @@ failures remain operator-review states.
 Options:
 
 - `--workspace PATH`
+- `--family FAMILY_ID`
+- `--kind task|probe|spec|incident|learning_request|blueprint_draft`
 - `--reason TEXT`
 - `--root-spec-id ROOT_SPEC_ID`
 - `--force`
@@ -713,10 +744,10 @@ Top-level fields:
 - `auto_recovery.max_auto_requeues_per_work_item`
 - `auto_recovery.cooldown_seconds`
 
-Default policy allows three automatic requeues per task with cooldowns of
+Default policy allows three automatic requeues per work item with cooldowns of
 `300`, `900`, and `3600` seconds. Operators can still use
-`millrace queue retry-blocked --force` after inspecting a blocked task that
-does not qualify for autonomous retry.
+`millrace queue retry-blocked --force` after inspecting a blocked work item
+that does not qualify for autonomous retry.
 
 ## Usage Governance Config
 

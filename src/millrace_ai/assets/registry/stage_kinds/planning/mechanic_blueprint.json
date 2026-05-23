@@ -36,7 +36,8 @@
   "declared_output_artifacts": [
     "stage_result",
     "mechanic_report",
-    "repaired_blueprint_artifact"
+    "blueprint_repair_decision",
+    "repaired_generated_task"
   ],
   "allowed_work_item_families": ["spec", "incident", "blueprint_draft"],
   "idempotence_policy": "retry_safe_with_key",

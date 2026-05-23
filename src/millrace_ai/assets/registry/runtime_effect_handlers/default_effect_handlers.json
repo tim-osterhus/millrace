@@ -12,6 +12,7 @@
       "returns_source_lifecycle_intent": true,
       "requires_lifecycle_mutation_plan": true,
       "creates_work_items": false,
+      "declared_capabilities": ["replay.planner_disposition"],
       "failure_classes": [
         "planner_disposition_missing",
         "planner_disposition_invalid",
@@ -33,6 +34,15 @@
       "returns_source_lifecycle_intent": true,
       "requires_lifecycle_mutation_plan": true,
       "creates_work_items": true,
+      "declared_capabilities": [
+        "replay.blueprint_manifest_equivalent",
+        "replay.blueprint_manifest_legacy_identity",
+        "replay.blueprint_drafts_equivalent",
+        "duplicate.blueprint_manifest_same_id",
+        "duplicate.blueprint_draft_same_id",
+        "conflict.blueprint_manifest_duplicate",
+        "conflict.blueprint_draft_duplicate"
+      ],
       "failure_classes": [
         "blueprint_manifest_missing",
         "blueprint_manifest_parse_error",
@@ -58,7 +68,18 @@
       "returns_source_lifecycle_intent": true,
       "requires_lifecycle_mutation_plan": true,
       "creates_work_items": false,
-      "failure_classes": ["blueprint_candidate_invalid", "blueprint_partial_mutation"]
+      "declared_capabilities": [
+        "replay.blueprint_candidate_equivalent",
+        "duplicate.blueprint_candidate_same_id",
+        "conflict.blueprint_candidate_duplicate_conflict",
+        "conflict.blueprint_candidate_markdown_conflict"
+      ],
+      "failure_classes": [
+        "blueprint_candidate_invalid",
+        "blueprint_candidate_duplicate_conflict",
+        "blueprint_candidate_markdown_conflict",
+        "blueprint_partial_mutation"
+      ]
     },
     {
       "schema_version": "1.0",
@@ -72,12 +93,25 @@
       "returns_source_lifecycle_intent": true,
       "requires_lifecycle_mutation_plan": true,
       "creates_work_items": true,
+      "declared_capabilities": [
+        "replay.blueprint_approval_equivalent",
+        "duplicate.generated_task_same_id",
+        "conflict.blueprint_evaluation_duplicate_conflict",
+        "conflict.blueprint_approved_packet_conflict",
+        "conflict.blueprint_approved_markdown_conflict",
+        "conflict.blueprint_task_duplicate",
+        "conflict.blueprint_promotion_duplicate_conflict"
+      ],
       "failure_classes": [
         "blueprint_evaluation_invalid",
         "generated_task_missing",
         "generated_task_invalid",
         "blueprint_task_promotion_invalid",
+        "blueprint_evaluation_duplicate_conflict",
+        "blueprint_approved_packet_conflict",
+        "blueprint_approved_markdown_conflict",
         "blueprint_task_duplicate",
+        "blueprint_promotion_duplicate_conflict",
         "blueprint_partial_mutation"
       ]
     },
@@ -93,7 +127,40 @@
       "returns_source_lifecycle_intent": true,
       "requires_lifecycle_mutation_plan": true,
       "creates_work_items": false,
+      "declared_capabilities": [
+        "replay.blueprint_rejection_equivalent",
+        "duplicate.blueprint_rejection_same_id",
+        "conflict.blueprint_rejection_duplicate"
+      ],
       "failure_classes": ["blueprint_critique_invalid", "blueprint_rejection_duplicate", "blueprint_partial_mutation"]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "mechanic_blueprint_repair_apply",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["spec", "incident", "blueprint_draft"],
+      "destination_kinds": ["task"],
+      "required_artifacts": ["blueprint_repair_decision", "mechanic_report"],
+      "optional_artifacts": ["repaired_generated_task"],
+      "returns_source_lifecycle_intent": true,
+      "requires_lifecycle_mutation_plan": true,
+      "creates_work_items": true,
+      "declared_capabilities": [
+        "repair.apply_repaired_generated_task",
+        "repair.generated_task_missing",
+        "repair.generated_task_invalid",
+        "conflict.blueprint_repair_context_mismatch"
+      ],
+      "failure_classes": [
+        "blueprint_repair_decision_missing",
+        "blueprint_repair_decision_invalid",
+        "blueprint_repair_context_mismatch",
+        "blueprint_repaired_generated_task_missing",
+        "blueprint_repaired_generated_task_invalid",
+        "blueprint_repair_requested_operator",
+        "blueprint_partial_mutation"
+      ]
     }
   ]
 }

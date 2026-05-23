@@ -13,6 +13,43 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-05-22
+
+### Added
+
+- Added structured Blueprint repair diagnostics so repairable approval-effect
+  failures preserve the failed generated task, Blueprint packet, evaluation,
+  runtime effect, and acceptance mismatch context for Mechanic Blueprint.
+- Added family-aware blocked work-item retry support for graph-owned queue
+  families, while preserving task retry compatibility.
+- Added doctor/status visibility for Blueprint recovery context, latest
+  runtime-effect failure metadata, and closure-lineage blockers.
+
+### Fixed
+
+- Fixed Blueprint approval recovery so invalid or missing generated task
+  artifacts route through Mechanic Blueprint and can promote a repaired task
+  without losing the original failed approval context.
+- Fixed Blueprint candidate and manifest replay handling so equivalent
+  durable artifacts are treated idempotently, true conflicts block
+  conservatively, and same-root remediation manifests use their own
+  `manifest_id` instead of colliding with root-spec filenames.
+- Fixed Blueprint artifact-contract drift between generated task JSON and
+  markdown renderings, including stricter canonical JSON validation before
+  runtime effects mutate queue state.
+- Fixed closure readiness around canceled/superseded Blueprint lineage
+  artifacts so Arbiter can run once all real same-lineage work has drained.
+- Fixed stopped-daemon and blocked-runtime diagnostics so operators get a clear
+  recovery path instead of a quiet idle workspace.
+
+### Compatibility Notes
+
+- This is a stabilization patch for the experimental `0.20.x` workflow-graph
+  and Blueprint Planning line. `0.19.0` remains the last stable baseline while
+  the `0.20.x` surface is validated through longer dogfood runs.
+- `millrace-ai` and `millrace-web` are released together as `0.20.1`;
+  `millrace-web` now depends on `millrace-ai>=0.20.1`.
+
 ## [0.20.0] - 2026-05-21
 
 ### Added
@@ -87,12 +124,13 @@ This file starts at `0.13.0`, the current documented public baseline.
   `manifest_id`, Evaluator context resolves manifests from `draft.manifest_id`,
   and duplicate manifest-id conflicts are reported separately from normal
   same-root lineage.
-- Fixed Manager Blueprint runtime-effect recovery semantics: recoverable
-  pre-mutation artifact failures route to Mechanic Blueprint, duplicate-id and
-  partial-mutation failures block conservatively with matched policy metadata,
-  idempotent replay can complete after source completion/resolution when
-  durable outputs are equivalent, and Planner disposition prevents emitted
-  child specs from also being decomposed through Manager.
+- Fixed Blueprint runtime-effect recovery semantics: Manager pre-mutation
+  artifact failures block conservatively with matched policy metadata,
+  Evaluator generated-task missing/invalid failures route to Mechanic
+  Blueprint repair, idempotent replay can complete after source
+  completion/resolution when durable outputs are equivalent, and Planner
+  disposition prevents emitted child specs from also being decomposed through
+  Manager.
 - Fixed stopped-daemon diagnostics so `doctor` warns when daemon mode is not
   running while open closure/backlog work still exists.
 
@@ -893,7 +931,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/tim-osterhus/millrace/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/tim-osterhus/millrace/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/tim-osterhus/millrace/compare/v0.18.6...v0.19.0
 [0.18.6]: https://github.com/tim-osterhus/millrace/compare/v0.18.5...v0.18.6

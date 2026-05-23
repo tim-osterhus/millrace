@@ -51,8 +51,7 @@
       "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_source_node_ids": ["manager_blueprint"],
       "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
-      "action": "route_to_node",
-      "target_node_id": "mechanic_blueprint",
+      "action": "block_source_work_item",
       "failure_class_template": "runtime_effect_failure"
     },
     {
@@ -103,12 +102,12 @@
       "applies_to_families": ["blueprint_draft"],
       "applies_to_failure_classes": [
         "generated_task_missing",
-        "generated_task_invalid",
-        "blueprint_task_promotion_invalid"
+        "generated_task_invalid"
       ],
       "applies_to_mutation_phases": ["pre_mutation"],
       "applies_to_handler_ids": ["evaluator_blueprint_approved_to_task"],
       "applies_to_source_node_ids": ["evaluator_blueprint"],
+      "applies_to_source_terminal_state_ids": ["blueprint_approved"],
       "action": "route_to_node",
       "target_node_id": "mechanic_blueprint",
       "failure_class_template": "runtime_effect_failure"

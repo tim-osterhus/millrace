@@ -18,12 +18,14 @@ from millrace_ai.contracts import (
     BlueprintManifestDocument,
     BlueprintPacketDocument,
     BlueprintPromotionRecord,
+    BlueprintRepairDecisionDocument,
     StageResultEnvelope,
     TaskDocument,
     WorkItemKind,
 )
 from millrace_ai.errors import QueueStateError
 from millrace_ai.workspace.blueprint_state import (
+    blueprint_packet_path,
     enqueue_blueprint_draft,
     move_candidate_blueprint_packet,
     persist_blueprint_critique,
@@ -33,11 +35,13 @@ from millrace_ai.workspace.blueprint_state import (
     read_active_blueprint_draft,
     read_blueprint_draft,
     read_blueprint_manifest,
+    read_blueprint_packet,
     update_active_blueprint_draft,
     write_blueprint_manifest,
 )
 from millrace_ai.workspace.paths import WorkspacePaths
 from millrace_ai.workspace.queue_transitions import enqueue_task
+from millrace_ai.workspace.work_documents import read_work_document_as
 
 from .artifact_contracts import (
     RuntimeArtifactError,
@@ -59,6 +63,7 @@ MANAGER_BLUEPRINT_HANDLER_ID = "manager_blueprint_manifest_to_blueprint_drafts"
 CONTRACTOR_BLUEPRINT_HANDLER_ID = "contractor_blueprint_candidate_persist"
 EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID = "evaluator_blueprint_approved_to_task"
 EVALUATOR_BLUEPRINT_REJECTION_HANDLER_ID = "evaluator_blueprint_rejected_to_draft_revision"
+MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID = "mechanic_blueprint_repair_apply"
 
 
 def manager_blueprint_manifest_to_blueprint_drafts(
@@ -195,10 +200,19 @@ def contractor_blueprint_candidate_persist(
         packet.ensure_matches_draft(draft)
         _validate_packet_critique_reference(draft, packet)
 
-        packet_path = persist_blueprint_packet(paths, packet, packet_state="candidates")
-        created_paths.append(_effect_path(paths, packet_path))
-        markdown_path = _persist_candidate_markdown(paths, packet.blueprint_id, run_dir)
-        created_paths.append(_effect_path(paths, markdown_path))
+        packet_exists = _candidate_packet_exists_equivalent(paths, packet)
+        markdown_exists = _candidate_markdown_exists_equivalent(
+            paths,
+            packet.blueprint_id,
+            run_dir,
+        )
+
+        if not packet_exists:
+            packet_path = persist_blueprint_packet(paths, packet, packet_state="candidates")
+            created_paths.append(_effect_path(paths, packet_path))
+        if not markdown_exists:
+            markdown_path = _persist_candidate_markdown(paths, packet.blueprint_id, run_dir)
+            created_paths.append(_effect_path(paths, markdown_path))
 
         updated = draft.model_copy(update={"latest_blueprint_id": packet.blueprint_id})
         update_active_blueprint_draft(paths, updated)
@@ -207,7 +221,19 @@ def contractor_blueprint_candidate_persist(
             handler_id=CONTRACTOR_BLUEPRINT_HANDLER_ID,
             decision=RuntimeEffectDecision.CONTINUE_ROUTE,
             created_paths=tuple(created_paths),
-            message=f"persisted candidate blueprint {packet.blueprint_id}",
+            message=(
+                f"persisted candidate blueprint {packet.blueprint_id}"
+                if created_paths
+                else f"candidate blueprint {packet.blueprint_id} already persisted"
+            ),
+        )
+    except _ContractorBlueprintEffectError as exc:
+        return _failure_result(
+            CONTRACTOR_BLUEPRINT_HANDLER_ID,
+            stage_result,
+            failure_class=exc.failure_class,
+            message=str(exc),
+            created_paths=created_paths,
         )
     except Exception as exc:
         return _failure_result(
@@ -233,8 +259,8 @@ def evaluator_blueprint_approved_to_task(
 
     created_paths: list[str] = []
     try:
-        draft = _active_draft_for_stage_result(paths, stage_result)
-        packet = _candidate_packet_for_draft(paths, draft)
+        draft, source_state = _approval_draft_for_stage_result(paths, stage_result)
+        packet = _approval_packet_for_draft(paths, draft)
         evaluation = _read_json_model(
             run_dir / "blueprint_evaluation.json",
             BlueprintEvaluationDocument,
@@ -245,63 +271,24 @@ def evaluator_blueprint_approved_to_task(
             TaskDocument,
         )
         _validate_generated_task(task, draft, packet)
-        _ensure_task_id_unused(paths, task.task_id)
-        _ensure_promotion_id_unused(paths, evaluation.evaluation_id)
-
-        evaluation_path = persist_blueprint_evaluation(paths, evaluation)
-        created_paths.append(_effect_path(paths, evaluation_path))
-        approved_packet_path = move_candidate_blueprint_packet(
+        return _promote_approved_blueprint_task(
             paths,
-            packet.blueprint_id,
-            target_state="approved",
-        )
-        created_paths.append(_effect_path(paths, approved_packet_path))
-        approved_markdown_path = _move_candidate_markdown(
-            paths,
-            packet.blueprint_id,
-            target_state="approved",
-        )
-        if approved_markdown_path is not None:
-            created_paths.append(_effect_path(paths, approved_markdown_path))
-
-        task = _task_with_blueprint_refs(
-            task,
-            paths=paths,
-            approved_blueprint_path=approved_packet_path,
-            evaluation_path=evaluation_path,
-        )
-        task_path = enqueue_task(paths, task)
-        created_paths.append(_effect_path(paths, task_path))
-        promotion_path = persist_blueprint_promotion(
-            paths,
-            BlueprintPromotionRecord(
-                promotion_id=_promotion_id(evaluation.evaluation_id),
-                blueprint_id=packet.blueprint_id,
-                evaluation_id=evaluation.evaluation_id,
-                draft_id=draft.draft_id,
-                manifest_id=draft.manifest_id,
-                root_spec_id=draft.root_spec_id,
-                root_idea_id=draft.root_idea_id,
-                generated_task_id=task.task_id,
-                generated_task_path=_effect_path(paths, task_path),
-                approved_blueprint_path=_effect_path(paths, approved_packet_path),
-                evaluation_path=_effect_path(paths, evaluation_path),
-                promoted_at=evaluation.created_at,
-            ),
-        )
-        created_paths.append(_effect_path(paths, promotion_path))
-
-        return RuntimeEffectResult(
             handler_id=EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID,
-            decision=RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE,
-            created_paths=tuple(created_paths),
-            source_lifecycle_intent=SourceLifecycleIntent(
-                lifecycle_plan_id="approve_blueprint_draft_after_effect",
-                action=SourceLifecycleAction.COMPLETE,
-                work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
-                work_item_id=draft.draft_id,
-            ),
-            message=f"promoted blueprint {packet.blueprint_id} to task {task.task_id}",
+            draft=draft,
+            source_state=source_state,
+            packet=packet,
+            evaluation=evaluation,
+            task=task,
+            run_dir=run_dir,
+            created_paths=created_paths,
+        )
+    except _ApprovalBlueprintEffectError as exc:
+        return _failure_result(
+            EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID,
+            stage_result,
+            failure_class=exc.failure_class,
+            message=str(exc),
+            created_paths=created_paths,
         )
     except Exception as exc:
         failure_class = _approval_failure_class(exc, created_paths)
@@ -309,6 +296,92 @@ def evaluator_blueprint_approved_to_task(
             EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID,
             stage_result,
             failure_class=failure_class,
+            message=str(exc),
+            created_paths=created_paths,
+        )
+
+
+def mechanic_blueprint_repair_apply(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+    run_dir: Path,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RuntimeEffectResult:
+    """Apply a structured Mechanic Blueprint repair decision through runtime-owned mutation."""
+
+    created_paths: list[str] = []
+    try:
+        decision = _read_blueprint_repair_decision(compiled_plan, run_dir)
+        _validate_mechanic_repair_stage_result(decision, stage_result)
+        if decision.repair_action == "block_for_operator":
+            raise _RepairBlueprintEffectError(
+                "blueprint_repair_requested_operator",
+                decision.operator_reason or "Mechanic Blueprint requested operator review",
+            )
+        if decision.repair_action != "apply_repaired_generated_task":
+            raise _RepairBlueprintEffectError(
+                "blueprint_repair_context_mismatch",
+                f"repair action {decision.repair_action} is not runtime-applied by this handler",
+            )
+
+        _failed_runtime_effect_context_for_decision(run_dir, decision)
+        draft, source_state = _approval_draft_for_stage_result(paths, stage_result)
+        _validate_repair_decision_matches_draft(decision, draft)
+        packet = _approval_packet_for_draft(paths, draft)
+        evaluation = _read_repair_evaluation(run_dir)
+        _validate_repair_decision_matches_approval_context(
+            decision,
+            packet=packet,
+            evaluation=evaluation,
+        )
+        task = _read_repaired_generated_task(compiled_plan, run_dir)
+        _validate_repaired_generated_task(
+            task,
+            decision=decision,
+            draft=draft,
+            packet=packet,
+        )
+
+        return _promote_approved_blueprint_task(
+            paths,
+            handler_id=MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID,
+            draft=draft,
+            source_state=source_state,
+            packet=packet,
+            evaluation=evaluation,
+            task=task,
+            run_dir=run_dir,
+            created_paths=created_paths,
+        )
+    except _RepairBlueprintEffectError as exc:
+        return _failure_result(
+            MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID,
+            stage_result,
+            failure_class=exc.failure_class,
+            message=str(exc),
+            created_paths=created_paths,
+        )
+    except _ApprovalBlueprintEffectError as exc:
+        return _failure_result(
+            MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID,
+            stage_result,
+            failure_class=(
+                "blueprint_partial_mutation"
+                if created_paths
+                else "blueprint_repair_context_mismatch"
+            ),
+            message=str(exc),
+            created_paths=created_paths,
+        )
+    except Exception as exc:
+        return _failure_result(
+            MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID,
+            stage_result,
+            failure_class=(
+                "blueprint_partial_mutation"
+                if created_paths
+                else "blueprint_repair_context_mismatch"
+            ),
             message=str(exc),
             created_paths=created_paths,
         )
@@ -386,6 +459,33 @@ def evaluator_blueprint_rejected_to_draft_revision(
 
 @dataclass(frozen=True, slots=True)
 class _ManagerBlueprintEffectError(Exception):
+    failure_class: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True, slots=True)
+class _ContractorBlueprintEffectError(Exception):
+    failure_class: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True, slots=True)
+class _ApprovalBlueprintEffectError(Exception):
+    failure_class: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True, slots=True)
+class _RepairBlueprintEffectError(Exception):
     failure_class: str
     message: str
 
@@ -724,17 +824,85 @@ def _validate_packet_critique_reference(
         raise ValueError("candidate Blueprint must reference latest open critique")
 
 
+def _candidate_packet_exists_equivalent(
+    paths: WorkspacePaths,
+    packet: BlueprintPacketDocument,
+) -> bool:
+    path = blueprint_packet_path(paths, packet.blueprint_id, packet_state="candidates")
+    if not path.exists():
+        return False
+    try:
+        existing = read_blueprint_packet(
+            paths,
+            packet.blueprint_id,
+            packet_state="candidates",
+        )
+    except (OSError, ValueError, ValidationError) as exc:
+        raise _ContractorBlueprintEffectError(
+            "blueprint_candidate_duplicate_conflict",
+            f"existing candidate packet {packet.blueprint_id} cannot be validated: {exc}",
+        ) from exc
+    if _normalized_blueprint_model_payload(existing) != _normalized_blueprint_model_payload(
+        packet,
+    ):
+        raise _ContractorBlueprintEffectError(
+            "blueprint_candidate_duplicate_conflict",
+            f"blueprint_candidate_duplicate_conflict: blueprint_id={packet.blueprint_id}",
+        )
+    return True
+
+
+def _candidate_markdown_exists_equivalent(
+    paths: WorkspacePaths,
+    blueprint_id: str,
+    run_dir: Path,
+) -> bool:
+    source = _candidate_markdown_source(run_dir)
+    destination = _candidate_markdown_path(paths, blueprint_id)
+    if not destination.exists():
+        return False
+    try:
+        source_content = source.read_text(encoding="utf-8")
+        existing_content = destination.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _ContractorBlueprintEffectError(
+            "blueprint_candidate_markdown_conflict",
+            f"existing candidate markdown {blueprint_id} cannot be validated: {exc}",
+        ) from exc
+    if _normalized_markdown_content(existing_content) != _normalized_markdown_content(
+        source_content,
+    ):
+        raise _ContractorBlueprintEffectError(
+            "blueprint_candidate_markdown_conflict",
+            f"blueprint_candidate_markdown_conflict: blueprint_id={blueprint_id}",
+        )
+    return True
+
+
 def _persist_candidate_markdown(
     paths: WorkspacePaths,
     blueprint_id: str,
     run_dir: Path,
 ) -> Path:
+    source = _candidate_markdown_source(run_dir)
+    destination = _candidate_markdown_path(paths, blueprint_id)
+    _copy_unique_file(source, destination)
+    return destination
+
+
+def _candidate_markdown_source(run_dir: Path) -> Path:
     source = run_dir / "blueprint.md"
     if not source.exists():
         raise QueueStateError("required Blueprint artifact is missing: blueprint.md")
-    destination = paths.runtime_root / "blueprints" / "packets" / "candidates" / f"{blueprint_id}.md"
-    _copy_unique_file(source, destination)
-    return destination
+    return source
+
+
+def _candidate_markdown_path(paths: WorkspacePaths, blueprint_id: str) -> Path:
+    return paths.runtime_root / "blueprints" / "packets" / "candidates" / f"{blueprint_id}.md"
+
+
+def _normalized_markdown_content(content: str) -> str:
+    return content.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _candidate_packet_for_draft(
@@ -753,6 +921,65 @@ def _candidate_packet_for_draft(
     packet = _read_json_model(path, BlueprintPacketDocument)
     packet.ensure_matches_draft(draft)
     return packet
+
+
+def _approval_draft_for_stage_result(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+) -> tuple[BlueprintDraftDocument, str]:
+    if stage_result.work_item_kind is not WorkItemKind.BLUEPRINT_DRAFT:
+        raise QueueStateError(
+            f"Blueprint handler requires blueprint_draft source, got {stage_result.work_item_kind.value}"
+        )
+    entries: list[tuple[str, BlueprintDraftDocument]] = []
+    for state in ("active", "approved"):
+        path = paths.runtime_root / "blueprints" / "drafts" / state / f"{stage_result.work_item_id}.json"
+        if path.exists():
+            entries.append((state, read_blueprint_draft(path)))
+    if len(entries) > 1:
+        raise QueueStateError(f"blueprint draft {stage_result.work_item_id} exists in active and approved")
+    if not entries:
+        raise QueueStateError(f"active or approved blueprint draft {stage_result.work_item_id} not found")
+    return entries[0][1], entries[0][0]
+
+
+def _approval_packet_for_draft(
+    paths: WorkspacePaths,
+    draft: BlueprintDraftDocument,
+) -> BlueprintPacketDocument:
+    if draft.latest_blueprint_id is None:
+        raise QueueStateError("active draft has no latest candidate blueprint")
+    entries: list[tuple[str, BlueprintPacketDocument]] = []
+    for state in ("candidates", "approved"):
+        path = blueprint_packet_path(
+            paths,
+            draft.latest_blueprint_id,
+            packet_state=state,
+        )
+        if not path.exists():
+            continue
+        try:
+            packet = read_blueprint_packet(
+                paths,
+                draft.latest_blueprint_id,
+                packet_state=state,
+            )
+            packet.ensure_matches_draft(draft)
+        except (OSError, ValueError, ValidationError) as exc:
+            raise _ApprovalBlueprintEffectError(
+                "blueprint_approved_packet_conflict",
+                f"existing {state} packet {draft.latest_blueprint_id} cannot be validated: {exc}",
+            ) from exc
+        entries.append((state, packet))
+    if not entries:
+        raise QueueStateError(f"candidate or approved blueprint packet {draft.latest_blueprint_id} not found")
+    expected_payload = _normalized_blueprint_model_payload(entries[0][1])
+    if any(_normalized_blueprint_model_payload(packet) != expected_payload for _state, packet in entries[1:]):
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_packet_conflict",
+            f"blueprint_approved_packet_conflict: blueprint_id={draft.latest_blueprint_id}",
+        )
+    return entries[0][1]
 
 
 def _validate_approval(
@@ -775,6 +1002,175 @@ def _validate_rejection(
     critique.ensure_matches_packet(packet)
     if evaluation.critique_id != critique.critique_id:
         raise ValueError("evaluation critique_id must match critique packet")
+
+
+def _read_blueprint_repair_decision(
+    compiled_plan: CompiledRunPlan | None,
+    run_dir: Path,
+) -> BlueprintRepairDecisionDocument:
+    try:
+        return parse_resolved_run_artifact_as(
+            resolve_run_artifact(compiled_plan, "blueprint_repair_decision", run_dir),
+            BlueprintRepairDecisionDocument,
+        )
+    except RuntimeArtifactError as exc:
+        failure_class = (
+            "blueprint_repair_decision_missing"
+            if exc.failure_class == "artifact_missing"
+            else "blueprint_repair_decision_invalid"
+        )
+        raise _RepairBlueprintEffectError(failure_class, str(exc)) from exc
+    except (OSError, ValueError, ValidationError) as exc:
+        raise _RepairBlueprintEffectError(
+            "blueprint_repair_decision_invalid",
+            str(exc),
+        ) from exc
+
+
+def _read_repaired_generated_task(
+    compiled_plan: CompiledRunPlan | None,
+    run_dir: Path,
+) -> TaskDocument:
+    try:
+        return parse_resolved_run_artifact_as(
+            resolve_run_artifact(compiled_plan, "repaired_generated_task", run_dir),
+            TaskDocument,
+        )
+    except RuntimeArtifactError as exc:
+        failure_class = (
+            "blueprint_repaired_generated_task_missing"
+            if exc.failure_class == "artifact_missing"
+            else "blueprint_repaired_generated_task_invalid"
+        )
+        raise _RepairBlueprintEffectError(failure_class, str(exc)) from exc
+    except (OSError, ValueError, ValidationError) as exc:
+        raise _RepairBlueprintEffectError(
+            "blueprint_repaired_generated_task_invalid",
+            str(exc),
+        ) from exc
+
+
+def _read_repair_evaluation(run_dir: Path) -> BlueprintEvaluationDocument:
+    try:
+        return _read_json_model(run_dir / "blueprint_evaluation.json", BlueprintEvaluationDocument)
+    except (OSError, ValueError, ValidationError, QueueStateError) as exc:
+        raise _RepairBlueprintEffectError(
+            "blueprint_repair_context_mismatch",
+            f"failed approval evaluation cannot be verified: {exc}",
+        ) from exc
+
+
+def _validate_mechanic_repair_stage_result(
+    decision: BlueprintRepairDecisionDocument,
+    stage_result: StageResultEnvelope,
+) -> None:
+    _ensure_repair_context_equal(
+        "stage_kind_id",
+        stage_result.stage_kind_id,
+        "mechanic_blueprint",
+    )
+    _ensure_repair_context_equal(
+        "terminal_result",
+        stage_result.terminal_result.value,
+        "MECHANIC_BLUEPRINT_COMPLETE",
+    )
+    _ensure_repair_context_equal(
+        "work_item_family_id",
+        stage_result.work_item_family_id,
+        decision.work_item_family_id,
+    )
+    _ensure_repair_context_equal("work_item_id", stage_result.work_item_id, decision.work_item_id)
+
+
+def _failed_runtime_effect_context_for_decision(
+    run_dir: Path,
+    decision: BlueprintRepairDecisionDocument,
+) -> StageResultEnvelope:
+    stage_results_dir = run_dir / "stage_results"
+    for path in sorted(stage_results_dir.glob("*.json")):
+        try:
+            stage_result = StageResultEnvelope.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            continue
+        if _stage_result_matches_repair_decision(stage_result, decision):
+            return stage_result
+    raise _RepairBlueprintEffectError(
+        "blueprint_repair_context_mismatch",
+        "no failed runtime-effect stage result matches blueprint_repair_decision.json",
+    )
+
+
+def _stage_result_matches_repair_decision(
+    stage_result: StageResultEnvelope,
+    decision: BlueprintRepairDecisionDocument,
+) -> bool:
+    metadata = stage_result.metadata
+    return (
+        stage_result.run_id == decision.failed_run_id
+        and stage_result.stage_kind_id == decision.failed_stage_kind_id
+        and stage_result.node_id == decision.failed_node_id
+        and stage_result.terminal_result.value == decision.failed_terminal_result
+        and stage_result.work_item_family_id == decision.work_item_family_id
+        and stage_result.work_item_id == decision.work_item_id
+        and metadata.get("runtime_effect_handler_id") == decision.failed_handler_id
+        and metadata.get("runtime_effect_decision") == "request_block_source"
+        and metadata.get("runtime_effect_failure_class") == decision.failure_class
+        and metadata.get("runtime_effect_mutation_phase") == decision.mutation_phase
+    )
+
+
+def _validate_repair_decision_matches_draft(
+    decision: BlueprintRepairDecisionDocument,
+    draft: BlueprintDraftDocument,
+) -> None:
+    _ensure_repair_context_equal("work_item_id", decision.work_item_id, draft.draft_id)
+    _ensure_repair_context_equal("draft_id", decision.draft_id, draft.draft_id)
+    _ensure_repair_context_equal("manifest_id", decision.manifest_id, draft.manifest_id)
+    _ensure_repair_context_equal("root_spec_id", decision.root_spec_id, draft.root_spec_id)
+    _ensure_repair_context_equal("root_idea_id", decision.root_idea_id, draft.root_idea_id)
+
+
+def _validate_repair_decision_matches_approval_context(
+    decision: BlueprintRepairDecisionDocument,
+    *,
+    packet: BlueprintPacketDocument,
+    evaluation: BlueprintEvaluationDocument,
+) -> None:
+    try:
+        decision.ensure_matches_packet(packet)
+        decision.ensure_matches_evaluation(evaluation)
+    except ValueError as exc:
+        raise _RepairBlueprintEffectError(
+            "blueprint_repair_context_mismatch",
+            str(exc),
+        ) from exc
+
+
+def _validate_repaired_generated_task(
+    task: TaskDocument,
+    *,
+    decision: BlueprintRepairDecisionDocument,
+    draft: BlueprintDraftDocument,
+    packet: BlueprintPacketDocument,
+) -> None:
+    try:
+        decision.ensure_matches_repaired_generated_task(task)
+        _validate_generated_task(task, draft, packet)
+    except ValueError as exc:
+        raise _RepairBlueprintEffectError(
+            "blueprint_repaired_generated_task_invalid",
+            str(exc),
+        ) from exc
+
+
+def _ensure_repair_context_equal(field_name: str, actual: object, expected: object) -> None:
+    if actual != expected:
+        raise _RepairBlueprintEffectError(
+            "blueprint_repair_context_mismatch",
+            f"{field_name} mismatch",
+        )
 
 
 def _validate_generated_task(
@@ -801,6 +1197,319 @@ def _validate_generated_task(
     allowed_targets = set(packet.intended_files) | set(draft.target_paths)
     if not set(task.target_paths).issubset(allowed_targets):
         raise ValueError("generated task target_paths must stay within Blueprint scope")
+
+
+def _blueprint_evaluation_path(paths: WorkspacePaths, evaluation_id: str) -> Path:
+    return paths.runtime_root / "blueprints" / "evaluations" / f"{evaluation_id}.json"
+
+
+def _blueprint_promotion_path(paths: WorkspacePaths, promotion_id: str) -> Path:
+    return paths.runtime_root / "blueprints" / "promotions" / f"{promotion_id}.json"
+
+
+def _approved_markdown_path(paths: WorkspacePaths, blueprint_id: str) -> Path:
+    return paths.runtime_root / "blueprints" / "packets" / "approved" / f"{blueprint_id}.md"
+
+
+def _blueprint_evaluation_exists_equivalent(
+    paths: WorkspacePaths,
+    evaluation: BlueprintEvaluationDocument,
+) -> bool:
+    path = _blueprint_evaluation_path(paths, evaluation.evaluation_id)
+    if not path.exists():
+        return False
+    try:
+        existing = _read_json_model(path, BlueprintEvaluationDocument)
+    except (OSError, ValueError, ValidationError) as exc:
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_evaluation_duplicate_conflict",
+            f"existing evaluation {evaluation.evaluation_id} cannot be validated: {exc}",
+        ) from exc
+    if _normalized_blueprint_model_payload(existing) != _normalized_blueprint_model_payload(evaluation):
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_evaluation_duplicate_conflict",
+            f"blueprint_evaluation_duplicate_conflict: evaluation_id={evaluation.evaluation_id}",
+        )
+    return True
+
+
+def _approved_packet_exists_equivalent(
+    paths: WorkspacePaths,
+    packet: BlueprintPacketDocument,
+) -> bool:
+    path = blueprint_packet_path(paths, packet.blueprint_id, packet_state="approved")
+    if not path.exists():
+        return False
+    try:
+        existing = read_blueprint_packet(paths, packet.blueprint_id, packet_state="approved")
+    except (OSError, ValueError, ValidationError) as exc:
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_packet_conflict",
+            f"existing approved packet {packet.blueprint_id} cannot be validated: {exc}",
+        ) from exc
+    if _normalized_blueprint_model_payload(existing) != _normalized_blueprint_model_payload(packet):
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_packet_conflict",
+            f"blueprint_approved_packet_conflict: blueprint_id={packet.blueprint_id}",
+        )
+    return True
+
+
+def _approved_markdown_exists_equivalent(
+    paths: WorkspacePaths,
+    blueprint_id: str,
+    *,
+    expected_content: str | None,
+) -> bool:
+    destination = _approved_markdown_path(paths, blueprint_id)
+    if not destination.exists():
+        return False
+    try:
+        destination_content = destination.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_markdown_conflict",
+            f"existing approved markdown {blueprint_id} cannot be validated: {exc}",
+        ) from exc
+    if expected_content is None:
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_markdown_conflict",
+            f"approved markdown {blueprint_id} cannot be verified without an expected source",
+        )
+    if _normalized_markdown_content(
+        destination_content,
+    ) != _normalized_markdown_content(expected_content):
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_markdown_conflict",
+            f"blueprint_approved_markdown_conflict: blueprint_id={blueprint_id}",
+        )
+    return True
+
+
+def _expected_approved_markdown_content(
+    paths: WorkspacePaths,
+    blueprint_id: str,
+    run_dir: Path,
+) -> str | None:
+    for source in (_candidate_markdown_path(paths, blueprint_id), run_dir / "blueprint.md"):
+        if not source.exists():
+            continue
+        try:
+            return source.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise _ApprovalBlueprintEffectError(
+                "blueprint_approved_markdown_conflict",
+                f"expected approved markdown {blueprint_id} cannot be read: {exc}",
+            ) from exc
+    return None
+
+
+def _generated_task_exists_equivalent(paths: WorkspacePaths, task: TaskDocument) -> bool:
+    entries: list[tuple[Path, TaskDocument]] = []
+    filename = f"{task.task_id}.md"
+    for directory in (
+        paths.tasks_queue_dir,
+        paths.tasks_active_dir,
+        paths.tasks_done_dir,
+        paths.tasks_blocked_dir,
+    ):
+        path = directory / filename
+        if not path.exists():
+            continue
+        try:
+            existing = read_work_document_as(path, model=TaskDocument)
+        except (OSError, ValueError, ValidationError) as exc:
+            raise _ApprovalBlueprintEffectError(
+                "blueprint_task_duplicate",
+                f"existing generated task {task.task_id} cannot be validated: {exc}",
+            ) from exc
+        entries.append((path, existing))
+    if not entries:
+        return False
+    if len(entries) > 1:
+        locations = ", ".join(path.as_posix() for path, _task in entries)
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_task_duplicate",
+            f"blueprint_task_duplicate: task_id={task.task_id} in {locations}",
+        )
+    existing = entries[0][1]
+    if _normalized_task_payload(existing) != _normalized_task_payload(task):
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_task_duplicate",
+            f"blueprint_task_duplicate: task_id={task.task_id}",
+        )
+    return True
+
+
+def _promote_approved_blueprint_task(
+    paths: WorkspacePaths,
+    *,
+    handler_id: str,
+    draft: BlueprintDraftDocument,
+    source_state: str,
+    packet: BlueprintPacketDocument,
+    evaluation: BlueprintEvaluationDocument,
+    task: TaskDocument,
+    run_dir: Path,
+    created_paths: list[str],
+) -> RuntimeEffectResult:
+    evaluation_path = _blueprint_evaluation_path(paths, evaluation.evaluation_id)
+    approved_packet_path = blueprint_packet_path(
+        paths,
+        packet.blueprint_id,
+        packet_state="approved",
+    )
+    expected_markdown_content = _expected_approved_markdown_content(
+        paths,
+        packet.blueprint_id,
+        run_dir,
+    )
+    approved_markdown_exists = _approved_markdown_exists_equivalent(
+        paths,
+        packet.blueprint_id,
+        expected_content=expected_markdown_content,
+    )
+    if not approved_markdown_exists and not _candidate_markdown_path(
+        paths,
+        packet.blueprint_id,
+    ).exists():
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_approved_markdown_conflict",
+            f"approved markdown {packet.blueprint_id} cannot be verified or reconstructed",
+        )
+    task = _task_with_blueprint_refs(
+        task,
+        paths=paths,
+        approved_blueprint_path=approved_packet_path,
+        evaluation_path=evaluation_path,
+    )
+    task_path = paths.tasks_queue_dir / f"{task.task_id}.md"
+    promotion = _promotion_record_for_approval(
+        paths,
+        draft=draft,
+        packet=packet,
+        evaluation=evaluation,
+        task=task,
+        task_path=task_path,
+        approved_packet_path=approved_packet_path,
+        evaluation_path=evaluation_path,
+    )
+
+    evaluation_exists = _blueprint_evaluation_exists_equivalent(
+        paths,
+        evaluation,
+    )
+    approved_packet_exists = _approved_packet_exists_equivalent(paths, packet)
+    task_exists = _generated_task_exists_equivalent(paths, task)
+    promotion_exists = _promotion_exists_equivalent(paths, promotion)
+
+    if not evaluation_exists:
+        evaluation_path = persist_blueprint_evaluation(paths, evaluation)
+        created_paths.append(_effect_path(paths, evaluation_path))
+    if not approved_packet_exists:
+        approved_packet_path = move_candidate_blueprint_packet(
+            paths,
+            packet.blueprint_id,
+            target_state="approved",
+        )
+        created_paths.append(_effect_path(paths, approved_packet_path))
+    if not approved_markdown_exists:
+        approved_markdown_path = _move_candidate_markdown(
+            paths,
+            packet.blueprint_id,
+            target_state="approved",
+        )
+        if approved_markdown_path is not None:
+            created_paths.append(_effect_path(paths, approved_markdown_path))
+        if not _approved_markdown_exists_equivalent(
+            paths,
+            packet.blueprint_id,
+            expected_content=expected_markdown_content,
+        ):
+            raise _ApprovalBlueprintEffectError(
+                "blueprint_approved_markdown_conflict",
+                f"approved markdown {packet.blueprint_id} cannot be verified or reconstructed",
+            )
+    if not task_exists:
+        task_path = enqueue_task(paths, task)
+        created_paths.append(_effect_path(paths, task_path))
+    if not promotion_exists:
+        promotion_path = persist_blueprint_promotion(paths, promotion)
+        created_paths.append(_effect_path(paths, promotion_path))
+
+    return RuntimeEffectResult(
+        handler_id=handler_id,
+        decision=RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE,
+        created_paths=tuple(created_paths),
+        source_lifecycle_intent=(
+            SourceLifecycleIntent(
+                lifecycle_plan_id="approve_blueprint_draft_after_effect",
+                action=SourceLifecycleAction.COMPLETE,
+                work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+                work_item_id=draft.draft_id,
+            )
+            if source_state == "active"
+            else None
+        ),
+        message=f"promoted blueprint {packet.blueprint_id} to task {task.task_id}",
+    )
+
+
+def _promotion_record_for_approval(
+    paths: WorkspacePaths,
+    *,
+    draft: BlueprintDraftDocument,
+    packet: BlueprintPacketDocument,
+    evaluation: BlueprintEvaluationDocument,
+    task: TaskDocument,
+    task_path: Path,
+    approved_packet_path: Path,
+    evaluation_path: Path,
+) -> BlueprintPromotionRecord:
+    return BlueprintPromotionRecord(
+        promotion_id=_promotion_id(evaluation.evaluation_id),
+        blueprint_id=packet.blueprint_id,
+        evaluation_id=evaluation.evaluation_id,
+        draft_id=draft.draft_id,
+        manifest_id=draft.manifest_id,
+        root_spec_id=draft.root_spec_id,
+        root_idea_id=draft.root_idea_id,
+        generated_task_id=task.task_id,
+        generated_task_path=_effect_path(paths, task_path),
+        approved_blueprint_path=_effect_path(paths, approved_packet_path),
+        evaluation_path=_effect_path(paths, evaluation_path),
+        promoted_at=evaluation.created_at,
+    )
+
+
+def _promotion_exists_equivalent(
+    paths: WorkspacePaths,
+    promotion: BlueprintPromotionRecord,
+) -> bool:
+    path = _blueprint_promotion_path(paths, promotion.promotion_id)
+    if not path.exists():
+        return False
+    try:
+        existing = _read_json_model(path, BlueprintPromotionRecord)
+    except (OSError, ValueError, ValidationError) as exc:
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_promotion_duplicate_conflict",
+            f"existing promotion {promotion.promotion_id} cannot be validated: {exc}",
+        ) from exc
+    if _normalized_blueprint_model_payload(existing) != _normalized_blueprint_model_payload(promotion):
+        raise _ApprovalBlueprintEffectError(
+            "blueprint_promotion_duplicate_conflict",
+            f"blueprint_promotion_duplicate_conflict: promotion_id={promotion.promotion_id}",
+        )
+    return True
+
+
+def _normalized_task_payload(task: TaskDocument) -> str:
+    return json.dumps(
+        task.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _ensure_contains_all(
@@ -971,6 +1680,8 @@ BlueprintModelT = (
     | BlueprintPacketDocument
     | BlueprintEvaluationDocument
     | BlueprintCritiqueDocument
+    | BlueprintPromotionRecord
+    | BlueprintRepairDecisionDocument
 )
 
 
@@ -979,8 +1690,10 @@ __all__ = [
     "EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID",
     "EVALUATOR_BLUEPRINT_REJECTION_HANDLER_ID",
     "MANAGER_BLUEPRINT_HANDLER_ID",
+    "MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID",
     "contractor_blueprint_candidate_persist",
     "evaluator_blueprint_approved_to_task",
     "evaluator_blueprint_rejected_to_draft_revision",
     "manager_blueprint_manifest_to_blueprint_drafts",
+    "mechanic_blueprint_repair_apply",
 ]

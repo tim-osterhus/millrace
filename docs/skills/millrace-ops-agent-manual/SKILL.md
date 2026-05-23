@@ -378,7 +378,7 @@ millrace queue add-task <task.md|task.json> --workspace <workspace>
 millrace queue add-probe <probe.md|probe.json> --workspace <workspace>
 millrace queue add-spec <spec.md|spec.json> --workspace <workspace>
 millrace queue add-idea <idea.md> --workspace <workspace>
-millrace queue retry-blocked <task_id> --reason "<reason>" --workspace <workspace>
+millrace queue retry-blocked <work_item_id> --family <family_id> --reason "<reason>" --workspace <workspace>
 millrace queue cancel <work_item_id> --kind task --reason "<reason>" --workspace <workspace>
 millrace queue archive-blocked <task_id> --reason "<reason>" --workspace <workspace>
 millrace queue supersede <old_task_id> --replacement <new_task_id> --reason "<reason>" --workspace <workspace>
@@ -450,6 +450,11 @@ Blueprint monitoring checklist:
   `runtime_effect_mutation_phase`, `runtime_effect_failure_policy_id`,
   `runtime_effect_recovery_action`, `runtime_effect_source_lifecycle_*`, and
   `runtime_effect_created_path` lines.
+- Use `millrace status` and `millrace doctor` to inspect the latest repairable
+  Evaluator approval generated-task failure context, structured repair
+  contract, replay conflict classes, inert-artifact guard, and runtime
+  ownership boundary. These diagnostics keep the original Evaluator failure
+  context visible after a successful `mechanic_blueprint_repair_apply` effect.
 - Compare `artifact_status` and `runtime_outcome` before trusting a run as
   clean. `artifact_status: valid` only means the stage-result artifact parsed;
   `runtime_outcome: blocked` means routing or a runtime effect still failed.
@@ -465,21 +470,43 @@ Blueprint monitoring checklist:
 - Diagnose `blueprint_manifest_duplicate` by comparing `manifest_id` and
   normalized manifest content. Do not block or edit solely because two
   manifests share `root_spec_id`; that is normal same-lineage remediation.
-- Manager Blueprint runtime-effect failures route by class. Missing,
-  malformed, schema-invalid, or manifest/draft-mismatched pre-mutation outputs
-  route to `mechanic_blueprint`. Duplicate manifest ids, duplicate draft ids,
-  invalid source lifecycle, and partial mutations block conservatively for
-  operator review.
-- Mechanic Blueprint manager-failure recovery is rerun-or-block. It receives
-  the failed Manager run context and may emit `MECHANIC_BLUEPRINT_COMPLETE`
-  with `resume_stage: manager_blueprint` only when a clean Manager rerun is
-  safe. Repaired Manager artifacts are inert unless a declared runtime effect
-  consumes them; unsafe recovery must emit `BLOCKED`.
+- Manager Blueprint runtime-effect failures route by class. The shipped policy
+  blocks missing, malformed, schema-invalid, or manifest/draft-mismatched
+  pre-mutation outputs conservatively, the same as duplicate manifest ids,
+  duplicate draft ids, invalid source lifecycle, and partial mutations.
+- Evaluator Blueprint approval pre-mutation `generated_task_missing` and
+  `generated_task_invalid` failures route to `mechanic_blueprint`; other
+  approval replay conflicts and partial mutations remain conservative blockers
+  unless a declared reconciliation handler proves equivalent durable state.
+- Mechanic Blueprint runtime-effect recovery is structured. It receives failed
+  runtime-effect context and emits `MECHANIC_BLUEPRINT_COMPLETE` only with a
+  `blueprint_repair_decision.json` repair decision; `mechanic_report.md` alone
+  is evidence, not operational state. Clean Manager rerun decisions use
+  `next_resume_stage: manager_blueprint` in the repair decision JSON and
+  `resume_stage: manager_blueprint` only as terminal-result metadata, but the
+  shipped runtime failure policy automatically routes only the Evaluator
+  generated-task missing/invalid class to Mechanic Blueprint.
+  `repaired_generated_task.json` is valid only with
+  `repair_action=apply_repaired_generated_task`; unsafe recovery must emit
+  `BLOCKED`.
 - Manager Blueprint replay is idempotent when all durable manifest and draft
   outputs already exist with equivalent content. If the source spec is already
   done or the source incident already resolved, the replay is a no-op success;
   blocked, missing, partial, or divergent state remains an operator-visible
   failure.
+- Contractor Blueprint candidate replay is idempotent only when existing
+  candidate packet and markdown outputs are equivalent to the new run output.
+  Divergent packet or markdown collisions surface as
+  `blueprint_candidate_duplicate_conflict` or
+  `blueprint_candidate_markdown_conflict` and should not be overwritten by
+  hand.
+- Evaluator Blueprint approval replay is idempotent only when existing
+  evaluation, approved packet, approved markdown, generated task, and promotion
+  outputs are equivalent. Divergent or unverifiable approval collisions surface
+  as `blueprint_evaluation_duplicate_conflict`,
+  `blueprint_approved_packet_conflict`, `blueprint_approved_markdown_conflict`,
+  `blueprint_task_duplicate`, or `blueprint_promotion_duplicate_conflict` and
+  should not be overwritten by hand.
 - Planner disposition controls whether the active source continues to Manager.
   `active_source_ready_for_manager` continues the same source,
   `emitted_child_specs` resolves/completes the source after validating child
@@ -558,11 +585,17 @@ Use intervention commands only when the runtime state actually justifies them:
 - `clear-stale-state` to recover stale active files, including older
   closure-target invariant failures that left an unrelated root spec
   half-claimed; preserve the open closure target and avoid manual file moves
-- `queue retry-blocked <TASK_ID> --reason "<reason>"` to requeue one blocked
-  task through the audited recovery path after verifying the blocker is
-  retryable; use `--force` only after inspecting the task and accepting the
-  override. The command refuses a live daemon ownership lock; stop the daemon
-  first or let daemon auto-recovery handle qualifying transient blockers.
+- `queue retry-blocked <WORK_ITEM_ID> --family <FAMILY_ID> --reason
+  "<reason>"` to requeue one blocked task, probe, spec, incident,
+  learning-request, or parseable graph-family artifact through the audited
+  recovery path after verifying the blocker is retryable. Task-only usage
+  remains compatible when the blocked id is unambiguous. Use `--force` only
+  after inspecting the artifact and accepting the override. The command refuses
+  a live daemon ownership lock, malformed blocked documents, ambiguous ids
+  without `--family`, destination collisions, and `--root-spec-id` mismatches;
+  stop the daemon first or let daemon auto-recovery handle qualifying transient
+  blockers. If the blocked artifact is semantically bad, prefer cancellation
+  plus fresh corrected intake over replaying it.
 - `queue cancel <WORK_ITEM_ID> --kind task|probe|spec|incident --reason
   "<reason>"` when queued or blocked work is bad intake and should not run.
   This archives the document as cancelled; it is not completion.

@@ -61,8 +61,9 @@ receives the critique packet and emits a revised candidate for the same draft.
 packet and emits one generated execution task, or rejects the packet with a
 critique that routes the same draft back to Contractor.
 
-`mechanic_blueprint` handles blocked Blueprint Planning work without taking
-over normal execution repair duties.
+`mechanic_blueprint` handles blocked Blueprint Planning work and structured
+runtime-effect recovery decisions without taking over normal execution repair
+duties.
 
 ## Runtime Effects
 
@@ -87,21 +88,50 @@ stage/terminal binding, or targets a packaged handler id without a packaged
 runtime implementation.
 
 Manager Blueprint runtime-effect failures are policy-routed by class and
-mutation phase. Missing, malformed, schema-invalid, or semantically mismatched
-Manager artifacts fail before mutation and route to `mechanic_blueprint` under
-the shipped recovery policy. Duplicate manifest ids, duplicate draft ids,
-invalid source lifecycle state, and partial mutations block conservatively for
-operator inspection. `runs show`, status JSON, and monitor events expose the
-handler id, failure class/message, mutation phase, matched policy id, and
-recovery action.
+mutation phase, and the shipped policy blocks them conservatively for operator
+inspection. That includes missing, malformed, schema-invalid, or semantically
+mismatched Manager artifacts, duplicate manifest ids, duplicate draft ids,
+invalid source lifecycle state, and partial mutations. `runs show`, status
+JSON, and monitor events expose the handler id, failure class/message, mutation
+phase, matched policy id, and recovery action.
 
-Mechanic Blueprint receives the failed Manager run directory, stage-result
-path, runtime-effect failure class/message, and implicated Manager artifacts in
-request context. Its initial recovery contract is diagnosis plus clean rerun:
-emit `MECHANIC_BLUEPRINT_COMPLETE` with `resume_stage: manager_blueprint` only
-when rerunning Manager against the still-active source is safe. Repaired
-Manager artifacts are inert unless a future runtime effect explicitly consumes
-them. If a clean rerun is not safe, Mechanic Blueprint emits `BLOCKED`.
+Contractor Blueprint candidate persistence checks existing same-id candidate
+packet and markdown artifacts before writing. Equivalent normalized packet
+payloads and line-ending-normalized markdown are replay-safe. Divergent packet
+or markdown collisions block with `blueprint_candidate_duplicate_conflict` or
+`blueprint_candidate_markdown_conflict` and do not overwrite existing
+artifacts.
+
+Mechanic Blueprint receives the failed runtime-effect run context,
+stage-result path, failure class/message, and implicated Blueprint artifacts in
+request context. Runtime-effect recovery is structured: a
+`MECHANIC_BLUEPRINT_COMPLETE` recovery result must be backed by
+`blueprint_repair_decision.json` as a `BlueprintRepairDecisionDocument`;
+`mechanic_report.md` alone is evidence, not runtime-owned repair state. The
+repair decision JSON uses `next_resume_stage` for evaluator, contractor, or
+manager rerun actions, while terminal-result metadata may still use
+`resume_stage` for router handoff. Current shipped runtime failure policies
+only route the Evaluator generated-task missing/invalid class to Mechanic
+Blueprint automatically; Manager pre-mutation artifact failures remain
+conservative blocks for operator inspection. Mechanic must not write corrected
+`blueprint_manifest.json` or `blueprint_drafts.json`.
+`repaired_generated_task.json` is valid only with
+`repair_action=apply_repaired_generated_task` and validates as a task document.
+`mechanic_blueprint_repair_apply` is the packaged repair-apply handler for this
+artifact pair. It consumes the structured decision and repaired generated task
+through artifact contracts, validates the Mechanic stage result, failed
+runtime-effect stage-result metadata, draft, packet, evaluation, root lineage,
+and repaired task identity/scope before mutation, then reuses the
+runtime-owned approval promotion path. Missing, invalid, mismatched, or
+out-of-scope repair inputs fail before durable mutation. The packaged
+`MECHANIC_BLUEPRINT_COMPLETE` effect rule requires `blueprint_repair_decision`,
+`mechanic_report`, and `repaired_generated_task`, and requires repair
+capabilities for `apply_repaired_generated_task`, `generated_task_missing`, and
+`generated_task_invalid`. Compiler validation rejects recoverable
+runtime-effect routes to `mechanic_blueprint` unless the selected Blueprint
+graph has the closed repair effect, a non-Mechanic resume guard, required
+repair artifacts, and handler capability alignment. Unsafe recovery emits
+`BLOCKED`.
 
 ## Durable Artifacts
 
@@ -132,6 +162,8 @@ Blueprint artifacts include:
 - evaluation records
 - promotion records
 - generated execution tasks
+- structured repair decisions and repaired generated-task artifacts emitted by
+  Mechanic Blueprint recovery
 
 Status exposes Blueprint counters and current artifact counts so operators can
 see whether drafts, packets, critiques, evaluations, promotions, and generated
@@ -167,6 +199,16 @@ Evaluator Blueprint resolves the manifest for an active draft by
 manifests and new manifest-id-keyed remediation manifests coexist under the
 same closure root while each draft receives the correct manifest context.
 
+Mechanic Blueprint request context includes preferred output refs for
+`blueprint_repair_decision.json`, `repaired_generated_task.json`, and
+`mechanic_report.md`. These refs tell the stage where to write declared
+artifacts; they do not grant direct queue mutation authority.
+For Evaluator approval pre-mutation repair, context also includes the failed
+stage result, the failed `blueprint_evaluation.json` and `generated_task.md`
+refs, runtime-effect policy metadata, and the required
+`apply_repaired_generated_task` action. Mechanic writes repair artifacts only;
+the runtime remains the owner of queue movement and canonical Blueprint state.
+
 This keeps Blueprint critique and approval decisions inspectable after the run,
 even when a later config reload compiles a newer pending plan.
 
@@ -182,6 +224,25 @@ source is blocked, missing, or otherwise incompatible, the failure class is
 `blueprint_source_lifecycle_invalid`. Partial or divergent output state remains
 conservative and blocks as `blueprint_partial_mutation` or a duplicate-id
 class.
+
+Contractor Blueprint candidate replay is also idempotent only after proving
+equivalence. Full replay reports no created paths; partial replay writes only
+missing packet or markdown artifacts after every existing artifact is proven
+equivalent, then keeps the active draft `latest_blueprint_id` coherent.
+
+Evaluator Blueprint approval replay is idempotent only after proving the
+existing evaluation, approved packet, approved markdown, generated task, and
+promotion record are equivalent. Existing approved markdown must match the
+candidate markdown or the replay run's `blueprint.md`; missing or divergent
+approval state blocks with a precise conflict class instead of returning source
+completion. Partial replay can reuse an equivalent generated task and write a
+missing promotion record.
+
+Only Evaluator approval pre-mutation failures for `generated_task_missing` and
+`generated_task_invalid` route to `mechanic_blueprint` under the shipped
+runtime failure policy. Other approval replay conflicts and partial mutations
+block unless a declared reconciliation handler proves the durable state is
+equivalent and safe to continue.
 
 ## Operator Inspection
 
@@ -208,9 +269,25 @@ Important operator expectations:
   generated tasks remain queued, active, blocked, or unpromoted
 - `millrace runs show` should expose runtime-effect handler, decision,
   source-lifecycle, and created-path details for Blueprint stage runs
+- `millrace status` and `millrace doctor` should surface the latest
+  recoverable Evaluator approval repair context, including the structured
+  repair contract, replay conflict classes, inert-artifact guard, and runtime
+  ownership boundary
+- Mechanic Blueprint recovery should emit structured
+  `blueprint_repair_decision.json`; `repaired_generated_task.json` is only
+  expected with `repair_action=apply_repaired_generated_task`, and the
+  repair-apply handler validates failed context and repaired task scope before
+  runtime-owned promotion
 - same-root remediation manifests are expected when their `manifest_id` values
   differ; diagnose duplicate manifest failures by comparing `manifest_id`, not
   `root_spec_id`
+- Contractor candidate replay accepts only equivalent packet and markdown
+  artifacts; divergent same-id packet or markdown collisions are blockers, not
+  files to overwrite manually
+- Evaluator approval replay accepts only equivalent evaluation, approved
+  packet, approved markdown, generated task, and promotion artifacts; divergent
+  or unverifiable approval collisions are blockers, not files to overwrite
+  manually
 - old root-keyed manifest files are read by embedded `manifest_id`; do not
   rename or overwrite them by hand while a daemon owns the workspace
 

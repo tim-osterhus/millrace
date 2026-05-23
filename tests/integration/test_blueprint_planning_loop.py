@@ -12,12 +12,14 @@ from millrace_ai.contracts import (
     BlueprintEvaluationDocument,
     BlueprintManifestDocument,
     BlueprintPacketDocument,
+    BlueprintRepairDecisionDocument,
     ExecutionStageName,
     ExecutionTerminalResult,
     IncidentDocument,
     PlanningStageName,
     PlanningTerminalResult,
     SpecDocument,
+    StageResultEnvelope,
     TaskDocument,
 )
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -827,6 +829,156 @@ def test_blueprint_mode_rejection_cycle_returns_to_contractor_before_approval(
     ).is_file()
     assert (paths.tasks_done_dir / "task-draft-blueprint-001.md").is_file()
     assert outcomes[-1].stage_result.stage_kind_id == "arbiter"
+    assert load_closure_target_state(paths, root_spec_id="spec-blueprint-001").closure_open is False
+
+
+def test_blueprint_approval_generated_task_invalid_recovers_without_duplicate_candidate(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    _write_idea_doc(paths, "idea-blueprint-001")
+    queue.enqueue_spec(_root_spec_doc())
+
+    stage_kind_order: list[str] = []
+    contractor_blueprint_ids: list[str] = []
+    repaired_task_ids: list[str] = []
+
+    def _latest_failed_evaluator_stage_result(run_dir: Path) -> StageResultEnvelope:
+        stage_results = [
+            StageResultEnvelope.model_validate_json(path.read_text(encoding="utf-8"))
+            for path in sorted((run_dir / "stage_results").glob("*.json"))
+        ]
+        evaluator_failures = [
+            result
+            for result in stage_results
+            if result.stage_kind_id == "evaluator_blueprint"
+            and result.metadata.get("runtime_effect_failure_class") == "generated_task_invalid"
+        ]
+        assert evaluator_failures
+        return evaluator_failures[-1]
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        stage_kind_order.append(request.stage_kind_id)
+        run_dir = Path(request.run_dir)
+        if request.stage is PlanningStageName.PLANNER:
+            return _runner_result(request, terminal=PlanningTerminalResult.PLANNER_COMPLETE.value)
+        if request.stage_kind_id == "manager_blueprint":
+            _write_json(run_dir / "blueprint_manifest.json", _manifest(draft_ids=("draft-blueprint-001",)))
+            _write_json(
+                run_dir / "blueprint_drafts.json",
+                [
+                    _draft(
+                        "draft-blueprint-001",
+                        draft_index=1,
+                        depends_on_draft_ids=(),
+                    ),
+                ],
+            )
+            return _runner_result(request, terminal="MANAGER_BLUEPRINT_COMPLETE")
+        if request.stage_kind_id == "contractor_blueprint":
+            assert request.active_work_item_id is not None
+            packet = _packet(request.active_work_item_id)
+            contractor_blueprint_ids.append(packet.blueprint_id)
+            _write_json(run_dir / "blueprint_packet.json", packet)
+            (run_dir / "blueprint.md").write_text(
+                f"# {packet.title}\n\nRuntime-owned Blueprint packet.\n",
+                encoding="utf-8",
+            )
+            return _runner_result(request, terminal="BLUEPRINT_CANDIDATE_READY")
+        if request.stage_kind_id == "evaluator_blueprint":
+            assert request.active_work_item_id is not None
+            packet = _packet(request.active_work_item_id)
+            _write_json(run_dir / "blueprint_evaluation.json", _evaluation(packet))
+            (run_dir / "generated_task.md").write_text(
+                "# Invalid generated task\n\nTask-ID: task-draft-blueprint-001\n",
+                encoding="utf-8",
+            )
+            return _runner_result(request, terminal="BLUEPRINT_APPROVED")
+        if request.stage_kind_id == "mechanic_blueprint":
+            assert request.active_work_item_id is not None
+            packet = _packet(request.active_work_item_id)
+            failed = _latest_failed_evaluator_stage_result(run_dir)
+            repaired_task = _task(packet)
+            repaired_task_ids.append(repaired_task.task_id)
+            decision = BlueprintRepairDecisionDocument(
+                repair_id=f"repair-{packet.blueprint_id}",
+                failed_handler_id="evaluator_blueprint_approved_to_task",
+                failed_run_id=failed.run_id,
+                failed_stage_kind_id=failed.stage_kind_id,
+                failed_node_id=failed.node_id,
+                failed_terminal_result=failed.terminal_result.value,
+                failure_class="generated_task_invalid",
+                mutation_phase="pre_mutation",
+                work_item_family_id=failed.work_item_family_id or "blueprint_draft",
+                work_item_id=failed.work_item_id,
+                draft_id=packet.draft_id,
+                manifest_id=packet.manifest_id,
+                root_spec_id=packet.root_spec_id,
+                root_idea_id=packet.root_idea_id,
+                repair_action="apply_repaired_generated_task",
+                target_blueprint_id=packet.blueprint_id,
+                target_revision=packet.revision,
+                target_evaluation_id=f"evaluation-{packet.blueprint_id}",
+                generated_task_id=repaired_task.task_id,
+                repaired_artifact_id="repaired_generated_task",
+                repaired_artifact_path="repaired_generated_task.json",
+                reason="generated_task.md failed schema validation before mutation",
+                verified_invariants=(
+                    "failed evaluator stage result is present",
+                    "candidate packet remains occupied and equivalent",
+                    "repaired generated task stays within Blueprint scope",
+                ),
+                references=("tests/integration/test_blueprint_planning_loop.py",),
+                created_at=NOW + timedelta(minutes=4),
+            )
+            _write_json(run_dir / "blueprint_repair_decision.json", decision)
+            _write_json(run_dir / "repaired_generated_task.json", repaired_task)
+            (run_dir / "mechanic_report.md").write_text(
+                "# Mechanic Blueprint Report\n\nApplied repaired generated task.\n",
+                encoding="utf-8",
+            )
+            return _runner_result(request, terminal="MECHANIC_BLUEPRINT_COMPLETE")
+        if request.stage is ExecutionStageName.BUILDER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+        if request.stage is ExecutionStageName.CHECKER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.CHECKER_PASS.value)
+        if request.stage is ExecutionStageName.UPDATER:
+            return _runner_result(request, terminal=ExecutionTerminalResult.UPDATE_COMPLETE.value)
+
+        verdict_path = Path(request.preferred_verdict_path)
+        verdict_path.parent.mkdir(parents=True, exist_ok=True)
+        verdict_path.write_text('{"status":"pass"}\n', encoding="utf-8")
+        Path(request.preferred_report_path).write_text("# Arbiter Report\n\nClosed.\n", encoding="utf-8")
+        return _runner_result(request, terminal=PlanningTerminalResult.ARBITER_COMPLETE.value)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="blueprint_codex")
+    engine.startup()
+    outcomes = [engine.tick() for _ in range(9)]
+
+    assert [outcome.stage_result.stage_kind_id for outcome in outcomes] == [
+        "planner",
+        "manager_blueprint",
+        "contractor_blueprint",
+        "evaluator_blueprint",
+        "mechanic_blueprint",
+        "builder",
+        "checker",
+        "updater",
+        "arbiter",
+    ]
+    assert contractor_blueprint_ids == ["blueprint-draft-blueprint-001-r1"]
+    assert stage_kind_order.count("contractor_blueprint") == 1
+    assert repaired_task_ids == ["task-draft-blueprint-001"]
+    assert (paths.tasks_done_dir / "task-draft-blueprint-001.md").is_file()
+    assert (
+        paths.runtime_root
+        / "blueprints/packets/approved/blueprint-draft-blueprint-001-r1.json"
+    ).is_file()
+    assert not (
+        paths.runtime_root
+        / "blueprints/packets/candidates/blueprint-draft-blueprint-001-r1.json"
+    ).exists()
     assert load_closure_target_state(paths, root_spec_id="spec-blueprint-001").closure_open is False
 
 
