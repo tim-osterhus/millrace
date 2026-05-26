@@ -744,6 +744,36 @@ def test_normalize_persists_request_context_and_failure_origin_metadata(
     ]
 
 
+def test_normalize_preserves_model_alias_provenance_on_malformed_terminal_output(
+    tmp_path: Path,
+) -> None:
+    request = StageRunRequest(
+        **(
+            _request(tmp_path, stage="builder").model_dump(mode="python")
+            | {
+                "model_assignment_alias_id": "builder-fast",
+                "model_assignment_source": "stages.builder.model_assignment",
+                "model_reasoning_effort": "high",
+            }
+        )
+    )
+    terminal_path = tmp_path / "stage_terminal_result.json"
+    terminal_path.write_text("{not-json", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, terminal_result_path=terminal_path),
+    )
+
+    assert envelope.terminal_result.value == "BLOCKED"
+    assert envelope.metadata["failure_class"] == "illegal_terminal_result"
+    assert envelope.model_assignment_alias_id == "builder-fast"
+    assert envelope.model_assignment_source == "stages.builder.model_assignment"
+    assert envelope.model_reasoning_effort == "high"
+    assert envelope.metadata["model_assignment_alias_id"] == "builder-fast"
+    assert envelope.metadata["model_assignment_source"] == "stages.builder.model_assignment"
+
+
 def test_normalize_output_is_deterministic(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="checker")
     stdout_path = tmp_path / "runner_stdout.txt"

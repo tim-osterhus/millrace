@@ -22,8 +22,10 @@ the compiler selected model/depth through a runtime config alias.
 
 - `src/millrace_ai/runners/requests.py`
   - `StageRunRequest`, `RunnerRawResult`, and prompt-context rendering
-- `src/millrace_ai/runners/normalization.py`
-  - terminal extraction, failure mapping, and `StageResultEnvelope` normalization
+- `src/millrace_ai/runners/normalization/`
+  - `StageResultEnvelope` normalization facade plus focused helpers for terminal
+    parsing, artifact safety, failure mapping, terminal-result mapping, and
+    request provenance preservation
 - `src/millrace_ai/runners/base.py`
   - adapter protocol (`name`, contextual capability support, `run(request)`)
 - `src/millrace_ai/runners/registry.py`
