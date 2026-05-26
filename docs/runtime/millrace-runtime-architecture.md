@@ -7,7 +7,10 @@ Each workspace is explicitly initialized under `<workspace>/millrace-agents/` by
 
 Use `docs/runtime/millrace-compiler-and-frozen-plans.md` for compile semantics
 and persisted compiled-plan behavior. Use `docs/runtime/millrace-modes-and-loops.md`
-for the shipped mode and loop topology the compiler resolves.
+for the shipped mode and loop topology the compiler resolves. Use
+`docs/runtime/millrace-runtime-authority-map.md` for trace-by-trace ownership
+of intake, queue selection, runner requests, artifacts, result normalization,
+and durable runtime mutation.
 
 ## Source Tree
 
