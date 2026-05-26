@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
+from typing import cast
 
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import ActiveRunState, LaneRuntimeState, Plane, RuntimeSnapshot
@@ -24,7 +26,7 @@ def lane_id_for_plane(compiled_plan: CompiledRunPlan | None, plane: Plane) -> st
     if scheduler_policy is not None:
         for lane in scheduler_policy.lanes:
             if lane.plane is plane:
-                return lane.lane_id
+                return cast(str, lane.lane_id)
     return default_lane_id_for_plane(plane)
 
 
@@ -166,7 +168,7 @@ def _declared_lane_specs(compiled_plan: CompiledRunPlan) -> tuple[tuple[str, Pla
 
 
 def _active_runs_by_lane(
-    active_runs: object,
+    active_runs: Iterable[ActiveRunState],
 ) -> dict[str, tuple[ActiveRunState, ...]]:
     grouped: dict[str, list[ActiveRunState]] = {}
     for active_run in active_runs:

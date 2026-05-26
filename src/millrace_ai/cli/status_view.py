@@ -8,10 +8,11 @@ from typing import Any, Sequence
 
 import typer
 
+from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import CompiledPlanCurrentness, inspect_workspace_plan_currentness
 from millrace_ai.config import load_runtime_config
-from millrace_ai.contracts import ClosureTargetState, StageResultEnvelope
+from millrace_ai.contracts import ClosureTargetState, Plane, RuntimeErrorContext, StageResultEnvelope
 from millrace_ai.contracts.blueprint import (
     BlueprintCritiqueDocument,
     BlueprintDraftDocument,
@@ -557,7 +558,7 @@ def _queue_depths(paths: WorkspacePaths) -> dict[str, int]:
     }
 
 
-def _load_compiled_plan_safe(paths: WorkspacePaths):
+def _load_compiled_plan_safe(paths: WorkspacePaths) -> CompiledRunPlan | None:
     return load_existing_plan(paths.state_dir / "compiled_plan.json")
 
 
@@ -788,7 +789,7 @@ def _render_blueprint_status_lines(status: dict[str, object]) -> tuple[str, ...]
     return tuple(lines)
 
 
-def _latest_runtime_error_context(paths: WorkspacePaths) -> object | None:
+def _latest_runtime_error_context(paths: WorkspacePaths) -> RuntimeErrorContext | None:
     return load_runtime_error_context(paths)
 
 
@@ -1002,7 +1003,7 @@ def _load_compile_currentness(
         return None, str(exc)
 
 
-def _json_files(directory: object) -> tuple[Path, ...]:
+def _json_files(directory: str | Path) -> tuple[Path, ...]:
     path = Path(directory)
     if not path.exists():
         return ()
@@ -1061,9 +1062,7 @@ def _status_payload_value(value: object) -> object:
     return value
 
 
-def _plane_key(value: str) -> object:
-    from millrace_ai.contracts import Plane
-
+def _plane_key(value: str) -> Plane:
     return Plane(value)
 
 

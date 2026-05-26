@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pydantic import JsonValue
+
 from millrace_ai.contracts import (
     IncidentDocument,
     LearningRequestDocument,
@@ -288,7 +290,7 @@ def _append_requeue_reason(
         raise QueueStateError("requeue reason is required")
 
     log_path = destination_dir / f"{item_id}.requeue.jsonl"
-    payload = {
+    payload: dict[str, JsonValue] = {
         "at": datetime.now(timezone.utc).isoformat(),
         "reason": cleaned_reason,
     }

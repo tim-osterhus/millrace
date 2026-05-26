@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import JsonValue
+
 from millrace_ai.contracts import Plane, RuntimeErrorCode, StageResultEnvelope
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
@@ -36,7 +38,7 @@ from .failure_policy import (
 from .graph_authority.stage_mapping import node_plan_by_id, stage_for_node
 
 if TYPE_CHECKING:
-    from millrace_ai.architecture import CompiledRunPlan
+    from millrace_ai.architecture import CompiledRunPlan, RuntimeEffectRuleDefinition
     from millrace_ai.runners import StageRunRequest
     from millrace_ai.runtime.engine import RuntimeEngine
 
@@ -218,7 +220,7 @@ def _handler_id_for(
 def _effect_rule_for(
     compiled_plan: CompiledRunPlan | None,
     stage_result: StageResultEnvelope,
-):
+) -> RuntimeEffectRuleDefinition | None:
     if compiled_plan is None:
         return None
 
@@ -552,7 +554,7 @@ def _annotate_stage_result_with_effect(
     recovery_action: str | None = None,
 ) -> None:
     intent = effect_result.source_lifecycle_intent
-    effect_metadata = {
+    effect_metadata: dict[str, JsonValue] = {
         **stage_result.metadata,
         "runtime_effect_handler_id": effect_result.handler_id,
         "runtime_effect_decision": effect_result.decision.value,

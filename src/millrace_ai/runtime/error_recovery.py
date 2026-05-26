@@ -508,7 +508,7 @@ def record_post_stage_exception_context(
     router_decision: RouterDecision | None,
     stage_result_path: Path | None,
     error_code: RuntimeErrorCode,
-    repair_stage: PlanningStageName | ExecutionStageName,
+    repair_stage: StageName,
     captured_at: datetime | None = None,
 ) -> RuntimeErrorContext:
     """Persist runtime exception context without choosing a recovery route."""

@@ -11,10 +11,17 @@ from millrace_ai.architecture import (
     ArtifactFormat,
     FrozenGraphPlanePlan,
     GraphLoopEntryKey,
+    LifecycleMutationPlanDefinition,
     MaterializedGraphNodePlan,
+    PlaneQueueClaimPolicyDefinition,
     RecoveryRole,
     RegisteredStageKindDefinition,
+    RuntimeEffectHandlerDefinition,
+    RuntimeEffectRuleDefinition,
+    RuntimeFailurePolicyDefinition,
+    TerminalActionDefinition,
     WorkflowPlaneSchedulerPolicyDefinition,
+    WorkItemDocumentAdapterDefinition,
     WorkItemFamilyDefinition,
 )
 from millrace_ai.architecture.loop_graphs import graph_loop_entry_key_value
@@ -301,8 +308,10 @@ def validate_lane_conflict_coverage(
                     )
 
 
-def _queue_policies_by_plane(workflow_primitives: WorkflowPrimitiveBundle):
-    policies_by_plane = {}
+def _queue_policies_by_plane(
+    workflow_primitives: WorkflowPrimitiveBundle,
+) -> dict[Plane, PlaneQueueClaimPolicyDefinition]:
+    policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition] = {}
     for policy in workflow_primitives.queue_claim_policies:
         if policy.plane in policies_by_plane:
             raise CompilerValidationError(f"Duplicate queue claim policy for plane: {policy.plane.value}")
@@ -322,7 +331,7 @@ def _graph_nodes_by_id(
 
 def _validate_document_adapters(
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    adapters_by_id: dict[str, object],
+    adapters_by_id: dict[str, WorkItemDocumentAdapterDefinition],
 ) -> None:
     for family in families_by_id.values():
         adapter = adapters_by_id.get(family.document_adapter_id)
@@ -351,8 +360,8 @@ def _validate_artifact_contracts(
     *,
     artifact_contracts_by_id: dict[str, ArtifactContractDefinition],
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    document_adapters_by_id: dict[str, object],
-    runtime_effect_handlers_by_id: dict[str, object],
+    document_adapters_by_id: dict[str, WorkItemDocumentAdapterDefinition],
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
 ) -> None:
     known_adapter_ids = set(document_adapters_by_id) | set(_BUILT_IN_ARTIFACT_ADAPTER_IDS)
@@ -423,7 +432,7 @@ def _validate_artifact_adapter_semantics(
     filename_adapter: ArtifactFilenameAdapterDefinition,
     adapter_id: str,
     adapter_role: str,
-    document_adapters_by_id: dict[str, object],
+    document_adapters_by_id: dict[str, WorkItemDocumentAdapterDefinition],
 ) -> None:
     built_in_format = _BUILT_IN_ARTIFACT_ADAPTER_FORMATS.get(adapter_id)
     if built_in_format is not None:
@@ -531,7 +540,7 @@ def _validate_queue_claim_policies(
     *,
     mode: ModeDefinition,
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    queue_policies_by_plane: dict[Plane, object],
+    queue_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition],
 ) -> None:
     for plane in mode.loop_ids_by_plane:
         if plane not in queue_policies_by_plane:
@@ -556,7 +565,7 @@ def _validate_graph_entries_are_claimable(
     *,
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    queue_policies_by_plane: dict[Plane, object],
+    queue_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition],
 ) -> None:
     families_by_plane_entry = {
         (family.plane, family.entry_key): family
@@ -622,9 +631,9 @@ def _stage_kind_can_start_family(
 def _validate_terminal_actions(
     *,
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
-    terminal_actions_by_id: dict[str, object],
-    lifecycle_plans_by_id: dict[str, object],
-    runtime_effect_rules_by_id: dict[str, object],
+    terminal_actions_by_id: dict[str, TerminalActionDefinition],
+    lifecycle_plans_by_id: dict[str, LifecycleMutationPlanDefinition],
+    runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
 ) -> None:
     terminal_classes = {
         getattr(action, "terminal_class")
@@ -658,7 +667,7 @@ def _validate_lifecycle_plans(
     *,
     families_by_id: dict[str, WorkItemFamilyDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
-    lifecycle_plan_ids: dict[str, object],
+    lifecycle_plan_ids: dict[str, LifecycleMutationPlanDefinition],
 ) -> None:
     for plan in lifecycle_plan_ids.values():
         source_family_id = getattr(plan, "source_family_id")
@@ -679,7 +688,7 @@ def _validate_runtime_effect_handlers(
     *,
     artifact_contracts_by_id: dict[str, ArtifactContractDefinition],
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    runtime_effect_handlers_by_id: dict[str, object],
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
 ) -> None:
     for handler in runtime_effect_handlers_by_id.values():
         handler_id = getattr(handler, "handler_id")
@@ -712,9 +721,9 @@ def _validate_runtime_effect_rules(
     *,
     artifact_contracts_by_id: dict[str, ArtifactContractDefinition],
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    lifecycle_plans_by_id: dict[str, object],
-    runtime_effect_handlers_by_id: dict[str, object],
-    runtime_effect_rules_by_id: dict[str, object],
+    lifecycle_plans_by_id: dict[str, LifecycleMutationPlanDefinition],
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
+    runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
 ) -> None:
@@ -838,8 +847,8 @@ def _validate_runtime_failure_policies(
     *,
     workflow_primitives: WorkflowPrimitiveBundle,
     families_by_id: dict[str, WorkItemFamilyDefinition],
-    runtime_effect_handlers_by_id: dict[str, object],
-    runtime_effect_rules_by_id: dict[str, object],
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
+    runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
@@ -986,11 +995,11 @@ def _validate_runtime_failure_policies(
 
 
 def _validate_blueprint_recovery_route_closure(
-    policy: object,
+    policy: RuntimeFailurePolicyDefinition,
     *,
     active_planes: tuple[Plane, ...],
-    runtime_effect_handlers_by_id: dict[str, object],
-    runtime_effect_rules_by_id: dict[str, object],
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
+    runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     graph_node_ids_by_plane: dict[Plane, set[str]],
 ) -> None:
@@ -1027,8 +1036,8 @@ def _validate_blueprint_recovery_route_closure(
 
 
 def _mechanic_blueprint_repair_rule(
-    runtime_effect_rules_by_id: dict[str, object],
-) -> object | None:
+    runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
+) -> RuntimeEffectRuleDefinition | None:
     for rule in runtime_effect_rules_by_id.values():
         if getattr(rule, "source_node_id") != _MECHANIC_BLUEPRINT_NODE_ID:
             continue
@@ -1041,7 +1050,7 @@ def _mechanic_blueprint_repair_rule(
 
 
 def _validate_mechanic_blueprint_resume_guard(
-    policy: object,
+    policy: RuntimeFailurePolicyDefinition,
     *,
     active_planes: tuple[Plane, ...],
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
@@ -1067,8 +1076,8 @@ def _validate_mechanic_blueprint_resume_guard(
 
 
 def _validate_mechanic_blueprint_repair_rule_artifacts(
-    policy: object,
-    repair_rule: object,
+    policy: RuntimeFailurePolicyDefinition,
+    repair_rule: RuntimeEffectRuleDefinition,
 ) -> None:
     required_artifacts = set(getattr(repair_rule, "required_run_artifacts"))
     missing = sorted(_MECHANIC_BLUEPRINT_REPAIR_ARTIFACTS - required_artifacts)
@@ -1083,10 +1092,10 @@ def _validate_mechanic_blueprint_repair_rule_artifacts(
 
 
 def _validate_mechanic_blueprint_repair_capabilities(
-    policy: object,
+    policy: RuntimeFailurePolicyDefinition,
     *,
-    repair_rule: object,
-    runtime_effect_handlers_by_id: dict[str, object],
+    repair_rule: RuntimeEffectRuleDefinition,
+    runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
 ) -> None:
     repair_handler = runtime_effect_handlers_by_id.get(_MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID)
     if repair_handler is None:
@@ -1121,7 +1130,7 @@ def _validate_mechanic_blueprint_repair_capabilities(
 
 
 def _runtime_failure_policy_active_planes(
-    policy: object,
+    policy: RuntimeFailurePolicyDefinition,
     *,
     graph_node_ids_by_plane: dict[Plane, set[str]],
     graph_stage_kind_ids_by_plane: dict[Plane, set[str]],
@@ -1137,7 +1146,7 @@ def _runtime_failure_policy_active_planes(
     )
 
 
-def _policy_activating_node_ids(policy: object) -> tuple[str, ...]:
+def _policy_activating_node_ids(policy: RuntimeFailurePolicyDefinition) -> tuple[str, ...]:
     return tuple(
         node_id
         for node_id in (
@@ -1212,7 +1221,7 @@ def _validate_policy_terminal_states_in_declared_planes(
 
 
 def _runtime_failure_policy_is_active_for_plane(
-    policy: object,
+    policy: RuntimeFailurePolicyDefinition,
     plane_node_ids: set[str],
     plane_stage_kind_ids: set[str],
 ) -> bool:
@@ -1229,7 +1238,7 @@ def _validate_structural_graph_smoke(
     *,
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
-    terminal_actions_by_id: dict[str, object],
+    terminal_actions_by_id: dict[str, TerminalActionDefinition],
 ) -> None:
     terminal_classes = {
         getattr(action, "terminal_class")

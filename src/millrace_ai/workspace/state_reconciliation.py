@@ -495,15 +495,15 @@ def _has_impossible_marker_for_active_stage(
             if marker == running_marker:
                 return False
             return marker not in allowed and marker not in inbound
-    allowed = _STAGE_ALLOWED_MARKERS.get(snapshot.active_stage.value)
-    inbound = _STAGE_INBOUND_MARKERS.get(snapshot.active_stage.value)
-    if allowed is None or inbound is None:
+    stage_allowed = _STAGE_ALLOWED_MARKERS.get(snapshot.active_stage.value)
+    stage_inbound = _STAGE_INBOUND_MARKERS.get(snapshot.active_stage.value)
+    if stage_allowed is None or stage_inbound is None:
         return False
     if marker == _IDLE_MARKER:
         return False
     if marker == running_status_marker_for_stage(snapshot.active_stage):
         return False
-    return marker not in allowed and marker not in inbound
+    return marker not in stage_allowed and marker not in stage_inbound
 
 
 def _active_stage_appears_running(

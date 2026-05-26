@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Generic, TypeVar
 
+from millrace_ai.architecture import CompiledRunPlan, WorkItemFamilyDefinition
 from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import fingerprint_runtime_config, load_runtime_config
@@ -729,21 +730,21 @@ class DirectControlMutations(Generic[ResultT]):
             artifact_path=result.destination_path,
         )
 
-    def _compiled_plan_for_inventory(self):
+    def _compiled_plan_for_inventory(self) -> CompiledRunPlan | None:
         return load_existing_plan(self.paths.state_dir / "compiled_plan.json")
 
-    def _work_item_families_for_inventory(self):
+    def _work_item_families_for_inventory(self) -> tuple[WorkItemFamilyDefinition, ...] | None:
         compiled_plan = self._compiled_plan_for_inventory()
         if compiled_plan is None:
             return None
         return tuple(compiled_plan.work_item_families_by_id.values())
 
-    def _queue_depths(self, *, compiled_plan=None) -> dict[Plane, int]:
+    def _queue_depths(self, *, compiled_plan: CompiledRunPlan | None = None) -> dict[Plane, int]:
         if compiled_plan is None:
             compiled_plan = self._compiled_plan_for_inventory()
         return queue_depths_by_plane(self.paths, compiled_plan=compiled_plan)
 
-    def _queue_depth_update(self, *, compiled_plan=None) -> dict[str, object]:
+    def _queue_depth_update(self, *, compiled_plan: CompiledRunPlan | None = None) -> dict[str, object]:
         queue_depths = self._queue_depths(compiled_plan=compiled_plan)
         return {
             "queue_depth_execution": queue_depths[Plane.EXECUTION],

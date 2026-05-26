@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 
@@ -460,7 +460,8 @@ class LaneConflictPolicyDefinition(ArchitectureContractModel):
             for concurrent_lane_id in self.concurrent_with_lane_ids:
                 if lane_id == concurrent_lane_id:
                     continue
-                pairs.append(tuple(sorted((lane_id, concurrent_lane_id))))
+                first_lane_id, second_lane_id = sorted((lane_id, concurrent_lane_id))
+                pairs.append((first_lane_id, second_lane_id))
         return tuple(sorted(set(pairs)))
 
     @property
@@ -959,7 +960,7 @@ class RuntimeFailurePolicyDefinition(ArchitectureContractModel):
                 "applies_to_mutation_phases contains unknown value: "
                 + ", ".join(unknown)
             )
-        return normalized
+        return cast(tuple[RuntimeEffectMutationPhaseValue, ...], normalized)
 
     @model_validator(mode="after")
     def validate_action_requirements(self) -> "RuntimeFailurePolicyDefinition":
@@ -1037,15 +1038,16 @@ class WorkflowPlaneSchedulerPolicyDefinition(ArchitectureContractModel):
             for policy in self.lane_conflict_policies
             for pair in policy.lane_pairs
         }
-        for policy in self.lane_conflict_policies:
-            for lane_id in (*policy.lane_ids, *policy.concurrent_with_lane_ids):
+        for conflict_policy in self.lane_conflict_policies:
+            for lane_id in (*conflict_policy.lane_ids, *conflict_policy.concurrent_with_lane_ids):
                 if lane_id not in lane_ids:
                     raise ValueError(f"lane conflict policy references unknown lane {lane_id}")
         if self.experimental_multi_lane:
             for lanes in lanes_by_plane.values():
                 for first_index, first_lane in enumerate(lanes):
                     for second_lane in lanes[first_index + 1:]:
-                        pair = tuple(sorted((first_lane.lane_id, second_lane.lane_id)))
+                        first_lane_id, second_lane_id = sorted((first_lane.lane_id, second_lane.lane_id))
+                        pair = (first_lane_id, second_lane_id)
                         if pair not in conflict_pairs:
                             raise ValueError(f"lane conflict policy missing for lane pair {pair[0]} + {pair[1]}")
         return self

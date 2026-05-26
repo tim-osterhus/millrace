@@ -6,9 +6,9 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from pydantic import ValidationError, model_validator
+from pydantic import JsonValue, ValidationError, model_validator
 
 from millrace_ai.architecture import WorkItemDocumentAdapterDefinition, WorkItemFamilyDefinition
 from millrace_ai.assets import load_builtin_workflow_primitives
@@ -57,6 +57,15 @@ FailureScope = Literal[
     "semantic",
     "unknown",
 ]
+
+QueueDocumentModel: TypeAlias = (
+    type[TaskDocument]
+    | type[SpecDocument]
+    | type[ProbeDocument]
+    | type[IncidentDocument]
+    | type[LearningRequestDocument]
+    | type[BlueprintDraftDocument]
+)
 
 AUTO_REQUEUE_FAILURE_CLASSES = frozenset(
     {
@@ -150,7 +159,7 @@ class _BlockedRetryFamily:
     document_adapter: WorkItemDocumentAdapterDefinition | None = None
 
 
-_DOCUMENT_MODEL_BY_SCHEMA_ID = {
+_DOCUMENT_MODEL_BY_SCHEMA_ID: dict[str, QueueDocumentModel] = {
     "task_document_v1": TaskDocument,
     "spec_document_v1": SpecDocument,
     "probe_document_v1": ProbeDocument,
@@ -696,9 +705,7 @@ def _parse_family_defined_document(family: _BlockedRetryFamily, raw: str, *, pat
     assert family.family_definition is not None
     model = _DOCUMENT_MODEL_BY_SCHEMA_ID.get(family.family_definition.schema_id)
     if model is not None:
-        if path.suffix == ".json":
-            return model.model_validate_json(raw)
-        return parse_work_document_as(raw, model=model, path=path)
+        return _parse_known_queue_document(raw, model=model, path=path)
     if path.suffix == ".json":
         payload = json.loads(raw)
         if not isinstance(payload, dict):
@@ -722,6 +729,27 @@ def _generic_markdown_fields(raw: str) -> dict[str, object]:
         if field_name and value:
             fields[field_name] = value
     return fields
+
+
+def _parse_known_queue_document(
+    raw: str,
+    *,
+    model: QueueDocumentModel,
+    path: Path,
+) -> Any:
+    if model is TaskDocument:
+        return parse_work_document_as(raw, model=TaskDocument, path=path)
+    if model is SpecDocument:
+        return parse_work_document_as(raw, model=SpecDocument, path=path)
+    if model is ProbeDocument:
+        return parse_work_document_as(raw, model=ProbeDocument, path=path)
+    if model is IncidentDocument:
+        return parse_work_document_as(raw, model=IncidentDocument, path=path)
+    if model is LearningRequestDocument:
+        return parse_work_document_as(raw, model=LearningRequestDocument, path=path)
+    if model is BlueprintDraftDocument:
+        return BlueprintDraftDocument.model_validate_json(raw)
+    raise QueueStateError(f"unsupported queue document model: {model}")
 
 
 def _validate_retry_root_spec_guard(
@@ -767,7 +795,7 @@ def _document_work_item_id(document: Any, *, family: _BlockedRetryFamily, fallba
 
 
 def _emit_blocked_retry_events(paths: WorkspacePaths, result: BlockedWorkItemRetryResult) -> None:
-    payload = {
+    payload: dict[str, JsonValue] = {
         "work_item_family_id": result.work_item_family_id,
         "work_item_kind": result.work_item_kind.value if result.work_item_kind is not None else None,
         "work_item_id": result.work_item_id,
@@ -1011,7 +1039,10 @@ def _candidate_blocked_lineage_paths(
     return tuple(candidates)
 
 
-def _work_item_family_for_lineage(paths: WorkspacePaths, family_id: str):
+def _work_item_family_for_lineage(
+    paths: WorkspacePaths,
+    family_id: str,
+) -> WorkItemFamilyDefinition | None:
     compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
     if compiled_plan is not None:
         family = compiled_plan.work_item_families_by_id.get(family_id)
@@ -1064,8 +1095,14 @@ def _lineage_from_markdown(raw: str) -> tuple[str | None, str | None]:
 
 def _blocked_origin_for_stage_result(stage_result: StageResultEnvelope) -> BlockedOrigin:
     raw_origin = stage_result.metadata.get("blocked_origin")
-    if raw_origin in {"stage_terminal", "runner_failure", "runtime_exception", "operator", "unknown"}:
-        return raw_origin
+    if isinstance(raw_origin, str) and raw_origin in {
+        "stage_terminal",
+        "runner_failure",
+        "runtime_exception",
+        "operator",
+        "unknown",
+    }:
+        return cast(BlockedOrigin, raw_origin)
     if stage_result.metadata.get("normalization_source") == "failure":
         return "runner_failure"
     return "stage_terminal"
@@ -1077,7 +1114,7 @@ def _failure_scope_for_stage_result(
     blocked_origin: BlockedOrigin,
 ) -> FailureScope:
     raw_scope = stage_result.metadata.get("failure_scope")
-    if raw_scope in {
+    if isinstance(raw_scope, str) and raw_scope in {
         "environment",
         "provider",
         "local_configuration",
@@ -1085,7 +1122,7 @@ def _failure_scope_for_stage_result(
         "semantic",
         "unknown",
     }:
-        return raw_scope
+        return cast(FailureScope, raw_scope)
     if blocked_origin == "stage_terminal":
         return "semantic"
     return "unknown"

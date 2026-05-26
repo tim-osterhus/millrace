@@ -363,7 +363,7 @@ def _supported_closure_root_source_kinds(compiled_plan: CompiledRunPlan | None) 
 
 def _validate_closure_target_contracts(
     paths: WorkspacePaths,
-    target,
+    target: ClosureTargetState,
     errors: list[DoctorIssue],
     *,
     supported_kinds: frozenset[str],
@@ -728,7 +728,7 @@ def _read_queue_document(
     if family.document_adapter_id == "builtin_markdown_v1":
         if model is None:
             return _read_generic_markdown_queue_document(path)
-        return read_work_document_as(path, model=model)
+        return _read_known_work_document(path, model)
     if family.document_adapter_id == "blueprint_draft_markdown_v1":
         if model is not BlueprintDraftDocument:
             raise WorkspaceStateError("blueprint_draft adapter requires BlueprintDraftDocument")
@@ -742,7 +742,23 @@ def _read_queue_document(
         return payload
     if model is None:
         return _read_generic_markdown_queue_document(path)
-    return read_work_document_as(path, model=model)
+    return _read_known_work_document(path, model)
+
+
+def _read_known_work_document(path: Path, model: DoctorModel) -> WorkDocument:
+    if model is TaskDocument:
+        return read_work_document_as(path, model=TaskDocument)
+    if model is SpecDocument:
+        return read_work_document_as(path, model=SpecDocument)
+    if model is ProbeDocument:
+        return read_work_document_as(path, model=ProbeDocument)
+    if model is IncidentDocument:
+        return read_work_document_as(path, model=IncidentDocument)
+    if model is LearningRequestDocument:
+        return read_work_document_as(path, model=LearningRequestDocument)
+    if model is BlueprintDraftDocument:
+        return BlueprintDraftDocument.model_validate_json(path.read_text(encoding="utf-8"))
+    raise WorkspaceStateError(f"unsupported work document model: {model}")
 
 
 def _validate_declared_adapter_accepts_path(

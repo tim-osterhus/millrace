@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from millrace_ai.contracts import (
     IncidentDocument,
@@ -45,22 +45,22 @@ class WorkItemDocumentAdapter(Generic[_DocT]):
     supports_root_filter: bool = False
 
     def queue_dir(self, paths: WorkspacePaths) -> Path:
-        return getattr(paths, self.queue_dir_attr)
+        return cast(Path, getattr(paths, self.queue_dir_attr))
 
     def active_dir(self, paths: WorkspacePaths) -> Path:
-        return getattr(paths, self.active_dir_attr)
+        return cast(Path, getattr(paths, self.active_dir_attr))
 
     def done_dir(self, paths: WorkspacePaths) -> Path:
-        return getattr(paths, self.done_dir_attr)
+        return cast(Path, getattr(paths, self.done_dir_attr))
 
     def blocked_dir(self, paths: WorkspacePaths) -> Path:
-        return getattr(paths, self.blocked_dir_attr)
+        return cast(Path, getattr(paths, self.blocked_dir_attr))
 
     def item_id(self, document: _DocT) -> str:
         return str(getattr(document, self.id_attr))
 
     def timestamp(self, document: _DocT) -> datetime:
-        return getattr(document, self.timestamp_attr)
+        return cast(datetime, getattr(document, self.timestamp_attr))
 
     def parse(self, text: str, *, path: Path) -> _DocT:
         return parse_work_document_as(text, model=self.document_model, path=path)

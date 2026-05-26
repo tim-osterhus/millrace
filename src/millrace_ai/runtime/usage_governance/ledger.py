@@ -6,9 +6,10 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import StageResultEnvelope
+from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
 from millrace_ai.paths import WorkspacePaths
 
 from .models import UsageGovernanceLedgerEntry
@@ -117,7 +118,7 @@ def ledger_entry_from_stage_result(
         plane=stage_result.plane,
         run_id=stage_result.run_id,
         stage_id=stage_result.stage_kind_id or stage_result.stage.value,
-        work_item_kind=stage_result.work_item_kind,
+        work_item_kind=cast(WorkItemKind, stage_result.work_item_kind),
         work_item_id=stage_result.work_item_id,
         token_usage=stage_result.token_usage,
         stage_result_path=relative_path,

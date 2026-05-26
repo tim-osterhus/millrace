@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import copyfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import ValidationError
 
@@ -129,7 +129,7 @@ def manager_blueprint_manifest_to_blueprint_drafts(
                 created_paths=created_paths,
                 source_lifecycle_intent=_source_lifecycle_intent(
                     stage_result,
-                    plan_id=_complete_lifecycle_plan_id(stage_result.work_item_kind),
+                    plan_id=_complete_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
                     action=SourceLifecycleAction.COMPLETE,
                 ),
                 message=f"queued {len(drafts)} blueprint draft(s)",
@@ -178,7 +178,7 @@ def manager_blueprint_manifest_to_blueprint_drafts(
         created_paths=created_paths,
         source_lifecycle_intent=_source_lifecycle_intent(
             stage_result,
-            plan_id=_complete_lifecycle_plan_id(stage_result.work_item_kind),
+            plan_id=_complete_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
             action=SourceLifecycleAction.COMPLETE,
         ),
         message=f"queued {len(drafts)} blueprint draft(s)",
@@ -686,7 +686,7 @@ def _manager_failure_result(
         source_lifecycle_intent=(
             _source_lifecycle_intent(
                 stage_result,
-                plan_id=_block_lifecycle_plan_id(stage_result.work_item_kind),
+                plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
                 action=SourceLifecycleAction.BLOCK,
             )
             if include_source_lifecycle_intent
@@ -766,7 +766,7 @@ def _validate_manager_output(
     manifest: BlueprintManifestDocument,
     drafts: Sequence[BlueprintDraftDocument],
 ) -> None:
-    if manifest.source_work_item_kind != stage_result.work_item_kind.value:
+    if manifest.source_work_item_kind != _stage_result_work_item_kind(stage_result).value:
         raise ValueError("manifest source_work_item_kind does not match active source")
     if manifest.source_work_item_id != stage_result.work_item_id:
         raise ValueError("manifest source_work_item_id does not match active source")
@@ -807,9 +807,10 @@ def _active_draft_for_stage_result(
     paths: WorkspacePaths,
     stage_result: StageResultEnvelope,
 ) -> BlueprintDraftDocument:
-    if stage_result.work_item_kind is not WorkItemKind.BLUEPRINT_DRAFT:
+    stage_result_kind = _stage_result_work_item_kind(stage_result)
+    if stage_result_kind is not WorkItemKind.BLUEPRINT_DRAFT:
         raise QueueStateError(
-            f"Blueprint handler requires blueprint_draft source, got {stage_result.work_item_kind.value}"
+            f"Blueprint handler requires blueprint_draft source, got {stage_result_kind.value}"
         )
     return read_active_blueprint_draft(paths, stage_result.work_item_id)
 
@@ -927,9 +928,10 @@ def _approval_draft_for_stage_result(
     paths: WorkspacePaths,
     stage_result: StageResultEnvelope,
 ) -> tuple[BlueprintDraftDocument, str]:
-    if stage_result.work_item_kind is not WorkItemKind.BLUEPRINT_DRAFT:
+    stage_result_kind = _stage_result_work_item_kind(stage_result)
+    if stage_result_kind is not WorkItemKind.BLUEPRINT_DRAFT:
         raise QueueStateError(
-            f"Blueprint handler requires blueprint_draft source, got {stage_result.work_item_kind.value}"
+            f"Blueprint handler requires blueprint_draft source, got {stage_result_kind.value}"
         )
     entries: list[tuple[str, BlueprintDraftDocument]] = []
     for state in ("active", "approved"):
@@ -1584,9 +1586,15 @@ def _source_lifecycle_intent(
     return SourceLifecycleIntent(
         lifecycle_plan_id=plan_id,
         action=action,
-        work_item_kind=stage_result.work_item_kind,
+        work_item_kind=_stage_result_work_item_kind(stage_result),
         work_item_id=stage_result.work_item_id,
     )
+
+
+def _stage_result_work_item_kind(stage_result: StageResultEnvelope) -> WorkItemKind:
+    if stage_result.work_item_kind is None:
+        raise QueueStateError("Blueprint runtime effect requires stage result work_item_kind")
+    return stage_result.work_item_kind
 
 
 def _failure_result(
@@ -1603,7 +1611,7 @@ def _failure_result(
         created_paths=tuple(created_paths),
         source_lifecycle_intent=_source_lifecycle_intent(
             stage_result,
-            plan_id=_block_lifecycle_plan_id(stage_result.work_item_kind),
+            plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
             action=SourceLifecycleAction.BLOCK,
         ),
         failure_class=failure_class,
@@ -1674,14 +1682,15 @@ def _unique_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
-BlueprintModelT = (
-    BlueprintManifestDocument
-    | BlueprintDraftDocument
-    | BlueprintPacketDocument
-    | BlueprintEvaluationDocument
-    | BlueprintCritiqueDocument
-    | BlueprintPromotionRecord
-    | BlueprintRepairDecisionDocument
+BlueprintModelT = TypeVar(
+    "BlueprintModelT",
+    BlueprintManifestDocument,
+    BlueprintDraftDocument,
+    BlueprintPacketDocument,
+    BlueprintEvaluationDocument,
+    BlueprintCritiqueDocument,
+    BlueprintPromotionRecord,
+    BlueprintRepairDecisionDocument,
 )
 
 

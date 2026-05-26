@@ -138,7 +138,8 @@ def merge_execution_capability_summaries(
     by_decision: Counter[str] = Counter()
     by_enforcement: Counter[str] = Counter()
     for summary in summaries:
-        total += int(summary.get("total_grants", 0))
+        total_grants = summary.get("total_grants", 0)
+        total += total_grants if isinstance(total_grants, int) else 0
         for key, value in _nested_counts(summary, "by_decision").items():
             by_decision[key] += value
         for key, value in _nested_counts(summary, "by_enforcement").items():

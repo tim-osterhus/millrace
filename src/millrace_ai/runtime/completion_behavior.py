@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.architecture import GraphLoopCompletionBehaviorDefinition
+from millrace_ai.architecture import CompiledRunPlan, GraphLoopCompletionBehaviorDefinition
 from millrace_ai.contracts import (
     ClosureBlockingWorkRef,
     ClosureRootSource,
@@ -20,6 +21,7 @@ from millrace_ai.contracts import (
 from millrace_ai.contracts.stage_metadata import validate_safe_identifier
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.events import write_runtime_event
+from millrace_ai.paths import WorkspacePaths
 from millrace_ai.queue_store import QueueClaim
 from millrace_ai.state_store import save_snapshot
 from millrace_ai.workspace.arbiter_state import (
@@ -190,10 +192,10 @@ def refresh_closure_target_readiness(
 
 
 def _closure_blocking_refs_from_inventory(
-    paths,
+    paths: WorkspacePaths,
     *,
     root_spec_id: str,
-    compiled_plan,
+    compiled_plan: CompiledRunPlan | None,
 ) -> tuple[ClosureBlockingWorkRef, ...]:
     refs = closure_blocking_refs(
         paths,
@@ -207,7 +209,10 @@ def _closure_blocking_refs_from_inventory(
     )
 
 
-def _blocking_ref_from_inventory(paths, ref: WorkInventoryItemRef) -> ClosureBlockingWorkRef:
+def _blocking_ref_from_inventory(
+    paths: WorkspacePaths,
+    ref: WorkInventoryItemRef,
+) -> ClosureBlockingWorkRef:
     return ClosureBlockingWorkRef(
         blocker_type="work_item",
         reason="open_lineage_work",
@@ -258,7 +263,7 @@ def _is_safe_identifier(value: str) -> bool:
     return True
 
 
-def _runtime_relative_path(paths, path: Path) -> str:
+def _runtime_relative_path(paths: WorkspacePaths, path: Path) -> str:
     try:
         return path.relative_to(paths.runtime_root).as_posix()
     except ValueError:
@@ -411,7 +416,7 @@ def _actionable_open_closure_targets(
     )
 
 
-def _unique_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+def _unique_ids(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 

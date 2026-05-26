@@ -208,8 +208,16 @@ def _parse_markdown_artifact(
     model = _model_for_schema_id(contract)
     try:
         raw = path.read_text(encoding="utf-8")
-        if model in _WORK_DOCUMENT_MODELS:
-            return parse_work_document_as(raw, model=model, path=path)
+        if model is IncidentDocument:
+            return parse_work_document_as(raw, model=IncidentDocument, path=path)
+        if model is LearningRequestDocument:
+            return parse_work_document_as(raw, model=LearningRequestDocument, path=path)
+        if model is ProbeDocument:
+            return parse_work_document_as(raw, model=ProbeDocument, path=path)
+        if model is SpecDocument:
+            return parse_work_document_as(raw, model=SpecDocument, path=path)
+        if model is TaskDocument:
+            return parse_work_document_as(raw, model=TaskDocument, path=path)
         if model is ReconPacketDocument:
             return parse_recon_packet(raw, path=path)
     except Exception as exc:
@@ -256,14 +264,6 @@ def _model_for_schema_id(contract: ArtifactContractDefinition) -> type[BaseModel
 def _format_value(value: object) -> str:
     return str(getattr(value, "value", value))
 
-
-_WORK_DOCUMENT_MODELS = {
-    IncidentDocument,
-    LearningRequestDocument,
-    ProbeDocument,
-    SpecDocument,
-    TaskDocument,
-}
 
 _MODEL_BY_SCHEMA_ID: dict[str, type[BaseModel]] = {
     "blueprint_critique_document_v1": BlueprintCritiqueDocument,

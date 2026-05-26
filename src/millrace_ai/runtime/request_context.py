@@ -15,6 +15,7 @@ from millrace_ai.architecture import ArtifactContractDefinition, CompiledRunPlan
 from millrace_ai.assets import discover_artifact_contract_definitions
 from millrace_ai.contracts import (
     BlueprintCritiqueDocument,
+    BlueprintDraftDocument,
     BlueprintEvaluationDocument,
     BlueprintPacketDocument,
     StageResultEnvelope,
@@ -84,14 +85,15 @@ def attach_default_request_context(
         compiled_plan=compiled_plan,
     )
     rendered = render_request_context(plan, workspace_root=workspace_root)
-    payload = request.model_dump(mode="python") | {
-        "request_context_profile_id": plan.profile_id,
-        "context_bundle_path": rendered.context_bundle_path,
-        "context_artifact_refs": plan.visible_artifact_refs,
-        "context_render_plan_id": plan.render_plan_id,
-        "rendered_prompt_context_path": rendered.rendered_prompt_context_path,
-    }
-    return StageRunRequest(**payload)
+    return request.model_copy(
+        update={
+            "request_context_profile_id": plan.profile_id,
+            "context_bundle_path": rendered.context_bundle_path,
+            "context_artifact_refs": plan.visible_artifact_refs,
+            "context_render_plan_id": plan.render_plan_id,
+            "rendered_prompt_context_path": rendered.rendered_prompt_context_path,
+        }
+    )
 
 
 def _request_context_plan(
@@ -508,7 +510,7 @@ def _visible_artifact_refs(request: StageRunRequest) -> tuple[str, ...]:
 def _active_blueprint_draft_for_request(
     paths: WorkspacePaths,
     request: StageRunRequest,
-):
+) -> BlueprintDraftDocument:
     if request.active_work_item_family_id != WorkItemKind.BLUEPRINT_DRAFT.value:
         raise ValueError("Blueprint context requires an active blueprint_draft")
     if request.active_work_item_id is None:

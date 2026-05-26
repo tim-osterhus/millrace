@@ -21,6 +21,7 @@ from millrace_ai.work_documents import read_work_document_as
 from millrace_ai.workspace.queue_selection import list_deferred_root_spec_ids
 
 if TYPE_CHECKING:
+    from millrace_ai.architecture import PlaneQueueClaimPolicyDefinition, WorkItemFamilyDefinition
     from millrace_ai.runtime.engine import RuntimeEngine
 
 import millrace_ai.runtime.completion_behavior as completion_behavior
@@ -148,12 +149,13 @@ def entry_stage_for_family_id(family_id: str) -> StageName:
 
 def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActivationDecision:
     assert engine.compiled_plan is not None
-    if claim.family_id != WorkItemKind.LEARNING_REQUEST.value:
-        return work_item_activation_for_graph(engine.compiled_plan, claim.family_id)
+    family_id = _claim_family_id(claim)
+    if family_id != WorkItemKind.LEARNING_REQUEST.value:
+        return work_item_activation_for_graph(engine.compiled_plan, family_id)
 
     document = read_work_document_as(claim.path, model=LearningRequestDocument)
     if document.target_stage is None:
-        return work_item_activation_for_graph(engine.compiled_plan, claim.family_id)
+        return work_item_activation_for_graph(engine.compiled_plan, family_id)
     return learning_stage_activation_for_graph(engine.compiled_plan, document.target_stage)
 
 
@@ -197,19 +199,23 @@ def _claim_next_open_closure_lineage_work(
 
 
 def _plane_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> Plane:
+    family_id = _claim_family_id(claim)
     if claim.plane is not None:
         return claim.plane
     if engine.compiled_plan is not None:
-        family = engine.compiled_plan.work_item_families_by_id.get(claim.family_id)
+        family = engine.compiled_plan.work_item_families_by_id.get(family_id)
         if family is not None:
             return family.plane
-    plane = plane_for_work_item_family_id(claim.family_id)
+    plane = plane_for_work_item_family_id(family_id)
     if plane is None:
-        raise ValueError(f"cannot infer plane for work item family {claim.family_id}")
+        raise ValueError(f"cannot infer plane for work item family {family_id}")
     return plane
 
 
-def _claim_policy_for_plane(engine: RuntimeEngine, plane: Plane):
+def _claim_policy_for_plane(
+    engine: RuntimeEngine,
+    plane: Plane,
+) -> PlaneQueueClaimPolicyDefinition | None:
     if engine.compiled_plan is None:
         return None
     claim_policy = engine.compiled_plan.queue_claim_policies_by_plane.get(plane)
@@ -218,10 +224,16 @@ def _claim_policy_for_plane(engine: RuntimeEngine, plane: Plane):
     return claim_policy
 
 
-def _work_item_families_for_engine(engine: RuntimeEngine):
+def _work_item_families_for_engine(engine: RuntimeEngine) -> tuple[WorkItemFamilyDefinition, ...] | None:
     if engine.compiled_plan is None:
         return None
     return tuple(engine.compiled_plan.work_item_families_by_id.values())
+
+
+def _claim_family_id(claim: QueueClaim) -> str:
+    if claim.family_id is None:
+        raise ValueError("QueueClaim is missing family_id")
+    return claim.family_id
 
 
 def _backpressure_claim(

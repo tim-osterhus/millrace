@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from millrace_ai.contracts import (
     CapabilityDecisionState,
@@ -19,7 +20,11 @@ from millrace_ai.paths import WorkspacePaths
 from millrace_ai.runners.base import default_capability_support_decision
 from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
 
-from .approvals import ensure_execution_capability_approval, find_approval_for_grant
+from .approvals import (
+    ExecutionCapabilityApproval,
+    ensure_execution_capability_approval,
+    find_approval_for_grant,
+)
 
 CapabilitySupportEvaluator = Callable[
     [ExecutionCapabilityGrant, Mapping[str, object]],
@@ -162,9 +167,9 @@ def support_evaluator_for_request(
         if evaluator is None:
             return default_capability_support_decision(grant, invocation_context)
         try:
-            return evaluator(grant, request)
+            return cast(CapabilitySupportDecision, evaluator(grant, request))
         except TypeError:
-            return evaluator(grant, invocation_context)
+            return cast(CapabilitySupportDecision, evaluator(grant, invocation_context))
 
     return _evaluate
 
@@ -175,7 +180,7 @@ def _approval_for_request(
     request: StageRunRequest,
     grant: ExecutionCapabilityGrant,
     now: Callable[[], datetime],
-):
+) -> ExecutionCapabilityApproval:
     existing = find_approval_for_grant(
         paths,
         run_id=request.run_id,

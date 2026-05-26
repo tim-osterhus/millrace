@@ -47,13 +47,10 @@ class StageRunnerDispatcher:
                 grant,
                 {"request": request, "stage": request.stage.value},
             ).model_copy(update={"runner_id": runner_name, "reason": "unknown runner"})
-        evaluator = getattr(adapter, "evaluate_capability_grant", None)
-        if evaluator is None:
-            return default_capability_support_decision(
-                grant,
-                {"request": request, "stage": request.stage.value},
-            )
-        return evaluator(grant, {"request": request, "stage": request.stage.value})
+        return adapter.evaluate_capability_grant(
+            grant,
+            {"request": request, "stage": request.stage.value},
+        )
 
 
 __all__ = ["StageRunnerDispatcher"]

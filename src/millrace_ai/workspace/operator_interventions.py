@@ -283,7 +283,7 @@ def retarget_queued_task_dependency(
     _emit_event(paths, "task_dependency_retargeted", record)
     return OperatorInterventionResult(
         action="retarget_dependency",
-        work_item_family_id=record.work_item_family_id,
+        work_item_family_id=_record_family_id(record),
         work_item_kind=WorkItemKind.TASK,
         work_item_id=task_id,
         source_state="queue",
@@ -393,7 +393,7 @@ def archive_invalid_incident_artifact(
     _emit_event(paths, "invalid_incident_artifact_archived", record)
     return OperatorInterventionResult(
         action="archive_invalid_incident",
-        work_item_family_id=record.work_item_family_id,
+        work_item_family_id=_record_family_id(record),
         work_item_kind=WorkItemKind.INCIDENT,
         work_item_id=source.name,
         source_state="incoming_invalid",
@@ -685,6 +685,12 @@ def _record(
         replacement_work_item_id=replacement_work_item_id,
         affected_dependents=affected_dependents,
     )
+
+
+def _record_family_id(record: OperatorInterventionRecord) -> str:
+    if record.work_item_family_id is None:
+        raise QueueStateError("operator intervention record is missing work_item_family_id")
+    return record.work_item_family_id
 
 
 def _work_item_families_by_id(paths: WorkspacePaths) -> dict[str, WorkItemFamilyDefinition]:

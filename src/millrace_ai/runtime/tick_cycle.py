@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+
+from pydantic import JsonValue
 
 from millrace_ai.contracts import (
     ExecutionStageName,
@@ -371,7 +373,7 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             "work_item_id": stage_result.work_item_id,
             "terminal_result": stage_result.terminal_result.value,
             "failure_class": stage_result.metadata.get("failure_class"),
-            **runtime_effect_monitor_payload(stage_result.metadata),
+            **cast(dict[str, JsonValue], runtime_effect_monitor_payload(stage_result.metadata)),
             "troubleshoot_report_path": (
                 stage_result.report_artifact or request.preferred_troubleshoot_report_path
             ),

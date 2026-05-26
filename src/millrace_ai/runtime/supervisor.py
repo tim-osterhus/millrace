@@ -6,9 +6,9 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from pydantic import model_validator
+from pydantic import JsonValue, model_validator
 
 from millrace_ai.contracts import (
     ActiveRunState,
@@ -53,6 +53,7 @@ from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
 from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
+    from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
 
 
@@ -663,7 +664,7 @@ def _validate_stage_result_matches_active_run(
         raise ValueError("stage_result work item id does not match active run")
 
 
-def _pre_dispatch_failed_stage(plane: Plane):
+def _pre_dispatch_failed_stage(plane: Plane) -> ExecutionStageName | PlanningStageName | LearningStageName:
     if plane is Plane.PLANNING:
         return PlanningStageName.ARBITER
     if plane is Plane.LEARNING:
@@ -747,7 +748,7 @@ def _emit_stage_completed(
             "work_item_id": stage_result.work_item_id,
             "terminal_result": stage_result.terminal_result.value,
             "failure_class": stage_result.metadata.get("failure_class"),
-            **runtime_effect_monitor_payload(stage_result.metadata),
+            **cast(dict[str, JsonValue], runtime_effect_monitor_payload(stage_result.metadata)),
             "troubleshoot_report_path": (stage_result.report_artifact or request.preferred_troubleshoot_report_path),
         },
     )
@@ -829,7 +830,7 @@ def _emit_router_decision(
 def _sort_lanes(
     lane_ids: tuple[str, ...],
     *,
-    compiled_plan,
+    compiled_plan: CompiledRunPlan | None,
 ) -> tuple[str, ...]:
     lane_id_set = set(lane_ids)
     ordered = tuple(lane_id for lane_id in lane_dispatch_order(compiled_plan) if lane_id in lane_id_set)

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Literal, Mapping
+from typing import Iterable, Literal, Mapping, cast
 
 from pydantic import ValidationError
 
@@ -223,7 +223,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 ),
                 terminal_result=stage_result.terminal_result.value,
                 result_class=stage_result.result_class.value,
-                work_item_kind=stage_result.work_item_kind,
+                work_item_kind=cast(WorkItemKind, stage_result.work_item_kind),
                 work_item_id=stage_result.work_item_id,
                 failure_class=_failure_class_from_stage_result(stage_result),
                 failure_origin=_string_metadata(stage_result, "failure_origin"),
@@ -533,7 +533,7 @@ def _runtime_outcome_for_run(
     if trace_path.is_file():
         return _inspect_run_trace(run_dir).status
     if latest_stage_result is None:
-        return artifact_status
+        return "incomplete" if artifact_status == "valid" else artifact_status
     if artifact_status == "malformed":
         return "malformed"
     if latest_stage_result.result_class != "success":

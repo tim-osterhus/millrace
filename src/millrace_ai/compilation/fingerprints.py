@@ -54,7 +54,7 @@ def _jsonable(value: object) -> object:
     if value is None:
         return None
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")  # type: ignore[no-any-return, attr-defined]
+        return value.model_dump(mode="json")
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, list | tuple):

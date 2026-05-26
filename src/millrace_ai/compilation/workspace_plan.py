@@ -22,7 +22,7 @@ from millrace_ai.assets import (
     load_builtin_workflow_primitives,
 )
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import CompileDiagnostics, Plane
+from millrace_ai.contracts import CompileDiagnostics, ModeDefinition, Plane
 from millrace_ai.errors import AssetValidationError
 from millrace_ai.paths import WorkspacePaths
 
@@ -386,7 +386,7 @@ def _map_queue_claim_policies_by_plane(
 
 def _build_scheduler_policy(
     *,
-    mode,
+    mode: ModeDefinition,
     queue_claim_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition],
 ) -> WorkflowPlaneSchedulerPolicyDefinition:
     lanes = tuple(
@@ -420,7 +420,7 @@ def _build_scheduler_policy(
     )
 
 
-def _default_lane_conflict_policies(mode) -> tuple[LaneConflictPolicyDefinition, ...]:
+def _default_lane_conflict_policies(mode: ModeDefinition) -> tuple[LaneConflictPolicyDefinition, ...]:
     if mode.concurrency_policy is None:
         return ()
     policies: list[LaneConflictPolicyDefinition] = []
@@ -430,15 +430,16 @@ def _default_lane_conflict_policies(mode) -> tuple[LaneConflictPolicyDefinition,
             continue
         first_lane_id = f"{plane_pair[0].value}.main"
         second_lane_id = f"{plane_pair[1].value}.main"
-        lane_pair = tuple(sorted((first_lane_id, second_lane_id)))
+        first_ordered_lane_id, second_ordered_lane_id = sorted((first_lane_id, second_lane_id))
+        lane_pair = (first_ordered_lane_id, second_ordered_lane_id)
         if lane_pair in seen_pairs:
             continue
         seen_pairs.add(lane_pair)
         policies.append(
             LaneConflictPolicyDefinition(
                 policy_id=f"{lane_pair[0]}-with-{lane_pair[1]}",
-                first_lane_id=lane_pair[0],
-                second_lane_id=lane_pair[1],
+                lane_ids=(lane_pair[0],),
+                concurrent_with_lane_ids=(lane_pair[1],),
                 conflict_scopes=("workspace",),
                 lock_acquisition_order=lane_pair,
                 release_policy="on_result_applied",

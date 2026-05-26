@@ -58,7 +58,7 @@ def write_workspace_schema_epoch_marker(
     marker_path = workspace_schema_epoch_marker_path(paths)
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     written_at = now or datetime.now(timezone.utc)
-    payload = {
+    payload: dict[str, object] = {
         "schema_version": "1.0",
         "kind": "workspace_schema_epoch_marker",
         "epoch_id": epoch_id,

@@ -165,10 +165,10 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
             lines.append(f"context_artifact_ref: {context_ref}")
         for path in stage_result.runtime_effect_created_paths:
             lines.append(f"runtime_effect_created_path: {path}")
-        for summary in stage_result.capability_grant_summaries:
-            lines.append(f"capability_grant: {summary}")
-        for summary in stage_result.capability_support_summaries:
-            lines.append(f"capability_support: {summary}")
+        for grant_summary in stage_result.capability_grant_summaries:
+            lines.append(f"capability_grant: {grant_summary}")
+        for support_summary in stage_result.capability_support_summaries:
+            lines.append(f"capability_support: {support_summary}")
     return tuple(lines)
 
 

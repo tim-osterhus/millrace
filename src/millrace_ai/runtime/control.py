@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
 from pydantic import JsonValue
 
@@ -259,7 +259,7 @@ class RuntimeControl:
         old_task_id: str,
         replacement_task_id: str,
         reason: str,
-        cascade: str = "none",
+        cascade: Literal["none", "retarget", "cancel"] = "none",
         issuer: str = "operator",
     ) -> ControlActionResult:
         payload_model = MailboxSupersedeTaskPayload(

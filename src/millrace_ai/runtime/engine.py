@@ -16,7 +16,7 @@ import millrace_ai.runtime.stage_requests as stage_requests
 import millrace_ai.runtime.tick_cycle as tick_cycle
 import millrace_ai.runtime.usage_governance as usage_governance
 import millrace_ai.runtime.watcher_intake as watcher_intake
-from millrace_ai.architecture import CompiledRunPlan, MaterializedGraphNodePlan
+from millrace_ai.architecture import CompiledRunPlan, MaterializedGraphNodePlan, WorkItemFamilyDefinition
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ActiveRunState,
@@ -489,7 +489,7 @@ class RuntimeEngine:
             work_item_families=self._work_item_families_for_lifecycle(),
         )
 
-    def _work_item_families_for_lifecycle(self):
+    def _work_item_families_for_lifecycle(self) -> tuple[WorkItemFamilyDefinition, ...] | None:
         if self.compiled_plan is None:
             return None
         return tuple(self.compiled_plan.work_item_families_by_id.values())

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import ResultClass, StageResultEnvelope, WorkItemKind
 from millrace_ai.contracts.work_refs import coerce_family_and_kind
 from millrace_ai.events import write_runtime_event
@@ -90,7 +91,7 @@ def apply_runtime_effect_result(
     paths: WorkspacePaths,
     effect_result: RuntimeEffectResult,
     *,
-    compiled_plan=None,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> RuntimeEffectResult:
     missing_paths = tuple(
         path
