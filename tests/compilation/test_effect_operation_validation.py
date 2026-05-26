@@ -263,7 +263,7 @@ def test_compile_rejects_effect_operation_with_unknown_store(tmp_path: Path) -> 
     assert outcome.active_plan is None
     assert (
         "runtime effect operation manager_blueprint_manifest_to_blueprint_drafts step "
-        "dispatch_legacy_handler references unknown store missing_store"
+        "parse_manifest references unknown store missing_store"
     ) in _diagnostic_text(outcome)
 
 

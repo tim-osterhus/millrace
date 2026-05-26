@@ -21,6 +21,44 @@
     {
       "schema_version": "1.0",
       "kind": "runtime_effect_validator",
+      "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.manifest_schema",
+      "primitive_id": "artifact_model_parse",
+      "input_artifact_ids": ["blueprint_manifest"],
+      "failure_class": "blueprint_manifest_schema_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.drafts_schema",
+      "primitive_id": "artifact_model_parse",
+      "input_artifact_ids": ["blueprint_drafts"],
+      "failure_class": "blueprint_drafts_schema_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.sequence",
+      "primitive_id": "blueprint_manifest_sequence_validation",
+      "input_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
+      "store_ids": ["blueprint_manifests", "blueprint_draft_queue"],
+      "failure_class": "blueprint_manifest_draft_mismatch",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.output_equivalence",
+      "primitive_id": "store_equivalence_check",
+      "input_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
+      "store_ids": ["blueprint_manifests", "blueprint_draft_queue"],
+      "failure_class": "blueprint_manifest_duplicate",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
       "validator_id": "contractor_blueprint_candidate_persist.required_artifacts",
       "primitive_id": "artifact_presence",
       "input_artifact_ids": ["blueprint_packet", "blueprint_markdown"],

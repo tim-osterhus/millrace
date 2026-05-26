@@ -15,8 +15,14 @@ from .outcomes import CompilerValidationError
 _SUPPORTED_EFFECT_PRIMITIVE_IDS = frozenset(
     {
         "artifact_presence",
+        "artifact_model_parse",
+        "blueprint_manifest_sequence_validation",
+        "enqueue_work_items",
         "legacy_python_handler",
         "mutation_journal_append",
+        "persist_record",
+        "source_lifecycle",
+        "store_equivalence_check",
     }
 )
 

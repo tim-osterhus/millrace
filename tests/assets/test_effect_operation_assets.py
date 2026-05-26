@@ -58,7 +58,12 @@ def test_builtin_effect_operation_assets_load() -> None:
         "evaluator_blueprint_rejected_to_draft_revision",
         "mechanic_blueprint_repair_apply",
     }
-    assert {store.store_id for store in stores} >= {"run_artifacts", "mutation_journal"}
+    assert {store.store_id for store in stores} >= {
+        "run_artifacts",
+        "mutation_journal",
+        "blueprint_manifests",
+        "blueprint_draft_queue",
+    }
     assert {
         validator.validator_id for validator in validators
     } >= {

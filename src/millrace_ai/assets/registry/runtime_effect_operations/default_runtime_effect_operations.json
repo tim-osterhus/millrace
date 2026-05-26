@@ -51,7 +51,7 @@
       "schema_version": "1.0",
       "kind": "runtime_effect_operation",
       "operation_id": "manager_blueprint_manifest_to_blueprint_drafts",
-      "display_name": "Manager Blueprint manifest legacy operation shell",
+      "display_name": "Manager Blueprint manifest to draft queue operation",
       "legacy_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "required_artifacts": ["blueprint_manifest", "blueprint_drafts"],
       "produced_artifacts": ["manager_blueprint_report"],
@@ -64,13 +64,58 @@
           "validator_ids": ["manager_blueprint_manifest_to_blueprint_drafts.required_artifacts"]
         },
         {
-          "step_id": "dispatch_legacy_handler",
-          "primitive_id": "legacy_python_handler",
-          "mutation_phase": "unknown",
+          "step_id": "parse_manifest",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_manifest"],
+          "validator_ids": ["manager_blueprint_manifest_to_blueprint_drafts.manifest_schema"]
+        },
+        {
+          "step_id": "parse_drafts",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_drafts"],
+          "validator_ids": ["manager_blueprint_manifest_to_blueprint_drafts.drafts_schema"]
+        },
+        {
+          "step_id": "validate_manifest_draft_sequence",
+          "primitive_id": "blueprint_manifest_sequence_validation",
+          "mutation_phase": "pre_mutation",
           "reads_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
-          "store_id": "mutation_journal",
+          "validator_ids": ["manager_blueprint_manifest_to_blueprint_drafts.sequence"]
+        },
+        {
+          "step_id": "check_equivalent_outputs",
+          "primitive_id": "store_equivalence_check",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
+          "validator_ids": ["manager_blueprint_manifest_to_blueprint_drafts.output_equivalence"]
+        },
+        {
+          "step_id": "persist_manifest",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_manifest"],
+          "store_id": "blueprint_manifests",
           "writes_store": true,
-          "journal_event_type": "legacy_handler_result"
+          "journal_event_type": "persist_manifest"
+        },
+        {
+          "step_id": "enqueue_drafts",
+          "primitive_id": "enqueue_work_items",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_drafts"],
+          "store_id": "blueprint_draft_queue",
+          "writes_store": true,
+          "journal_event_type": "enqueue_draft"
+        },
+        {
+          "step_id": "complete_source_lifecycle",
+          "primitive_id": "source_lifecycle",
+          "mutation_phase": "partial_mutation",
+          "store_id": "source_lifecycle",
+          "writes_store": true,
+          "journal_event_type": "complete_source"
         }
       ],
       "idempotency": {
@@ -84,14 +129,54 @@
           "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.required_artifacts"
         },
         {
-          "failure_class": "legacy_handler_failure",
-          "mutation_phase": "unknown"
+          "failure_class": "blueprint_manifest_parse_error",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_manifest_schema_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.manifest_schema"
+        },
+        {
+          "failure_class": "blueprint_drafts_missing",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_drafts_parse_error",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_drafts_schema_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.drafts_schema"
+        },
+        {
+          "failure_class": "blueprint_manifest_draft_mismatch",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.sequence"
+        },
+        {
+          "failure_class": "blueprint_manifest_duplicate",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.output_equivalence"
+        },
+        {
+          "failure_class": "blueprint_draft_duplicate",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_source_lifecycle_invalid",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_partial_mutation",
+          "mutation_phase": "partial_mutation"
         }
       ],
       "mutation_journal": {
         "entry_id_template": "{operation_id}:{run_id}:{step_id}",
         "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
-        "record_step_ids": ["dispatch_legacy_handler"]
+        "record_step_ids": ["persist_manifest", "enqueue_drafts", "complete_source_lifecycle"]
       },
       "partial_commit_policy": "block_source"
     },

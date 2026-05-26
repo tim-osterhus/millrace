@@ -591,6 +591,10 @@ def _annotate_stage_result_with_effect(
         effect_metadata["runtime_effect_failure_policy_id"] = failure_policy_id
     if recovery_action is not None:
         effect_metadata["runtime_effect_recovery_action"] = recovery_action
+    if effect_result.mutation_journal:
+        effect_metadata["runtime_effect_mutation_journal"] = [
+            dict(entry) for entry in effect_result.mutation_journal
+        ]
     stage_result.metadata = effect_metadata
     stage_result.artifact_paths = tuple(
         dict.fromkeys((*stage_result.artifact_paths, *effect_result.created_paths))

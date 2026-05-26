@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, JsonValue, model_validator
 
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import ResultClass, StageResultEnvelope, WorkItemKind
@@ -69,6 +69,7 @@ class RuntimeEffectResult(BaseModel):
     failure_class: str | None = None
     message: str | None = None
     mutation_phase: RuntimeEffectMutationPhase = RuntimeEffectMutationPhase.UNKNOWN
+    mutation_journal: tuple[dict[str, JsonValue], ...] = ()
 
 
 def lifecycle_intent_for_terminal_result(

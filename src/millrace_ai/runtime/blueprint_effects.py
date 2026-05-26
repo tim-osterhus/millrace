@@ -72,8 +72,32 @@ def manager_blueprint_manifest_to_blueprint_drafts(
     run_dir: Path,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> RuntimeEffectResult:
+    """Compatibility facade for the Manager Blueprint runtime operation."""
+
+    from .effects import operations
+
+    original_enqueue = getattr(operations, "enqueue_blueprint_draft")
+    setattr(operations, "enqueue_blueprint_draft", enqueue_blueprint_draft)
+    try:
+        return operations.manager_blueprint_manifest_to_blueprint_drafts(
+            paths,
+            stage_result,
+            run_dir,
+            compiled_plan,
+        )
+    finally:
+        setattr(operations, "enqueue_blueprint_draft", original_enqueue)
+
+
+def _legacy_manager_blueprint_manifest_to_blueprint_drafts(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+    run_dir: Path,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RuntimeEffectResult:
     """Promote Manager Blueprint manifest output into queued draft packets."""
 
+    del compiled_plan
     created_paths: list[str] = []
     try:
         manifest = _read_manager_json_model(
