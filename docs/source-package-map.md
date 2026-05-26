@@ -15,24 +15,65 @@ packages that make workflow configuration data-driven.
   `tests/integration/`
 - the package entrypoints are `src/millrace_ai/__main__.py` and the `src/millrace_ai/cli/` package
 - optional web dashboard code lives under `packages/millrace-web/` as a
-  separate source distribution; it is not imported by or packaged into the base
-  `millrace-ai` wheel
+  separate source distribution with its own `pyproject.toml`, `millrace_web`
+  package, tests, changelog, and README; it is not imported by or packaged into
+  the base `millrace-ai` wheel
+
+## Package Ownership Snapshot
+
+The current `src/millrace_ai/` package tree is intentionally split by ownership:
+
+- `architecture/` owns typed architecture contracts for graph loops, stage
+  kinds, materialized plans, workflow primitives, and shared architecture
+  contract helpers.
+- `assets/` owns packaged runtime assets and public asset-loading helpers,
+  including modes, loops, graphs, registries, entrypoint markdown, and bundled
+  skills.
+- `cli/` owns the Typer operator surface, command modules, command-specific
+  view assembly, and CLI-only formatting/error presentation.
+- `compilation/` owns compiler internals behind `millrace_ai.compiler`,
+  including workspace plan compilation, graph materialization/export,
+  validation, mode resolution, policy compilation, capabilities, model aliases,
+  completion behavior, fingerprints, persistence, and currentness checks.
+- `config/` owns runtime config models, loading, TOML-preserving mutations, and
+  config-change boundary classification.
+- `contracts/` owns canonical typed runtime contracts behind the
+  `millrace_ai.contracts` facade, including work documents, work references,
+  stage results, stage metadata, graph exports, runtime snapshots, mailbox
+  payloads, Blueprint contracts, Recon contracts, recovery counters, and token
+  usage.
+- `runners/` owns runner contracts, request rendering, result normalization,
+  registry/dispatcher/process helpers, typed runner errors, and built-in Codex
+  CLI and Pi RPC adapters.
+- `runtime/` owns daemon execution and runtime state transitions. Its subdomains
+  include lifecycle, tick cycle, active runs, compiled plans, activation,
+  mailbox/watcher intake, graph authority, usage governance, request context,
+  runtime effects, result persistence/application, completion behavior,
+  recovery/blocking/error handling, lane and plane concurrency, approvals,
+  monitoring, snapshots, run traces, closure/recon/work-item transitions, and
+  handoff incidents.
+- `workspace/` owns durable filesystem state and mutation helpers, including
+  paths, initialization, baselines, schema epochs, queue storage/selection/
+  lifecycle/reconciliation, task integrity, work inventory, work documents,
+  state reconciliation, mailbox/events, remote skills, operator interventions,
+  lineage integrity, Arbiter state, Blueprint state, runtime locks, and packaged
+  asset deployment.
 
 ## Old-To-New Module Map
 
 | Legacy surface | Current source home | Notes |
 | --- | --- | --- |
 | `millrace_ai/cli.py` | `src/millrace_ai/cli/app.py`, `src/millrace_ai/cli/shared.py`, `src/millrace_ai/cli/errors.py`, `src/millrace_ai/cli/status_view.py`, `src/millrace_ai/cli/runs_view.py`, `src/millrace_ai/cli/config_view.py`, `src/millrace_ai/cli/compile_view.py`, `src/millrace_ai/cli/formatting.py`, `src/millrace_ai/cli/monitoring.py`, `src/millrace_ai/cli/commands/*` | `millrace_ai.cli` is now a package surface; command groups live in dedicated modules, daemon monitor formatting is isolated, and status/run/config/compile views own their filesystem-backed data loading instead of feeding back through shared command helpers. |
-| `millrace_ai/runtime.py` | `src/millrace_ai/runtime/engine.py` plus owned modules for lifecycle, tick cycle, active runs, compiled-plan archives, mailbox intake, watcher intake, activation, reconciliation, result application, runtime effects, lifecycle interpretation, lane scheduling, lane conflicts, request context, Blueprint effects, Blueprint recovery diagnostics, failure policy, run traces, learning triggers, skill evidence, snapshot state, approvals, capability gates, usage governance, graph authority, closure transitions, stage requests, and inspection | `millrace_ai.runtime` is now a package that re-exports `RuntimeEngine`, `RuntimeTickOutcome`, and daemon supervisor surfaces. `engine.py` remains the stable facade while collaborators own runtime lifecycle, lane-keyed scheduling, immutable launch-plan authority, request-context artifacts, compiled workflow effect dispatch, Blueprint-specific mutations, repair diagnostics, and routed post-stage mutation details. |
+| `millrace_ai/runtime.py` | `src/millrace_ai/runtime/engine.py` plus owned modules for lifecycle, tick cycle, active runs, compiled-plan archives, mailbox intake, watcher intake, activation, reconciliation, result persistence/application, runtime effects, lifecycle interpretation, completion behavior, error recovery, blocked recovery, lane scheduling, plane concurrency, lane conflicts, request context, Blueprint effects, Planner effects, Blueprint recovery diagnostics, failure policy, run traces, learning triggers/promotions, skill evidence, snapshot state, approvals, capability gates, usage governance, graph authority, closure transitions, Recon transitions, work-item transitions, stage requests, handoff incidents, monitoring, and inspection | `millrace_ai.runtime` is now a package that re-exports `RuntimeEngine`, `RuntimeTickOutcome`, runtime monitor types, and daemon supervisor surfaces. `engine.py` remains the stable facade while collaborators own runtime lifecycle, lane-keyed scheduling, immutable launch-plan authority, request-context artifacts, compiled workflow effect dispatch, Blueprint/Planner-specific mutations, repair diagnostics, recovery policy, and routed post-stage mutation details. |
 | `millrace_ai/control.py` | `src/millrace_ai/runtime/control.py`, `src/millrace_ai/runtime/control_mailbox.py`, `src/millrace_ai/runtime/control_mutations.py` | Root `control.py` remains a thin compatibility facade. |
 | `millrace_ai/config.py` | `src/millrace_ai/config/models.py`, `src/millrace_ai/config/loading.py`, `src/millrace_ai/config/boundaries.py`, `src/millrace_ai/config/toml_editing.py` | `millrace_ai.config` is now a package surface; usage-governance config models live in `models.py` and apply on next-tick boundaries. Model alias config and assignment policy are recompile boundaries, with TOML-preserving CLI mutation helpers in `toml_editing.py`. |
-| `millrace_ai/contracts.py` | `src/millrace_ai/contracts/__init__.py`, `base.py`, `blueprint.py`, `capabilities.py`, `enums.py`, `stage_metadata.py`, `token_usage.py`, `work_documents.py`, `recon.py`, `stage_results.py`, `graph_exports.py`, `run_trace.py`, `loop_config.py`, `modes.py`, `compile_diagnostics.py`, `runtime_snapshot.py`, `runtime_errors.py`, `mailbox.py`, `recovery.py` | `millrace_ai.contracts` remains the public facade for canonical typed contracts; named submodules own contract families, including execution capability contracts, Blueprint packet/evaluation contracts, Recon packet contracts, compiled-stage-graph exports, run-trace graph artifacts, and `stage_metadata.py` as the typed registry for shipped stage plane membership, legal terminal results, runner prompt markers, and result-class policy. |
+| `millrace_ai/contracts.py` | `src/millrace_ai/contracts/__init__.py`, `base.py`, `blueprint.py`, `capabilities.py`, `enums.py`, `stage_metadata.py`, `token_usage.py`, `work_documents.py`, `work_refs.py`, `recon.py`, `stage_results.py`, `graph_exports.py`, `run_trace.py`, `loop_config.py`, `modes.py`, `compile_diagnostics.py`, `runtime_snapshot.py`, `runtime_errors.py`, `mailbox.py`, `recovery.py` | `millrace_ai.contracts` remains the public facade for canonical typed contracts; named submodules own contract families, including execution capability contracts, Blueprint packet/evaluation contracts, Recon packet contracts, work-family reference normalization, compiled-stage-graph exports, run-trace graph artifacts, and `stage_metadata.py` as the typed registry for shipped stage plane membership, legal terminal results, runner prompt markers, and result-class policy. |
 | `millrace_ai/compiler.py` | `src/millrace_ai/compiler.py`, `src/millrace_ai/compilation/` | `millrace_ai.compiler` remains the public facade; compiler outcomes, workspace compile orchestration, graph preview/export, mode/path resolution, graph and node materialization, policy compilation, workflow primitive resolution/validation, scheduler lane validation, execution-capability grant resolution, asset resolution, fingerprints, persistence, and currentness inspection live in `compilation/`. |
 | `millrace_ai/entrypoints.py` | `src/millrace_ai/assets/entrypoints/__init__.py`, `models.py`, `discovery.py`, `parsing.py`, `advisory.py`, `linting.py`, `rendering.py` | Root `entrypoints.py` remains a thin compatibility facade; packaged markdown entrypoint assets live in the same `assets/entrypoints/` directory under `execution/`, `planning/`, and `learning/`. |
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
 | `millrace_ai/stage_kinds.py` | `src/millrace_ai/assets/architecture.py`, `src/millrace_ai/architecture/stage_kinds.py` | Root `stage_kinds.py` is the thin public facade for stage-kind registry loading. |
 | `millrace_ai/loop_graphs.py` | `src/millrace_ai/assets/loop_graphs.py`, `src/millrace_ai/architecture/loop_graphs.py` | Root `loop_graphs.py` is the thin public facade for graph-loop loading. |
-| `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py`, `src/millrace_ai/runners/adapters/codex_cli.py`, `codex_cli_command.py`, `codex_cli_artifacts.py`, `codex_cli_tokens.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package; Codex adapter command construction, artifact handling, and token extraction have focused modules behind the public adapter class. |
+| `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py`, `src/millrace_ai/runners/base.py`, `contracts.py`, `dispatcher.py`, `errors.py`, `process.py`, `registry.py`, `src/millrace_ai/runners/adapters/codex_cli.py`, `codex_cli_command.py`, `codex_cli_artifacts.py`, `codex_cli_tokens.py`, `pi_rpc.py`, and `pi_rpc_client.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package; runner registration/dispatch, process helpers, typed errors, Codex adapter command construction, artifact handling, token extraction, and Pi RPC integration have focused modules behind the public adapter classes. |
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
 | `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py`, `src/millrace_ai/workspace/initialization.py` | Root `paths.py` remains a thin compatibility facade for `WorkspacePaths`, `workspace_paths`, and workspace initialization helpers. |
 | workspace initialization/baseline/schema epoch | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/bootstrap_files.py`, `src/millrace_ai/workspace/asset_deployment.py`, `src/millrace_ai/workspace/baseline.py`, `schema_epoch.py`, `schema_epoch_marker.py` | Explicit `millrace init`, default runtime file payloads, runtime asset deployment, managed baseline upgrade classification, schema epoch markers, and archive/reset helpers live in workspace-owned modules with path modeling kept separate from bootstrap behavior. |
@@ -42,8 +83,31 @@ packages that make workflow configuration data-driven.
 | `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. |
 | `millrace_ai/work_documents.py` | `src/millrace_ai/workspace/work_documents.py` | Root `work_documents.py` remains a thin compatibility facade. |
 | `millrace_ai/recon_packets.py` | `src/millrace_ai/recon_packets.py` | Recon packet markdown parsing/rendering is a root helper because runtime transitions and stage tests share the same artifact contract. |
-| `millrace_ai/queue_store.py` | `src/millrace_ai/workspace/queue_store.py`, `queue_claims.py`, `queue_selection.py`, `queue_transitions.py`, `queue_lifecycle.py`, `queue_reconciliation.py`, `task_lifecycle_integrity.py`, `work_item_adapters.py`, `blueprint_state.py` | Root `queue_store.py` remains a thin compatibility facade over the workspace queue package. Queue claim policy, compiled lifecycle mutation interpretation, family-aware work-item adapters, and Blueprint artifact state have explicit workspace-owned homes. |
+| `millrace_ai/queue_store.py` | `src/millrace_ai/workspace/queue_store.py`, `queue_claims.py`, `queue_selection.py`, `queue_transitions.py`, `queue_lifecycle.py`, `queue_reconciliation.py`, `task_lifecycle_integrity.py`, `work_inventory.py`, `work_item_adapters.py`, `operator_interventions.py`, `lineage_integrity.py`, `arbiter_state.py`, `remote_skills.py`, `blueprint_state.py` | Root `queue_store.py` remains a thin compatibility facade over the workspace queue package. Queue claim policy, compiled lifecycle mutation interpretation, family-aware work-item adapters, work inventory, intervention/lineage integrity, Arbiter state, remote skill metadata, and Blueprint artifact state have explicit workspace-owned homes. |
 | `millrace_ai/state_store.py` | `src/millrace_ai/workspace/state_store.py`, `state_reconciliation.py` | Root `state_store.py` remains a thin compatibility facade over the workspace state package. |
+
+## Stable Public Facades And Exports
+
+These import surfaces are deliberate compatibility contracts and should be
+preserved unless an ADR or release note explicitly removes them:
+
+- `src/millrace_ai/compiler.py` re-exports the public compiler API from
+  `compilation/`, including `CompileOutcome`, `CompilerValidationError`,
+  `compile_and_persist_workspace_plan`, plan-currentness inspection, and graph
+  preview.
+- `src/millrace_ai/runner.py` re-exports stable runner request/result and
+  normalization helpers from `runners/`.
+- `src/millrace_ai/queue_store.py` re-exports `QueueStore`, `QueueClaim`, and
+  `StaleActiveState` from workspace queue modules.
+- `src/millrace_ai/control.py` re-exports `RuntimeControl` and
+  `ControlActionResult` from `runtime/control.py`.
+- `src/millrace_ai/__init__.py` intentionally exposes only `__version__`; richer
+  surfaces live in named modules or package facades.
+- Package `__init__.py` files are public facades when they define `__all__`:
+  `architecture`, `assets`, `assets.entrypoints`, `compilation`, `config`,
+  `contracts`, `runners`, `runtime`, `runtime.graph_authority`,
+  `runtime.usage_governance`, and `workspace`. Empty CLI package initializers
+  remain package markers, not API expansion points.
 
 ## Compiled Architecture And Workflow Primitive Authority
 
@@ -112,6 +176,9 @@ These modules remain at the package root because they still have one coherent re
 Additional thin compatibility or public API facades also exist at the root:
 
 - `src/millrace_ai/compiler.py`
+- `src/millrace_ai/control.py`
+- `src/millrace_ai/queue_store.py`
+- `src/millrace_ai/runner.py`
 - `src/millrace_ai/stage_kinds.py`
 - `src/millrace_ai/loop_graphs.py`
 
@@ -152,8 +219,12 @@ cycles:
   package facade remains the stable `RuntimeEngine` / `RuntimeTickOutcome`
   import surface.
 - `runtime/supervisor.py`, `runtime/lanes.py`, `runtime/lane_conflicts.py`,
-  and `runtime/active_runs.py` own daemon lane dispatch, durable lane state,
-  conflict policy checks, and active-run projection.
+  `runtime/plane_concurrency.py`, and `runtime/active_runs.py` own daemon lane
+  dispatch, durable lane state, conflict policy checks, plane concurrency, and
+  active-run projection.
+- `runtime/monitoring.py`, `runtime/pause_state.py`, and
+  `runtime/handoff_incidents.py` own runtime event sink contracts, pause-source
+  projection, and operator handoff incident state.
 - `runtime/compiled_plans.py` preserves active-run launch-plan authority when
   config reload compiles a newer pending plan.
 - `runtime/request_context.py` owns deterministic per-request context bundles
@@ -163,6 +234,17 @@ cycles:
   source-lifecycle application.
 - `runtime/blueprint_effects.py` owns Blueprint-specific runtime effects while
   using the same compiled effect-selection path.
+- `runtime/planner_effects.py` owns Planner-specific runtime effects while
+  staying on the same compiled effect-selection path as Blueprint effects.
+- `runtime/completion_behavior.py`, `runtime/blocked_recovery.py`, and
+  `runtime/error_recovery.py` own compiled completion behavior, blocked-work
+  recovery, and runtime error recovery rather than folding those policies back
+  into `engine.py`.
+- `runtime/artifact_contracts.py`, `runtime/stage_result_persistence.py`,
+  `runtime/result_counters.py`, `runtime/recon_transitions.py`, and
+  `runtime/work_item_transitions.py` keep post-stage artifact validation,
+  durable result writes, counters, and family-specific transition helpers out of
+  the central tick cycle.
 - `runtime/blueprint_recovery_diagnostics.py` owns shared Blueprint
   runtime-effect repair context rendering for status and doctor, and supports
   preserving the original repairable Evaluator approval failure context after
@@ -206,6 +288,11 @@ cycles:
   frontmatter parsing, advisory skill-reference checks, lint policy, and
   diagnostic rendering now have separate module ownership behind the stable
   `millrace_ai.assets.entrypoints` facade.
+- `workspace/work_inventory.py`, `workspace/operator_interventions.py`,
+  `workspace/lineage_integrity.py`, `workspace/arbiter_state.py`, and
+  `workspace/remote_skills.py` keep workspace inventory, operator intervention
+  records, lineage checks, Arbiter closure state, and remote skill metadata out
+  of the queue-store facade.
 
 ## Runner Package Notes
 

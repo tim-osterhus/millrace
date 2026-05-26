@@ -7,6 +7,9 @@ unless explicitly marked otherwise.
 
 ## Index
 
+The table below lists every numbered ADR file currently present in this
+directory, in filename order.
+
 | ADR | Status | Summary |
 | --- | --- | --- |
 | `0001-adopt-src-layout-and-domain-packages.md` | Accepted | Use a `src/` layout and grow domain packages deliberately. |
