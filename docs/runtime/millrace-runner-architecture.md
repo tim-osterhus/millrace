@@ -15,6 +15,8 @@ dispatch happens.
 Those compile-time surfaces now also define the identity that runtime requests
 and run inspection carry forward: `mode_id`, `compiled_plan_id`, `node_id`, and
 `stage_kind_id`.
+They also carry `model_assignment_alias_id` and `model_assignment_source` when
+the compiler selected model/depth through a runtime config alias.
 
 ## Components
 
@@ -70,11 +72,13 @@ The same split applies to runtime identity:
 2. runtime stage-request construction copies that identity into every
    `StageRunRequest`
 
-Compile also freezes the runner-neutral `thinking_level` node binding from
+Compile first freezes the runner-neutral `thinking_level` node binding from
 graph-loop node defaults, `stages.<stage>.thinking_level`, the legacy
 `stages.<stage>.model_reasoning_effort` alias, or mode-level
-`stage_thinking_bindings`. A missing value or explicit mode `null` means no
-compiled stage override. The Codex adapter passes the selected value as
+`stage_thinking_bindings`. It then applies `model_assignment` aliases as the
+final compiler overlay. A missing value or explicit mode `null` means no
+compiled stage override before aliasing. The Codex adapter passes the selected
+value as
 `-c model_reasoning_effort="<value>"` after generic
 `runners.codex.extra_config`; the Pi adapter passes it as `--thinking <value>`.
 When no compiled value exists, adapters may still use their runner-global
@@ -113,6 +117,8 @@ which frozen node contract produced a run.
 - `mode_id`
 - `node_id`
 - `stage_kind_id`
+- `model_assignment_alias_id`
+- `model_assignment_source`
 
 It also carries the active node's `execution_capability_grants` and any
 `capability_support_decisions` produced by the runtime gate. The prompt context
@@ -171,6 +177,7 @@ Operator-facing `runs show` output now carries:
 - per-stage `node_id`
 - per-stage `stage_kind_id`
 - per-stage `request_kind`
+- per-stage model-assignment alias id and source when present
 - per-stage request-context profile, render plan, context bundle, and visible
   context refs
 - per-stage `failure_origin` when a runtime/runner boundary can classify one

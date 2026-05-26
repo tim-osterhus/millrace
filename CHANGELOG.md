@@ -18,6 +18,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Added graph-declared default runtime repair routing so unclassified Planning
   and Execution runtime blockers route to the active graph's Mechanic or
   Troubleshooter stage when no more specific policy overrides them.
+- Added compiler-owned model assignment aliases with default `fast`,
+  `standard`, and `deep` aliases, plus `millrace model-aliases ...` commands
+  for workspace-local alias and assignment management.
 
 ### Changed
 
@@ -25,6 +28,11 @@ This file starts at `0.13.0`, the current documented public baseline.
   while attempts remain, instead of always hard-blocking the probe immediately.
 - Updated Manager task instructions to preserve probe-root intake labels and to
   omit `Root-Idea-ID` when the active spec has no idea lineage.
+- Alias assignments now supersede graph node defaults, `stages.<stage>.model`,
+  and mode `stage_model_bindings`; invalid selected aliases emit compile
+  warnings and fall back instead of blocking daemon startup. Alias changes are
+  recompile changes and use existing pending-plan reload semantics for active
+  daemons.
 
 ## [0.20.1] - 2026-05-22
 

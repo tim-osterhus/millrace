@@ -47,6 +47,8 @@ class StageResultEnvelope(ContractModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     token_usage: TokenUsage | None = None
 
     notes: tuple[str, ...] = ()

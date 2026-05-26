@@ -133,6 +133,8 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
                 f"model_name: {_value(stage_result.model_name)}",
                 f"thinking_level: {_value(stage_result.thinking_level)}",
                 f"model_reasoning_effort: {_value(stage_result.model_reasoning_effort)}",
+                f"model_assignment_alias_id: {_value(stage_result.model_assignment_alias_id)}",
+                f"model_assignment_source: {_value(stage_result.model_assignment_source)}",
                 f"started_at: {stage_result.started_at}",
                 f"completed_at: {stage_result.completed_at}",
                 f"duration_seconds: {stage_result.duration_seconds}",

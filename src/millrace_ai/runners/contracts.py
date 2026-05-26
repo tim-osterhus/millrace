@@ -30,6 +30,8 @@ class RunnerInvocationArtifact(_ArtifactModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     command: tuple[str, ...]
     prompt_path: str
     emitted_at: datetime
@@ -50,6 +52,8 @@ class RunnerCompletionArtifact(_ArtifactModel):
     runner_name: str
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     exit_kind: str
     exit_code: int | None = None
     observed_exit_kind: str | None = None
@@ -99,6 +103,8 @@ def invocation_artifact_from_request(
         model_name=request.model_name,
         thinking_level=request.thinking_level,
         model_reasoning_effort=request.model_reasoning_effort,
+        model_assignment_alias_id=request.model_assignment_alias_id,
+        model_assignment_source=request.model_assignment_source,
         command=command,
         prompt_path=prompt_path,
         emitted_at=emitted_at,
@@ -132,6 +138,8 @@ def completion_artifact_from_raw_result(
         runner_name=runner_name,
         thinking_level=raw_result.thinking_level,
         model_reasoning_effort=raw_result.model_reasoning_effort,
+        model_assignment_alias_id=request.model_assignment_alias_id,
+        model_assignment_source=request.model_assignment_source,
         exit_kind=raw_result.exit_kind,
         exit_code=raw_result.exit_code,
         observed_exit_kind=raw_result.observed_exit_kind,

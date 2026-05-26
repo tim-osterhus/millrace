@@ -90,6 +90,8 @@ class StageRunRequest(BaseModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     timeout_seconds: int = 0
     execution_capability_grants: tuple[ExecutionCapabilityGrant, ...] = ()
     capability_support_decisions: tuple[CapabilitySupportDecision, ...] = ()
@@ -252,6 +254,8 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
             f"Model Name: {request.model_name or 'none'}",
             f"Thinking Level: {request.thinking_level or 'none'}",
             f"Model Reasoning Effort: {request.model_reasoning_effort or 'none'}",
+            f"Model Assignment Alias: {request.model_assignment_alias_id or 'none'}",
+            f"Model Assignment Source: {request.model_assignment_source or 'none'}",
             f"Timeout Seconds: {request.timeout_seconds}",
         ]
     )

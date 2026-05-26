@@ -133,6 +133,8 @@ def build_stage_run_request(
         model_name=stage_plan.model_name,
         thinking_level=stage_plan.thinking_level,
         model_reasoning_effort=stage_plan.model_reasoning_effort,
+        model_assignment_alias_id=stage_plan.model_assignment_alias_id,
+        model_assignment_source=stage_plan.model_assignment_source,
         timeout_seconds=stage_plan.timeout_seconds,
         execution_capability_grants=stage_plan.execution_capability_grants,
     )
@@ -273,6 +275,8 @@ def build_closure_target_stage_run_request(
         model_name=stage_plan.model_name,
         thinking_level=stage_plan.thinking_level,
         model_reasoning_effort=stage_plan.model_reasoning_effort,
+        model_assignment_alias_id=stage_plan.model_assignment_alias_id,
+        model_assignment_source=stage_plan.model_assignment_source,
         timeout_seconds=stage_plan.timeout_seconds,
         execution_capability_grants=stage_plan.execution_capability_grants,
     )
@@ -418,6 +422,8 @@ def runner_failure_result(
         model_name=request.model_name,
         thinking_level=request.thinking_level,
         model_reasoning_effort=request.model_reasoning_effort,
+        model_assignment_alias_id=request.model_assignment_alias_id,
+        model_assignment_source=request.model_assignment_source,
         exit_kind="runner_error",
         exit_code=1,
         stdout_path=None,

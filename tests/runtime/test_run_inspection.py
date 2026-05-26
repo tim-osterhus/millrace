@@ -47,6 +47,8 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
         model_name="gpt-5.4",
         thinking_level="high",
         model_reasoning_effort="high",
+        model_assignment_alias_id="fast",
+        model_assignment_source="stage:checker",
         metadata={
             "failure_class": None,
             "request_id": "request-001",
@@ -87,6 +89,8 @@ def test_inspect_run_surfaces_stage_result_and_primary_artifacts(tmp_path: Path)
     assert summary.stage_results[0].terminal_result == "CHECKER_PASS"
     assert summary.stage_results[0].thinking_level == "high"
     assert summary.stage_results[0].model_reasoning_effort == "high"
+    assert summary.stage_results[0].model_assignment_alias_id == "fast"
+    assert summary.stage_results[0].model_assignment_source == "stage:checker"
     assert summary.stage_results[0].capability_grant_summaries == (
         (
             "grant_id=grant-checker-runner capability=runner.invoke decision=granted "

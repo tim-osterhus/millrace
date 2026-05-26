@@ -23,6 +23,7 @@ Module entrypoint: `python -m millrace_ai`
 - `millrace planning ...`
 - `millrace approvals ...`
 - `millrace config ...`
+- `millrace model-aliases ...`
 - `millrace control ...`
 - `millrace compile ...`
 - `millrace modes ...`
@@ -334,6 +335,8 @@ Each stage-result block now includes:
   execution grants
 - compact `capability_support` lines when the selected runner reported
   contextual grant support
+- `model_assignment_alias_id` and `model_assignment_source` when the compiled
+  node used an alias policy
 
 For Blueprint failures, diagnose duplicate ids separately from same-root
 lineage. Same-root remediation is expected when two manifests share
@@ -625,6 +628,10 @@ required-advisory failure disabled for the initial rollout. The default policy
 denies raw network access, requires approval for package install and git mutate
 capabilities, and allows shell run and workspace write capability requests.
 
+Model aliases are configured under `[model_aliases.<alias>]` and selected under
+`[model_assignment]`. `config show` prints `model_assignment.*`, each
+`model_alias.<alias>`, and any loop or stage assignment overrides.
+
 ### `millrace config validate [--mode MODE_ID]`
 
 Loads the effective config, compiles the selected mode, and prints compile diagnostics. This is the preferred operator-facing config validation command.
@@ -643,7 +650,8 @@ basic daemon monitor show whether a governance-owned pause cleared, remained,
 or was newly applied.
 
 Config changes that affect compile inputs, including `runtime.default_mode`
-and `stages.<stage>.*`, are recompile changes. When a daemon owns the
+and `stages.<stage>.*`, `model_aliases.*`, or `model_assignment.*`, are
+recompile changes. When a daemon owns the
 workspace, `millrace config reload` is mailbox-routed. If no active runs exist,
 the daemon can apply the new compiled plan on the next tick. If active runs
 exist, those runs keep their launch-plan authority and the newly compiled plan
@@ -651,6 +659,33 @@ is recorded as pending until active runs drain. If the daemon was started with
 an explicit `--mode`, that mode override remains pinned across reloads; start
 without `--mode`, or with the intended mode, when config-driven mode selection
 should take effect.
+
+## Model Alias Commands
+
+Model aliases let operators switch model/depth policy without editing every
+stage. Defaults are `fast`, `standard`, and `deep`; the default assignment is
+`standard`.
+
+Commands:
+
+- `millrace model-aliases list --workspace <workspace>`
+- `millrace model-aliases show <alias> --workspace <workspace>`
+- `millrace model-aliases set <alias> --model <model> --thinking-level <level> --workspace <workspace>`
+- `millrace model-aliases remove <alias> --workspace <workspace>`
+- `millrace model-aliases assign-global <alias> --workspace <workspace>`
+- `millrace model-aliases assign-loop <loop_id> <alias> --workspace <workspace>`
+- `millrace model-aliases assign-stage <stage> <alias> --workspace <workspace>`
+- `millrace model-aliases clear-global --workspace <workspace>`
+- `millrace model-aliases clear-loop <loop_id> --workspace <workspace>`
+- `millrace model-aliases clear-stage <stage> --workspace <workspace>`
+
+Mutation commands write `millrace-agents/millrace.toml` with TOML-preserving
+edits and request `reload-config` by default. Pass `--no-reload` to edit only.
+With an active daemon, reload is mailbox-routed; active runs keep their launch
+compiled plan and future runs pick up the new alias policy when the pending
+plan can safely become active. Unknown or invalid selected aliases warn at
+compile time and fall back instead of blocking daemon startup. Millrace does
+not statically verify provider support for a model id.
 
 ## Compile + Modes Commands
 
@@ -679,6 +714,7 @@ Compiles and prints operator inspectability surface:
 - frozen `completion_behavior.*` fields when the selected planning loop defines one
 - stage ordering
 - per-stage `thinking_level` when configured
+- per-stage model-assignment alias provenance when configured
 - per-stage execution capability grants and warnings
 - Codex compatibility `model_reasoning_effort` when configured
 - entrypoint path per stage

@@ -3283,12 +3283,99 @@ def test_config_show_renders_effective_runtime_and_reload_state(tmp_path: Path) 
     assert "run_style: daemon" in result.output
     assert "watchers.enabled: true" in result.output
     assert "auto_recovery.enabled: true" in result.output
+    assert "model_assignment.enabled: true" in result.output
+    assert "model_assignment.default_alias: standard" in result.output
+    assert "model_alias.fast: model=gpt-5.4-mini thinking_level=high" in result.output
+    assert "model_alias.standard: model=gpt-5.5 thinking_level=medium" in result.output
+    assert "model_alias.deep: model=gpt-5.5 thinking_level=xhigh" in result.output
     assert "execution_capabilities.enabled: true" in result.output
     assert "execution_capabilities.allow_advisory_grants: true" in result.output
     assert "execution_capabilities.fail_required_advisory: false" in result.output
     assert "config_version: cfg-active-123" in result.output
     assert "last_reload_outcome: failed_retained_previous_plan" in result.output
     assert "last_reload_error: mode lookup failed" in result.output
+
+
+def test_model_aliases_list_shows_defaults(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+
+    result = CliRunner().invoke(cli.app, ["model-aliases", "list", "--workspace", str(paths.root)])
+
+    assert result.exit_code == 0
+    assert "fast: model=gpt-5.4-mini thinking_level=high" in result.output
+    assert "standard: model=gpt-5.5 thinking_level=medium" in result.output
+    assert "deep: model=gpt-5.5 thinking_level=xhigh" in result.output
+    assert "assignment: enabled=true default_alias=standard" in result.output
+
+
+def test_model_aliases_set_updates_toml_and_requests_reload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    seen: list[str] = []
+
+    class FakeRuntimeControl:
+        def __init__(self, target) -> None:
+            seen.append(str(target.root))
+
+        def reload_config(self, *, issuer: str = "operator"):
+            seen.append(issuer)
+            return ControlActionResult(
+                action=MailboxCommand.RELOAD_CONFIG,
+                mode="direct",
+                applied=True,
+                detail="config reload applied",
+            )
+
+    monkeypatch.setattr(cli, "RuntimeControl", FakeRuntimeControl)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "model-aliases",
+            "set",
+            "audit",
+            "--model",
+            "gpt-5.5",
+            "--thinking-level",
+            "high",
+            "--workspace",
+            str(paths.root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [str(paths.root), "operator"]
+    config_text = (paths.runtime_root / "millrace.toml").read_text(encoding="utf-8")
+    assert "[model_aliases.audit]" in config_text
+    assert 'model = "gpt-5.5"' in config_text
+    assert 'thinking_level = "high"' in config_text
+    assert "detail: config reload applied" in result.output
+
+
+def test_model_aliases_assign_loop_updates_toml(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "model-aliases",
+            "assign-loop",
+            "planning.blueprint",
+            "deep",
+            "--workspace",
+            str(paths.root),
+            "--no-reload",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "updated: true" in result.output
+    assert (
+        '"planning.blueprint" = "deep"'
+        in (paths.runtime_root / "millrace.toml").read_text(encoding="utf-8")
+    )
 
 
 def test_config_validate_returns_nonzero_for_invalid_config(tmp_path: Path) -> None:

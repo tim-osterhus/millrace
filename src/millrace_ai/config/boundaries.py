@@ -65,6 +65,9 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "execution_capabilities.allow_advisory_grants": ApplyBoundary.RECOMPILE,
     "execution_capabilities.fail_required_advisory": ApplyBoundary.RECOMPILE,
     "execution_capabilities.defaults": ApplyBoundary.RECOMPILE,
+    "model_assignment.enabled": ApplyBoundary.RECOMPILE,
+    "model_assignment.default_alias": ApplyBoundary.RECOMPILE,
+    "model_assignment.invalid_assignment_policy": ApplyBoundary.RECOMPILE,
 }
 
 _STAGE_FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
@@ -105,6 +108,15 @@ def iter_config_field_paths(config: RuntimeConfig) -> tuple[str, ...]:
     for stage_name in sorted(config.stages):
         keys.extend(f"stages.{stage_name}.{field_name}" for field_name in StageConfig.model_fields)
 
+    for alias_id in sorted(config.model_aliases):
+        keys.append(f"model_aliases.{alias_id}.model")
+        keys.append(f"model_aliases.{alias_id}.thinking_level")
+    keys.append("model_assignment.enabled")
+    keys.append("model_assignment.default_alias")
+    keys.append("model_assignment.invalid_assignment_policy")
+    keys.extend(f"model_assignment.by_loop.{loop_id}" for loop_id in sorted(config.model_assignment.by_loop))
+    keys.extend(f"model_assignment.by_stage.{stage}" for stage in sorted(config.model_assignment.by_stage))
+
     return tuple(keys)
 
 
@@ -121,6 +133,16 @@ def apply_boundary_for_field(field_path: str) -> ApplyBoundary:
             stage_field = _STAGE_FIELD_BOUNDARIES.get(parts[2])
             if stage_field is not None:
                 return stage_field
+
+    if field_path.startswith("model_aliases."):
+        parts = field_path.split(".")
+        if len(parts) >= 3 and parts[-1] in {"model", "thinking_level"}:
+            return ApplyBoundary.RECOMPILE
+
+    if field_path.startswith("model_assignment.by_loop."):
+        return ApplyBoundary.RECOMPILE
+    if field_path.startswith("model_assignment.by_stage."):
+        return ApplyBoundary.RECOMPILE
 
     raise KeyError(f"No apply boundary declared for config field: {field_path}")
 
@@ -177,6 +199,20 @@ def _flatten_config(config: RuntimeConfig) -> dict[str, Any]:
         stage_config = config.stages[stage_name]
         for field_name in StageConfig.model_fields:
             flattened[f"stages.{stage_name}.{field_name}"] = getattr(stage_config, field_name)
+
+    for alias_id in sorted(config.model_aliases):
+        alias = config.model_aliases[alias_id]
+        flattened[f"model_aliases.{alias_id}.model"] = alias.model
+        flattened[f"model_aliases.{alias_id}.thinking_level"] = alias.thinking_level
+    flattened["model_assignment.enabled"] = config.model_assignment.enabled
+    flattened["model_assignment.default_alias"] = config.model_assignment.default_alias
+    flattened["model_assignment.invalid_assignment_policy"] = (
+        config.model_assignment.invalid_assignment_policy
+    )
+    for loop_id in sorted(config.model_assignment.by_loop):
+        flattened[f"model_assignment.by_loop.{loop_id}"] = config.model_assignment.by_loop[loop_id]
+    for stage in sorted(config.model_assignment.by_stage):
+        flattened[f"model_assignment.by_stage.{stage}"] = config.model_assignment.by_stage[stage]
 
     return flattened
 

@@ -103,10 +103,11 @@ def compile_and_persist_workspace_plan(
         and compile_input_fingerprint is not None
         and last_known_good.compile_input_fingerprint == compile_input_fingerprint
     ):
+        warnings = _compiled_plan_warnings(last_known_good)
         diagnostics = CompileDiagnostics(
             ok=True,
             mode_id=mode_id,
-            warnings=(),
+            warnings=warnings,
             emitted_at=compile_time,
         )
         return CompileOutcome(
@@ -124,10 +125,11 @@ def compile_and_persist_workspace_plan(
             assets_root=compile_assets_root,
             compile_time=compile_time,
         )
+        warnings = _compiled_plan_warnings(plan)
         diagnostics = CompileDiagnostics(
             ok=True,
             mode_id=mode_id,
-            warnings=(),
+            warnings=warnings,
             emitted_at=compile_time,
         )
         atomic_write_json(compiled_plan_path, plan.model_dump(mode="json"))
@@ -358,6 +360,17 @@ def compile_compiled_run_plan(
 
 def _map_by_attr(items: tuple[_ModelT, ...], attr: str) -> dict[str, _ModelT]:
     return {str(getattr(item, attr)): item for item in items}
+
+
+def _compiled_plan_warnings(plan: CompiledRunPlan) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            warning
+            for graph in plan.graphs_by_plane.values()
+            for node in graph.nodes
+            for warning in node.model_assignment_warnings
+        )
+    )
 
 
 def _map_queue_claim_policies_by_plane(

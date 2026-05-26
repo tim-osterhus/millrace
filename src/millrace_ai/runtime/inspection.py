@@ -57,6 +57,8 @@ class InspectedStageResult:
     duration_seconds: float = 0.0
     token_usage: TokenUsage | None = None
     thinking_level: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     capability_grant_summaries: tuple[str, ...] = ()
     capability_support_summaries: tuple[str, ...] = ()
     failure_origin: str | None = None
@@ -219,6 +221,8 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 model_name=stage_result.model_name,
                 thinking_level=stage_result.thinking_level,
                 model_reasoning_effort=stage_result.model_reasoning_effort,
+                model_assignment_alias_id=stage_result.model_assignment_alias_id,
+                model_assignment_source=stage_result.model_assignment_source,
                 started_at=stage_result.started_at.isoformat(),
                 completed_at=stage_result.completed_at.isoformat(),
                 duration_seconds=stage_result.duration_seconds,

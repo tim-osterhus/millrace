@@ -147,6 +147,8 @@ def normalize_stage_result(
         model_name=raw_result.model_name,
         thinking_level=_resolved_thinking_level(request, raw_result),
         model_reasoning_effort=raw_result.model_reasoning_effort or request.model_reasoning_effort,
+        model_assignment_alias_id=request.model_assignment_alias_id,
+        model_assignment_source=request.model_assignment_source,
         token_usage=raw_result.token_usage,
         notes=extraction.notes + _transport_reconciliation_notes(raw_result),
         metadata={
@@ -637,6 +639,8 @@ def _failure_envelope(
         model_name=raw_result.model_name,
         thinking_level=_resolved_thinking_level(request, raw_result),
         model_reasoning_effort=raw_result.model_reasoning_effort or request.model_reasoning_effort,
+        model_assignment_alias_id=request.model_assignment_alias_id,
+        model_assignment_source=request.model_assignment_source,
         token_usage=raw_result.token_usage,
         notes=notes,
         metadata={
@@ -812,6 +816,8 @@ def _request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "rendered_prompt_context_path": request.rendered_prompt_context_path,
         "thinking_level": request.thinking_level,
         "model_reasoning_effort": request.model_reasoning_effort,
+        "model_assignment_alias_id": request.model_assignment_alias_id,
+        "model_assignment_source": request.model_assignment_source,
         "execution_capability_grants": [
             grant.model_dump(mode="json") for grant in request.execution_capability_grants
         ],

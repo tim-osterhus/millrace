@@ -32,6 +32,7 @@ def materialize_graph_plane_plan(
             mode=mode,
             config=config,
             stage_kinds=stage_kinds,
+            loop_id=graph_loop.loop_id,
         )
         for node in graph_loop.nodes
     )

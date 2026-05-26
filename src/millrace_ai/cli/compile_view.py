@@ -131,6 +131,10 @@ def _render_compile_show_lines(paths: WorkspacePaths, outcome: CompileOutcome) -
                 f"thinking_level: {getattr(stage_plan, 'thinking_level', None) or 'none'}",
                 "model_reasoning_effort: "
                 f"{getattr(stage_plan, 'model_reasoning_effort', None) or 'none'}",
+                "model_assignment_alias_id: "
+                f"{getattr(stage_plan, 'model_assignment_alias_id', None) or 'none'}",
+                "model_assignment_source: "
+                f"{getattr(stage_plan, 'model_assignment_source', None) or 'none'}",
                 f"timeout_seconds: {stage_plan.timeout_seconds}",
             )
         )

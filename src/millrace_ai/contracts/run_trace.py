@@ -69,6 +69,8 @@ class RunTraceNode(ContractModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     started_at: datetime
     completed_at: datetime
     duration_seconds: float

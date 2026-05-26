@@ -364,6 +364,11 @@ millrace approvals approve <approval_id> --reason "<reason>" --workspace <worksp
 millrace approvals deny <approval_id> --reason "<reason>" --workspace <workspace>
 millrace modes list
 millrace modes show <mode_id>
+millrace model-aliases list --workspace <workspace>
+millrace model-aliases set <alias> --model <model> --thinking-level <level> --workspace <workspace>
+millrace model-aliases assign-global <alias> --workspace <workspace>
+millrace model-aliases assign-loop <loop_id> <alias> --workspace <workspace>
+millrace model-aliases assign-stage <stage> <alias> --workspace <workspace>
 millrace compile validate --mode default_codex_integrated --workspace <workspace>
 millrace compile validate --mode blueprint_codex --workspace <workspace>
 millrace compile validate --mode blueprint_learning_codex --workspace <workspace>
@@ -662,10 +667,17 @@ Use intervention commands only when the runtime state actually justifies them:
   changes. Defaults keep rollout compatible: advisory grants are allowed,
   strict required-advisory failure is disabled, network access is denied, and
   package install plus git mutate grants require operator approval.
+- Model aliases live under `[model_aliases.<alias>]` and assignment policy
+  lives under `[model_assignment]`. Defaults are `fast`, `standard`, and
+  `deep`, with `standard` selected globally. Use `millrace model-aliases ...`
+  commands instead of hand-editing when possible; they preserve TOML comments
+  where possible and request daemon-safe reload by default.
 - Config reload recompiles changes such as `runtime.default_mode` and
-  `stages.<stage>.*` on the daemon's next tick when a daemon owns the
-  workspace. If the daemon was started with an explicit `--mode`, that override
-  remains pinned across reloads.
+  `stages.<stage>.*`, `model_aliases.*`, and `model_assignment.*` on the
+  daemon's next tick when a daemon owns the workspace. If the daemon was
+  started with an explicit `--mode`, that override remains pinned across
+  reloads. Active runs keep their launch compiled plan while a newer alias
+  plan waits as pending.
 - Stage config supports learning stages such as `professor` and `librarian`,
   including `model`, runner-neutral `thinking_level`, legacy Codex
   `model_reasoning_effort`, and `timeout_seconds`.

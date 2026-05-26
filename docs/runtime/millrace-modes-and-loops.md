@@ -244,6 +244,36 @@ stage-level config during compile. JSON `null` is meaningful here: it freezes
 the compiled stage default, so the request carries no explicit thinking
 override and the selected adapter can use its own default behavior.
 
+## Model Assignment Aliases
+
+Runtime config can assign model/depth policy by alias instead of editing every
+stage or mode map. The shipped aliases are:
+
+- `fast`: `model = "gpt-5.4-mini"`, `thinking_level = "high"`
+- `standard`: `model = "gpt-5.5"`, `thinking_level = "medium"`
+- `deep`: `model = "gpt-5.5"`, `thinking_level = "xhigh"`
+
+Alias assignment is compiler-owned and runs after graph-loop node defaults,
+stage config, and mode `stage_model_bindings` / `stage_thinking_bindings` have
+already been applied. Stage assignment wins over loop assignment, loop
+assignment wins over the global default alias, and the built-in `standard`
+alias is the final alias fallback before preserving the pre-alias assignment.
+
+Example:
+
+```toml
+[model_assignment.by_loop]
+"planning.blueprint" = "deep"
+
+[model_assignment.by_stage]
+"contractor_blueprint" = "deep"
+```
+
+Set `model_assignment.enabled = false` to preserve legacy stage/mode model
+resolution exactly. Invalid selected aliases warn during compile and fall back
+deterministically; provider support for a syntactically valid model id is still
+checked only when the runner/provider handles the request.
+
 ## Stage Config Overlays
 
 Runtime config may define `stages.<stage>` entries for execution, planning, and
@@ -284,6 +314,8 @@ Each materialized node binding records:
 - `model_name`
 - `thinking_level`
 - `model_reasoning_effort`
+- `model_assignment_alias_id`
+- `model_assignment_source`
 - `timeout_seconds`
 
 This matters because the runtime executes the compiled node bindings later. It
@@ -314,6 +346,12 @@ Relevant examples:
 - `stages.<stage>.thinking_level`
 - `stages.<stage>.model_reasoning_effort`
 - `stages.<stage>.timeout_seconds`
+- `model_aliases.<alias>.model`
+- `model_aliases.<alias>.thinking_level`
+- `model_assignment.enabled`
+- `model_assignment.default_alias`
+- `model_assignment.by_loop.<loop_id>`
+- `model_assignment.by_stage.<stage>`
 
 New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.
 Existing configs that still use `standard_plain` continue to resolve to the
@@ -340,6 +378,7 @@ Use:
 
 - `millrace compile validate`
 - `millrace compile show`
+- `millrace model-aliases list`
 - `millrace modes list`
 - `millrace modes show <MODE_ID>`
 

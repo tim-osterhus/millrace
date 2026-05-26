@@ -698,7 +698,10 @@ def test_compile_materializes_workspace_local_mode_contract(tmp_path: Path) -> N
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
-        config=RuntimeConfig(recovery={"max_fix_cycles": 5}),
+        config=RuntimeConfig(
+            recovery={"max_fix_cycles": 5},
+            model_assignment={"enabled": False},
+        ),
         requested_mode_id="local_review_codex",
         assets_root=workspace_root / "millrace-agents",
     )
@@ -742,6 +745,7 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(
+            model_assignment={"enabled": False},
             stages={
                 "professor": {
                     "model": "gpt-5.4",
@@ -942,6 +946,7 @@ def test_compile_resolves_runner_neutral_thinking_precedence_for_pi(tmp_path: Pa
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(
+            model_assignment={"enabled": False},
             stages={
                 "builder": {"thinking_level": "medium"},
                 "checker": {"thinking_level": "xhigh"},
@@ -988,8 +993,9 @@ def test_compile_materializes_graph_loop_thinking_default(tmp_path: Path) -> Non
     assert outcome.active_plan is not None
 
     builder = next(node for node in outcome.active_plan.execution_graph.nodes if node.node_id == "builder")
-    assert builder.thinking_level == "high"
-    assert builder.model_reasoning_effort == "high"
+    assert builder.thinking_level == "medium"
+    assert builder.model_reasoning_effort == "medium"
+    assert builder.model_assignment_alias_id == "standard"
 
 
 def test_compile_rejects_stage_thinking_binding_outside_selected_loops(tmp_path: Path) -> None:

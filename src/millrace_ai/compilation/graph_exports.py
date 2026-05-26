@@ -65,6 +65,8 @@ def _export_graph(
                 model_name=node.model_name,
                 thinking_level=node.thinking_level,
                 model_reasoning_effort=node.model_reasoning_effort,
+                model_assignment_alias_id=node.model_assignment_alias_id,
+                model_assignment_source=node.model_assignment_source,
                 timeout_seconds=node.timeout_seconds,
                 allowed_result_classes_by_outcome=node.allowed_result_classes_by_outcome,
                 declared_output_artifacts=node.declared_output_artifacts,

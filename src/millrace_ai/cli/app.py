@@ -20,6 +20,7 @@ from millrace_ai.cli.commands.control import (
 from millrace_ai.cli.commands.doctor import doctor
 from millrace_ai.cli.commands.incident import incident_app
 from millrace_ai.cli.commands.init import init_workspace
+from millrace_ai.cli.commands.model_aliases import model_aliases_app
 from millrace_ai.cli.commands.modes import modes_app
 from millrace_ai.cli.commands.planning import planning_app
 from millrace_ai.cli.commands.queue import add_probe, add_spec, add_task, queue_add_idea, queue_app
@@ -56,6 +57,7 @@ app.add_typer(status_app, name="status")
 app.add_typer(runs_app, name="runs")
 app.add_typer(planning_app, name="planning")
 app.add_typer(config_app, name="config")
+app.add_typer(model_aliases_app, name="model-aliases")
 app.add_typer(modes_app, name="modes")
 app.add_typer(compile_app, name="compile")
 app.add_typer(skills_app, name="skills")

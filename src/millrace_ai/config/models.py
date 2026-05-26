@@ -52,6 +52,10 @@ class CodexReasoningEffort(str, Enum):
     XHIGH = "xhigh"
 
 
+class ModelAssignmentInvalidPolicy(str, Enum):
+    WARN_FALLBACK = "warn_fallback"
+
+
 class PiEventLogPolicy(str, Enum):
     FAILURE_FULL = "failure_full"
     FULL = "full"
@@ -279,6 +283,27 @@ class WatchersSection(ConfigModel):
     watch_specs_queue: bool = True
 
 
+class ModelAliasDefinition(ConfigModel):
+    model: str | None = None
+    thinking_level: str | None = None
+
+
+def _default_model_aliases() -> dict[str, ModelAliasDefinition]:
+    return {
+        "fast": ModelAliasDefinition(model="gpt-5.4-mini", thinking_level="high"),
+        "standard": ModelAliasDefinition(model="gpt-5.5", thinking_level="medium"),
+        "deep": ModelAliasDefinition(model="gpt-5.5", thinking_level="xhigh"),
+    }
+
+
+class ModelAssignmentSection(ConfigModel):
+    enabled: bool = True
+    default_alias: str = "standard"
+    invalid_assignment_policy: ModelAssignmentInvalidPolicy = ModelAssignmentInvalidPolicy.WARN_FALLBACK
+    by_loop: dict[str, str] = Field(default_factory=dict)
+    by_stage: dict[str, str] = Field(default_factory=dict)
+
+
 class StageConfig(ConfigModel):
     runner: str | None = None
     model: str | None = None
@@ -316,6 +341,8 @@ class RuntimeConfig(ConfigModel):
     auto_recovery: AutoRecoverySection = Field(default_factory=AutoRecoverySection)
     usage_governance: UsageGovernanceSection = Field(default_factory=UsageGovernanceSection)
     execution_capabilities: ExecutionCapabilitiesSection = Field(default_factory=ExecutionCapabilitiesSection)
+    model_aliases: dict[str, ModelAliasDefinition] = Field(default_factory=_default_model_aliases)
+    model_assignment: ModelAssignmentSection = Field(default_factory=ModelAssignmentSection)
     stages: dict[str, StageConfig] = Field(default_factory=dict)
 
     @field_validator("stages")
@@ -337,6 +364,9 @@ __all__ = [
     "DEFAULT_CONFIG_PATH",
     "ExecutionCapabilitiesSection",
     "KNOWN_STAGE_NAMES",
+    "ModelAliasDefinition",
+    "ModelAssignmentInvalidPolicy",
+    "ModelAssignmentSection",
     "RecoverySection",
     "PiEventLogPolicy",
     "PiRunnerSection",

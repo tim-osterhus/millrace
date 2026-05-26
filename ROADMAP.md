@@ -46,6 +46,8 @@ contracts:
   inside the Execution plane
 - optional local observability surfaces that make workspace state visible
   without adding runtime authority or weight to the base deployment package
+- hot-swappable model assignment aliases so operators can change model/depth
+  policy through compiler-owned config without editing every stage binding
 
 ## Active
 
@@ -73,6 +75,9 @@ contracts declare canonical and legacy outputs, runtime-effect failure policy
 can route recoverable pre-mutation failures, queue inventory is family-aware,
 and `doctor`/`runs` distinguish parse-valid artifacts from blocked route/effect
 outcomes.
+Model assignment aliases now sit on the same compile/reload authority path:
+alias changes recompile the frozen plan, active runs keep their launch plan,
+and invalid selected aliases warn and fall back instead of crashing startup.
 
 Expected user impact:
 

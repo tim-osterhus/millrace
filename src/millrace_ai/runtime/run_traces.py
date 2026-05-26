@@ -273,6 +273,8 @@ def _node_from_stage_result(
         model_name=stage_result.model_name,
         thinking_level=stage_result.thinking_level,
         model_reasoning_effort=stage_result.model_reasoning_effort,
+        model_assignment_alias_id=stage_result.model_assignment_alias_id,
+        model_assignment_source=stage_result.model_assignment_source,
         started_at=stage_result.started_at,
         completed_at=stage_result.completed_at,
         duration_seconds=stage_result.duration_seconds,

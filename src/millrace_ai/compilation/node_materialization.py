@@ -17,6 +17,7 @@ from millrace_ai.contracts.stage_metadata import STAGE_NAME_BY_VALUE, stage_name
 
 from .capabilities import compile_execution_capability_grants
 from .entrypoint_overrides import validate_entrypoint_override
+from .model_aliases import resolve_model_alias_assignment
 
 DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
 
@@ -51,6 +52,7 @@ def materialize_graph_node_plan(
     mode: ModeDefinition,
     config: RuntimeConfig,
     stage_kinds: dict[str, RegisteredStageKindDefinition],
+    loop_id: str,
 ) -> MaterializedGraphNodePlan:
     stage_kind = stage_kinds[node.stage_kind_id]
     stage_name = stage_name_for_identifier(node.stage_kind_id)
@@ -94,6 +96,20 @@ def materialize_graph_node_plan(
         if runner_name == "codex_cli" and thinking_level is not None
         else None
     )
+    alias_decision = resolve_model_alias_assignment(
+        config=config,
+        stage_key=stage_key,
+        loop_id=loop_id,
+        existing_model_name=model_name,
+        existing_thinking_level=thinking_level,
+    )
+    model_name = alias_decision.model_name
+    thinking_level = alias_decision.thinking_level
+    model_reasoning_effort = (
+        thinking_level
+        if runner_name == "codex_cli" and thinking_level is not None
+        else None
+    )
     capability_grants, capability_warnings = compile_execution_capability_grants(
         node=node,
         stage_kind=stage_kind,
@@ -125,6 +141,9 @@ def materialize_graph_node_plan(
         model_name=model_name,
         thinking_level=thinking_level,
         model_reasoning_effort=model_reasoning_effort,
+        model_assignment_alias_id=alias_decision.alias_id,
+        model_assignment_source=alias_decision.source,
+        model_assignment_warnings=alias_decision.warnings,
         timeout_seconds=timeout_seconds,
         execution_capability_grants=capability_grants,
         execution_capability_warnings=capability_warnings,

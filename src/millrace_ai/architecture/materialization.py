@@ -145,6 +145,9 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
+    model_assignment_warnings: tuple[str, ...] = ()
     timeout_seconds: int = 0
     execution_capability_grants: tuple[ExecutionCapabilityGrant, ...] = ()
     execution_capability_warnings: tuple[str, ...] = ()

@@ -38,7 +38,8 @@ That compiled plan freezes:
 - graph authority for execution, planning, and optional learning
 - selected loop ids by plane
 - per-node `node_id` and `stage_kind_id`
-- per-node entrypoint path, skill bindings, runner, model, and timeout
+- per-node entrypoint path, skill bindings, runner, model, thinking level,
+  model-assignment alias provenance, and timeout
 - per-node execution capability grants and grant warnings
 - compiled transitions, resume policies, threshold policies, and completion
   behavior
@@ -103,8 +104,9 @@ compile implicitly.
 
 Next-tick runtime config such as `usage_governance.*` does not change the
 compiled plan and does not require recompile. Execution capability policy under
-`execution_capabilities.*` does change the compiled plan and is treated as a
-recompile boundary.
+`execution_capabilities.*`, model aliases under `model_aliases.*`, and alias
+assignment policy under `model_assignment.*` do change the compiled plan and
+are treated as recompile boundaries.
 
 At runtime startup, Millrace invokes the same compiler path used by explicit
 compile commands with `compile_if_needed=True`. If the persisted compiled plan
@@ -204,6 +206,47 @@ The CLI also prints:
 - `compile_input.*` for the current expected fingerprint
 - `persisted_compile_input.*` for the persisted plan fingerprint
 
+## Model Assignment Aliases
+
+The compiler owns model alias resolution. Runtime config ships three default
+aliases:
+
+```toml
+[model_aliases.fast]
+model = "gpt-5.4-mini"
+thinking_level = "high"
+
+[model_aliases.standard]
+model = "gpt-5.5"
+thinking_level = "medium"
+
+[model_aliases.deep]
+model = "gpt-5.5"
+thinking_level = "xhigh"
+
+[model_assignment]
+enabled = true
+default_alias = "standard"
+invalid_assignment_policy = "warn_fallback"
+```
+
+The compiler first resolves the older node/model surfaces, then applies alias
+assignment as the final overlay:
+
+1. graph-loop node defaults, `stages.<stage>.*`, and mode stage maps
+2. `model_assignment.by_stage.<stage>`
+3. `model_assignment.by_loop.<loop_id>`
+4. `model_assignment.default_alias`
+5. the built-in `standard` alias
+6. the pre-alias assignment when no alias can be used
+
+If `model_assignment.enabled = false`, the alias resolver does nothing and the
+pre-alias behavior is preserved. Unknown or syntactically invalid selected
+aliases emit compile warnings and fall back through the chain above; they do
+not make diagnostics `ok=false`. Provider availability is not statically
+validated, so a syntactically valid but unsupported model remains a runner or
+provider failure later.
+
 ## Baseline Manifest Identity
 
 Compile currentness is related to, but distinct from, workspace baseline
@@ -255,6 +298,7 @@ mismatched plan is still authoritative.
 - `compiled_plan_id`
 - loop and graph identity
 - stage/node request-binding details, including runner/model/thinking bindings
+  and model-assignment alias provenance
 - execution capability summaries and per-node grants
 - loop ids by plane
 - scheduler lane policy, lane conflict policy, concurrency policy, and learning

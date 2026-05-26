@@ -22,6 +22,8 @@ class GraphExportNode(ContractModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
     timeout_seconds: int = 0
     allowed_result_classes_by_outcome: dict[str, tuple[ResultClass, ...]]
     declared_output_artifacts: tuple[str, ...] = ()
