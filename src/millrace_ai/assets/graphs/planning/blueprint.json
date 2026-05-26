@@ -82,6 +82,13 @@
       }
     ]
   },
+  "runtime_failure_recovery": {
+    "default_repair_node_id": "mechanic_blueprint",
+    "default_failure_class_template": "runtime_failure_recovery",
+    "counter_name": "mechanic_attempt_count",
+    "threshold": 2,
+    "exhausted_terminal_state_id": "blocked"
+  },
   "completion_behavior": {
     "trigger": "backlog_drained",
     "readiness_rule": "no_open_lineage_work",

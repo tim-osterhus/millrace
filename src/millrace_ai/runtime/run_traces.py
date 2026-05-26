@@ -353,6 +353,8 @@ def _edge_kind_from_decision(
         )
     ):
         return "runtime_effect_recovery"
+    if decision.action is RouterAction.RUN_STAGE and decision.reason.startswith("runtime_exception:"):
+        return "runtime_repair"
     return decision.action.value
 
 

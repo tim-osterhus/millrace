@@ -13,6 +13,19 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added graph-declared default runtime repair routing so unclassified Planning
+  and Execution runtime blockers route to the active graph's Mechanic or
+  Troubleshooter stage when no more specific policy overrides them.
+
+### Changed
+
+- Changed invalid Recon handoffs to route to the active Planning repair node
+  while attempts remain, instead of always hard-blocking the probe immediately.
+- Updated Manager task instructions to preserve probe-root intake labels and to
+  omit `Root-Idea-ID` when the active spec has no idea lineage.
+
 ## [0.20.1] - 2026-05-22
 
 ### Added

@@ -190,6 +190,9 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
     )
     assert blocked_policy.counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT
     assert blocked_policy.exhausted_target_node_id == "consultant"
+    assert execution.runtime_failure_recovery is not None
+    assert execution.runtime_failure_recovery.default_repair_node_id == "troubleshooter"
+    assert execution.runtime_failure_recovery.counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT
     assert {state.terminal_state_id for state in execution.terminal_states} == {
         "update_complete",
         "needs_planning",
@@ -206,6 +209,9 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
         "planning.blocked.recovery"
     }
     assert planning.completion_behavior is not None
+    assert planning.runtime_failure_recovery is not None
+    assert planning.runtime_failure_recovery.default_repair_node_id == "mechanic"
+    assert planning.runtime_failure_recovery.counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT
     assert planning.completion_behavior.target_node_id == "arbiter"
     assert planning.completion_behavior.on_gap_terminal_state_id == "remediation_needed"
     assert any(
@@ -315,6 +321,9 @@ def test_blueprint_planning_graph_routes_drafts_through_contract_review() -> Non
         "blueprint_evaluation",
         "generated_task",
     )
+    assert planning.runtime_failure_recovery is not None
+    assert planning.runtime_failure_recovery.default_repair_node_id == "mechanic_blueprint"
+    assert planning.runtime_failure_recovery.counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT
     assert planning.completion_behavior is not None
     assert planning.completion_behavior.target_node_id == "arbiter"
 

@@ -588,6 +588,14 @@ def apply_stage_completion(
             router_decision=router_decision,
             stage_result_path=stage_result_path,
         )
+        if stage_result_path is not None:
+            record_router_decision_trace(
+                engine.paths,
+                run_dir=Path(stage_result_path).parents[1],
+                stage_result=stage_result,
+                decision=recovery_decision,
+                spawned_work=(),
+            )
         return StageCompletionOutcome(
             stage_result=stage_result,
             stage_result_path=stage_result_path

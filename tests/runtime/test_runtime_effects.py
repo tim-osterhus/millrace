@@ -497,13 +497,18 @@ def test_planner_disposition_missing_child_spec_blocks_source(tmp_path: Path) ->
         router_decision=router_decision,
     )
 
-    assert application.router_decision.action is RouterAction.BLOCKED
+    assert application.router_decision.action is RouterAction.RUN_STAGE
+    assert application.router_decision.next_stage is PlanningStageName.MECHANIC
+    assert application.router_decision.next_node_id == "mechanic_blueprint"
+    assert application.router_decision.next_stage_kind_id == "mechanic_blueprint"
     assert application.router_decision.failure_class == "planner_disposition_child_spec_missing"
-    assert (paths.incidents_blocked_dir / "incident-001.md").is_file()
+    assert application.source_lifecycle_applied is False
+    assert not (paths.incidents_blocked_dir / "incident-001.md").exists()
     assert not (paths.incidents_resolved_dir / "incident-001.md").exists()
     assert stage_result.metadata["runtime_effect_failure_class"] == (
         "planner_disposition_child_spec_missing"
     )
+    assert stage_result.metadata["runtime_effect_recovery_action"] == "default_runtime_repair"
 
 
 def test_planner_disposition_missing_artifact_blocks_source_even_when_child_spec_exists(
@@ -535,14 +540,18 @@ def test_planner_disposition_missing_artifact_blocks_source_even_when_child_spec
         router_decision=router_decision,
     )
 
-    assert application.router_decision.action is RouterAction.BLOCKED
+    assert application.router_decision.action is RouterAction.RUN_STAGE
+    assert application.router_decision.next_stage is PlanningStageName.MECHANIC
+    assert application.router_decision.next_node_id == "mechanic_blueprint"
+    assert application.router_decision.next_stage_kind_id == "mechanic_blueprint"
     assert application.router_decision.failure_class == "planner_disposition_missing"
-    assert application.source_lifecycle_applied is True
-    assert (paths.incidents_blocked_dir / "incident-001.md").is_file()
+    assert application.source_lifecycle_applied is False
+    assert not (paths.incidents_blocked_dir / "incident-001.md").exists()
     assert not (paths.incidents_resolved_dir / "incident-001.md").exists()
     assert (paths.specs_queue_dir / "spec-child-001.md").is_file()
     assert stage_result.metadata["runtime_effect_decision"] == "request_block_source"
     assert stage_result.metadata["runtime_effect_failure_class"] == "planner_disposition_missing"
+    assert stage_result.metadata["runtime_effect_recovery_action"] == "default_runtime_repair"
 
 
 @pytest.mark.parametrize(
@@ -787,6 +796,111 @@ def test_manager_blueprint_conservative_failure_policy_blocks_and_annotates(
     )
     assert persisted.metadata["runtime_effect_recovery_action"] == "block_source_work_item"
     assert persisted.metadata["runtime_effect_failure_class"] == failure_class
+
+
+def test_unclassified_pre_mutation_effect_failure_routes_to_default_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine.startup()
+    assert engine.compiled_plan is not None
+    run_dir = tmp_path / "run"
+    stage_result_path = run_dir / "stage_results" / "request-001.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _handler(paths, stage_result, run_dir, compiled_plan):
+        return RuntimeEffectResult(
+            handler_id="manager_blueprint_manifest_to_blueprint_drafts",
+            decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
+            mutation_phase=RuntimeEffectMutationPhase.PRE_MUTATION,
+            failure_class="unclassified_manifest_handoff",
+            message="manifest handoff was diagnosable but unclassified",
+        )
+
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_ID,
+        "manager_blueprint_manifest_to_blueprint_drafts",
+        _handler,
+    )
+    stage_result = _manager_blueprint_stage_result()
+
+    application = apply_runtime_effect_for_stage_result(
+        engine,
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="manager_blueprint_complete",
+        ),
+        stage_result_path=stage_result_path,
+    )
+
+    assert application.router_decision.action is RouterAction.RUN_STAGE
+    assert application.router_decision.next_stage is PlanningStageName.MECHANIC
+    assert application.router_decision.next_node_id == "mechanic_blueprint"
+    assert application.router_decision.next_stage_kind_id == "mechanic_blueprint"
+    assert application.router_decision.failure_class == "unclassified_manifest_handoff"
+    persisted = StageResultEnvelope.model_validate_json(
+        stage_result_path.read_text(encoding="utf-8")
+    )
+    assert persisted.metadata["runtime_effect_recovery_action"] == "default_runtime_repair"
+    assert persisted.metadata["runtime_effect_failure_class"] == "unclassified_manifest_handoff"
+    context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+    assert context["error_code"] == "planning_post_stage_apply_failed"
+    assert context["repair_stage"] == "mechanic"
+    assert context["exception_message"].startswith(
+        "manager_blueprint_manifest_to_blueprint_drafts:unclassified_manifest_handoff"
+    )
+    assert Path(context["report_path"]).is_file()
+
+
+def test_default_runtime_effect_repair_blocks_after_threshold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine.startup()
+    engine.snapshot = engine.snapshot.model_copy(update={"mechanic_attempt_count": 2})
+    run_dir = tmp_path / "run"
+
+    def _handler(paths, stage_result, run_dir, compiled_plan):
+        return RuntimeEffectResult(
+            handler_id="manager_blueprint_manifest_to_blueprint_drafts",
+            decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
+            mutation_phase=RuntimeEffectMutationPhase.PRE_MUTATION,
+            failure_class="unclassified_manifest_handoff",
+            message="manifest handoff was diagnosable but unclassified",
+        )
+
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_ID,
+        "manager_blueprint_manifest_to_blueprint_drafts",
+        _handler,
+    )
+
+    application = apply_runtime_effect_for_stage_result(
+        engine,
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=_manager_blueprint_stage_result(),
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="manager_blueprint_complete",
+        ),
+    )
+
+    assert application.router_decision.action is RouterAction.BLOCKED
+    assert application.router_decision.reason == (
+        "runtime_effect_failure:manager_blueprint_manifest_to_blueprint_drafts:"
+        "unclassified_manifest_handoff:repair_attempts_exhausted"
+    )
+    assert application.router_decision.failure_class == "unclassified_manifest_handoff"
 
 
 def test_manager_blueprint_partial_mutation_policy_blocks_without_model_repair(

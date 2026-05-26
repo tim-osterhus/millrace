@@ -70,6 +70,7 @@ def materialize_graph_plane_plan(
             else (),
             config=config,
         ),
+        runtime_failure_recovery=graph_loop.runtime_failure_recovery,
         terminal_states=graph_loop.terminal_states,
         completion_behavior=graph_loop.completion_behavior,
         execution_capability_summary=summarize_execution_capability_grants(

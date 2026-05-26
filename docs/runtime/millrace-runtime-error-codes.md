@@ -15,7 +15,7 @@ status payload does not include `runtime_error_code` or
 | `execution_work_item_completion_conflict` | An execution-stage run finished successfully, but the runtime could not finalize the active execution work item because it had already been moved out of `tasks/active/`. | Read `runtime_error_report_path`, then inspect the active/done/blocked task queues implicated by the report. |
 | `planning_post_stage_apply_failed` | A planning-stage run returned a legal terminal result, but another runtime-owned post-stage step failed after normalization. | Read `runtime_error_report_path`, then inspect the named exception, router action, and referenced stage-result artifact. |
 | `execution_post_stage_apply_failed` | An execution-stage run returned a legal terminal result, but another runtime-owned post-stage step failed after normalization. | Read `runtime_error_report_path`, then inspect the named exception, router action, and referenced stage-result artifact. |
-| `recon_handoff_invalid` | Recon returned a handoff terminal result, but the required `recon_packet.md` or generated task/spec artifact was missing, malformed, or inconsistent with the terminal result. The runtime blocks the active probe instead of routing that probe into Planner, Manager, or Mechanic. | Run `millrace status show --format json`, read `latest_runtime_error_report_path`, inspect the run's `recon_packet.md` and generated artifact, then fix the probe/request or rerun Recon. |
+| `recon_handoff_invalid` | Recon returned a handoff terminal result, but the required `recon_packet.md` or generated task/spec artifact was missing, malformed, or inconsistent with the terminal result. When the active Planning graph declares a default runtime repair node and attempts remain, the runtime routes the active probe to that repair node; otherwise it blocks the probe with evidence. | Run `millrace status show --format json`, read `latest_runtime_error_report_path`, inspect the run's `recon_packet.md` and generated artifact, then inspect the active repair-stage request or blocked probe. |
 | `compiled_plan_stale` | Result application found an active-run launch plan that is no longer available or no longer matches the launch fingerprint. | Inspect the active run's `compiled_plan_id` and `compiled_plan_fingerprint`, then inspect archived compiled plans under runtime state. |
 | `workspace_integrity_failure` | Runtime-owned workspace authority, launch-plan identity, or persisted state invariants are inconsistent enough that routing cannot continue safely. | Read `latest_runtime_error_report_path`, inspect the cited active run, lane state, snapshot, and archived compiled plan. |
 
@@ -27,10 +27,15 @@ status payload does not include `runtime_error_code` or
 - The code narrows the diagnosis; the report provides the concrete run-specific details.
 - `millrace status` and `millrace status show --format json` also surface the
   latest `failure_origin` when one is known.
-- `recon_handoff_invalid` is intentionally not auto-routed into Mechanic. Recon
-  handoff artifacts are ownership boundaries; invalid handoff output should
-  block the probe with evidence rather than mutate it into unrelated planning
-  work.
+- Default runtime repair routing is graph-authoritative. If the compiled active
+  graph declares `runtime_failure_recovery.default_repair_node_id`, unclassified
+  runtime-owned Planning and Execution failures route to that repair node after
+  any more specific runtime failure policy has had a chance to apply.
+- `recon_handoff_invalid` is a runtime-owned Planning failure. In
+  `planning.standard` it routes to `mechanic`; in `planning.blueprint` it routes
+  to `mechanic_blueprint`. Attempt counters still cap repeated repair loops, and
+  the probe blocks with the runtime error report when the threshold is exhausted.
+- `learning.standard` currently declares no default runtime repair node.
 
 ## Failure Origins
 

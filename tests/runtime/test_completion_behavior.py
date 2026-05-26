@@ -740,11 +740,13 @@ def test_daemon_supervisor_reports_learning_request_build_exception_without_cras
         context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
 
         assert dispatched == 0
-        assert snapshot.active_stage is LearningStageName.LIBRARIAN
+        assert snapshot.active_stage is None
         assert snapshot.learning_status_marker == "### BLOCKED"
         assert snapshot.current_failure_class == "learning_pre_dispatch_failed"
-        assert snapshot.active_work_item_family_id == "learning_request"
-        assert snapshot.active_work_item_id == "learn-001"
+        assert snapshot.active_work_item_family_id is None
+        assert snapshot.active_work_item_id is None
+        assert not (paths.learning_requests_active_dir / "learn-001.md").exists()
+        assert (paths.learning_requests_blocked_dir / "learn-001.md").is_file()
         assert context["error_code"] == "learning_pre_dispatch_failed"
         assert context["work_item_family_id"] == "learning_request"
         assert context["work_item_id"] == "learn-001"
@@ -775,12 +777,16 @@ def test_runtime_tick_reports_learning_request_build_exception_without_misroutin
     snapshot = load_snapshot(paths)
     context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
 
-    assert outcome.router_decision.reason == "runtime_exception:learning_pre_dispatch_failed"
-    assert snapshot.active_stage is LearningStageName.LIBRARIAN
+    assert outcome.router_decision.reason == (
+        "runtime_exception:learning_pre_dispatch_failed:repair_unavailable"
+    )
+    assert snapshot.active_stage is None
     assert snapshot.learning_status_marker == "### BLOCKED"
     assert snapshot.current_failure_class == "learning_pre_dispatch_failed"
-    assert snapshot.active_work_item_family_id == "learning_request"
-    assert snapshot.active_work_item_id == "learn-001"
+    assert snapshot.active_work_item_family_id is None
+    assert snapshot.active_work_item_id is None
+    assert not (paths.learning_requests_active_dir / "learn-001.md").exists()
+    assert (paths.learning_requests_blocked_dir / "learn-001.md").is_file()
     assert context["error_code"] == "learning_pre_dispatch_failed"
     assert context["work_item_family_id"] == "learning_request"
     assert context["work_item_id"] == "learn-001"

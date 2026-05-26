@@ -53,6 +53,13 @@ class GraphExportTerminalState(ContractModel):
     ends_plane_run: bool = True
 
 
+class GraphExportRuntimeFailureRecovery(ContractModel):
+    default_repair_node_id: str
+    counter_name: str
+    threshold: int
+    exhausted_terminal_state_id: str | None = None
+
+
 class CompiledStageGraphExport(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["compiled_stage_graph"] = "compiled_stage_graph"
@@ -64,6 +71,7 @@ class CompiledStageGraphExport(ContractModel):
     edges: tuple[GraphExportEdge, ...]
     entries: tuple[GraphExportEntry, ...]
     terminal_states: tuple[GraphExportTerminalState, ...]
+    runtime_failure_recovery: GraphExportRuntimeFailureRecovery | None = None
     source_refs: tuple[str, ...] = ()
     exported_at: datetime
 
@@ -73,5 +81,6 @@ __all__ = [
     "GraphExportEdge",
     "GraphExportEntry",
     "GraphExportNode",
+    "GraphExportRuntimeFailureRecovery",
     "GraphExportTerminalState",
 ]

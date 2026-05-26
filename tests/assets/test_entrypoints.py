@@ -1440,7 +1440,10 @@ def test_planner_and_manager_assets_require_root_lineage_preservation() -> None:
 
     assert "Root-Idea-ID" in manager_body
     assert "Root-Spec-ID" in manager_body
-    assert "copy the active spec's root lineage ids onto every emitted task" in manager_body.lower()
+    assert "Root-Intake-Kind" in manager_body
+    assert "Root-Intake-ID" in manager_body
+    assert "preserve `root-idea-id` only when the active spec has one" in manager_body.lower()
+    assert "never derive or fabricate root lineage" in manager_body.lower()
 
     assert "preserve root lineage ids" in planner_skill.lower()
     assert "planner_disposition.json" in planner_skill

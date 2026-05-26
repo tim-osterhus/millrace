@@ -1552,7 +1552,11 @@ def test_runtime_mailbox_retry_scope_rejects_invalid_scope_payloads() -> None:
         )
 
 
-def test_runtime_routes_malformed_stage_exit_into_recovery(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode_id", [None, "default_codex_integrated"])
+def test_runtime_routes_malformed_stage_exit_into_recovery(
+    tmp_path: Path,
+    mode_id: str | None,
+) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
     queue.enqueue_task(_task_doc("task-001", created_at=NOW))
@@ -1646,8 +1650,18 @@ def test_runtime_routes_post_stage_planning_completion_conflict_into_mechanic(
     assert "spec spec-001 is not active" in report_text
 
 
-def test_runtime_blocks_malformed_recon_handoff_without_running_mechanic_or_manager(
+@pytest.mark.parametrize(
+    ("mode_id", "expected_node_id", "expected_stage_kind_id"),
+    [
+        (None, "mechanic", "mechanic"),
+        ("blueprint_codex", "mechanic_blueprint", "mechanic_blueprint"),
+    ],
+)
+def test_runtime_routes_malformed_recon_handoff_to_mechanic(
     tmp_path: Path,
+    mode_id: str | None,
+    expected_node_id: str,
+    expected_stage_kind_id: str,
 ) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -1687,26 +1701,87 @@ Semantic-Invariants:
                 terminal=PlanningTerminalResult.RECON_TO_PLANNING.value,
                 now=NOW,
             )
+        if request.stage is PlanningStageName.MECHANIC:
+            assert request.runtime_error_code == "recon_handoff_invalid"
+            assert request.runtime_error_report_path is not None
+            assert Path(request.runtime_error_report_path).is_file()
+            return _runner_result(
+                request,
+                terminal=PlanningTerminalResult.BLOCKED.value,
+                now=NOW,
+            )
         raise AssertionError(f"unexpected stage after malformed recon handoff: {request.stage}")
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id=mode_id)
     engine.startup()
 
     outcome = engine.tick()
 
     assert outcome.stage is PlanningStageName.RECON
+    assert outcome.router_decision.action is RouterAction.RUN_STAGE
+    assert outcome.router_decision.next_stage is PlanningStageName.MECHANIC
+    assert outcome.router_decision.next_node_id == expected_node_id
+    assert outcome.router_decision.next_stage_kind_id == expected_stage_kind_id
+    assert outcome.router_decision.reason == "runtime_exception:recon_handoff_invalid"
+    trace_path = Path(outcome.stage_result_path).parents[1] / "run_trace.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert trace["edges"][0]["target_node_id"] == expected_node_id
+    assert trace["edges"][0]["edge_kind"] == "runtime_repair"
     assert seen_stages == [PlanningStageName.RECON]
     snapshot = load_snapshot(paths)
-    assert snapshot.active_stage is None
-    assert snapshot.active_work_item_kind is None
+    assert snapshot.active_stage is PlanningStageName.MECHANIC
+    assert snapshot.active_node_id == expected_node_id
+    assert snapshot.active_stage_kind_id == expected_stage_kind_id
+    assert snapshot.active_work_item_kind is WorkItemKind.PROBE
+    assert snapshot.mechanic_attempt_count == 1
     assert snapshot.current_failure_class == "recon_handoff_invalid"
     assert load_planning_status(paths) == "### BLOCKED"
-    assert (paths.probes_blocked_dir / "probe-001.md").is_file()
-    assert not (paths.probes_active_dir / "probe-001.md").exists()
+    assert not (paths.probes_blocked_dir / "probe-001.md").exists()
+    assert (paths.probes_active_dir / "probe-001.md").is_file()
     assert not any(paths.specs_queue_dir.glob("*.md"))
 
     second = engine.tick()
-    assert second.router_decision.reason == "no_work"
+    assert second.stage is PlanningStageName.MECHANIC
+    assert seen_stages == [PlanningStageName.RECON, PlanningStageName.MECHANIC]
+
+
+def test_runtime_blocks_repeated_malformed_recon_handoff_after_repair_threshold(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_probe(_probe_doc("probe-001", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        run_dir = Path(request.run_dir)
+        (run_dir / "recon_packet.md").write_text(
+            "# Bad Recon Packet\n\nRecon-Packet-ID: recon-probe-001\n",
+            encoding="utf-8",
+        )
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.RECON_TO_PLANNING.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    engine.snapshot = load_snapshot(paths).model_copy(update={"mechanic_attempt_count": 2})
+    save_snapshot(paths, engine.snapshot)
+
+    outcome = engine.tick()
+
+    assert outcome.router_decision.action is RouterAction.BLOCKED
+    assert outcome.router_decision.reason == (
+        "runtime_exception:recon_handoff_invalid:repair_attempts_exhausted"
+    )
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is None
+    assert snapshot.current_failure_class == "recon_handoff_invalid"
+    assert (paths.probes_blocked_dir / "probe-001.md").is_file()
+    assert paths.runtime_error_context_file.is_file()
+    report_path = paths.runs_dir / outcome.stage_result.run_id / "runtime_error_report.md"
+    assert report_path.is_file()
 
 
 def test_runtime_claims_generated_spec_after_recon_to_planning_handoff(

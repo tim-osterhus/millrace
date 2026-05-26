@@ -168,6 +168,17 @@ def _render_compiled_graph_lines(
     for graph in graphs:
         lines.append("")
         lines.append(f"{graph.plane.value}:")
+        if graph.runtime_failure_recovery is not None:
+            recovery = graph.runtime_failure_recovery
+            lines.append(
+                "  runtime_failure_recovery: "
+                f"default_repair_node_id={recovery.default_repair_node_id} "
+                f"counter_name={recovery.counter_name} "
+                f"threshold={recovery.threshold} "
+                f"exhausted_terminal_state_id={_value(recovery.exhausted_terminal_state_id)}"
+            )
+        else:
+            lines.append("  runtime_failure_recovery: none")
         for edge in graph.edges:
             target = (
                 edge.target_node_id

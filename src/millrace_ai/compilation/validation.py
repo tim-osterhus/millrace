@@ -12,6 +12,7 @@ from millrace_ai.architecture import (
     FrozenGraphPlanePlan,
     GraphLoopEntryKey,
     MaterializedGraphNodePlan,
+    RecoveryRole,
     RegisteredStageKindDefinition,
     WorkflowPlaneSchedulerPolicyDefinition,
     WorkItemFamilyDefinition,
@@ -19,6 +20,7 @@ from millrace_ai.architecture import (
 from millrace_ai.architecture.loop_graphs import graph_loop_entry_key_value
 from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane, StageMapKey
+from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 
 from .outcomes import CompilerValidationError
 
@@ -43,6 +45,16 @@ _MECHANIC_BLUEPRINT_REPAIR_ARTIFACTS = frozenset(
     }
 )
 _MECHANIC_BLUEPRINT_REPAIR_CAPABILITY = "repair.apply_repaired_generated_task"
+_CUSTOM_STAGE_KIND_IDS_BY_PLANE: dict[Plane, frozenset[str]] = {
+    Plane.PLANNING: frozenset(
+        {
+            "manager_blueprint",
+            "contractor_blueprint",
+            "evaluator_blueprint",
+            "mechanic_blueprint",
+        }
+    )
+}
 _BUILT_IN_ARTIFACT_ADAPTER_IDS = frozenset(
     {
         "builtin.json",
@@ -195,11 +207,66 @@ def validate_workflow_primitives(
         stage_kinds=stage_kinds,
         terminal_state_ids=terminal_state_ids,
     )
+    _validate_runtime_failure_recovery(
+        graphs_by_plane=graphs_by_plane,
+        stage_kinds_by_node_id=stage_kinds_by_node_id,
+    )
     _validate_structural_graph_smoke(
         graphs_by_plane=graphs_by_plane,
         stage_kinds=stage_kinds,
         terminal_actions_by_id=terminal_actions_by_id,
     )
+
+
+def _validate_runtime_failure_recovery(
+    *,
+    graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
+    stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
+) -> None:
+    for graph in graphs_by_plane.values():
+        recovery = graph.runtime_failure_recovery
+        if recovery is None:
+            continue
+        repair_node = next(
+            (node for node in graph.nodes if node.node_id == recovery.default_repair_node_id),
+            None,
+        )
+        if repair_node is None:
+            raise CompilerValidationError(
+                f"graph {graph.loop_id} runtime failure recovery references unknown "
+                f"default repair node {recovery.default_repair_node_id}"
+            )
+        stage_kind = stage_kinds_by_node_id.get(repair_node.node_id)
+        if stage_kind is None:
+            raise CompilerValidationError(
+                f"graph {graph.loop_id} runtime failure recovery node "
+                f"{repair_node.node_id} has no registered stage kind"
+            )
+        if stage_kind.plane is not graph.plane:
+            raise CompilerValidationError(
+                f"graph {graph.loop_id} runtime failure recovery node "
+                f"{repair_node.node_id} belongs to plane {stage_kind.plane.value}, "
+                f"not {graph.plane.value}"
+            )
+        if stage_kind.recovery_role is not RecoveryRole.LOCAL_REPAIR:
+            raise CompilerValidationError(
+                f"graph {graph.loop_id} runtime failure recovery node "
+                f"{repair_node.node_id} must declare recovery_role=local_repair"
+            )
+        try:
+            _validate_stage_kind_maps_to_stage(graph.plane, repair_node.stage_kind_id)
+        except ValueError as exc:
+            raise CompilerValidationError(
+                f"graph {graph.loop_id} runtime failure recovery node "
+                f"{repair_node.node_id} uses unmapped stage kind "
+                f"{repair_node.stage_kind_id}"
+            ) from exc
+
+
+def _validate_stage_kind_maps_to_stage(plane: Plane, stage_kind_id: str) -> None:
+    if stage_kind_id in _CUSTOM_STAGE_KIND_IDS_BY_PLANE.get(plane, frozenset()):
+        return
+    stage_name_for_plane(plane, stage_kind_id)
 
 
 def validate_lane_conflict_coverage(

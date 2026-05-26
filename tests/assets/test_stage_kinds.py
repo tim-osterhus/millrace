@@ -180,7 +180,7 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert recon.allowed_work_item_families == ("probe",)
     assert planner.allowed_work_item_families == ("spec", "incident")
     assert manager.allowed_work_item_families == ("spec", "incident")
-    assert mechanic.allowed_work_item_families == ("spec", "incident")
+    assert mechanic.allowed_work_item_families == ("probe", "spec", "incident")
     assert auditor.allowed_work_item_families == ("incident",)
 
     assert troubleshooter.recovery_role is RecoveryRole.LOCAL_REPAIR
@@ -292,7 +292,7 @@ def test_blueprint_stage_kind_assets_load_as_discovered_extensions() -> None:
         "skills/stage/planning/mechanic-blueprint-core/SKILL.md",
     )
     assert mechanic.legal_outcomes == ("MECHANIC_BLUEPRINT_COMPLETE", "BLOCKED")
-    assert mechanic.allowed_work_item_families == ("spec", "incident", "blueprint_draft")
+    assert mechanic.allowed_work_item_families == ("probe", "spec", "incident", "blueprint_draft")
     assert mechanic.recovery_role is RecoveryRole.LOCAL_REPAIR
     assert mechanic.declared_output_artifacts == (
         "stage_result",

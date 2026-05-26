@@ -398,9 +398,10 @@ persisted artifacts without taking runtime ownership.
   generated task/spec artifacts are enqueued by the runtime.
 - Recon handoff artifacts are strict runtime-owned promotion contracts. A
   malformed `recon_packet.md`, missing generated task/spec, or packet/artifact
-  ID mismatch records `recon_handoff_invalid`, blocks the active probe, and
-  stops that probe from being treated as ordinary Planner/Manager/Mechanic
-  work.
+  ID mismatch records `recon_handoff_invalid`. If the active Planning graph
+  declares a default runtime repair node and repair attempts remain, the runtime
+  routes the active probe to that repair node with the runtime error report in
+  request context. Otherwise it blocks the probe with the same evidence.
 - Stage request construction also checks stage/work-item ownership before a
   runner is invoked, so stale state cannot send a probe to Manager or a spec to
   Recon.

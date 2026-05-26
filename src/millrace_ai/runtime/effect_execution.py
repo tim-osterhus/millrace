@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from millrace_ai.contracts import Plane, StageResultEnvelope
+from millrace_ai.contracts import Plane, RuntimeErrorCode, StageResultEnvelope
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import load_recovery_counters, reset_forward_progress_counters, save_snapshot
@@ -22,6 +22,11 @@ from .effects import (
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
     apply_runtime_effect_result,
+)
+from .error_recovery import (
+    record_post_stage_exception_context,
+    runtime_repair_attempts_exhausted,
+    runtime_repair_route_for_plane,
 )
 from .failure_policy import (
     RuntimeEffectFailurePolicyInput,
@@ -117,6 +122,29 @@ def apply_runtime_effect_for_stage_result(
                 effect_result=effect_result,
                 failure_policy_id=failure_policy_resolution.policy_id,
                 failure_policy_action=failure_policy_resolution.action,
+            )
+            return RuntimeEffectApplication(router_decision=override_decision)
+    if failure_policy_resolution is None:
+        override_decision = _router_decision_for_default_runtime_repair(
+            engine,
+            stage_result=stage_result,
+            effect_result=effect_result,
+            router_decision=router_decision,
+            stage_result_path=stage_result_path,
+            compiled_plan=effective_plan,
+        )
+        if override_decision is not None:
+            _annotate_stage_result_with_effect(
+                stage_result,
+                effect_result,
+                stage_result_path,
+                recovery_action="default_runtime_repair",
+            )
+            _emit_runtime_effect_event(
+                engine,
+                stage_result=stage_result,
+                effect_result=effect_result,
+                failure_policy_action="default_runtime_repair",
             )
             return RuntimeEffectApplication(router_decision=override_decision)
 
@@ -306,6 +334,65 @@ def _router_decision_for_failure_policy_route(
         reason=f"runtime_effect_failure:{effect_result.handler_id}:{failure_class}",
         failure_class=failure_class,
     )
+
+
+def _router_decision_for_default_runtime_repair(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    effect_result: RuntimeEffectResult,
+    router_decision: RouterDecision,
+    stage_result_path: Path | None,
+    compiled_plan: CompiledRunPlan | None,
+) -> RouterDecision | None:
+    if effect_result.decision is not RuntimeEffectDecision.REQUEST_BLOCK_SOURCE:
+        return None
+    if effect_result.mutation_phase is not RuntimeEffectMutationPhase.PRE_MUTATION:
+        return None
+    repair_route = runtime_repair_route_for_plane(
+        engine,
+        stage_result.plane,
+        compiled_plan=compiled_plan,
+    )
+    if repair_route is None:
+        return None
+    failure_class = effect_result.failure_class or "runtime_effect_failed"
+    message = effect_result.message or "runtime effect requested default runtime repair"
+    record_post_stage_exception_context(
+        engine,
+        stage_result=stage_result,
+        error=RuntimeError(f"{effect_result.handler_id}:{failure_class}: {message}"),
+        router_decision=router_decision,
+        stage_result_path=stage_result_path,
+        error_code=_runtime_effect_error_code(stage_result.plane),
+        repair_stage=repair_route.stage,
+    )
+    if runtime_repair_attempts_exhausted(engine, repair_route):
+        return RouterDecision(
+            action=RouterAction.BLOCKED,
+            next_plane=None,
+            next_stage=None,
+            reason=(
+                f"runtime_effect_failure:{effect_result.handler_id}:"
+                f"{failure_class}:repair_attempts_exhausted"
+            ),
+            failure_class=failure_class,
+        )
+    return RouterDecision(
+        action=RouterAction.RUN_STAGE,
+        next_plane=stage_result.plane,
+        next_stage=repair_route.stage,
+        next_node_id=repair_route.node_id,
+        next_stage_kind_id=repair_route.stage_kind_id,
+        reason=f"runtime_effect_failure:{effect_result.handler_id}:{failure_class}:default_repair",
+        failure_class=failure_class,
+    )
+
+
+def _runtime_effect_error_code(plane: Plane) -> RuntimeErrorCode:
+    if plane is Plane.EXECUTION:
+        return RuntimeErrorCode.EXECUTION_POST_STAGE_APPLY_FAILED
+    return RuntimeErrorCode.PLANNING_POST_STAGE_APPLY_FAILED
 
 
 def _router_decision_for_effect(

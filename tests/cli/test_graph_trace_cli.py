@@ -37,6 +37,8 @@ def test_compile_graph_json_outputs_compiled_stage_graphs(tmp_path: Path) -> Non
     assert '"kind": "compiled_stage_graph"' in result.output
     assert '"plane": "execution"' in result.output
     assert '"node_id": "builder"' in result.output
+    assert '"runtime_failure_recovery"' in result.output
+    assert '"default_repair_node_id": "troubleshooter"' in result.output
 
 
 def test_runs_trace_json_outputs_fallback_trace_for_existing_run(tmp_path: Path) -> None:

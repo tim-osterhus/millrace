@@ -79,5 +79,12 @@
         "exhausted_target_node_id": "consultant"
       }
     ]
+  },
+  "runtime_failure_recovery": {
+    "default_repair_node_id": "troubleshooter",
+    "default_failure_class_template": "runtime_failure_recovery",
+    "counter_name": "troubleshoot_attempt_count",
+    "threshold": 2,
+    "exhausted_terminal_state_id": "blocked"
   }
 }

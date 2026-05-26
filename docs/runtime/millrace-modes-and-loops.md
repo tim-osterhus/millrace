@@ -126,6 +126,18 @@ This document keeps the higher-level compiler and mode model: which loop ids
 ship, how modes select plane graphs, which maps a mode can override, and what
 the compiler freezes into the runtime plan.
 
+The shipped Execution and Planning graphs also declare their default
+runtime-failure repair node in the compiled graph authority:
+
+- `execution.standard` and `execution.with_integrator` route unclassified
+  runtime-owned Execution blockers to `troubleshooter` when attempts remain.
+- `planning.standard` routes unclassified runtime-owned Planning blockers to
+  `mechanic` when attempts remain.
+- `planning.blueprint` routes unclassified runtime-owned Planning blockers to
+  `mechanic_blueprint` when attempts remain.
+- `learning.standard` intentionally declares no default runtime-failure repair
+  node.
+
 ## What A Mode Defines
 
 Modes validate as `ModeDefinition`.

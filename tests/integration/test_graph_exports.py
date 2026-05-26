@@ -28,6 +28,9 @@ def test_export_compiled_stage_graphs_projects_default_mode_graphs(tmp_path: Pat
     assert execution.compiled_plan_id == outcome.active_plan.compiled_plan_id
     assert execution.mode_id == "default_codex"
     assert execution.loop_id == "execution.standard"
+    assert execution.runtime_failure_recovery is not None
+    assert execution.runtime_failure_recovery.default_repair_node_id == "troubleshooter"
+    assert execution.runtime_failure_recovery.counter_name == "troubleshoot_attempt_count"
     assert {entry.entry_key: entry.node_id for entry in execution.entries} == {
         "task": "builder",
     }
@@ -69,6 +72,7 @@ def test_export_compiled_stage_graphs_includes_learning_graph_for_learning_mode(
     ]
     learning = next(export for export in exports if export.plane is Plane.LEARNING)
     assert learning.loop_id == "learning.standard"
+    assert learning.runtime_failure_recovery is None
     assert {entry.entry_key: entry.node_id for entry in learning.entries} == {
         "learning_request": "analyst",
     }

@@ -51,12 +51,12 @@ Required format:
      `Target-Paths:`
      `- e2e/pipeline/result.md`
 5. Use canonical labels exactly:
-   - scalars: `Task-ID`, `Title`, `Summary`, `Root-Idea-ID`, `Root-Spec-ID`, `Spec-ID`, `Parent-Task-ID`, `Incident-ID`, `Status-Hint`, `Created-At`, `Created-By`, `Updated-At`
+   - scalars: `Task-ID`, `Title`, `Summary`, `Root-Idea-ID`, `Root-Spec-ID`, `Root-Intake-Kind`, `Root-Intake-ID`, `Spec-ID`, `Parent-Task-ID`, `Incident-ID`, `Status-Hint`, `Created-At`, `Created-By`, `Updated-At`
    - lists: `Depends-On`, `Blocks`, `Tags`, `Target-Paths`, `Acceptance`, `Required-Checks`, `References`, `Risk`
 6. Do not emit JSON frontmatter, `schema_version`, or `kind` fields in markdown work docs for this framework.
 7. `Status-Hint` must be one of exactly: `queued`, `active`, `blocked`, `done` (use `queued` for newly emitted manager tasks). Do **not** use `queue`.
-8. Copy the active spec's root lineage ids onto every emitted task. Every manager task must preserve `Root-Idea-ID` and `Root-Spec-ID` from the active spec instead of dropping them.
-9. Never derive root lineage from `Source-ID`, filenames, references, task names, or prior stale queue artifacts. If the active spec's root lineage is missing or contradictory, emit `### BLOCKED` instead of producing tasks.
+8. Copy the active spec's explicit root lineage and intake labels onto every emitted task. Every manager task must preserve `Root-Spec-ID` from the active spec. Preserve `Root-Idea-ID` only when the active spec has one. Preserve `Root-Intake-Kind` and `Root-Intake-ID` when the active spec has them.
+9. Never derive or fabricate root lineage from `Source-ID`, filenames, references, task names, stale queue artifacts, inferred idea names, or task ids. If explicit lineage or intake labels on the active spec are contradictory, malformed, or impossible to preserve, emit `### BLOCKED` instead of producing tasks.
 10. Do not create a task card with a `Task-ID` that already exists in `tasks/queue/`, `tasks/active/`, `tasks/done/`, or `tasks/blocked/`. If continuing a blocked source task, prefer a new continuation `Task-ID` that references the incident/source task unless the runtime has explicitly requeued the original task.
 11. Omit empty relationship blocks entirely. If a task has no prerequisites, do not write `Depends-On:`. If a task blocks no explicit successor, do not write `Blocks:`. Never write placeholder list items such as `- none`, `- n/a`, or `-`.
 

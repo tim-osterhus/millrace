@@ -23,6 +23,7 @@ from .loop_graphs import (
     GraphLoopEntryDefinition,
     GraphLoopEntryKey,
     GraphLoopEntryKeyValue,
+    GraphLoopRuntimeFailureRecoveryDefinition,
     GraphLoopTerminalStateDefinition,
     normalize_graph_loop_entry_key,
 )
@@ -166,6 +167,7 @@ class FrozenGraphPlanePlan(ArchitectureContractModel):
     compiled_transitions: tuple[CompiledGraphTransitionPlan, ...] = Field(min_length=1)
     compiled_resume_policies: tuple[CompiledGraphResumePolicyPlan, ...] = ()
     compiled_threshold_policies: tuple[CompiledGraphThresholdPolicyPlan, ...] = ()
+    runtime_failure_recovery: GraphLoopRuntimeFailureRecoveryDefinition | None = None
     terminal_states: tuple[GraphLoopTerminalStateDefinition, ...] = Field(min_length=1)
     completion_behavior: GraphLoopCompletionBehaviorDefinition | None = None
     execution_capability_summary: dict[str, int | dict[str, int]] = Field(default_factory=dict)

@@ -6,12 +6,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
-    PlanningStageName,
     PlanningTerminalResult,
     ReconDecision,
     ReconPacketDocument,
     RootIntakeKind,
-    RuntimeErrorCode,
     SpecDocument,
     StageResultEnvelope,
     TaskDocument,
@@ -25,12 +23,15 @@ from .artifact_contracts import (
     parse_resolved_run_artifact_as,
     resolve_run_artifact,
 )
-from .error_recovery import record_post_stage_exception_context
 from .work_item_transitions import apply_blocked_router_decision, apply_idle_router_decision
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
+
+
+class ReconHandoffInvalidError(RuntimeError):
+    """Raised when Recon produced artifacts that do not satisfy its handoff contract."""
 
 
 def is_recon_stage_result(stage_result: StageResultEnvelope) -> bool:
@@ -109,51 +110,7 @@ def apply_recon_router_decision(
         )
         return ()
     except Exception as exc:
-        return _block_invalid_recon_handoff(
-            engine,
-            stage_result=stage_result,
-            router_decision=decision,
-            stage_result_path=stage_result_path,
-            error=exc,
-        )
-
-
-def _block_invalid_recon_handoff(
-    engine: RuntimeEngine,
-    *,
-    stage_result: StageResultEnvelope,
-    router_decision: RouterDecision,
-    stage_result_path: Path | None,
-    error: Exception,
-) -> tuple[Path, ...]:
-    record_post_stage_exception_context(
-        engine,
-        stage_result=stage_result,
-        error=error,
-        router_decision=router_decision,
-        stage_result_path=stage_result_path,
-        error_code=RuntimeErrorCode.RECON_HANDOFF_INVALID,
-        repair_stage=PlanningStageName.RECON,
-    )
-    engine._set_plane_status_marker(
-        plane=stage_result.plane,
-        marker="### BLOCKED",
-        run_id=stage_result.run_id,
-        source="recon_handoff_invalid",
-    )
-    apply_blocked_router_decision(
-        engine,
-        RouterDecision(
-            action=RouterAction.BLOCKED,
-            next_plane=None,
-            next_stage=None,
-            reason="recon_handoff_invalid",
-            failure_class=RuntimeErrorCode.RECON_HANDOFF_INVALID.value,
-        ),
-        stage_result,
-        stage_result_path=stage_result_path,
-    )
-    return ()
+        raise ReconHandoffInvalidError("Recon handoff artifacts failed validation") from exc
 
 
 def _read_and_persist_packet(
@@ -295,4 +252,4 @@ def _append_required_references(
     return tuple(merged)
 
 
-__all__ = ["apply_recon_router_decision", "is_recon_stage_result"]
+__all__ = ["ReconHandoffInvalidError", "apply_recon_router_decision", "is_recon_stage_result"]

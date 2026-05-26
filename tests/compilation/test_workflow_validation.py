@@ -1189,3 +1189,43 @@ def test_compile_rejects_graph_route_with_illegal_source_outcome(tmp_path: Path)
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert "declares illegal outcome NOT_LEGAL for stage kind builder" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_unmapped_runtime_failure_recovery_stage_kind(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "planning" / "mechanic.json"
+    stage_kind_payload = _load_json(stage_kind_path)
+    stage_kind_payload.update(
+        {
+            "stage_kind_id": "diagnostician",
+            "display_name": "Diagnostician",
+            "running_status_marker": "DIAGNOSTICIAN_RUNNING",
+        }
+    )
+    diagnostician_path = stage_kind_path.with_name("diagnostician.json")
+    _write_json(diagnostician_path, stage_kind_payload)
+
+    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_payload = _load_json(graph_path)
+    for node in graph_payload["nodes"]:
+        if node["node_id"] == "mechanic":
+            node["stage_kind_id"] = "diagnostician"
+            break
+    _write_json(graph_path, graph_payload)
+    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_payload = _load_json(mode_path)
+    mode_payload["stage_runner_bindings"]["diagnostician"] = mode_payload[
+        "stage_runner_bindings"
+    ].pop("mechanic")
+    _write_json(mode_path, mode_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "graph planning.standard runtime failure recovery node mechanic "
+        "uses unmapped stage kind diagnostician"
+    ) in _diagnostic_text(outcome)

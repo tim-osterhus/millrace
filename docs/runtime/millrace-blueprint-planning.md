@@ -111,10 +111,15 @@ request context. Runtime-effect recovery is structured: a
 repair decision JSON uses `next_resume_stage` for evaluator, contractor, or
 manager rerun actions, while terminal-result metadata may still use
 `resume_stage` for router handoff. Current shipped runtime failure policies
-only route the Evaluator generated-task missing/invalid class to Mechanic
-Blueprint automatically; Manager pre-mutation artifact failures remain
-conservative blocks for operator inspection. Mechanic must not write corrected
-`blueprint_manifest.json` or `blueprint_drafts.json`.
+still route the Evaluator generated-task missing/invalid class to Mechanic
+Blueprint automatically. The Blueprint Planning graph also declares
+`mechanic_blueprint` as its default runtime failure repair node, so
+unclassified Planning runtime blockers can be diagnosed there when no more
+specific policy blocks first. Manager pre-mutation artifact failures that are
+safe to diagnose may route through that default repair path; partial mutations
+and explicit conservative policies still block for operator inspection.
+Mechanic must not write corrected `blueprint_manifest.json` or
+`blueprint_drafts.json`.
 `repaired_generated_task.json` is valid only with
 `repair_action=apply_repaired_generated_task` and validates as a task document.
 `mechanic_blueprint_repair_apply` is the packaged repair-apply handler for this

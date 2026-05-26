@@ -371,6 +371,22 @@ class GraphLoopThresholdPolicyDefinition(ArchitectureContractModel):
         return self
 
 
+class GraphLoopRuntimeFailureRecoveryDefinition(ArchitectureContractModel):
+    default_repair_node_id: str
+    default_failure_class_template: str = "runtime_failure_recovery"
+    counter_name: GraphLoopCounterName
+    threshold: int = Field(ge=1)
+    exhausted_terminal_state_id: str | None = None
+
+    @field_validator("default_repair_node_id", "default_failure_class_template", "exhausted_terminal_state_id")
+    @classmethod
+    def validate_canonical_refs(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        field_name = getattr(info, "field_name", None) or "canonical ref"
+        return normalize_canonical_id(value, field_label=field_name)
+
+
 class GraphLoopDynamicPoliciesDefinition(ArchitectureContractModel):
     resume_policies: tuple[GraphLoopResumePolicyDefinition, ...] = ()
     threshold_policies: tuple[GraphLoopThresholdPolicyDefinition, ...] = ()
@@ -397,6 +413,7 @@ class GraphLoopDefinition(ArchitectureContractModel):
     entry_nodes: tuple[GraphLoopEntryDefinition, ...] = Field(min_length=1)
     terminal_states: tuple[GraphLoopTerminalStateDefinition, ...] = Field(min_length=1)
     dynamic_policies: GraphLoopDynamicPoliciesDefinition | None = None
+    runtime_failure_recovery: GraphLoopRuntimeFailureRecoveryDefinition | None = None
     completion_behavior: GraphLoopCompletionBehaviorDefinition | None = None
 
     @field_validator("loop_id")
@@ -504,6 +521,22 @@ class GraphLoopDefinition(ArchitectureContractModel):
                         f"{threshold_policy.exhausted_terminal_state_id}"
                     )
 
+        if self.runtime_failure_recovery is not None:
+            recovery = self.runtime_failure_recovery
+            if recovery.default_repair_node_id not in node_id_set:
+                raise ValueError(
+                    "runtime_failure_recovery references unknown default_repair_node_id "
+                    f"{recovery.default_repair_node_id}"
+                )
+            if (
+                recovery.exhausted_terminal_state_id is not None
+                and recovery.exhausted_terminal_state_id not in terminal_state_id_set
+            ):
+                raise ValueError(
+                    "runtime_failure_recovery references unknown exhausted_terminal_state_id "
+                    f"{recovery.exhausted_terminal_state_id}"
+                )
+
         if self.completion_behavior is not None:
             if self.completion_behavior.target_node_id not in node_id_set:
                 raise ValueError(
@@ -561,6 +594,7 @@ __all__ = [
     "GraphLoopEntryKeyValue",
     "GraphLoopNodeDefinition",
     "GraphLoopResumePolicyDefinition",
+    "GraphLoopRuntimeFailureRecoveryDefinition",
     "GraphLoopThresholdPolicyDefinition",
     "GraphLoopTerminalClass",
     "GraphLoopTerminalStateDefinition",

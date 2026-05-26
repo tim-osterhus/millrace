@@ -12,6 +12,7 @@ from millrace_ai.contracts.graph_exports import (
     GraphExportEdge,
     GraphExportEntry,
     GraphExportNode,
+    GraphExportRuntimeFailureRecovery,
     GraphExportTerminalState,
 )
 
@@ -102,6 +103,18 @@ def _export_graph(
                 ends_plane_run=state.ends_plane_run,
             )
             for state in graph.terminal_states
+        ),
+        runtime_failure_recovery=(
+            GraphExportRuntimeFailureRecovery(
+                default_repair_node_id=graph.runtime_failure_recovery.default_repair_node_id,
+                counter_name=graph.runtime_failure_recovery.counter_name.value,
+                threshold=graph.runtime_failure_recovery.threshold,
+                exhausted_terminal_state_id=(
+                    graph.runtime_failure_recovery.exhausted_terminal_state_id
+                ),
+            )
+            if graph.runtime_failure_recovery is not None
+            else None
         ),
         source_refs=plan.source_refs,
         exported_at=datetime.now(timezone.utc),
