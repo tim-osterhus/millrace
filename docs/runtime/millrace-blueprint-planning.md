@@ -82,18 +82,19 @@ The shipped Blueprint outcomes are:
 - `BLUEPRINT_APPROVED`: persist the approved packet, evaluation, and promotion
   record, enqueue the generated execution task, and approve the source draft
 
-Effect dispatch is data-driven. A mode or graph cannot run if a Blueprint
-terminal effect rule references an unknown handler, duplicates another
-stage/terminal binding, or targets a packaged handler id without a packaged
-runtime implementation.
+Effect dispatch is operation-driven. A mode or graph cannot run if a Blueprint
+terminal effect rule references an unknown operation id, duplicates another
+stage/terminal binding, or binds a legacy handler id that is not declared as an
+operation alias. Runtime runner registration is now separate compatibility
+plumbing, not the architectural source of Blueprint behavior.
 
 Manager Blueprint runtime-effect failures are policy-routed by class and
 mutation phase, and the shipped policy blocks them conservatively for operator
 inspection. That includes missing, malformed, schema-invalid, or semantically
 mismatched Manager artifacts, duplicate manifest ids, duplicate draft ids,
 invalid source lifecycle state, and partial mutations. `runs show`, status
-JSON, and monitor events expose the handler id, failure class/message, mutation
-phase, matched policy id, and recovery action.
+JSON, and monitor events expose the operation id, runner id, legacy handler id,
+failure class/message, mutation phase, matched policy id, and recovery action.
 
 Contractor Blueprint candidate persistence checks existing same-id candidate
 packet and markdown artifacts before writing. Equivalent normalized packet
@@ -122,9 +123,10 @@ Mechanic must not write corrected `blueprint_manifest.json` or
 `blueprint_drafts.json`.
 `repaired_generated_task.json` is valid only with
 `repair_action=apply_repaired_generated_task` and validates as a task document.
-`mechanic_blueprint_repair_apply` is the packaged repair-apply handler for this
-artifact pair. It consumes the structured decision and repaired generated task
-through artifact contracts, validates the Mechanic stage result, failed
+`mechanic_blueprint_repair_apply` is the packaged repair-apply operation for
+this artifact pair. It consumes the structured decision, Mechanic report, and
+repaired generated task through artifact contracts, validates the Mechanic
+stage result, failed
 runtime-effect stage-result metadata, draft, packet, evaluation, root lineage,
 and repaired task identity/scope before mutation, then reuses the
 runtime-owned approval promotion path. Missing, invalid, mismatched, or
@@ -134,9 +136,9 @@ out-of-scope repair inputs fail before durable mutation. The packaged
 capabilities for `apply_repaired_generated_task`, `generated_task_missing`, and
 `generated_task_invalid`. Compiler validation rejects recoverable
 runtime-effect routes to `mechanic_blueprint` unless the selected Blueprint
-graph has the closed repair effect, a non-Mechanic resume guard, required
-repair artifacts, and handler capability alignment. Unsafe recovery emits
-`BLOCKED`.
+graph has the closed repair operation, a non-Mechanic resume guard, required
+repair artifacts, and operation/compatibility metadata alignment. Unsafe
+recovery emits `BLOCKED`.
 
 ## Durable Artifacts
 

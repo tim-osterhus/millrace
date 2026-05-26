@@ -295,16 +295,16 @@ def test_compile_rejects_effect_rule_with_unknown_handler(tmp_path: Path) -> Non
     assert "runtime effect rule bad_rule references unknown handler missing_handler" in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_effect_rule_with_declared_unimplemented_handler(tmp_path: Path) -> None:
+def test_compile_rejects_effect_rule_with_unknown_operation(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     handlers_dir = assets_root / "registry" / "runtime_effect_handlers"
     handlers_dir.mkdir(parents=True, exist_ok=True)
     _write_json(
-        handlers_dir / "unimplemented_handler.json",
+        handlers_dir / "unknown_operation_handler.json",
         {
             "schema_version": "1.0",
             "kind": "runtime_effect_handler",
-            "handler_id": "declared_unimplemented_handler",
+            "handler_id": "declared_unknown_operation_handler",
             "source_planes": ["execution"],
             "allowed_source_families": ["task"],
             "destination_kinds": [],
@@ -318,15 +318,15 @@ def test_compile_rejects_effect_rule_with_declared_unimplemented_handler(tmp_pat
     rules_dir = assets_root / "registry" / "runtime_effect_rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
     _write_json(
-        rules_dir / "unimplemented_rule.json",
+        rules_dir / "unknown_operation_rule.json",
         {
             "schema_version": "1.0",
             "kind": "runtime_effect_rule",
-            "rule_id": "unimplemented_rule",
+            "rule_id": "unknown_operation_rule",
             "effect_operation_id": "enqueue_task",
             "source_node_id": "builder",
             "on_outcomes": ["BUILDER_COMPLETE"],
-            "handler_id": "declared_unimplemented_handler",
+            "handler_id": "declared_unknown_operation_handler",
             "destination_family_id": "task",
             "creates_work_items": False,
             "duplicate_policy": "fail",
@@ -342,8 +342,7 @@ def test_compile_rejects_effect_rule_with_declared_unimplemented_handler(tmp_pat
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "runtime effect rule unimplemented_rule references handler "
-        "declared_unimplemented_handler without a runtime implementation"
+        "runtime effect rule unknown_operation_rule references unknown operation enqueue_task"
     ) in _diagnostic_text(outcome)
 
 

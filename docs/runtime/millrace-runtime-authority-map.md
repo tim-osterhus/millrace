@@ -72,7 +72,7 @@ Public compatibility facades may re-export the same behavior.
   `runtime/lifecycle_interpreter.py`, and `workspace/queue_lifecycle.py` apply
   compiled runtime-effect and source-lifecycle intents.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
-  `runtime/blueprint_effects.py`, `runtime/closure_transitions.py`,
+  `runtime/effects/operations.py`, `runtime/closure_transitions.py`,
   `runtime/result_counters.py`, `runtime/stage_result_persistence.py`,
   `runtime/run_traces.py`, `runtime/snapshot_state.py`, and
   `workspace/*_state.py` own the durable mutations for their domains.
@@ -275,11 +275,12 @@ are stage artifacts only.
 Blueprint terminal results and metadata. Stage-result persistence records the
 normalized result before runtime effect application.
 
-**Runtime mutation owner:** `runtime/blueprint_effects.py` applies compiled
-Blueprint runtime effects: persist manifests/drafts, queue drafts, persist
+**Runtime mutation owner:** `runtime/effects/operations.py` applies compiled
+Blueprint runtime operations: persist manifests/drafts, queue drafts, persist
 candidate packets, route rejected drafts back to Contractor, approve drafts,
 write promotion records, enqueue generated execution tasks, apply safe
 Mechanic repair actions, and block precise replay/partial-mutation failures.
+`runtime/blueprint_effects.py` is a legacy import facade, and
 `workspace/blueprint_state.py` owns durable Blueprint file layout helpers.
 
 **Inspection/monitor visibility:** status exposes Blueprint counters and latest

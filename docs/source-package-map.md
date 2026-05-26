@@ -247,10 +247,12 @@ cycles:
   source-lifecycle application. `runtime/effects/registry.py` provides the
   handler registry seam, and `runtime/effects/legacy.py` is the temporary
   registry for legacy Python effect handlers while declarative operation
-  migration proceeds. Stage results and runtime events carry operation id,
-  runner id, and legacy handler id metadata during that migration.
-- `runtime/blueprint_effects.py` owns Blueprint-specific runtime effects while
-  registering on the same compiled effect-selection path.
+  migration proceeds. `runtime/effects/operations.py` owns the shipped
+  operation implementations, including the Blueprint operation runners. Stage
+  results and runtime events carry operation id, runner id, and legacy handler
+  id metadata during that migration.
+- `runtime/blueprint_effects.py` is a compatibility facade for old imports and
+  handler-id names. It no longer owns Blueprint durable mutation.
 - `runtime/planner_effects.py` owns Planner-specific runtime effects while
   registering on the same compiled effect-selection path as Blueprint effects.
 - `runtime/completion_behavior.py`, `runtime/blocked_recovery.py`, and

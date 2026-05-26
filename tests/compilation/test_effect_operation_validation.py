@@ -4,7 +4,6 @@ import json
 import shutil
 from pathlib import Path
 
-from millrace_ai.compilation import validation as validation_module
 from millrace_ai.compilation.fingerprints import build_existing_plan_input_fingerprint
 from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_workspace_plan_currentness
 from millrace_ai.config import RuntimeConfig
@@ -29,15 +28,6 @@ def _copy_non_blueprint_fixture_assets(tmp_path: Path) -> Path:
     copied_root = _copy_builtin_assets(tmp_path)
     shutil.copytree(FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True)
     return copied_root
-
-
-def _allow_fixture_handler_implementation(monkeypatch) -> None:
-    # Packet 04 uses a test-local runner; later migration packets replace this allow-list.
-    monkeypatch.setattr(
-        validation_module,
-        "_RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS",
-        validation_module._RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS | {FIXTURE_HANDLER_ID},
-    )
 
 
 def _compile_blueprint_with_assets(tmp_path: Path, assets_root: Path):
@@ -286,9 +276,7 @@ def test_compile_rejects_effect_operation_with_unknown_validator(tmp_path: Path)
 
 def test_compile_rejects_non_blueprint_fixture_unknown_validator(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
-    _allow_fixture_handler_implementation(monkeypatch)
     assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
     operations_path = _fixture_runtime_effect_operations_path(assets_root)
     payload = _load_json(operations_path)

@@ -175,8 +175,8 @@ Blueprint graph authoring has two additional invariants:
   directly mutates queues.
 - every Blueprint terminal outcome that creates durable work must have a
   matching runtime effect rule and lifecycle mutation plan. The compiler can
-  validate cross-references, but the runtime effect handler still owns
-  destination-before-source ordering.
+  validate cross-references, and the compiled runtime effect operation plus
+  lifecycle mutation plan own destination-before-source ordering.
 
 ## Workflow Primitive Rules
 
@@ -193,9 +193,9 @@ For the shipped foundation slice, primitives define:
   in what order
 - terminal actions and lifecycle mutation plans that explain how terminal
   outcomes become source lifecycle intents
-- runtime effect handlers and effect rules that let terminal results request
-  additional runtime-owned effects without mutating queues directly from stage
-  code
+- runtime effect operations, stores, validators, effect rules, and temporary
+  legacy handler aliases that let terminal results request additional
+  runtime-owned effects without mutating queues directly from stage code
 - recovery and failure policies used by compiler validation and future runtime
   interpretation
 - the active workspace schema epoch

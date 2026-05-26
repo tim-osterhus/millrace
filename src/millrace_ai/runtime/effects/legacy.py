@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .. import blueprint_effects, planner_effects
+from .. import planner_effects
 from . import operations
 from .registry import RuntimeEffectHandlerRegistration, RuntimeEffectHandlerRegistry
 
@@ -17,27 +17,27 @@ def legacy_runtime_effect_handler_registrations() -> tuple[RuntimeEffectHandlerR
             handler=planner_effects.planner_disposition,
         ),
         RuntimeEffectHandlerRegistration(
-            handler_id=blueprint_effects.MANAGER_BLUEPRINT_HANDLER_ID,
+            handler_id=operations.MANAGER_BLUEPRINT_OPERATION_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
             handler=operations.manager_blueprint_manifest_to_blueprint_drafts,
         ),
         RuntimeEffectHandlerRegistration(
-            handler_id=blueprint_effects.CONTRACTOR_BLUEPRINT_HANDLER_ID,
+            handler_id=operations.CONTRACTOR_BLUEPRINT_OPERATION_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
             handler=operations.contractor_blueprint_candidate_persist,
         ),
         RuntimeEffectHandlerRegistration(
-            handler_id=blueprint_effects.EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID,
+            handler_id=operations.EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
             handler=operations.evaluator_blueprint_approved_to_task,
         ),
         RuntimeEffectHandlerRegistration(
-            handler_id=blueprint_effects.EVALUATOR_BLUEPRINT_REJECTION_HANDLER_ID,
+            handler_id=operations.EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
             handler=operations.evaluator_blueprint_rejected_to_draft_revision,
         ),
         RuntimeEffectHandlerRegistration(
-            handler_id=blueprint_effects.MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID,
+            handler_id=operations.MECHANIC_BLUEPRINT_REPAIR_OPERATION_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
             handler=operations.mechanic_blueprint_repair_apply,
         ),

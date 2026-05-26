@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from millrace_ai.compilation import validation as validation_module
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import Plane, ResultClass, StageResultEnvelope, WorkItemKind
@@ -38,17 +37,7 @@ def _copy_assets_with_non_blueprint_fixture(tmp_path: Path) -> Path:
     return copied_root
 
 
-def _allow_fixture_handler_implementation(monkeypatch: Any) -> None:
-    # Packet 04 uses a test-local runner; later migration packets replace this allow-list.
-    monkeypatch.setattr(
-        validation_module,
-        "_RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS",
-        validation_module._RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS | {FIXTURE_HANDLER_ID},
-    )
-
-
 def _compile_fixture_plan(tmp_path: Path, monkeypatch: Any):
-    _allow_fixture_handler_implementation(monkeypatch)
     assets_root = _copy_assets_with_non_blueprint_fixture(tmp_path)
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)

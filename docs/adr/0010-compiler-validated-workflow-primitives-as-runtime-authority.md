@@ -43,6 +43,7 @@ define:
 - terminal actions
 - lifecycle mutation plans
 - runtime effect handlers
+- runtime effect operations, stores, and validators
 - runtime effect rules
 - recovery policies
 - runtime failure policies
@@ -55,10 +56,11 @@ compiled primitive selections instead of re-deriving queue family ownership,
 terminal lifecycle behavior, effect selection, or schema compatibility from
 loose assets or hard-coded tables.
 
-Runtime effect rules may reference only declared handlers, and packaged
-handler ids must have packaged runtime implementations before a configuration
-can run. Duplicate stage/terminal effect bindings are invalid because runtime
-effect dispatch must be unambiguous.
+Runtime effect rules may reference only declared handlers and known operation
+ids. A selected operation must declare the rule's handler as a legacy alias,
+and runtime dispatch must provide a matching registry entry before execution.
+Duplicate stage/terminal effect bindings are invalid because runtime effect
+dispatch must be unambiguous.
 
 Scheduler lane policy and request-context generation are also compiler-owned
 runtime surfaces. Default shipped modes remain conservative, but any mode that

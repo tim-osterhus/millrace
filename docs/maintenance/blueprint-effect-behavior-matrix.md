@@ -1,16 +1,18 @@
 # Blueprint Effect Behavior Matrix
 
-This note records the current Blueprint runtime-effect behavior before the
-declarative runtime effect migration. The source of truth for actual mutation is
-still `src/millrace_ai/runtime/blueprint_effects.py`, dispatched by
-`src/millrace_ai/runtime/effect_execution.py`. The declared policy lives in
-`src/millrace_ai/assets/registry/runtime_effect_rules/blueprint_effect_rules.json`
-and handler metadata lives in
+This note records Blueprint runtime-effect behavior across the declarative
+runtime effect migration. The source of truth for actual mutation is now
+`src/millrace_ai/runtime/effects/operations.py`, selected through compiled
+operation assets and dispatched by `src/millrace_ai/runtime/effect_execution.py`.
+`src/millrace_ai/runtime/blueprint_effects.py` remains as a compatibility facade
+for legacy handler-id imports. Declared policy lives in
+`src/millrace_ai/assets/registry/runtime_effect_rules/blueprint_effect_rules.json`,
+and compatibility handler metadata lives in
 `src/millrace_ai/assets/registry/runtime_effect_handlers/default_effect_handlers.json`.
 
 The goal of this matrix is characterization, not redesign. Behaviors marked as
-missing direct tests should be covered by parity tests before replacing the
-legacy Python handler with declarative operations.
+missing direct tests should be covered before deleting legacy compatibility
+surfaces or widening operation runners.
 
 ## Summary
 

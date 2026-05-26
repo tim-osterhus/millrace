@@ -33,16 +33,6 @@ from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 from .effect_operations import validate_runtime_effect_operations
 from .outcomes import CompilerValidationError
 
-_RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS = frozenset(
-    {
-        "planner_disposition",
-        "manager_blueprint_manifest_to_blueprint_drafts",
-        "contractor_blueprint_candidate_persist",
-        "evaluator_blueprint_approved_to_task",
-        "evaluator_blueprint_rejected_to_draft_revision",
-        "mechanic_blueprint_repair_apply",
-    }
-)
 _MECHANIC_BLUEPRINT_NODE_ID = "mechanic_blueprint"
 _MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID = "mechanic_blueprint_repair_apply"
 _MECHANIC_BLUEPRINT_REPAIR_OUTCOME = "MECHANIC_BLUEPRINT_COMPLETE"
@@ -759,11 +749,6 @@ def _validate_runtime_effect_rules(
                 f"{handler_id}"
             )
         handler = runtime_effect_handlers_by_id[handler_id]
-        if handler_id not in _RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS:
-            raise CompilerValidationError(
-                f"runtime effect rule {rule_id} references handler {handler_id} "
-                "without a runtime implementation"
-            )
         handler_required_artifacts = set(getattr(handler, "required_artifacts"))
         handler_declared_artifacts = handler_required_artifacts | set(
             getattr(handler, "optional_artifacts")

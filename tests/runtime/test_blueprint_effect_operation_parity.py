@@ -518,7 +518,7 @@ def _result_payload_without_markdown_checksums(result: RuntimeEffectResult) -> d
 def _assert_runner_parity(tmp_path: Path, setup) -> None:
     legacy_result, legacy_paths = _run_manager_case(
         tmp_path / "legacy",
-        blueprint_effects._legacy_manager_blueprint_manifest_to_blueprint_drafts,
+        blueprint_effects.manager_blueprint_manifest_to_blueprint_drafts,
         setup,
     )
     operation_result, operation_paths = _run_manager_case(
@@ -564,7 +564,7 @@ def _run_contractor_case(
 def _assert_contractor_parity(tmp_path: Path, setup) -> None:
     legacy_result, legacy_paths = _run_contractor_case(
         tmp_path / "legacy",
-        blueprint_effects._legacy_contractor_blueprint_candidate_persist,
+        blueprint_effects.contractor_blueprint_candidate_persist,
         setup,
     )
     operation_result, operation_paths = _run_contractor_case(
@@ -673,7 +673,7 @@ def _run_evaluator_rejection_case(
 def _assert_evaluator_approval_parity(tmp_path: Path, setup) -> None:
     legacy_result, legacy_paths = _run_evaluator_approval_case(
         tmp_path / "legacy",
-        blueprint_effects._legacy_evaluator_blueprint_approved_to_task,
+        blueprint_effects.evaluator_blueprint_approved_to_task,
         setup,
     )
     operation_result, operation_paths = _run_evaluator_approval_case(
@@ -701,7 +701,7 @@ def _assert_evaluator_approval_parity(tmp_path: Path, setup) -> None:
 def _assert_evaluator_rejection_parity(tmp_path: Path, setup) -> None:
     legacy_result, legacy_paths = _run_evaluator_rejection_case(
         tmp_path / "legacy",
-        blueprint_effects._legacy_evaluator_blueprint_rejected_to_draft_revision,
+        blueprint_effects.evaluator_blueprint_rejected_to_draft_revision,
         setup,
     )
     operation_result, operation_paths = _run_evaluator_rejection_case(
@@ -748,7 +748,7 @@ def _run_mechanic_case(
 def _assert_mechanic_parity(tmp_path: Path, setup) -> None:
     legacy_result, legacy_paths = _run_mechanic_case(
         tmp_path / "legacy",
-        blueprint_effects._legacy_mechanic_blueprint_repair_apply,
+        blueprint_effects.mechanic_blueprint_repair_apply,
         setup,
     )
     operation_result, operation_paths = _run_mechanic_case(
@@ -814,20 +814,13 @@ def test_manager_operation_matches_legacy_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_legacy_enqueue = blueprint_effects.enqueue_blueprint_draft
     original_operation_enqueue = effect_operations.enqueue_blueprint_draft
-
-    def fail_second_enqueue(paths, draft):
-        if draft.draft_id == "draft-002":
-            raise OSError("simulated write failure")
-        return original_legacy_enqueue(paths, draft)
 
     def fail_second_operation_enqueue(paths, draft):
         if draft.draft_id == "draft-002":
             raise OSError("simulated write failure")
         return original_operation_enqueue(paths, draft)
 
-    monkeypatch.setattr(blueprint_effects, "enqueue_blueprint_draft", fail_second_enqueue)
     monkeypatch.setattr(
         effect_operations,
         "enqueue_blueprint_draft",
@@ -1097,18 +1090,12 @@ def test_evaluator_approval_operation_matches_legacy_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_legacy_enqueue = blueprint_effects.enqueue_task
     original_operation_enqueue = effect_operations.enqueue_task
-
-    def fail_legacy_enqueue(paths, task):
-        raise OSError("simulated task enqueue failure")
 
     def fail_operation_enqueue(paths, task):
         raise OSError("simulated task enqueue failure")
 
-    assert original_legacy_enqueue is not None
     assert original_operation_enqueue is not None
-    monkeypatch.setattr(blueprint_effects, "enqueue_task", fail_legacy_enqueue)
     monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
 
     _assert_evaluator_approval_parity(tmp_path, lambda paths, run_dir: None)
@@ -1160,13 +1147,9 @@ def test_mechanic_repair_operation_matches_legacy_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail_legacy_enqueue(paths, task):
-        raise OSError("simulated repaired task enqueue failure")
-
     def fail_operation_enqueue(paths, task):
         raise OSError("simulated repaired task enqueue failure")
 
-    monkeypatch.setattr(blueprint_effects, "enqueue_task", fail_legacy_enqueue)
     monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
 
     _assert_mechanic_parity(tmp_path, lambda paths, run_dir: None)
@@ -1329,17 +1312,9 @@ def test_evaluator_rejection_operation_matches_legacy_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail_legacy_critique(paths, critique, *, critique_state="open"):
-        raise OSError("simulated critique persistence failure")
-
     def fail_operation_critique(paths, critique, *, critique_state="open"):
         raise OSError("simulated critique persistence failure")
 
-    monkeypatch.setattr(
-        blueprint_effects,
-        "persist_blueprint_critique",
-        fail_legacy_critique,
-    )
     monkeypatch.setattr(
         effect_operations,
         "persist_blueprint_critique",

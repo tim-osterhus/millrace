@@ -156,11 +156,12 @@ workspace.
   classification plus runtime-effect failure policy matching by operation id
   and legacy handler id, including conservative Blueprint blocks and
   recoverable Mechanic Blueprint routes.
-- `src/millrace_ai/runtime/blueprint_effects.py`: Blueprint-specific runtime
-  effects for manifest/draft promotion, packet persistence, evaluator
-  approval/rejection, idempotent Manager replay, Contractor candidate replay,
-  Evaluator approval replay, Mechanic repaired-task application, and precise
-  Blueprint failure classes.
+- `src/millrace_ai/runtime/effects/operations.py`: shipped runtime operation
+  runners, including Blueprint manifest/draft promotion, packet persistence,
+  evaluator approval/rejection, replay handling, Mechanic repaired-task
+  application, and precise Blueprint failure classes. The
+  `runtime/blueprint_effects.py` module remains only as a compatibility facade
+  for legacy Blueprint handler imports.
 - `src/millrace_ai/runtime/blueprint_recovery_diagnostics.py`: shared
   Blueprint runtime-effect repair diagnostics used by status and doctor to
   expose the structured repair contract, replay conflict classes,

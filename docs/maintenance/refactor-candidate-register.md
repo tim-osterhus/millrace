@@ -22,8 +22,8 @@ coverage to keep behavior stable.
 
 | ID | Source | Main reason to change | Dependency risk | Suggested batch | Dedicated spec |
 | --- | --- | --- | --- | --- | --- |
-| MR-MAINT-001 | `src/millrace_ai/runtime/blueprint_effects.py` | Blueprint durable mutation is hardcoded as a privileged runtime subsystem. | Very high | Batch A | Required |
-| MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Core effect dispatch imports mode-specific handlers and couples failure routing to handler ids. | Very high | Batch A | Required |
+| MR-MAINT-001 | `src/millrace_ai/runtime/blueprint_effects.py` | Blueprint durable mutation has moved to operation runners; a legacy facade and handler-id compatibility surface remain. | Medium | Batch A | Required |
+| MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Core effect dispatch resolves operations through a registry seam, but failure routing and compatibility metadata still partly key on handler ids. | High | Batch A | Required |
 | MR-MAINT-003 | `src/millrace_ai/compilation/validation.py` | Many unrelated compiler rule families accumulate in one validation module. | High | Batch C | Required |
 | MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives.py` | Workflow primitive contracts span many contract families in one schema module. | Medium-high | Batch C | Required |
 | MR-MAINT-005 | `src/millrace_ai/runtime/blocked_recovery.py` | Blocked metadata, retry eligibility, queue mutation, lineage guards, and auto-recovery share one module. | High | Batch D | Optional, recommended |
@@ -43,10 +43,10 @@ Batch 3 as behavior-preserving package splits with compatibility facades.
 
 Source: `src/millrace_ai/runtime/blueprint_effects.py`
 
-Reason to change: The module owns Manager, Contractor, Evaluator, and Mechanic
-Blueprint durable mutations. That gives Blueprint a privileged runtime engine
-even though Blueprint should be a graph/assets configuration backed by generic
-runtime effect primitives.
+Reason to change: Manager, Contractor, Evaluator, and Mechanic Blueprint
+durable mutations now run through `runtime/effects/operations.py` and compiled
+operation assets. This module remains only as a compatibility facade for old
+imports and legacy handler-id names.
 
 Blast radius: Blueprint workspace state, runtime effect failure classes,
 runtime failure policy routing, repair artifacts, generated task promotion,
@@ -58,17 +58,19 @@ Owned tests: `tests/blueprint/test_effects.py`,
 `tests/runtime/test_runtime_effects.py`, and Blueprint-adjacent CLI/status
 coverage in `tests/cli/test_cli.py`.
 
-Missing characterization: A behavior matrix for every current Blueprint effect,
-legacy-vs-declarative parity tests, mutation journal expectations beyond
-created paths, old compiled-plan handler-id compatibility tests, and at least
-one non-Blueprint declarative effect fixture.
+Missing characterization: Remaining direct gaps are divergent duplicate
+Mechanic repair outputs, unsupported repair actions, and full-suite coverage
+after removing the mutation engine. Operation-id and handler-id compatibility
+tests plus one non-Blueprint declarative effect fixture are now present.
 
-Likely extraction seams: generic effect operations, effect stores, pure
-validators, artifact binding, idempotency/equivalence checks, work-item update
-operations, mutation journaling, and legacy handler adapters.
+Likely extraction seams: future extraction should split the large operation
+runner module into generic effect operations, effect stores, pure validators,
+artifact binding, idempotency/equivalence checks, work-item update operations,
+mutation journaling, and legacy handler adapters.
 
-Dependency risk: Very high. This module mutates durable workspace state and is
-used by `runtime/effect_execution.py` through a hardcoded handler map.
+Dependency risk: Medium. The facade itself no longer mutates durable workspace
+state, but public imports and legacy handler-id compatibility still depend on
+the exported names.
 
 Suggested batch: Batch A. Execute under the declarative runtime effects and
 Blueprint decoupling specification, one Blueprint effect at a time.
@@ -79,11 +81,11 @@ Dedicated implementation spec required: Yes. This is not generic cleanup.
 
 Source: `src/millrace_ai/runtime/effect_execution.py`
 
-Reason to change: Core runtime effect dispatch now resolves Blueprint and
-Planner legacy handlers through a registry seam, but it still keys policy
-behavior on handler ids and combines selection, handler execution,
-failure-policy routing, source lifecycle application, stage-result annotation,
-spawned-work projection, and event output.
+Reason to change: Core runtime effect dispatch now resolves operation runners
+through a registry seam, but it still carries legacy handler-id compatibility
+metadata and combines selection, runner execution, failure-policy routing,
+source lifecycle application, stage-result annotation, spawned-work projection,
+and event output.
 
 Blast radius: Every compiled runtime effect, router decision after stage
 completion, runtime failure policy routing, default repair fallback, blocked
