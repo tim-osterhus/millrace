@@ -4,18 +4,40 @@ import json
 import shutil
 from pathlib import Path
 
+from millrace_ai.compilation import validation as validation_module
 from millrace_ai.compilation.fingerprints import build_existing_plan_input_fingerprint
 from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_workspace_plan_currentness
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
 ASSETS_ROOT = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
+FIXTURE_HANDLER_ID = "fixture_echo_effect"
+FIXTURE_ASSETS_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "non_blueprint_effect_assets"
+)
 
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:
     copied_root = tmp_path / "assets"
     shutil.copytree(ASSETS_ROOT, copied_root)
     return copied_root
+
+
+def _copy_non_blueprint_fixture_assets(tmp_path: Path) -> Path:
+    copied_root = _copy_builtin_assets(tmp_path)
+    shutil.copytree(FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True)
+    return copied_root
+
+
+def _allow_fixture_handler_implementation(monkeypatch) -> None:
+    # Packet 04 uses a test-local runner; later migration packets replace this allow-list.
+    monkeypatch.setattr(
+        validation_module,
+        "_RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS",
+        validation_module._RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS | {FIXTURE_HANDLER_ID},
+    )
 
 
 def _compile_blueprint_with_assets(tmp_path: Path, assets_root: Path):
@@ -25,6 +47,17 @@ def _compile_blueprint_with_assets(tmp_path: Path, assets_root: Path):
         workspace_root,
         config=RuntimeConfig(),
         requested_mode_id="blueprint_codex",
+        assets_root=assets_root,
+    )
+
+
+def _compile_default_with_assets(tmp_path: Path, assets_root: Path):
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    return compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
         assets_root=assets_root,
     )
 
@@ -50,8 +83,21 @@ def _runtime_effect_operations_path(assets_root: Path) -> Path:
     )
 
 
+def _fixture_runtime_effect_operations_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_operations"
+        / "fixture_runtime_effect_operations.json"
+    )
+
+
 def _effect_validators_path(assets_root: Path) -> Path:
     return assets_root / "registry" / "effect_validators" / "default_effect_validators.json"
+
+
+def _fixture_effect_stores_path(assets_root: Path) -> Path:
+    return assets_root / "registry" / "effect_stores" / "fixture_effect_stores.json"
 
 
 def _effect_stores_path(assets_root: Path) -> Path:
@@ -76,6 +122,14 @@ def _manager_operation(payload: dict) -> dict:
         definition
         for definition in payload["definitions"]
         if definition["operation_id"] == "manager_blueprint_manifest_to_blueprint_drafts"
+    )
+
+
+def _fixture_operation(payload: dict) -> dict:
+    return next(
+        definition
+        for definition in payload["definitions"]
+        if definition["operation_id"] == "fixture_echo_effect"
     )
 
 
@@ -230,6 +284,27 @@ def test_compile_rejects_effect_operation_with_unknown_validator(tmp_path: Path)
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_non_blueprint_fixture_unknown_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _allow_fixture_handler_implementation(monkeypatch)
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    operations_path = _fixture_runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    _fixture_operation(payload)["steps"][0]["validator_ids"].append("missing_fixture_validator")
+    _write_json(operations_path, payload)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime effect operation fixture_echo_effect step validate_required_artifacts "
+        "references unknown validator missing_fixture_validator"
+    ) in _diagnostic_text(outcome)
+
+
 def test_compile_rejects_effect_validator_bound_to_unowned_artifact(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     validators_path = _effect_validators_path(assets_root)
@@ -284,6 +359,20 @@ def test_compile_rejects_unsafe_effect_store_path(tmp_path: Path) -> None:
     _write_json(stores_path, payload)
 
     outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert "Invalid runtime effect store definition in asset" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_fixture_unsafe_store_path(tmp_path: Path) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    stores_path = _fixture_effect_stores_path(assets_root)
+    payload = _load_json(stores_path)
+    payload["definitions"][0]["runtime_relative_root"] = "../fixture-effects"
+    _write_json(stores_path, payload)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None

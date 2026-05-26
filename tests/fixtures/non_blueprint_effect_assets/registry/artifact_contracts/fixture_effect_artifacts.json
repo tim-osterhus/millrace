@@ -1,0 +1,21 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "artifact_contract",
+      "artifact_id": "fixture_effect_input",
+      "canonical_filename": "fixture_effect_input.json",
+      "preferred_format": "json",
+      "schema_id": "fixture_effect_input_v1",
+      "filename_adapters": [
+        {
+          "filename": "fixture_effect_input.json",
+          "format": "json",
+          "parser_id": "builtin.json",
+          "renderer_id": "builtin.json"
+        }
+      ],
+      "consumer_handler_ids": ["fixture_echo_effect"]
+    }
+  ]
+}

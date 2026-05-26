@@ -1,0 +1,23 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_handler",
+      "handler_id": "fixture_echo_effect",
+      "source_planes": ["planning"],
+      "allowed_source_families": ["spec"],
+      "destination_kinds": [],
+      "required_artifacts": ["fixture_effect_input"],
+      "optional_artifacts": [],
+      "returns_source_lifecycle_intent": false,
+      "requires_lifecycle_mutation_plan": false,
+      "creates_work_items": false,
+      "declared_capabilities": [],
+      "failure_classes": [
+        "fixture_effect_input_missing",
+        "fixture_effect_invalid",
+        "legacy_handler_failure"
+      ]
+    }
+  ]
+}
