@@ -87,6 +87,50 @@ def test_docs_reference_check_reports_missing_source_paths_once(tmp_path: Path) 
     )
 
 
+def test_docs_reference_check_uses_tracked_markdown_only(tmp_path: Path) -> None:
+    docs_root = tmp_path / "docs"
+    docs_root.mkdir()
+    (docs_root / "tracked.md").write_text(
+        "See `src/millrace_ai/runtime/live.py`.",
+        encoding="utf-8",
+    )
+    (docs_root / "ignored.md").write_text(
+        "See `src/millrace_ai/runtime/missing.py`.",
+        encoding="utf-8",
+    )
+    tracked_paths = (
+        Path("docs/tracked.md"),
+        Path("src/millrace_ai/runtime/live.py"),
+    )
+
+    missing = report.find_missing_doc_source_references(tmp_path, tracked_paths)
+
+    assert missing == ()
+
+
+def test_missing_doc_references_are_integrity_failures() -> None:
+    shape = report.RepoShape(
+        largest_source_modules=(),
+        largest_test_modules=(),
+        fan_out=(),
+        fan_in=(),
+        import_cycles=(),
+        suspicious_names=(),
+        missing_doc_references=(
+            report.MissingDocReference(
+                doc_path=Path("docs/shape.md"),
+                source_path=Path("src/millrace_ai/runtime/missing.py"),
+            ),
+        ),
+        tracked_artifacts=(),
+        ignored_artifacts=(),
+    )
+
+    assert shape.integrity_failures == (
+        "docs reference missing source path: docs/shape.md -> src/millrace_ai/runtime/missing.py",
+    )
+
+
 def test_ignored_artifacts_are_advisory_not_integrity_failures() -> None:
     shape = report.RepoShape(
         largest_source_modules=(),

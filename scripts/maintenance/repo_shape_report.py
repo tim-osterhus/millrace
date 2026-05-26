@@ -84,6 +84,11 @@ class RepoShape:
         failures: list[str] = []
         failures.extend(f"import cycle: {' -> '.join(cycle)}" for cycle in self.import_cycles)
         failures.extend(f"tracked build/local artifact: {format_path(path)}" for path in self.tracked_artifacts)
+        failures.extend(
+            "docs reference missing source path: "
+            f"{format_path(reference.doc_path)} -> {format_path(reference.source_path)}"
+            for reference in self.missing_doc_references
+        )
         return tuple(failures)
 
 

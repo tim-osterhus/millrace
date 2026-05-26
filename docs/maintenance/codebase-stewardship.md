@@ -38,8 +38,9 @@ uv run python scripts/maintenance/repo_shape_report.py
 ```
 
 The report is advisory for module size, import breadth, suspicious names, and
-ignored local artifacts. It fails only on objective integrity issues such as
-concrete import cycles or tracked generated/local artifacts.
+ignored local artifacts. It fails only on objective integrity issues: concrete
+import cycles, tracked generated/local artifacts, or Markdown docs that
+reference source paths missing from tracked source.
 
 ## Stewardship Rules
 
