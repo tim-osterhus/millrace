@@ -30,10 +30,10 @@ Public compatibility facades may re-export the same behavior.
   `millrace-agents/state/compiled_plan.json`.
 - `compilation/workspace_plan.py`, graph materialization, workflow primitive
   validation, queue-claim policy validation, runtime-effect rule validation,
-  learning-trigger validation, and completion-behavior compilation decide which
-  plane graphs, work-item families, queue policies, transitions, failure
-  policies, runtime effects, learning triggers, and closure activation rules
-  may run.
+  effect-operation catalog validation, learning-trigger validation, and
+  completion-behavior compilation decide which plane graphs, work-item
+  families, queue policies, transitions, failure policies, runtime effects,
+  learning triggers, and closure activation rules may run.
 - `runtime/compiled_plans.py` preserves the active launch-plan authority for
   already-dispatched work when config reload compiles a newer pending plan.
 
@@ -150,7 +150,8 @@ same-lineage Planning work.
 `planning.standard` or `planning.blueprint`, maps probe work to Recon, maps
 spec work to Planner, validates stage/work-item ownership, carries the
 Planning transition table, runtime failure recovery node, queue claim policy,
-runtime-effect rules, and completion behavior.
+runtime-effect rules with operation/legacy-handler identity, and completion
+behavior.
 
 **Runner request builder:** `runtime/stage_requests.py` builds
 `request_kind = active_work_item` requests with the active probe/spec path.
@@ -256,8 +257,8 @@ remain claimable.
 **Compiled plan authority:** `compiled_plan.json` selects
 `planning.blueprint`, maps Manager/Contractor/Evaluator/Mechanic Blueprint
 nodes, validates Blueprint work-item families and artifact contracts, selects
-runtime-effect handlers for Blueprint terminal results, and freezes repair
-policies.
+runtime-effect operations plus legacy handlers for Blueprint terminal results,
+and freezes repair policies.
 
 **Runner request builder:** `runtime/stage_requests.py` builds active
 work-item requests for Blueprint stages. `runtime/request_context.py` resolves
@@ -282,9 +283,9 @@ Mechanic repair actions, and block precise replay/partial-mutation failures.
 `workspace/blueprint_state.py` owns durable Blueprint file layout helpers.
 
 **Inspection/monitor visibility:** status exposes Blueprint counters and latest
-repair context; `runs show/trace` exposes runtime-effect handler, failure
-class, source lifecycle, created paths, and compiled identity; doctor checks
-closure/Blueprint health; raw Blueprint state remains inspectable under
+repair context; `runs show/trace` exposes runtime-effect operation, runner,
+legacy handler, failure class, source lifecycle, created paths, and compiled
+identity; doctor checks closure/Blueprint health; raw Blueprint state remains inspectable under
 `millrace-agents/blueprints/`.
 
 **Root-source contract:** Blueprint lineage uses the source spec or incident

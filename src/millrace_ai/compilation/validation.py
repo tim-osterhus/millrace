@@ -17,6 +17,7 @@ from millrace_ai.architecture import (
     RecoveryRole,
     RegisteredStageKindDefinition,
     RuntimeEffectHandlerDefinition,
+    RuntimeEffectOperationDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeFailurePolicyDefinition,
     TerminalActionDefinition,
@@ -228,6 +229,7 @@ def validate_workflow_primitives(
         workflow_primitives=workflow_primitives,
         families_by_id=families_by_id,
         runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
+        runtime_effect_operations_by_id=runtime_effect_operations_by_id,
         runtime_effect_rules_by_id=runtime_effect_rules_by_id,
         graphs_by_plane=graphs_by_plane,
         stage_kinds_by_node_id=stage_kinds_by_node_id,
@@ -868,6 +870,7 @@ def _validate_runtime_failure_policies(
     workflow_primitives: WorkflowPrimitiveBundle,
     families_by_id: dict[str, WorkItemFamilyDefinition],
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
     runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
@@ -895,6 +898,10 @@ def _validate_runtime_failure_policies(
         failure_class
         for handler in runtime_effect_handlers_by_id.values()
         for failure_class in getattr(handler, "failure_classes")
+    } | {
+        mapping.failure_class
+        for operation in runtime_effect_operations_by_id.values()
+        for mapping in operation.failure_mappings
     }
     for policy in workflow_primitives.runtime_failure_policies:
         active_planes = _runtime_failure_policy_active_planes(
@@ -915,6 +922,16 @@ def _validate_runtime_failure_policies(
                         f"runtime failure policy {policy.policy_id} references unknown "
                         f"runtime effect handler {handler_id}"
                     )
+            for operation_id in policy.applies_to_operation_ids:
+                if operation_id not in runtime_effect_operations_by_id:
+                    raise CompilerValidationError(
+                        f"runtime failure policy {policy.policy_id} references unknown "
+                        f"runtime effect operation {operation_id}"
+                    )
+            _validate_runtime_failure_policy_effect_identity_scope(
+                policy,
+                runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+            )
             if (
                 policy.action == "route_to_node"
                 and (
@@ -939,7 +956,7 @@ def _validate_runtime_failure_policies(
                     stage_kinds=stage_kinds,
                     policy_id=policy.policy_id,
                     role="source",
-                )
+                    )
             _validate_policy_nodes_in_declared_planes(
                 policy_id=policy.policy_id,
                 node_ids=policy.applies_to_source_node_ids,
@@ -1175,7 +1192,37 @@ def _policy_activating_node_ids(policy: RuntimeFailurePolicyDefinition) -> tuple
             getattr(policy, "recovery_node_id", None),
         )
         if node_id is not None
+            )
+
+
+def _validate_runtime_failure_policy_effect_identity_scope(
+    policy: RuntimeFailurePolicyDefinition,
+    *,
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+) -> None:
+    if not policy.applies_to_handler_ids or not policy.applies_to_operation_ids:
+        return
+    selected_operations = tuple(
+        runtime_effect_operations_by_id[operation_id]
+        for operation_id in policy.applies_to_operation_ids
     )
+    selected_handler_ids = set(policy.applies_to_handler_ids)
+    legacy_handlers_by_operation_id = {
+        operation.operation_id: set(operation.legacy_handler_ids)
+        for operation in selected_operations
+    }
+    compatible_handler_ids = set().union(*legacy_handlers_by_operation_id.values())
+    for handler_id in sorted(selected_handler_ids - compatible_handler_ids):
+        raise CompilerValidationError(
+            f"runtime failure policy {policy.policy_id} handler {handler_id} is not a "
+            f"legacy alias for operation ids {', '.join(policy.applies_to_operation_ids)}"
+        )
+    for operation_id, legacy_handler_ids in sorted(legacy_handlers_by_operation_id.items()):
+        if not (selected_handler_ids & legacy_handler_ids):
+            raise CompilerValidationError(
+                f"runtime failure policy {policy.policy_id} operation {operation_id} has no "
+                "selected legacy handler alias"
+            )
 
 
 def _validate_runtime_failure_policy_node_reference(

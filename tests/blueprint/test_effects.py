@@ -365,6 +365,35 @@ def test_blueprint_repair_decision_binds_repaired_generated_task_context() -> No
     assert decision.repair_action == "apply_repaired_generated_task"
 
 
+def test_blueprint_repair_decision_accepts_operation_identity() -> None:
+    payload = _repair_decision().model_dump(mode="python")
+    payload.pop("failed_handler_id")
+    payload["failed_operation_id"] = "evaluator_blueprint_approved_to_task"
+    payload["failed_runner_id"] = "legacy_python_handler"
+
+    decision = BlueprintRepairDecisionDocument.model_validate(payload)
+
+    assert decision.failed_operation_id == "evaluator_blueprint_approved_to_task"
+    assert decision.failed_handler_id == "evaluator_blueprint_approved_to_task"
+    assert decision.legacy_failed_handler_id == "evaluator_blueprint_approved_to_task"
+
+
+def test_blueprint_repair_decision_rejects_conflicting_legacy_handler_identity() -> None:
+    payload = _repair_decision().model_dump(mode="python")
+    payload["legacy_failed_handler_id"] = "manager_blueprint_manifest_to_blueprint_drafts"
+
+    with pytest.raises(ValueError, match="failed_handler_id and legacy_failed_handler_id"):
+        BlueprintRepairDecisionDocument.model_validate(payload)
+
+
+def test_blueprint_repair_decision_rejects_conflicting_operation_identity() -> None:
+    payload = _repair_decision().model_dump(mode="python")
+    payload["failed_operation_id"] = "manager_blueprint_manifest_to_blueprint_drafts"
+
+    with pytest.raises(ValueError, match="failed_operation_id is not compatible"):
+        BlueprintRepairDecisionDocument.model_validate(payload)
+
+
 def test_blueprint_repair_decision_requires_repaired_generated_task_artifact() -> None:
     with pytest.raises(ValueError, match="repaired_artifact_id"):
         BlueprintRepairDecisionDocument.model_validate(
@@ -436,6 +465,67 @@ def test_mechanic_blueprint_repair_apply_promotes_repaired_generated_task(
     queued_task = read_work_document_as(paths.tasks_queue_dir / "task-001.md", model=TaskDocument)
     assert "millrace-agents/blueprints/packets/approved/blueprint-001.json" in queued_task.references
     assert "millrace-agents/blueprints/evaluations/evaluation-001.json" in queued_task.references
+
+
+def test_mechanic_blueprint_repair_apply_matches_operation_identity_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    _activate_blueprint_draft(paths)
+    run_dir = _run_dir(tmp_path)
+    _persist_candidate(paths, run_dir)
+    _write_json(run_dir / "blueprint_evaluation.json", _evaluation("approved"))
+    _write_failed_approval_context(
+        run_dir,
+        runtime_effect_handler_id=None,
+        runtime_effect_operation_id="evaluator_blueprint_approved_to_task",
+        runtime_effect_runner_id="legacy_python_handler",
+    )
+    payload = _repair_decision().model_dump(mode="python")
+    payload.pop("failed_handler_id")
+    payload["failed_operation_id"] = "evaluator_blueprint_approved_to_task"
+    payload["failed_runner_id"] = "legacy_python_handler"
+    decision = BlueprintRepairDecisionDocument.model_validate(payload)
+    _write_repair_outputs(run_dir, decision=decision, task=_task())
+
+    result = blueprint_effects.mechanic_blueprint_repair_apply(
+        paths,
+        _mechanic_stage_result(),
+        run_dir,
+    )
+
+    assert result.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    assert (paths.tasks_queue_dir / "task-001.md").is_file()
+
+
+def test_mechanic_blueprint_repair_apply_blocks_runner_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    _activate_blueprint_draft(paths)
+    run_dir = _run_dir(tmp_path)
+    _persist_candidate(paths, run_dir)
+    _write_json(run_dir / "blueprint_evaluation.json", _evaluation("approved"))
+    _write_failed_approval_context(
+        run_dir,
+        runtime_effect_operation_id="evaluator_blueprint_approved_to_task",
+        runtime_effect_runner_id="legacy_python_handler",
+    )
+    payload = _repair_decision().model_dump(mode="python")
+    payload["failed_operation_id"] = "evaluator_blueprint_approved_to_task"
+    payload["failed_runner_id"] = "declarative_operation_runner"
+    decision = BlueprintRepairDecisionDocument.model_validate(payload)
+    _write_repair_outputs(run_dir, decision=decision, task=_task())
+
+    result = blueprint_effects.mechanic_blueprint_repair_apply(
+        paths,
+        _mechanic_stage_result(),
+        run_dir,
+    )
+
+    assert result.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert result.failure_class == "blueprint_repair_context_mismatch"
+    assert not (paths.tasks_queue_dir / "task-001.md").exists()
 
 
 def test_mechanic_blueprint_repair_apply_blocks_missing_repair_decision(

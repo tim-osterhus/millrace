@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -110,6 +111,43 @@ def test_runtime_effect_failure_policy_matches_partial_mutation_block_action() -
     assert resolution.policy_id == "manager_partial_block"
     assert resolution.action == "block_source_work_item"
     assert resolution.failure_class == "blueprint_partial_mutation"
+
+
+def test_runtime_effect_failure_policy_matches_operation_id_without_handler_id() -> None:
+    failure = replace(
+        _manager_partial_mutation_failure(),
+        handler_id=None,
+        operation_id="manager_blueprint_manifest_to_blueprint_drafts",
+    )
+
+    resolution = interpret_runtime_effect_failure_policy(
+        (
+            _runtime_effect_failure_policy(
+                applies_to_handler_ids=(),
+                applies_to_operation_ids=("manager_blueprint_manifest_to_blueprint_drafts",),
+            ),
+        ),
+        failure,
+    )
+
+    assert resolution is not None
+    assert resolution.policy_id == "manager_partial_block"
+
+
+def test_runtime_effect_failure_policy_matches_legacy_handler_alias() -> None:
+    failure = replace(
+        _manager_partial_mutation_failure(),
+        handler_id=None,
+        legacy_handler_id="manager_blueprint_manifest_to_blueprint_drafts",
+    )
+
+    resolution = interpret_runtime_effect_failure_policy(
+        (_runtime_effect_failure_policy(),),
+        failure,
+    )
+
+    assert resolution is not None
+    assert resolution.policy_id == "manager_partial_block"
 
 
 def test_runtime_effect_failure_policy_does_not_route_partial_mutation_to_node() -> None:

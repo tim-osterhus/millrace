@@ -36,6 +36,9 @@ class RuntimeEffectFailurePolicyInput:
     source_family_id: str | None
     created_paths: tuple[str, ...]
     message: str | None
+    operation_id: str | None = None
+    runner_id: str | None = None
+    legacy_handler_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +92,7 @@ def interpret_runtime_effect_failure_policy(
 
     if (
         not failure.failure_class
-        or not failure.handler_id
+        or not (failure.handler_id or failure.operation_id or failure.legacy_handler_id)
         or not failure.source_node_id
         or not failure.source_plane
         or not failure.source_family_id
@@ -137,8 +140,13 @@ def _policy_matches_effect_failure(
     ):
         return False
     if not _matches_optional_tuple(
+        _tuple_attr(policy, "applies_to_operation_ids"),
+        failure.operation_id,
+    ):
+        return False
+    if not _matches_optional_tuple_any(
         _tuple_attr(policy, "applies_to_handler_ids"),
-        failure.handler_id,
+        (failure.handler_id, failure.legacy_handler_id),
     ):
         return False
     if not _matches_optional_tuple(
@@ -154,6 +162,10 @@ def _policy_matches_effect_failure(
 
 def _matches_optional_tuple(values: tuple[str, ...], candidate: str | None) -> bool:
     return not values or (candidate is not None and candidate in values)
+
+
+def _matches_optional_tuple_any(values: tuple[str, ...], candidates: tuple[str | None, ...]) -> bool:
+    return not values or any(candidate is not None and candidate in values for candidate in candidates)
 
 
 def _tuple_attr(policy: object, name: str) -> tuple[str, ...]:

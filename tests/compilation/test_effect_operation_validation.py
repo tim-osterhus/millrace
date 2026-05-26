@@ -58,6 +58,15 @@ def _effect_stores_path(assets_root: Path) -> Path:
     return assets_root / "registry" / "effect_stores" / "default_effect_stores.json"
 
 
+def _runtime_failure_policies_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_failure_policies"
+        / "default_runtime_failure_policies.json"
+    )
+
+
 def _diagnostic_text(outcome) -> str:
     return "\n".join(outcome.diagnostics.errors)
 
@@ -137,6 +146,53 @@ def test_compile_rejects_effect_operation_with_unknown_primitive(tmp_path: Path)
     assert (
         "runtime effect operation manager_blueprint_manifest_to_blueprint_drafts step "
         "validate_required_artifacts references unknown primitive unknown_primitive"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_runtime_failure_policy_with_unknown_operation(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    policies_path = _runtime_failure_policies_path(assets_root)
+    payload = _load_json(policies_path)
+    manager_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "manager_blueprint_pre_mutation_artifact_repair"
+    )
+    manager_policy["applies_to_operation_ids"] = ["missing_operation"]
+    _write_json(policies_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime failure policy manager_blueprint_pre_mutation_artifact_repair references unknown "
+        "runtime effect operation missing_operation"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_runtime_failure_policy_operation_handler_drift(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    policies_path = _runtime_failure_policies_path(assets_root)
+    payload = _load_json(policies_path)
+    manager_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "manager_blueprint_pre_mutation_artifact_repair"
+    )
+    manager_policy["applies_to_operation_ids"] = ["evaluator_blueprint_approved_to_task"]
+    _write_json(policies_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime failure policy manager_blueprint_pre_mutation_artifact_repair handler "
+        "manager_blueprint_manifest_to_blueprint_drafts is not a legacy alias for operation "
+        "ids evaluator_blueprint_approved_to_task"
     ) in _diagnostic_text(outcome)
 
 

@@ -521,11 +521,18 @@ def _spawned_kind_from_effect_rule(
     if compiled_plan is None:
         return None
     handler_id = stage_result.metadata.get("runtime_effect_handler_id")
-    if not isinstance(handler_id, str):
+    operation_id = stage_result.metadata.get("runtime_effect_operation_id")
+    legacy_handler_id = stage_result.metadata.get("runtime_effect_legacy_handler_id")
+    if not isinstance(handler_id, str) and not isinstance(operation_id, str):
         return None
     terminal_result = stage_result.terminal_result.value
     for rule in getattr(compiled_plan, "runtime_effect_rules", ()):
-        if getattr(rule, "handler_id", None) != handler_id:
+        if not _runtime_effect_rule_matches_identity(
+            rule,
+            handler_id=handler_id if isinstance(handler_id, str) else None,
+            operation_id=operation_id if isinstance(operation_id, str) else None,
+            legacy_handler_id=legacy_handler_id if isinstance(legacy_handler_id, str) else None,
+        ):
             continue
         if terminal_result not in getattr(rule, "on_outcomes", ()):
             continue
@@ -537,6 +544,26 @@ def _spawned_kind_from_effect_rule(
         ):
             return str(destination_family_id)
     return None
+
+
+def _runtime_effect_rule_matches_identity(
+    rule: object,
+    *,
+    handler_id: str | None,
+    operation_id: str | None,
+    legacy_handler_id: str | None,
+) -> bool:
+    return (
+        (handler_id is not None and getattr(rule, "handler_id", None) == handler_id)
+        or (
+            legacy_handler_id is not None
+            and getattr(rule, "handler_id", None) == legacy_handler_id
+        )
+        or (
+            operation_id is not None
+            and getattr(rule, "effect_operation_id", None) == operation_id
+        )
+    )
 
 
 def _path_matches_family_queue(

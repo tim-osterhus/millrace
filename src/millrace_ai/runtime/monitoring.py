@@ -8,6 +8,9 @@ from typing import Mapping
 
 _RUNTIME_EFFECT_MONITOR_KEYS = (
     "runtime_effect_handler_id",
+    "runtime_effect_operation_id",
+    "runtime_effect_runner_id",
+    "runtime_effect_legacy_handler_id",
     "runtime_effect_decision",
     "runtime_effect_failure_class",
     "runtime_effect_failure_message",

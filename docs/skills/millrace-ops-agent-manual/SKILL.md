@@ -498,8 +498,10 @@ Blueprint monitoring checklist:
   `blueprint_evaluation_count`, and `blueprint_promotion_count` before opening
   raw files.
 - Use `millrace runs show <run_id>` on Blueprint stage runs to inspect
-  `runtime_effect_handler_id`, `runtime_effect_decision`,
-  `runtime_effect_failure_class`, `runtime_effect_failure_message`,
+  `runtime_effect_handler_id`, `runtime_effect_operation_id`,
+  `runtime_effect_runner_id`, `runtime_effect_legacy_handler_id`,
+  `runtime_effect_decision`, `runtime_effect_failure_class`,
+  `runtime_effect_failure_message`,
   `runtime_effect_mutation_phase`, `runtime_effect_failure_policy_id`,
   `runtime_effect_recovery_action`, `runtime_effect_source_lifecycle_*`, and
   `runtime_effect_created_path` lines.

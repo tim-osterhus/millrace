@@ -71,6 +71,9 @@ class InspectedStageResult:
     context_render_plan_id: str | None = None
     rendered_prompt_context_path: str | None = None
     runtime_effect_handler_id: str | None = None
+    runtime_effect_operation_id: str | None = None
+    runtime_effect_runner_id: str | None = None
+    runtime_effect_legacy_handler_id: str | None = None
     runtime_effect_decision: str | None = None
     runtime_effect_failure_class: str | None = None
     runtime_effect_failure_message: str | None = None
@@ -110,6 +113,9 @@ class InspectedRunSummary:
     token_usage: TokenUsage | None = None
     failure_origin: str | None = None
     runtime_effect_handler_id: str | None = None
+    runtime_effect_operation_id: str | None = None
+    runtime_effect_runner_id: str | None = None
+    runtime_effect_legacy_handler_id: str | None = None
     runtime_effect_decision: str | None = None
     runtime_effect_failure_class: str | None = None
     runtime_effect_failure_message: str | None = None
@@ -277,6 +283,18 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                     stage_result,
                     "runtime_effect_handler_id",
                 ),
+                runtime_effect_operation_id=_string_metadata(
+                    stage_result,
+                    "runtime_effect_operation_id",
+                ),
+                runtime_effect_runner_id=_string_metadata(
+                    stage_result,
+                    "runtime_effect_runner_id",
+                ),
+                runtime_effect_legacy_handler_id=_string_metadata(
+                    stage_result,
+                    "runtime_effect_legacy_handler_id",
+                ),
                 runtime_effect_decision=_string_metadata(
                     stage_result,
                     "runtime_effect_decision",
@@ -372,6 +390,21 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         ),
         runtime_effect_handler_id=(
             latest_runtime_effect_stage_result.runtime_effect_handler_id
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_operation_id=(
+            latest_runtime_effect_stage_result.runtime_effect_operation_id
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_runner_id=(
+            latest_runtime_effect_stage_result.runtime_effect_runner_id
+            if latest_runtime_effect_stage_result
+            else None
+        ),
+        runtime_effect_legacy_handler_id=(
+            latest_runtime_effect_stage_result.runtime_effect_legacy_handler_id
             if latest_runtime_effect_stage_result
             else None
         ),

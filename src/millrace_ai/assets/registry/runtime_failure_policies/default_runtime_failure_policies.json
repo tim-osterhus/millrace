@@ -48,6 +48,7 @@
         "blueprint_manifest_draft_mismatch"
       ],
       "applies_to_mutation_phases": ["pre_mutation"],
+      "applies_to_operation_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_source_node_ids": ["manager_blueprint"],
       "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
@@ -67,6 +68,7 @@
         "blueprint_source_lifecycle_invalid"
       ],
       "applies_to_mutation_phases": ["pre_mutation"],
+      "applies_to_operation_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_source_node_ids": ["manager_blueprint"],
       "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
@@ -87,6 +89,7 @@
         "blueprint_partial_mutation"
       ],
       "applies_to_mutation_phases": ["partial_mutation"],
+      "applies_to_operation_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
       "applies_to_source_node_ids": ["manager_blueprint"],
       "applies_to_source_terminal_state_ids": ["manager_blueprint_complete"],
@@ -105,6 +108,7 @@
         "generated_task_invalid"
       ],
       "applies_to_mutation_phases": ["pre_mutation"],
+      "applies_to_operation_ids": ["evaluator_blueprint_approved_to_task"],
       "applies_to_handler_ids": ["evaluator_blueprint_approved_to_task"],
       "applies_to_source_node_ids": ["evaluator_blueprint"],
       "applies_to_source_terminal_state_ids": ["blueprint_approved"],

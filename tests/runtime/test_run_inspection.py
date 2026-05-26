@@ -358,6 +358,9 @@ def test_inspect_run_surfaces_runtime_effect_metadata(tmp_path: Path) -> None:
         ),
         metadata={
             "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_operation_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_runner_id": "legacy_python_handler",
+            "runtime_effect_legacy_handler_id": "evaluator_blueprint_approved_to_task",
             "runtime_effect_decision": "request_complete_source",
             "runtime_effect_failure_class": "generated_task_missing",
             "runtime_effect_failure_message": "generated_task.json is missing",
@@ -382,6 +385,10 @@ def test_inspect_run_surfaces_runtime_effect_metadata(tmp_path: Path) -> None:
 
     assert summary.failure_class == "generated_task_missing"
     assert inspected.runtime_effect_handler_id == "evaluator_blueprint_approved_to_task"
+    assert inspected.runtime_effect_operation_id == "evaluator_blueprint_approved_to_task"
+    assert inspected.runtime_effect_runner_id == "legacy_python_handler"
+    assert inspected.runtime_effect_legacy_handler_id == "evaluator_blueprint_approved_to_task"
+    assert summary.runtime_effect_operation_id == "evaluator_blueprint_approved_to_task"
     assert inspected.runtime_effect_decision == "request_complete_source"
     assert inspected.runtime_effect_failure_class == "generated_task_missing"
     assert inspected.runtime_effect_failure_message == "generated_task.json is missing"

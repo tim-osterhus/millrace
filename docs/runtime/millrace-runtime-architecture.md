@@ -146,14 +146,16 @@ workspace.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
 - `src/millrace_ai/runtime/effects/`: runtime effect result contracts,
   source lifecycle intent creation, destination-existence checks, and
-  effect-result application, plus the handler registry seam used by legacy
-  Python effect runners.
+  effect-result application, plus the handler registry seam that maps legacy
+  Python handler ids to runner ids during the operation-id migration.
 - `src/millrace_ai/runtime/effect_execution.py`: compiled runtime-effect
-  dispatch, failure-policy interpretation, matched-policy metadata, and
+  dispatch, operation/runner/legacy-handler identity annotation,
+  failure-policy interpretation, matched-policy metadata, and
   source-lifecycle application after runtime-owned mutation.
 - `src/millrace_ai/runtime/failure_policy.py`: runtime failure-origin
-  classification plus runtime-effect failure policy matching, including
-  conservative Blueprint blocks and recoverable Mechanic Blueprint routes.
+  classification plus runtime-effect failure policy matching by operation id
+  and legacy handler id, including conservative Blueprint blocks and
+  recoverable Mechanic Blueprint routes.
 - `src/millrace_ai/runtime/blueprint_effects.py`: Blueprint-specific runtime
   effects for manifest/draft promotion, packet persistence, evaluator
   approval/rejection, idempotent Manager replay, Contractor candidate replay,
@@ -363,8 +365,8 @@ Compile notes:
   transition, recovery, learning-trigger, execution-capability,
   concurrency-policy, workflow-primitive, and closure-activation surfaces
 - built-in stage work-item ownership, queue claim order, terminal lifecycle
-  intent, and runtime effect handler lookup are read from compiled workflow
-  authority rather than prompt prose or loose runtime tables
+  intent, and runtime effect operation/handler lookup are read from compiled
+  workflow authority rather than prompt prose or loose runtime tables
 - usage-governance config is next-tick runtime config, not a compile-input
   boundary
 - execution-capability config is a compile-input boundary because it changes

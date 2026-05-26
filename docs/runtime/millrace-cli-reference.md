@@ -257,6 +257,9 @@ machine-readable status payload with the same key state, including:
 - `latest_runtime_error_report_path`
 - `latest_operator_intervention`
 - `latest_runtime_effect_handler_id`
+- `latest_runtime_effect_operation_id`
+- `latest_runtime_effect_runner_id`
+- `latest_runtime_effect_legacy_handler_id`
 - `latest_runtime_effect_decision`
 - `latest_runtime_effect_failure_class`
 - `latest_runtime_effect_failure_message`
@@ -322,6 +325,9 @@ Each stage-result block now includes:
 - `request_kind`
 - `closure_target_root_spec_id`
 - `runtime_effect_handler_id`
+- `runtime_effect_operation_id`
+- `runtime_effect_runner_id`
+- `runtime_effect_legacy_handler_id`
 - `runtime_effect_decision`
 - `runtime_effect_failure_class`
 - `runtime_effect_failure_message`

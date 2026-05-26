@@ -143,6 +143,10 @@ families:
 - `src/millrace_ai/assets/registry/terminal_actions/`,
   `lifecycle_mutation_plans/`, `runtime_effect_handlers/`, and
   `runtime_effect_rules/` ship compiled post-stage mutation authority
+- `src/millrace_ai/assets/registry/runtime_effect_operations/`,
+  `effect_stores/`, and `effect_validators/` ship compiler-validated
+  declarative runtime-effect operation catalogs used as the forward-looking
+  authoring identity during the legacy-handler migration
 - `src/millrace_ai/assets/registry/recovery_policies/` and
   `runtime_failure_policies/` ship compiler-validated recovery/failure policy
   hooks
@@ -240,9 +244,11 @@ cycles:
   and rendered prompt-context artifacts.
 - `runtime/effects/`, `runtime/effect_execution.py`, and
   `runtime/lifecycle_interpreter.py` own generic compiled runtime-effect and
-  source-lifecycle application. `runtime/effects/legacy.py` is the temporary
+  source-lifecycle application. `runtime/effects/registry.py` provides the
+  handler registry seam, and `runtime/effects/legacy.py` is the temporary
   registry for legacy Python effect handlers while declarative operation
-  migration proceeds.
+  migration proceeds. Stage results and runtime events carry operation id,
+  runner id, and legacy handler id metadata during that migration.
 - `runtime/blueprint_effects.py` owns Blueprint-specific runtime effects while
   registering on the same compiled effect-selection path.
 - `runtime/planner_effects.py` owns Planner-specific runtime effects while

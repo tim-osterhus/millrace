@@ -419,7 +419,10 @@ class BlueprintRepairDecisionDocument(ContractModel):
     kind: Literal["blueprint_repair_decision"] = "blueprint_repair_decision"
 
     repair_id: str
-    failed_handler_id: str
+    failed_handler_id: str | None = None
+    failed_operation_id: str | None = None
+    failed_runner_id: str | None = None
+    legacy_failed_handler_id: str | None = None
     failed_run_id: str
     failed_stage_kind_id: str
     failed_node_id: str
@@ -453,9 +456,9 @@ class BlueprintRepairDecisionDocument(ContractModel):
 
     @model_validator(mode="after")
     def validate_repair_decision(self) -> "BlueprintRepairDecisionDocument":
+        effective_failed_handler_id = self._normalize_failed_effect_identity()
         _validate_identifiers(
             repair_id=self.repair_id,
-            failed_handler_id=self.failed_handler_id,
             failed_run_id=self.failed_run_id,
             failed_stage_kind_id=self.failed_stage_kind_id,
             failed_node_id=self.failed_node_id,
@@ -467,6 +470,15 @@ class BlueprintRepairDecisionDocument(ContractModel):
             root_idea_id=self.root_idea_id,
             target_blueprint_id=self.target_blueprint_id,
         )
+        _validate_identifiers(failed_handler_id=effective_failed_handler_id)
+        for field_name in (
+            "failed_operation_id",
+            "failed_runner_id",
+            "legacy_failed_handler_id",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_safe_identifier(value, field_name=field_name)
         for field_name in (
             "target_evaluation_id",
             "generated_task_id",
@@ -477,7 +489,7 @@ class BlueprintRepairDecisionDocument(ContractModel):
             value = getattr(self, field_name)
             if value is not None:
                 validate_safe_identifier(value, field_name=field_name)
-        if self.failed_handler_id not in _BLUEPRINT_REPAIR_HANDLER_IDS:
+        if effective_failed_handler_id not in _BLUEPRINT_REPAIR_HANDLER_IDS:
             raise ValueError("failed_handler_id is not Blueprint-repairable")
         _require_nonempty_text(
             failed_terminal_result=self.failed_terminal_result,
@@ -487,6 +499,36 @@ class BlueprintRepairDecisionDocument(ContractModel):
         _require_nonempty_items(self.verified_invariants, field_name="verified_invariants")
         self._validate_action_requirements()
         return self
+
+    def _normalize_failed_effect_identity(self) -> str:
+        if (
+            self.failed_handler_id is not None
+            and self.legacy_failed_handler_id is not None
+            and self.failed_handler_id != self.legacy_failed_handler_id
+        ):
+            raise ValueError("failed_handler_id and legacy_failed_handler_id must match")
+        failed_operation_alias = (
+            self.failed_operation_id
+            if self.failed_operation_id in _BLUEPRINT_REPAIR_HANDLER_IDS
+            else None
+        )
+        effective_failed_handler_id = (
+            self.failed_handler_id
+            or self.legacy_failed_handler_id
+            or failed_operation_alias
+        )
+        if effective_failed_handler_id is None:
+            raise ValueError("failed_handler_id or failed_operation_id is required")
+        if (
+            failed_operation_alias is not None
+            and failed_operation_alias != effective_failed_handler_id
+        ):
+            raise ValueError("failed_operation_id is not compatible with failed_handler_id")
+        if self.failed_handler_id is None:
+            self.failed_handler_id = effective_failed_handler_id
+        if self.legacy_failed_handler_id is None:
+            self.legacy_failed_handler_id = effective_failed_handler_id
+        return effective_failed_handler_id
 
     def _validate_action_requirements(self) -> None:
         if self.repair_action == "apply_repaired_generated_task":

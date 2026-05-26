@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import copyfile
@@ -1116,11 +1116,48 @@ def _stage_result_matches_repair_decision(
         and stage_result.terminal_result.value == decision.failed_terminal_result
         and stage_result.work_item_family_id == decision.work_item_family_id
         and stage_result.work_item_id == decision.work_item_id
-        and metadata.get("runtime_effect_handler_id") == decision.failed_handler_id
+        and _stage_result_matches_failed_effect_identity(metadata, decision)
         and metadata.get("runtime_effect_decision") == "request_block_source"
         and metadata.get("runtime_effect_failure_class") == decision.failure_class
         and metadata.get("runtime_effect_mutation_phase") == decision.mutation_phase
     )
+
+
+def _stage_result_matches_failed_effect_identity(
+    metadata: Mapping[str, object],
+    decision: BlueprintRepairDecisionDocument,
+) -> bool:
+    if (
+        decision.failed_runner_id is not None
+        and metadata.get("runtime_effect_runner_id") != decision.failed_runner_id
+    ):
+        return False
+    if decision.failed_operation_id is not None:
+        if metadata.get("runtime_effect_operation_id") != decision.failed_operation_id:
+            return False
+        if (
+            decision.failed_handler_id is not None
+            and decision.failed_handler_id != decision.failed_operation_id
+            and not _stage_result_matches_legacy_failed_handler(metadata, decision)
+        ):
+            return False
+        return True
+    return _stage_result_matches_legacy_failed_handler(metadata, decision)
+
+
+def _stage_result_matches_legacy_failed_handler(
+    metadata: Mapping[str, object],
+    decision: BlueprintRepairDecisionDocument,
+) -> bool:
+    handler_values = {
+        metadata.get("runtime_effect_handler_id"),
+        metadata.get("runtime_effect_legacy_handler_id"),
+    }
+    expected_values = {
+        decision.failed_handler_id,
+        decision.legacy_failed_handler_id,
+    }
+    return any(expected is not None and expected in handler_values for expected in expected_values)
 
 
 def _validate_repair_decision_matches_draft(

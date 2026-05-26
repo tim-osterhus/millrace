@@ -60,6 +60,9 @@ class RuntimeEffectResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     handler_id: str
+    operation_id: str | None = None
+    runner_id: str | None = None
+    legacy_handler_id: str | None = None
     decision: RuntimeEffectDecision = RuntimeEffectDecision.CONTINUE_ROUTE
     created_paths: tuple[str, ...] = ()
     source_lifecycle_intent: SourceLifecycleIntent | None = None

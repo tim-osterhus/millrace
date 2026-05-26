@@ -53,6 +53,9 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
         f"failure_class: {_value(summary.failure_class)}",
         f"failure_origin: {_value(summary.failure_origin)}",
         f"runtime_effect_handler_id: {_value(summary.runtime_effect_handler_id)}",
+        f"runtime_effect_operation_id: {_value(summary.runtime_effect_operation_id)}",
+        f"runtime_effect_runner_id: {_value(summary.runtime_effect_runner_id)}",
+        f"runtime_effect_legacy_handler_id: {_value(summary.runtime_effect_legacy_handler_id)}",
         f"runtime_effect_decision: {_value(summary.runtime_effect_decision)}",
         f"runtime_effect_failure_class: {_value(summary.runtime_effect_failure_class)}",
         f"runtime_effect_failure_message: {_value(summary.runtime_effect_failure_message)}",
@@ -114,6 +117,18 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
                 (
                     "runtime_effect_handler_id: "
                     f"{_value(stage_result.runtime_effect_handler_id)}"
+                ),
+                (
+                    "runtime_effect_operation_id: "
+                    f"{_value(stage_result.runtime_effect_operation_id)}"
+                ),
+                (
+                    "runtime_effect_runner_id: "
+                    f"{_value(stage_result.runtime_effect_runner_id)}"
+                ),
+                (
+                    "runtime_effect_legacy_handler_id: "
+                    f"{_value(stage_result.runtime_effect_legacy_handler_id)}"
                 ),
                 f"runtime_effect_decision: {_value(stage_result.runtime_effect_decision)}",
                 (

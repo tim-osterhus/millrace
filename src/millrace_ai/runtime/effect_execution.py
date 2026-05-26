@@ -74,9 +74,11 @@ def apply_runtime_effect_for_stage_result(
     if handler is None:
         raise RuntimeError(f"runtime effect handler {handler_id} is not implemented")
 
-    effect_result = _normalize_effect_failure_phase(
-        handler(engine.paths, stage_result, Path(request.run_dir), effective_plan)
+    effect_result = _with_runtime_effect_identity(
+        handler(engine.paths, stage_result, Path(request.run_dir), effective_plan),
+        effect_rule=effect_rule,
     )
+    effect_result = _normalize_effect_failure_phase(effect_result)
     failure_policy_resolution = _runtime_effect_failure_policy_resolution(
         effective_plan,
         stage_result=stage_result,
@@ -247,6 +249,9 @@ def _runtime_effect_failure_policy_resolution(
         source_family_id=stage_result.work_item_family_id,
         created_paths=effect_result.created_paths,
         message=effect_result.message,
+        operation_id=effect_result.operation_id,
+        runner_id=effect_result.runner_id,
+        legacy_handler_id=effect_result.legacy_handler_id,
     )
     return interpret_runtime_effect_failure_policy(
         compiled_plan.runtime_failure_policies_by_id.values(),
@@ -264,6 +269,36 @@ def _normalize_effect_failure_phase(effect_result: RuntimeEffectResult) -> Runti
             update={"mutation_phase": RuntimeEffectMutationPhase.PARTIAL_MUTATION}
         )
     return effect_result
+
+
+def _with_runtime_effect_identity(
+    effect_result: RuntimeEffectResult,
+    *,
+    effect_rule: RuntimeEffectRuleDefinition,
+) -> RuntimeEffectResult:
+    operation_id = effect_result.operation_id or getattr(effect_rule, "effect_operation_id", None)
+    runner_id = (
+        effect_result.runner_id
+        or _RUNTIME_EFFECT_HANDLER_REGISTRY.runner_id_for(effect_rule.handler_id)
+    )
+    legacy_handler_id = (
+        effect_result.legacy_handler_id
+        or effect_result.handler_id
+        or effect_rule.handler_id
+    )
+    if (
+        effect_result.operation_id == operation_id
+        and effect_result.runner_id == runner_id
+        and effect_result.legacy_handler_id == legacy_handler_id
+    ):
+        return effect_result
+    return effect_result.model_copy(
+        update={
+            "operation_id": operation_id,
+            "runner_id": runner_id,
+            "legacy_handler_id": legacy_handler_id,
+        }
+    )
 
 
 def _source_terminal_state_id_for_effect(
@@ -537,6 +572,9 @@ def _annotate_stage_result_with_effect(
     effect_metadata: dict[str, JsonValue] = {
         **stage_result.metadata,
         "runtime_effect_handler_id": effect_result.handler_id,
+        "runtime_effect_operation_id": effect_result.operation_id,
+        "runtime_effect_runner_id": effect_result.runner_id,
+        "runtime_effect_legacy_handler_id": effect_result.legacy_handler_id,
         "runtime_effect_decision": effect_result.decision.value,
         "runtime_effect_created_paths": list(effect_result.created_paths),
         "runtime_effect_failure_class": effect_result.failure_class,
@@ -591,6 +629,9 @@ def _emit_runtime_effect_event(
         event_type="runtime_effect_applied",
         data={
             "handler_id": effect_result.handler_id,
+            "operation_id": effect_result.operation_id,
+            "runner_id": effect_result.runner_id,
+            "legacy_handler_id": effect_result.legacy_handler_id,
             "decision": effect_result.decision.value,
             "failure_class": effect_result.failure_class,
             "message": effect_result.message,

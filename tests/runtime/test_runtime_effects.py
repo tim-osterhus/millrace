@@ -418,6 +418,9 @@ def test_planner_disposition_active_source_ready_continues_existing_route(
     assert application.router_decision is router_decision
     assert application.source_lifecycle_applied is False
     assert stage_result.metadata["runtime_effect_handler_id"] == "planner_disposition"
+    assert stage_result.metadata["runtime_effect_operation_id"] == "planner_disposition"
+    assert stage_result.metadata["runtime_effect_runner_id"] == "legacy_python_handler"
+    assert stage_result.metadata["runtime_effect_legacy_handler_id"] == "planner_disposition"
     assert stage_result.metadata["runtime_effect_decision"] == "continue_route"
 
 
@@ -668,6 +671,13 @@ def test_pre_mutation_effect_failure_routes_through_runtime_failure_policy(
         stage_result_path.read_text(encoding="utf-8")
     )
     assert persisted.metadata["runtime_effect_handler_id"] == (
+        "evaluator_blueprint_approved_to_task"
+    )
+    assert persisted.metadata["runtime_effect_operation_id"] == (
+        "evaluator_blueprint_approved_to_task"
+    )
+    assert persisted.metadata["runtime_effect_runner_id"] == "legacy_python_handler"
+    assert persisted.metadata["runtime_effect_legacy_handler_id"] == (
         "evaluator_blueprint_approved_to_task"
     )
     assert persisted.metadata["runtime_effect_decision"] == "request_block_source"

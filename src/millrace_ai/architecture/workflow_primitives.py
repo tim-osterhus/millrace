@@ -885,6 +885,7 @@ class RuntimeFailurePolicyDefinition(ArchitectureContractModel):
     applies_to_families: tuple[WorkItemFamilyId, ...] = ()
     applies_to_failure_classes: tuple[str, ...] = ()
     applies_to_mutation_phases: tuple[RuntimeEffectMutationPhaseValue, ...] = ()
+    applies_to_operation_ids: tuple[str, ...] = ()
     applies_to_handler_ids: tuple[RuntimeEffectHandlerId, ...] = ()
     applies_to_source_node_ids: tuple[str, ...] = ()
     applies_to_source_terminal_state_ids: tuple[str, ...] = ()
@@ -929,6 +930,7 @@ class RuntimeFailurePolicyDefinition(ArchitectureContractModel):
         "applies_to_origins",
         "applies_to_families",
         "applies_to_failure_classes",
+        "applies_to_operation_ids",
         "applies_to_handler_ids",
         "applies_to_source_node_ids",
         "applies_to_source_terminal_state_ids",

@@ -273,8 +273,9 @@ Important operator expectations:
   record, and generated execution task
 - Arbiter should stay suppressed while same-lineage Blueprint drafts or
   generated tasks remain queued, active, blocked, or unpromoted
-- `millrace runs show` should expose runtime-effect handler, decision,
-  source-lifecycle, and created-path details for Blueprint stage runs
+- `millrace runs show` should expose runtime-effect operation, runner, legacy
+  handler, decision, source-lifecycle, and created-path details for Blueprint
+  stage runs
 - `millrace status` and `millrace doctor` should surface the latest
   recoverable Evaluator approval repair context, including the structured
   repair contract, replay conflict classes, inert-artifact guard, and runtime
