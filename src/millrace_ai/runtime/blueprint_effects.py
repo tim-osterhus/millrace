@@ -368,6 +368,24 @@ def mechanic_blueprint_repair_apply(
     run_dir: Path,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> RuntimeEffectResult:
+    """Compatibility facade for the Mechanic Blueprint repair operation."""
+
+    from .effects import operations
+
+    return operations.mechanic_blueprint_repair_apply(
+        paths,
+        stage_result,
+        run_dir,
+        compiled_plan,
+    )
+
+
+def _legacy_mechanic_blueprint_repair_apply(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+    run_dir: Path,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RuntimeEffectResult:
     """Apply a structured Mechanic Blueprint repair decision through runtime-owned mutation."""
 
     created_paths: list[str] = []

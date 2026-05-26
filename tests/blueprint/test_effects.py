@@ -351,6 +351,10 @@ def _write_repair_outputs(
         _write_json(run_dir / "blueprint_repair_decision.json", decision)
     if task is not None:
         _write_json(run_dir / "repaired_generated_task.json", task)
+    (run_dir / "mechanic_report.md").write_text(
+        "# Mechanic Blueprint Report\n\nApplied repaired generated task.\n",
+        encoding="utf-8",
+    )
 
 
 def test_blueprint_repair_decision_binds_repaired_generated_task_context() -> None:

@@ -85,6 +85,7 @@ def test_builtin_effect_operation_assets_load() -> None:
         "evaluator_blueprint_approved_to_task.generated_task_scope",
         "evaluator_blueprint_rejected_to_draft_revision.rejection_context",
         "mechanic_blueprint_repair_apply.required_artifacts",
+        "mechanic_blueprint_repair_apply.repair_context",
     }
 
 

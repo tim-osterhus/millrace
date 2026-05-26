@@ -39,7 +39,7 @@ def legacy_runtime_effect_handler_registrations() -> tuple[RuntimeEffectHandlerR
         RuntimeEffectHandlerRegistration(
             handler_id=blueprint_effects.MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
-            handler=blueprint_effects.mechanic_blueprint_repair_apply,
+            handler=operations.mechanic_blueprint_repair_apply,
         ),
     )
 

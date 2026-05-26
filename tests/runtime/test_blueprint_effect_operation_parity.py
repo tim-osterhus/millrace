@@ -15,6 +15,7 @@ from millrace_ai.contracts import (
     BlueprintManifestDocument,
     BlueprintPacketDocument,
     BlueprintPromotionRecord,
+    BlueprintRepairDecisionDocument,
     Plane,
     ResultClass,
     SpecDocument,
@@ -41,6 +42,7 @@ NOW = datetime(2026, 5, 26, tzinfo=UTC)
 ManagerRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
 ContractorRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
 EvaluatorRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
+MechanicRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
 
 
 def _workspace(tmp_path: Path):
@@ -205,6 +207,51 @@ def _evaluator_stage_result(terminal_result: str = "BLUEPRINT_APPROVED") -> Stag
     )
 
 
+def _mechanic_stage_result() -> StageResultEnvelope:
+    return StageResultEnvelope(
+        run_id="run-mechanic-001",
+        plane=Plane.PLANNING,
+        stage="mechanic",
+        node_id="mechanic_blueprint",
+        stage_kind_id="mechanic_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-001",
+        terminal_result="MECHANIC_BLUEPRINT_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### MECHANIC_BLUEPRINT_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+
+def _failed_approval_stage_result(**metadata_updates: object) -> StageResultEnvelope:
+    metadata = {
+        "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
+        "runtime_effect_decision": "request_block_source",
+        "runtime_effect_failure_class": "generated_task_invalid",
+        "runtime_effect_failure_message": "generated task target_paths must stay within Blueprint scope",
+        "runtime_effect_mutation_phase": "pre_mutation",
+    }
+    metadata.update(metadata_updates)
+    return StageResultEnvelope(
+        run_id="run-evaluator-001",
+        plane=Plane.PLANNING,
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+        metadata=metadata,
+    )
+
+
 def _packet(**updates: object) -> BlueprintPacketDocument:
     values: dict[str, object] = {
         "blueprint_id": "blueprint-001",
@@ -316,6 +363,38 @@ def _promotion(**updates: object) -> BlueprintPromotionRecord:
     }
     values.update(updates)
     return BlueprintPromotionRecord(**values)
+
+
+def _repair_decision(**updates: object) -> BlueprintRepairDecisionDocument:
+    values: dict[str, object] = {
+        "repair_id": "repair-001",
+        "failed_handler_id": "evaluator_blueprint_approved_to_task",
+        "failed_run_id": "run-evaluator-001",
+        "failed_stage_kind_id": "evaluator_blueprint",
+        "failed_node_id": "evaluator_blueprint",
+        "failed_terminal_result": "BLUEPRINT_APPROVED",
+        "failure_class": "generated_task_invalid",
+        "mutation_phase": "pre_mutation",
+        "work_item_family_id": WorkItemKind.BLUEPRINT_DRAFT.value,
+        "work_item_id": "draft-001",
+        "draft_id": "draft-001",
+        "manifest_id": "manifest-001",
+        "root_spec_id": "spec-001",
+        "root_idea_id": "idea-001",
+        "repair_action": "apply_repaired_generated_task",
+        "target_blueprint_id": "blueprint-001",
+        "target_revision": 1,
+        "target_evaluation_id": "evaluation-001",
+        "generated_task_id": "task-001",
+        "repaired_artifact_id": "repaired_generated_task",
+        "repaired_artifact_path": "repaired_generated_task.json",
+        "reason": "Generated task omitted the failed approval lineage.",
+        "verified_invariants": ("Evaluation, packet, draft, task, and root lineage match.",),
+        "references": ("run-evaluator-001/blueprint_evaluation.json",),
+        "created_at": NOW,
+    }
+    values.update(updates)
+    return BlueprintRepairDecisionDocument(**values)
 
 
 def _activate_blueprint_draft(paths) -> None:
@@ -538,6 +617,31 @@ def _write_rejection_outputs(run_dir: Path, *, critique: object | None = None) -
     _write_json(run_dir / "blueprint_critique.json", _critique() if critique is None else critique)
 
 
+def _write_failed_approval_context(run_dir: Path, **metadata_updates: object) -> None:
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        stage_results_dir / "request-evaluator.json",
+        _failed_approval_stage_result(**metadata_updates),
+    )
+
+
+def _write_repair_outputs(
+    run_dir: Path,
+    *,
+    decision: BlueprintRepairDecisionDocument | dict[str, object] | None = None,
+    task: TaskDocument | dict[str, object] | None = None,
+) -> None:
+    if decision is not None:
+        _write_json(run_dir / "blueprint_repair_decision.json", decision)
+    if task is not None:
+        _write_json(run_dir / "repaired_generated_task.json", task)
+    (run_dir / "mechanic_report.md").write_text(
+        "# Mechanic report\n\nRepaired the generated task artifact.\n",
+        encoding="utf-8",
+    )
+
+
 def _run_evaluator_approval_case(
     tmp_path: Path,
     runner: EvaluatorRunner,
@@ -623,6 +727,50 @@ def _assert_evaluator_rejection_parity(tmp_path: Path, setup) -> None:
         read_blueprint_draft(_active_draft_path(operation_paths)).model_dump(mode="json")
         == read_blueprint_draft(_active_draft_path(legacy_paths)).model_dump(mode="json")
     )
+
+
+def _run_mechanic_case(
+    tmp_path: Path,
+    runner: MechanicRunner,
+    setup,
+) -> tuple[RuntimeEffectResult, object]:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_json(run_dir / "blueprint_evaluation.json", _evaluation("approved"))
+    _write_failed_approval_context(run_dir)
+    _write_repair_outputs(run_dir, decision=_repair_decision(), task=_task())
+    setup(paths, run_dir)
+    result = runner(paths, _mechanic_stage_result(), run_dir, None)
+    return result, paths
+
+
+def _assert_mechanic_parity(tmp_path: Path, setup) -> None:
+    legacy_result, legacy_paths = _run_mechanic_case(
+        tmp_path / "legacy",
+        blueprint_effects._legacy_mechanic_blueprint_repair_apply,
+        setup,
+    )
+    operation_result, operation_paths = _run_mechanic_case(
+        tmp_path / "operation",
+        effect_operations.mechanic_blueprint_repair_apply,
+        setup,
+    )
+
+    assert _result_payload_without_markdown_checksums(
+        operation_result,
+    ) == _result_payload_without_markdown_checksums(legacy_result)
+    for operation_path, legacy_path in (
+        (_evaluation_path(operation_paths), _evaluation_path(legacy_paths)),
+        (_approved_packet_path(operation_paths), _approved_packet_path(legacy_paths)),
+        (_approved_markdown_path(operation_paths), _approved_markdown_path(legacy_paths)),
+        (_candidate_packet_path(operation_paths), _candidate_packet_path(legacy_paths)),
+        (_candidate_markdown_path(operation_paths), _candidate_markdown_path(legacy_paths)),
+        (_task_path(operation_paths), _task_path(legacy_paths)),
+        (_promotion_path(operation_paths), _promotion_path(legacy_paths)),
+    ):
+        assert operation_path.exists() == legacy_path.exists()
+        assert _optional_text(operation_path) == _optional_text(legacy_path)
 
 
 def test_manager_operation_matches_legacy_success(tmp_path: Path) -> None:
@@ -964,6 +1112,142 @@ def test_evaluator_approval_operation_matches_legacy_partial_mutation(
     monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
 
     _assert_evaluator_approval_parity(tmp_path, lambda paths, run_dir: None)
+
+
+def test_mechanic_repair_operation_matches_legacy_handler_id_artifacts(
+    tmp_path: Path,
+) -> None:
+    _assert_mechanic_parity(tmp_path, lambda paths, run_dir: None)
+
+
+def test_mechanic_repair_operation_matches_operation_id_artifacts(
+    tmp_path: Path,
+) -> None:
+    def setup(paths, run_dir) -> None:
+        _write_failed_approval_context(
+            run_dir,
+            runtime_effect_handler_id=None,
+            runtime_effect_operation_id="evaluator_blueprint_approved_to_task",
+            runtime_effect_runner_id="legacy_python_handler",
+        )
+        payload = _repair_decision().model_dump(mode="python")
+        payload.pop("failed_handler_id")
+        payload["failed_operation_id"] = "evaluator_blueprint_approved_to_task"
+        payload["failed_runner_id"] = "legacy_python_handler"
+        _write_repair_outputs(
+            run_dir,
+            decision=BlueprintRepairDecisionDocument.model_validate(payload),
+            task=_task(),
+        )
+
+    _assert_mechanic_parity(tmp_path, setup)
+
+
+def test_mechanic_repair_operation_matches_legacy_invalid_repaired_task(
+    tmp_path: Path,
+) -> None:
+    def setup(paths, run_dir) -> None:
+        _write_repair_outputs(
+            run_dir,
+            decision=_repair_decision(),
+            task=_task(target_paths=("src/millrace_ai/runtime/unowned.py",)),
+        )
+
+    _assert_mechanic_parity(tmp_path, setup)
+
+
+def test_mechanic_repair_operation_matches_legacy_partial_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_legacy_enqueue(paths, task):
+        raise OSError("simulated repaired task enqueue failure")
+
+    def fail_operation_enqueue(paths, task):
+        raise OSError("simulated repaired task enqueue failure")
+
+    monkeypatch.setattr(blueprint_effects, "enqueue_task", fail_legacy_enqueue)
+    monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
+
+    _assert_mechanic_parity(tmp_path, lambda paths, run_dir: None)
+
+
+def test_mechanic_repair_operation_blocks_missing_mechanic_report(
+    tmp_path: Path,
+) -> None:
+    def setup(paths, run_dir) -> None:
+        (run_dir / "mechanic_report.md").unlink()
+
+    result, paths = _run_mechanic_case(
+        tmp_path,
+        effect_operations.mechanic_blueprint_repair_apply,
+        setup,
+    )
+
+    assert result.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert result.failure_class == "blueprint_repaired_generated_task_missing"
+    assert result.created_paths == ()
+    assert not _task_path(paths).exists()
+
+
+def test_mechanic_repair_operation_replays_completed_repair_promotion(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_json(run_dir / "blueprint_evaluation.json", _evaluation("approved"))
+    _write_failed_approval_context(run_dir)
+    _write_repair_outputs(run_dir, decision=_repair_decision(), task=_task())
+    first = effect_operations.mechanic_blueprint_repair_apply(
+        paths,
+        _mechanic_stage_result(),
+        run_dir,
+        None,
+    )
+    active_path = _active_draft_path(paths)
+    approved_draft_path = paths.runtime_root / "blueprints/drafts/approved/draft-001.json"
+    approved_draft_path.parent.mkdir(parents=True, exist_ok=True)
+    active_path.replace(approved_draft_path)
+
+    replay = effect_operations.mechanic_blueprint_repair_apply(
+        paths,
+        _mechanic_stage_result(),
+        run_dir,
+        None,
+    )
+
+    assert first.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    assert replay.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    assert replay.failure_class is None
+    assert replay.created_paths == ()
+    assert replay.source_lifecycle_intent is None
+    assert _approved_markdown_checksum_path(paths).is_file()
+    assert not _candidate_markdown_path(paths).exists()
+
+
+def test_mechanic_repair_operation_records_mutation_journal_for_durable_writes(
+    tmp_path: Path,
+) -> None:
+    result, _paths = _run_mechanic_case(
+        tmp_path,
+        effect_operations.mechanic_blueprint_repair_apply,
+        lambda paths, run_dir: None,
+    )
+
+    step_ids = tuple(entry["step_id"] for entry in result.mutation_journal)
+    assert {entry["operation_id"] for entry in result.mutation_journal} == {
+        "mechanic_blueprint_repair_apply"
+    }
+    assert step_ids == (
+        "persist_evaluation",
+        "move_candidate_packet_to_approved",
+        "move_candidate_markdown_to_approved",
+        "record_approved_markdown_checksum",
+        "enqueue_generated_task",
+        "persist_promotion",
+        "approve_blueprint_draft_lifecycle",
+    )
 
 
 def test_evaluator_rejection_operation_matches_legacy_success(tmp_path: Path) -> None:

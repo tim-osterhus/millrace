@@ -606,7 +606,7 @@
       "schema_version": "1.0",
       "kind": "runtime_effect_operation",
       "operation_id": "mechanic_blueprint_repair_apply",
-      "display_name": "Mechanic Blueprint repair legacy operation shell",
+      "display_name": "Mechanic Blueprint repair apply operation",
       "legacy_handler_ids": ["mechanic_blueprint_repair_apply"],
       "required_artifacts": [
         "blueprint_repair_decision",
@@ -618,46 +618,179 @@
           "step_id": "validate_required_artifacts",
           "primitive_id": "artifact_presence",
           "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_repair_decision"],
+          "validator_ids": ["mechanic_blueprint_repair_apply.repair_decision_required"]
+        },
+        {
+          "step_id": "validate_repair_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
           "reads_artifact_ids": [
-            "blueprint_repair_decision",
             "mechanic_report",
             "repaired_generated_task"
           ],
           "validator_ids": ["mechanic_blueprint_repair_apply.required_artifacts"]
         },
         {
-          "step_id": "dispatch_legacy_handler",
-          "primitive_id": "legacy_python_handler",
-          "mutation_phase": "unknown",
+          "step_id": "parse_repair_decision",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_repair_decision"],
+          "validator_ids": ["mechanic_blueprint_repair_apply.decision_schema"]
+        },
+        {
+          "step_id": "parse_repaired_generated_task",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["repaired_generated_task"],
+          "validator_ids": ["mechanic_blueprint_repair_apply.repaired_task_schema"]
+        },
+        {
+          "step_id": "validate_failed_effect_context",
+          "primitive_id": "blueprint_evaluation_packet_validation",
+          "mutation_phase": "pre_mutation",
           "reads_artifact_ids": [
             "blueprint_repair_decision",
-            "mechanic_report",
             "repaired_generated_task"
           ],
-          "store_id": "mutation_journal",
+          "store_id": "run_artifacts",
+          "validator_ids": ["mechanic_blueprint_repair_apply.repair_context"]
+        },
+        {
+          "step_id": "validate_repaired_generated_task_scope",
+          "primitive_id": "blueprint_generated_task_validation",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["repaired_generated_task"],
+          "validator_ids": ["mechanic_blueprint_repair_apply.repaired_task_scope"]
+        },
+        {
+          "step_id": "check_equivalent_outputs",
+          "primitive_id": "store_equivalence_check",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": [
+            "blueprint_repair_decision",
+            "repaired_generated_task"
+          ],
+          "validator_ids": ["mechanic_blueprint_repair_apply.output_equivalence"]
+        },
+        {
+          "step_id": "persist_evaluation",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_evaluations",
           "writes_store": true,
-          "journal_event_type": "legacy_handler_result"
+          "journal_event_type": "persist_evaluation"
+        },
+        {
+          "step_id": "move_candidate_packet_to_approved",
+          "primitive_id": "move_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_approved_packets",
+          "writes_store": true,
+          "journal_event_type": "move_candidate_packet_to_approved"
+        },
+        {
+          "step_id": "move_candidate_markdown_to_approved",
+          "primitive_id": "move_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_approved_markdown",
+          "writes_store": true,
+          "journal_event_type": "move_candidate_markdown_to_approved"
+        },
+        {
+          "step_id": "record_approved_markdown_checksum",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_approved_markdown_checksums",
+          "writes_store": true,
+          "journal_event_type": "record_approved_markdown_checksum"
+        },
+        {
+          "step_id": "enqueue_generated_task",
+          "primitive_id": "enqueue_work_items",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["repaired_generated_task"],
+          "store_id": "task_queue",
+          "writes_store": true,
+          "journal_event_type": "enqueue_generated_task"
+        },
+        {
+          "step_id": "persist_promotion",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_promotions",
+          "writes_store": true,
+          "journal_event_type": "persist_promotion"
+        },
+        {
+          "step_id": "approve_blueprint_draft_lifecycle",
+          "primitive_id": "source_lifecycle",
+          "mutation_phase": "partial_mutation",
+          "store_id": "source_lifecycle",
+          "writes_store": true,
+          "journal_event_type": "approve_blueprint_draft_lifecycle"
         }
       ],
       "idempotency": {
         "duplicate_policy": "fail",
-        "replay_policy": "resume_idempotently"
+        "replay_policy": "resume_idempotently",
+        "equivalence_validator_ids": [
+          "mechanic_blueprint_repair_apply.output_equivalence"
+        ]
       },
       "failure_mappings": [
+        {
+          "failure_class": "blueprint_repair_decision_missing",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.repair_decision_required"
+        },
+        {
+          "failure_class": "blueprint_repair_decision_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.decision_schema"
+        },
         {
           "failure_class": "blueprint_repaired_generated_task_missing",
           "mutation_phase": "pre_mutation",
           "validator_id": "mechanic_blueprint_repair_apply.required_artifacts"
         },
         {
-          "failure_class": "legacy_handler_failure",
-          "mutation_phase": "unknown"
+          "failure_class": "blueprint_repaired_generated_task_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.repaired_task_schema"
+        },
+        {
+          "failure_class": "blueprint_repaired_generated_task_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.repaired_task_scope"
+        },
+        {
+          "failure_class": "blueprint_repair_context_mismatch",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.repair_context"
+        },
+        {
+          "failure_class": "blueprint_repair_context_mismatch",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.output_equivalence"
+        },
+        {
+          "failure_class": "blueprint_partial_mutation",
+          "mutation_phase": "partial_mutation"
         }
       ],
       "mutation_journal": {
         "entry_id_template": "{operation_id}:{run_id}:{step_id}",
         "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
-        "record_step_ids": ["dispatch_legacy_handler"]
+        "record_step_ids": [
+          "persist_evaluation",
+          "move_candidate_packet_to_approved",
+          "move_candidate_markdown_to_approved",
+          "record_approved_markdown_checksum",
+          "enqueue_generated_task",
+          "persist_promotion",
+          "approve_blueprint_draft_lifecycle"
+        ]
       },
       "partial_commit_policy": "block_source"
     }

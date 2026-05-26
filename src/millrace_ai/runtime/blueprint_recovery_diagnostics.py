@@ -10,12 +10,14 @@ from millrace_ai.contracts import StageResultEnvelope
 from millrace_ai.paths import WorkspacePaths
 
 BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID = "evaluator_blueprint_approved_to_task"
+BLUEPRINT_APPROVAL_REPAIR_OPERATION_ID = "evaluator_blueprint_approved_to_task"
 BLUEPRINT_APPROVAL_REPAIR_POLICY_ID = "blueprint_approval_pre_mutation_effect_validation"
 BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES = {
     "generated_task_invalid",
     "generated_task_missing",
 }
 BLUEPRINT_REPAIR_APPLY_HANDLER_ID = "mechanic_blueprint_repair_apply"
+BLUEPRINT_REPAIR_APPLY_OPERATION_ID = "mechanic_blueprint_repair_apply"
 
 BLUEPRINT_REPAIR_CONTRACT_STATUS = (
     "action=apply_repaired_generated_task "
@@ -37,6 +39,8 @@ BLUEPRINT_RUNTIME_OWNERSHIP_BOUNDARY_STATUS = (
 
 _RUNTIME_EFFECT_STATUS_KEYS = {
     "latest_runtime_effect_handler_id": "runtime_effect_handler_id",
+    "latest_runtime_effect_operation_id": "runtime_effect_operation_id",
+    "latest_runtime_effect_legacy_handler_id": "runtime_effect_legacy_handler_id",
     "latest_runtime_effect_decision": "runtime_effect_decision",
     "latest_runtime_effect_failure_class": "runtime_effect_failure_class",
     "latest_runtime_effect_failure_message": "runtime_effect_failure_message",
@@ -111,7 +115,10 @@ def blueprint_repair_diagnostic_status_values(
 ) -> dict[str, str]:
     if not _is_blueprint_approval_repair_context(runtime_effect_values):
         return {}
-    handler_id = runtime_effect_values["latest_runtime_effect_handler_id"]
+    handler_id = _display_runtime_effect_handler_id(
+        runtime_effect_values,
+        fallback=BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
+    )
     failure_class = runtime_effect_values["latest_runtime_effect_failure_class"]
     mutation_phase = runtime_effect_values["latest_runtime_effect_mutation_phase"]
     policy_id = runtime_effect_values.get(
@@ -143,8 +150,11 @@ def _is_blueprint_approval_repair_context(
     runtime_effect_values: Mapping[str, str],
 ) -> bool:
     return (
-        runtime_effect_values.get("latest_runtime_effect_handler_id")
-        == BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID
+        _runtime_effect_identity_matches(
+            runtime_effect_values,
+            expected_handler_id=BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
+            expected_operation_id=BLUEPRINT_APPROVAL_REPAIR_OPERATION_ID,
+        )
         and runtime_effect_values.get("latest_runtime_effect_decision")
         == "request_block_source"
         and runtime_effect_values.get("latest_runtime_effect_failure_class")
@@ -160,10 +170,41 @@ def _is_blueprint_repair_apply_context(
     runtime_effect_values: Mapping[str, str],
 ) -> bool:
     return (
-        runtime_effect_values.get("latest_runtime_effect_handler_id")
-        == BLUEPRINT_REPAIR_APPLY_HANDLER_ID
+        _runtime_effect_identity_matches(
+            runtime_effect_values,
+            expected_handler_id=BLUEPRINT_REPAIR_APPLY_HANDLER_ID,
+            expected_operation_id=BLUEPRINT_REPAIR_APPLY_OPERATION_ID,
+        )
         and runtime_effect_values.get("latest_runtime_effect_decision")
         == "request_complete_source"
+    )
+
+
+def _runtime_effect_identity_matches(
+    runtime_effect_values: Mapping[str, str],
+    *,
+    expected_handler_id: str,
+    expected_operation_id: str,
+) -> bool:
+    return (
+        runtime_effect_values.get("latest_runtime_effect_handler_id") == expected_handler_id
+        or runtime_effect_values.get("latest_runtime_effect_legacy_handler_id")
+        == expected_handler_id
+        or runtime_effect_values.get("latest_runtime_effect_operation_id")
+        == expected_operation_id
+    )
+
+
+def _display_runtime_effect_handler_id(
+    runtime_effect_values: Mapping[str, str],
+    *,
+    fallback: str,
+) -> str:
+    return (
+        runtime_effect_values.get("latest_runtime_effect_legacy_handler_id")
+        or runtime_effect_values.get("latest_runtime_effect_handler_id")
+        or runtime_effect_values.get("latest_runtime_effect_operation_id")
+        or fallback
     )
 
 
