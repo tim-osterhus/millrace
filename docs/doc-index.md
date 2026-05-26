@@ -22,6 +22,9 @@ workspace operation.
 
 - `runtime/millrace-runtime-architecture.md`: workspace ownership model,
   artifact model, module topology, and tick lifecycle.
+- `runtime/millrace-runtime-authority-map.md`: trace-by-trace mutation
+  authority for intake, queue selection, runner requests, artifacts, result
+  normalization, and durable runtime state.
 - `runtime/millrace-cli-reference.md`: current CLI command surface, aliases,
   and operator-facing command groups.
 - `runtime/millrace-compiler-and-frozen-plans.md`: mode resolution, compiled
@@ -91,6 +94,10 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
   characterization work.
 - `maintenance/documentation-ownership.md`: canonical owner document for each
   major architecture topic and duplicated sections to reconcile.
+- `maintenance/documentation-freshness-matrix.md`: source areas mapped to docs
+  that should be checked when those areas change.
+- `maintenance/refactor-candidate-register.md`: candidate ids, reasons to
+  change, risk, tests, and extraction strategy for targeted refactor work.
 - `adr/README.md`: accepted architecture-decision records.
 - `adr/0001-adopt-src-layout-and-domain-packages.md`
 - `adr/0002-runtime-engine-decomposition.md`

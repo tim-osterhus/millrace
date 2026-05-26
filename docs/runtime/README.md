@@ -17,6 +17,9 @@ If you need the shipped mode-to-plane graph matrix or per-plane topology, use
 ## Maintained Runtime Docs
 
 - `millrace-runtime-architecture.md`: workspace ownership model, artifact model, module topology, and tick lifecycle.
+- `millrace-runtime-authority-map.md`: trace-by-trace ownership for intake,
+  queue selection, runner requests, artifacts, result normalization, and
+  durable runtime mutation.
 - `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used when narrow evidence is not enough.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
 - `millrace-usage-governance.md`: shipped v1 default-off runtime-owned usage accounting, automatic pause/resume behavior, subscription telemetry, config-reload next-tick behavior, and operator visibility.
@@ -67,4 +70,10 @@ During package-boundary refactors, also run the focused guardrail suite:
 
 ```bash
 uv run --extra dev python -m pytest tests/test_import_cycles.py tests/test_source_hygiene.py -q
+```
+
+For advisory source/documentation shape review, run:
+
+```bash
+uv run python scripts/maintenance/repo_shape_report.py
 ```

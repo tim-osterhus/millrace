@@ -13,15 +13,28 @@ operator docs that own shipped behavior.
 - `documentation-ownership.md`: canonical owner document for each major
   architecture topic, plus duplicated or stale sections to clean up in later
   passes.
+- `documentation-freshness-matrix.md`: source areas mapped to docs that should
+  be checked when those areas change.
+- `refactor-candidate-register.md`: single source of truth for candidate ids,
+  reasons to change, risk, tests, and extraction strategy.
+
+## Advisory Report
+
+Run the repository shape report when source ownership or documentation shape
+changes:
+
+```bash
+uv run python scripts/maintenance/repo_shape_report.py
+```
+
+The report is advisory for module size, import breadth, suspicious names, and
+ignored local artifacts. It fails only on objective integrity issues such as
+concrete import cycles or tracked generated/local artifacts.
 
 ## Planned Additions
 
 The maintainability refactor wave will add these pages as their packets land:
 
-- `documentation-freshness-matrix.md`: source areas mapped to docs that should
-  be checked when those areas change.
-- `refactor-candidate-register.md`: single source of truth for candidate ids,
-  reasons to change, risk, tests, and extraction strategy.
 - `blueprint-effect-behavior-matrix.md`: Blueprint runtime-effect behavior and
   parity requirements before declarative migration.
 - behavior contract inventories for compiler validation, workflow primitives,
@@ -41,4 +54,3 @@ The maintainability refactor wave will add these pages as their packets land:
   state.
 - Keep AutoLab implementation deferred until the post-refactor architecture is
   documented and the AutoLab spec is rebaselined.
-
