@@ -792,7 +792,7 @@ def test_runtime_tick_reports_learning_request_build_exception_without_misroutin
     assert context["work_item_id"] == "learn-001"
 
 
-def test_learning_recovery_request_keeps_runtime_error_context_with_foreground_active_run(
+def test_learning_pre_dispatch_failure_keeps_foreground_active_run_and_blocks_learning_request(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -829,14 +829,16 @@ def test_learning_recovery_request_keeps_runtime_error_context_with_foreground_a
     )
     assert engine.snapshot is not None
     assert Plane.EXECUTION in engine.snapshot.active_runs_by_plane
-    learning_active_run = engine.snapshot.active_runs_by_plane[Plane.LEARNING]
-
-    request = RuntimeDaemonSupervisor(engine)._request_for_active_run(learning_active_run)
-
-    assert request.stage is LearningStageName.LIBRARIAN
-    assert request.active_work_item_id == "learn-001"
-    assert request.runtime_error_code == "learning_pre_dispatch_failed"
-    assert request.runtime_error_report_path is not None
+    assert Plane.LEARNING not in engine.snapshot.active_runs_by_plane
+    assert engine.snapshot.learning_status_marker == "### BLOCKED"
+    assert engine.snapshot.current_failure_class == "learning_pre_dispatch_failed"
+    assert (paths.learning_requests_blocked_dir / "learn-001.md").is_file()
+    assert not (paths.learning_requests_active_dir / "learn-001.md").exists()
+    context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+    assert context["error_code"] == "learning_pre_dispatch_failed"
+    assert context["work_item_family_id"] == "learning_request"
+    assert context["work_item_id"] == "learn-001"
+    assert context["repair_stage"] == "analyst"
     engine.close()
 
 

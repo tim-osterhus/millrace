@@ -645,6 +645,8 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "model_name": "Model Name:",
         "thinking_level": "Thinking Level:",
             "model_reasoning_effort": "Model Reasoning Effort:",
+            "model_assignment_alias_id": "Model Assignment Alias:",
+            "model_assignment_source": "Model Assignment Source:",
             "timeout_seconds": "Timeout Seconds:",
             "execution_capability_grants": "Execution Capability Grants",
             "capability_support_decisions": "Capability Support Decisions",

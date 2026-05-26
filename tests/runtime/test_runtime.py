@@ -428,6 +428,12 @@ def _renamed_compiled_node(
                 else policy
                 for policy in graph.compiled_threshold_policies
             ),
+            "runtime_failure_recovery": (
+                graph.runtime_failure_recovery.model_copy(update={"default_repair_node_id": new_node_id})
+                if graph.runtime_failure_recovery is not None
+                and graph.runtime_failure_recovery.default_repair_node_id == old_node_id
+                else graph.runtime_failure_recovery
+            ),
         }
     )
     graphs_by_plane = dict(compiled_plan.graphs_by_plane)

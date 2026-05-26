@@ -274,6 +274,8 @@ class RunnerRawResult(BaseModel):
     model_name: str | None = None
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
+    model_assignment_alias_id: str | None = None
+    model_assignment_source: str | None = None
 
     exit_kind: RunnerExitKind
     exit_code: int | None = None

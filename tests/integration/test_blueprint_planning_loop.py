@@ -1088,7 +1088,7 @@ def test_blueprint_planner_child_spec_disposition_resolves_arbiter_incident_with
     assert (paths.specs_active_dir / "spec-blueprint-gap-child-001.md").is_file()
 
 
-def test_blueprint_planner_missing_disposition_blocks_incident_without_manager(
+def test_blueprint_planner_missing_disposition_routes_incident_to_mechanic_without_manager(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -1124,9 +1124,25 @@ def test_blueprint_planner_missing_disposition_blocks_incident_without_manager(
         "auditor",
         "planner",
     ]
-    assert outcomes[-1].router_decision.action is RouterAction.BLOCKED
+    assert outcomes[-1].router_decision.action is RouterAction.RUN_STAGE
+    assert outcomes[-1].router_decision.next_stage is PlanningStageName.MECHANIC
+    assert outcomes[-1].router_decision.next_node_id == "mechanic_blueprint"
+    assert outcomes[-1].router_decision.next_stage_kind_id == "mechanic_blueprint"
     assert outcomes[-1].router_decision.failure_class == "planner_disposition_missing"
+    assert outcomes[-1].snapshot.active_stage_kind_id == "mechanic_blueprint"
+    assert outcomes[-1].snapshot.current_failure_class == "planner_disposition_missing"
+    assert outcomes[-1].snapshot.mechanic_attempt_count == 1
+    assert outcomes[-1].stage_result.metadata["runtime_effect_recovery_action"] == (
+        "default_runtime_repair"
+    )
     assert stage_kind_order == ["auditor", "planner"]
     assert manager_blueprint_sources == []
-    assert (paths.incidents_blocked_dir / "incident-blueprint-gap-001.md").is_file()
+    assert (paths.incidents_active_dir / "incident-blueprint-gap-001.md").is_file()
+    assert not (paths.incidents_blocked_dir / "incident-blueprint-gap-001.md").exists()
     assert (paths.specs_queue_dir / "spec-blueprint-gap-child-001.md").is_file()
+    context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
+    assert context["error_code"] == "planning_post_stage_apply_failed"
+    assert context["repair_stage"] == "mechanic"
+    assert context["exception_message"].startswith(
+        "planner_disposition:planner_disposition_missing"
+    )

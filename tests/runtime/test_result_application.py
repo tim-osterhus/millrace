@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from millrace_ai.architecture import (
     ArtifactContractDefinition,
     ArtifactFilenameAdapterDefinition,
@@ -40,6 +42,7 @@ from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.compiled_plans import archive_compiled_plan
 from millrace_ai.runtime.lanes import compiled_plan_fingerprint_for_runtime
+from millrace_ai.runtime.recon_transitions import ReconHandoffInvalidError
 from millrace_ai.runtime.result_application import apply_router_decision, route_stage_result
 from millrace_ai.runtime.run_traces import record_router_decision_trace
 from millrace_ai.runtime.supervisor import StageWorkerOutcome, apply_stage_completion
@@ -784,10 +787,11 @@ def test_recon_to_execution_fails_malformed_canonical_generated_task_before_fall
         artifact_paths=("recon_packet.md", "generated_task.json", "generated_task.md"),
     )
 
-    spawned = apply_router_decision(engine, _idle_recon_decision(), stage_result)
+    with pytest.raises(ReconHandoffInvalidError, match="Recon handoff artifacts failed validation"):
+        apply_router_decision(engine, _idle_recon_decision(), stage_result)
 
-    assert spawned == ()
-    assert (paths.probes_blocked_dir / "probe-001.md").is_file()
+    assert (paths.probes_active_dir / "probe-001.md").is_file()
+    assert not (paths.probes_blocked_dir / "probe-001.md").exists()
     assert not (paths.tasks_queue_dir / "task-from-probe.md").exists()
 
 
@@ -935,10 +939,11 @@ def test_recon_to_execution_fails_malformed_canonical_recon_packet_before_fallba
         artifact_paths=("recon_packet.json", "recon_packet.md", "generated_task.json"),
     )
 
-    spawned = apply_router_decision(engine, _idle_recon_decision(), stage_result)
+    with pytest.raises(ReconHandoffInvalidError, match="Recon handoff artifacts failed validation"):
+        apply_router_decision(engine, _idle_recon_decision(), stage_result)
 
-    assert spawned == ()
-    assert (paths.probes_blocked_dir / "probe-001.md").is_file()
+    assert (paths.probes_active_dir / "probe-001.md").is_file()
+    assert not (paths.probes_blocked_dir / "probe-001.md").exists()
     assert not (paths.tasks_queue_dir / "task-from-probe.md").exists()
 
 
@@ -1047,8 +1052,9 @@ def test_recon_to_planning_fails_malformed_canonical_generated_spec_before_fallb
         artifact_paths=("recon_packet.md", "generated_spec.json", "generated_spec.md"),
     )
 
-    spawned = apply_router_decision(engine, _idle_recon_decision(), stage_result)
+    with pytest.raises(ReconHandoffInvalidError, match="Recon handoff artifacts failed validation"):
+        apply_router_decision(engine, _idle_recon_decision(), stage_result)
 
-    assert spawned == ()
-    assert (paths.probes_blocked_dir / "probe-001.md").is_file()
+    assert (paths.probes_active_dir / "probe-001.md").is_file()
+    assert not (paths.probes_blocked_dir / "probe-001.md").exists()
     assert not (paths.specs_queue_dir / "spec-from-probe.md").exists()
