@@ -79,10 +79,11 @@ Dedicated implementation spec required: Yes. This is not generic cleanup.
 
 Source: `src/millrace_ai/runtime/effect_execution.py`
 
-Reason to change: Core runtime effect dispatch imports Blueprint and planner
-handler modules directly, keys policy behavior on handler ids, and combines
-selection, handler execution, failure-policy routing, source lifecycle
-application, stage-result annotation, spawned-work projection, and event output.
+Reason to change: Core runtime effect dispatch now resolves Blueprint and
+Planner legacy handlers through a registry seam, but it still keys policy
+behavior on handler ids and combines selection, handler execution,
+failure-policy routing, source lifecycle application, stage-result annotation,
+spawned-work projection, and event output.
 
 Blast radius: Every compiled runtime effect, router decision after stage
 completion, runtime failure policy routing, default repair fallback, blocked

@@ -238,13 +238,15 @@ cycles:
   config reload compiles a newer pending plan.
 - `runtime/request_context.py` owns deterministic per-request context bundles
   and rendered prompt-context artifacts.
-- `runtime/effects.py`, `runtime/effect_execution.py`, and
+- `runtime/effects/`, `runtime/effect_execution.py`, and
   `runtime/lifecycle_interpreter.py` own generic compiled runtime-effect and
-  source-lifecycle application.
+  source-lifecycle application. `runtime/effects/legacy.py` is the temporary
+  registry for legacy Python effect handlers while declarative operation
+  migration proceeds.
 - `runtime/blueprint_effects.py` owns Blueprint-specific runtime effects while
-  using the same compiled effect-selection path.
+  registering on the same compiled effect-selection path.
 - `runtime/planner_effects.py` owns Planner-specific runtime effects while
-  staying on the same compiled effect-selection path as Blueprint effects.
+  registering on the same compiled effect-selection path as Blueprint effects.
 - `runtime/completion_behavior.py`, `runtime/blocked_recovery.py`, and
   `runtime/error_recovery.py` own compiled completion behavior, blocked-work
   recovery, and runtime error recovery rather than folding those policies back

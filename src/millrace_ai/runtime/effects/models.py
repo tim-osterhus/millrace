@@ -13,7 +13,7 @@ from millrace_ai.contracts.work_refs import coerce_family_and_kind
 from millrace_ai.events import write_runtime_event
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from .lifecycle_interpreter import apply_source_lifecycle_intent
+from ..lifecycle_interpreter import apply_source_lifecycle_intent
 
 
 class RuntimeEffectDecision(str, Enum):

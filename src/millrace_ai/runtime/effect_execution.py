@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 
@@ -15,7 +14,6 @@ from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import load_recovery_counters, reset_forward_progress_counters, save_snapshot
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from . import blueprint_effects, planner_effects
 from .active_runs import snapshot_without_active_plane
 from .blocked_recovery import write_blocked_item_metadata
 from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
@@ -25,6 +23,7 @@ from .effects import (
     RuntimeEffectResult,
     apply_runtime_effect_result,
 )
+from .effects.legacy import default_legacy_runtime_effect_handler_registry
 from .error_recovery import (
     record_post_stage_exception_context,
     runtime_repair_attempts_exhausted,
@@ -42,27 +41,8 @@ if TYPE_CHECKING:
     from millrace_ai.runners import StageRunRequest
     from millrace_ai.runtime.engine import RuntimeEngine
 
-RuntimeEffectHandler = Callable[
-    [WorkspacePaths, StageResultEnvelope, Path, Any],
-    RuntimeEffectResult,
-]
-
-_HANDLERS_BY_ID: dict[str, RuntimeEffectHandler] = {
-    "planner_disposition": planner_effects.planner_disposition,
-    "manager_blueprint_manifest_to_blueprint_drafts": (
-        blueprint_effects.manager_blueprint_manifest_to_blueprint_drafts
-    ),
-    "contractor_blueprint_candidate_persist": (
-        blueprint_effects.contractor_blueprint_candidate_persist
-    ),
-    "evaluator_blueprint_approved_to_task": (
-        blueprint_effects.evaluator_blueprint_approved_to_task
-    ),
-    "evaluator_blueprint_rejected_to_draft_revision": (
-        blueprint_effects.evaluator_blueprint_rejected_to_draft_revision
-    ),
-    "mechanic_blueprint_repair_apply": blueprint_effects.mechanic_blueprint_repair_apply,
-}
+_RUNTIME_EFFECT_HANDLER_REGISTRY = default_legacy_runtime_effect_handler_registry()
+_HANDLERS_BY_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +70,7 @@ def apply_runtime_effect_for_stage_result(
     if effect_rule is None:
         return RuntimeEffectApplication(router_decision=router_decision)
     handler_id = effect_rule.handler_id
-    handler = _HANDLERS_BY_ID.get(handler_id)
+    handler = _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for(handler_id)
     if handler is None:
         raise RuntimeError(f"runtime effect handler {handler_id} is not implemented")
 

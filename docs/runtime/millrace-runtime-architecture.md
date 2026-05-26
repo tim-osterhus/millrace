@@ -144,9 +144,10 @@ workspace.
 - `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
 - `src/millrace_ai/runtime/outcomes.py`: runtime tick outcome contract shared by the engine and tick/request helpers without creating an engine import cycle.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
-- `src/millrace_ai/runtime/effects.py`: runtime effect result contracts,
+- `src/millrace_ai/runtime/effects/`: runtime effect result contracts,
   source lifecycle intent creation, destination-existence checks, and
-  effect-result application.
+  effect-result application, plus the handler registry seam used by legacy
+  Python effect runners.
 - `src/millrace_ai/runtime/effect_execution.py`: compiled runtime-effect
   dispatch, failure-policy interpretation, matched-policy metadata, and
   source-lifecycle application after runtime-owned mutation.
@@ -293,7 +294,7 @@ The implementation mirrors that ordering directly:
   collaborators for counters, work-item movement, incident creation,
   persistence, closure-target handling, and next-stage running status-marker
   updates after compiled `RUN_STAGE` decisions
-- `runtime/effects.py` and `workspace/queue_lifecycle.py` keep terminal
+- `runtime/effects/` and `workspace/queue_lifecycle.py` keep terminal
   lifecycle effects behind runtime-owned intent objects and queue interpreters
 
 Idle:
