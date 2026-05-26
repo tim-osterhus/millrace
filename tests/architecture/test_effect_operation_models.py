@@ -69,6 +69,15 @@ def test_runtime_effect_store_rejects_unsafe_paths() -> None:
         )
 
 
+def test_runtime_effect_store_rejects_windows_drive_paths() -> None:
+    with pytest.raises(ValidationError, match="runtime_relative_root"):
+        RuntimeEffectStoreDefinition(
+            store_id="bad_store",
+            store_type="workspace_state",
+            runtime_relative_root="C:/temp/millrace",
+        )
+
+
 def test_runtime_effect_step_requires_store_for_writes() -> None:
     with pytest.raises(ValidationError, match="store_id"):
         RuntimeEffectOperationStepDefinition(

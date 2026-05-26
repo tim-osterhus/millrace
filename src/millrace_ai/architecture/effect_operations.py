@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
@@ -253,7 +253,12 @@ def _normalize_runtime_path_template(value: str, *, field_label: str) -> str:
     if not normalized:
         raise ValueError(f"{field_label} may not be empty")
     path = PurePosixPath(normalized)
-    if path.is_absolute() or ".." in path.parts or path.as_posix() == ".":
+    if (
+        path.is_absolute()
+        or PureWindowsPath(normalized).drive
+        or ".." in path.parts
+        or path.as_posix() == "."
+    ):
         raise ValueError(f"{field_label} must be a safe runtime-relative path template")
     return path.as_posix()
 

@@ -26,13 +26,19 @@ Introduce compiler-validated runtime effect operation catalogs:
 Packet 01 keeps these catalogs inert for dispatch. Existing runtime effect
 rules still execute through `handler_id`; `effect_operation_id` is now a
 validated compiled authority surface that later packets can route through.
+During the migration, each rule's legacy handler id must remain declared on
+the selected operation, required run artifacts must be declared by that
+operation, and duplicate/replay policies must agree.
 
 ## Consequences
 
 This preserves old compiled-plan and handler-id behavior while giving the
 compiler a stable operation id to validate. It also makes unsafe store paths,
 unknown primitives, unknown validators, unknown stores, and missing
-partial-commit policy visible before runtime.
+partial-commit policy visible before runtime. Persisted plans that predate the
+operation/store/validator catalogs are treated as stale so startup
+`compile_if_needed` refreshes them instead of silently reusing empty catalog
+defaults.
 
 The immediate cost is dual metadata during migration: handler ids remain
 required for legacy execution while operation ids become the forward-looking

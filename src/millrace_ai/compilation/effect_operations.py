@@ -33,10 +33,12 @@ def validate_runtime_effect_operations(
 
     for rule in runtime_effect_rules_by_id.values():
         operation_id = rule.effect_operation_id
-        if operation_id not in runtime_effect_operations_by_id:
+        operation = runtime_effect_operations_by_id.get(operation_id)
+        if operation is None:
             raise CompilerValidationError(
                 f"runtime effect rule {rule.rule_id} references unknown operation {operation_id}"
             )
+        _validate_rule_operation_compatibility(rule, operation)
 
     for validator in effect_validators_by_id.values():
         _validate_primitive_id(
@@ -130,6 +132,36 @@ def _validate_runtime_effect_operation(
         )
 
 
+def _validate_rule_operation_compatibility(
+    rule: RuntimeEffectRuleDefinition,
+    operation: RuntimeEffectOperationDefinition,
+) -> None:
+    if rule.handler_id not in operation.legacy_handler_ids:
+        raise CompilerValidationError(
+            f"runtime effect rule {rule.rule_id} handler {rule.handler_id} is not a legacy alias "
+            f"for operation {operation.operation_id}"
+        )
+
+    missing_artifacts = set(rule.required_run_artifacts) - set(operation.required_artifacts)
+    if missing_artifacts:
+        artifacts = ", ".join(sorted(missing_artifacts))
+        raise CompilerValidationError(
+            f"runtime effect rule {rule.rule_id} requires artifacts not declared by operation "
+            f"{operation.operation_id}: {artifacts}"
+        )
+
+    if rule.duplicate_policy != operation.idempotency.duplicate_policy:
+        raise CompilerValidationError(
+            f"runtime effect rule {rule.rule_id} duplicate_policy does not match operation "
+            f"{operation.operation_id}"
+        )
+    if rule.replay_policy != operation.idempotency.replay_policy:
+        raise CompilerValidationError(
+            f"runtime effect rule {rule.rule_id} replay_policy does not match operation "
+            f"{operation.operation_id}"
+        )
+
+
 def _validate_operation_validator_binding(
     operation: RuntimeEffectOperationDefinition,
     validator: RuntimeEffectValidatorDefinition,
@@ -141,6 +173,15 @@ def _validate_operation_validator_binding(
                 f"runtime effect operation {operation.operation_id} binds validator "
                 f"{validator.validator_id} to artifact {artifact_id} not declared by the operation"
             )
+    mapped_failure_classes = {
+        mapping.failure_class
+        for mapping in operation.failure_mappings
+    }
+    if validator.failure_class not in mapped_failure_classes:
+        raise CompilerValidationError(
+            f"runtime effect operation {operation.operation_id} binds validator "
+            f"{validator.validator_id} with unmapped failure class {validator.failure_class}"
+        )
 
 
 def _validate_primitive_id(primitive_id: str, *, source_label: str) -> None:

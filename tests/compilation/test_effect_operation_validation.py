@@ -4,9 +4,10 @@ import json
 import shutil
 from pathlib import Path
 
-from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.compilation.fingerprints import build_existing_plan_input_fingerprint
+from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_workspace_plan_currentness
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.paths import bootstrap_workspace
+from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
 ASSETS_ROOT = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
 
@@ -104,6 +105,24 @@ def test_compile_rejects_effect_rule_with_unknown_operation(tmp_path: Path) -> N
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_effect_rule_operation_handler_drift(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    rules_path = _runtime_effect_rules_path(assets_root)
+    payload = _load_json(rules_path)
+    payload["definitions"][0]["effect_operation_id"] = "planner_disposition"
+    _write_json(rules_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime effect rule manager_blueprint_manifest_to_blueprint_drafts handler "
+        "manager_blueprint_manifest_to_blueprint_drafts is not a legacy alias for operation "
+        "planner_disposition"
+    ) in _diagnostic_text(outcome)
+
+
 def test_compile_rejects_effect_operation_with_unknown_primitive(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     operations_path = _runtime_effect_operations_path(assets_root)
@@ -178,6 +197,29 @@ def test_compile_rejects_effect_validator_bound_to_unowned_artifact(tmp_path: Pa
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_effect_validator_with_unmapped_failure_class(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["failure_mappings"] = [
+        mapping
+        for mapping in operation["failure_mappings"]
+        if mapping["failure_class"] != "blueprint_manifest_missing"
+    ]
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime effect operation manager_blueprint_manifest_to_blueprint_drafts binds validator "
+        "manager_blueprint_manifest_to_blueprint_drafts.required_artifacts with unmapped failure class "
+        "blueprint_manifest_missing"
+    ) in _diagnostic_text(outcome)
+
+
 def test_compile_rejects_unsafe_effect_store_path(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     stores_path = _effect_stores_path(assets_root)
@@ -217,3 +259,76 @@ def test_compile_rejects_multi_write_operation_without_partial_policy(tmp_path: 
         "runtime effect operation manager_blueprint_manifest_to_blueprint_drafts "
         "has multiple write steps without partial_commit_policy"
     ) in _diagnostic_text(outcome)
+
+
+def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+    config = RuntimeConfig()
+
+    compiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=config,
+        requested_mode_id="blueprint_codex",
+        assets_root=assets_root,
+    )
+    assert compiled.active_plan is not None
+    plan = compiled.active_plan
+    old_resolved_assets = tuple(
+        ref
+        for ref in plan.resolved_assets
+        if ref.asset_family
+        not in {
+            "runtime_effect_operation",
+            "runtime_effect_store",
+            "runtime_effect_validator",
+        }
+    )
+    old_plan = plan.model_copy(
+        update={
+            "resolved_assets": old_resolved_assets,
+            "runtime_effect_operations_by_id": {},
+            "effect_stores_by_id": {},
+            "effect_validators_by_id": {},
+        }
+    )
+    old_fingerprint = build_existing_plan_input_fingerprint(
+        config=config,
+        mode_id="blueprint_codex",
+        plan=old_plan,
+        paths=paths,
+        assets_root=assets_root,
+    )
+    old_plan = old_plan.model_copy(update={"compile_input_fingerprint": old_fingerprint})
+    (paths.state_dir / "compiled_plan.json").write_text(
+        old_plan.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=config,
+        requested_mode_id="blueprint_codex",
+        assets_root=assets_root,
+    )
+    assert currentness.state == "stale"
+
+    refreshed = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=config,
+        requested_mode_id="blueprint_codex",
+        assets_root=assets_root,
+        compile_if_needed=True,
+    )
+
+    assert refreshed.diagnostics.ok is True
+    assert refreshed.active_plan is not None
+    assert refreshed.active_plan.runtime_effect_operations_by_id
+    assert refreshed.active_plan.effect_stores_by_id
+    assert refreshed.active_plan.effect_validators_by_id
+    assert any(
+        ref.asset_family == "runtime_effect_operation"
+        for ref in refreshed.active_plan.resolved_assets
+    )

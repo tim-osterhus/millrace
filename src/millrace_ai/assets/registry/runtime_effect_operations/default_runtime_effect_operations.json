@@ -31,6 +31,11 @@
       },
       "failure_mappings": [
         {
+          "failure_class": "planner_disposition_missing",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "planner_disposition.required_artifacts"
+        },
+        {
           "failure_class": "legacy_handler_failure",
           "mutation_phase": "unknown"
         }
@@ -74,6 +79,11 @@
       },
       "failure_mappings": [
         {
+          "failure_class": "blueprint_manifest_missing",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.required_artifacts"
+        },
+        {
           "failure_class": "legacy_handler_failure",
           "mutation_phase": "unknown"
         }
@@ -115,6 +125,11 @@
         "replay_policy": "resume_idempotently"
       },
       "failure_mappings": [
+        {
+          "failure_class": "blueprint_candidate_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "contractor_blueprint_candidate_persist.required_artifacts"
+        },
         {
           "failure_class": "legacy_handler_failure",
           "mutation_phase": "unknown"
@@ -159,6 +174,11 @@
       },
       "failure_mappings": [
         {
+          "failure_class": "generated_task_missing",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "evaluator_blueprint_approved_to_task.required_artifacts"
+        },
+        {
           "failure_class": "legacy_handler_failure",
           "mutation_phase": "unknown"
         }
@@ -201,6 +221,11 @@
         "replay_policy": "resume_idempotently"
       },
       "failure_mappings": [
+        {
+          "failure_class": "blueprint_critique_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "evaluator_blueprint_rejected_to_draft_revision.required_artifacts"
+        },
         {
           "failure_class": "legacy_handler_failure",
           "mutation_phase": "unknown"
@@ -255,6 +280,11 @@
         "replay_policy": "resume_idempotently"
       },
       "failure_mappings": [
+        {
+          "failure_class": "blueprint_repaired_generated_task_missing",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "mechanic_blueprint_repair_apply.required_artifacts"
+        },
         {
           "failure_class": "legacy_handler_failure",
           "mutation_phase": "unknown"
