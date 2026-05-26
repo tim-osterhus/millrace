@@ -9,13 +9,17 @@ import pytest
 from pydantic import BaseModel
 
 from millrace_ai.contracts import (
+    BlueprintCritiqueDocument,
     BlueprintDraftDocument,
+    BlueprintEvaluationDocument,
     BlueprintManifestDocument,
     BlueprintPacketDocument,
+    BlueprintPromotionRecord,
     Plane,
     ResultClass,
     SpecDocument,
     StageResultEnvelope,
+    TaskDocument,
     WorkItemKind,
 )
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -24,15 +28,19 @@ from millrace_ai.runtime.effects import RuntimeEffectDecision, RuntimeEffectResu
 from millrace_ai.runtime.effects import operations as effect_operations
 from millrace_ai.workspace.blueprint_state import (
     enqueue_blueprint_draft,
+    persist_blueprint_evaluation,
     persist_blueprint_packet,
+    persist_blueprint_promotion,
     read_blueprint_draft,
     write_blueprint_manifest,
 )
+from millrace_ai.workspace.queue_transitions import enqueue_task
 from millrace_ai.workspace.work_documents import render_work_document
 
 NOW = datetime(2026, 5, 26, tzinfo=UTC)
 ManagerRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
 ContractorRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
+EvaluatorRunner = Callable[[object, StageResultEnvelope, Path, object | None], RuntimeEffectResult]
 
 
 def _workspace(tmp_path: Path):
@@ -179,6 +187,24 @@ def _contractor_stage_result() -> StageResultEnvelope:
     )
 
 
+def _evaluator_stage_result(terminal_result: str = "BLUEPRINT_APPROVED") -> StageResultEnvelope:
+    return StageResultEnvelope(
+        run_id="run-evaluator-001",
+        plane=Plane.PLANNING,
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_id="draft-001",
+        terminal_result=terminal_result,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker=f"### {terminal_result}",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+
 def _packet(**updates: object) -> BlueprintPacketDocument:
     values: dict[str, object] = {
         "blueprint_id": "blueprint-001",
@@ -200,6 +226,96 @@ def _packet(**updates: object) -> BlueprintPacketDocument:
     }
     values.update(updates)
     return BlueprintPacketDocument(**values)
+
+
+def _evaluation(decision: str = "approved", **updates: object) -> BlueprintEvaluationDocument:
+    values: dict[str, object] = {
+        "evaluation_id": "evaluation-001",
+        "blueprint_id": "blueprint-001",
+        "draft_id": "draft-001",
+        "manifest_id": "manifest-001",
+        "root_spec_id": "spec-001",
+        "root_idea_id": "idea-001",
+        "decision": decision,
+        "rubric_findings": ("Blueprint is coherent.",),
+        "lineage_consistency_findings": ("Lineage matches active draft.",),
+        "verification_findings": ("Checks are concrete.",),
+        "required_task_fields": ("task_id", "target_paths") if decision == "approved" else (),
+        "critique_id": "critique-001" if decision == "rejected" else None,
+        "references": ("lab/specs/pending/blueprint.md",),
+        "created_at": NOW,
+    }
+    values.update(updates)
+    return BlueprintEvaluationDocument(**values)
+
+
+def _critique(**updates: object) -> BlueprintCritiqueDocument:
+    values: dict[str, object] = {
+        "critique_id": "critique-001",
+        "evaluation_id": "evaluation-001",
+        "blueprint_id": "blueprint-001",
+        "draft_id": "draft-001",
+        "manifest_id": "manifest-001",
+        "root_spec_id": "spec-001",
+        "root_idea_id": "idea-001",
+        "revision": 1,
+        "required_changes": ("Narrow the implementation sequence.",),
+        "verification_issues": ("Add a duplicate promotion check.",),
+        "blocking_reason": "Blueprint needs a narrower implementation sequence.",
+        "references": ("lab/specs/pending/blueprint.md",),
+        "created_at": NOW,
+    }
+    values.update(updates)
+    return BlueprintCritiqueDocument(**values)
+
+
+def _task(**updates: object) -> TaskDocument:
+    values: dict[str, object] = {
+        "task_id": "task-001",
+        "title": "Implement Blueprint runtime effects",
+        "summary": "Add runtime effect handlers for Blueprint Planning.",
+        "root_idea_id": "idea-001",
+        "root_spec_id": "spec-001",
+        "spec_id": "spec-001",
+        "target_paths": ("src/millrace_ai/runtime/blueprint_effects.py",),
+        "acceptance": ("Blueprint handlers preserve destination-before-source ordering.",),
+        "required_checks": ("pytest tests/blueprint/test_effects.py -q",),
+        "references": ("lab/specs/pending/blueprint.md",),
+        "risk": ("Duplicate promotions must fail.",),
+        "created_at": NOW,
+        "created_by": "evaluator_blueprint",
+    }
+    values.update(updates)
+    return TaskDocument(**values)
+
+
+def _approved_task(**updates: object) -> TaskDocument:
+    task = _task()
+    references = (
+        *task.references,
+        "millrace-agents/blueprints/packets/approved/blueprint-001.json",
+        "millrace-agents/blueprints/evaluations/evaluation-001.json",
+    )
+    return task.model_copy(update={"references": references, **updates})
+
+
+def _promotion(**updates: object) -> BlueprintPromotionRecord:
+    values: dict[str, object] = {
+        "promotion_id": "promotion-evaluation-001",
+        "blueprint_id": "blueprint-001",
+        "evaluation_id": "evaluation-001",
+        "draft_id": "draft-001",
+        "manifest_id": "manifest-001",
+        "root_spec_id": "spec-001",
+        "root_idea_id": "idea-001",
+        "generated_task_id": "task-001",
+        "generated_task_path": "millrace-agents/tasks/queue/task-001.md",
+        "approved_blueprint_path": "millrace-agents/blueprints/packets/approved/blueprint-001.json",
+        "evaluation_path": "millrace-agents/blueprints/evaluations/evaluation-001.json",
+        "promoted_at": NOW,
+    }
+    values.update(updates)
+    return BlueprintPromotionRecord(**values)
 
 
 def _activate_blueprint_draft(paths) -> None:
@@ -233,6 +349,58 @@ def _active_draft_path(paths) -> Path:
     return paths.runtime_root / "blueprints/drafts/active/draft-001.json"
 
 
+def _approved_packet_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/packets/approved/blueprint-001.json"
+
+
+def _approved_markdown_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/packets/approved/blueprint-001.md"
+
+
+def _approved_markdown_checksum_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/packets/approved/blueprint-001.md.sha256"
+
+
+def _rejected_packet_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/packets/rejected/blueprint-001.json"
+
+
+def _rejected_markdown_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/packets/rejected/blueprint-001.md"
+
+
+def _rejected_markdown_checksum_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/packets/rejected/blueprint-001.md.sha256"
+
+
+def _evaluation_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/evaluations/evaluation-001.json"
+
+
+def _critique_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/critiques/open/critique-001.json"
+
+
+def _promotion_path(paths) -> Path:
+    return paths.runtime_root / "blueprints/promotions/promotion-evaluation-001.json"
+
+
+def _task_path(paths) -> Path:
+    return paths.tasks_queue_dir / "task-001.md"
+
+
+def _optional_text(path: Path) -> str | None:
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
+def _write_markdown_checksum(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"{effect_operations._normalized_markdown_sha256(content)}\n",
+        encoding="utf-8",
+    )
+
+
 def _write_manager_outputs(run_dir: Path, *, manifest: object | None = None, drafts: object | None = None) -> None:
     if manifest is not None:
         _write_json(run_dir / "blueprint_manifest.json", manifest)
@@ -258,6 +426,16 @@ def _result_payload(result: RuntimeEffectResult) -> dict[str, object]:
     return result.model_dump(mode="json", exclude={"mutation_journal"})
 
 
+def _result_payload_without_markdown_checksums(result: RuntimeEffectResult) -> dict[str, object]:
+    payload = _result_payload(result)
+    payload["created_paths"] = [
+        path
+        for path in payload.get("created_paths", [])
+        if not str(path).endswith(".md.sha256")
+    ]
+    return payload
+
+
 def _assert_runner_parity(tmp_path: Path, setup) -> None:
     legacy_result, legacy_paths = _run_manager_case(
         tmp_path / "legacy",
@@ -270,7 +448,9 @@ def _assert_runner_parity(tmp_path: Path, setup) -> None:
         setup,
     )
 
-    assert _result_payload(operation_result) == _result_payload(legacy_result)
+    assert _result_payload_without_markdown_checksums(
+        operation_result,
+    ) == _result_payload_without_markdown_checksums(legacy_result)
     assert (
         operation_paths.runtime_root / "blueprints/manifests/manifest-001.json"
     ).exists() == (
@@ -314,13 +494,131 @@ def _assert_contractor_parity(tmp_path: Path, setup) -> None:
         setup,
     )
 
-    assert _result_payload(operation_result) == _result_payload(legacy_result)
+    assert _result_payload_without_markdown_checksums(
+        operation_result,
+    ) == _result_payload_without_markdown_checksums(legacy_result)
     assert _candidate_packet_path(operation_paths).exists() == _candidate_packet_path(
         legacy_paths,
     ).exists()
     assert _candidate_markdown_path(operation_paths).exists() == _candidate_markdown_path(
         legacy_paths,
     ).exists()
+    assert (
+        read_blueprint_draft(_active_draft_path(operation_paths)).model_dump(mode="json")
+        == read_blueprint_draft(_active_draft_path(legacy_paths)).model_dump(mode="json")
+    )
+
+
+def _persist_evaluator_candidate_state(paths, run_dir: Path) -> None:
+    active_dir = paths.runtime_root / "blueprints/drafts/active"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        active_dir / "draft-001.json",
+        _draft("draft-001", draft_index=1).model_copy(
+            update={"status": "active", "latest_blueprint_id": "blueprint-001"},
+        ),
+    )
+    persist_blueprint_packet(paths, _packet(), packet_state="candidates")
+    _candidate_markdown_path(paths).write_text(
+        "# Blueprint\n\nImplement runtime effects.\n",
+        encoding="utf-8",
+    )
+
+
+def _write_approval_outputs(run_dir: Path, *, task: TaskDocument | None = None) -> None:
+    _write_json(run_dir / "blueprint_evaluation.json", _evaluation("approved"))
+    (run_dir / "generated_task.md").write_text(
+        render_work_document(_task() if task is None else task),
+        encoding="utf-8",
+    )
+
+
+def _write_rejection_outputs(run_dir: Path, *, critique: object | None = None) -> None:
+    _write_json(run_dir / "blueprint_evaluation.json", _evaluation("rejected"))
+    _write_json(run_dir / "blueprint_critique.json", _critique() if critique is None else critique)
+
+
+def _run_evaluator_approval_case(
+    tmp_path: Path,
+    runner: EvaluatorRunner,
+    setup,
+) -> tuple[RuntimeEffectResult, object]:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_approval_outputs(run_dir)
+    setup(paths, run_dir)
+    result = runner(paths, _evaluator_stage_result("BLUEPRINT_APPROVED"), run_dir, None)
+    return result, paths
+
+
+def _run_evaluator_rejection_case(
+    tmp_path: Path,
+    runner: EvaluatorRunner,
+    setup,
+) -> tuple[RuntimeEffectResult, object]:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_rejection_outputs(run_dir)
+    setup(paths, run_dir)
+    result = runner(paths, _evaluator_stage_result("BLUEPRINT_REJECTED"), run_dir, None)
+    return result, paths
+
+
+def _assert_evaluator_approval_parity(tmp_path: Path, setup) -> None:
+    legacy_result, legacy_paths = _run_evaluator_approval_case(
+        tmp_path / "legacy",
+        blueprint_effects._legacy_evaluator_blueprint_approved_to_task,
+        setup,
+    )
+    operation_result, operation_paths = _run_evaluator_approval_case(
+        tmp_path / "operation",
+        effect_operations.evaluator_blueprint_approved_to_task,
+        setup,
+    )
+
+    assert _result_payload_without_markdown_checksums(
+        operation_result,
+    ) == _result_payload_without_markdown_checksums(legacy_result)
+    for operation_path, legacy_path in (
+        (_evaluation_path(operation_paths), _evaluation_path(legacy_paths)),
+        (_approved_packet_path(operation_paths), _approved_packet_path(legacy_paths)),
+        (_approved_markdown_path(operation_paths), _approved_markdown_path(legacy_paths)),
+        (_candidate_packet_path(operation_paths), _candidate_packet_path(legacy_paths)),
+        (_candidate_markdown_path(operation_paths), _candidate_markdown_path(legacy_paths)),
+        (_task_path(operation_paths), _task_path(legacy_paths)),
+        (_promotion_path(operation_paths), _promotion_path(legacy_paths)),
+    ):
+        assert operation_path.exists() == legacy_path.exists()
+        assert _optional_text(operation_path) == _optional_text(legacy_path)
+
+
+def _assert_evaluator_rejection_parity(tmp_path: Path, setup) -> None:
+    legacy_result, legacy_paths = _run_evaluator_rejection_case(
+        tmp_path / "legacy",
+        blueprint_effects._legacy_evaluator_blueprint_rejected_to_draft_revision,
+        setup,
+    )
+    operation_result, operation_paths = _run_evaluator_rejection_case(
+        tmp_path / "operation",
+        effect_operations.evaluator_blueprint_rejected_to_draft_revision,
+        setup,
+    )
+
+    assert _result_payload_without_markdown_checksums(
+        operation_result,
+    ) == _result_payload_without_markdown_checksums(legacy_result)
+    for operation_path, legacy_path in (
+        (_evaluation_path(operation_paths), _evaluation_path(legacy_paths)),
+        (_critique_path(operation_paths), _critique_path(legacy_paths)),
+        (_rejected_packet_path(operation_paths), _rejected_packet_path(legacy_paths)),
+        (_rejected_markdown_path(operation_paths), _rejected_markdown_path(legacy_paths)),
+        (_candidate_packet_path(operation_paths), _candidate_packet_path(legacy_paths)),
+        (_candidate_markdown_path(operation_paths), _candidate_markdown_path(legacy_paths)),
+    ):
+        assert operation_path.exists() == legacy_path.exists()
+        assert _optional_text(operation_path) == _optional_text(legacy_path)
     assert (
         read_blueprint_draft(_active_draft_path(operation_paths)).model_dump(mode="json")
         == read_blueprint_draft(_active_draft_path(legacy_paths)).model_dump(mode="json")
@@ -540,3 +838,228 @@ def test_contractor_operation_records_mutation_journal_for_durable_writes(
             "work_item_id": "draft-001",
         },
     )
+
+
+def test_evaluator_approval_operation_matches_legacy_success(tmp_path: Path) -> None:
+    _assert_evaluator_approval_parity(tmp_path, lambda paths, run_dir: None)
+
+
+def test_evaluator_approval_operation_replays_completed_approved_state(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_approval_outputs(run_dir)
+
+    first = effect_operations.evaluator_blueprint_approved_to_task(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_APPROVED"),
+        run_dir,
+        None,
+    )
+    active_path = _active_draft_path(paths)
+    approved_draft_path = paths.runtime_root / "blueprints/drafts/approved/draft-001.json"
+    approved_draft_path.parent.mkdir(parents=True, exist_ok=True)
+    active_path.replace(approved_draft_path)
+
+    replay = effect_operations.evaluator_blueprint_approved_to_task(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_APPROVED"),
+        run_dir,
+        None,
+    )
+
+    assert first.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    assert replay.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    assert replay.failure_class is None
+    assert replay.created_paths == ()
+    assert replay.source_lifecycle_intent is None
+    assert _approved_markdown_path(paths).is_file()
+    assert _approved_markdown_checksum_path(paths).is_file()
+    assert not _candidate_markdown_path(paths).exists()
+
+
+def test_evaluator_approval_operation_blocks_replay_with_modified_approved_markdown(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_approval_outputs(run_dir)
+    first = effect_operations.evaluator_blueprint_approved_to_task(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_APPROVED"),
+        run_dir,
+        None,
+    )
+    active_path = _active_draft_path(paths)
+    approved_draft_path = paths.runtime_root / "blueprints/drafts/approved/draft-001.json"
+    approved_draft_path.parent.mkdir(parents=True, exist_ok=True)
+    active_path.replace(approved_draft_path)
+    _approved_markdown_path(paths).write_text(
+        "# Blueprint\n\nModified after approval.\n",
+        encoding="utf-8",
+    )
+
+    replay = effect_operations.evaluator_blueprint_approved_to_task(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_APPROVED"),
+        run_dir,
+        None,
+    )
+
+    assert first.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    assert replay.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert replay.failure_class == "blueprint_approved_markdown_conflict"
+
+
+def test_evaluator_approval_operation_matches_legacy_equivalent_pre_lifecycle_state(
+    tmp_path: Path,
+) -> None:
+    def setup(paths, run_dir) -> None:
+        (run_dir / "blueprint.md").write_text(
+            "# Blueprint\n\nImplement runtime effects.\n",
+            encoding="utf-8",
+        )
+        persist_blueprint_evaluation(paths, _evaluation("approved"))
+        _approved_packet_path(paths).parent.mkdir(parents=True, exist_ok=True)
+        _candidate_packet_path(paths).replace(_approved_packet_path(paths))
+        _approved_markdown_path(paths).parent.mkdir(parents=True, exist_ok=True)
+        _candidate_markdown_path(paths).replace(_approved_markdown_path(paths))
+        enqueue_task(paths, _approved_task())
+        persist_blueprint_promotion(paths, _promotion())
+
+    _assert_evaluator_approval_parity(tmp_path, setup)
+
+
+def test_evaluator_approval_operation_matches_legacy_invalid_generated_task(
+    tmp_path: Path,
+) -> None:
+    def setup(paths, run_dir) -> None:
+        _write_approval_outputs(
+            run_dir,
+            task=_task(target_paths=("src/millrace_ai/runtime/unowned.py",)),
+        )
+
+    _assert_evaluator_approval_parity(tmp_path, setup)
+
+
+def test_evaluator_approval_operation_matches_legacy_partial_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_legacy_enqueue = blueprint_effects.enqueue_task
+    original_operation_enqueue = effect_operations.enqueue_task
+
+    def fail_legacy_enqueue(paths, task):
+        raise OSError("simulated task enqueue failure")
+
+    def fail_operation_enqueue(paths, task):
+        raise OSError("simulated task enqueue failure")
+
+    assert original_legacy_enqueue is not None
+    assert original_operation_enqueue is not None
+    monkeypatch.setattr(blueprint_effects, "enqueue_task", fail_legacy_enqueue)
+    monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
+
+    _assert_evaluator_approval_parity(tmp_path, lambda paths, run_dir: None)
+
+
+def test_evaluator_rejection_operation_matches_legacy_success(tmp_path: Path) -> None:
+    _assert_evaluator_rejection_parity(tmp_path, lambda paths, run_dir: None)
+
+
+def test_evaluator_rejection_operation_replays_completed_rejection_state(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_rejection_outputs(run_dir)
+
+    first = effect_operations.evaluator_blueprint_rejected_to_draft_revision(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_REJECTED"),
+        run_dir,
+        None,
+    )
+    second = effect_operations.evaluator_blueprint_rejected_to_draft_revision(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_REJECTED"),
+        run_dir,
+        None,
+    )
+
+    assert first.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+    assert second.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+    assert second.failure_class is None
+    assert second.created_paths == ()
+    assert second.mutation_journal == ()
+    assert _critique_path(paths).is_file()
+    assert _rejected_packet_path(paths).is_file()
+    assert _rejected_markdown_checksum_path(paths).is_file()
+    assert not _candidate_packet_path(paths).exists()
+
+
+def test_evaluator_rejection_operation_blocks_replay_with_modified_rejected_markdown(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    run_dir = _run_dir(tmp_path)
+    _persist_evaluator_candidate_state(paths, run_dir)
+    _write_rejection_outputs(run_dir)
+    first = effect_operations.evaluator_blueprint_rejected_to_draft_revision(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_REJECTED"),
+        run_dir,
+        None,
+    )
+    _rejected_markdown_path(paths).write_text("", encoding="utf-8")
+
+    replay = effect_operations.evaluator_blueprint_rejected_to_draft_revision(
+        paths,
+        _evaluator_stage_result("BLUEPRINT_REJECTED"),
+        run_dir,
+        None,
+    )
+
+    assert first.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+    assert replay.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert replay.failure_class == "blueprint_rejection_duplicate_conflict"
+
+
+def test_evaluator_rejection_operation_matches_legacy_invalid_critique(
+    tmp_path: Path,
+) -> None:
+    def setup(paths, run_dir) -> None:
+        (run_dir / "blueprint_critique.json").write_text(
+            '{"critique_id": "critique-001", "required_changes": 12}',
+            encoding="utf-8",
+        )
+
+    _assert_evaluator_rejection_parity(tmp_path, setup)
+
+
+def test_evaluator_rejection_operation_matches_legacy_partial_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_legacy_critique(paths, critique, *, critique_state="open"):
+        raise OSError("simulated critique persistence failure")
+
+    def fail_operation_critique(paths, critique, *, critique_state="open"):
+        raise OSError("simulated critique persistence failure")
+
+    monkeypatch.setattr(
+        blueprint_effects,
+        "persist_blueprint_critique",
+        fail_legacy_critique,
+    )
+    monkeypatch.setattr(
+        effect_operations,
+        "persist_blueprint_critique",
+        fail_operation_critique,
+    )
+
+    _assert_evaluator_rejection_parity(tmp_path, lambda paths, run_dir: None)

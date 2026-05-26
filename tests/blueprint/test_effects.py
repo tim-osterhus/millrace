@@ -1359,7 +1359,10 @@ def test_evaluator_approval_replays_equivalent_generated_task_before_promotion(
 
     assert result.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
     assert result.failure_class is None
-    assert result.created_paths == ("millrace-agents/blueprints/promotions/promotion-evaluation-001.json",)
+    assert result.created_paths == (
+        "millrace-agents/blueprints/packets/approved/blueprint-001.md.sha256",
+        "millrace-agents/blueprints/promotions/promotion-evaluation-001.json",
+    )
     assert result.source_lifecycle_intent is not None
     assert result.source_lifecycle_intent.action is SourceLifecycleAction.COMPLETE
     assert len(list(paths.tasks_queue_dir.glob("task-001.md"))) == 1

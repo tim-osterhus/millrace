@@ -73,6 +73,116 @@
     {
       "schema_version": "1.0",
       "kind": "runtime_effect_store",
+      "store_id": "blueprint_approved_drafts",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/drafts/approved",
+      "path_template": "blueprints/drafts/approved/{draft_id}.json",
+      "owner": "runtime",
+      "write_policy": "move"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_rejected_packets",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/rejected",
+      "path_template": "blueprints/packets/rejected/{blueprint_id}.json",
+      "owner": "runtime",
+      "write_policy": "move"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_rejected_markdown",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/rejected",
+      "path_template": "blueprints/packets/rejected/{blueprint_id}.md",
+      "owner": "runtime",
+      "write_policy": "move"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_rejected_markdown_checksums",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/rejected",
+      "path_template": "blueprints/packets/rejected/{blueprint_id}.md.sha256",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_approved_packets",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/approved",
+      "path_template": "blueprints/packets/approved/{blueprint_id}.json",
+      "owner": "runtime",
+      "write_policy": "move"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_approved_markdown",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/approved",
+      "path_template": "blueprints/packets/approved/{blueprint_id}.md",
+      "owner": "runtime",
+      "write_policy": "move"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_approved_markdown_checksums",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/approved",
+      "path_template": "blueprints/packets/approved/{blueprint_id}.md.sha256",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_evaluations",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/evaluations",
+      "path_template": "blueprints/evaluations/{evaluation_id}.json",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_critiques_open",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/critiques/open",
+      "path_template": "blueprints/critiques/open/{critique_id}.json",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_promotions",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/promotions",
+      "path_template": "blueprints/promotions/{promotion_id}.json",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "task_queue",
+      "store_type": "queue_family",
+      "runtime_relative_root": "tasks/queue",
+      "path_template": "tasks/queue/{task_id}.md",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
       "store_id": "source_lifecycle",
       "store_type": "queue_family",
       "runtime_relative_root": "source-lifecycle",

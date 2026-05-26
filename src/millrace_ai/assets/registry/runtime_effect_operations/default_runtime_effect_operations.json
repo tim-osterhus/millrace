@@ -289,7 +289,7 @@
       "schema_version": "1.0",
       "kind": "runtime_effect_operation",
       "operation_id": "evaluator_blueprint_approved_to_task",
-      "display_name": "Evaluator Blueprint approval legacy operation shell",
+      "display_name": "Evaluator Blueprint approval promotion operation",
       "legacy_handler_ids": ["evaluator_blueprint_approved_to_task"],
       "required_artifacts": ["blueprint_evaluation", "generated_task"],
       "produced_artifacts": ["blueprint_evaluation_report"],
@@ -302,18 +302,105 @@
           "validator_ids": ["evaluator_blueprint_approved_to_task.required_artifacts"]
         },
         {
-          "step_id": "dispatch_legacy_handler",
-          "primitive_id": "legacy_python_handler",
-          "mutation_phase": "unknown",
+          "step_id": "parse_evaluation",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation"],
+          "validator_ids": ["evaluator_blueprint_approved_to_task.evaluation_schema"]
+        },
+        {
+          "step_id": "parse_generated_task",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["generated_task"],
+          "validator_ids": ["evaluator_blueprint_approved_to_task.generated_task_schema"]
+        },
+        {
+          "step_id": "lookup_approval_context",
+          "primitive_id": "active_work_item_lookup",
+          "mutation_phase": "pre_mutation",
+          "store_id": "blueprint_active_drafts",
+          "validator_ids": ["evaluator_blueprint_approved_to_task.approval_context"]
+        },
+        {
+          "step_id": "validate_generated_task_scope",
+          "primitive_id": "blueprint_generated_task_validation",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["generated_task"],
+          "validator_ids": ["evaluator_blueprint_approved_to_task.generated_task_scope"]
+        },
+        {
+          "step_id": "check_equivalent_outputs",
+          "primitive_id": "store_equivalence_check",
+          "mutation_phase": "pre_mutation",
           "reads_artifact_ids": ["blueprint_evaluation", "generated_task"],
-          "store_id": "mutation_journal",
+          "validator_ids": ["evaluator_blueprint_approved_to_task.output_equivalence"]
+        },
+        {
+          "step_id": "persist_evaluation",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation"],
+          "store_id": "blueprint_evaluations",
           "writes_store": true,
-          "journal_event_type": "legacy_handler_result"
+          "journal_event_type": "persist_evaluation"
+        },
+        {
+          "step_id": "move_candidate_packet_to_approved",
+          "primitive_id": "move_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_approved_packets",
+          "writes_store": true,
+          "journal_event_type": "move_candidate_packet_to_approved"
+        },
+        {
+          "step_id": "move_candidate_markdown_to_approved",
+          "primitive_id": "move_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_approved_markdown",
+          "writes_store": true,
+          "journal_event_type": "move_candidate_markdown_to_approved"
+        },
+        {
+          "step_id": "record_approved_markdown_checksum",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_approved_markdown_checksums",
+          "writes_store": true,
+          "journal_event_type": "record_approved_markdown_checksum"
+        },
+        {
+          "step_id": "enqueue_generated_task",
+          "primitive_id": "enqueue_work_items",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["generated_task"],
+          "store_id": "task_queue",
+          "writes_store": true,
+          "journal_event_type": "enqueue_generated_task"
+        },
+        {
+          "step_id": "persist_promotion",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_promotions",
+          "writes_store": true,
+          "journal_event_type": "persist_promotion"
+        },
+        {
+          "step_id": "approve_blueprint_draft_lifecycle",
+          "primitive_id": "source_lifecycle",
+          "mutation_phase": "partial_mutation",
+          "store_id": "source_lifecycle",
+          "writes_store": true,
+          "journal_event_type": "approve_blueprint_draft_lifecycle"
         }
       ],
       "idempotency": {
         "duplicate_policy": "fail",
-        "replay_policy": "resume_idempotently"
+        "replay_policy": "resume_idempotently",
+        "equivalence_validator_ids": [
+          "evaluator_blueprint_approved_to_task.output_equivalence"
+        ]
       },
       "failure_mappings": [
         {
@@ -322,14 +409,57 @@
           "validator_id": "evaluator_blueprint_approved_to_task.required_artifacts"
         },
         {
-          "failure_class": "legacy_handler_failure",
-          "mutation_phase": "unknown"
+          "failure_class": "blueprint_evaluation_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "evaluator_blueprint_approved_to_task.evaluation_schema"
+        },
+        {
+          "failure_class": "generated_task_invalid",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "evaluator_blueprint_approved_to_task.generated_task_schema"
+        },
+        {
+          "failure_class": "blueprint_evaluation_duplicate_conflict",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "evaluator_blueprint_approved_to_task.output_equivalence"
+        },
+        {
+          "failure_class": "blueprint_approved_packet_conflict",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_approved_markdown_conflict",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_task_duplicate",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_promotion_duplicate_conflict",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_source_lifecycle_invalid",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_partial_mutation",
+          "mutation_phase": "partial_mutation"
         }
       ],
       "mutation_journal": {
         "entry_id_template": "{operation_id}:{run_id}:{step_id}",
         "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
-        "record_step_ids": ["dispatch_legacy_handler"]
+        "record_step_ids": [
+          "persist_evaluation",
+          "move_candidate_packet_to_approved",
+          "move_candidate_markdown_to_approved",
+          "record_approved_markdown_checksum",
+          "enqueue_generated_task",
+          "persist_promotion",
+          "approve_blueprint_draft_lifecycle"
+        ]
       },
       "partial_commit_policy": "block_source"
     },
@@ -337,7 +467,7 @@
       "schema_version": "1.0",
       "kind": "runtime_effect_operation",
       "operation_id": "evaluator_blueprint_rejected_to_draft_revision",
-      "display_name": "Evaluator Blueprint rejection legacy operation shell",
+      "display_name": "Evaluator Blueprint rejection critique operation",
       "legacy_handler_ids": ["evaluator_blueprint_rejected_to_draft_revision"],
       "required_artifacts": ["blueprint_evaluation", "blueprint_critique"],
       "produced_artifacts": ["blueprint_evaluation_report"],
@@ -350,18 +480,97 @@
           "validator_ids": ["evaluator_blueprint_rejected_to_draft_revision.required_artifacts"]
         },
         {
-          "step_id": "dispatch_legacy_handler",
-          "primitive_id": "legacy_python_handler",
-          "mutation_phase": "unknown",
+          "step_id": "parse_evaluation",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation"],
+          "validator_ids": ["evaluator_blueprint_rejected_to_draft_revision.evaluation_schema"]
+        },
+        {
+          "step_id": "parse_critique",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_critique"],
+          "validator_ids": ["evaluator_blueprint_rejected_to_draft_revision.critique_schema"]
+        },
+        {
+          "step_id": "lookup_active_draft",
+          "primitive_id": "active_work_item_lookup",
+          "mutation_phase": "pre_mutation",
+          "store_id": "blueprint_active_drafts"
+        },
+        {
+          "step_id": "validate_rejection_context",
+          "primitive_id": "blueprint_critique_packet_validation",
+          "mutation_phase": "pre_mutation",
           "reads_artifact_ids": ["blueprint_evaluation", "blueprint_critique"],
-          "store_id": "mutation_journal",
+          "store_id": "blueprint_candidate_packets",
+          "validator_ids": ["evaluator_blueprint_rejected_to_draft_revision.rejection_context"]
+        },
+        {
+          "step_id": "check_equivalent_outputs",
+          "primitive_id": "store_equivalence_check",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation", "blueprint_critique"],
+          "validator_ids": ["evaluator_blueprint_rejected_to_draft_revision.output_equivalence"]
+        },
+        {
+          "step_id": "persist_evaluation",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation"],
+          "store_id": "blueprint_evaluations",
           "writes_store": true,
-          "journal_event_type": "legacy_handler_result"
+          "journal_event_type": "persist_evaluation"
+        },
+        {
+          "step_id": "move_candidate_packet_to_rejected",
+          "primitive_id": "move_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_rejected_packets",
+          "writes_store": true,
+          "journal_event_type": "move_candidate_packet_to_rejected"
+        },
+        {
+          "step_id": "move_candidate_markdown_to_rejected",
+          "primitive_id": "move_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_rejected_markdown",
+          "writes_store": true,
+          "journal_event_type": "move_candidate_markdown_to_rejected"
+        },
+        {
+          "step_id": "record_rejected_markdown_checksum",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_rejected_markdown_checksums",
+          "writes_store": true,
+          "journal_event_type": "record_rejected_markdown_checksum"
+        },
+        {
+          "step_id": "persist_critique",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_critique"],
+          "store_id": "blueprint_critiques_open",
+          "writes_store": true,
+          "journal_event_type": "persist_critique"
+        },
+        {
+          "step_id": "update_active_draft_for_revision",
+          "primitive_id": "work_item_patch",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_active_drafts",
+          "writes_store": true,
+          "journal_event_type": "update_active_draft_for_revision"
         }
       ],
       "idempotency": {
         "duplicate_policy": "fail",
-        "replay_policy": "resume_idempotently"
+        "replay_policy": "resume_idempotently",
+        "equivalence_validator_ids": [
+          "evaluator_blueprint_rejected_to_draft_revision.output_equivalence"
+        ]
       },
       "failure_mappings": [
         {
@@ -370,14 +579,26 @@
           "validator_id": "evaluator_blueprint_rejected_to_draft_revision.required_artifacts"
         },
         {
-          "failure_class": "legacy_handler_failure",
-          "mutation_phase": "unknown"
+          "failure_class": "blueprint_rejection_duplicate_conflict",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "evaluator_blueprint_rejected_to_draft_revision.output_equivalence"
+        },
+        {
+          "failure_class": "blueprint_partial_mutation",
+          "mutation_phase": "partial_mutation"
         }
       ],
       "mutation_journal": {
         "entry_id_template": "{operation_id}:{run_id}:{step_id}",
         "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
-        "record_step_ids": ["dispatch_legacy_handler"]
+        "record_step_ids": [
+          "persist_evaluation",
+          "move_candidate_packet_to_rejected",
+          "move_candidate_markdown_to_rejected",
+          "record_rejected_markdown_checksum",
+          "persist_critique",
+          "update_active_draft_for_revision"
+        ]
       },
       "partial_commit_policy": "block_source"
     },

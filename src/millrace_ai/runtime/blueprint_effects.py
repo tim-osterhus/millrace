@@ -298,6 +298,24 @@ def evaluator_blueprint_approved_to_task(
     run_dir: Path,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> RuntimeEffectResult:
+    """Compatibility facade for the Evaluator Blueprint approval operation."""
+
+    from .effects import operations
+
+    return operations.evaluator_blueprint_approved_to_task(
+        paths,
+        stage_result,
+        run_dir,
+        compiled_plan,
+    )
+
+
+def _legacy_evaluator_blueprint_approved_to_task(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+    run_dir: Path,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RuntimeEffectResult:
     """Promote an approved Blueprint candidate into an execution task."""
 
     created_paths: list[str] = []
@@ -431,6 +449,24 @@ def mechanic_blueprint_repair_apply(
 
 
 def evaluator_blueprint_rejected_to_draft_revision(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+    run_dir: Path,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RuntimeEffectResult:
+    """Compatibility facade for the Evaluator Blueprint rejection operation."""
+
+    from .effects import operations
+
+    return operations.evaluator_blueprint_rejected_to_draft_revision(
+        paths,
+        stage_result,
+        run_dir,
+        compiled_plan,
+    )
+
+
+def _legacy_evaluator_blueprint_rejected_to_draft_revision(
     paths: WorkspacePaths,
     stage_result: StageResultEnvelope,
     run_dir: Path,

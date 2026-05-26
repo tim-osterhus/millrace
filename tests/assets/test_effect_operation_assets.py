@@ -64,13 +64,26 @@ def test_builtin_effect_operation_assets_load() -> None:
         "blueprint_manifests",
         "blueprint_draft_queue",
         "blueprint_active_drafts",
+        "blueprint_approved_drafts",
         "blueprint_candidate_packets",
         "blueprint_candidate_markdown",
+        "blueprint_rejected_packets",
+        "blueprint_rejected_markdown",
+        "blueprint_rejected_markdown_checksums",
+        "blueprint_approved_packets",
+        "blueprint_approved_markdown",
+        "blueprint_approved_markdown_checksums",
+        "blueprint_evaluations",
+        "blueprint_critiques_open",
+        "blueprint_promotions",
+        "task_queue",
     }
     assert {
         validator.validator_id for validator in validators
     } >= {
         "planner_disposition.required_artifacts",
+        "evaluator_blueprint_approved_to_task.generated_task_scope",
+        "evaluator_blueprint_rejected_to_draft_revision.rejection_context",
         "mechanic_blueprint_repair_apply.required_artifacts",
     }
 
