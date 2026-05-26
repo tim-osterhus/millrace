@@ -29,6 +29,7 @@ from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane, StageMapKey
 from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 
+from .effect_operations import validate_runtime_effect_operations
 from .outcomes import CompilerValidationError
 
 _RUNTIME_EFFECT_HANDLER_IMPLEMENTATION_IDS = frozenset(
@@ -126,6 +127,18 @@ def validate_workflow_primitives(
         rule.rule_id: rule
         for rule in workflow_primitives.runtime_effect_rules
     }
+    effect_stores_by_id = {
+        store.store_id: store
+        for store in workflow_primitives.effect_stores
+    }
+    effect_validators_by_id = {
+        validator.validator_id: validator
+        for validator in workflow_primitives.effect_validators
+    }
+    runtime_effect_operations_by_id = {
+        operation.operation_id: operation
+        for operation in workflow_primitives.runtime_effect_operations
+    }
     queue_policies_by_plane = _queue_policies_by_plane(workflow_primitives)
     graph_nodes_by_id = _graph_nodes_by_id(graphs_by_plane.values())
     stage_kinds_by_node_id = {
@@ -197,6 +210,13 @@ def validate_workflow_primitives(
         runtime_effect_rules_by_id=runtime_effect_rules_by_id,
         stage_kinds_by_node_id=stage_kinds_by_node_id,
         stage_kinds=stage_kinds,
+    )
+    validate_runtime_effect_operations(
+        artifact_contracts_by_id=artifact_contracts_by_id,
+        runtime_effect_rules_by_id=runtime_effect_rules_by_id,
+        effect_stores_by_id=effect_stores_by_id,
+        effect_validators_by_id=effect_validators_by_id,
+        runtime_effect_operations_by_id=runtime_effect_operations_by_id,
     )
     _validate_recovery_policies(
         workflow_primitives=workflow_primitives,

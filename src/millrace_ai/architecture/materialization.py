@@ -15,6 +15,11 @@ from millrace_ai.contracts import (
     ResultClass,
 )
 
+from .effect_operations import (
+    RuntimeEffectOperationDefinition,
+    RuntimeEffectStoreDefinition,
+    RuntimeEffectValidatorDefinition,
+)
 from .loop_graphs import (
     GraphLoopCompletionBehaviorDefinition,
     GraphLoopCounterName,
@@ -231,6 +236,9 @@ class CompiledRunPlan(ArchitectureContractModel):
     terminal_actions_by_id: dict[str, TerminalActionDefinition] = Field(default_factory=dict)
     lifecycle_mutation_plans_by_id: dict[str, LifecycleMutationPlanDefinition] = Field(default_factory=dict)
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition] = Field(default_factory=dict)
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition] = Field(default_factory=dict)
+    effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition] = Field(default_factory=dict)
+    effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition] = Field(default_factory=dict)
     workflow_recovery_policies_by_id: dict[str, WorkflowRecoveryPolicyDefinition] = Field(default_factory=dict)
     runtime_failure_policies_by_id: dict[str, RuntimeFailurePolicyDefinition] = Field(default_factory=dict)
     runtime_effect_rules: tuple[RuntimeEffectRuleDefinition, ...] = ()

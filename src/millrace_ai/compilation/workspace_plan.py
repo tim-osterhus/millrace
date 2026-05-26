@@ -276,6 +276,18 @@ def compile_compiled_run_plan(
                     "handler_id",
                 ),
                 "runtime_effect_rules": workflow_primitives.runtime_effect_rules,
+                "runtime_effect_operations_by_id": _map_by_attr(
+                    workflow_primitives.runtime_effect_operations,
+                    "operation_id",
+                ),
+                "effect_stores_by_id": _map_by_attr(
+                    workflow_primitives.effect_stores,
+                    "store_id",
+                ),
+                "effect_validators_by_id": _map_by_attr(
+                    workflow_primitives.effect_validators,
+                    "validator_id",
+                ),
                 "workflow_recovery_policies_by_id": _map_by_attr(
                     workflow_primitives.recovery_policies,
                     "policy_id",
@@ -329,6 +341,18 @@ def compile_compiled_run_plan(
         runtime_effect_handlers_by_id=_map_by_attr(
             workflow_primitives.runtime_effect_handlers,
             "handler_id",
+        ),
+        runtime_effect_operations_by_id=_map_by_attr(
+            workflow_primitives.runtime_effect_operations,
+            "operation_id",
+        ),
+        effect_stores_by_id=_map_by_attr(
+            workflow_primitives.effect_stores,
+            "store_id",
+        ),
+        effect_validators_by_id=_map_by_attr(
+            workflow_primitives.effect_validators,
+            "validator_id",
         ),
         runtime_effect_rules=workflow_primitives.runtime_effect_rules,
         workflow_recovery_policies_by_id=_map_by_attr(

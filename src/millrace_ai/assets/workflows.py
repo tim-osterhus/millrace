@@ -15,7 +15,10 @@ from millrace_ai.architecture import (
     PlaneQueueClaimPolicyDefinition,
     RequestContextProfileDefinition,
     RuntimeEffectHandlerDefinition,
+    RuntimeEffectOperationDefinition,
     RuntimeEffectRuleDefinition,
+    RuntimeEffectStoreDefinition,
+    RuntimeEffectValidatorDefinition,
     RuntimeFailurePolicyDefinition,
     TerminalActionDefinition,
     WorkflowRecoveryPolicyDefinition,
@@ -24,6 +27,12 @@ from millrace_ai.architecture import (
     WorkspaceSchemaEpochDefinition,
 )
 from millrace_ai.errors import AssetValidationError
+
+from .effect_operations import (
+    discover_effect_store_definitions,
+    discover_effect_validator_definitions,
+    discover_runtime_effect_operation_definitions,
+)
 
 ASSETS_ROOT = Path(__file__).resolve().parent
 ARTIFACT_CONTRACT_REGISTRY_ROOT = Path("registry/artifact_contracts")
@@ -67,6 +76,9 @@ class WorkflowPrimitiveBundle:
     lifecycle_mutation_plans: tuple[LifecycleMutationPlanDefinition, ...]
     runtime_effect_handlers: tuple[RuntimeEffectHandlerDefinition, ...]
     runtime_effect_rules: tuple[RuntimeEffectRuleDefinition, ...]
+    effect_stores: tuple[RuntimeEffectStoreDefinition, ...]
+    effect_validators: tuple[RuntimeEffectValidatorDefinition, ...]
+    runtime_effect_operations: tuple[RuntimeEffectOperationDefinition, ...]
     recovery_policies: tuple[WorkflowRecoveryPolicyDefinition, ...]
     runtime_failure_policies: tuple[RuntimeFailurePolicyDefinition, ...]
     workspace_schema_epoch: WorkspaceSchemaEpochDefinition | None = None
@@ -86,6 +98,9 @@ def load_builtin_workflow_primitives(
         lifecycle_mutation_plans=discover_lifecycle_mutation_plan_definitions(assets_root=assets_root),
         runtime_effect_handlers=discover_runtime_effect_handler_definitions(assets_root=assets_root),
         runtime_effect_rules=discover_runtime_effect_rule_definitions(assets_root=assets_root),
+        effect_stores=discover_effect_store_definitions(assets_root=assets_root),
+        effect_validators=discover_effect_validator_definitions(assets_root=assets_root),
+        runtime_effect_operations=discover_runtime_effect_operation_definitions(assets_root=assets_root),
         recovery_policies=discover_workflow_recovery_policy_definitions(assets_root=assets_root),
         runtime_failure_policies=discover_runtime_failure_policy_definitions(assets_root=assets_root),
         workspace_schema_epoch=load_workspace_schema_epoch_definition(assets_root=assets_root),
@@ -406,10 +421,13 @@ __all__ = [
     "WorkflowAssetError",
     "WorkflowPrimitiveBundle",
     "discover_artifact_contract_definitions",
+    "discover_effect_store_definitions",
+    "discover_effect_validator_definitions",
     "discover_lifecycle_mutation_plan_definitions",
     "discover_plane_queue_claim_policy_definitions",
     "discover_request_context_profile_definitions",
     "discover_runtime_effect_handler_definitions",
+    "discover_runtime_effect_operation_definitions",
     "discover_runtime_effect_rule_definitions",
     "discover_runtime_failure_policy_definitions",
     "discover_terminal_action_definitions",

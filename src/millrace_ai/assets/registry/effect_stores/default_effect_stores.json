@@ -1,0 +1,24 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "run_artifacts",
+      "store_type": "run_artifacts",
+      "runtime_relative_root": "runs",
+      "path_template": "runs/{run_id}",
+      "owner": "stage",
+      "write_policy": "read_only"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "mutation_journal",
+      "store_type": "mutation_journal",
+      "runtime_relative_root": "state/runtime-effect-journal",
+      "path_template": "state/runtime-effect-journal/{operation_id}.jsonl",
+      "owner": "runtime",
+      "write_policy": "append_only"
+    }
+  ]
+}

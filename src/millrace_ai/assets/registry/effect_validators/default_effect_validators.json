@@ -1,0 +1,62 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "planner_disposition.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": ["planner_disposition"],
+      "failure_class": "planner_disposition_missing",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "manager_blueprint_manifest_to_blueprint_drafts.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
+      "failure_class": "blueprint_manifest_missing",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "contractor_blueprint_candidate_persist.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": ["blueprint_packet", "blueprint_markdown"],
+      "failure_class": "blueprint_candidate_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "evaluator_blueprint_approved_to_task.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": ["blueprint_evaluation", "generated_task"],
+      "failure_class": "generated_task_missing",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "evaluator_blueprint_rejected_to_draft_revision.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": ["blueprint_evaluation", "blueprint_critique"],
+      "failure_class": "blueprint_critique_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "mechanic_blueprint_repair_apply.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": [
+        "blueprint_repair_decision",
+        "mechanic_report",
+        "repaired_generated_task"
+      ],
+      "failure_class": "blueprint_repaired_generated_task_missing",
+      "mutation_phase": "pre_mutation"
+    }
+  ]
+}

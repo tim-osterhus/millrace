@@ -1,0 +1,271 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "planner_disposition",
+      "display_name": "Planner disposition legacy operation shell",
+      "legacy_handler_ids": ["planner_disposition"],
+      "required_artifacts": ["planner_disposition"],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["planner_disposition"],
+          "validator_ids": ["planner_disposition.required_artifacts"]
+        },
+        {
+          "step_id": "dispatch_legacy_handler",
+          "primitive_id": "legacy_python_handler",
+          "mutation_phase": "unknown",
+          "reads_artifact_ids": ["planner_disposition"],
+          "store_id": "mutation_journal",
+          "writes_store": true,
+          "journal_event_type": "legacy_handler_result"
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "legacy_handler_failure",
+          "mutation_phase": "unknown"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["dispatch_legacy_handler"]
+      },
+      "partial_commit_policy": "block_source"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "manager_blueprint_manifest_to_blueprint_drafts",
+      "display_name": "Manager Blueprint manifest legacy operation shell",
+      "legacy_handler_ids": ["manager_blueprint_manifest_to_blueprint_drafts"],
+      "required_artifacts": ["blueprint_manifest", "blueprint_drafts"],
+      "produced_artifacts": ["manager_blueprint_report"],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
+          "validator_ids": ["manager_blueprint_manifest_to_blueprint_drafts.required_artifacts"]
+        },
+        {
+          "step_id": "dispatch_legacy_handler",
+          "primitive_id": "legacy_python_handler",
+          "mutation_phase": "unknown",
+          "reads_artifact_ids": ["blueprint_manifest", "blueprint_drafts"],
+          "store_id": "mutation_journal",
+          "writes_store": true,
+          "journal_event_type": "legacy_handler_result"
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "legacy_handler_failure",
+          "mutation_phase": "unknown"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["dispatch_legacy_handler"]
+      },
+      "partial_commit_policy": "block_source"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "contractor_blueprint_candidate_persist",
+      "display_name": "Contractor Blueprint candidate legacy operation shell",
+      "legacy_handler_ids": ["contractor_blueprint_candidate_persist"],
+      "required_artifacts": ["blueprint_packet", "blueprint_markdown"],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_packet", "blueprint_markdown"],
+          "validator_ids": ["contractor_blueprint_candidate_persist.required_artifacts"]
+        },
+        {
+          "step_id": "dispatch_legacy_handler",
+          "primitive_id": "legacy_python_handler",
+          "mutation_phase": "unknown",
+          "reads_artifact_ids": ["blueprint_packet", "blueprint_markdown"],
+          "store_id": "mutation_journal",
+          "writes_store": true,
+          "journal_event_type": "legacy_handler_result"
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "legacy_handler_failure",
+          "mutation_phase": "unknown"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["dispatch_legacy_handler"]
+      },
+      "partial_commit_policy": "block_source"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "evaluator_blueprint_approved_to_task",
+      "display_name": "Evaluator Blueprint approval legacy operation shell",
+      "legacy_handler_ids": ["evaluator_blueprint_approved_to_task"],
+      "required_artifacts": ["blueprint_evaluation", "generated_task"],
+      "produced_artifacts": ["blueprint_evaluation_report"],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation", "generated_task"],
+          "validator_ids": ["evaluator_blueprint_approved_to_task.required_artifacts"]
+        },
+        {
+          "step_id": "dispatch_legacy_handler",
+          "primitive_id": "legacy_python_handler",
+          "mutation_phase": "unknown",
+          "reads_artifact_ids": ["blueprint_evaluation", "generated_task"],
+          "store_id": "mutation_journal",
+          "writes_store": true,
+          "journal_event_type": "legacy_handler_result"
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "legacy_handler_failure",
+          "mutation_phase": "unknown"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["dispatch_legacy_handler"]
+      },
+      "partial_commit_policy": "block_source"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "evaluator_blueprint_rejected_to_draft_revision",
+      "display_name": "Evaluator Blueprint rejection legacy operation shell",
+      "legacy_handler_ids": ["evaluator_blueprint_rejected_to_draft_revision"],
+      "required_artifacts": ["blueprint_evaluation", "blueprint_critique"],
+      "produced_artifacts": ["blueprint_evaluation_report"],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_evaluation", "blueprint_critique"],
+          "validator_ids": ["evaluator_blueprint_rejected_to_draft_revision.required_artifacts"]
+        },
+        {
+          "step_id": "dispatch_legacy_handler",
+          "primitive_id": "legacy_python_handler",
+          "mutation_phase": "unknown",
+          "reads_artifact_ids": ["blueprint_evaluation", "blueprint_critique"],
+          "store_id": "mutation_journal",
+          "writes_store": true,
+          "journal_event_type": "legacy_handler_result"
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "legacy_handler_failure",
+          "mutation_phase": "unknown"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["dispatch_legacy_handler"]
+      },
+      "partial_commit_policy": "block_source"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "mechanic_blueprint_repair_apply",
+      "display_name": "Mechanic Blueprint repair legacy operation shell",
+      "legacy_handler_ids": ["mechanic_blueprint_repair_apply"],
+      "required_artifacts": [
+        "blueprint_repair_decision",
+        "mechanic_report",
+        "repaired_generated_task"
+      ],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": [
+            "blueprint_repair_decision",
+            "mechanic_report",
+            "repaired_generated_task"
+          ],
+          "validator_ids": ["mechanic_blueprint_repair_apply.required_artifacts"]
+        },
+        {
+          "step_id": "dispatch_legacy_handler",
+          "primitive_id": "legacy_python_handler",
+          "mutation_phase": "unknown",
+          "reads_artifact_ids": [
+            "blueprint_repair_decision",
+            "mechanic_report",
+            "repaired_generated_task"
+          ],
+          "store_id": "mutation_journal",
+          "writes_store": true,
+          "journal_event_type": "legacy_handler_result"
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "legacy_handler_failure",
+          "mutation_phase": "unknown"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["dispatch_legacy_handler"]
+      },
+      "partial_commit_policy": "block_source"
+    }
+  ]
+}

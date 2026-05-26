@@ -22,6 +22,7 @@ directory, in filename order.
 | `0008-contract-facade-and-domain-contract-modules.md` | Accepted | Keep `millrace_ai.contracts` as a facade over domain contract modules. |
 | `0009-stage-metadata-single-source-of-truth.md` | Accepted | Use typed stage metadata as the shipped-stage legality registry. |
 | `0010-compiler-validated-workflow-primitives-as-runtime-authority.md` | Accepted | Extend compiled authority to workflow primitives, lanes, request context, effects, and schema epoch. |
+| `0011-declarative-runtime-effect-operations.md` | Accepted | Validate runtime effect operation/store/validator catalogs before dispatch migration. |
 
 ## Reading Notes
 

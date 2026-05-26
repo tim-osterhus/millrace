@@ -12,6 +12,15 @@ from .architecture import (
     load_stage_kind_definition,
     stage_kind_asset_relative_path,
 )
+from .effect_operations import (
+    EFFECT_STORE_REGISTRY_ROOT,
+    EFFECT_VALIDATOR_REGISTRY_ROOT,
+    RUNTIME_EFFECT_OPERATION_REGISTRY_ROOT,
+    EffectOperationAssetError,
+    discover_effect_store_definitions,
+    discover_effect_validator_definitions,
+    discover_runtime_effect_operation_definitions,
+)
 from .entrypoints import LintLevel, lint_asset_manifests, parse_markdown_asset
 from .loop_graphs import (
     BUILTIN_GRAPH_LOOP_PATHS,
@@ -85,6 +94,9 @@ __all__ = [
     "BUILTIN_STAGE_KIND_PATHS",
     "BUILTIN_WORK_ITEM_FAMILY_PATHS",
     "DOCUMENT_ADAPTER_REGISTRY_ROOT",
+    "EFFECT_STORE_REGISTRY_ROOT",
+    "EFFECT_VALIDATOR_REGISTRY_ROOT",
+    "EffectOperationAssetError",
     "GraphLoopAssetError",
     "LIFECYCLE_MUTATION_PLAN_REGISTRY_ROOT",
     "LintLevel",
@@ -94,6 +106,7 @@ __all__ = [
     "RECOVERY_POLICY_REGISTRY_ROOT",
     "REQUEST_CONTEXT_PROFILE_REGISTRY_ROOT",
     "RUNTIME_EFFECT_HANDLER_REGISTRY_ROOT",
+    "RUNTIME_EFFECT_OPERATION_REGISTRY_ROOT",
     "RUNTIME_EFFECT_RULE_REGISTRY_ROOT",
     "RUNTIME_FAILURE_POLICY_REGISTRY_ROOT",
     "SHIPPED_GRAPH_LOOP_IDS",
@@ -108,9 +121,12 @@ __all__ = [
     "builtin_mode_alias_target",
     "discover_graph_loop_definitions",
     "discover_artifact_contract_definitions",
+    "discover_effect_store_definitions",
+    "discover_effect_validator_definitions",
     "discover_plane_queue_claim_policy_definitions",
     "discover_request_context_profile_definitions",
     "discover_runtime_effect_handler_definitions",
+    "discover_runtime_effect_operation_definitions",
     "discover_runtime_effect_rule_definitions",
     "discover_runtime_failure_policy_definitions",
     "discover_stage_kind_definitions",
