@@ -68,7 +68,7 @@ Public compatibility facades may re-export the same behavior.
 ### Mutation and inspection authority
 
 - `runtime/result_application.py` is the post-stage routing facade.
-- `runtime/effect_execution.py`, `runtime/effects.py`,
+- `runtime/effect_execution.py`, `runtime/effects/`,
   `runtime/lifecycle_interpreter.py`, and `workspace/queue_lifecycle.py` apply
   compiled runtime-effect and source-lifecycle intents.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
