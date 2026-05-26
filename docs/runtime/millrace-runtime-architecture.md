@@ -206,10 +206,13 @@ workspace.
 - `src/millrace_ai/runtime/control_mailbox.py`: mailbox-safe daemon routing, command envelope creation, and control enqueue failure boundaries.
 - `src/millrace_ai/runtime/control_mutations.py`: direct offline workspace mutations, pause/resume source handling, requeue/reset helpers, stale-state clearing behavior, and operator intervention snapshot refreshes.
 - `src/millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
-- `src/millrace_ai/doctor.py`: workspace integrity + lock health checks.
+- `src/millrace_ai/doctor/`: workspace integrity + lock health checks.
 - `src/millrace_ai/assets/entrypoints/`: packaged entrypoint markdown assets plus the parsing/linting package that validates entrypoint and advisory skill manifests.
 - `src/millrace_ai/cli/errors.py`: operator error output helper used by command modules and shared workspace resolution.
-- `src/millrace_ai/cli/status_view.py`: status state loading and line rendering.
+- `src/millrace_ai/cli/status_view.py`: compatibility facade for status
+  output.
+- `src/millrace_ai/cli/status/`: status data collection, view-model assembly,
+  text rendering, and JSON payload rendering.
 - `src/millrace_ai/cli/runs_view.py`: persisted run-list loading and line rendering.
 - `src/millrace_ai/cli/config_view.py`: config-show state loading and line rendering.
 - `src/millrace_ai/cli/compile_view.py`: compile diagnostics and compile-show line rendering.

@@ -30,7 +30,8 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   including modes, loops, graphs, registries, entrypoint markdown, and bundled
   skills.
 - `cli/` owns the Typer operator surface, command modules, command-specific
-  view assembly, and CLI-only formatting/error presentation.
+  view assembly, status view-model collection/rendering, and CLI-only
+  formatting/error presentation.
 - `compilation/` owns compiler internals behind `millrace_ai.compiler`,
   including workspace plan compilation, graph materialization/export,
   validation, mode resolution, policy compilation, capabilities, model aliases,
@@ -42,6 +43,10 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   stage results, stage metadata, graph exports, runtime snapshots, mailbox
   payloads, Blueprint contracts, Recon contracts, recovery counters, and token
   usage.
+- `doctor/` owns read-only workspace Doctor diagnostics, including the public
+  Doctor facade, result models, check registry, workspace/runtime state checks,
+  queue parseability checks, asset/runner posture checks, and deterministic
+  issue ordering.
 - `runners/` owns runner contracts, request rendering, result normalization,
   registry/dispatcher/process helpers, typed runner errors, and built-in Codex
   CLI and Pi RPC adapters.
@@ -73,7 +78,8 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
 | `millrace_ai/modes.py` | `src/millrace_ai/assets/modes.py` | Root `modes.py` remains a thin compatibility facade. |
 | `millrace_ai/stage_kinds.py` | `src/millrace_ai/assets/architecture.py`, `src/millrace_ai/architecture/stage_kinds.py` | Root `stage_kinds.py` is the thin public facade for stage-kind registry loading. |
 | `millrace_ai/loop_graphs.py` | `src/millrace_ai/assets/loop_graphs.py`, `src/millrace_ai/architecture/loop_graphs.py` | Root `loop_graphs.py` is the thin public facade for graph-loop loading. |
-| `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization.py`, `src/millrace_ai/runners/base.py`, `contracts.py`, `dispatcher.py`, `errors.py`, `process.py`, `registry.py`, `src/millrace_ai/runners/adapters/codex_cli.py`, `codex_cli_command.py`, `codex_cli_artifacts.py`, `codex_cli_tokens.py`, `pi_rpc.py`, and `pi_rpc_client.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package; runner registration/dispatch, process helpers, typed errors, Codex adapter command construction, artifact handling, token extraction, and Pi RPC integration have focused modules behind the public adapter classes. |
+| `millrace_ai/runner.py` | `src/millrace_ai/runners/requests.py`, `src/millrace_ai/runners/normalization/`, `src/millrace_ai/runners/base.py`, `contracts.py`, `dispatcher.py`, `errors.py`, `process.py`, `registry.py`, `src/millrace_ai/runners/adapters/codex_cli.py`, `codex_cli_command.py`, `codex_cli_artifacts.py`, `codex_cli_tokens.py`, `pi_rpc.py`, and `pi_rpc_client.py` | Root `runner.py` remains a thin compatibility facade over the `runners` package; runner registration/dispatch, normalization, process helpers, typed errors, Codex adapter command construction, artifact handling, token extraction, and Pi RPC integration have focused modules behind the public adapter classes. |
+| `millrace_ai/doctor.py` | `src/millrace_ai/doctor/__init__.py`, `checks.py`, `models.py`, `output.py`, `workspace_checks.py`, `queue_checks.py`, and `asset_checks.py` | `millrace_ai.doctor` is now a package facade that preserves `DoctorIssue`, `DoctorReport`, and `run_workspace_doctor` while keeping check families in focused modules. |
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
 | `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py`, `src/millrace_ai/workspace/initialization.py` | Root `paths.py` remains a thin compatibility facade for `WorkspacePaths`, `workspace_paths`, and workspace initialization helpers. |
 | workspace initialization/baseline/schema epoch | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/bootstrap_files.py`, `src/millrace_ai/workspace/asset_deployment.py`, `src/millrace_ai/workspace/baseline.py`, `schema_epoch.py`, `schema_epoch_marker.py` | Explicit `millrace init`, default runtime file payloads, runtime asset deployment, managed baseline upgrade classification, schema epoch markers, and archive/reset helpers live in workspace-owned modules with path modeling kept separate from bootstrap behavior. |
@@ -97,6 +103,8 @@ preserved unless an ADR or release note explicitly removes them:
   preview.
 - `src/millrace_ai/runner.py` re-exports stable runner request/result and
   normalization helpers from `runners/`.
+- `src/millrace_ai/doctor/__init__.py` re-exports stable Doctor result models
+  and `run_workspace_doctor` from the Doctor check package.
 - `src/millrace_ai/queue_store.py` re-exports `QueueStore`, `QueueClaim`, and
   `StaleActiveState` from workspace queue modules.
 - `src/millrace_ai/control.py` re-exports `RuntimeControl` and
@@ -104,8 +112,9 @@ preserved unless an ADR or release note explicitly removes them:
 - `src/millrace_ai/__init__.py` intentionally exposes only `__version__`; richer
   surfaces live in named modules or package facades.
 - Package `__init__.py` files are public facades when they define `__all__`:
-  `architecture`, `assets`, `assets.entrypoints`, `compilation`, `config`,
-  `contracts`, `runners`, `runtime`, `runtime.graph_authority`,
+  `architecture`, `assets`, `assets.entrypoints`, `cli.status`, `compilation`,
+  `config`, `contracts`, `doctor`, `runners`, `runners.normalization`,
+  `runtime`, `runtime.graph_authority`,
   `runtime.usage_governance`, and `workspace`. Empty CLI package initializers
   remain package markers, not API expansion points.
 
@@ -168,7 +177,6 @@ reads the persisted compiled plan.
 
 These modules remain at the package root because they still have one coherent reason to change or they define foundational errors/adapters used across the package:
 
-- `src/millrace_ai/doctor.py`
 - `src/millrace_ai/router.py`
 - `src/millrace_ai/watchers.py`
 - `src/millrace_ai/errors.py`
@@ -205,9 +213,10 @@ cycles:
 - `workspace/initialization.py` orchestrates initialization and keeps
   `bootstrap_workspace` as the compatibility alias used by older callers.
 - `cli/errors.py` owns operator error output.
-- `cli/status_view.py`, `cli/runs_view.py`, `cli/config_view.py`, and
-  `cli/compile_view.py` own command-specific view assembly that reads workspace
-  state.
+- `cli/status_view.py` is a compatibility facade over `cli/status/`, where
+  `collection.py` owns status view-model assembly and `rendering.py` owns text
+  and JSON output. `cli/runs_view.py`, `cli/config_view.py`, and
+  `cli/compile_view.py` continue to own their command-specific view assembly.
 - `cli/commands/model_aliases.py` owns operator commands for model alias CRUD
   and global/loop/stage assignment CRUD. It stays thin by delegating TOML
   mutation to `config/toml_editing.py` and reload routing to `RuntimeControl`.
@@ -293,6 +302,14 @@ cycles:
   `workspace/remote_skills.py` keep workspace inventory, operator intervention
   records, lineage checks, Arbiter closure state, and remote skill metadata out
   of the queue-store facade.
+- `doctor/checks.py`, `doctor/workspace_checks.py`,
+  `doctor/queue_checks.py`, and `doctor/asset_checks.py` keep Doctor check
+  registration, workspace/runtime diagnostics, queue parseability, and asset/
+  runner posture checks separate while preserving `millrace_ai.doctor`.
+- `runners/normalization/` keeps terminal parsing, artifact safety, failure
+  classification, terminal-result mapping, and request provenance projection
+  behind the stable `millrace_ai.runners.normalization.normalize_stage_result`
+  import.
 
 ## Runner Package Notes
 

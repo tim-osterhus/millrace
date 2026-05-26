@@ -30,9 +30,12 @@ coverage to keep behavior stable.
 | MR-MAINT-006 | `src/millrace_ai/runtime/error_recovery.py` | Runtime exception context, repair routing, snapshot mutation, and reports are interleaved. | High | Batch D | Optional, recommended |
 | MR-MAINT-007 | `src/millrace_ai/runtime/request_context.py` | Generic request context rendering and Blueprint-specific context providers are coupled. | High | Batch D | Required for Blueprint half |
 | MR-MAINT-008 | `src/millrace_ai/cli/status_view.py` | Data collection, view model assembly, text rendering, and JSON payload generation are mixed. | Medium | Batch B | Not required |
-| MR-MAINT-009 | `src/millrace_ai/doctor.py` | Workspace checks, asset checks, compile checks, queue parsing, and output issue construction grow together. | Medium | Batch B | Not required |
-| MR-MAINT-010 | `src/millrace_ai/runners/normalization.py` | Terminal extraction, transport classification, artifact checks, and provenance preservation are intertwined. | Medium | Batch B | Not required |
+| MR-MAINT-009 | `src/millrace_ai/doctor/` | Workspace checks, asset checks, compile checks, queue parsing, and output issue construction grow together. | Medium | Batch B | Not required |
+| MR-MAINT-010 | `src/millrace_ai/runners/normalization/` | Terminal extraction, transport classification, artifact checks, and provenance preservation are intertwined. | Medium | Batch B | Not required |
 | MR-MAINT-011 | `src/millrace_ai/runtime/supervisor.py` | Daemon dispatch, worker lifecycle, result application, recovery, and event emission share one orchestration file. | Very high | Batch E | Required |
+
+Batch B status: MR-MAINT-008, MR-MAINT-009, and MR-MAINT-010 landed in
+Batch 3 as behavior-preserving package splits with compatibility facades.
 
 ## Candidates
 
@@ -319,15 +322,16 @@ closure status collector, and runtime-effect diagnostic projection.
 Dependency risk: Medium. It is operator-facing but mostly read-only; output
 compatibility is the main risk.
 
-Suggested batch: Batch B. This is a good early split because it improves test
-focus without changing runtime mutation.
+Suggested batch: Batch B. Completed in Batch 3 with a `cli/status/`
+collection/rendering package behind the `cli/status_view.py` compatibility
+facade.
 
 Dedicated implementation spec required: No. A small implementation checklist
 with output stability expectations should be enough.
 
 ### MR-MAINT-009: Workspace Doctor
 
-Source: `src/millrace_ai/doctor.py`
+Source: `src/millrace_ai/doctor/`
 
 Reason to change: Doctor checks tend to grow by appending another validation
 function. The module now spans workspace layout, baseline manifests, runtime
@@ -355,14 +359,15 @@ formatting.
 Dependency risk: Medium. Doctor is read-only, but operators rely on stable
 codes and deterministic ordering.
 
-Suggested batch: Batch B, after status view-model work or alongside it.
+Suggested batch: Batch B. Completed in Batch 3 with a `doctor/` check registry
+package behind the stable `millrace_ai.doctor` facade.
 
 Dedicated implementation spec required: No. Keep commits grouped by check
 family and preserve issue codes.
 
 ### MR-MAINT-010: Runner Normalization
 
-Source: `src/millrace_ai/runners/normalization.py`
+Source: `src/millrace_ai/runners/normalization/`
 
 Reason to change: Runner normalization combines raw result identity checks,
 transport failure classification, stdout terminal-token parsing, structured
@@ -392,8 +397,8 @@ checks, envelope builders, and request/provenance metadata projection.
 Dependency risk: Medium. The module is pure-ish but sits on the boundary
 between external runner behavior and runtime state.
 
-Suggested batch: Batch B, after status/doctor or in parallel if test ownership
-is clear.
+Suggested batch: Batch B. Completed in Batch 3 with a
+`runners/normalization/` package behind the stable normalization import.
 
 Dedicated implementation spec required: No. Require a short behavior contract
 inventory before movement.
