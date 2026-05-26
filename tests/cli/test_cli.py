@@ -13,7 +13,13 @@ from typer.testing import CliRunner
 
 from millrace_ai import cli
 from millrace_ai.architecture import WorkItemFamilyDefinition
+from millrace_ai.cli import status_view as cli_status_view
 from millrace_ai.cli.commands import skills as skills_commands
+from millrace_ai.cli.status import (
+    collect_status_view_model,
+    render_status_lines,
+    status_payload,
+)
 from millrace_ai.compiler import CompileOutcome, compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -1329,6 +1335,46 @@ def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "learning_queue_depth: 1" in result.output
     assert "learning_status_marker: ### ANALYST_COMPLETE" in result.output
+
+
+def test_status_view_model_separates_collection_from_rendering(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_learning_request(
+        LearningRequestDocument(
+            learning_request_id="learn-view-model-001",
+            title="Characterize status view model",
+            requested_action="improve",
+            created_at=NOW,
+            created_by="tests",
+        )
+    )
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "active_mode_id": "learning_codex",
+            "learning_status_marker": "### ANALYST_COMPLETE",
+        }
+    )
+    save_snapshot(paths, snapshot)
+
+    view_model = collect_status_view_model(paths)
+
+    assert view_model.paths == paths
+    assert view_model.snapshot.active_mode_id == "learning_codex"
+    assert view_model.queue_depths["learning"] == 1
+    assert view_model.blueprint_status["draft_counts"] == {
+        "queue": 0,
+        "active": 0,
+        "blocked": 0,
+        "approved": 0,
+        "canceled": 0,
+        "superseded": 0,
+    }
+
+    payload = status_payload(view_model)
+    assert payload["learning_queue_depth"] == 1
+    assert payload["learning_status_marker"] == "### ANALYST_COMPLETE"
+    assert render_status_lines(view_model) == cli_status_view._render_status_lines(paths)
+    assert payload == cli_status_view._status_payload(paths)
 
 
 def test_status_surfaces_latest_operator_intervention(tmp_path: Path) -> None:
