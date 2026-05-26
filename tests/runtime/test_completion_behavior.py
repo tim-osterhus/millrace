@@ -16,6 +16,8 @@ from millrace_ai.contracts import (
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
+    ProbeDocument,
+    RootIntakeKind,
     SpecDocument,
     TaskDocument,
     WorkItemKind,
@@ -33,6 +35,7 @@ from millrace_ai.workspace.arbiter_state import (
     load_closure_target_state,
     save_closure_target_state,
 )
+from millrace_ai.workspace.work_documents import render_work_document
 
 NOW = datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -60,6 +63,59 @@ def _root_spec_doc(
         constraints=("keep the implementation deterministic",),
         acceptance=("runtime can carry the lineage to closure",),
         references=(idea_reference,),
+        created_at=created_at,
+        created_by="tests",
+    )
+
+
+def _probe_root_spec_doc(
+    spec_id: str,
+    *,
+    probe_id: str,
+    created_at: datetime,
+) -> SpecDocument:
+    return SpecDocument(
+        spec_id=spec_id,
+        title=f"Probe Root Spec {spec_id}",
+        summary="probe-rooted closure target",
+        source_type="probe",
+        source_id=probe_id,
+        root_spec_id=spec_id,
+        root_intake_kind="probe",
+        root_intake_id=probe_id,
+        goals=("turn probe findings into a closed implementation line",),
+        constraints=("keep probe source identity intact",),
+        acceptance=("arbiter can close without a fabricated idea id",),
+        references=(f"millrace-agents/probes/done/{probe_id}.md",),
+        created_at=created_at,
+        created_by="tests",
+    )
+
+
+def _probe_doc(probe_id: str, *, created_at: datetime) -> ProbeDocument:
+    return ProbeDocument(
+        probe_id=probe_id,
+        title=f"Probe {probe_id}",
+        summary="probe source",
+        request="Inspect the workspace and generate a root spec.",
+        target_paths=("src/millrace_ai/runtime/completion_behavior.py",),
+        references=("docs/runtime/millrace-arbiter-and-completion-behavior.md",),
+        created_at=created_at,
+        created_by="tests",
+    )
+
+
+def _manual_root_spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
+    return SpecDocument(
+        spec_id=spec_id,
+        title=f"Manual Root Spec {spec_id}",
+        summary="directly imported manual root spec",
+        source_type="manual",
+        root_spec_id=spec_id,
+        goals=("close direct spec intake without inventing an idea",),
+        constraints=("use the root spec itself as source context",),
+        acceptance=("arbiter can close a manual root spec",),
+        references=("docs/runtime/millrace-arbiter-and-completion-behavior.md",),
         created_at=created_at,
         created_by="tests",
     )
@@ -439,6 +495,8 @@ def test_open_closure_target_activates_arbiter_before_unrelated_root_spec(
     assert request.stage is PlanningStageName.ARBITER
     assert request.request_kind == "closure_target"
     assert request.closure_target_root_spec_id == "spec-root-001"
+    assert request.closure_target_root_source_kind == "idea"
+    assert request.closure_target_root_source_id == "idea-001"
     assert (paths.specs_queue_dir / "spec-root-002.md").is_file()
     assert not (paths.specs_active_dir / "spec-root-002.md").exists()
 
@@ -879,6 +937,172 @@ def test_maybe_activate_completion_stage_backfills_open_target_from_done_root_sp
     assert engine.snapshot.active_stage is PlanningStageName.ARBITER
 
 
+def test_maybe_activate_completion_stage_backfills_probe_rooted_target(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    probe_id = "probe-root-001"
+    probe_markdown = render_work_document(_probe_doc(probe_id, created_at=NOW))
+    (paths.probes_done_dir / f"{probe_id}.md").write_text(probe_markdown, encoding="utf-8")
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(
+        _probe_root_spec_doc(
+            "spec-from-probe-001",
+            probe_id=probe_id,
+            created_at=NOW,
+        )
+    )
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+    assert not (paths.arbiter_targets_dir / "spec-from-probe-001.json").exists()
+
+    queue.mark_spec_done("spec-from-probe-001")
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    target = load_closure_target_state(paths, root_spec_id="spec-from-probe-001")
+
+    assert activated is not None
+    assert target.root_spec_id == "spec-from-probe-001"
+    assert target.root_source.kind == "probe"
+    assert target.root_source.id == probe_id
+    assert target.root_idea_id is None
+    assert target.root_idea_path is None
+    assert target.root_source.path == (
+        "millrace-agents/arbiter/contracts/root-sources/probe/probe-root-001.md"
+    )
+    assert (paths.root / target.root_source.path).read_text(encoding="utf-8") == probe_markdown
+    assert engine.snapshot is not None
+    assert engine.snapshot.active_stage is PlanningStageName.ARBITER
+
+
+def test_maybe_activate_completion_stage_backfills_manual_rooted_target(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    spec_id = "spec-manual-root-001"
+    spec_doc = _manual_root_spec_doc(spec_id, created_at=NOW)
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(spec_doc)
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    queue.mark_spec_done(spec_id)
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    target = load_closure_target_state(paths, root_spec_id=spec_id)
+
+    assert activated is not None
+    assert target.root_source.kind == "manual"
+    assert target.root_source.id == spec_id
+    assert target.root_idea_id is None
+    assert target.root_idea_path is None
+    assert target.root_source.path == (
+        "millrace-agents/arbiter/contracts/root-sources/manual/spec-manual-root-001.md"
+    )
+    assert (paths.root / target.root_source.path).read_text(encoding="utf-8") == (
+        paths.specs_done_dir / f"{spec_id}.md"
+    ).read_text(encoding="utf-8")
+    assert engine.snapshot is not None
+    assert engine.snapshot.active_stage is PlanningStageName.ARBITER
+
+
+def test_maybe_activate_completion_stage_blocks_ambiguous_probe_root_source(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    probe_id = "probe-root-001"
+    (paths.intake_sources_dir / "probe").mkdir(parents=True, exist_ok=True)
+    (paths.intake_dir / "probes").mkdir(parents=True, exist_ok=True)
+    (paths.intake_sources_dir / "probe" / f"{probe_id}.md").write_text(
+        render_work_document(_probe_doc(probe_id, created_at=NOW)),
+        encoding="utf-8",
+    )
+    (paths.intake_dir / "probes" / f"{probe_id}.md").write_text(
+        render_work_document(_probe_doc(probe_id, created_at=NOW)),
+        encoding="utf-8",
+    )
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(
+        _probe_root_spec_doc(
+            "spec-from-probe-001",
+            probe_id=probe_id,
+            created_at=NOW,
+        )
+    )
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    queue.mark_spec_done("spec-from-probe-001")
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    snapshot = load_snapshot(paths)
+    events = read_runtime_events(paths)
+
+    assert activated is None
+    assert load_planning_status(paths) == "### BLOCKED"
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "root_source_ambiguous"
+    assert any(
+        event.event_type == "root_source_resolution_failed"
+        and event.data.get("failure_class") == "root_source_ambiguous"
+        and event.data.get("root_source_kind") == "probe"
+        and event.data.get("root_source_id") == probe_id
+        for event in events
+    )
+
+
+def test_maybe_activate_completion_stage_backfills_spec_rooted_target(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    spec_id = "spec-direct-root-001"
+    spec_doc = _manual_root_spec_doc(spec_id, created_at=NOW).model_copy(
+        update={
+            "root_intake_kind": RootIntakeKind.DERIVED_SPEC,
+            "root_intake_id": spec_id,
+        }
+    )
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(spec_doc)
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    queue.mark_spec_done(spec_id)
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    target = load_closure_target_state(paths, root_spec_id=spec_id)
+
+    assert activated is not None
+    assert target.root_source.kind == "spec"
+    assert target.root_source.id == spec_id
+    assert target.root_idea_id is None
+    assert target.root_source.path == (
+        "millrace-agents/arbiter/contracts/root-sources/spec/spec-direct-root-001.md"
+    )
+    assert engine.snapshot is not None
+    assert engine.snapshot.active_stage is PlanningStageName.ARBITER
+
+
 def test_maybe_activate_completion_stage_blocks_when_root_spec_missing_lineage(
     tmp_path: Path,
 ) -> None:
@@ -912,10 +1136,10 @@ def test_maybe_activate_completion_stage_blocks_when_root_spec_missing_lineage(
     assert activated is None
     assert load_planning_status(paths) == "### BLOCKED"
     assert snapshot.planning_status_marker == "### BLOCKED"
-    assert snapshot.current_failure_class == "missing_root_lineage"
+    assert snapshot.current_failure_class == "missing_root_spec_id"
     assert any(
         event.event_type == "completion_behavior_blocked"
-        and event.data.get("reason") == "missing_root_lineage"
+        and event.data.get("reason") == "missing_root_spec_id"
         and event.data.get("spec_id") == "spec-root-001"
         for event in events
     )
@@ -950,11 +1174,59 @@ def test_maybe_activate_completion_stage_blocks_when_root_idea_source_is_missing
     assert activated is None
     assert load_planning_status(paths) == "### BLOCKED"
     assert snapshot.planning_status_marker == "### BLOCKED"
-    assert snapshot.current_failure_class == "missing_root_idea_source"
+    assert snapshot.current_failure_class == "root_source_unresolved"
     assert any(
         event.event_type == "completion_behavior_blocked"
-        and event.data.get("reason") == "missing_root_idea_source"
+        and event.data.get("reason") == "root_source_unresolved"
         and event.data.get("spec_id") == "spec-root-001"
+        for event in events
+    )
+
+
+def test_maybe_activate_completion_stage_ignores_unrelated_probe_reference(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    probe_id = "probe-root-001"
+    packet_path = paths.recon_packets_dir / "recon-packet-001.md"
+    packet_path.write_text("# Recon Packet\n\nThis is not a ProbeDocument.\n", encoding="utf-8")
+
+    spec_doc = _probe_root_spec_doc(
+        "spec-from-probe-001",
+        probe_id=probe_id,
+        created_at=NOW,
+    ).model_copy(
+        update={
+            "references": (
+                f"millrace-agents/probes/active/{probe_id}.md",
+                "millrace-agents/recon/packets/recon-packet-001.md",
+            )
+        }
+    )
+    queue = QueueStore(paths)
+    queue.enqueue_spec(spec_doc)
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+
+    queue.mark_spec_done("spec-from-probe-001")
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    activated = maybe_activate_completion_stage(engine)
+    snapshot = load_snapshot(paths)
+    events = read_runtime_events(paths)
+
+    assert activated is None
+    assert load_planning_status(paths) == "### BLOCKED"
+    assert snapshot.planning_status_marker == "### BLOCKED"
+    assert snapshot.current_failure_class == "root_source_unresolved"
+    assert any(
+        event.event_type == "root_source_resolution_failed"
+        and event.data.get("failure_class") == "root_source_unresolved"
+        and event.data.get("root_source_kind") == "probe"
+        and event.data.get("root_source_id") == probe_id
         for event in events
     )
 

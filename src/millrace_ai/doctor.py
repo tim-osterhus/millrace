@@ -34,6 +34,7 @@ from millrace_ai.compilation.workspace_plan import compile_compiled_run_plan
 from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.contracts import (
     BlueprintDraftDocument,
+    ClosureTargetState,
     ExecutionStageName,
     IncidentDocument,
     LearningRequestDocument,
@@ -143,7 +144,7 @@ def run_workspace_doctor(
     _validate_queue_parseability(paths, errors, compiled_plan=compiled_plan)
     _validate_blueprint_manifest_diagnostics(paths, errors)
     _validate_task_lifecycle_uniqueness(paths, errors)
-    _validate_closure_lineage_integrity(paths, errors)
+    _validate_closure_lineage_integrity(paths, errors, compiled_plan=compiled_plan)
     if snapshot is not None:
         _validate_stopped_daemon_with_open_graph_work(
             paths,
@@ -274,20 +275,14 @@ def _validate_manifest_tracked_managed_files(
 def _validate_closure_lineage_integrity(
     paths: WorkspacePaths,
     errors: list[DoctorIssue],
+    *,
+    compiled_plan: CompiledRunPlan | None,
 ) -> None:
-    try:
-        targets = list_open_closure_target_states(paths)
-    except (OSError, ValidationError, json.JSONDecodeError, WorkspaceStateError) as exc:
-        errors.append(
-            DoctorIssue(
-                code="closure_target_state_invalid",
-                message=str(exc),
-                path=paths.arbiter_targets_dir,
-            )
-        )
-        return
+    targets = _load_open_closure_target_states_for_doctor(paths, errors)
+    supported_kinds = _supported_closure_root_source_kinds(compiled_plan)
 
     for target in targets:
+        _validate_closure_target_contracts(paths, target, errors, supported_kinds=supported_kinds)
         diagnostic = scan_closure_lineage_drift(paths, target)
         if diagnostic is None:
             continue
@@ -302,6 +297,128 @@ def _validate_closure_lineage_integrity(
                     path=paths.root / finding.path,
                 )
             )
+
+
+def _load_open_closure_target_states_for_doctor(
+    paths: WorkspacePaths,
+    errors: list[DoctorIssue],
+) -> tuple[ClosureTargetState, ...]:
+    targets: list[ClosureTargetState] = []
+    for path in sorted(paths.arbiter_targets_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(
+                DoctorIssue(
+                    code="closure_target_state_invalid",
+                    message=str(exc),
+                    path=path,
+                )
+            )
+            continue
+        if not isinstance(payload, dict):
+            errors.append(
+                DoctorIssue(
+                    code="closure_target_state_invalid",
+                    message="closure target state payload must be an object",
+                    path=path,
+                )
+            )
+            continue
+        if payload.get("closure_open") is False:
+            continue
+        if not isinstance(payload.get("root_source"), dict):
+            errors.append(
+                DoctorIssue(
+                    code="closure_root_source_missing",
+                    message="closure target is missing root_source metadata",
+                    path=path,
+                )
+            )
+            continue
+        try:
+            target = ClosureTargetState.model_validate(payload)
+        except (ValidationError, WorkspaceStateError, ValueError) as exc:
+            errors.append(
+                DoctorIssue(
+                    code="closure_target_state_invalid",
+                    message=str(exc),
+                    path=path,
+                )
+            )
+            continue
+        if target.closure_open:
+            targets.append(target)
+    return tuple(targets)
+
+
+def _supported_closure_root_source_kinds(compiled_plan: CompiledRunPlan | None) -> frozenset[str]:
+    if compiled_plan is None:
+        return frozenset({"idea", "probe", "manual", "spec", "incident"})
+    completion_behavior = compiled_plan.planning_graph.completion_behavior
+    if completion_behavior is None:
+        return frozenset({"idea", "probe", "manual", "spec", "incident"})
+    return frozenset(completion_behavior.root_source_policy.accepted_kinds)
+
+
+def _validate_closure_target_contracts(
+    paths: WorkspacePaths,
+    target,
+    errors: list[DoctorIssue],
+    *,
+    supported_kinds: frozenset[str],
+) -> None:
+    if target.root_source.kind not in supported_kinds:
+        errors.append(
+            DoctorIssue(
+                code="closure_root_source_kind_unsupported",
+                message=f"unsupported root source kind: {target.root_source.kind}",
+                path=paths.arbiter_targets_dir / f"{target.root_spec_id}.json",
+            )
+        )
+    root_source_path = paths.root / target.root_source.path
+    if not root_source_path.is_file():
+        errors.append(
+            DoctorIssue(
+                code="closure_root_source_unresolved",
+                message=(
+                    "closure root source contract is missing: "
+                    f"{target.root_source.kind}/{target.root_source.id}"
+                ),
+                path=root_source_path,
+            )
+        )
+    root_spec_path = paths.root / target.root_spec_path
+    if not root_spec_path.is_file():
+        errors.append(
+            DoctorIssue(
+                code="closure_root_spec_missing",
+                message=f"closure root spec contract is missing: {target.root_spec_id}",
+                path=root_spec_path,
+            )
+        )
+    if (
+        target.root_source.kind == "idea"
+        and target.root_idea_id is not None
+        and target.root_idea_id != target.root_source.id
+    ):
+        errors.append(
+            DoctorIssue(
+                code="closure_root_source_legacy_mismatch",
+                message="legacy root idea id does not match idea root source id",
+                path=paths.arbiter_targets_dir / f"{target.root_spec_id}.json",
+            )
+        )
+    if target.root_source.kind != "idea" and (
+        target.root_idea_id is not None or target.root_idea_path is not None
+    ):
+        errors.append(
+            DoctorIssue(
+                code="closure_root_source_legacy_mismatch",
+                message="legacy root idea fields are only valid for idea root sources",
+                path=paths.arbiter_targets_dir / f"{target.root_spec_id}.json",
+            )
+        )
 
 
 def _validate_execution_status(paths: WorkspacePaths, errors: list[DoctorIssue]) -> str | None:

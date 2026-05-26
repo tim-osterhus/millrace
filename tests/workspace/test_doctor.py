@@ -638,10 +638,114 @@ def test_doctor_flags_closure_lineage_drift(tmp_path: Path) -> None:
     assert any(stale_root in item.message and canonical_root in item.message for item in drift_errors)
 
 
+def test_doctor_reports_missing_closure_root_source(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    target_path = paths.arbiter_targets_dir / "spec-root-001.json"
+    target_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "closure_target_state",
+                "root_spec_id": "spec-root-001",
+                "root_spec_path": "millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+                "rubric_path": "millrace-agents/arbiter/rubrics/spec-root-001.md",
+                "closure_open": True,
+                "opened_at": NOW.isoformat(),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == "closure_root_source_missing" for item in report.errors)
+
+
+def test_doctor_reports_unsupported_closure_root_source_kind(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    (paths.arbiter_root_spec_contracts_dir / "spec-root-001.md").write_text(
+        "# Root Spec\n",
+        encoding="utf-8",
+    )
+    root_source_path = paths.arbiter_root_source_contracts_dir / "custom" / "custom-root-001.md"
+    root_source_path.parent.mkdir(parents=True, exist_ok=True)
+    root_source_path.write_text(
+        "# Custom Root Source\n",
+        encoding="utf-8",
+    )
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_source={
+                "kind": "custom",
+                "id": "custom-root-001",
+                "path": "millrace-agents/arbiter/contracts/root-sources/custom/custom-root-001.md",
+            },
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            closure_open=True,
+            opened_at=NOW,
+        ),
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == "closure_root_source_kind_unsupported" for item in report.errors)
+
+
+def test_doctor_reports_closure_root_source_legacy_mismatch(tmp_path: Path) -> None:
+    paths = _bootstrap(tmp_path)
+    (paths.arbiter_root_spec_contracts_dir / "spec-root-001.md").write_text(
+        "# Root Spec\n",
+        encoding="utf-8",
+    )
+    root_source_path = paths.arbiter_root_source_contracts_dir / "probe" / "probe-root-001.md"
+    root_source_path.parent.mkdir(parents=True, exist_ok=True)
+    root_source_path.write_text(
+        "# Probe Root Source\n",
+        encoding="utf-8",
+    )
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_source={
+                "kind": "probe",
+                "id": "probe-root-001",
+                "path": "millrace-agents/arbiter/contracts/root-sources/probe/probe-root-001.md",
+            },
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            closure_open=True,
+            opened_at=NOW,
+        ),
+    )
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == "closure_root_source_legacy_mismatch" for item in report.errors)
+
+
 def test_doctor_warns_stopped_daemon_with_open_closure_and_graph_backlog(
     tmp_path: Path,
 ) -> None:
     paths = _bootstrap(tmp_path)
+    (paths.arbiter_root_spec_contracts_dir / "spec-blueprint-001.md").write_text(
+        "# Root Spec\n",
+        encoding="utf-8",
+    )
+    (paths.arbiter_idea_contracts_dir / "idea-blueprint-001.md").write_text(
+        "# Root Idea\n",
+        encoding="utf-8",
+    )
     save_closure_target_state(
         paths,
         ClosureTargetState(

@@ -437,6 +437,15 @@ def _render_closure_target_status_lines_from_status(
 ) -> tuple[str, ...]:
     return (
         f"closure_target_root_spec_id: {_status_value(status['closure_target_root_spec_id'])}",
+        (
+            "closure_target_root_source: "
+            f"{_status_value(status['closure_target_root_source_kind'])}/"
+            f"{_status_value(status['closure_target_root_source_id'])}"
+        ),
+        (
+            "closure_target_root_source_path: "
+            f"{_status_value(status['closure_target_root_source_path'])}"
+        ),
         f"closure_target_open: {_status_value(status['closure_target_open'])}",
         (
             "closure_target_blocked_by_lineage_work: "
@@ -457,6 +466,9 @@ def _closure_target_status(paths: WorkspacePaths) -> dict[str, object]:
     if len(actionable_targets) > 1:
         return {
             "closure_target_root_spec_id": "invalid_multiple_actionable_open_targets",
+            "closure_target_root_source_kind": "invalid",
+            "closure_target_root_source_id": "invalid",
+            "closure_target_root_source_path": None,
             "closure_target_open": "invalid",
             "closure_target_blocked_by_lineage_work": "invalid",
             "planning_root_specs_deferred_by_closure_target": "invalid",
@@ -466,6 +478,9 @@ def _closure_target_status(paths: WorkspacePaths) -> dict[str, object]:
     if not open_targets:
         return {
             "closure_target_root_spec_id": None,
+            "closure_target_root_source_kind": None,
+            "closure_target_root_source_id": None,
+            "closure_target_root_source_path": None,
             "closure_target_open": None,
             "closure_target_blocked_by_lineage_work": None,
             "planning_root_specs_deferred_by_closure_target": 0,
@@ -480,6 +495,9 @@ def _closure_target_status(paths: WorkspacePaths) -> dict[str, object]:
     )
     return {
         "closure_target_root_spec_id": target.root_spec_id,
+        "closure_target_root_source_kind": target.root_source.kind,
+        "closure_target_root_source_id": target.root_source.id,
+        "closure_target_root_source_path": target.root_source.path,
         "closure_target_open": target.closure_open,
         "closure_target_blocked_by_lineage_work": target.closure_blocked_by_lineage_work,
         "planning_root_specs_deferred_by_closure_target": len(deferred_root_spec_ids),

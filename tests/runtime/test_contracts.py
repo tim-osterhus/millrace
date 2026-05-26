@@ -850,7 +850,49 @@ def test_closure_target_state_valid_payload() -> None:
     )
 
     assert target.root_spec_id == "spec-root-001"
+    assert target.root_source.kind == "idea"
+    assert target.root_source.id == "idea-001"
     assert target.last_arbiter_run_id == "run-001"
+
+
+def test_closure_target_state_accepts_generic_probe_root_source() -> None:
+    target = ClosureTargetState(
+        root_spec_id="spec-from-probe-001",
+        root_source={
+            "kind": "probe",
+            "id": "probe-root-001",
+            "path": "millrace-agents/arbiter/contracts/root-sources/probe/probe-root-001.md",
+            "intake_kind": "probe",
+            "intake_id": "probe-root-001",
+        },
+        root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-from-probe-001.md",
+        rubric_path="millrace-agents/arbiter/rubrics/spec-from-probe-001.md",
+        closure_open=True,
+        opened_at=NOW,
+    )
+
+    assert target.root_source.kind == "probe"
+    assert target.root_source.id == "probe-root-001"
+    assert target.root_idea_id is None
+    assert target.root_intake_id == "probe-root-001"
+
+
+def test_closure_target_state_synthesizes_legacy_idea_fields_from_root_source() -> None:
+    target = ClosureTargetState(
+        root_spec_id="spec-root-001",
+        root_source={
+            "kind": "idea",
+            "id": "idea-001",
+            "path": "millrace-agents/arbiter/contracts/root-sources/idea/idea-001.md",
+        },
+        root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+        rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+        closure_open=True,
+        opened_at=NOW,
+    )
+
+    assert target.root_idea_id == "idea-001"
+    assert target.root_idea_path == "millrace-agents/arbiter/contracts/root-sources/idea/idea-001.md"
 
 
 def test_compile_diagnostics_requires_errors_on_failure() -> None:

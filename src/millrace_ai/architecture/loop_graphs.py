@@ -20,6 +20,7 @@ from .stage_kinds import ArchitectureContractModel
 
 _ALLOWED_ENTRYPOINT_PREFIX = "entrypoints/"
 _ALLOWED_SKILL_PREFIX = "skills/"
+_DEFAULT_CLOSURE_ROOT_SOURCE_KINDS = ("idea", "probe", "manual", "spec", "incident")
 
 
 class GraphLoopEntryKey(str, Enum):
@@ -256,12 +257,31 @@ class GraphLoopEdgeDefinition(ArchitectureContractModel):
         return self
 
 
+class GraphLoopRootSourcePolicyDefinition(ArchitectureContractModel):
+    accepted_kinds: tuple[str, ...] = _DEFAULT_CLOSURE_ROOT_SOURCE_KINDS
+    resolution: Literal["runtime_inventory"] = "runtime_inventory"
+
+    @field_validator("accepted_kinds")
+    @classmethod
+    def validate_accepted_kinds(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = [
+            normalize_canonical_id(kind, field_label="root_source_policy.accepted_kinds")
+            for kind in value
+        ]
+        if not normalized:
+            raise ValueError("root_source_policy.accepted_kinds must not be empty")
+        return dedupe_preserve_order(normalized)
+
+
 class GraphLoopCompletionBehaviorDefinition(ArchitectureContractModel):
     trigger: Literal["backlog_drained"]
     readiness_rule: Literal["no_open_lineage_work"]
     target_node_id: str
     request_kind: Literal["closure_target"]
     target_selector: Literal["active_closure_target"]
+    root_source_policy: GraphLoopRootSourcePolicyDefinition = Field(
+        default_factory=GraphLoopRootSourcePolicyDefinition
+    )
     rubric_policy: Literal["reuse_or_create"]
     blocked_work_policy: Literal["suppress"]
     skip_if_already_closed: bool = True
@@ -594,6 +614,7 @@ __all__ = [
     "GraphLoopEntryKeyValue",
     "GraphLoopNodeDefinition",
     "GraphLoopResumePolicyDefinition",
+    "GraphLoopRootSourcePolicyDefinition",
     "GraphLoopRuntimeFailureRecoveryDefinition",
     "GraphLoopThresholdPolicyDefinition",
     "GraphLoopTerminalClass",

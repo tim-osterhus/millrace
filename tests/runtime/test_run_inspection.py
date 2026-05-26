@@ -262,6 +262,11 @@ def test_inspect_run_surfaces_closure_target_request_metadata(tmp_path: Path) ->
             "failure_class": None,
             "request_kind": "closure_target",
             "closure_target_root_spec_id": "spec-root-001",
+            "closure_target_root_source_kind": "probe",
+            "closure_target_root_source_id": "probe-root-001",
+            "closure_target_root_source_path": (
+                "millrace-agents/arbiter/contracts/root-sources/probe/probe-root-001.md"
+            ),
         },
         started_at=NOW,
         completed_at=NOW,
@@ -275,8 +280,12 @@ def test_inspect_run_surfaces_closure_target_request_metadata(tmp_path: Path) ->
 
     assert summary.request_kind == "closure_target"
     assert summary.closure_target_root_spec_id == "spec-root-001"
+    assert summary.closure_target_root_source_kind == "probe"
+    assert summary.closure_target_root_source_id == "probe-root-001"
     assert summary.stage_results[0].request_kind == "closure_target"
     assert summary.stage_results[0].closure_target_root_spec_id == "spec-root-001"
+    assert summary.stage_results[0].closure_target_root_source_kind == "probe"
+    assert summary.stage_results[0].closure_target_root_source_id == "probe-root-001"
 
 
 def test_inspect_run_surfaces_context_and_failure_origin_metadata(tmp_path: Path) -> None:

@@ -64,6 +64,9 @@ class StageRunRequest(BaseModel):
     active_work_item_path: str | None = None
     closure_target_path: str | None = None
     closure_target_root_spec_id: str | None = None
+    closure_target_root_source_kind: str | None = None
+    closure_target_root_source_id: str | None = None
+    closure_target_root_source_path: str | None = None
     closure_target_root_idea_id: str | None = None
     canonical_root_spec_path: str | None = None
     canonical_seed_idea_path: str | None = None
@@ -141,9 +144,45 @@ class StageRunRequest(BaseModel):
         closure_fields = (
             self.closure_target_path,
             self.closure_target_root_spec_id,
+            self.closure_target_root_source_kind,
+            self.closure_target_root_source_id,
+            self.closure_target_root_source_path,
             self.closure_target_root_idea_id,
             self.canonical_root_spec_path,
             self.canonical_seed_idea_path,
+            self.preferred_rubric_path,
+            self.preferred_verdict_path,
+            self.preferred_report_path,
+        )
+        if (
+            self.request_kind == "closure_target"
+            and self.closure_target_root_source_kind is None
+            and self.closure_target_root_idea_id is not None
+            and self.canonical_seed_idea_path is not None
+        ):
+            self.closure_target_root_source_kind = "idea"
+            self.closure_target_root_source_id = self.closure_target_root_idea_id
+            self.closure_target_root_source_path = self.canonical_seed_idea_path
+            closure_fields = (
+                self.closure_target_path,
+                self.closure_target_root_spec_id,
+                self.closure_target_root_source_kind,
+                self.closure_target_root_source_id,
+                self.closure_target_root_source_path,
+                self.closure_target_root_idea_id,
+                self.canonical_root_spec_path,
+                self.canonical_seed_idea_path,
+                self.preferred_rubric_path,
+                self.preferred_verdict_path,
+                self.preferred_report_path,
+            )
+        required_closure_fields = (
+            self.closure_target_path,
+            self.closure_target_root_spec_id,
+            self.closure_target_root_source_kind,
+            self.closure_target_root_source_id,
+            self.closure_target_root_source_path,
+            self.canonical_root_spec_path,
             self.preferred_rubric_path,
             self.preferred_verdict_path,
             self.preferred_report_path,
@@ -158,7 +197,7 @@ class StageRunRequest(BaseModel):
                 raise ValueError(
                     "closure_target requests cannot declare active work item fields"
                 )
-            if any(field is None for field in closure_fields):
+            if any(field is None for field in required_closure_fields):
                 raise ValueError("closure_target requests require closure target fields")
         else:
             if self.plane is not Plane.LEARNING:
@@ -213,6 +252,12 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
         f"Active Work Item Path: {request.active_work_item_path or 'none'}",
         f"Closure Target Path: {request.closure_target_path or 'none'}",
         f"Closure Target Root Spec ID: {request.closure_target_root_spec_id or 'none'}",
+        (
+            "Closure Target Root Source: "
+            f"{request.closure_target_root_source_kind or 'none'}/"
+            f"{request.closure_target_root_source_id or 'none'}"
+        ),
+        f"Closure Target Root Source Path: {request.closure_target_root_source_path or 'none'}",
         f"Closure Target Root Idea ID: {request.closure_target_root_idea_id or 'none'}",
         f"Canonical Root Spec Path: {request.canonical_root_spec_path or 'none'}",
         f"Canonical Seed Idea Path: {request.canonical_seed_idea_path or 'none'}",

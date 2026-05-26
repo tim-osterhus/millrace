@@ -47,6 +47,7 @@ class WorkspacePaths:
     probes_blocked_dir: Path
 
     intake_dir: Path
+    intake_sources_dir: Path
     intake_ideas_dir: Path
 
     recon_dir: Path
@@ -67,6 +68,7 @@ class WorkspacePaths:
     arbiter_dir: Path
     arbiter_contracts_dir: Path
     arbiter_idea_contracts_dir: Path
+    arbiter_root_source_contracts_dir: Path
     arbiter_root_spec_contracts_dir: Path
     arbiter_targets_dir: Path
     arbiter_rubrics_dir: Path
@@ -137,6 +139,7 @@ class WorkspacePaths:
             self.probes_done_dir,
             self.probes_blocked_dir,
             self.intake_dir,
+            self.intake_sources_dir,
             self.intake_ideas_dir,
             self.recon_dir,
             self.recon_packets_dir,
@@ -153,6 +156,7 @@ class WorkspacePaths:
             self.arbiter_dir,
             self.arbiter_contracts_dir,
             self.arbiter_idea_contracts_dir,
+            self.arbiter_root_source_contracts_dir,
             self.arbiter_root_spec_contracts_dir,
             self.arbiter_targets_dir,
             self.arbiter_rubrics_dir,
@@ -230,6 +234,7 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         probes_done_dir=probes_dir / "done",
         probes_blocked_dir=probes_dir / "blocked",
         intake_dir=intake_dir,
+        intake_sources_dir=intake_dir / "sources",
         intake_ideas_dir=intake_dir / "ideas",
         recon_dir=recon_dir,
         recon_packets_dir=recon_dir / "packets",
@@ -247,6 +252,7 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         arbiter_dir=arbiter_dir,
         arbiter_contracts_dir=arbiter_contracts_dir,
         arbiter_idea_contracts_dir=arbiter_contracts_dir / "ideas",
+        arbiter_root_source_contracts_dir=arbiter_contracts_dir / "root-sources",
         arbiter_root_spec_contracts_dir=arbiter_contracts_dir / "root-specs",
         arbiter_targets_dir=arbiter_dir / "targets",
         arbiter_rubrics_dir=arbiter_dir / "rubrics",

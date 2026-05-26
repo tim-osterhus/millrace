@@ -144,9 +144,10 @@ Blueprint state is runtime-owned workspace state. Operators should use status
 and run inspection first, then open raw files only when detailed diagnosis is
 needed.
 
-Lineage ids are not storage ids. `root_spec_id` and `root_idea_id` identify the
-closure lineage used for inventory and Arbiter readiness; they do not own
-Blueprint artifact paths. Blueprint manifests are keyed by
+Lineage ids are not storage ids. `root_spec_id` and generic `root_source`
+metadata identify the closure lineage used for inventory and Arbiter
+readiness; legacy `root_idea_id` is only the idea-rooted compatibility field.
+They do not own Blueprint artifact paths. Blueprint manifests are keyed by
 `BlueprintManifestDocument.manifest_id` and new manifests are written to
 `millrace-agents/blueprints/manifests/<manifest_id>.json`.
 

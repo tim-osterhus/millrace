@@ -405,6 +405,52 @@ millrace-web serve --workspace <workspace>
 millrace-web serve --workspace <workspace-a> --workspace <workspace-b> --view flow
 ```
 
+### Self-Contained Intake Rule
+
+Queue intake commands are typed Millrace document imports, not generic markdown
+ingestion commands. `queue add-task` imports a valid `TaskDocument`,
+`queue add-probe` imports a valid `ProbeDocument`, `queue add-spec` imports a
+valid `SpecDocument`, and `queue add-idea` stages idea-shaped markdown.
+
+When supporting material is needed, package it inside the active workspace or
+repo and reference it with repo-relative paths. Do not enqueue thin wrappers
+that point to arbitrary local files outside the workspace. Stable public URLs
+are acceptable when the operator deliberately supplies them, but local absolute
+paths outside the workspace are not acceptable intake dependencies.
+
+For non-trivial probe/spec handoffs, prepare a workspace-local package such as:
+
+```text
+lab/intake/<intake-id>/
+  probe.md
+  architecture-spec.md
+  supporting-notes.md
+  reference-index.md
+```
+
+Then enqueue the typed work document, for example:
+
+```markdown
+# Millracer vNext Ops Gateway Recon Probe
+
+Probe-ID: probe-millracer-vnext-ops-gateway
+Title: Millracer vNext Ops Gateway Recon Probe
+Summary: Inspect repo-local reference material before generating scoped work.
+Request: Use the repo-local architecture spec and references to determine the
+clean implementation plan, then emit generated specs or implementation tasks.
+Created-At: 2026-05-26T06:36:36Z
+Created-By: codex
+
+Target-Paths:
+- .
+- src/millracer/
+- tests/
+
+References:
+- lab/intake/millracer-vnext-ops-gateway/architecture-spec.md
+- lab/intake/millracer-vnext-ops-gateway/reference-index.md
+```
+
 Important monitoring note:
 
 - `millrace status watch` is monitor-only and does not acquire runtime
@@ -529,6 +575,12 @@ Blueprint monitoring checklist:
 - `millrace status` exposes the open closure target and
   `planning_root_specs_deferred_by_closure_target` when bulk root-spec intake
   is backpressured behind the v1 one-open-target policy
+- Arbiter closure is rooted in a generic root source plus a root spec. Use
+  `Root-Idea-ID` only for idea-rooted work. Probe-rooted work should preserve
+  `Root-Intake-Kind: probe` and `Root-Intake-ID: <probe-id>` rather than
+  inventing an idea id to satisfy closure. If closure blocks on root source
+  resolution, inspect `status`, `doctor`, `queue ls`, and the Arbiter target
+  state before attempting direct repair.
 - If `millrace doctor` reports `daemon_stopped_with_open_graph_work`, the
   daemon is stopped while an open closure target still has compiled-family
   backlog or blockers. Confirm `process_running`, inspect `queue ls` family
@@ -733,6 +785,8 @@ that probe into Planner, Manager, or Mechanic.
 - Forgetting to ask the user which Millrace delegation authority you have when
   no autonomous policy or explicit Millrace request is already in force.
 - Treating direct queue-folder mutation as equivalent to the CLI intake surface.
+- Passing arbitrary markdown to `queue add-probe`; convert it into a valid
+  `ProbeDocument` and keep supporting local files inside the active workspace.
 - Acting as if Planning and Execution can overlap in shipped modes; Learning is
   the opportunistic concurrent lane, and only when the compiled policy permits
   it.

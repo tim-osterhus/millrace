@@ -26,6 +26,8 @@ class RunnerInvocationArtifact(_ArtifactModel):
     request_kind: str
     active_work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
+    closure_target_root_source_kind: str | None = None
+    closure_target_root_source_id: str | None = None
     runner_name: str
     model_name: str | None = None
     thinking_level: str | None = None
@@ -49,6 +51,8 @@ class RunnerCompletionArtifact(_ArtifactModel):
     request_kind: str
     active_work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
+    closure_target_root_source_kind: str | None = None
+    closure_target_root_source_id: str | None = None
     runner_name: str
     thinking_level: str | None = None
     model_reasoning_effort: str | None = None
@@ -99,6 +103,8 @@ def invocation_artifact_from_request(
         request_kind=request.request_kind,
         active_work_item_id=request.active_work_item_id,
         closure_target_root_spec_id=request.closure_target_root_spec_id,
+        closure_target_root_source_kind=request.closure_target_root_source_kind,
+        closure_target_root_source_id=request.closure_target_root_source_id,
         runner_name=runner_name,
         model_name=request.model_name,
         thinking_level=request.thinking_level,
@@ -135,6 +141,8 @@ def completion_artifact_from_raw_result(
         request_kind=request.request_kind,
         active_work_item_id=request.active_work_item_id,
         closure_target_root_spec_id=request.closure_target_root_spec_id,
+        closure_target_root_source_kind=request.closure_target_root_source_kind,
+        closure_target_root_source_id=request.closure_target_root_source_id,
         runner_name=runner_name,
         thinking_level=raw_result.thinking_level,
         model_reasoning_effort=raw_result.model_reasoning_effort,

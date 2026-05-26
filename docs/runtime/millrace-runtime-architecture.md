@@ -85,14 +85,21 @@ runtime events.
 - `millrace-agents/blueprints/{critiques,evaluations,promotions}/**/*.json`
 
 Storage identity belongs to the artifact or work-item id, not to lineage.
-`root_spec_id` and `root_idea_id` are closure and inventory metadata. Multiple
-Blueprint manifests may share the same root lineage during Arbiter remediation
-as long as their `manifest_id` values differ. A same-root manifest is valid
-lineage; a duplicate manifest is the same `manifest_id` with divergent
+`root_spec_id` and generic `root_source` metadata are closure and inventory
+metadata; legacy `root_idea_id` remains the idea-rooted compatibility field.
+Multiple Blueprint manifests may share the same root lineage during Arbiter
+remediation as long as their `manifest_id` values differ. A same-root manifest
+is valid lineage; a duplicate manifest is the same `manifest_id` with divergent
 normalized content.
+
+Queue intake artifacts must be reproducible from the active workspace: typed
+work documents may embed supporting context or reference repo-relative files,
+but they should not depend on arbitrary local absolute paths outside the
+workspace.
 
 ### Arbiter-owned completion artifacts
 
+- `millrace-agents/arbiter/contracts/root-sources/<kind>/*.md`
 - `millrace-agents/arbiter/contracts/ideas/*.md`
 - `millrace-agents/arbiter/contracts/root-specs/*.md`
 - `millrace-agents/arbiter/targets/*.json`
@@ -392,7 +399,7 @@ persisted artifacts without taking runtime ownership.
 
 - Entrypoints are plain markdown instruction files under `millrace-agents/entrypoints/<plane>/<stage>.md`.
 - Work-item stage requests include `active_work_item_path`, `run_dir`, and relevant context paths so entrypoints do not invent runtime paths.
-- Closure-target stage requests such as `arbiter` use `request_kind = closure_target` and pass canonical root-spec and seed-idea paths instead of fabricating an active queue document.
+- Closure-target stage requests such as `arbiter` use `request_kind = closure_target` and pass canonical root-source and root-spec paths instead of fabricating an active queue document. Idea-rooted requests also carry legacy seed-idea fields for compatibility.
 - Probe stage requests enter Planning through `recon`; successful Recon outputs
   are persisted as `millrace-agents/recon/packets/<PACKET_ID>.md` before
   generated task/spec artifacts are enqueued by the runtime.

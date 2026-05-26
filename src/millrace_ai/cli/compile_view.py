@@ -92,6 +92,10 @@ def _render_compile_show_lines(paths: WorkspacePaths, outcome: CompileOutcome) -
                 f"completion_behavior.readiness_rule: {completion_behavior.readiness_rule}",
                 f"completion_behavior.request_kind: {completion_behavior.request_kind}",
                 f"completion_behavior.target_selector: {completion_behavior.target_selector}",
+                "completion_behavior.root_source_policy.accepted_kinds: "
+                f"{', '.join(completion_behavior.root_source_policy.accepted_kinds)}",
+                "completion_behavior.root_source_policy.resolution: "
+                f"{completion_behavior.root_source_policy.resolution}",
                 f"completion_behavior.rubric_policy: {completion_behavior.rubric_policy}",
                 f"completion_behavior.blocked_work_policy: {completion_behavior.blocked_work_policy}",
                 "completion_behavior.skip_if_already_closed: "

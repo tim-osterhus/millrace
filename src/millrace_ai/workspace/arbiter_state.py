@@ -91,6 +91,19 @@ def write_canonical_idea_contract(
     return path
 
 
+def write_canonical_root_source_contract(
+    target: WorkspacePaths | Path | str,
+    *,
+    root_source_kind: str,
+    root_source_id: str,
+    markdown: str,
+) -> Path:
+    paths = _resolve_paths(target)
+    path = paths.arbiter_root_source_contracts_dir / root_source_kind / f"{root_source_id}.md"
+    _atomic_write_text(path, markdown)
+    return path
+
+
 def write_canonical_root_spec_contract(
     target: WorkspacePaths | Path | str,
     *,
@@ -109,5 +122,6 @@ __all__ = [
     "load_closure_target_state",
     "save_closure_target_state",
     "write_canonical_idea_contract",
+    "write_canonical_root_source_contract",
     "write_canonical_root_spec_contract",
 ]

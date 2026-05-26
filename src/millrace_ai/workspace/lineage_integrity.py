@@ -26,6 +26,7 @@ from .work_documents import parse_work_document_as, render_work_document
 LineageWorkState = Literal["queue", "active", "blocked"]
 LineageDiagnosticReason = Literal[
     "same_root_idea_different_root_spec",
+    "same_root_source_different_root_spec",
     "known_root_spec_alias",
 ]
 
@@ -50,7 +51,9 @@ class LineageDriftDiagnostic(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["closure_lineage_drift_diagnostic"] = "closure_lineage_drift_diagnostic"
     root_spec_id: str
-    root_idea_id: str
+    root_idea_id: str | None = None
+    root_source_kind: str | None = None
+    root_source_id: str | None = None
     detected_at: datetime
     findings: tuple[LineageDriftFinding, ...] = Field(default_factory=tuple)
     recommended_command: str
@@ -74,7 +77,9 @@ class LineageRepairPlan(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["closure_lineage_repair_plan"] = "closure_lineage_repair_plan"
     root_spec_id: str
-    root_idea_id: str
+    root_idea_id: str | None = None
+    root_source_kind: str | None = None
+    root_source_id: str | None = None
     created_at: datetime
     changes: tuple[LineageRepairChange, ...] = Field(default_factory=tuple)
     skipped_findings: tuple[LineageDriftFinding, ...] = Field(default_factory=tuple)
@@ -153,6 +158,8 @@ def scan_closure_lineage_drift(
     return LineageDriftDiagnostic(
         root_spec_id=target.root_spec_id,
         root_idea_id=target.root_idea_id,
+        root_source_kind=target.root_source.kind,
+        root_source_id=target.root_source.id,
         detected_at=_coerce_detected_at(detected_at),
         findings=tuple(findings),
         recommended_command=(
@@ -192,6 +199,8 @@ def build_lineage_repair_plan(
         return LineageRepairPlan(
             root_spec_id=target.root_spec_id,
             root_idea_id=target.root_idea_id,
+            root_source_kind=target.root_source.kind,
+            root_source_id=target.root_source.id,
             created_at=_coerce_detected_at(created_at),
         )
 
@@ -213,6 +222,8 @@ def build_lineage_repair_plan(
     return LineageRepairPlan(
         root_spec_id=target.root_spec_id,
         root_idea_id=target.root_idea_id,
+        root_source_kind=target.root_source.kind,
+        root_source_id=target.root_source.id,
         created_at=_coerce_detected_at(created_at),
         changes=tuple(changes),
         skipped_findings=tuple(skipped),
@@ -356,8 +367,15 @@ def _drift_reason(
     actual_root_spec_id: str | None,
     aliases: set[str],
 ) -> LineageDiagnosticReason | None:
-    if document.root_idea_id == target.root_idea_id:
+    if target.root_idea_id is not None and document.root_idea_id == target.root_idea_id:
         return "same_root_idea_different_root_spec"
+    if (
+        target.root_source.intake_kind is not None
+        and target.root_source.intake_id is not None
+        and document.root_intake_kind == target.root_source.intake_kind
+        and document.root_intake_id == target.root_source.intake_id
+    ):
+        return "same_root_source_different_root_spec"
     if actual_root_spec_id is not None and actual_root_spec_id in aliases:
         return "known_root_spec_alias"
     if _document_spec_id(document) in aliases:

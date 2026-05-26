@@ -21,6 +21,8 @@ def _render_runs_ls_lines(paths: WorkspacePaths) -> tuple[str, ...]:
                 f"artifact_status: {summary.artifact_status}",
                 f"runtime_outcome: {summary.runtime_outcome}",
                 f"compiled_plan_id: {_value(summary.compiled_plan_id)}",
+                f"closure_target_root_source_kind: {_value(summary.closure_target_root_source_kind)}",
+                f"closure_target_root_source_id: {_value(summary.closure_target_root_source_id)}",
                 f"work_item_kind: {_value(summary.work_item_kind)}",
                 f"work_item_id: {_value(summary.work_item_id)}",
                 f"failure_class: {_value(summary.failure_class)}",

@@ -45,6 +45,9 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
         f"mode_id: {_value(summary.mode_id)}",
         f"request_kind: {_value(summary.request_kind)}",
         f"closure_target_root_spec_id: {_value(summary.closure_target_root_spec_id)}",
+        f"closure_target_root_source_kind: {_value(summary.closure_target_root_source_kind)}",
+        f"closure_target_root_source_id: {_value(summary.closure_target_root_source_id)}",
+        f"closure_target_root_source_path: {_value(summary.closure_target_root_source_path)}",
         f"work_item_kind: {_value(summary.work_item_kind)}",
         f"work_item_id: {_value(summary.work_item_id)}",
         f"failure_class: {_value(summary.failure_class)}",
@@ -82,6 +85,18 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
                 f"stage_kind_id: {stage_result.stage_kind_id}",
                 f"request_kind: {_value(stage_result.request_kind)}",
                 f"closure_target_root_spec_id: {_value(stage_result.closure_target_root_spec_id)}",
+                (
+                    "closure_target_root_source_kind: "
+                    f"{_value(stage_result.closure_target_root_source_kind)}"
+                ),
+                (
+                    "closure_target_root_source_id: "
+                    f"{_value(stage_result.closure_target_root_source_id)}"
+                ),
+                (
+                    "closure_target_root_source_path: "
+                    f"{_value(stage_result.closure_target_root_source_path)}"
+                ),
                 f"terminal_result: {stage_result.terminal_result}",
                 f"result_class: {stage_result.result_class}",
                 f"failure_class: {_value(stage_result.failure_class)}",
@@ -198,6 +213,8 @@ def _render_run_trace_lines(trace: RunTraceGraph) -> tuple[str, ...]:
         f"compiled_plan_id: {_value(trace.compiled_plan_id)}",
         f"mode_id: {_value(trace.mode_id)}",
         f"request_kind: {_value(trace.request_kind)}",
+        f"closure_target_root_source_kind: {_value(trace.closure_target_root_source_kind)}",
+        f"closure_target_root_source_id: {_value(trace.closure_target_root_source_id)}",
         f"work_item_kind: {_value(trace.work_item_kind)}",
         f"work_item_id: {_value(trace.work_item_id)}",
         f"node_count: {len(trace.nodes)}",

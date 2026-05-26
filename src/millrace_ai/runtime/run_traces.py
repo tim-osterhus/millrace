@@ -106,6 +106,13 @@ def derive_run_trace_from_stage_results(
         work_item_kind=latest.work_item_kind if latest else None,
         work_item_id=latest.work_item_id if latest else None,
         closure_target_root_spec_id=latest.closure_target_root_spec_id if latest else None,
+        closure_target_root_source_kind=(
+            latest.closure_target_root_source_kind if latest else None
+        ),
+        closure_target_root_source_id=latest.closure_target_root_source_id if latest else None,
+        closure_target_root_source_path=(
+            latest.closure_target_root_source_path if latest else None
+        ),
         status=status,
         started_at=first.started_at if first else None,
         completed_at=latest.completed_at if latest else None,
@@ -266,6 +273,18 @@ def _node_from_stage_result(
             stage_result,
             "closure_target_root_spec_id",
         ),
+        closure_target_root_source_kind=_string_metadata(
+            stage_result,
+            "closure_target_root_source_kind",
+        ),
+        closure_target_root_source_id=_string_metadata(
+            stage_result,
+            "closure_target_root_source_id",
+        ),
+        closure_target_root_source_path=_string_metadata(
+            stage_result,
+            "closure_target_root_source_path",
+        ),
         terminal_result=stage_result.terminal_result.value,
         result_class=stage_result.result_class,
         failure_class=_string_metadata(stage_result, "failure_class"),
@@ -388,6 +407,21 @@ def _trace_with(
                 "closure_target_root_spec_id",
             )
             or trace.closure_target_root_spec_id,
+            "closure_target_root_source_kind": _string_metadata(
+                stage_result,
+                "closure_target_root_source_kind",
+            )
+            or trace.closure_target_root_source_kind,
+            "closure_target_root_source_id": _string_metadata(
+                stage_result,
+                "closure_target_root_source_id",
+            )
+            or trace.closure_target_root_source_id,
+            "closure_target_root_source_path": _string_metadata(
+                stage_result,
+                "closure_target_root_source_path",
+            )
+            or trace.closure_target_root_source_path,
             "status": status,
             "started_at": first.started_at if first else trace.started_at,
             "completed_at": latest.completed_at if latest else trace.completed_at,

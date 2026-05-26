@@ -11,17 +11,18 @@ lineage has an open closure target and no queued, active, or blocked work
 remains for that lineage, the compiled planning-loop `completion_behavior`
 dispatches the `arbiter` stage through the normal runner contract.
 
-## Root Lineage Model
+## Root Source Model
 
-Closure behavior is keyed by explicit root-lineage fields carried through work
-documents:
+Closure behavior pairs two durable contracts:
 
 - `root_spec_id`
-- `root_idea_id`
+- `root_source`
 
-Those fields live on canonical task, spec, and incident markdown documents. The
-immediate provenance fields still exist, but Arbiter uses root lineage so it
-does not guess which spec family it is judging after remediation churn.
+`root_spec_id` identifies the implementation contract that decomposed the
+workline. `root_source` identifies the original intake artifact that caused the
+workline to exist, such as an idea, probe, manual/spec intake, or incident.
+The legacy `root_idea_id` field remains supported for idea-rooted work and maps
+to `root_source.kind = idea`.
 
 Watcher-seeded root specs are expected to initialize both fields immediately,
 and Planner/Manager are expected to preserve them when refining specs or
@@ -36,16 +37,19 @@ target creation does not depend on an inbox file remaining in place.
 
 Arbiter judges against canonical copies under its own workspace subtree:
 
+- `millrace-agents/arbiter/contracts/root-sources/<kind>/<source_id>.md`
 - `millrace-agents/arbiter/contracts/ideas/<root_idea_id>.md`
 - `millrace-agents/arbiter/contracts/root-specs/<root_spec_id>.md`
 
-Those copies are opened when the root spec first enters the managed lineage.
-The runtime snapshots them immediately from the durable intake copy when one
-exists, then falls back to legacy spec references and inbox paths. Arbiter does
-not search the operator-authored workspace for mutable source files later.
-If none of those sources exists during backlog-drain recovery, Planning is
-marked blocked with `missing_root_idea_source` and the runtime emits a
-`root_idea_source_missing` event instead of terminating the daemon loop.
+The generic `root-sources/` path is authoritative for new code. The
+`contracts/ideas/` path remains a compatibility mirror for idea-rooted closure
+targets. Runtime snapshots source contracts immediately from durable intake
+storage when available, then from supported lifecycle folders and workspace
+relative references. Arbiter does not search arbitrary local files later.
+If the root source cannot be resolved during backlog-drain recovery, Planning
+is marked blocked with a precise failure class such as
+`root_source_unresolved`, `root_source_ambiguous`, or
+`root_source_kind_unsupported`.
 
 ## Closure Target State
 
@@ -56,7 +60,9 @@ The runtime owns one closure-target state file per root spec:
 The shipped v1 policy is one open closure target per workspace. The target file
 records:
 
-- root lineage ids
+- root source kind/id/path
+- root spec id/path
+- legacy idea id/path for idea-rooted targets
 - canonical contract paths
 - rubric path
 - latest verdict/report paths
@@ -70,6 +76,8 @@ The compiled planning-loop `completion_behavior` for `planning.standard` is:
 
 - trigger: `backlog_drained`
 - readiness rule: `no_open_lineage_work`
+- root source policy: accepted kinds `idea`, `probe`, `manual`, `spec`, and
+  `incident` with `runtime_inventory` resolution
 - stage: `arbiter`
 - request kind: `closure_target`
 - target selector: `active_closure_target`
@@ -82,8 +90,8 @@ Runtime behavior is:
    only same-lineage execution/planning work
 3. if no same-lineage work remains, inspect the compiled completion behavior
 4. locate the single open closure target
-5. if no open target exists, try to backfill one from the latest root spec that
-   already carries root-lineage ids
+5. if no open target exists, try to backfill one from the latest root spec by
+   resolving its generic root source deterministically
 6. scan queued, active, and blocked work for matching `root_spec_id`, including
    Blueprint drafts, candidate packets, approved-unpromoted packets, promotion
    records, and generated tasks when the selected Planning graph uses
@@ -91,9 +99,10 @@ Runtime behavior is:
 7. suppress Arbiter if lineage work still remains
 8. dispatch Arbiter when the target is eligible
 
-If no open target exists and the latest root spec is still missing root-lineage
-metadata, the runtime marks planning blocked and emits a diagnosable runtime
-event instead of silently idling through required closure behavior.
+If no open target exists and the latest root spec is missing `root_spec_id` or
+has no resolvable root source, the runtime marks planning blocked and emits a
+diagnosable runtime event instead of silently idling through required closure
+behavior.
 
 ## Bulk Root-Spec Intake Backpressure
 
@@ -132,9 +141,12 @@ The stage request uses `request_kind = closure_target` and includes:
 
 - `closure_target_path`
 - `closure_target_root_spec_id`
-- `closure_target_root_idea_id`
+- `closure_target_root_source_kind`
+- `closure_target_root_source_id`
+- `closure_target_root_source_path`
+- `closure_target_root_idea_id` for legacy idea-rooted work
 - `canonical_root_spec_path`
-- `canonical_seed_idea_path`
+- `canonical_seed_idea_path` for legacy idea-rooted work
 - `preferred_rubric_path`
 - `preferred_verdict_path`
 - `preferred_report_path`
@@ -181,10 +193,11 @@ change.
 The current operator-facing surfaces expose this behavior directly:
 
 - `millrace compile show` prints frozen `completion_behavior`
-- `millrace status` prints the active open closure target, deferred-root count,
+- `millrace status` prints the active open closure target root source,
+  deferred-root count,
   latest verdict/report paths, and Blueprint draft/packet/critique/evaluation
   and promotion summaries when those artifacts exist
-- `millrace runs show` prints request kind, closure-target lineage for Arbiter
+- `millrace runs show` prints request kind, closure-target root source for Arbiter
   runs, and runtime-effect lifecycle intent plus created paths for Blueprint
   stages
 

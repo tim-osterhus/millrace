@@ -213,6 +213,13 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
     assert planning.runtime_failure_recovery.default_repair_node_id == "mechanic"
     assert planning.runtime_failure_recovery.counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT
     assert planning.completion_behavior.target_node_id == "arbiter"
+    assert planning.completion_behavior.root_source_policy.accepted_kinds == (
+        "idea",
+        "probe",
+        "manual",
+        "spec",
+        "incident",
+    )
     assert planning.completion_behavior.on_gap_terminal_state_id == "remediation_needed"
     assert any(
         state.terminal_class is GraphLoopTerminalClass.FOLLOWUP_NEEDED

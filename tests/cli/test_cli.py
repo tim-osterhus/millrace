@@ -367,6 +367,9 @@ def _inspected_run_summary(
     mode_id: str | None = "default_codex",
     request_kind: str | None = None,
     closure_target_root_spec_id: str | None = None,
+    closure_target_root_source_kind: str | None = None,
+    closure_target_root_source_id: str | None = None,
+    closure_target_root_source_path: str | None = None,
     failure_origin: str | None = None,
     request_context_profile_id: str | None = None,
     context_bundle_path: str | None = None,
@@ -399,6 +402,9 @@ def _inspected_run_summary(
         stage_kind_id="checker",
         request_kind=request_kind,
         closure_target_root_spec_id=closure_target_root_spec_id,
+        closure_target_root_source_kind=closure_target_root_source_kind,
+        closure_target_root_source_id=closure_target_root_source_id,
+        closure_target_root_source_path=closure_target_root_source_path,
         terminal_result="CHECKER_PASS",
         result_class="success",
         work_item_kind="task",
@@ -451,6 +457,9 @@ def _inspected_run_summary(
         mode_id=mode_id,
         request_kind=request_kind,
         closure_target_root_spec_id=closure_target_root_spec_id,
+        closure_target_root_source_kind=closure_target_root_source_kind,
+        closure_target_root_source_id=closure_target_root_source_id,
+        closure_target_root_source_path=closure_target_root_source_path,
         work_item_kind="task",
         work_item_id="task-001",
         failure_class=failure_class,
@@ -3596,6 +3605,10 @@ def test_compile_show_surfaces_compiled_plan_summary(
                     readiness_rule="no_open_lineage_work",
                     request_kind="closure_target",
                     target_selector="active_closure_target",
+                    root_source_policy=SimpleNamespace(
+                        accepted_kinds=("idea", "probe", "manual", "spec", "incident"),
+                        resolution="runtime_inventory",
+                    ),
                     rubric_policy="reuse_or_create",
                     blocked_work_policy="suppress",
                     skip_if_already_closed=True,
@@ -3657,6 +3670,10 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "execution_capability_warning: builder:workspace.read is required but advisory_only" in result.output
     assert "completion_behavior.trigger: backlog_drained" in result.output
     assert "completion_behavior.request_kind: closure_target" in result.output
+    assert (
+        "completion_behavior.root_source_policy.accepted_kinds: idea, probe, manual, spec, incident"
+        in result.output
+    )
     assert "completion_behavior.on_gap_terminal_state_id: remediation_needed" in result.output
     assert "role_overlays:" not in result.output
 

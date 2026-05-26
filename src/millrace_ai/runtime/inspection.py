@@ -40,6 +40,9 @@ class InspectedStageResult:
     stage_kind_id: str
     request_kind: str | None
     closure_target_root_spec_id: str | None
+    closure_target_root_source_kind: str | None
+    closure_target_root_source_id: str | None
+    closure_target_root_source_path: str | None
     terminal_result: str
     result_class: str
     work_item_kind: WorkItemKind
@@ -90,6 +93,9 @@ class InspectedRunSummary:
     mode_id: str | None
     request_kind: str | None
     closure_target_root_spec_id: str | None
+    closure_target_root_source_kind: str | None
+    closure_target_root_source_id: str | None
+    closure_target_root_source_path: str | None
     work_item_kind: WorkItemKind | None
     work_item_id: str | None
     failure_class: str | None
@@ -133,6 +139,9 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             mode_id=None,
             request_kind=None,
             closure_target_root_spec_id=None,
+            closure_target_root_source_kind=None,
+            closure_target_root_source_id=None,
+            closure_target_root_source_path=None,
             work_item_kind=None,
             work_item_id=None,
             failure_class=None,
@@ -158,6 +167,9 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             mode_id=None,
             request_kind=None,
             closure_target_root_spec_id=None,
+            closure_target_root_source_kind=None,
+            closure_target_root_source_id=None,
+            closure_target_root_source_path=None,
             work_item_kind=None,
             work_item_id=None,
             failure_class=None,
@@ -196,6 +208,18 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
                 closure_target_root_spec_id=_string_metadata(
                     stage_result,
                     "closure_target_root_spec_id",
+                ),
+                closure_target_root_source_kind=_string_metadata(
+                    stage_result,
+                    "closure_target_root_source_kind",
+                ),
+                closure_target_root_source_id=_string_metadata(
+                    stage_result,
+                    "closure_target_root_source_id",
+                ),
+                closure_target_root_source_path=_string_metadata(
+                    stage_result,
+                    "closure_target_root_source_path",
                 ),
                 terminal_result=stage_result.terminal_result.value,
                 result_class=stage_result.result_class.value,
@@ -316,6 +340,15 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         request_kind=latest_stage_result.request_kind if latest_stage_result else None,
         closure_target_root_spec_id=(
             latest_stage_result.closure_target_root_spec_id if latest_stage_result else None
+        ),
+        closure_target_root_source_kind=(
+            latest_stage_result.closure_target_root_source_kind if latest_stage_result else None
+        ),
+        closure_target_root_source_id=(
+            latest_stage_result.closure_target_root_source_id if latest_stage_result else None
+        ),
+        closure_target_root_source_path=(
+            latest_stage_result.closure_target_root_source_path if latest_stage_result else None
         ),
         work_item_kind=latest_stage_result.work_item_kind if latest_stage_result else None,
         work_item_id=latest_stage_result.work_item_id if latest_stage_result else None,

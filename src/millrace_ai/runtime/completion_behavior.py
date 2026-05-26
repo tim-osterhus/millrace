@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING
 from millrace_ai.architecture import GraphLoopCompletionBehaviorDefinition
 from millrace_ai.contracts import (
     ClosureBlockingWorkRef,
+    ClosureRootSource,
     ClosureTargetState,
+    IncidentDocument,
     Plane,
+    ProbeDocument,
     SpecDocument,
     WorkItemKind,
 )
@@ -24,6 +27,7 @@ from millrace_ai.workspace.arbiter_state import (
     load_closure_target_state,
     save_closure_target_state,
     write_canonical_idea_contract,
+    write_canonical_root_source_contract,
     write_canonical_root_spec_contract,
 )
 from millrace_ai.workspace.blueprint_state import list_open_blueprint_lineage_work_refs
@@ -43,6 +47,8 @@ from .active_runs import active_run_from_closure_target, snapshot_with_active_ru
 from .graph_authority import completion_activation_for_graph
 from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
 
+_SUPPORTED_ROOT_SOURCE_KINDS = frozenset({"idea", "probe", "manual", "spec", "incident"})
+
 
 @dataclass(frozen=True, slots=True)
 class ClosureTargetPreparation:
@@ -54,14 +60,32 @@ class ClosureTargetPreparation:
     deferred_root_spec_id: str | None = None
 
 
-class RootIdeaSourceResolutionError(WorkspaceStateError):
-    """Raised when closure-target creation cannot find root idea markdown."""
+@dataclass(frozen=True, slots=True)
+class RootSourceResolution:
+    """Resolved source artifact content for a closure target."""
 
-    def __init__(self, *, root_idea_id: str | None, candidates: tuple[Path, ...]) -> None:
-        self.root_idea_id = root_idea_id
+    source: ClosureRootSource
+    markdown: str
+
+
+class RootSourceResolutionError(WorkspaceStateError):
+    """Raised when closure-target creation cannot resolve the generic root source."""
+
+    def __init__(
+        self,
+        *,
+        failure_class: str,
+        root_source_kind: str | None,
+        root_source_id: str | None,
+        candidates: tuple[Path, ...] = (),
+    ) -> None:
+        self.failure_class = failure_class
+        self.root_source_kind = root_source_kind
+        self.root_source_id = root_source_id
         self.candidates = candidates
         super().__init__(
-            f"could not resolve source idea markdown for root_idea_id={root_idea_id}"
+            "could not resolve closure root source "
+            f"kind={root_source_kind} id={root_source_id} failure_class={failure_class}"
         )
 
 
@@ -278,10 +302,10 @@ def _recover_or_diagnose_missing_closure_target(
         return None
 
     spec_path, spec = candidate
-    if spec.root_spec_id is None or spec.root_idea_id is None:
+    if spec.root_spec_id is None:
         _mark_completion_behavior_blocked(
             engine,
-            failure_class="missing_root_lineage",
+            failure_class="missing_root_spec_id",
             spec_id=spec.spec_id,
             spec_path=spec_path,
         )
@@ -293,18 +317,20 @@ def _recover_or_diagnose_missing_closure_target(
 
     try:
         target = _open_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
-    except RootIdeaSourceResolutionError as exc:
+    except RootSourceResolutionError as exc:
         _mark_completion_behavior_blocked(
             engine,
-            failure_class="missing_root_idea_source",
+            failure_class=exc.failure_class,
             spec_id=spec.spec_id,
             spec_path=spec_path,
         )
         write_runtime_event(
             engine.paths,
-            event_type="root_idea_source_missing",
+            event_type="root_source_resolution_failed",
             data={
-                "root_idea_id": exc.root_idea_id,
+                "failure_class": exc.failure_class,
+                "root_source_kind": exc.root_source_kind,
+                "root_source_id": exc.root_source_id,
                 "spec_id": spec.spec_id,
                 "spec_path": _display_path(engine, spec_path),
                 "candidates": [_display_path(engine, candidate) for candidate in exc.candidates],
@@ -317,6 +343,8 @@ def _recover_or_diagnose_missing_closure_target(
             event_type="completion_behavior_target_backfilled",
             data={
                 "root_spec_id": target.root_spec_id,
+                "root_source_kind": target.root_source.kind,
+                "root_source_id": target.root_source.id,
                 "root_idea_id": target.root_idea_id,
                 "spec_path": str(spec_path.relative_to(engine.paths.root)),
             },
@@ -351,7 +379,7 @@ def _prepare_closure_target_for_spec(
     spec_path: Path,
     spec: SpecDocument,
 ) -> ClosureTargetPreparation:
-    if spec.root_spec_id is None or spec.root_idea_id is None:
+    if spec.root_spec_id is None:
         return ClosureTargetPreparation(allowed=True)
     if spec.spec_id != spec.root_spec_id:
         return ClosureTargetPreparation(allowed=True)
@@ -393,27 +421,41 @@ def _create_closure_target_for_spec(
     spec_path: Path,
     spec: SpecDocument,
 ) -> ClosureTargetState:
-    assert spec.root_idea_id is not None
     assert spec.root_spec_id is not None
-    root_idea_id = spec.root_idea_id
     root_spec_id = spec.root_spec_id
-    idea_markdown = _load_root_idea_markdown(engine, spec)
+    source_resolution = _resolve_root_source(engine, spec_path=spec_path, spec=spec)
     root_spec_markdown = spec_path.read_text(encoding="utf-8")
-    idea_contract = write_canonical_idea_contract(
+    root_source_contract = write_canonical_root_source_contract(
         engine.paths,
-        root_idea_id=root_idea_id,
-        markdown=idea_markdown,
+        root_source_kind=source_resolution.source.kind,
+        root_source_id=source_resolution.source.id,
+        markdown=source_resolution.markdown,
     )
     root_spec_contract = write_canonical_root_spec_contract(
         engine.paths,
         root_spec_id=root_spec_id,
         markdown=root_spec_markdown,
     )
+    root_source = source_resolution.source.model_copy(
+        update={"path": _workspace_relative_path(engine, root_source_contract)}
+    )
+    root_idea_id = root_source.id if root_source.kind == "idea" else None
+    root_idea_path = None
+    if root_idea_id is not None:
+        idea_contract = write_canonical_idea_contract(
+            engine.paths,
+            root_idea_id=root_idea_id,
+            markdown=source_resolution.markdown,
+        )
+        root_idea_path = _workspace_relative_path(engine, idea_contract)
     target = ClosureTargetState(
         root_spec_id=root_spec_id,
+        root_source=root_source,
         root_idea_id=root_idea_id,
         root_spec_path=_workspace_relative_path(engine, root_spec_contract),
-        root_idea_path=_workspace_relative_path(engine, idea_contract),
+        root_idea_path=root_idea_path,
+        root_intake_kind=root_source.intake_kind,
+        root_intake_id=root_source.intake_id,
         rubric_path=f"millrace-agents/arbiter/rubrics/{root_spec_id}.md",
         latest_verdict_path=None,
         latest_report_path=None,
@@ -462,7 +504,7 @@ def _latest_root_spec_candidate(engine: RuntimeEngine) -> tuple[Path, SpecDocume
 def _is_root_spec_candidate(spec: SpecDocument) -> bool:
     if spec.root_spec_id is not None and spec.spec_id == spec.root_spec_id:
         return True
-    return spec.source_type in {"idea", "manual"} and not _has_parent_spec(spec)
+    return spec.source_type in {"idea", "manual", "probe", "incident"} and not _has_parent_spec(spec)
 
 
 def _has_parent_spec(spec: SpecDocument) -> bool:
@@ -471,38 +513,270 @@ def _has_parent_spec(spec: SpecDocument) -> bool:
     return spec.parent_spec_id.strip().lower() != "none"
 
 
-def _load_root_idea_markdown(engine: RuntimeEngine, spec: SpecDocument) -> str:
-    candidates = _root_idea_source_candidates(engine, spec)
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.read_text(encoding="utf-8")
-    raise RootIdeaSourceResolutionError(root_idea_id=spec.root_idea_id, candidates=candidates)
+def _resolve_root_source(
+    engine: RuntimeEngine,
+    *,
+    spec_path: Path,
+    spec: SpecDocument,
+) -> RootSourceResolution:
+    identity = _root_source_identity(spec)
+    if identity is None:
+        raise RootSourceResolutionError(
+            failure_class="missing_root_source",
+            root_source_kind=None,
+            root_source_id=None,
+        )
+
+    root_source_kind, root_source_id = identity
+    if root_source_kind not in _supported_root_source_kinds(engine):
+        raise RootSourceResolutionError(
+            failure_class="root_source_kind_unsupported",
+            root_source_kind=root_source_kind,
+            root_source_id=root_source_id,
+        )
+
+    if root_source_kind in {"manual", "spec"} and root_source_id == spec.spec_id:
+        markdown = spec_path.read_text(encoding="utf-8")
+    else:
+        candidates = _root_source_candidate_groups(
+            engine,
+            kind=root_source_kind,
+            source_id=root_source_id,
+            spec=spec,
+        )
+        source_path = _select_root_source_candidate(
+            candidates,
+            root_source_kind=root_source_kind,
+            root_source_id=root_source_id,
+        )
+        markdown = source_path.read_text(encoding="utf-8")
+
+    return RootSourceResolution(
+        source=ClosureRootSource(
+            kind=root_source_kind,
+            id=root_source_id,
+            path=_canonical_root_source_contract_path(root_source_kind, root_source_id),
+            title=spec.title,
+            summary=spec.summary,
+            intake_kind=spec.root_intake_kind,
+            intake_id=spec.root_intake_id,
+        ),
+        markdown=markdown,
+    )
 
 
-def _root_idea_source_candidates(engine: RuntimeEngine, spec: SpecDocument) -> tuple[Path, ...]:
-    candidates: list[Path] = []
+def _root_source_identity(spec: SpecDocument) -> tuple[str, str] | None:
     if spec.root_idea_id is not None:
-        durable_source = idea_source_artifact_path(engine.paths, root_idea_id=spec.root_idea_id)
-        candidates.append(durable_source)
-    for reference in spec.references:
-        resolved = _resolve_reference_path(engine, reference)
-        if resolved not in candidates:
-            candidates.append(resolved)
+        return "idea", spec.root_idea_id
+    if spec.root_intake_kind is not None and spec.root_intake_id is not None:
+        return _root_source_kind_from_value(spec.root_intake_kind.value), spec.root_intake_id
+    if spec.source_type == "idea" and spec.source_id is not None:
+        return "idea", spec.source_id
+    if spec.source_type == "probe" and spec.source_id is not None:
+        return "probe", spec.source_id
+    if spec.source_type == "incident" and spec.source_id is not None:
+        return "incident", spec.source_id
+    if spec.source_type == "manual":
+        return "manual", spec.spec_id
+    return None
+
+
+def _root_source_kind_from_value(value: str) -> str:
+    if value == "derived_spec":
+        return "spec"
+    return value
+
+
+def _canonical_root_source_contract_path(kind: str, source_id: str) -> str:
+    return f"millrace-agents/arbiter/contracts/root-sources/{kind}/{source_id}.md"
+
+
+def _root_source_candidate_groups(
+    engine: RuntimeEngine,
+    *,
+    kind: str,
+    source_id: str,
+    spec: SpecDocument,
+) -> tuple[tuple[Path, ...], ...]:
+    if kind == "idea":
+        return _root_idea_source_candidate_groups(engine, spec)
+
+    durable = (
+        engine.paths.intake_sources_dir / kind / f"{source_id}.md",
+        engine.paths.intake_dir / f"{kind}s" / f"{source_id}.md",
+    )
+    lifecycle = _root_source_lifecycle_candidates(engine, kind=kind, source_id=source_id)
+    references = _root_source_reference_candidates(
+        engine,
+        kind=kind,
+        source_id=source_id,
+        spec=spec,
+    )
+    return (durable, lifecycle, references)
+
+
+def _root_source_lifecycle_candidates(
+    engine: RuntimeEngine,
+    *,
+    kind: str,
+    source_id: str,
+) -> tuple[Path, ...]:
+    filename = f"{source_id}.md"
+    if kind == "probe":
+        return (
+            engine.paths.probes_done_dir / filename,
+            engine.paths.probes_active_dir / filename,
+            engine.paths.probes_blocked_dir / filename,
+            engine.paths.probes_queue_dir / filename,
+        )
+    if kind == "incident":
+        return (
+            engine.paths.incidents_resolved_dir / filename,
+            engine.paths.incidents_active_dir / filename,
+            engine.paths.incidents_blocked_dir / filename,
+            engine.paths.incidents_incoming_dir / filename,
+        )
+    if kind == "spec":
+        return (
+            engine.paths.specs_done_dir / filename,
+            engine.paths.specs_active_dir / filename,
+            engine.paths.specs_blocked_dir / filename,
+            engine.paths.specs_queue_dir / filename,
+        )
+    return ()
+
+
+def _select_root_source_candidate(
+    candidate_groups: tuple[tuple[Path, ...], ...],
+    *,
+    root_source_kind: str,
+    root_source_id: str,
+) -> Path:
+    all_candidates: list[Path] = []
+    for candidates in candidate_groups:
+        existing = tuple(path for path in _existing_ordered_paths(candidates) if path.is_file())
+        all_candidates.extend(existing)
+        if len(existing) > 1:
+            raise RootSourceResolutionError(
+                failure_class="root_source_ambiguous",
+                root_source_kind=root_source_kind,
+                root_source_id=root_source_id,
+                candidates=existing,
+            )
+        if existing:
+            return existing[0]
+    raise RootSourceResolutionError(
+        failure_class="root_source_unresolved",
+        root_source_kind=root_source_kind,
+        root_source_id=root_source_id,
+        candidates=tuple(all_candidates) or tuple(
+            path for group in candidate_groups for path in group
+        ),
+    )
+
+
+def _existing_ordered_paths(candidates: tuple[Path, ...]) -> tuple[Path, ...]:
+    return tuple(dict.fromkeys(candidates))
+
+
+def _root_idea_source_candidate_groups(
+    engine: RuntimeEngine,
+    spec: SpecDocument,
+) -> tuple[tuple[Path, ...], ...]:
+    root_idea_id = spec.root_idea_id or spec.source_id
+    durable: list[Path] = []
+    if root_idea_id is not None:
+        durable.append(idea_source_artifact_path(engine.paths, root_idea_id=root_idea_id))
+        durable.append(engine.paths.intake_sources_dir / "idea" / f"{root_idea_id}.md")
+
+    references = tuple(
+        candidate
+        for reference in spec.references
+        if (candidate := _resolve_workspace_reference_path(engine, reference)) is not None
+    )
+
+    legacy: list[Path] = []
     if spec.source_id is not None:
-        source_candidate = engine.paths.root / "ideas" / "inbox" / f"{spec.source_id}.md"
-        if source_candidate not in candidates:
-            candidates.append(source_candidate)
-    root_candidate = engine.paths.root / "ideas" / "inbox" / f"{spec.root_idea_id}.md"
-    if root_candidate not in candidates:
-        candidates.append(root_candidate)
-    return tuple(candidates)
+        legacy.append(engine.paths.root / "ideas" / "inbox" / f"{spec.source_id}.md")
+    if root_idea_id is not None:
+        legacy.append(engine.paths.root / "ideas" / "inbox" / f"{root_idea_id}.md")
+    return (
+        tuple(_existing_ordered_paths(tuple(durable))),
+        tuple(_existing_ordered_paths(tuple(legacy))),
+        references,
+    )
 
 
-def _resolve_reference_path(engine: RuntimeEngine, reference: str) -> Path:
+def _root_source_reference_candidates(
+    engine: RuntimeEngine,
+    *,
+    kind: str,
+    source_id: str,
+    spec: SpecDocument,
+) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    for reference in spec.references:
+        candidate = _resolve_workspace_reference_path(engine, reference)
+        if candidate is None:
+            continue
+        if kind == "idea" or _reference_matches_root_source(candidate, kind=kind, source_id=source_id):
+            candidates.append(candidate)
+    return tuple(_existing_ordered_paths(tuple(candidates)))
+
+
+def _reference_matches_root_source(path: Path, *, kind: str, source_id: str) -> bool:
+    if not path.is_file():
+        return path.name == f"{source_id}.md"
+    try:
+        if kind == "probe":
+            return (
+                parse_work_document_as(
+                    path.read_text(encoding="utf-8"),
+                    model=ProbeDocument,
+                    path=path,
+                ).probe_id
+                == source_id
+            )
+        if kind == "incident":
+            return (
+                parse_work_document_as(
+                    path.read_text(encoding="utf-8"),
+                    model=IncidentDocument,
+                    path=path,
+                ).incident_id
+                == source_id
+            )
+        if kind == "spec":
+            return (
+                parse_work_document_as(
+                    path.read_text(encoding="utf-8"),
+                    model=SpecDocument,
+                    path=path,
+                ).spec_id
+                == source_id
+            )
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+def _supported_root_source_kinds(engine: RuntimeEngine) -> frozenset[str]:
+    completion_behavior = _completion_behavior_for(engine)
+    if completion_behavior is None:
+        return _SUPPORTED_ROOT_SOURCE_KINDS
+    return frozenset(completion_behavior.root_source_policy.accepted_kinds)
+
+
+def _resolve_workspace_reference_path(engine: RuntimeEngine, reference: str) -> Path | None:
+    if reference.startswith(("http://", "https://")):
+        return None
     candidate = Path(reference)
-    if candidate.is_absolute():
-        return candidate
-    return engine.paths.root / candidate
+    resolved = candidate if candidate.is_absolute() else engine.paths.root / candidate
+    try:
+        resolved.resolve().relative_to(engine.paths.root.resolve())
+    except (OSError, ValueError):
+        return None
+    return resolved
 
 
 def _workspace_relative_path(engine: RuntimeEngine, path: Path) -> str:
@@ -602,7 +876,8 @@ def _mark_lineage_drift_blocked(
 
 __all__ = [
     "ClosureTargetPreparation",
-    "RootIdeaSourceResolutionError",
+    "RootSourceResolution",
+    "RootSourceResolutionError",
     "active_closure_target",
     "block_on_closure_lineage_drift_if_present",
     "maybe_activate_completion_stage",

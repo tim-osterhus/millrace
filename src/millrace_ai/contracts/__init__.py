@@ -116,6 +116,8 @@ from .stage_results import StageResultEnvelope
 from .token_usage import TokenUsage
 from .work_documents import (  # noqa: F401
     ClosureBlockingWorkRef,
+    ClosureRootSource,
+    ClosureRootSourceKind,
     ClosureTargetState,
     IncidentDocument,
     LearningRequestDocument,
@@ -136,6 +138,8 @@ from .work_refs import (
 
 __all__ = [
     "ClosureBlockingWorkRef",
+    "ClosureRootSource",
+    "ClosureRootSourceKind",
     "ClosureTargetState",
     "CompileDiagnostics",
     "CompiledStageGraphExport",

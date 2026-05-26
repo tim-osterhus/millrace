@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, JsonValue, model_validator
@@ -289,6 +290,7 @@ ClosureBlockingWorkRefType = Literal[
     "blueprint_approved",
     "blueprint_invalid",
 ]
+ClosureRootSourceKind = str
 
 
 class ClosureBlockingWorkRef(ContractModel):
@@ -327,16 +329,40 @@ class ClosureBlockingWorkRef(ContractModel):
         return self
 
 
+class ClosureRootSource(ContractModel):
+    kind: ClosureRootSourceKind
+    id: str
+    path: str
+    title: str | None = None
+    summary: str | None = None
+    intake_kind: RootIntakeKind | None = None
+    intake_id: str | None = None
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "ClosureRootSource":
+        validate_safe_identifier(self.kind, field_name="root_source.kind")
+        validate_safe_identifier(self.id, field_name="root_source.id")
+        if self.intake_id is not None:
+            validate_safe_identifier(self.intake_id, field_name="root_source.intake_id")
+        self.path = _validate_workspace_relative_path(
+            self.path,
+            field_name="root_source.path",
+        )
+        return self
+
+
 class ClosureTargetState(ContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["closure_target_state"] = "closure_target_state"
 
     root_spec_id: str
-    root_idea_id: str
+    root_source: ClosureRootSource
+    root_idea_id: str | None = None
     root_intake_kind: RootIntakeKind | None = None
     root_intake_id: str | None = None
     root_spec_path: str
-    root_idea_path: str
+    root_idea_path: str | None = None
     rubric_path: str
     latest_verdict_path: str | None = None
     latest_report_path: str | None = None
@@ -350,10 +376,30 @@ class ClosureTargetState(ContractModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_blocking_work_ids(cls, value: object) -> object:
+    def migrate_legacy_target_payload(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
         payload = dict(value)
+        root_source = payload.get("root_source")
+        root_idea_id = payload.get("root_idea_id")
+        root_idea_path = payload.get("root_idea_path")
+        if root_source is None and isinstance(root_idea_id, str) and isinstance(root_idea_path, str):
+            payload["root_source"] = {
+                "kind": "idea",
+                "id": root_idea_id,
+                "path": root_idea_path,
+                "intake_kind": payload.get("root_intake_kind"),
+                "intake_id": payload.get("root_intake_id"),
+            }
+        elif isinstance(root_source, dict):
+            if payload.get("root_intake_kind") is None and root_source.get("intake_kind") is not None:
+                payload["root_intake_kind"] = root_source.get("intake_kind")
+            if payload.get("root_intake_id") is None and root_source.get("intake_id") is not None:
+                payload["root_intake_id"] = root_source.get("intake_id")
+            if root_source.get("kind") == "idea":
+                payload.setdefault("root_idea_id", root_source.get("id"))
+                payload.setdefault("root_idea_path", root_source.get("path"))
+
         raw_ids = tuple(str(item) for item in payload.get("blocking_work_ids") or ())
         safe_ids: list[str] = []
         migrated_refs: list[dict[str, object]] = []
@@ -376,9 +422,42 @@ class ClosureTargetState(ContractModel):
     @model_validator(mode="after")
     def validate_target_state(self) -> "ClosureTargetState":
         validate_safe_identifier(self.root_spec_id, field_name="root_spec_id")
-        validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        self.root_spec_path = _validate_workspace_relative_path(
+            self.root_spec_path,
+            field_name="root_spec_path",
+        )
+        self.rubric_path = _validate_workspace_relative_path(
+            self.rubric_path,
+            field_name="rubric_path",
+        )
+        if self.latest_verdict_path is not None:
+            self.latest_verdict_path = _validate_workspace_relative_path(
+                self.latest_verdict_path,
+                field_name="latest_verdict_path",
+            )
+        if self.latest_report_path is not None:
+            self.latest_report_path = _validate_workspace_relative_path(
+                self.latest_report_path,
+                field_name="latest_report_path",
+            )
+        if self.root_idea_path is not None:
+            self.root_idea_path = _validate_workspace_relative_path(
+                self.root_idea_path,
+                field_name="root_idea_path",
+            )
+        if self.root_idea_id is not None:
+            validate_safe_identifier(self.root_idea_id, field_name="root_idea_id")
+        if self.root_source.kind == "idea":
+            if self.root_idea_id is None:
+                self.root_idea_id = self.root_source.id
+            if self.root_idea_path is None:
+                self.root_idea_path = self.root_source.path
         if self.root_intake_id is not None:
             validate_safe_identifier(self.root_intake_id, field_name="root_intake_id")
+        if self.root_source.intake_kind is not None and self.root_intake_kind is None:
+            self.root_intake_kind = self.root_source.intake_kind
+        if self.root_source.intake_id is not None and self.root_intake_id is None:
+            self.root_intake_id = self.root_source.intake_id
         if self.last_arbiter_run_id is not None:
             validate_safe_identifier(self.last_arbiter_run_id, field_name="last_arbiter_run_id")
         for work_item_id in self.blocking_work_ids:
@@ -392,6 +471,18 @@ class ClosureTargetState(ContractModel):
         ) and not self.closure_blocked_by_lineage_work:
             raise ValueError("blocking work requires closure_blocked_by_lineage_work=true")
         return self
+
+
+def _validate_workspace_relative_path(value: str, *, field_name: str) -> str:
+    normalized = value.strip().replace("\\", "/")
+    if not normalized:
+        raise ValueError(f"{field_name} is required")
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        raise ValueError(f"{field_name} must be workspace-relative")
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        raise ValueError(f"{field_name} must not contain empty or parent traversal parts")
+    return normalized
 
 
 def _is_safe_identifier(value: str) -> bool:
@@ -466,6 +557,8 @@ def _legacy_blocking_work_ref(value: str) -> dict[str, object] | None:
 
 __all__ = [
     "ClosureBlockingWorkRef",
+    "ClosureRootSource",
+    "ClosureRootSourceKind",
     "ClosureTargetState",
     "IncidentDocument",
     "LearningRequestDocument",

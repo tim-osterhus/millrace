@@ -62,6 +62,9 @@ class RunTraceNode(ContractModel):
     work_item_kind: str | None = None
     work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
+    closure_target_root_source_kind: str | None = None
+    closure_target_root_source_id: str | None = None
+    closure_target_root_source_path: str | None = None
     terminal_result: str
     result_class: ResultClass
     failure_class: str | None = None
@@ -114,6 +117,9 @@ class RunTraceGraph(ContractModel):
     work_item_kind: str | None = None
     work_item_id: str | None = None
     closure_target_root_spec_id: str | None = None
+    closure_target_root_source_kind: str | None = None
+    closure_target_root_source_id: str | None = None
+    closure_target_root_source_path: str | None = None
     status: RunTraceStatus
     started_at: datetime | None = None
     completed_at: datetime | None = None

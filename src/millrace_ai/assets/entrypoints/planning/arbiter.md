@@ -5,7 +5,7 @@ Your job is to judge whether one closure target satisfies its canonical contract
 
 ## Mission
 
-- Perform a grounded parity audit against the canonical seed idea and root spec.
+- Perform a grounded parity audit against the canonical root source and root spec.
 - Reuse or create a durable rubric for the closure target.
 - Run a broader audit when a new rubric or weak evidence would make a shallow pass dishonest.
 - Record a verdict that says whether the current state is complete, remediation-needed, or honestly blocked.
@@ -38,7 +38,7 @@ Runtime-owned, not stage-owned:
 
 1. the request-provided `closure_target_path` (typically `millrace-agents/arbiter/targets/<ROOT_SPEC_ID>.json`)
 2. the canonical root spec copy referenced by that target (typically `millrace-agents/arbiter/contracts/root-specs/<ROOT_SPEC_ID>.md`)
-3. the canonical seed idea copy referenced by that target (typically `millrace-agents/arbiter/contracts/ideas/<ROOT_IDEA_ID>.md`)
+3. the canonical root source copy referenced by that target (typically `millrace-agents/arbiter/contracts/root-sources/<KIND>/<SOURCE_ID>.md`; legacy idea-rooted targets may also mirror `millrace-agents/arbiter/contracts/ideas/<ROOT_IDEA_ID>.md`)
 4. the existing rubric when present at `millrace-agents/arbiter/rubrics/<ROOT_SPEC_ID>.md`
 5. request-provided `runtime_snapshot_path` when current runtime context matters
 6. the smallest amount of repo/workspace context needed to judge rubric criteria honestly
@@ -73,12 +73,12 @@ Process only the assigned closure target for this run.
 ## Workflow
 
 1. Load the assigned closure target.
-- Confirm the root lineage ids and canonical contract paths from `closure_target_path`.
+- Confirm the root source identity, root spec id, and canonical contract paths from `closure_target_path`.
 - Do not substitute a different spec family.
 
 2. Establish the rubric.
 - Reuse the existing rubric when present.
-- If no rubric exists, create one grounded in the canonical seed idea and canonical root spec.
+- If no rubric exists, create one grounded in the canonical root source and canonical root spec.
 
 3. Choose the audit depth.
 - If no rubric exists yet, or the available evidence is too weak to trust narrowly, run a full-band audit across the whole rubric.
@@ -135,6 +135,6 @@ After emitting a legal terminal result:
 ## Stop Conditions
 
 Stop with `### BLOCKED` only when:
-- the canonical seed idea and root spec conflict in a way that prevents honest judgment
+- the canonical root source and root spec conflict in a way that prevents honest judgment
 - the evidence needed to apply the rubric is missing and cannot be reconstructed reasonably even after the strongest credible substitute checks
 - the closure target itself is too inconsistent to interpret truthfully

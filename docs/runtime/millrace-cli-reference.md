@@ -393,21 +393,30 @@ operator-resolved archive records.
 
 ### `millrace queue add-task <task.md|task.json>`
 
-Imports `TaskDocument`. Canonical queue artifacts are markdown (`.md`); JSON is import-only.
+Imports `TaskDocument`. Canonical queue artifacts are markdown (`.md`); JSON is import-only and must validate against the same contract.
 
 ### `millrace queue add-probe <probe.md|probe.json>`
 
 Imports `ProbeDocument`. Probes are lightweight Planning intake that run
 through Recon before becoming a generated execution task, generated planning
-spec, no-op, or blocked probe.
+spec, no-op, or blocked probe. The input file must already be a valid
+`ProbeDocument`; arbitrary markdown should be converted into a typed probe
+before enqueueing.
 
 ### `millrace queue add-spec <spec.md|spec.json>`
 
-Imports `SpecDocument`. Canonical queue artifacts are markdown (`.md`); JSON is import-only.
+Imports `SpecDocument`. Canonical queue artifacts are markdown (`.md`); JSON is import-only and must validate against the same contract.
 
 ### `millrace queue add-idea <idea.md>`
 
-Drops idea markdown into planning intake.
+Drops idea-shaped markdown into planning intake.
+
+Typed queue commands are not generic markdown ingestion commands. Supporting
+local material should be embedded in the typed document or copied into the
+active workspace/repo and referenced with repo-relative paths. Do not enqueue
+thin wrappers that depend on arbitrary local absolute paths outside the active
+workspace. Stable public URLs are acceptable when deliberately supplied by the
+operator.
 
 Top-level convenience alias:
 

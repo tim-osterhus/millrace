@@ -68,3 +68,23 @@ instead of moving the source work item to done or blocked.
 Treat these failure classes as runtime-owned diagnostics. They describe a
 failed effect application boundary, not a legal stage terminal result and not a
 new queue state.
+
+## Closure Root Source Failure Classes
+
+Completion behavior can also block while opening a generic Arbiter closure
+target. These are `current_failure_class` values, not `RuntimeErrorCode` enum
+members:
+
+| Class | Meaning |
+| --- | --- |
+| `missing_root_spec_id` | The candidate root spec does not declare the root implementation contract id needed for closure. |
+| `missing_root_source` | The runtime cannot determine any root intake source identity from the spec metadata. |
+| `root_source_unresolved` | The root source kind/id is known, but no durable source artifact can be found inside the workspace. |
+| `root_source_ambiguous` | More than one same-precedence source artifact exists for the same root source, so the runtime refuses to guess. |
+| `root_source_kind_unsupported` | The spec names a root source kind the active runtime cannot resolve. |
+| `root_source_contract_invalid` | A persisted root-source contract is malformed or outside the supported workspace path policy. |
+| `closure_lineage_drift` | Same-lineage work exists under a mismatched effective root spec and must be repaired before Arbiter runs. |
+
+`missing_root_lineage` may still appear in older workspaces and docs as a
+legacy umbrella, but current status and doctor output prefer the precise
+failure classes above.

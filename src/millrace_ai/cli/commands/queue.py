@@ -506,12 +506,17 @@ def queue_repair_lineage(
             event_type="closure_lineage_repaired",
             data={
                 "root_spec_id": target.root_spec_id,
+                "root_source_kind": target.root_source.kind,
+                "root_source_id": target.root_source.id,
                 "repair_count": repaired_count,
                 "repair_report_path": str(report_path.relative_to(paths.root)),
             },
         )
 
     typer.echo(f"root_spec_id: {target.root_spec_id}")
+    typer.echo(f"root_source_kind: {target.root_source.kind}")
+    typer.echo(f"root_source_id: {target.root_source.id}")
+    typer.echo(f"root_source_path: {target.root_source.path}")
     typer.echo(f"apply: {'true' if apply else 'false'}")
     repair_count = len({(change.work_item_kind, change.work_item_id, change.path) for change in plan.changes})
     typer.echo(f"repair_count: {repair_count}")
