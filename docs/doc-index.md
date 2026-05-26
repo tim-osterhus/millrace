@@ -86,6 +86,11 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
 ## Maintainer And Architecture Docs
 
 - `source-package-map.md`: old-to-new module mapping and compatibility facades.
+- `maintenance/codebase-stewardship.md`: maintainer-facing map for
+  documentation ownership, maintainability gates, refactor candidates, and
+  characterization work.
+- `maintenance/documentation-ownership.md`: canonical owner document for each
+  major architecture topic and duplicated sections to reconcile.
 - `adr/README.md`: accepted architecture-decision records.
 - `adr/0001-adopt-src-layout-and-domain-packages.md`
 - `adr/0002-runtime-engine-decomposition.md`
