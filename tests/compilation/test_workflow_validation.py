@@ -212,6 +212,23 @@ def test_compile_rejects_entry_family_missing_from_plane_claim_policy(tmp_path: 
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_mode_stage_map_outside_selected_loops(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    mode_path = assets_root / "modes" / "default_codex.json"
+    payload = _load_json(mode_path)
+    payload["stage_runner_bindings"]["professor"] = "codex_cli"
+    _write_json(mode_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "Mode map `stage_runner_bindings` references stage outside selected loops: professor"
+        in _diagnostic_text(outcome)
+    )
+
+
 def test_compile_rejects_terminal_state_without_terminal_action(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     actions_path = assets_root / "registry" / "terminal_actions" / "default_terminal_actions.json"
