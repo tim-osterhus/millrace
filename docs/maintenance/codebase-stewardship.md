@@ -17,6 +17,16 @@ operator docs that own shipped behavior.
   be checked when those areas change.
 - `refactor-candidate-register.md`: single source of truth for candidate ids,
   reasons to change, risk, tests, and extraction strategy.
+- `blueprint-effect-behavior-matrix.md`: Blueprint runtime-effect behavior and
+  parity requirements before declarative migration.
+- `compiler-validation-contracts.md`: compiler validator groups, diagnostic
+  substrings, direct tests, and extraction order for MR-MAINT-003.
+- `workflow-primitive-contract-family-inventory.md`: public primitive contract
+  families, consumers, tests, proposed destinations, and compatibility needs.
+- `request-context-contracts.md`: generic request-context contracts separated
+  from Blueprint-specific request/repair context coupling.
+- `recovery-status-doctor-runner-contracts.md`: recovery, status, Doctor, and
+  runner-normalization contracts for low-risk and recovery refactors.
 
 ## Advisory Report
 
@@ -30,15 +40,6 @@ uv run python scripts/maintenance/repo_shape_report.py
 The report is advisory for module size, import breadth, suspicious names, and
 ignored local artifacts. It fails only on objective integrity issues such as
 concrete import cycles or tracked generated/local artifacts.
-
-## Planned Additions
-
-The maintainability refactor wave will add these pages as their packets land:
-
-- `blueprint-effect-behavior-matrix.md`: Blueprint runtime-effect behavior and
-  parity requirements before declarative migration.
-- behavior contract inventories for compiler validation, workflow primitives,
-  request context, recovery, status, Doctor, and runner normalization.
 
 ## Stewardship Rules
 

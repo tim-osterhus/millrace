@@ -98,6 +98,16 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
   that should be checked when those areas change.
 - `maintenance/refactor-candidate-register.md`: candidate ids, reasons to
   change, risk, tests, and extraction strategy for targeted refactor work.
+- `maintenance/blueprint-effect-behavior-matrix.md`: current Blueprint
+  runtime-effect behavior and parity gaps before declarative migration.
+- `maintenance/compiler-validation-contracts.md`: validator-family contracts
+  and diagnostic stability notes before compiler validation decomposition.
+- `maintenance/workflow-primitive-contract-family-inventory.md`: workflow
+  primitive contract-family inventory before package decomposition.
+- `maintenance/request-context-contracts.md`: generic and Blueprint-specific
+  request-context contracts before runtime request-context decomposition.
+- `maintenance/recovery-status-doctor-runner-contracts.md`: recovery, status,
+  Doctor, and runner-normalization contracts before Batch 3 and Batch 5 splits.
 - `adr/README.md`: accepted architecture-decision records.
 - `adr/0001-adopt-src-layout-and-domain-packages.md`
 - `adr/0002-runtime-engine-decomposition.md`
