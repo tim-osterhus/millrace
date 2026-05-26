@@ -184,7 +184,7 @@
       "schema_version": "1.0",
       "kind": "runtime_effect_operation",
       "operation_id": "contractor_blueprint_candidate_persist",
-      "display_name": "Contractor Blueprint candidate legacy operation shell",
+      "display_name": "Contractor Blueprint candidate persistence operation",
       "legacy_handler_ids": ["contractor_blueprint_candidate_persist"],
       "required_artifacts": ["blueprint_packet", "blueprint_markdown"],
       "steps": [
@@ -196,13 +196,58 @@
           "validator_ids": ["contractor_blueprint_candidate_persist.required_artifacts"]
         },
         {
-          "step_id": "dispatch_legacy_handler",
-          "primitive_id": "legacy_python_handler",
-          "mutation_phase": "unknown",
+          "step_id": "parse_packet",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_packet"],
+          "validator_ids": ["contractor_blueprint_candidate_persist.packet_schema"]
+        },
+        {
+          "step_id": "lookup_active_draft",
+          "primitive_id": "active_work_item_lookup",
+          "mutation_phase": "pre_mutation",
+          "store_id": "blueprint_active_drafts",
+          "validator_ids": ["contractor_blueprint_candidate_persist.active_draft"]
+        },
+        {
+          "step_id": "validate_packet_matches_draft",
+          "primitive_id": "blueprint_packet_draft_validation",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["blueprint_packet"],
+          "validator_ids": ["contractor_blueprint_candidate_persist.packet_matches_draft"]
+        },
+        {
+          "step_id": "check_equivalent_outputs",
+          "primitive_id": "store_equivalence_check",
+          "mutation_phase": "pre_mutation",
           "reads_artifact_ids": ["blueprint_packet", "blueprint_markdown"],
-          "store_id": "mutation_journal",
+          "validator_ids": ["contractor_blueprint_candidate_persist.output_equivalence"]
+        },
+        {
+          "step_id": "persist_candidate_packet",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_packet"],
+          "store_id": "blueprint_candidate_packets",
           "writes_store": true,
-          "journal_event_type": "legacy_handler_result"
+          "journal_event_type": "persist_candidate_packet"
+        },
+        {
+          "step_id": "copy_candidate_markdown",
+          "primitive_id": "copy_artifact",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["blueprint_markdown"],
+          "store_id": "blueprint_candidate_markdown",
+          "writes_store": true,
+          "journal_event_type": "copy_candidate_markdown"
+        },
+        {
+          "step_id": "update_active_draft",
+          "primitive_id": "work_item_patch",
+          "mutation_phase": "partial_mutation",
+          "store_id": "blueprint_active_drafts",
+          "writes_store": true,
+          "journal_event_type": "update_active_draft"
         }
       ],
       "idempotency": {
@@ -216,14 +261,27 @@
           "validator_id": "contractor_blueprint_candidate_persist.required_artifacts"
         },
         {
-          "failure_class": "legacy_handler_failure",
-          "mutation_phase": "unknown"
+          "failure_class": "blueprint_candidate_duplicate_conflict",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "contractor_blueprint_candidate_persist.output_equivalence"
+        },
+        {
+          "failure_class": "blueprint_candidate_markdown_conflict",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "blueprint_partial_mutation",
+          "mutation_phase": "partial_mutation"
         }
       ],
       "mutation_journal": {
         "entry_id_template": "{operation_id}:{run_id}:{step_id}",
         "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
-        "record_step_ids": ["dispatch_legacy_handler"]
+        "record_step_ids": [
+          "persist_candidate_packet",
+          "copy_candidate_markdown",
+          "update_active_draft"
+        ]
       },
       "partial_commit_policy": "block_source"
     },

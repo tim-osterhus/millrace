@@ -215,8 +215,27 @@ def contractor_blueprint_candidate_persist(
     run_dir: Path,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> RuntimeEffectResult:
+    """Compatibility facade for the Contractor Blueprint runtime operation."""
+
+    from .effects import operations
+
+    return operations.contractor_blueprint_candidate_persist(
+        paths,
+        stage_result,
+        run_dir,
+        compiled_plan,
+    )
+
+
+def _legacy_contractor_blueprint_candidate_persist(
+    paths: WorkspacePaths,
+    stage_result: StageResultEnvelope,
+    run_dir: Path,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RuntimeEffectResult:
     """Persist Contractor Blueprint candidate output before Evaluator routing."""
 
+    del compiled_plan
     created_paths: list[str] = []
     try:
         draft = _active_draft_for_stage_result(paths, stage_result)

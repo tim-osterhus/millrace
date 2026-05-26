@@ -24,7 +24,7 @@ def legacy_runtime_effect_handler_registrations() -> tuple[RuntimeEffectHandlerR
         RuntimeEffectHandlerRegistration(
             handler_id=blueprint_effects.CONTRACTOR_BLUEPRINT_HANDLER_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
-            handler=blueprint_effects.contractor_blueprint_candidate_persist,
+            handler=operations.contractor_blueprint_candidate_persist,
         ),
         RuntimeEffectHandlerRegistration(
             handler_id=blueprint_effects.EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID,

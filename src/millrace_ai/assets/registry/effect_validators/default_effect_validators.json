@@ -68,6 +68,44 @@
     {
       "schema_version": "1.0",
       "kind": "runtime_effect_validator",
+      "validator_id": "contractor_blueprint_candidate_persist.packet_schema",
+      "primitive_id": "artifact_model_parse",
+      "input_artifact_ids": ["blueprint_packet"],
+      "failure_class": "blueprint_candidate_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "contractor_blueprint_candidate_persist.active_draft",
+      "primitive_id": "active_work_item_lookup",
+      "store_ids": ["blueprint_active_drafts"],
+      "failure_class": "blueprint_candidate_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "contractor_blueprint_candidate_persist.packet_matches_draft",
+      "primitive_id": "blueprint_packet_draft_validation",
+      "input_artifact_ids": ["blueprint_packet"],
+      "store_ids": ["blueprint_active_drafts"],
+      "failure_class": "blueprint_candidate_invalid",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "contractor_blueprint_candidate_persist.output_equivalence",
+      "primitive_id": "store_equivalence_check",
+      "input_artifact_ids": ["blueprint_packet", "blueprint_markdown"],
+      "store_ids": ["blueprint_candidate_packets", "blueprint_candidate_markdown"],
+      "failure_class": "blueprint_candidate_duplicate_conflict",
+      "mutation_phase": "pre_mutation"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
       "validator_id": "evaluator_blueprint_approved_to_task.required_artifacts",
       "primitive_id": "artifact_presence",
       "input_artifact_ids": ["blueprint_evaluation", "generated_task"],

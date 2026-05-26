@@ -43,6 +43,36 @@
     {
       "schema_version": "1.0",
       "kind": "runtime_effect_store",
+      "store_id": "blueprint_active_drafts",
+      "store_type": "queue_family",
+      "runtime_relative_root": "blueprints/drafts/active",
+      "path_template": "blueprints/drafts/active/{draft_id}.json",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_candidate_packets",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/candidates",
+      "path_template": "blueprints/packets/candidates/{blueprint_id}.json",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "blueprint_candidate_markdown",
+      "store_type": "blueprint_state",
+      "runtime_relative_root": "blueprints/packets/candidates",
+      "path_template": "blueprints/packets/candidates/{blueprint_id}.md",
+      "owner": "runtime",
+      "write_policy": "idempotent_write"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
       "store_id": "source_lifecycle",
       "store_type": "queue_family",
       "runtime_relative_root": "source-lifecycle",

@@ -63,6 +63,9 @@ def test_builtin_effect_operation_assets_load() -> None:
         "mutation_journal",
         "blueprint_manifests",
         "blueprint_draft_queue",
+        "blueprint_active_drafts",
+        "blueprint_candidate_packets",
+        "blueprint_candidate_markdown",
     }
     assert {
         validator.validator_id for validator in validators
