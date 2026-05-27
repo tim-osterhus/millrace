@@ -137,10 +137,14 @@ families:
 - `src/millrace_ai/architecture/stage_kinds.py` defines typed stage-kind contracts
 - `src/millrace_ai/architecture/loop_graphs.py` defines typed graph-loop contracts
 - `src/millrace_ai/architecture/materialization.py` defines the graph-plan materialization contracts, including normalized compiled entry/transition indexes, runtime-authority flags, and legacy-equivalence compatibility reporting
-- `src/millrace_ai/architecture/workflow_primitives/__init__.py` defines
-  work-item family, document adapter, claim policy, terminal action, lifecycle
-  mutation, runtime effect, recovery policy, failure policy, and schema epoch
-  contracts; shared aliases and private validation helpers live in
+- `src/millrace_ai/architecture/workflow_primitives/__init__.py` is the public
+  facade for workflow primitive contracts. Family modules now live in
+  `workflow_primitives/work_families.py`,
+  `document_adapters.py`, `artifact_contracts.py`,
+  `request_context_profiles.py`, `lifecycle.py`, `concurrency.py`,
+  `completion.py`, `runtime_effects.py`, `recovery_policies.py`,
+  `operator_controls.py`, and `schema_epochs.py`. Shared aliases and private
+  normalization helpers remain in
   `src/millrace_ai/architecture/workflow_primitives/identifiers.py` and
   `src/millrace_ai/architecture/workflow_primitives/_validation.py`
 - `src/millrace_ai/assets/architecture.py` loads stage-kind registry assets

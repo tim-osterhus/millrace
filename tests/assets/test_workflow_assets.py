@@ -7,7 +7,24 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
+from millrace_ai.architecture import (
+    ArtifactContractDefinition,
+    LifecycleMutationPlanDefinition,
+    PlaneQueueClaimPolicyDefinition,
+    RequestContextProfileDefinition,
+    RequestContextProviderDefinition,
+    RequestContextRenderPlan,
+    RuntimeEffectHandlerDefinition,
+    RuntimeEffectRuleDefinition,
+    RuntimeFailurePolicyDefinition,
+    TerminalActionDefinition,
+    WorkflowRecoveryPolicyDefinition,
+    WorkItemDocumentAdapterDefinition,
+    WorkItemFamilyDefinition,
+    WorkspaceSchemaEpochDefinition,
+)
 from millrace_ai.assets import (
     SHIPPED_WORK_ITEM_FAMILY_IDS,
     WorkflowAssetError,
@@ -98,6 +115,28 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     copied_root = tmp_path / "assets"
     shutil.copytree(ASSETS_ROOT, copied_root)
     return copied_root
+
+
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _select_definition(path: Path, key: str, expected_value: str) -> dict[str, Any]:
+    payload = _load_json(path)
+    if isinstance(payload, dict) and "definitions" in payload:
+        definitions = payload["definitions"]
+    else:
+        definitions = [payload]
+    for definition in definitions:
+        if str(definition.get(key)) == expected_value:
+            return definition
+    raise AssertionError(f"Expected definition with {key}={expected_value} in {path}")
+
+
+def _assert_round_trip(model: type[BaseModel], payload: dict[str, Any]) -> None:
+    parsed = model.model_validate(payload)
+    reparsed = model.model_validate(parsed.model_dump())
+    assert reparsed == parsed
 
 
 def _walk_artifact_references(payload: Any) -> set[str]:
@@ -438,6 +477,137 @@ def test_discover_request_context_provider_and_render_plan_definitions_load() ->
         "active_blueprint_draft",
         "candidate_blueprint",
     )
+
+
+def test_shipped_work_family_payload_round_trip() -> None:
+    payload = _load_json(ASSETS_ROOT / "registry" / "work_item_families" / "task.json")
+    _assert_round_trip(WorkItemFamilyDefinition, payload)
+
+
+def test_shipped_document_adapter_payload_round_trip() -> None:
+    payload = _load_json(
+        ASSETS_ROOT / "registry" / "document_adapters" / "builtin_markdown_v1.json"
+    )
+    _assert_round_trip(WorkItemDocumentAdapterDefinition, payload)
+
+
+def test_shipped_artifact_contract_payload_round_trip() -> None:
+    payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "artifact_contracts"
+        / "default_artifact_contracts.json",
+        "artifact_id",
+        "generated_task",
+    )
+    _assert_round_trip(ArtifactContractDefinition, payload)
+
+
+def test_shipped_request_context_payloads_round_trip() -> None:
+    profile_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "request_context_profiles"
+        / "default_request_context_profiles.json",
+        "profile_id",
+        "builder.default",
+    )
+    provider_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "request_context_providers"
+        / "default_request_context_providers.json",
+        "provider_id",
+        "generic.active_work_item",
+    )
+    render_plan_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "request_context_render_plans"
+        / "default_request_context_render_plans.json",
+        "render_plan_id",
+        "stage_request.default.v1",
+    )
+    _assert_round_trip(RequestContextProfileDefinition, profile_payload)
+    _assert_round_trip(RequestContextProviderDefinition, provider_payload)
+    _assert_round_trip(RequestContextRenderPlan, render_plan_payload)
+
+
+def test_shipped_lifecycle_payloads_round_trip() -> None:
+    terminal_action_payload = _select_definition(
+        ASSETS_ROOT / "registry" / "terminal_actions" / "default_terminal_actions.json",
+        "terminal_action_id",
+        "complete_work_item",
+    )
+    lifecycle_plan_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "lifecycle_mutation_plans"
+        / "default_lifecycle_mutations.json",
+        "plan_id",
+        "complete_work_item",
+    )
+    _assert_round_trip(TerminalActionDefinition, terminal_action_payload)
+    _assert_round_trip(LifecycleMutationPlanDefinition, lifecycle_plan_payload)
+
+
+def test_shipped_concurrency_payload_round_trip() -> None:
+    claim_policy_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "queue_claim_policies"
+        / "default_queue_claim_policies.json",
+        "policy_id",
+        "planning.default",
+    )
+    _assert_round_trip(PlaneQueueClaimPolicyDefinition, claim_policy_payload)
+
+
+def test_shipped_runtime_effect_payloads_round_trip() -> None:
+    handler_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "runtime_effect_handlers"
+        / "default_effect_handlers.json",
+        "handler_id",
+        "evaluator_blueprint_approved_to_task",
+    )
+    rule_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "runtime_effect_rules"
+        / "blueprint_effect_rules.json",
+        "rule_id",
+        "evaluator_blueprint_approved_to_task",
+    )
+    _assert_round_trip(RuntimeEffectHandlerDefinition, handler_payload)
+    _assert_round_trip(RuntimeEffectRuleDefinition, rule_payload)
+
+
+def test_shipped_recovery_policy_payloads_round_trip() -> None:
+    recovery_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "recovery_policies"
+        / "default_recovery_policies.json",
+        "policy_id",
+        "execution.blocked_recovery",
+    )
+    runtime_failure_payload = _select_definition(
+        ASSETS_ROOT
+        / "registry"
+        / "runtime_failure_policies"
+        / "default_runtime_failure_policies.json",
+        "policy_id",
+        "blueprint_approval_pre_mutation_effect_validation",
+    )
+    _assert_round_trip(WorkflowRecoveryPolicyDefinition, recovery_payload)
+    _assert_round_trip(RuntimeFailurePolicyDefinition, runtime_failure_payload)
+
+
+def test_shipped_workspace_schema_epoch_payload_round_trip() -> None:
+    payload = _load_json(ASSETS_ROOT / "registry" / "workspace_schema_epochs" / "current.json")
+    _assert_round_trip(WorkspaceSchemaEpochDefinition, payload)
 
 
 def test_workflow_primitives_discover_custom_work_item_families(tmp_path: Path) -> None:

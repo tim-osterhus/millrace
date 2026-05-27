@@ -19,6 +19,7 @@ from millrace_ai.architecture import (
     RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeFailurePolicyDefinition,
+    RuntimeFailurePolicyRepairClosureMappingDefinition,
     TerminalActionDefinition,
     WorkflowCompletionBehaviorDefinition,
     WorkflowLaneDefinition,
@@ -482,6 +483,114 @@ def test_scheduler_policy_requires_claim_policy_for_each_plane() -> None:
             claim_policies_by_plane={},
             completion_check_order=(Plane.EXECUTION,),
         )
+
+
+def test_contract_family_models_live_in_split_modules() -> None:
+    assert ArtifactContractDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.artifact_contracts"
+    )
+    assert ArtifactFilenameAdapterDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.artifact_contracts"
+    )
+    assert ArtifactFormat.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.artifact_contracts"
+    )
+    assert WorkItemQueueDirs.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.work_families"
+    )
+    assert WorkItemFamilyDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.work_families"
+    )
+    assert WorkItemDocumentAdapterDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.document_adapters"
+    )
+    assert RequestContextProviderDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.request_context_profiles"
+    )
+    assert RequestContextProfileDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.request_context_profiles"
+    )
+    assert RequestContextRenderPlan.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.request_context_profiles"
+    )
+    assert TerminalActionDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.lifecycle"
+    )
+    assert LifecycleMutationPlanDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.lifecycle"
+    )
+    assert WorkItemPartitionSelectorDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.concurrency"
+    )
+    assert PlaneQueueClaimPolicyDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.concurrency"
+    )
+    assert WorkflowLaneDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.concurrency"
+    )
+    assert LaneConflictPolicyDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.concurrency"
+    )
+    assert WorkflowPlaneSchedulerPolicyDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.concurrency"
+    )
+    assert WorkflowCompletionBehaviorDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.completion"
+    )
+    assert RuntimeEffectHandlerDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.runtime_effects"
+    )
+    assert RuntimeEffectOperationRunnerDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.runtime_effects"
+    )
+    assert RuntimeEffectRuleDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.runtime_effects"
+    )
+    assert OutcomeArtifactDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.runtime_effects"
+    )
+    assert WorkflowRecoveryPolicyDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.recovery_policies"
+    )
+    assert RuntimeFailurePolicyDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.recovery_policies"
+    )
+    assert RuntimeFailurePolicyRepairClosureMappingDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.recovery_policies"
+    )
+    assert OperatorControlCapabilityDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.operator_controls"
+    )
+    assert WorkspaceSchemaEpochDefinition.__module__ == (
+        "millrace_ai.architecture.workflow_primitives.schema_epochs"
+    )
+
+
+def test_architecture_request_context_models_remain_distinct_from_runtime_render_models() -> None:
+    from millrace_ai.runtime.request_context import (
+        RequestContextRenderPlan as RuntimeRequestContextRenderPlan,
+    )
+
+    architecture_render_plan = RequestContextRenderPlan(
+        render_plan_id="stage_request.default.v1",
+        bundle_schema_version="1.0",
+        included_sections=("active_work_item",),
+        required_provider_capabilities=("active_work_item",),
+        artifact_ref_policy="path_only",
+        prompt_rendering_behavior="default_markdown",
+        redaction_policy_id="default",
+        missing_optional_provider_policy="omit",
+    )
+    runtime_render_plan = RuntimeRequestContextRenderPlan(
+        render_plan_id="stage_request.default.v1",
+        context_bundle_path="run/context_bundle.json",
+        rendered_prompt_context_path="run/context.md",
+    )
+
+    assert RequestContextRenderPlan is not RuntimeRequestContextRenderPlan
+    assert architecture_render_plan.included_sections == ("active_work_item",)
+    assert runtime_render_plan.context_bundle_path == "run/context_bundle.json"
+    assert runtime_render_plan.rendered_prompt_context_path == "run/context.md"
 
 
 def test_exported_primitive_models_round_trip() -> None:
