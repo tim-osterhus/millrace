@@ -12,6 +12,7 @@ from millrace_ai.contracts import (
     LearningTriggerRuleDefinition,
     Plane,
     PlaneConcurrencyPolicyDefinition,
+    PlanningStageName,
     ResultClass,
     StageName,
 )
@@ -169,17 +170,32 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     @model_validator(mode="after")
     def validate_timeout(self) -> "MaterializedGraphNodePlan":
         if self.runtime_stage is None:
-            try:
-                self.runtime_stage = stage_name_for_plane(self.plane, self.stage_kind_id)
-            except ValueError as exc:
+            runtime_stage = _legacy_runtime_stage_backfill(self.plane, self.stage_kind_id)
+            if runtime_stage is None:
                 raise ValueError(
                     f"runtime_stage is required for noncanonical stage_kind_id {self.stage_kind_id}"
-                ) from exc
+                )
+            self.runtime_stage = runtime_stage
         elif stage_plane(self.runtime_stage) is not self.plane:
             raise ValueError("runtime_stage must belong to node plane")
         if self.timeout_seconds < 0:
             raise ValueError("timeout_seconds must be >= 0")
         return self
+
+
+_LEGACY_RUNTIME_STAGE_BACKFILL: dict[tuple[Plane, str], StageName] = {
+    (Plane.PLANNING, "manager_blueprint"): PlanningStageName.MANAGER,
+    (Plane.PLANNING, "contractor_blueprint"): PlanningStageName.MANAGER,
+    (Plane.PLANNING, "evaluator_blueprint"): PlanningStageName.MANAGER,
+    (Plane.PLANNING, "mechanic_blueprint"): PlanningStageName.MECHANIC,
+}
+
+
+def _legacy_runtime_stage_backfill(plane: Plane, stage_kind_id: str) -> StageName | None:
+    try:
+        return stage_name_for_plane(plane, stage_kind_id)
+    except ValueError:
+        return _LEGACY_RUNTIME_STAGE_BACKFILL.get((plane, stage_kind_id))
 
 
 class FrozenGraphPlanePlan(ArchitectureContractModel):

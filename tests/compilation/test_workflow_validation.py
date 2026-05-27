@@ -1394,3 +1394,55 @@ def test_compile_rejects_stage_kind_runtime_stage_outside_plane(
     assert outcome.active_plan is None
     assert "Invalid stage kind definition in asset" in _diagnostic_text(outcome)
     assert "builder.json" in _diagnostic_text(outcome)
+
+
+def test_compile_accepts_runtime_failure_recovery_node_with_noncanonical_runtime_stage(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "planning" / "mechanic.json"
+    stage_kind_payload = _load_json(stage_kind_path)
+    stage_kind_payload.update(
+        {
+            "stage_kind_id": "diagnostician",
+            "runtime_stage": "mechanic",
+            "display_name": "Diagnostician",
+            "running_status_marker": "DIAGNOSTICIAN_RUNNING",
+        }
+    )
+    diagnostician_path = stage_kind_path.with_name("diagnostician.json")
+    _write_json(diagnostician_path, stage_kind_payload)
+
+    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_payload = _load_json(graph_path)
+    for node in graph_payload["nodes"]:
+        if node["node_id"] == "mechanic":
+            node["stage_kind_id"] = "diagnostician"
+            break
+    _write_json(graph_path, graph_payload)
+
+    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_payload = _load_json(mode_path)
+    for map_name in (
+        "stage_runner_bindings",
+        "stage_model_bindings",
+        "stage_thinking_bindings",
+        "stage_entrypoint_overrides",
+        "stage_skill_additions",
+    ):
+        mapping = mode_payload.get(map_name)
+        if not isinstance(mapping, dict) or "mechanic" not in mapping:
+            continue
+        mapping["diagnostician"] = mapping.pop("mechanic")
+    _write_json(mode_path, mode_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    mechanic_node = next(
+        node for node in outcome.active_plan.planning_graph.nodes if node.node_id == "mechanic"
+    )
+    assert mechanic_node.stage_kind_id == "diagnostician"
+    assert mechanic_node.runtime_stage is not None
+    assert mechanic_node.runtime_stage.value == "mechanic"

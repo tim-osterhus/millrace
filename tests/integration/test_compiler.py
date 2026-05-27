@@ -17,7 +17,7 @@ from millrace_ai.compiler import (
     preview_graph_loop_plan,
 )
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import CompileDiagnostics, Plane, ResultClass
+from millrace_ai.contracts import CompileDiagnostics, Plane, PlanningStageName, ResultClass
 from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
@@ -172,6 +172,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "kind": "registered_stage_kind",
         "stage_kind_id": "synthetic_worker",
         "plane": "execution",
+        "runtime_stage": "builder",
         "display_name": "Synthetic Worker",
         "default_entrypoint_path": "entrypoints/execution/builder.md",
         "required_skill_paths": ["skills/stage/execution/builder-core/SKILL.md"],
@@ -361,6 +362,53 @@ def test_load_existing_plan_accepts_legacy_plan_without_artifact_contract_fields
     assert loaded is not None
     assert loaded.artifact_contracts_by_id == {}
     assert loaded.artifact_contracts == ()
+
+
+def test_load_existing_plan_backfills_legacy_runtime_stage_for_blueprint_nodes(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="blueprint_codex",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    for graph_key in ("planning_graph",):
+        for node in payload[graph_key]["nodes"]:
+            if node["stage_kind_id"] in {
+                "manager_blueprint",
+                "contractor_blueprint",
+                "evaluator_blueprint",
+                "mechanic_blueprint",
+            }:
+                node.pop("runtime_stage", None)
+    for node in payload["graphs_by_plane"]["planning"]["nodes"]:
+        if node["stage_kind_id"] in {
+            "manager_blueprint",
+            "contractor_blueprint",
+            "evaluator_blueprint",
+            "mechanic_blueprint",
+        }:
+            node.pop("runtime_stage", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = load_existing_plan(compiled_plan_path)
+
+    assert loaded is not None
+    runtime_stage_by_kind = {
+        node.stage_kind_id: node.runtime_stage for node in loaded.planning_graph.nodes
+    }
+    assert runtime_stage_by_kind["manager_blueprint"] is PlanningStageName.MANAGER
+    assert runtime_stage_by_kind["contractor_blueprint"] is PlanningStageName.MANAGER
+    assert runtime_stage_by_kind["evaluator_blueprint"] is PlanningStageName.MANAGER
+    assert runtime_stage_by_kind["mechanic_blueprint"] is PlanningStageName.MECHANIC
 
 
 def test_legacy_plan_without_artifact_authority_is_stale_and_recompiled(tmp_path: Path) -> None:

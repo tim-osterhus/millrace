@@ -32,7 +32,7 @@ from millrace_ai.architecture import (
 from millrace_ai.architecture.loop_graphs import graph_loop_entry_key_value
 from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane, StageMapKey
-from millrace_ai.contracts.stage_metadata import stage_name_for_plane
+from millrace_ai.contracts.stage_metadata import stage_plane
 
 from .effect_operations import validate_runtime_effect_operations
 from .outcomes import CompilerValidationError
@@ -48,16 +48,6 @@ _MECHANIC_BLUEPRINT_REPAIR_ARTIFACTS = frozenset(
     }
 )
 _MECHANIC_BLUEPRINT_REPAIR_CAPABILITY = "repair.apply_repaired_generated_task"
-_CUSTOM_STAGE_KIND_IDS_BY_PLANE: dict[Plane, frozenset[str]] = {
-    Plane.PLANNING: frozenset(
-        {
-            "manager_blueprint",
-            "contractor_blueprint",
-            "evaluator_blueprint",
-            "mechanic_blueprint",
-        }
-    )
-}
 _BUILT_IN_ARTIFACT_ADAPTER_IDS = frozenset(
     {
         "builtin.json",
@@ -302,20 +292,19 @@ def _validate_runtime_failure_recovery(
                 f"graph {graph.loop_id} runtime failure recovery node "
                 f"{repair_node.node_id} must declare recovery_role=local_repair"
             )
-        try:
-            _validate_stage_kind_maps_to_stage(graph.plane, repair_node.stage_kind_id)
-        except ValueError as exc:
+        runtime_stage = stage_kind.runtime_stage
+        if runtime_stage is None:
             raise CompilerValidationError(
                 f"graph {graph.loop_id} runtime failure recovery node "
-                f"{repair_node.node_id} uses unmapped stage kind "
-                f"{repair_node.stage_kind_id}"
-            ) from exc
-
-
-def _validate_stage_kind_maps_to_stage(plane: Plane, stage_kind_id: str) -> None:
-    if stage_kind_id in _CUSTOM_STAGE_KIND_IDS_BY_PLANE.get(plane, frozenset()):
-        return
-    stage_name_for_plane(plane, stage_kind_id)
+                f"{repair_node.node_id} uses stage kind {repair_node.stage_kind_id} "
+                "without runtime_stage"
+            )
+        if stage_plane(runtime_stage) is not graph.plane:
+            raise CompilerValidationError(
+                f"graph {graph.loop_id} runtime failure recovery node "
+                f"{repair_node.node_id} maps to runtime stage {runtime_stage.value} "
+                f"outside plane {graph.plane.value}"
+            )
 
 
 def validate_lane_conflict_coverage(
