@@ -40,7 +40,7 @@ remaining debt is now owned by
 
 | Candidate | Follow-up owner | Notes |
 | --- | --- | --- |
-| MR-MAINT-001 | FU-2 | `runtime/blueprint_effects.py` stays a compatibility facade; operation implementation moves out of the large operations module. |
+| MR-MAINT-001 | FU-2 | `runtime/blueprint_effects.py` and `runtime/effects/operations.py` stay compatibility facades; operation implementations live under `runtime/effects/operation_runners/`. |
 | MR-MAINT-002 | FU-1 | Runtime effect dispatch becomes operation-id first while legacy handler metadata remains compatibility-only. |
 | MR-MAINT-003 | FU-6 | Compiler validation moves only after public symbols, operation dispatch, repair closure, and request/family seams are stable. |
 | MR-MAINT-004 | FU-7 | Workflow primitive contracts move after the public architecture export inventory is tested. |
@@ -56,7 +56,7 @@ remaining debt is now owned by
 
 | ID | Source | Main reason to change | Dependency risk | Suggested batch | Dedicated spec |
 | --- | --- | --- | --- | --- | --- |
-| MR-MAINT-001 | `src/millrace_ai/runtime/blueprint_effects.py` | Blueprint durable mutation has moved to operation runners; a legacy facade and handler-id compatibility surface remain. | Medium | Batch A | Required |
+| MR-MAINT-001 | `src/millrace_ai/runtime/effects/operation_runners/` | Blueprint durable mutation has moved to focused operation runners; legacy facades and handler-id compatibility surfaces remain. | Medium | Batch A | Required |
 | MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Core effect dispatch resolves operations through a registry seam, but failure routing and compatibility metadata still partly key on handler ids. | High | Batch A | Required |
 | MR-MAINT-003 | `src/millrace_ai/compilation/validation.py` | Many unrelated compiler rule families accumulate in one validation module. | High | Batch C | Required |
 | MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives.py` | Workflow primitive contracts span many contract families in one schema module. | Medium-high | Batch C | Required |
@@ -71,16 +71,34 @@ remaining debt is now owned by
 Batch B status: MR-MAINT-008, MR-MAINT-009, and MR-MAINT-010 landed in
 Batch 3 as behavior-preserving package splits with compatibility facades.
 
+Latest repo-shape snapshot from FU-2 Packet 03:
+
+- Largest source modules: `compilation/validation.py` (1494 lines),
+  `architecture/workflow_primitives.py` (1408 lines),
+  `runtime/effects/operation_runners/blueprint_evaluator.py` (1253 lines),
+  `runtime/blocked_recovery.py` (1159 lines), and
+  `runtime/request_context.py` (987 lines).
+- Effect-operation debt moved from a monolithic operations module to focused
+  runner modules. The remaining hotspot is
+  `operation_runners/blueprint_evaluator.py`, which still combines approval,
+  rejection, promotion, critique persistence, checksum/idempotency, and repair
+  support helpers.
+
 ## Candidates
 
 ### MR-MAINT-001: Blueprint Runtime Effects
 
-Source: `src/millrace_ai/runtime/blueprint_effects.py`
+Source: `src/millrace_ai/runtime/effects/operation_runners/`, especially the
+Blueprint runner modules, with compatibility facades in
+`src/millrace_ai/runtime/blueprint_effects.py` and
+`src/millrace_ai/runtime/effects/operations.py`.
 
 Reason to change: Manager, Contractor, Evaluator, and Mechanic Blueprint
-durable mutations now run through `runtime/effects/operations.py` and compiled
-operation assets. This module remains only as a compatibility facade for old
-imports and legacy handler-id names.
+durable mutations now run through focused modules in
+`runtime/effects/operation_runners/` and compiled operation assets. The old
+Blueprint and operations modules remain compatibility facades for old imports,
+legacy handler-id names, and diagnostics that should now patch focused runner
+modules for implementation behavior.
 
 Blast radius: Blueprint workspace state, runtime effect failure classes,
 runtime failure policy routing, repair artifacts, generated task promotion,
@@ -94,17 +112,19 @@ coverage in `tests/cli/test_cli.py`.
 
 Missing characterization: Remaining direct gaps are divergent duplicate
 Mechanic repair outputs, unsupported repair actions, and full-suite coverage
-after removing the mutation engine. Operation-id and handler-id compatibility
-tests plus one non-Blueprint declarative effect fixture are now present.
+after the operation split. Operation-id and handler-id compatibility tests,
+facade-to-runner parity tests, and one non-Blueprint declarative effect fixture
+are now present.
 
-Likely extraction seams: future extraction should split the large operation
-runner module into generic effect operations, effect stores, pure validators,
-artifact binding, idempotency/equivalence checks, work-item update operations,
-mutation journaling, and legacy handler adapters.
+Likely extraction seams: future extraction should split the remaining large
+Evaluator runner into approval and rejection subflows, shared candidate-state
+loading, critique/promotion persistence, checksum/idempotency checks,
+work-item enqueue/update helpers, mutation journaling, and repair compatibility
+support.
 
-Dependency risk: Medium. The facade itself no longer mutates durable workspace
-state, but public imports and legacy handler-id compatibility still depend on
-the exported names.
+Dependency risk: Medium. The facades no longer mutate durable workspace state,
+but public imports, legacy handler-id compatibility, and old diagnostic patch
+points still depend on the exported names.
 
 Suggested batch: Batch A. Execute under the declarative runtime effects and
 Blueprint decoupling specification, one Blueprint effect at a time.

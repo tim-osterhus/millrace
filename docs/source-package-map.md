@@ -53,10 +53,10 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
 - `runtime/` owns daemon execution and runtime state transitions. Its subdomains
   include lifecycle, tick cycle, active runs, compiled plans, activation,
   mailbox/watcher intake, graph authority, usage governance, request context,
-  runtime effects, result persistence/application, completion behavior,
-  recovery/blocking/error handling, lane and plane concurrency, approvals,
-  monitoring, snapshots, run traces, closure/recon/work-item transitions, and
-  handoff incidents.
+  runtime effects, focused runtime-effect operation runners, result
+  persistence/application, completion behavior, recovery/blocking/error
+  handling, lane and plane concurrency, approvals, monitoring, snapshots, run
+  traces, closure/recon/work-item transitions, and handoff incidents.
 - `workspace/` owns durable filesystem state and mutation helpers, including
   paths, initialization, baselines, schema epochs, queue storage/selection/
   lifecycle/reconciliation, task integrity, work inventory, work documents,
@@ -248,10 +248,14 @@ cycles:
   source-lifecycle application. `runtime/effects/registry.py` provides the
   operation-indexed handler registry seam, and `runtime/effects/legacy.py` is
   the temporary registry for legacy Python effect handlers while declarative
-  operation migration proceeds. `runtime/effects/operations.py` owns the
-  shipped operation implementations, including the Blueprint operation runners.
-  Stage results and runtime events carry operation id and runner id as
-  authority metadata; legacy handler id is optional compatibility metadata.
+  operation migration proceeds. `runtime/effects/operation_runners/` owns the
+  generic operation helper modules plus focused Blueprint operation runners for
+  Manager, Contractor, Evaluator, and Mechanic effects.
+  `runtime/effects/operations.py` is a compatibility forwarding facade for old
+  imports. Implementation patching for diagnostics belongs in the focused
+  runner modules. Stage results and runtime events carry operation id and runner
+  id as authority metadata; legacy handler id is optional compatibility
+  metadata.
 - `runtime/blueprint_effects.py` is a compatibility facade for old imports and
   handler-id names. It no longer owns Blueprint durable mutation.
 - `runtime/planner_effects.py` owns Planner-specific runtime effects while

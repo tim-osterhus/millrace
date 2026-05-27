@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from .. import planner_effects
-from .operation_runners import blueprint_runtime_effect_handler_registrations
 from .registry import RuntimeEffectHandlerRegistration, RuntimeEffectHandlerRegistry
 
 LEGACY_PYTHON_EFFECT_RUNNER_ID = "legacy_python_handler"
 
 
 def legacy_runtime_effect_handler_registrations() -> tuple[RuntimeEffectHandlerRegistration, ...]:
+    from .operation_runners import blueprint_runtime_effect_handler_registrations
+
     return (
         RuntimeEffectHandlerRegistration(
             handler_id=planner_effects.PLANNER_DISPOSITION_HANDLER_ID,

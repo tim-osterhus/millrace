@@ -20,6 +20,7 @@ from .completion_behavior import active_closure_target, block_on_closure_lineage
 from .effects import (
     RuntimeEffectDecision,
     RuntimeEffectHandler,
+    RuntimeEffectHandlerRegistry,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
     apply_runtime_effect_result,
@@ -42,9 +43,9 @@ if TYPE_CHECKING:
     from millrace_ai.runners import StageRunRequest
     from millrace_ai.runtime.engine import RuntimeEngine
 
-_RUNTIME_EFFECT_HANDLER_REGISTRY = default_legacy_runtime_effect_handler_registry()
-_HANDLERS_BY_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_id
-_HANDLERS_BY_OPERATION_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_operation_id
+_RUNTIME_EFFECT_HANDLER_REGISTRY: RuntimeEffectHandlerRegistry | None = None
+_HANDLERS_BY_ID: dict[str, RuntimeEffectHandler] = {}
+_HANDLERS_BY_OPERATION_ID: dict[str, RuntimeEffectHandler] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,15 @@ class _RuntimeEffectOperationSelection:
     runner_id: str
     legacy_handler_id: str | None
     handler: RuntimeEffectHandler
+
+
+def _runtime_effect_handler_registry() -> RuntimeEffectHandlerRegistry:
+    global _RUNTIME_EFFECT_HANDLER_REGISTRY, _HANDLERS_BY_ID, _HANDLERS_BY_OPERATION_ID
+    if _RUNTIME_EFFECT_HANDLER_REGISTRY is None:
+        _RUNTIME_EFFECT_HANDLER_REGISTRY = default_legacy_runtime_effect_handler_registry()
+        _HANDLERS_BY_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_id
+        _HANDLERS_BY_OPERATION_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_operation_id
+    return _RUNTIME_EFFECT_HANDLER_REGISTRY
 
 
 def apply_runtime_effect_for_stage_result(
@@ -275,9 +285,10 @@ def _legacy_handler_id_for_operation(
     alias = result_display_aliases.get(operation_id)
     if alias is not None:
         return str(alias)
-    registry_alias = _RUNTIME_EFFECT_HANDLER_REGISTRY.legacy_handler_id_for_operation(operation_id)
-    if registry_alias is not None:
-        return registry_alias
+    if _RUNTIME_EFFECT_HANDLER_REGISTRY is not None:
+        registry_alias = _RUNTIME_EFFECT_HANDLER_REGISTRY.legacy_handler_id_for_operation(operation_id)
+        if registry_alias is not None:
+            return registry_alias
     if operation_id in tuple(getattr(runner, "legacy_handler_ids", ())):
         return operation_id
     return None
@@ -309,13 +320,13 @@ def _handler_for_operation(
     handler = (
         _HANDLERS_BY_ID.get(operation_id)
         or _HANDLERS_BY_OPERATION_ID.get(operation_id)
-        or _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for_operation(operation_id)
+        or _runtime_effect_handler_registry().handler_for_operation(operation_id)
     )
     if handler is not None:
         return handler
     if legacy_handler_id is None:
         return None
-    return _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for(legacy_handler_id) or _HANDLERS_BY_ID.get(
+    return _runtime_effect_handler_registry().handler_for(legacy_handler_id) or _HANDLERS_BY_ID.get(
         legacy_handler_id
     )
 

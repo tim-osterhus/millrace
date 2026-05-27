@@ -27,7 +27,12 @@ from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.runtime import blueprint_effects
 from millrace_ai.runtime.effects import RuntimeEffectDecision, RuntimeEffectResult
 from millrace_ai.runtime.effects import operations as effect_operations
-from millrace_ai.runtime.effects.operation_runners import blueprint_evaluator, blueprint_manager
+from millrace_ai.runtime.effects.operation_runners import (
+    blueprint_contractor,
+    blueprint_evaluator,
+    blueprint_manager,
+    blueprint_mechanic,
+)
 from millrace_ai.workspace.blueprint_state import (
     enqueue_blueprint_draft,
     persist_blueprint_evaluation,
@@ -772,6 +777,78 @@ def _assert_mechanic_parity(tmp_path: Path, setup) -> None:
     ):
         assert operation_path.exists() == legacy_path.exists()
         assert _optional_text(operation_path) == _optional_text(legacy_path)
+
+
+def test_operations_facade_matches_focused_runner_modules(tmp_path: Path) -> None:
+    manager_facade, _manager_facade_paths = _run_manager_case(
+        tmp_path / "manager-facade",
+        effect_operations.manager_blueprint_manifest_to_blueprint_drafts,
+        lambda paths, run_dir: None,
+    )
+    manager_runner, _manager_runner_paths = _run_manager_case(
+        tmp_path / "manager-runner",
+        blueprint_manager.manager_blueprint_manifest_to_blueprint_drafts,
+        lambda paths, run_dir: None,
+    )
+    assert _result_payload_without_markdown_checksums(
+        manager_facade
+    ) == _result_payload_without_markdown_checksums(manager_runner)
+
+    contractor_facade, _contractor_facade_paths = _run_contractor_case(
+        tmp_path / "contractor-facade",
+        effect_operations.contractor_blueprint_candidate_persist,
+        lambda paths, run_dir: None,
+    )
+    contractor_runner, _contractor_runner_paths = _run_contractor_case(
+        tmp_path / "contractor-runner",
+        blueprint_contractor.contractor_blueprint_candidate_persist,
+        lambda paths, run_dir: None,
+    )
+    assert _result_payload_without_markdown_checksums(
+        contractor_facade
+    ) == _result_payload_without_markdown_checksums(contractor_runner)
+
+    approval_facade, _approval_facade_paths = _run_evaluator_approval_case(
+        tmp_path / "approval-facade",
+        effect_operations.evaluator_blueprint_approved_to_task,
+        lambda paths, run_dir: None,
+    )
+    approval_runner, _approval_runner_paths = _run_evaluator_approval_case(
+        tmp_path / "approval-runner",
+        blueprint_evaluator.evaluator_blueprint_approved_to_task,
+        lambda paths, run_dir: None,
+    )
+    assert _result_payload_without_markdown_checksums(
+        approval_facade
+    ) == _result_payload_without_markdown_checksums(approval_runner)
+
+    rejection_facade, _rejection_facade_paths = _run_evaluator_rejection_case(
+        tmp_path / "rejection-facade",
+        effect_operations.evaluator_blueprint_rejected_to_draft_revision,
+        lambda paths, run_dir: None,
+    )
+    rejection_runner, _rejection_runner_paths = _run_evaluator_rejection_case(
+        tmp_path / "rejection-runner",
+        blueprint_evaluator.evaluator_blueprint_rejected_to_draft_revision,
+        lambda paths, run_dir: None,
+    )
+    assert _result_payload_without_markdown_checksums(
+        rejection_facade
+    ) == _result_payload_without_markdown_checksums(rejection_runner)
+
+    mechanic_facade, _mechanic_facade_paths = _run_mechanic_case(
+        tmp_path / "mechanic-facade",
+        effect_operations.mechanic_blueprint_repair_apply,
+        lambda paths, run_dir: None,
+    )
+    mechanic_runner, _mechanic_runner_paths = _run_mechanic_case(
+        tmp_path / "mechanic-runner",
+        blueprint_mechanic.mechanic_blueprint_repair_apply,
+        lambda paths, run_dir: None,
+    )
+    assert _result_payload_without_markdown_checksums(
+        mechanic_facade
+    ) == _result_payload_without_markdown_checksums(mechanic_runner)
 
 
 def test_manager_operation_matches_legacy_success(tmp_path: Path) -> None:

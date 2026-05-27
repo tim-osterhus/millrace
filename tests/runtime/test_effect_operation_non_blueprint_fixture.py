@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +30,26 @@ FIXTURE_ASSETS_ROOT = (
 NOW = datetime(2026, 5, 26, tzinfo=UTC)
 FIXTURE_HANDLER_ID = "fixture_echo_effect"
 FIXTURE_RUNNER_ID = "fixture_test_runner"
+FIXTURE_COMPILED_RUNNER_ID = "fixture_echo_runner"
+
+
+def test_effect_execution_import_keeps_blueprint_runner_modules_lazy() -> None:
+    code = (
+        "import sys\n"
+        "import millrace_ai.runtime.effect_execution\n"
+        "loaded = sorted(\n"
+        "    name for name in sys.modules\n"
+        "    if name.startswith('millrace_ai.runtime.effects.operation_runners.blueprint_')\n"
+        ")\n"
+        "assert not loaded, loaded\n"
+    )
+
+    subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _copy_assets_with_non_blueprint_fixture(tmp_path: Path) -> Path:
@@ -169,5 +191,5 @@ def test_non_blueprint_fixture_effect_executes_via_registered_operation_runner(
         "message": "hello from fixture",
     }
     assert stage_result.metadata["runtime_effect_operation_id"] == FIXTURE_HANDLER_ID
-    assert stage_result.metadata["runtime_effect_runner_id"] == FIXTURE_RUNNER_ID
+    assert stage_result.metadata["runtime_effect_runner_id"] == FIXTURE_COMPILED_RUNNER_ID
     assert stage_result.metadata["runtime_effect_legacy_handler_id"] == FIXTURE_HANDLER_ID

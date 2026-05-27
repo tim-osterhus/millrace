@@ -20,6 +20,8 @@ EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID = blueprint_evaluator.EVALUATOR_BLUEPR
 EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID = blueprint_evaluator.EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID
 MECHANIC_BLUEPRINT_REPAIR_OPERATION_ID = blueprint_mechanic.MECHANIC_BLUEPRINT_REPAIR_OPERATION_ID
 
+# Deprecated import aliases retained for older tests and downstream diagnostics.
+# New code should patch the focused runner modules for implementation behavior.
 enqueue_blueprint_draft = blueprint_manager.enqueue_blueprint_draft
 enqueue_task = blueprint_evaluator.enqueue_task
 persist_blueprint_critique = blueprint_evaluator.persist_blueprint_critique
