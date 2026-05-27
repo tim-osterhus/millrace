@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from millrace_ai.contracts import (
     ActiveRunState,
@@ -17,7 +14,6 @@ from millrace_ai.contracts import (
     PlanningStageName,
     RuntimeErrorCode,
     RuntimeErrorContext,
-    RuntimeSnapshot,
     StageName,
     StageResultEnvelope,
     WorkItemKind,
@@ -26,99 +22,44 @@ from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import save_snapshot
-from millrace_ai.workspace.paths import WorkspacePaths
 from millrace_ai.workspace.queue_transitions import mark_learning_request_blocked
 
 from .active_runs import (
-    active_run_for_plane,
     snapshot_with_active_run,
     snapshot_with_next_stage_for_plane,
     snapshot_without_active_plane,
 )
 from .compiled_plans import CompiledPlanAuthorityError
 from .failure_policy import RuntimeFailureBoundary, classify_failure_origin
-from .graph_authority.stage_mapping import node_plan_by_id, stage_for_node
 from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
 from .recon_transitions import ReconHandoffInvalidError
-from .work_item_transitions import apply_blocked_router_decision
+from .recovery.error_context import (
+    clear_runtime_error_context,
+    load_runtime_error_context,
+    report_path_for,
+    save_runtime_error_context,
+)
+from .recovery.repair_routes import (
+    RuntimeRepairRoute,
+    incremented_repair_counter,
+)
+from .recovery.repair_routes import (
+    runtime_repair_attempts_exhausted as _runtime_repair_attempts_exhausted,
+)
+from .recovery.repair_routes import (
+    runtime_repair_route_for_plane as _runtime_repair_route_for_plane,
+)
+from .recovery.reports import (
+    BLOCKED_MARKER,
+    build_runtime_error_request_fields,
+    path_relative_to_root,
+    runtime_error_catalog_path,
+    write_runtime_error_report,
+)
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
-
-
-_BLOCKED_MARKER = "### BLOCKED"
-_ERROR_CATALOG_RELATIVE_PATH = Path("docs/runtime/millrace-runtime-error-codes.md")
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeRepairRoute:
-    node_id: str
-    stage_kind_id: str
-    stage: PlanningStageName | ExecutionStageName | LearningStageName
-    counter_name: str | None = None
-    threshold: int | None = None
-
-
-def build_runtime_error_request_fields(
-    engine: RuntimeEngine,
-    *,
-    plane: Plane | None = None,
-) -> dict[str, str | None]:
-    """Return request fields for recovery-stage prompts when runtime error context is active."""
-
-    fields: dict[str, str | None] = {
-        "runtime_error_code": None,
-        "runtime_error_report_path": None,
-        "runtime_error_catalog_path": None,
-    }
-
-    snapshot = engine.snapshot
-    if snapshot is None:
-        return fields
-
-    context = load_runtime_error_context(engine.paths)
-    if context is None:
-        return fields
-
-    if plane is not None:
-        active_run = active_run_for_plane(snapshot, plane)
-        if active_run is None or not _context_matches_active_run(context, active_run):
-            return fields
-    elif not _context_matches_snapshot(context, snapshot):
-        return fields
-
-    catalog_path = runtime_error_catalog_path(engine.paths)
-    fields["runtime_error_code"] = context.error_code.value
-    fields["runtime_error_report_path"] = context.report_path
-    fields["runtime_error_catalog_path"] = str(catalog_path) if catalog_path is not None else None
-    return fields
-
-
-def runtime_error_catalog_path(paths: WorkspacePaths) -> Path | None:
-    """Return the repo-visible runtime error catalog path when available."""
-
-    catalog_path = paths.root / _ERROR_CATALOG_RELATIVE_PATH
-    if not catalog_path.is_file():
-        return None
-    return catalog_path
-
-
-def load_runtime_error_context(paths: WorkspacePaths) -> RuntimeErrorContext | None:
-    """Load persisted runtime error context when present."""
-
-    path = paths.runtime_error_context_file
-    if not path.is_file():
-        return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return RuntimeErrorContext.model_validate(payload)
-
-
-def clear_runtime_error_context(paths: WorkspacePaths) -> None:
-    """Remove persisted runtime error context after recovery consumes it."""
-
-    if paths.runtime_error_context_file.exists():
-        paths.runtime_error_context_file.unlink()
 
 
 def schedule_post_stage_exception_recovery(
@@ -135,7 +76,11 @@ def schedule_post_stage_exception_recovery(
     assert engine.snapshot is not None
 
     captured_at = engine._now()
-    repair_route = runtime_repair_route_for_plane(engine, stage_result.plane)
+    repair_route = runtime_repair_route_for_plane(
+        engine,
+        stage_result.plane,
+        stage_result=stage_result,
+    )
     repair_stage = repair_route.stage if repair_route is not None else stage_result.stage
     resolved_error_code = (
         error_code
@@ -166,10 +111,12 @@ def schedule_post_stage_exception_recovery(
         )
         engine._set_plane_status_marker(
             plane=stage_result.plane,
-            marker=_BLOCKED_MARKER,
+            marker=BLOCKED_MARKER,
             run_id=stage_result.run_id,
             source="runtime_recovery_exhausted",
         )
+        from .work_item_transitions import apply_blocked_router_decision
+
         apply_blocked_router_decision(
             engine,
             blocked_decision,
@@ -195,7 +142,7 @@ def schedule_post_stage_exception_recovery(
     if stage_result.plane is Plane.EXECUTION:
         execution_marker = engine._set_plane_status_marker(
             plane=Plane.EXECUTION,
-            marker=_BLOCKED_MARKER,
+            marker=BLOCKED_MARKER,
             run_id=stage_result.run_id,
             source="runtime_recovery_blocked",
         )
@@ -203,7 +150,7 @@ def schedule_post_stage_exception_recovery(
     else:
         planning_marker = engine._set_plane_status_marker(
             plane=Plane.PLANNING,
-            marker=_BLOCKED_MARKER,
+            marker=BLOCKED_MARKER,
             run_id=stage_result.run_id,
             source="runtime_recovery_blocked",
         )
@@ -235,7 +182,7 @@ def schedule_post_stage_exception_recovery(
                 Plane.LEARNING: queue_depths["queue_depth_learning"],
             },
             "last_terminal_result": stage_result.terminal_result,
-            "last_stage_result_path": _path_relative_to_root(engine.paths, stage_result_path),
+            "last_stage_result_path": path_relative_to_root(engine.paths, stage_result_path),
             "updated_at": captured_at,
         }
     )
@@ -321,19 +268,19 @@ def schedule_pre_dispatch_exception_recovery(
         router_action=None,
         terminal_result=None,
         stage_result_path=None,
-        report_path=str(_report_path_for(paths=engine.paths, run_id=recovery_run_id)),
+        report_path=str(report_path_for(paths=engine.paths, run_id=recovery_run_id)),
         exception_type=type(error).__name__,
         exception_message=str(error),
         captured_at=captured_at,
     )
-    _write_runtime_error_report(engine.paths, context)
-    _save_runtime_error_context(engine.paths, context)
+    write_runtime_error_report(engine.paths, context)
+    save_runtime_error_context(engine.paths, context)
 
     if repair_route is None or runtime_repair_attempts_exhausted(engine, repair_route):
         reason_suffix = "repair_unavailable" if repair_route is None else "repair_attempts_exhausted"
         marker = engine._set_plane_status_marker(
             plane=plane,
-            marker=_BLOCKED_MARKER,
+            marker=BLOCKED_MARKER,
             run_id=recovery_run_id,
             source=f"runtime_pre_dispatch_{reason_suffix}",
         )
@@ -413,7 +360,7 @@ def schedule_pre_dispatch_exception_recovery(
 
     marker = engine._set_plane_status_marker(
         plane=plane,
-        marker=_BLOCKED_MARKER,
+        marker=BLOCKED_MARKER,
         run_id=recovery_run_id,
         source="runtime_pre_dispatch_recovery_blocked",
     )
@@ -530,14 +477,14 @@ def record_post_stage_exception_context(
         run_id=stage_result.run_id,
         router_action=router_decision.action.value if router_decision is not None else None,
         terminal_result=stage_result.terminal_result,
-        stage_result_path=_path_relative_to_root(engine.paths, stage_result_path),
-        report_path=str(_report_path_for(paths=engine.paths, run_id=stage_result.run_id)),
+        stage_result_path=path_relative_to_root(engine.paths, stage_result_path),
+        report_path=str(report_path_for(paths=engine.paths, run_id=stage_result.run_id)),
         exception_type=type(error).__name__,
         exception_message=str(error),
         captured_at=captured,
     )
-    _write_runtime_error_report(engine.paths, context)
-    _save_runtime_error_context(engine.paths, context)
+    write_runtime_error_report(engine.paths, context)
+    save_runtime_error_context(engine.paths, context)
     return context
 
 
@@ -588,41 +535,25 @@ def runtime_repair_route_for_plane(
     plane: Plane,
     *,
     compiled_plan: CompiledRunPlan | None = None,
+    stage_result: StageResultEnvelope | None = None,
 ) -> RuntimeRepairRoute | None:
-    plan = compiled_plan or engine.compiled_plan
-    if plan is None:
-        return None
-    graph = plan.graphs_by_plane.get(plane)
-    if graph is None or graph.runtime_failure_recovery is None:
-        return None
-    repair_node = node_plan_by_id(
-        graph,
-        graph.runtime_failure_recovery.default_repair_node_id,
-    )
-    repair_stage = stage_for_node(graph, repair_node.node_id)
-    return RuntimeRepairRoute(
-        node_id=repair_node.node_id,
-        stage_kind_id=repair_node.stage_kind_id,
-        stage=repair_stage,
-        counter_name=graph.runtime_failure_recovery.counter_name.value,
-        threshold=graph.runtime_failure_recovery.threshold,
+    return _runtime_repair_route_for_plane(
+        engine,
+        plane,
+        compiled_plan=compiled_plan,
+        stage_result=stage_result,
     )
 
 
 def runtime_repair_attempts_exhausted(engine: RuntimeEngine, repair_route: RuntimeRepairRoute) -> bool:
-    if engine.snapshot is None or repair_route.counter_name is None or repair_route.threshold is None:
-        return False
-    return int(getattr(engine.snapshot, repair_route.counter_name, 0)) >= repair_route.threshold
+    return _runtime_repair_attempts_exhausted(engine, repair_route)
 
 
 def _incremented_repair_counter(
     engine: RuntimeEngine,
     repair_route: RuntimeRepairRoute,
 ) -> dict[str, int]:
-    if engine.snapshot is None or repair_route.counter_name is None:
-        return {}
-    current = int(getattr(engine.snapshot, repair_route.counter_name, 0))
-    return {repair_route.counter_name: current + 1}
+    return incremented_repair_counter(engine, repair_route)
 
 
 def _pre_dispatch_work_identity(
@@ -665,99 +596,6 @@ def _compiled_plan_fingerprint(engine: RuntimeEngine) -> str:
         assert engine.snapshot is not None
         return engine.snapshot.compiled_plan_fingerprint
     return compiled_plan_fingerprint_for_runtime(engine.compiled_plan)
-
-
-def _compiled_identity_for_stage(
-    engine: RuntimeEngine,
-    *,
-    plane: Plane,
-    stage: PlanningStageName | ExecutionStageName | LearningStageName,
-) -> tuple[str, str]:
-    try:
-        stage_plan = engine._stage_plan_for(plane, stage)
-    except KeyError:
-        return stage.value, stage.value
-    return stage_plan.node_id, stage_plan.stage_kind_id
-
-
-def _save_runtime_error_context(paths: WorkspacePaths, context: RuntimeErrorContext) -> None:
-    _atomic_write_text(paths.runtime_error_context_file, context.model_dump_json(indent=2) + "\n")
-
-
-def _write_runtime_error_report(paths: WorkspacePaths, context: RuntimeErrorContext) -> None:
-    lines = [
-        "# Runtime Error Report",
-        "",
-        f"Error-Code: {context.error_code.value}",
-        f"Plane: {context.plane.value}",
-        f"Failed-Stage: {context.failed_stage.value}",
-        f"Repair-Stage: {context.repair_stage.value}",
-        f"Run-ID: {context.run_id}",
-        f"Work-Item: {context.work_item_family_id} {context.work_item_id}",
-        f"Router-Action: {context.router_action or 'none'}",
-        f"Terminal-Result: {context.terminal_result.value if context.terminal_result else 'none'}",
-        f"Stage-Result-Path: {context.stage_result_path or 'none'}",
-        f"Exception-Type: {context.exception_type}",
-        f"Exception-Message: {context.exception_message}",
-        f"Failure-Origin: {context.failure_origin.value if context.failure_origin else 'none'}",
-        f"Captured-At: {context.captured_at.isoformat()}",
-        "",
-        "Summary:",
-        "- The runtime hit an exception after a stage returned a legal terminal result.",
-        "- Runtime-owned handling either stopped this work item or rerouted it according to the error code.",
-        "- Consult the runtime error catalog when the error code needs interpretation.",
-    ]
-    _atomic_write_text(Path(context.report_path), "\n".join(lines) + "\n")
-
-
-def _report_path_for(*, paths: WorkspacePaths, run_id: str) -> Path:
-    return paths.runs_dir / run_id / "runtime_error_report.md"
-
-
-def _context_matches_snapshot(context: RuntimeErrorContext, snapshot: RuntimeSnapshot) -> bool:
-    return (
-        snapshot.current_failure_class == context.error_code.value
-        and snapshot.active_plane is context.plane
-        and snapshot.active_stage == context.repair_stage
-        and snapshot.active_run_id == context.run_id
-        and snapshot.active_work_item_family_id == context.work_item_family_id
-        and snapshot.active_work_item_id == context.work_item_id
-    )
-
-
-def _context_matches_active_run(
-    context: RuntimeErrorContext,
-    active_run: ActiveRunState,
-) -> bool:
-    return (
-        active_run.plane is context.plane
-        and active_run.stage == context.repair_stage
-        and active_run.run_id == context.run_id
-        and active_run.work_item_family_id == context.work_item_family_id
-        and active_run.work_item_id == context.work_item_id
-    )
-
-
-def _path_relative_to_root(paths: WorkspacePaths, path: Path | None) -> str | None:
-    if path is None:
-        return None
-    try:
-        return str(path.relative_to(paths.root))
-    except ValueError:
-        return str(path)
-
-
-def _atomic_write_text(path: Path, payload: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
-    try:
-        with temp_path.open("w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-        temp_path.replace(path)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
 
 
 __all__ = [

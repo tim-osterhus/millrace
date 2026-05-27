@@ -33,10 +33,59 @@ from millrace_ai.runtime.blocked_recovery import (
     retry_blocked_work_item,
     write_blocked_item_metadata,
 )
+from millrace_ai.runtime.recovery.environmental import (
+    auto_retryable_scope,
+    blocked_origin_from_metadata,
+    failure_scope_from_metadata,
+)
 from millrace_ai.state_store import load_snapshot
 from millrace_ai.workspace.blueprint_state import enqueue_blueprint_draft
 
 NOW = datetime(2026, 5, 19, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected_origin", "expected_scope"),
+    (
+        ({}, "stage_terminal", "semantic"),
+        ({"normalization_source": "failure"}, "runner_failure", "unknown"),
+        ({"blocked_origin": "runtime_exception"}, "runtime_exception", "unknown"),
+        (
+            {"blocked_origin": "runner_failure", "failure_scope": "provider"},
+            "runner_failure",
+            "provider",
+        ),
+        (
+            {"blocked_origin": "stage_terminal", "failure_scope": "contract"},
+            "stage_terminal",
+            "contract",
+        ),
+    ),
+)
+def test_environmental_classification_is_table_driven(
+    metadata: dict[str, object],
+    expected_origin: str,
+    expected_scope: str,
+) -> None:
+    origin = blocked_origin_from_metadata(metadata)
+    scope = failure_scope_from_metadata(metadata, blocked_origin=origin)
+    assert origin == expected_origin
+    assert scope == expected_scope
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected"),
+    (
+        ("environment", True),
+        ("provider", True),
+        ("local_configuration", True),
+        ("unknown", True),
+        ("contract", False),
+        ("semantic", False),
+    ),
+)
+def test_environmental_retry_scope_matrix(scope: str, expected: bool) -> None:
+    assert auto_retryable_scope(scope) is expected  # type: ignore[arg-type]
 
 
 def test_blocked_metadata_accepts_custom_family_without_work_item_kind(tmp_path) -> None:

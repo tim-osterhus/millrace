@@ -31,6 +31,11 @@ status payload does not include `runtime_error_code` or
   graph declares `runtime_failure_recovery.default_repair_node_id`, unclassified
   runtime-owned Planning and Execution failures route to that repair node after
   any more specific runtime failure policy has had a chance to apply.
+- When runtime-effect metadata includes a compiled
+  `runtime_effect_failure_policy_id`, the runtime now resolves any
+  `route_to_node` repair path through the compiled runtime-failure policy plus
+  runtime-effect operation closure contracts before falling back to the graph
+  default repair node.
 - `recon_handoff_invalid` is a runtime-owned Planning failure. In
   `planning.standard` it routes to `mechanic`; in `planning.blueprint` it routes
   to `mechanic_blueprint`. Attempt counters still cap repeated repair loops, and

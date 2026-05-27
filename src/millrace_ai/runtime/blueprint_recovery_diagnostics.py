@@ -1,4 +1,4 @@
-"""Shared Blueprint runtime-effect recovery diagnostics."""
+"""Compatibility module for Blueprint runtime-effect recovery diagnostics."""
 
 from __future__ import annotations
 

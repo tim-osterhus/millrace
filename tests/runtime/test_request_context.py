@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from millrace_ai.assets.workflows import load_builtin_workflow_primitives
-from millrace_ai.compilation.validation import (
-    CompilerValidationError,
-    _validate_request_context_profiles,
+from millrace_ai.compilation.outcomes import CompilerValidationError
+from millrace_ai.compilation.validation.request_context_profiles import (
+    validate_request_context_profiles,
 )
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
@@ -573,7 +573,7 @@ def test_request_context_validation_rejects_provider_profile_request_kind_mismat
             "supported by provider generic.active_work_item"
         ),
     ):
-        _validate_request_context_profiles(
+        validate_request_context_profiles(
             artifact_contracts_by_id=active_plan.artifact_contracts_by_id,
             graphs_by_plane=active_plan.graphs_by_plane,
             request_context_profiles_by_id=active_plan.request_context_profiles_by_id,
@@ -609,7 +609,7 @@ def test_request_context_validation_rejects_missing_provider_capability(
             "generic.active_work_item: missing_provider_capability"
         ),
     ):
-        _validate_request_context_profiles(
+        validate_request_context_profiles(
             artifact_contracts_by_id=active_plan.artifact_contracts_by_id,
             graphs_by_plane=active_plan.graphs_by_plane,
             request_context_profiles_by_id=active_plan.request_context_profiles_by_id,
@@ -646,7 +646,7 @@ def test_request_context_validation_rejects_disallowed_render_plan_override(
             "builder.default does not allow render plan overrides"
         ),
     ):
-        _validate_request_context_profiles(
+        validate_request_context_profiles(
             artifact_contracts_by_id=active_plan.artifact_contracts_by_id,
             graphs_by_plane=mutated_graphs_by_plane,
             request_context_profiles_by_id=active_plan.request_context_profiles_by_id,

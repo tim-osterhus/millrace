@@ -290,19 +290,22 @@ cycles:
   handler-id names. It no longer owns Blueprint durable mutation.
 - `runtime/planner_effects.py` owns Planner-specific runtime effects while
   registering on the same compiled effect-selection path as Blueprint effects.
-- `runtime/completion_behavior.py`, `runtime/blocked_recovery.py`, and
-  `runtime/error_recovery.py` own compiled completion behavior, blocked-work
-  recovery, and runtime error recovery rather than folding those policies back
-  into `engine.py`.
+- `runtime/completion_behavior.py` owns compiled completion behavior, while
+  `runtime/recovery/` now owns focused recovery subdomains:
+  `blocked_metadata.py`, `retry_policy.py`, `environmental.py`,
+  `queue_mutation.py`, `error_context.py`, `reports.py`, `repair_routes.py`,
+  and recovery event helpers. `runtime/blocked_recovery.py` and
+  `runtime/error_recovery.py` remain compatibility facades so existing runtime
+  and CLI imports stay stable during the decomposition.
 - `runtime/artifact_contracts.py`, `runtime/stage_result_persistence.py`,
   `runtime/result_counters.py`, `runtime/recon_transitions.py`, and
   `runtime/work_item_transitions.py` keep post-stage artifact validation,
   durable result writes, counters, and family-specific transition helpers out of
   the central tick cycle.
-- `runtime/blueprint_recovery_diagnostics.py` owns shared Blueprint
-  runtime-effect repair context rendering for status and doctor, and supports
-  preserving the original repairable Evaluator approval failure context after
-  Mechanic repair apply.
+- `runtime/blueprint_recovery_diagnostics.py` remains an explicit Blueprint
+  compatibility module for shared runtime-effect repair context rendering in
+  status and doctor, including preservation of the original repairable
+  Evaluator approval failure context after Mechanic repair apply.
 - `runtime/failure_policy.py` keeps runtime failure classification aligned with
   compiled failure-policy identifiers and matches runtime-effect policies by
   operation id before falling back to legacy handler aliases.
