@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from millrace_ai.contracts import RunTraceGraph, RunTraceNode, StageResultEnvelope, TokenUsage
@@ -401,6 +401,198 @@ def test_inspect_run_surfaces_runtime_effect_metadata(tmp_path: Path) -> None:
         "approve_blueprint_draft_after_effect"
     )
     assert inspected.runtime_effect_source_lifecycle_action == "complete"
+
+
+def test_inspect_run_surfaces_operation_only_runtime_effect_metadata(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-operation-only-effect"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-operation-only-effect",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class="success",
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        metadata={
+            "runtime_effect_operation_id": "operation_only_effect",
+            "runtime_effect_runner_id": "operation_only_runner",
+            "runtime_effect_decision": "continue_route",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+    inspected = summary.stage_results[0]
+
+    assert inspected.runtime_effect_handler_id is None
+    assert inspected.runtime_effect_operation_id == "operation_only_effect"
+    assert inspected.runtime_effect_runner_id == "operation_only_runner"
+    assert inspected.runtime_effect_legacy_handler_id is None
+    assert summary.runtime_effect_operation_id == "operation_only_effect"
+    assert summary.runtime_effect_runner_id == "operation_only_runner"
+    assert summary.runtime_effect_handler_id is None
+
+
+def test_inspect_run_keeps_operation_only_blueprint_repair_context(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run-operation-only-repair"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    repairable_failure = StageResultEnvelope(
+        run_id="run-operation-only-repair",
+        plane="planning",
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class="recoverable_failure",
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=False,
+        metadata={
+            "runtime_effect_operation_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_runner_id": "legacy_python_handler",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_invalid",
+            "runtime_effect_failure_message": "generated_task.md failed schema validation",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": (
+                "blueprint_approval_pre_mutation_effect_validation"
+            ),
+            "runtime_effect_recovery_action": "route_to_node",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    mechanic_apply = StageResultEnvelope(
+        run_id="run-operation-only-repair",
+        plane="planning",
+        stage="mechanic",
+        node_id="mechanic_blueprint",
+        stage_kind_id="mechanic_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="MECHANIC_COMPLETE",
+        result_class="success",
+        summary_status_marker="### MECHANIC_COMPLETE",
+        success=True,
+        metadata={
+            "runtime_effect_operation_id": "mechanic_blueprint_repair_apply",
+            "runtime_effect_runner_id": "legacy_python_handler",
+            "runtime_effect_decision": "request_complete_source",
+            "runtime_effect_failure_message": "promoted repaired task",
+            "runtime_effect_mutation_phase": "unknown",
+        },
+        started_at=NOW + timedelta(seconds=1),
+        completed_at=NOW + timedelta(seconds=1),
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        repairable_failure.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (stage_results_dir / "request-002.json").write_text(
+        mechanic_apply.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.runtime_effect_operation_id == "evaluator_blueprint_approved_to_task"
+    assert summary.runtime_effect_runner_id == "legacy_python_handler"
+    assert summary.runtime_effect_handler_id is None
+    assert summary.runtime_effect_decision == "request_block_source"
+    assert summary.runtime_effect_failure_class == "generated_task_invalid"
+    assert summary.runtime_effect_recovery_action == "route_to_node"
+
+
+def test_inspect_run_ignores_stale_legacy_blueprint_repair_identity(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run-stale-legacy-repair-identity"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+
+    repairable_failure = StageResultEnvelope(
+        run_id="run-stale-legacy-repair-identity",
+        plane="planning",
+        stage="manager",
+        node_id="evaluator_blueprint",
+        stage_kind_id="evaluator_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="BLUEPRINT_APPROVED",
+        result_class="recoverable_failure",
+        summary_status_marker="### BLUEPRINT_APPROVED",
+        success=False,
+        metadata={
+            "runtime_effect_operation_id": "evaluator_blueprint_approved_to_task",
+            "runtime_effect_runner_id": "legacy_python_handler",
+            "runtime_effect_decision": "request_block_source",
+            "runtime_effect_failure_class": "generated_task_invalid",
+            "runtime_effect_failure_message": "generated_task.md failed schema validation",
+            "runtime_effect_mutation_phase": "pre_mutation",
+            "runtime_effect_failure_policy_id": (
+                "blueprint_approval_pre_mutation_effect_validation"
+            ),
+            "runtime_effect_recovery_action": "route_to_node",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    stale_legacy_apply = StageResultEnvelope(
+        run_id="run-stale-legacy-repair-identity",
+        plane="planning",
+        stage="mechanic",
+        node_id="mechanic_blueprint",
+        stage_kind_id="mechanic_blueprint",
+        work_item_kind="blueprint_draft",
+        work_item_id="draft-blueprint-001",
+        terminal_result="MECHANIC_COMPLETE",
+        result_class="success",
+        summary_status_marker="### MECHANIC_COMPLETE",
+        success=True,
+        metadata={
+            "runtime_effect_operation_id": "unrelated_runtime_effect",
+            "runtime_effect_runner_id": "legacy_python_handler",
+            "runtime_effect_legacy_handler_id": "mechanic_blueprint_repair_apply",
+            "runtime_effect_decision": "request_complete_source",
+            "runtime_effect_failure_message": "unrelated effect completed",
+            "runtime_effect_mutation_phase": "unknown",
+        },
+        started_at=NOW + timedelta(seconds=1),
+        completed_at=NOW + timedelta(seconds=1),
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        repairable_failure.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (stage_results_dir / "request-002.json").write_text(
+        stale_legacy_apply.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.runtime_effect_operation_id == "unrelated_runtime_effect"
+    assert summary.runtime_effect_legacy_handler_id == "mechanic_blueprint_repair_apply"
+    assert summary.runtime_effect_decision == "request_complete_source"
+    assert summary.runtime_effect_failure_class is None
+    assert summary.runtime_effect_recovery_action is None
 
 
 def test_inspect_run_uses_blocked_run_trace_outcome_when_stage_result_is_schema_valid(

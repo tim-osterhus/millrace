@@ -455,6 +455,29 @@ def test_compile_accepts_operation_only_rule_without_legacy_handler_definition(
     assert rule.handler_id is None
 
 
+def test_compile_backfills_legacy_artifact_consumers_from_runner_alias(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    contracts_path = _fixture_artifact_contracts_path(assets_root)
+    contracts_payload = _load_json(contracts_path)
+    contracts_payload["definitions"][0].pop("consumer_operation_ids")
+    _write_json(contracts_path, contracts_payload)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    contract = outcome.active_plan.artifact_contracts_by_id["fixture_effect_input"]
+    assert contract.consumer_handler_ids == ("fixture_echo_effect",)
+    assert contract.consumer_operation_ids == ()
+    assert "fixture_echo_effect" in outcome.active_plan.runtime_effect_operations_by_id
+    assert any(
+        runner.operation_id_for_legacy_handler("fixture_echo_effect") == "fixture_echo_effect"
+        for runner in outcome.active_plan.runtime_effect_runners_by_id.values()
+    )
+
+
 def test_compile_rejects_effect_validator_bound_to_unowned_artifact(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     validators_path = _effect_validators_path(assets_root)

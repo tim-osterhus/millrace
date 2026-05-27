@@ -70,7 +70,7 @@ Public compatibility facades may re-export the same behavior.
 - `runtime/result_application.py` is the post-stage routing facade.
 - `runtime/effect_execution.py`, `runtime/effects/`,
   `runtime/lifecycle_interpreter.py`, and `workspace/queue_lifecycle.py` apply
-  compiled runtime-effect and source-lifecycle intents.
+  compiled operation-id-first runtime-effect and source-lifecycle intents.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
   `runtime/effects/operations.py`, `runtime/closure_transitions.py`,
   `runtime/result_counters.py`, `runtime/stage_result_persistence.py`,
@@ -150,8 +150,8 @@ same-lineage Planning work.
 `planning.standard` or `planning.blueprint`, maps probe work to Recon, maps
 spec work to Planner, validates stage/work-item ownership, carries the
 Planning transition table, runtime failure recovery node, queue claim policy,
-runtime-effect rules with operation/legacy-handler identity, and completion
-behavior.
+runtime-effect rules with operation/runner authority plus optional
+legacy-handler aliases, and completion behavior.
 
 **Runner request builder:** `runtime/stage_requests.py` builds
 `request_kind = active_work_item` requests with the active probe/spec path.
@@ -280,6 +280,9 @@ Blueprint runtime operations: persist manifests/drafts, queue drafts, persist
 candidate packets, route rejected drafts back to Contractor, approve drafts,
 write promotion records, enqueue generated execution tasks, apply safe
 Mechanic repair actions, and block precise replay/partial-mutation failures.
+`runtime/effect_execution.py` selects those operations by compiled operation id
+and runner id; legacy handler ids are compatibility aliases, not dispatch
+authority.
 `runtime/blueprint_effects.py` is a legacy import facade, and
 `workspace/blueprint_state.py` owns durable Blueprint file layout helpers.
 

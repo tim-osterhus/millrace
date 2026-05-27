@@ -291,3 +291,75 @@ def test_runtime_effect_dispatch_reports_missing_operation_runner(
             ),
             compiled_plan=compiled_plan,
         )
+
+
+def test_runtime_effect_operation_only_metadata_can_omit_legacy_handler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+    def _operation_handler(paths, stage_result, run_dir, compiled_plan):
+        return RuntimeEffectResult(
+            operation_id="operation_only_effect",
+            decision=RuntimeEffectDecision.CONTINUE_ROUTE,
+        )
+
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_OPERATION_ID,
+        "operation_only_effect",
+        _operation_handler,
+    )
+    stage_result = StageResultEnvelope(
+        run_id="run-operation-only",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_rules=(
+            SimpleNamespace(
+                rule_id="operation_only_effect_rule",
+                effect_operation_id="operation_only_effect",
+                source_node_id="builder",
+                on_outcomes=("BUILDER_COMPLETE",),
+                handler_id=None,
+                destination_family_id=None,
+            ),
+        ),
+        runtime_effect_runners_by_id={
+            "operation_only_runner": RuntimeEffectOperationRunnerDefinition(
+                runner_id="operation_only_runner",
+                operation_ids=("operation_only_effect",),
+            )
+        },
+        runtime_failure_policies_by_id={},
+        work_item_families_by_id={},
+    )
+
+    apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(tmp_path / "run")),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert stage_result.metadata["runtime_effect_handler_id"] is None
+    assert stage_result.metadata["runtime_effect_operation_id"] == "operation_only_effect"
+    assert stage_result.metadata["runtime_effect_runner_id"] == "operation_only_runner"
+    assert stage_result.metadata["runtime_effect_legacy_handler_id"] is None

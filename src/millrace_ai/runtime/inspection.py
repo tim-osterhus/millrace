@@ -15,8 +15,10 @@ from millrace_ai.paths import WorkspacePaths, workspace_paths
 from millrace_ai.runtime.blueprint_recovery_diagnostics import (
     BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES,
     BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
+    BLUEPRINT_APPROVAL_REPAIR_OPERATION_ID,
     BLUEPRINT_APPROVAL_REPAIR_POLICY_ID,
     BLUEPRINT_REPAIR_APPLY_HANDLER_ID,
+    BLUEPRINT_REPAIR_APPLY_OPERATION_ID,
 )
 from millrace_ai.runtime.run_traces import (
     inspect_run_trace as _inspect_run_trace,
@@ -515,14 +517,22 @@ def _latest_blueprint_approval_repair_stage_result(
 
 def _is_blueprint_repair_apply_stage_result(stage_result: InspectedStageResult) -> bool:
     return (
-        stage_result.runtime_effect_handler_id == BLUEPRINT_REPAIR_APPLY_HANDLER_ID
+        _matches_runtime_effect_identity(
+            stage_result,
+            operation_id=BLUEPRINT_REPAIR_APPLY_OPERATION_ID,
+            legacy_handler_id=BLUEPRINT_REPAIR_APPLY_HANDLER_ID,
+        )
         and stage_result.runtime_effect_decision == "request_complete_source"
     )
 
 
 def _is_blueprint_approval_repair_stage_result(stage_result: InspectedStageResult) -> bool:
     return (
-        stage_result.runtime_effect_handler_id == BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID
+        _matches_runtime_effect_identity(
+            stage_result,
+            operation_id=BLUEPRINT_APPROVAL_REPAIR_OPERATION_ID,
+            legacy_handler_id=BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
+        )
         and stage_result.runtime_effect_decision == "request_block_source"
         and stage_result.runtime_effect_failure_class
         in BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES
@@ -533,10 +543,27 @@ def _is_blueprint_approval_repair_stage_result(stage_result: InspectedStageResul
     )
 
 
+def _matches_runtime_effect_identity(
+    stage_result: InspectedStageResult,
+    *,
+    operation_id: str,
+    legacy_handler_id: str,
+) -> bool:
+    if stage_result.runtime_effect_operation_id is not None:
+        return stage_result.runtime_effect_operation_id == operation_id
+    return (
+        stage_result.runtime_effect_handler_id == legacy_handler_id
+        or stage_result.runtime_effect_legacy_handler_id == legacy_handler_id
+    )
+
+
 def _stage_result_has_runtime_effect_metadata(stage_result: InspectedStageResult) -> bool:
     return any(
         (
             stage_result.runtime_effect_handler_id,
+            stage_result.runtime_effect_operation_id,
+            stage_result.runtime_effect_runner_id,
+            stage_result.runtime_effect_legacy_handler_id,
             stage_result.runtime_effect_decision,
             stage_result.runtime_effect_failure_class,
             stage_result.runtime_effect_failure_message,

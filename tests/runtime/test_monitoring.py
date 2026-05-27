@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from io import StringIO
 from pathlib import Path
 
 import millrace_ai
+from millrace_ai.cli.monitoring import BasicTerminalMonitor
 from millrace_ai.contracts import ExecutionStageName, LearningRequestDocument, TaskDocument
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -171,6 +173,9 @@ def test_runtime_effect_monitor_payload_preserves_operator_diagnostic_fields() -
     payload = runtime_effect_monitor_payload(
         {
             "runtime_effect_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
+            "runtime_effect_operation_id": "manager_blueprint_manifest_to_blueprint_drafts",
+            "runtime_effect_runner_id": "legacy_python_handler",
+            "runtime_effect_legacy_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
             "runtime_effect_decision": "request_block_source",
             "runtime_effect_failure_class": "blueprint_manifest_parse_error",
             "runtime_effect_failure_message": "blueprint_manifest.json is malformed",
@@ -185,6 +190,9 @@ def test_runtime_effect_monitor_payload_preserves_operator_diagnostic_fields() -
 
     assert payload == {
         "runtime_effect_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
+        "runtime_effect_operation_id": "manager_blueprint_manifest_to_blueprint_drafts",
+        "runtime_effect_runner_id": "legacy_python_handler",
+        "runtime_effect_legacy_handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
         "runtime_effect_decision": "request_block_source",
         "runtime_effect_failure_class": "blueprint_manifest_parse_error",
         "runtime_effect_failure_message": "blueprint_manifest.json is malformed",
@@ -195,6 +203,36 @@ def test_runtime_effect_monitor_payload_preserves_operator_diagnostic_fields() -
             "millrace-agents/blueprints/manifests/manifest-001.json",
         ),
     }
+
+
+def test_basic_terminal_monitor_renders_runtime_effect_operation_and_runner() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW,
+            payload={
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": "run-operation-monitor",
+                "terminal_result": "BUILDER_COMPLETE",
+                "summary_status_marker": "### BUILDER_COMPLETE",
+                "duration_seconds": 1.0,
+                "runtime_effect_operation_id": "operation_only_effect",
+                "runtime_effect_runner_id": "operation_only_runner",
+                "runtime_effect_decision": "continue_route",
+            },
+        )
+    )
+
+    output = stream.getvalue()
+    assert "effect=operation_only_effect" in output
+    assert "runner=operation_only_runner" in output
+    assert "effect=unknown" not in output
 
 
 def test_runtime_learning_stage_monitor_event_includes_learning_identity(tmp_path: Path) -> None:

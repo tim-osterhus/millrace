@@ -144,9 +144,10 @@ families:
   `lifecycle_mutation_plans/`, `runtime_effect_handlers/`, and
   `runtime_effect_rules/` ship compiled post-stage mutation authority
 - `src/millrace_ai/assets/registry/runtime_effect_operations/`,
-  `effect_stores/`, and `effect_validators/` ship compiler-validated
-  declarative runtime-effect operation catalogs used as the forward-looking
-  authoring identity during the legacy-handler migration
+  `runtime_effect_runners/`, `effect_stores/`, and `effect_validators/` ship
+  compiler-validated declarative runtime-effect operation catalogs and runner
+  ownership used as the runtime dispatch identity during the legacy-handler
+  migration
 - `src/millrace_ai/assets/registry/recovery_policies/` and
   `runtime_failure_policies/` ship compiler-validated recovery/failure policy
   hooks
@@ -245,12 +246,12 @@ cycles:
 - `runtime/effects/`, `runtime/effect_execution.py`, and
   `runtime/lifecycle_interpreter.py` own generic compiled runtime-effect and
   source-lifecycle application. `runtime/effects/registry.py` provides the
-  handler registry seam, and `runtime/effects/legacy.py` is the temporary
-  registry for legacy Python effect handlers while declarative operation
-  migration proceeds. `runtime/effects/operations.py` owns the shipped
-  operation implementations, including the Blueprint operation runners. Stage
-  results and runtime events carry operation id, runner id, and legacy handler
-  id metadata during that migration.
+  operation-indexed handler registry seam, and `runtime/effects/legacy.py` is
+  the temporary registry for legacy Python effect handlers while declarative
+  operation migration proceeds. `runtime/effects/operations.py` owns the
+  shipped operation implementations, including the Blueprint operation runners.
+  Stage results and runtime events carry operation id and runner id as
+  authority metadata; legacy handler id is optional compatibility metadata.
 - `runtime/blueprint_effects.py` is a compatibility facade for old imports and
   handler-id names. It no longer owns Blueprint durable mutation.
 - `runtime/planner_effects.py` owns Planner-specific runtime effects while
@@ -269,7 +270,8 @@ cycles:
   preserving the original repairable Evaluator approval failure context after
   Mechanic repair apply.
 - `runtime/failure_policy.py` keeps runtime failure classification aligned with
-  compiled failure-policy identifiers.
+  compiled failure-policy identifiers and matches runtime-effect policies by
+  operation id before falling back to legacy handler aliases.
 - `runtime/usage_governance/` is a package-level authority domain. Its facade
   preserves the previous `millrace_ai.runtime.usage_governance` imports while
   models, state persistence, ledger reconciliation, runtime-token windows,

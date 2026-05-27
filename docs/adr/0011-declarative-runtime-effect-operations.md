@@ -23,24 +23,30 @@ Introduce compiler-validated runtime effect operation catalogs:
 - effect validators describe artifact/store validation primitives and failure
   classes.
 
-Packet 01 keeps these catalogs inert for dispatch. Existing runtime effect
-rules still execute through `handler_id`; `effect_operation_id` is now a
-validated compiled authority surface that later packets can route through.
-During the migration, each rule's legacy handler id must remain declared on
-the selected operation, required run artifacts must be declared by that
-operation, and duplicate/replay policies must agree.
+Runtime effect dispatch is operation-id first. `effect_operation_id` selects a
+compiled runtime-effect runner, and the runner selects the Python implementation
+through an operation-indexed registry. `handler_id` remains optional legacy
+alias metadata for old artifacts, older policies, and compatibility displays;
+it is no longer the runtime authority for selecting an effect.
+
+During the migration, each rule's legacy handler id, when present, must be
+declared as an alias on the selected runner and operation. Required run
+artifacts must be declared by that operation, duplicate/replay policies must
+agree, and handler-authored result metadata cannot override the compiled
+operation id or runner id.
 
 ## Consequences
 
-This preserves old compiled-plan and handler-id behavior while giving the
-compiler a stable operation id to validate. It also makes unsafe store paths,
-unknown primitives, unknown validators, unknown stores, and missing
-partial-commit policy visible before runtime. Persisted plans that predate the
-operation/store/validator catalogs are treated as stale so startup
-`compile_if_needed` refreshes them instead of silently reusing empty catalog
-defaults.
+This preserves compatibility for old handler-id artifacts while making the
+compiler's operation catalog the stable identity for dispatch, failure-policy
+matching, spawned-work destination lookup, metadata, and runtime events. It also
+makes unsafe store paths, unknown primitives, unknown validators, unknown
+stores, missing runner ownership, and missing partial-commit policy visible
+before runtime. Persisted plans that predate the operation/store/validator/
+runner catalogs are treated as stale so startup `compile_if_needed` refreshes
+them instead of silently reusing empty catalog defaults.
 
-The immediate cost is dual metadata during migration: handler ids remain
-required for legacy execution while operation ids become the forward-looking
-authoring key. Later ADRs or release notes may retire handler-id authoring once
-operation dispatch fully replaces legacy handlers.
+The immediate cost is dual metadata during migration: operation ids and runner
+ids are required runtime metadata, while legacy handler ids remain optional
+aliases where compatibility requires them. Later ADRs or release notes may
+retire handler-id authoring once the compatibility window closes.

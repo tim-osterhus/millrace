@@ -417,9 +417,18 @@ def _format_token_usage(token_usage: object) -> str | None:
 
 def _runtime_effect_parts(payload: Mapping[str, object]) -> list[str]:
     parts: list[str] = []
+    operation_id = _optional_string(payload.get("runtime_effect_operation_id"))
     handler_id = _optional_string(payload.get("runtime_effect_handler_id"))
-    if handler_id is not None:
+    if operation_id is not None:
+        parts.append(f"effect={operation_id}")
+    elif handler_id is not None:
         parts.append(f"effect={handler_id}")
+    runner_id = _optional_string(payload.get("runtime_effect_runner_id"))
+    if runner_id is not None:
+        parts.append(f"runner={runner_id}")
+    legacy_handler_id = _optional_string(payload.get("runtime_effect_legacy_handler_id"))
+    if legacy_handler_id is not None and legacy_handler_id != operation_id:
+        parts.append(f"legacy={legacy_handler_id}")
     failure_class = _optional_string(payload.get("runtime_effect_failure_class"))
     if failure_class is not None:
         parts.append(f"failure={failure_class}")
