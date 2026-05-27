@@ -8,6 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 from millrace_ai.architecture import RuntimeEffectOperationRunnerDefinition
+from millrace_ai.architecture.workflow_primitives import (
+    builtin_queue_lifecycle_adapter_id_for_family,
+)
 from millrace_ai.contracts import (
     IncidentDocument,
     PlanningStageName,
@@ -285,13 +288,26 @@ def test_lifecycle_intent_for_terminal_result_maps_success_and_blocked() -> None
     assert blocked_intent.action is SourceLifecycleAction.BLOCK
 
 
-def test_effect_applies_source_lifecycle_after_destination_artifacts_exist(tmp_path: Path) -> None:
+def test_effect_applies_source_lifecycle_after_destination_artifacts_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace_ai.workspace import family_adapters
+
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
     queue.enqueue_task(_task_doc())
     assert queue.claim_next_execution_task() is not None
     created_path = paths.tasks_queue_dir / "task-002.md"
     created_path.write_text("queued task artifact", encoding="utf-8")
+    called_adapter_ids: list[str] = []
+    real_queue_adapter_for_id = family_adapters.queue_adapter_for_id
+
+    def capture_queue_adapter(adapter_id: str):
+        called_adapter_ids.append(adapter_id)
+        return real_queue_adapter_for_id(adapter_id)
+
+    monkeypatch.setattr(family_adapters, "queue_adapter_for_id", capture_queue_adapter)
 
     result = RuntimeEffectResult(
         handler_id="generated_task_artifact_to_task_queue",
@@ -310,6 +326,9 @@ def test_effect_applies_source_lifecycle_after_destination_artifacts_exist(tmp_p
     assert applied.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
     assert (paths.tasks_done_dir / "task-001.md").is_file()
     assert created_path.is_file()
+    task_adapter_id = builtin_queue_lifecycle_adapter_id_for_family("task")
+    assert task_adapter_id is not None
+    assert task_adapter_id in called_adapter_ids
 
 
 def test_effect_missing_destination_does_not_move_source_and_records_failure(tmp_path: Path) -> None:

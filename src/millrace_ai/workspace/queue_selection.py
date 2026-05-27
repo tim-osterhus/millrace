@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import ValidationError
 
@@ -29,6 +29,9 @@ from .queue_claims import QueueClaim
 from .work_documents import parse_work_document_as
 from .work_item_adapters import WorkItemDocumentAdapter, adapter_for_kind, parse_with_adapter
 
+if TYPE_CHECKING:
+    from .family_adapters import WorkFamilyQueueAdapter
+
 _DocT = TypeVar(
     "_DocT",
     TaskDocument,
@@ -37,8 +40,6 @@ _DocT = TypeVar(
     IncidentDocument,
     LearningRequestDocument,
 )
-
-_DEFAULT_PLANNING_FAMILY_ORDER = ("incident", "blueprint_draft", "probe", "spec")
 
 
 def claim_next_execution_task(
@@ -80,10 +81,16 @@ def claim_next_planning_item(
     work_item_families: tuple[WorkItemFamilyDefinition, ...] | None = None,
 ) -> QueueClaim | None:
     families_by_id = _families_by_id(work_item_families)
+    default_policy = _default_planning_claim_policy()
     family_order = (
         queue_claim_policy.family_order
         if queue_claim_policy is not None
-        else _DEFAULT_PLANNING_FAMILY_ORDER
+        else (default_policy.family_order if default_policy is not None else ())
+    )
+    claim_policy_id = (
+        queue_claim_policy.policy_id
+        if queue_claim_policy is not None
+        else (default_policy.policy_id if default_policy is not None else "planning.default")
     )
     active_count = _active_planning_item_count(
         paths,
@@ -103,11 +110,7 @@ def claim_next_planning_item(
                 family_id=family_id,
                 root_spec_id=root_spec_id,
                 families_by_id=families_by_id,
-                claim_policy_id=(
-                    queue_claim_policy.policy_id
-                    if queue_claim_policy is not None
-                    else "planning.builtin_fallback"
-                ),
+                claim_policy_id=claim_policy_id,
                 claim_order=claim_order,
             )
             if claim is not None:
@@ -117,6 +120,13 @@ def claim_next_planning_item(
                 break
         if not raced:
             return None
+
+
+def _default_planning_claim_policy() -> PlaneQueueClaimPolicyDefinition | None:
+    for policy in load_builtin_workflow_primitives().queue_claim_policies:
+        if policy.plane is Plane.PLANNING:
+            return policy
+    return None
 
 
 def claim_next_learning_request(paths: WorkspacePaths) -> QueueClaim | None:
@@ -214,35 +224,15 @@ def _select_oldest_spec(
     return item_id, path
 
 
-def _select_oldest_probe_or_spec(
-    paths: WorkspacePaths,
-    *,
-    root_spec_id: str | None = None,
-) -> tuple[WorkItemKind, str, Path] | None:
-    candidates: list[tuple[datetime, WorkItemKind, str, Path]] = []
-    # Probes are root intake and should not be claimed while closure-scoped
-    # lineage work is draining for an existing root spec.
-    if root_spec_id is None:
-        probe_candidate = _select_oldest_document_candidate(
-            directory=paths.probes_queue_dir,
-            adapter=adapter_for_kind(WorkItemKind.PROBE),
-        )
-        if probe_candidate is not None:
-            timestamp, item_id, path = probe_candidate
-            candidates.append((timestamp, WorkItemKind.PROBE, item_id, path))
-    spec_candidate = _select_oldest_document_candidate(
-        directory=paths.specs_queue_dir,
-        adapter=adapter_for_kind(WorkItemKind.SPEC),
-        root_spec_id=root_spec_id,
+def _select_oldest_probe(directory: Path) -> tuple[str, Path] | None:
+    candidate = _select_oldest_document_candidate(
+        directory=directory,
+        adapter=adapter_for_kind(WorkItemKind.PROBE),
     )
-    if spec_candidate is not None:
-        timestamp, item_id, path = spec_candidate
-        candidates.append((timestamp, WorkItemKind.SPEC, item_id, path))
-    if not candidates:
+    if candidate is None:
         return None
-    candidates.sort(key=lambda item: (item[0], item[1].value, item[2]))
-    _timestamp, work_item_kind, item_id, path = candidates[0]
-    return work_item_kind, item_id, path
+    _timestamp, item_id, path = candidate
+    return item_id, path
 
 
 def _claim_next_planning_family(
@@ -254,107 +244,34 @@ def _claim_next_planning_family(
     claim_policy_id: str,
     claim_order: int,
 ) -> tuple[QueueClaim | None, bool]:
-    if family_id == WorkItemKind.INCIDENT.value:
-        incident_candidate = _select_oldest_incident(
-            paths.incidents_incoming_dir,
-            root_spec_id=root_spec_id,
-        )
-        if incident_candidate is None:
-            return None, False
-        incident_id, source = incident_candidate
-        destination = paths.incidents_active_dir / source.name
-        try:
-            source.replace(destination)
-        except FileNotFoundError:
-            return None, True
-        return (
-            QueueClaim(
-                work_item_kind=WorkItemKind.INCIDENT,
-                work_item_id=incident_id,
-                path=destination,
-                source_state="incoming",
-                source_path=source,
-                claim_policy_id=claim_policy_id,
-                claim_order=claim_order,
-            ),
-            False,
-        )
-
-    if family_id == WorkItemKind.BLUEPRINT_DRAFT.value:
-        from .blueprint_state import claim_next_blueprint_draft
-
-        return (
-            claim_next_blueprint_draft(
-                paths,
-                root_spec_id=root_spec_id,
-                claim_policy_id=claim_policy_id,
-                claim_order=claim_order,
-            ),
-            False,
-        )
-
-    if family_id == WorkItemKind.PROBE.value:
-        if root_spec_id is not None:
-            return None, False
-        probe_candidate = _select_oldest_document_candidate(
-            directory=paths.probes_queue_dir,
-            adapter=adapter_for_kind(WorkItemKind.PROBE),
-        )
-        if probe_candidate is None:
-            return None, False
-        _timestamp, probe_id, source = probe_candidate
-        destination = paths.probes_active_dir / source.name
-        try:
-            source.replace(destination)
-        except FileNotFoundError:
-            return None, True
-        return (
-            QueueClaim(
-                work_item_kind=WorkItemKind.PROBE,
-                work_item_id=probe_id,
-                path=destination,
-                source_state="queue",
-                source_path=source,
-                claim_policy_id=claim_policy_id,
-                claim_order=claim_order,
-            ),
-            False,
-        )
-
-    if family_id == WorkItemKind.SPEC.value:
-        spec_candidate = _select_oldest_spec(paths.specs_queue_dir, root_spec_id=root_spec_id)
-        if spec_candidate is None:
-            return None, False
-        spec_id, source = spec_candidate
-        destination = paths.specs_active_dir / source.name
-        try:
-            source.replace(destination)
-        except FileNotFoundError:
-            return None, True
-        return (
-            QueueClaim(
-                work_item_kind=WorkItemKind.SPEC,
-                work_item_id=spec_id,
-                path=destination,
-                source_state="queue",
-                source_path=source,
-                claim_policy_id=claim_policy_id,
-                claim_order=claim_order,
-            ),
-            False,
-        )
-
     family = families_by_id.get(family_id)
-    if family is not None and family.plane is Plane.PLANNING:
-        return _claim_next_generic_planning_family(
-            paths,
-            family=family,
-            root_spec_id=root_spec_id,
-            claim_policy_id=claim_policy_id,
-            claim_order=claim_order,
-        )
+    if family is None or family.plane is not Plane.PLANNING:
+        raise QueueStateError(f"unsupported planning queue family in claim policy: {family_id}")
 
-    raise QueueStateError(f"unsupported planning queue family in claim policy: {family_id}")
+    adapter = _queue_adapter_for_family(family)
+    if adapter is not None:
+        claim = adapter.claim_next(
+            paths,
+            root_spec_id=root_spec_id,
+            work_item_families=tuple(families_by_id.values()),
+        )
+        if claim is None:
+            return None, False
+        if claim.family_id != family.family_id:
+            raise QueueStateError(
+                "planning queue adapter returned mismatched family: "
+                f"expected {family.family_id}, got {claim.family_id}"
+            )
+        return _with_claim_policy(claim, claim_policy_id=claim_policy_id, claim_order=claim_order), False
+
+    claim, raced = _claim_next_generic_planning_family(
+        paths,
+        family=family,
+        root_spec_id=root_spec_id,
+    )
+    if claim is None:
+        return None, raced
+    return _with_claim_policy(claim, claim_policy_id=claim_policy_id, claim_order=claim_order), raced
 
 
 def _claim_next_generic_planning_family(
@@ -362,8 +279,6 @@ def _claim_next_generic_planning_family(
     *,
     family: WorkItemFamilyDefinition,
     root_spec_id: str | None,
-    claim_policy_id: str,
-    claim_order: int,
 ) -> tuple[QueueClaim | None, bool]:
     candidate = _select_oldest_generic_family_candidate(
         paths,
@@ -388,11 +303,44 @@ def _claim_next_generic_planning_family(
             plane=family.plane,
             source_state=family.claimable_state,
             source_path=source,
-            claim_policy_id=claim_policy_id,
-            claim_order=claim_order,
         ),
         False,
     )
+
+
+def _with_claim_policy(
+    claim: QueueClaim,
+    *,
+    claim_policy_id: str,
+    claim_order: int,
+) -> QueueClaim:
+    return QueueClaim(
+        family_id=claim.family_id,
+        work_item_kind=claim.work_item_kind,
+        work_item_id=claim.work_item_id,
+        path=claim.path,
+        plane=claim.plane,
+        source_state=claim.source_state,
+        source_path=claim.source_path,
+        claim_policy_id=claim_policy_id,
+        claim_order=claim_order,
+    )
+
+
+def _queue_adapter_for_family(
+    family: WorkItemFamilyDefinition,
+) -> "WorkFamilyQueueAdapter | None":
+    from .family_adapters import queue_adapter_for_id, resolve_queue_lifecycle_adapter_id
+
+    adapter_id = resolve_queue_lifecycle_adapter_id(family)
+    if adapter_id is None:
+        return None
+    adapter = queue_adapter_for_id(adapter_id)
+    if adapter is None:
+        raise QueueStateError(
+            f"planning queue family {family.family_id} references unknown adapter {adapter_id}"
+        )
+    return adapter
 
 
 def _select_oldest_generic_family_candidate(
@@ -627,16 +575,6 @@ def _select_oldest_document_candidate(
 
 def _list_markdown_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.glob("*.md") if path.is_file())
-
-
-def _list_json_files(directory: Path) -> list[Path]:
-    if not directory.exists():
-        return []
-    return sorted(path for path in directory.glob("*.json") if path.is_file())
-
-
-def _blueprint_drafts_dir(paths: WorkspacePaths, state: str) -> Path:
-    return paths.runtime_root / "blueprints" / "drafts" / state
 
 
 def _task_dependencies_satisfied(task: TaskDocument, completed_task_ids: set[str]) -> bool:

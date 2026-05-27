@@ -13,28 +13,12 @@ from millrace_ai.contracts import WorkItemKind
 from millrace_ai.contracts.work_refs import coerce_family_and_kind
 from millrace_ai.errors import QueueStateError
 
-from .blueprint_state import approve_active_blueprint_draft, block_active_blueprint_draft, requeue_active_blueprint_draft
 from .paths import WorkspacePaths
-from .queue_transitions import (
-    mark_incident_blocked,
-    mark_incident_resolved,
-    mark_learning_request_blocked,
-    mark_learning_request_done,
-    mark_probe_blocked,
-    mark_probe_done,
-    mark_spec_blocked,
-    mark_spec_done,
-    mark_task_blocked,
-    mark_task_done,
-    requeue_incident,
-    requeue_learning_request,
-    requeue_probe,
-    requeue_spec,
-    requeue_task,
-)
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.effects import SourceLifecycleIntent
+
+    from .family_adapters import WorkFamilyQueueAdapter
 
 
 class QueueLifecycleInterpreter:
@@ -55,55 +39,25 @@ class QueueLifecycleInterpreter:
         self._families_by_id = {family.family_id: family for family in family_definitions}
 
     def apply(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.work_item_kind is WorkItemKind.TASK:
-            return self._apply_task(intent)
-        if intent.work_item_kind is WorkItemKind.SPEC:
-            return self._apply_spec(intent)
-        if intent.work_item_kind is WorkItemKind.PROBE:
-            return self._apply_probe(intent)
-        if intent.work_item_kind is WorkItemKind.INCIDENT:
-            return self._apply_incident(intent)
-        if intent.work_item_kind is WorkItemKind.LEARNING_REQUEST:
-            return self._apply_learning_request(intent)
-        if intent.work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
-            return self._apply_blueprint_draft(intent)
-        if intent.work_item_family_id in self._families_by_id:
-            return self._apply_generic_family(intent)
-        raise ValueError(f"Unsupported work item family: {intent.work_item_family_id}")
+        family_id = intent.work_item_family_id or (
+            intent.work_item_kind.value if intent.work_item_kind is not None else None
+        )
+        if family_id is None:
+            raise ValueError("Source lifecycle intent requires work item family id")
+        family = self._families_by_id.get(family_id)
+        adapter = _queue_adapter_for_family(family_id=family_id, family=family)
+        if adapter is not None:
+            return adapter.apply_lifecycle(
+                self._paths,
+                intent=intent,
+                work_item_families=tuple(self._families_by_id.values()),
+            )
+        if family is not None:
+            return self._apply_generic_family(intent, family_id=family_id)
+        raise ValueError(f"Unsupported work item family: {family_id}")
 
-    def _apply_task(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.action.value == "complete":
-            return mark_task_done(self._paths, intent.work_item_id)
-        return mark_task_blocked(self._paths, intent.work_item_id)
-
-    def _apply_spec(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.action.value == "complete":
-            return mark_spec_done(self._paths, intent.work_item_id)
-        return mark_spec_blocked(self._paths, intent.work_item_id)
-
-    def _apply_probe(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.action.value == "complete":
-            return mark_probe_done(self._paths, intent.work_item_id)
-        return mark_probe_blocked(self._paths, intent.work_item_id)
-
-    def _apply_incident(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.action.value == "complete":
-            return mark_incident_resolved(self._paths, intent.work_item_id)
-        return mark_incident_blocked(self._paths, intent.work_item_id)
-
-    def _apply_learning_request(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.action.value == "complete":
-            return mark_learning_request_done(self._paths, intent.work_item_id)
-        return mark_learning_request_blocked(self._paths, intent.work_item_id)
-
-    def _apply_blueprint_draft(self, intent: "SourceLifecycleIntent") -> Path:
-        if intent.action.value == "complete":
-            return approve_active_blueprint_draft(self._paths, intent.work_item_id)
-        return block_active_blueprint_draft(self._paths, intent.work_item_id)
-
-    def _apply_generic_family(self, intent: "SourceLifecycleIntent") -> Path:
-        assert intent.work_item_family_id is not None
-        family = self._families_by_id[intent.work_item_family_id]
+    def _apply_generic_family(self, intent: "SourceLifecycleIntent", *, family_id: str) -> Path:
+        family = self._families_by_id[family_id]
         target_relative = (
             family.queue_dirs.done if intent.action.value == "complete" else family.queue_dirs.blocked
         )
@@ -137,24 +91,18 @@ def requeue_active_work_item(
     )
     if family_id is None:
         raise QueueStateError("requeue requires work_item_family_id or work_item_kind")
-    if kind is WorkItemKind.TASK:
-        return requeue_task(paths, work_item_id, reason=reason)
-    if kind is WorkItemKind.SPEC:
-        return requeue_spec(paths, work_item_id, reason=reason)
-    if kind is WorkItemKind.PROBE:
-        return requeue_probe(paths, work_item_id, reason=reason)
-    if kind is WorkItemKind.INCIDENT:
-        return requeue_incident(paths, work_item_id, reason=reason)
-    if kind is WorkItemKind.LEARNING_REQUEST:
-        return requeue_learning_request(paths, work_item_id, reason=reason)
-    if kind is WorkItemKind.BLUEPRINT_DRAFT:
-        destination = requeue_active_blueprint_draft(paths, work_item_id)
-        _append_family_requeue_reason(destination.parent, work_item_id, family_id=family_id, reason=reason)
-        return destination
-
     family = _families_by_id(work_item_families).get(family_id)
+    adapter = _queue_adapter_for_family(family_id=family_id, family=family)
+    if adapter is not None:
+        return adapter.requeue_active(
+            paths,
+            work_item_id=work_item_id,
+            reason=reason,
+            work_item_families=work_item_families,
+        )
     if family is None:
-        raise QueueStateError(f"unsupported active work item family: {family_id}")
+        detail = f" (kind={kind.value})" if kind is not None else ""
+        raise QueueStateError(f"unsupported active work item family: {family_id}{detail}")
     return _requeue_active_generic_family(paths, family=family, work_item_id=work_item_id, reason=reason)
 
 
@@ -195,6 +143,29 @@ def _families_by_id(
         else load_builtin_workflow_primitives().work_item_families
     )
     return {family.family_id: family for family in families}
+
+
+def _queue_adapter_for_family(
+    *,
+    family_id: str,
+    family: WorkItemFamilyDefinition | None,
+) -> "WorkFamilyQueueAdapter | None":
+    from .family_adapters import (
+        queue_adapter_for_family_id,
+        queue_adapter_for_id,
+        resolve_queue_lifecycle_adapter_id,
+    )
+
+    if family is not None:
+        adapter_id = resolve_queue_lifecycle_adapter_id(family)
+        if adapter_id is not None:
+            adapter = queue_adapter_for_id(adapter_id)
+            if adapter is None:
+                raise QueueStateError(
+                    f"work item family {family.family_id} references unknown adapter {adapter_id}"
+                )
+            return adapter
+    return queue_adapter_for_family_id(family_id)
 
 
 def _requeue_active_generic_family(

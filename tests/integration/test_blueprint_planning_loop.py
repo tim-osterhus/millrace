@@ -4,8 +4,13 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
+from millrace_ai.architecture import PlaneQueueClaimPolicyDefinition
+from millrace_ai.architecture.workflow_primitives import (
+    builtin_queue_lifecycle_adapter_id_for_family,
+)
 from millrace_ai.contracts import (
     BlueprintCritiqueDocument,
     BlueprintDraftDocument,
@@ -16,6 +21,7 @@ from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
     IncidentDocument,
+    Plane,
     PlanningStageName,
     PlanningTerminalResult,
     SpecDocument,
@@ -30,6 +36,7 @@ from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.completion_behavior import maybe_activate_completion_stage
 from millrace_ai.workspace.arbiter_state import load_closure_target_state
 from millrace_ai.workspace.blueprint_state import (
+    enqueue_blueprint_draft,
     list_blueprint_manifests_for_root,
     read_blueprint_draft,
     read_blueprint_manifest,
@@ -389,6 +396,46 @@ def _write_default_planner_disposition(
             "created_by": "planner",
         },
     )
+
+
+def test_blueprint_planning_claim_uses_blueprint_queue_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace_ai.workspace import family_adapters
+
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    enqueue_blueprint_draft(
+        paths,
+        _draft("draft-blueprint-001", draft_index=1, depends_on_draft_ids=()),
+    )
+
+    called_adapter_ids: list[str] = []
+    real_queue_adapter_for_id = family_adapters.queue_adapter_for_id
+
+    def capture_queue_adapter(adapter_id: str):
+        called_adapter_ids.append(adapter_id)
+        return real_queue_adapter_for_id(adapter_id)
+
+    monkeypatch.setattr(family_adapters, "queue_adapter_for_id", capture_queue_adapter)
+
+    claim = queue.claim_next_planning_item(
+        queue_claim_policy=PlaneQueueClaimPolicyDefinition(
+            policy_id="planning.blueprint.adapter.test",
+            plane=Plane.PLANNING,
+            family_order=("blueprint_draft",),
+            closure_lineage_policy="defer_unrelated",
+            empty_behavior="idle",
+        )
+    )
+
+    assert claim is not None
+    assert claim.family_id == "blueprint_draft"
+    assert claim.work_item_id == "draft-blueprint-001"
+    adapter_id = builtin_queue_lifecycle_adapter_id_for_family("blueprint_draft")
+    assert adapter_id is not None
+    assert adapter_id in called_adapter_ids
 
 
 def test_blueprint_mode_approval_path_promotes_two_strict_sequence_drafts_and_closes(

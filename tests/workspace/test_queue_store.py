@@ -8,6 +8,10 @@ from typing import Any, Mapping
 
 import pytest
 
+from millrace_ai.architecture import PlaneQueueClaimPolicyDefinition, WorkItemFamilyDefinition
+from millrace_ai.architecture.workflow_primitives import (
+    builtin_queue_lifecycle_adapter_id_for_family,
+)
 from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
@@ -22,8 +26,11 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import QueueStateError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.runtime.effects import SourceLifecycleAction, SourceLifecycleIntent
 from millrace_ai.work_documents import parse_work_document, parse_work_document_as, render_work_document
 from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
+from millrace_ai.workspace.queue_claims import QueueClaim
+from millrace_ai.workspace.queue_lifecycle import QueueLifecycleInterpreter, requeue_active_work_item
 from millrace_ai.workspace.queue_selection import list_open_lineage_work_ids
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
@@ -94,6 +101,155 @@ def _incident_doc(incident_id: str, *, opened_at: datetime) -> IncidentDocument:
         opened_at=opened_at,
         opened_by="tests",
     )
+
+
+def _planning_policy(*family_order: str) -> PlaneQueueClaimPolicyDefinition:
+    return PlaneQueueClaimPolicyDefinition(
+        policy_id="planning.test.adapters",
+        plane=Plane.PLANNING,
+        family_order=family_order,
+        closure_lineage_policy="defer_unrelated",
+        empty_behavior="idle",
+    )
+
+
+def _custom_file_backed_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_lifecycle_adapter_id="tests.custom.file_backed",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+    )
+
+
+class _CustomFileBackedAdapter:
+    def __init__(self, family: WorkItemFamilyDefinition) -> None:
+        if family.queue_lifecycle_adapter_id is None:
+            raise AssertionError("custom family must declare queue_lifecycle_adapter_id")
+        self.adapter_id = family.queue_lifecycle_adapter_id
+        self.family_id = family.family_id
+        self._family = family
+
+    def claim_next(
+        self,
+        paths,
+        *,
+        root_spec_id: str | None = None,
+        work_item_families: tuple[WorkItemFamilyDefinition, ...] | None = None,
+    ) -> QueueClaim | None:
+        queue_dir = paths.runtime_root / self._family.queue_dirs.queue
+        for source in sorted(queue_dir.glob(f"*{self._family.file_extension}")):
+            if not source.is_file():
+                continue
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            item_id = str(payload.get(self._family.id_field or "custom_id", source.stem))
+            source_root_spec_id = payload.get("root_spec_id")
+            if (
+                root_spec_id is not None
+                and isinstance(source_root_spec_id, str)
+                and source_root_spec_id
+                and source_root_spec_id != root_spec_id
+            ):
+                continue
+            destination = paths.runtime_root / self._family.queue_dirs.active / source.name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(destination)
+            return QueueClaim(
+                family_id=self.family_id,
+                work_item_id=item_id,
+                path=destination,
+                source_state=self._family.claimable_state,
+                source_path=source,
+                plane=self._family.plane,
+            )
+        return None
+
+    def active_path(self, paths, *, work_item_id: str) -> Path:
+        return paths.runtime_root / self._family.queue_dirs.active / (
+            f"{work_item_id}{self._family.file_extension}"
+        )
+
+    def apply_lifecycle(
+        self,
+        paths,
+        *,
+        intent: SourceLifecycleIntent,
+        work_item_families: tuple[WorkItemFamilyDefinition, ...] | None = None,
+    ) -> Path:
+        source = self.active_path(paths, work_item_id=intent.work_item_id)
+        target_dir = (
+            self._family.queue_dirs.done
+            if intent.action is SourceLifecycleAction.COMPLETE
+            else self._family.queue_dirs.blocked
+        )
+        destination = paths.runtime_root / target_dir / source.name
+        if not source.exists():
+            raise QueueStateError(f"{self.family_id} {intent.work_item_id} is not active")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        return destination
+
+    def requeue_active(
+        self,
+        paths,
+        *,
+        work_item_id: str,
+        reason: str,
+        work_item_families: tuple[WorkItemFamilyDefinition, ...] | None = None,
+    ) -> Path:
+        source = self.active_path(paths, work_item_id=work_item_id)
+        destination = paths.runtime_root / self._family.queue_dirs.queue / source.name
+        if not source.exists():
+            raise QueueStateError(f"{self.family_id} {work_item_id} is not active")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        payload = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "family_id": self.family_id,
+            "reason": reason,
+        }
+        with (destination.parent / f"{work_item_id}.requeue.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, sort_keys=True) + "\n")
+        return destination
+
+    def list_open_lineage_work_ids(
+        self,
+        paths,
+        *,
+        root_spec_id: str,
+    ) -> tuple[str, ...]:
+        return ()
+
+    def list_deferred_root_spec_ids(
+        self,
+        paths,
+        *,
+        open_root_spec_id: str,
+    ) -> tuple[str, ...]:
+        return ()
 
 
 def _read_json_lines(path: Path) -> list[dict[str, object]]:
@@ -574,6 +730,134 @@ def test_planning_lifecycle_incidents_then_oldest_probe_or_spec(
     assert third is not None
     assert third.work_item_kind is WorkItemKind.SPEC
     assert third.work_item_id == "spec-001"
+
+
+def test_claim_next_planning_item_uses_spec_queue_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace_ai.workspace import family_adapters
+
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+    store.enqueue_spec(_spec_doc("spec-001", created_at=NOW))
+
+    called_adapter_ids: list[str] = []
+    real_queue_adapter_for_id = family_adapters.queue_adapter_for_id
+
+    def capture_queue_adapter(adapter_id: str):
+        called_adapter_ids.append(adapter_id)
+        return real_queue_adapter_for_id(adapter_id)
+
+    monkeypatch.setattr(family_adapters, "queue_adapter_for_id", capture_queue_adapter)
+
+    claim = store.claim_next_planning_item(queue_claim_policy=_planning_policy("spec"))
+
+    assert claim is not None
+    assert claim.work_item_kind is WorkItemKind.SPEC
+    spec_adapter_id = builtin_queue_lifecycle_adapter_id_for_family("spec")
+    assert spec_adapter_id is not None
+    assert spec_adapter_id in called_adapter_ids
+
+
+def test_queue_lifecycle_interpreter_uses_spec_queue_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace_ai.workspace import family_adapters
+
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+    store.enqueue_spec(_spec_doc("spec-001", created_at=NOW))
+    assert store.claim_next_planning_item(queue_claim_policy=_planning_policy("spec")) is not None
+
+    called_adapter_ids: list[str] = []
+    real_queue_adapter_for_id = family_adapters.queue_adapter_for_id
+
+    def capture_queue_adapter(adapter_id: str):
+        called_adapter_ids.append(adapter_id)
+        return real_queue_adapter_for_id(adapter_id)
+
+    monkeypatch.setattr(family_adapters, "queue_adapter_for_id", capture_queue_adapter)
+
+    intent = SourceLifecycleIntent(
+        lifecycle_plan_id="tests.complete_spec",
+        action=SourceLifecycleAction.COMPLETE,
+        work_item_family_id="spec",
+        work_item_id="spec-001",
+    )
+    destination = QueueLifecycleInterpreter(paths).apply(intent)
+
+    assert destination == paths.specs_done_dir / "spec-001.md"
+    spec_adapter_id = builtin_queue_lifecycle_adapter_id_for_family("spec")
+    assert spec_adapter_id is not None
+    assert spec_adapter_id in called_adapter_ids
+
+
+def test_custom_file_backed_family_can_claim_requeue_and_complete_via_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace_ai.workspace import family_adapters
+
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    store = QueueStore(paths)
+    family = _custom_file_backed_family()
+    adapter = _CustomFileBackedAdapter(family)
+    queue_path = paths.runtime_root / family.queue_dirs.queue / "custom-001.json"
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    queue_path.write_text(
+        (
+            '{"custom_id":"custom-001","root_spec_id":"spec-root-001",'
+            '"created_at":"2026-05-19T12:00:00+00:00"}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    real_queue_adapter_for_id = family_adapters.queue_adapter_for_id
+
+    def custom_queue_adapter(adapter_id: str):
+        if adapter_id == adapter.adapter_id:
+            return adapter
+        return real_queue_adapter_for_id(adapter_id)
+
+    monkeypatch.setattr(family_adapters, "queue_adapter_for_id", custom_queue_adapter)
+
+    claim = store.claim_next_planning_item(
+        root_spec_id="spec-root-001",
+        queue_claim_policy=_planning_policy("custom_review"),
+        work_item_families=(family,),
+    )
+    assert claim is not None
+    assert claim.family_id == "custom_review"
+    assert claim.path == paths.runtime_root / family.queue_dirs.active / "custom-001.json"
+
+    requeued = requeue_active_work_item(
+        paths,
+        work_item_family_id="custom_review",
+        work_item_id="custom-001",
+        reason="retry after adapter check",
+        work_item_families=(family,),
+    )
+    assert requeued == queue_path
+    assert _read_json_lines(paths.runtime_root / family.queue_dirs.queue / "custom-001.requeue.jsonl")
+
+    claim_again = store.claim_next_planning_item(
+        root_spec_id="spec-root-001",
+        queue_claim_policy=_planning_policy("custom_review"),
+        work_item_families=(family,),
+    )
+    assert claim_again is not None
+    assert claim_again.path == paths.runtime_root / family.queue_dirs.active / "custom-001.json"
+
+    intent = SourceLifecycleIntent(
+        lifecycle_plan_id="tests.complete_custom_review",
+        action=SourceLifecycleAction.COMPLETE,
+        work_item_family_id="custom_review",
+        work_item_id="custom-001",
+    )
+    destination = QueueLifecycleInterpreter(paths, work_item_families=(family,)).apply(intent)
+    assert destination == paths.runtime_root / family.queue_dirs.done / "custom-001.json"
 
 
 def test_requeue_probe_returns_to_queue_surface(tmp_path: Path) -> None:
