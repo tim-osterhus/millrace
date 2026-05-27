@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from millrace_ai.architecture import WorkItemFamilyDefinition
+from millrace_ai.cli.commands.run import _run_daemon_supervisor_loop
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -49,6 +51,7 @@ from millrace_ai.recon_packets import render_recon_packet
 from millrace_ai.router import RouterAction
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
+from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
 from millrace_ai.runtime.watcher_intake import safe_spec_id_from_idea_path
 from millrace_ai.runtime_lock import (
     RuntimeOwnershipLockError,
@@ -1231,6 +1234,33 @@ def test_runtime_stage_events_surface_failure_class_and_troubleshoot_report_path
     assert outcome.stage_result.report_artifact == captured_request.preferred_troubleshoot_report_path
 
 
+def test_runtime_tick_runner_raised_cancelled_error_is_treated_as_worker_failure(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise asyncio.CancelledError("runner cancelled")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    outcome = engine.tick()
+    events = read_runtime_events(paths)
+
+    assert outcome.stage_result is not None
+    assert outcome.stage_result.metadata["failure_class"] == "runtime_primitive_exception"
+    assert outcome.router_decision.failure_class == "runtime_primitive_exception"
+    assert any(
+        event.event_type == "runtime_worker_exception"
+        and event.data.get("exception_type") == "CancelledError"
+        for event in events
+    )
+    assert not any(event.event_type == "runtime_worker_cancelled" for event in events)
+
+
 def test_runtime_single_tick_emits_stage_events_in_order(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
@@ -2224,6 +2254,13 @@ def test_runtime_startup_reconciles_stale_state_to_recovery_stage(tmp_path: Path
     claimed = queue.claim_next_execution_task()
     assert claimed is not None
 
+    def bootstrap_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError(f"bootstrap stage runner should not run: {request.stage.value}")
+
+    bootstrap_engine = RuntimeEngine(paths, stage_runner=bootstrap_runner)
+    bootstrap_snapshot = bootstrap_engine.startup()
+    bootstrap_engine.close()
+
     stale_snapshot = RuntimeSnapshot.model_validate(
         {
             **load_snapshot(paths).model_dump(mode="python"),
@@ -2231,9 +2268,12 @@ def test_runtime_startup_reconciles_stale_state_to_recovery_stage(tmp_path: Path
             "active_plane": Plane.EXECUTION,
             "active_stage": ExecutionStageName.CHECKER,
             "active_run_id": "run-stale",
+            "active_work_item_family_id": WorkItemKind.TASK.value,
             "active_work_item_kind": WorkItemKind.TASK,
             "active_work_item_id": "task-001",
             "active_since": NOW,
+            "compiled_plan_id": bootstrap_snapshot.compiled_plan_id,
+            "compiled_plan_fingerprint": bootstrap_snapshot.compiled_plan_fingerprint,
             "updated_at": NOW,
         }
     )
@@ -3922,6 +3962,41 @@ def test_runtime_tick_stop_without_owned_lock_does_not_release_external_lock(
 
     assert outcome.router_decision.reason == "stop_requested"
     assert paths.runtime_lock_file.is_file()
+
+
+def test_supervisor_daemon_max_ticks_stop_leaves_lock_and_snapshot_clean(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nrun_style = 'daemon'\n", encoding="utf-8")
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError(f"stage_runner should not run on stop-only cycle: {request.stage.value}")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+    assert paths.runtime_lock_file.is_file()
+
+    write_mailbox_command(paths, _mailbox_command("cmd-stop-max-tick", "stop"))
+    ticks = asyncio.run(
+        _run_daemon_supervisor_loop(
+            engine,
+            supervisor_cls=RuntimeDaemonSupervisor,
+            idle_sleep_seconds=0.0,
+            max_ticks=1,
+        )
+    )
+    snapshot = load_snapshot(paths)
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+
+    assert ticks == 1
+    assert snapshot.process_running is False
+    assert snapshot.stop_requested is False
+    assert snapshot.active_runs_by_plane == {}
+    assert snapshot.active_stage is None
+    assert paths.runtime_lock_file.exists() is False
+    assert "runtime_tick_stopped" in event_types
+
+    engine.close()
 
 
 def test_runtime_mailbox_reload_config_retains_lock_when_rejecting_legacy_run_once(

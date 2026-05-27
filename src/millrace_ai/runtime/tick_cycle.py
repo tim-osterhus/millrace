@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -220,18 +221,24 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
 
         try:
             raw_result = engine.stage_runner(request)
-        except Exception as exc:  # pragma: no cover - defensive path
+        except (asyncio.CancelledError, Exception) as exc:  # pragma: no cover - defensive path
+            classification_error: Exception
+            if isinstance(exc, Exception):
+                classification_error = exc
+            else:
+                classification_error = RuntimeError(str(exc) or type(exc).__name__)
             failure_origin = classify_failure_origin(
-                exc,
+                classification_error,
                 boundary=RuntimeFailureBoundary.RUNNER_INVOCATION,
             )
+            exception_message = str(exc) or type(exc).__name__
             write_runtime_event(
                 engine.paths,
                 event_type="runtime_worker_exception",
                 data={
                     "failure_origin": failure_origin.value,
                     "exception_type": type(exc).__name__,
-                    "exception_message": str(exc),
+                    "exception_message": exception_message,
                     "plane": request.plane.value,
                     "run_id": request.run_id,
                     "stage": request.stage.value,
@@ -240,7 +247,7 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             raw_result = engine._runner_failure_result(
                 request,
                 failure_class=failure_origin.value,
-                error=str(exc),
+                error=exception_message,
             )
     else:
         raw_result = capability_gate_failure_result(

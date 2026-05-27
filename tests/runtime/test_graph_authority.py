@@ -16,6 +16,8 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ExecutionStageName,
     ExecutionTerminalResult,
+    LearningStageName,
+    LearningTerminalResult,
     Plane,
     PlanningStageName,
     PlanningTerminalResult,
@@ -661,6 +663,60 @@ def test_integrated_graph_routes_integrator_to_checker_or_recovery(
     assert decision.action.value == "run_stage"
     assert decision.next_stage == expected_stage
     assert decision.reason == expected_reason
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected_failure_class"),
+    (
+        ({"failure_class": "network_unavailable"}, "network_unavailable"),
+        ({}, "analyst_blocked"),
+        ({"failure_class": "   "}, "analyst_blocked"),
+    ),
+)
+def test_route_stage_result_from_graph_learning_blocked_sets_failure_class(
+    tmp_path: Path,
+    metadata: dict[str, object],
+    expected_failure_class: str,
+) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="learning_codex",
+    )
+    assert outcome.active_plan is not None
+
+    snapshot = _snapshot(
+        plane=Plane.LEARNING,
+        stage=LearningStageName.ANALYST,
+        work_item_kind=WorkItemKind.LEARNING_REQUEST,
+        work_item_id="learn-001",
+    )
+    stage_result = StageResultEnvelope(
+        run_id="run-001",
+        plane=Plane.LEARNING,
+        stage=LearningStageName.ANALYST,
+        work_item_kind=WorkItemKind.LEARNING_REQUEST,
+        work_item_id="learn-001",
+        terminal_result=LearningTerminalResult.BLOCKED,
+        result_class=ResultClass.BLOCKED,
+        summary_status_marker="### BLOCKED",
+        success=False,
+        metadata=metadata,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result_from_graph(
+        outcome.active_plan,
+        snapshot,
+        stage_result,
+        RecoveryCounters(),
+    )
+
+    assert decision.action.value == "blocked"
+    assert decision.reason == "analyst_blocked"
+    assert decision.failure_class == expected_failure_class
 
 
 def test_route_stage_result_from_graph_rejects_invalid_closure_target_identity(

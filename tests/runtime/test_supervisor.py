@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 
+import millrace_ai.runtime.supervisor as supervisor_module
 from millrace_ai.contracts import (
+    ExecutionStageName,
     ExecutionTerminalResult,
     LearningRequestDocument,
     LearningTerminalResult,
@@ -16,11 +18,13 @@ from millrace_ai.contracts import (
     TaskDocument,
 )
 from millrace_ai.events import read_runtime_events
+from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor, StageWorkerOutcome
+from millrace_ai.state_store import load_snapshot
 
 NOW = datetime(2026, 4, 28, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -107,6 +111,20 @@ def _learning_request_doc(learning_request_id: str) -> LearningRequestDocument:
         created_at=NOW,
         created_by="tests",
     )
+
+
+def _mailbox_command(
+    command_id: str,
+    command: str,
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "command_id": command_id,
+        "command": command,
+        "issued_at": NOW,
+        "issuer": "tests",
+        "payload": payload or {},
+    }
 
 
 def _runner_result(
@@ -378,6 +396,310 @@ def test_supervisor_applies_completed_workers_before_new_claims(tmp_path: Path) 
         assert engine.snapshot.active_runs_by_plane[Plane.LEARNING].work_item_id == "learn-002"
 
         await supervisor.drain_completed(wait=True)
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_canceled_worker_releases_active_run_state(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+    started = Event()
+    release_worker = Event()
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        started.set()
+        release_worker.wait(timeout=0.25)
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner)
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        await asyncio.wait_for(asyncio.to_thread(started.wait), timeout=5)
+
+        task = next(iter(supervisor._tasks.values()))
+        task.cancel()
+        completions = await supervisor.drain_completed(wait=True)
+
+        snapshot = load_snapshot(paths)
+        assert completions == ()
+        assert supervisor.active_worker_lanes == frozenset()
+        assert snapshot.active_runs_by_plane == {}
+        assert snapshot.active_stage is None
+        assert snapshot.active_run_id is None
+
+        release_worker.set()
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_canceled_worker_cleans_active_run_metadata_and_preserves_active_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+    started = Event()
+    release_worker = Event()
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        started.set()
+        release_worker.wait(timeout=0.25)
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner)
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        await asyncio.wait_for(asyncio.to_thread(started.wait), timeout=5)
+
+        task = next(iter(supervisor._tasks.values()))
+        task.cancel()
+        await supervisor.drain_completed(wait=True)
+
+        events = read_runtime_events(paths)
+        assert (paths.tasks_active_dir / "task-001.md").is_file()
+        assert not (paths.tasks_done_dir / "task-001.md").exists()
+        assert not (paths.tasks_blocked_dir / "task-001.md").exists()
+        assert not any(event.event_type == "stage_completed" for event in events)
+
+        release_worker.set()
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_canceled_execution_worker_preserves_learning_failure_class(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001"))
+    queue.enqueue_learning_request(_learning_request_doc("learn-001"))
+    execution_started = Event()
+    release_execution = Event()
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        if request.plane is Plane.LEARNING:
+            raise OSError("network unavailable")
+        execution_started.set()
+        assert release_execution.wait(timeout=5)
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 2
+        assert await asyncio.wait_for(asyncio.to_thread(execution_started.wait), timeout=5)
+
+        learning_task = supervisor._tasks["learning.main"]
+        await asyncio.wait_for(learning_task, timeout=5)
+        completions = await supervisor.drain_completed(wait=False)
+
+        assert len(completions) == 1
+        assert completions[0].stage_result.plane is Plane.LEARNING
+        assert completions[0].stage_result.metadata["failure_class"] == "network_unavailable"
+        assert completions[0].router_decision.failure_class == "network_unavailable"
+        snapshot = load_snapshot(paths)
+        assert Plane.EXECUTION in snapshot.active_runs_by_plane
+        assert snapshot.current_failure_class == "network_unavailable"
+
+        execution_task = supervisor._tasks["execution.main"]
+        execution_task.cancel()
+        cancelled = await supervisor.drain_completed(wait=True)
+
+        snapshot_after_cancel = load_snapshot(paths)
+        assert cancelled == ()
+        assert Plane.EXECUTION not in snapshot_after_cancel.active_runs_by_plane
+        assert snapshot_after_cancel.current_failure_class == "network_unavailable"
+
+        release_execution.set()
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_runner_raised_cancelled_error_is_treated_as_worker_failure(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise asyncio.CancelledError("runner cancelled")
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner)
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        completions = await supervisor.drain_completed(wait=True)
+        events = read_runtime_events(paths)
+
+        assert len(completions) == 1
+        assert completions[0].stage_result.metadata["failure_class"] == "runtime_primitive_exception"
+        assert any(
+            event.event_type == "runtime_worker_exception"
+            and event.data.get("exception_type") == "CancelledError"
+            for event in events
+        )
+        assert not any(event.event_type == "runtime_worker_cancelled" for event in events)
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_reload_promotes_compiled_plan_after_completion_boundary(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\ndefault_mode = 'learning_codex'\n", encoding="utf-8")
+    QueueStore(paths).enqueue_learning_request(_learning_request_doc("learn-001"))
+    started = Event()
+    release_worker = Event()
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        started.set()
+        assert release_worker.wait(timeout=5)
+        return _runner_result(request, terminal=LearningTerminalResult.CURATOR_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+        startup_snapshot = engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        await asyncio.wait_for(asyncio.to_thread(started.wait), timeout=5)
+
+        config_path.write_text("[runtime]\ndefault_mode = 'default_codex'\n", encoding="utf-8")
+        write_mailbox_command(paths, _mailbox_command("cmd-reload", "reload_config"))
+
+        worker_task = next(iter(supervisor._tasks.values()))
+        release_worker.set()
+        await asyncio.wait_for(worker_task, timeout=5)
+
+        completions = await supervisor.run_cycle()
+        snapshot = load_snapshot(paths)
+        events = read_runtime_events(paths)
+
+        assert len(completions) == 1
+        assert snapshot.compiled_plan_id != startup_snapshot.compiled_plan_id
+        assert snapshot.pending_compiled_plan_id is None
+        assert snapshot.learning_loop_id != startup_snapshot.learning_loop_id
+        stage_completed_index = next(
+            index for index, event in enumerate(events) if event.event_type == "stage_completed"
+        )
+        reload_index = next(
+            index for index, event in enumerate(events) if event.event_type == "runtime_config_reloaded"
+        )
+        assert stage_completed_index < reload_index
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_applies_completion_against_launch_compiled_plan_after_reload(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        assert request.stage is ExecutionStageName.BUILDER
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner)
+        engine.startup()
+        assert engine.compiled_plan is not None
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        active_run = next(iter(supervisor._task_active_runs.values()))
+
+        builder_complete = next(
+            transition
+            for transition in engine.compiled_plan.execution_graph.compiled_transitions
+            if transition.source_node_id == "builder"
+            and transition.outcome == ExecutionTerminalResult.BUILDER_COMPLETE.value
+        )
+        engine.compiled_plan = engine.compiled_plan.model_copy(
+            update={
+                "compiled_plan_id": f"{engine.compiled_plan.compiled_plan_id}-reloaded",
+                "execution_graph": engine.compiled_plan.execution_graph.model_copy(
+                    update={
+                        "compiled_transitions": tuple(
+                            transition.model_copy(update={"target_node_id": "updater"})
+                            if transition == builder_complete
+                            else transition
+                            for transition in engine.compiled_plan.execution_graph.compiled_transitions
+                        )
+                    }
+                ),
+            }
+        )
+
+        completions = await supervisor.drain_completed(wait=True)
+
+        assert len(completions) == 1
+        assert completions[0].router_decision.next_stage is ExecutionStageName.CHECKER
+        assert active_run.compiled_plan_id != engine.compiled_plan.compiled_plan_id
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_completion_runtime_effects_drain_once_across_reload_and_stop_boundary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\ndefault_mode = 'learning_codex'\n", encoding="utf-8")
+    QueueStore(paths).enqueue_learning_request(_learning_request_doc("learn-001"))
+    calls = {"count": 0}
+    original_apply = supervisor_module.apply_runtime_effect_for_stage_result
+
+    def counted_apply(*args, **kwargs):
+        calls["count"] += 1
+        return original_apply(*args, **kwargs)
+
+    monkeypatch.setattr(supervisor_module, "apply_runtime_effect_for_stage_result", counted_apply)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(request, terminal=LearningTerminalResult.CURATOR_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        assert await supervisor.dispatch_ready_work() == 1
+        worker_task = next(iter(supervisor._tasks.values()))
+        await asyncio.wait_for(worker_task, timeout=5)
+
+        config_path.write_text("[runtime]\ndefault_mode = 'default_codex'\n", encoding="utf-8")
+        write_mailbox_command(paths, _mailbox_command("cmd-reload", "reload_config"))
+        write_mailbox_command(paths, _mailbox_command("cmd-stop", "stop"))
+
+        completions = await supervisor.run_cycle()
+        second_pass = await supervisor.drain_completed(wait=False)
+        events = read_runtime_events(paths)
+
+        assert len(completions) == 1
+        assert second_pass == ()
+        assert calls["count"] == 1
+        assert sum(1 for event in events if event.event_type == "stage_completed") == 1
+        assert load_snapshot(paths).process_running is False
         engine.close()
 
     asyncio.run(scenario())

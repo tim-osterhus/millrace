@@ -479,10 +479,9 @@ Owned tests: `tests/runtime/test_supervisor.py`,
 `tests/runtime/test_result_application.py`, `tests/runtime/test_runtime.py`,
 and CLI daemon tests in `tests/cli/test_cli.py`.
 
-Missing characterization: Lifecycle-failure vs tick-cycle-failure contracts,
-worker cancellation/shutdown behavior, signal/stop handling separated from
-dispatch, reload/config-change boundaries, event payload stability, and tests
-for lock release around partial supervisor failures.
+Missing characterization: Multi-worker stop/restart contracts when completion
+draining, mailbox mutations, and daemon shutdown all happen in adjacent cycles;
+and stricter event-payload freeze coverage across monitor/runtime outputs.
 
 Likely extraction seams: worker task lifecycle, dispatch loop, claim activation
 and pre-dispatch recovery, completion application, event emission, idle/stop
@@ -498,6 +497,14 @@ number of responsibilities imported into the supervisor.
 Dedicated implementation spec required: Yes. The implementation spec should
 start with behavior contracts and targeted async/lifecycle tests.
 
+FU-8 Batch 8 Packet 02 status: direct supervisor boundary tests now cover
+worker cancellation active-run cleanup, cancellation durability expectations,
+max-tick stop lock/snapshot cleanliness, reload/pending-plan boundary ordering,
+compiled-plan authority for in-flight result application, exact-once completion
+draining, and Learning/foreground concurrency checks. No `supervisor_parts`
+split landed in this packet because dispatch, completion mutation, and
+event/monitor projection still share one tightly-coupled lifecycle boundary.
+
 ## Deferred Or Gated Work
 
 - MR-MAINT-001 and MR-MAINT-002 are now owned by this follow-up wave in FU-2
@@ -509,7 +516,9 @@ start with behavior contracts and targeted async/lifecycle tests.
   Planning/Execution/Learning contexts, Recon/Integrator contexts, legacy
   node-level request-context/runtime-stage backfill behavior, and request-context
   authority negative checks.
-- MR-MAINT-011 remains gated to FU-8 after lower-level seams land; splitting
-  the supervisor first would mostly move complexity around.
+- MR-MAINT-011 remains gated after FU-8 Packet 02 characterization: cancellation
+  and reload boundaries are now tested directly, but splitting is still deferred
+  because supervisor dispatch, completion mutation, and event projection are not
+  yet separable without widening lifecycle risk.
 - MR-MAINT-003 and MR-MAINT-004 remain gated until the Batch 0 public API
   inventory is committed and earlier follow-up gates pass.

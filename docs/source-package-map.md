@@ -256,7 +256,10 @@ cycles:
 - `runtime/supervisor.py`, `runtime/lanes.py`, `runtime/lane_conflicts.py`,
   `runtime/plane_concurrency.py`, and `runtime/active_runs.py` own daemon lane
   dispatch, durable lane state, conflict policy checks, plane concurrency, and
-  active-run projection.
+  active-run projection. FU-8 Batch 8 Packet 02 added direct boundary tests
+  for supervisor cancellation/reload/drain behavior and landed cancellation
+  cleanup in `runtime/supervisor.py`; `runtime/supervisor_parts/` remains
+  deferred until lifecycle/event seams are safer to separate.
 - `runtime/monitoring.py`, `runtime/pause_state.py`, and
   `runtime/handoff_incidents.py` own runtime event sink contracts, pause-source
   projection, and operator handoff incident state.

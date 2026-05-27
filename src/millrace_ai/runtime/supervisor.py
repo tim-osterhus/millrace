@@ -26,7 +26,7 @@ from millrace_ai.runners import RunnerRawResult, StageRunRequest, normalize_stag
 from millrace_ai.state_store import save_snapshot
 
 from .activation import activate_claim_for_plane, claim_next_work_item_for_plane
-from .active_runs import active_run_for_plane, snapshot_with_active_run
+from .active_runs import active_run_for_plane, snapshot_with_active_run, snapshot_without_active_plane
 from .blocked_recovery import attempt_stranded_dependency_auto_recovery
 from .capability_gates import (
     capability_gate_failure_result,
@@ -175,8 +175,15 @@ class RuntimeDaemonSupervisor:
 
             for lane_id in _sort_lanes(done_planes, compiled_plan=self.engine.compiled_plan):
                 task = self._tasks.pop(lane_id)
-                self._task_active_runs.pop(lane_id, None)
-                outcome = task.result()
+                active_run = self._task_active_runs.pop(lane_id, None)
+                if task.cancelled():
+                    self._handle_cancelled_worker(lane_id=lane_id, active_run=active_run)
+                    continue
+                try:
+                    outcome = task.result()
+                except asyncio.CancelledError:
+                    self._handle_cancelled_worker(lane_id=lane_id, active_run=active_run)
+                    continue
                 completions.append(apply_stage_completion(self.engine, outcome=outcome))
 
             if not wait:
@@ -430,6 +437,43 @@ class RuntimeDaemonSupervisor:
     def _pending_completion_exists(self) -> bool:
         return any(task.done() for task in self._tasks.values())
 
+    def _handle_cancelled_worker(self, *, lane_id: str, active_run: ActiveRunState | None) -> None:
+        if active_run is None:
+            write_runtime_event(
+                self.engine.paths,
+                event_type="runtime_worker_cancelled",
+                data={"lane_id": lane_id},
+            )
+            return
+        assert self.engine.snapshot is not None
+        self.engine.snapshot = snapshot_without_active_plane(
+            self.engine.snapshot,
+            plane=active_run.plane,
+            now=self.engine._now(),
+            current_failure_class=self.engine.snapshot.current_failure_class,
+        )
+        self.engine._set_plane_status_marker(
+            plane=active_run.plane,
+            marker="### IDLE",
+            run_id=active_run.run_id,
+            source="worker_cancelled",
+        )
+        write_runtime_event(
+            self.engine.paths,
+            event_type="runtime_worker_cancelled",
+            data={
+                "lane_id": lane_id,
+                "plane": active_run.plane.value,
+                "run_id": active_run.run_id,
+                "stage": active_run.stage.value,
+                "work_item_family_id": active_run.work_item_family_id,
+                "work_item_kind": (
+                    active_run.work_item_kind.value if active_run.work_item_kind is not None else None
+                ),
+                "work_item_id": active_run.work_item_id,
+            },
+        )
+
 
 async def _run_stage_worker(
     engine: RuntimeEngine,
@@ -440,34 +484,24 @@ async def _run_stage_worker(
     started_at = engine._now()
     try:
         raw_result = await asyncio.to_thread(engine.stage_runner, request)
-    except Exception as exc:  # pragma: no cover - defensive path
-        failure_origin = classify_failure_origin(
-            exc,
-            boundary=RuntimeFailureBoundary.RUNNER_INVOCATION,
-        )
-        write_runtime_event(
-            engine.paths,
-            event_type="runtime_worker_exception",
-            data={
-                "failure_origin": failure_origin.value,
-                "exception_type": type(exc).__name__,
-                "exception_message": str(exc),
-                "plane": active_run.plane.value,
-                "lane_id": active_run.lane_id,
-                "run_id": active_run.run_id,
-                "stage": active_run.stage.value,
-            },
-        )
-        return StageWorkerOutcome(
-            plane=active_run.plane,
-            lane_id=active_run.lane_id,
-            run_id=active_run.run_id,
+    except asyncio.CancelledError as exc:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise
+        return _worker_exception_outcome(
+            engine,
             active_run=active_run,
             request=request,
             started_at=started_at,
-            completed_at=engine._now(),
-            exception_type=type(exc).__name__,
-            exception_message=str(exc),
+            error=exc,
+        )
+    except Exception as exc:  # pragma: no cover - defensive path
+        return _worker_exception_outcome(
+            engine,
+            active_run=active_run,
+            request=request,
+            started_at=started_at,
+            error=exc,
         )
     return StageWorkerOutcome(
         plane=active_run.plane,
@@ -478,6 +512,50 @@ async def _run_stage_worker(
         started_at=started_at,
         completed_at=engine._now(),
         raw_result=raw_result,
+    )
+
+
+def _worker_exception_outcome(
+    engine: RuntimeEngine,
+    *,
+    active_run: ActiveRunState,
+    request: StageRunRequest,
+    started_at: datetime,
+    error: BaseException,
+) -> StageWorkerOutcome:
+    classification_error: Exception
+    if isinstance(error, Exception):
+        classification_error = error
+    else:
+        classification_error = RuntimeError(str(error) or type(error).__name__)
+    failure_origin = classify_failure_origin(
+        classification_error,
+        boundary=RuntimeFailureBoundary.RUNNER_INVOCATION,
+    )
+    exception_message = str(error) or type(error).__name__
+    write_runtime_event(
+        engine.paths,
+        event_type="runtime_worker_exception",
+        data={
+            "failure_origin": failure_origin.value,
+            "exception_type": type(error).__name__,
+            "exception_message": exception_message,
+            "plane": active_run.plane.value,
+            "lane_id": active_run.lane_id,
+            "run_id": active_run.run_id,
+            "stage": active_run.stage.value,
+        },
+    )
+    return StageWorkerOutcome(
+        plane=active_run.plane,
+        lane_id=active_run.lane_id,
+        run_id=active_run.run_id,
+        active_run=active_run,
+        request=request,
+        started_at=started_at,
+        completed_at=engine._now(),
+        exception_type=type(error).__name__,
+        exception_message=exception_message,
     )
 
 
