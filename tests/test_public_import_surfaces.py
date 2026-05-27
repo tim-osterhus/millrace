@@ -198,3 +198,15 @@ def test_public_import_surface_exports_expected_symbols(
     assert set(exported_symbols) == set(expected_symbols)
     for symbol in expected_symbols:
         assert hasattr(module, symbol), f"{module_name} missing public symbol {symbol}"
+
+
+def test_validation_public_symbols_support_direct_import() -> None:
+    from millrace_ai.compilation.validation import (
+        validate_lane_conflict_coverage,
+        validate_mode_stage_maps,
+        validate_workflow_primitives,
+    )
+
+    assert callable(validate_lane_conflict_coverage)
+    assert callable(validate_mode_stage_maps)
+    assert callable(validate_workflow_primitives)

@@ -43,6 +43,7 @@ from millrace_ai.workspace.family_adapters import (
 
 from .effect_operations import validate_runtime_effect_operations
 from .outcomes import CompilerValidationError
+from .validation.diagnostics import stage_key_value
 
 _BUILT_IN_ARTIFACT_ADAPTER_IDS = frozenset(
     {
@@ -68,11 +69,11 @@ def validate_mode_stage_maps(mode: ModeDefinition, selected_stages: set[StageMap
         ("stage_runner_bindings", mode.stage_runner_bindings),
         ("stage_thinking_bindings", mode.stage_thinking_bindings),
     ):
-        for stage in sorted(mapping, key=_stage_key_value):
+        for stage in sorted(mapping, key=stage_key_value):
             if stage not in selected_stages:
                 raise CompilerValidationError(
                     "Mode map "
-                    f"`{map_name}` references stage outside selected loops: {_stage_key_value(stage)}"
+                    f"`{map_name}` references stage outside selected loops: {stage_key_value(stage)}"
                 )
 
 
@@ -1901,7 +1902,3 @@ __all__ = [
     "validate_mode_stage_maps",
     "validate_workflow_primitives",
 ]
-
-
-def _stage_key_value(stage: StageMapKey) -> str:
-    return stage.value if hasattr(stage, "value") else str(stage)
