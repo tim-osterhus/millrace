@@ -10,6 +10,35 @@ families.
 Diagnostic stability here means preserving useful substrings. The compiler does
 not expose structured validation error codes for these checks.
 
+## Batch 6 Packet 02 Status
+
+Packet 02 extracts the low-coupling validation families into focused modules
+under `src/millrace_ai/compilation/validation/`:
+
+- `graphs.py` for graph topology smoke validation and entry-walk checks
+- `stages.py` for stage artifact references, entry-family ownership, and runtime
+  failure recovery node constraints
+- `modes.py`, `model_assignments.py`, and `capabilities.py` for mode map scope
+  validation across entrypoint, skill, model/thinking, and runner bindings
+- `artifacts.py` for document adapter and artifact contract checks
+- `work_families.py` for queue claim policy/lifecycle adapter validation
+- `request_context_profiles.py` for profile/provider/render-plan authority
+- `lifecycle.py` for terminal action and lifecycle plan authority checks
+- `lane_conflicts.py` for concurrent-plane lane conflict coverage
+- `__init__.py` as the orchestration facade keeping public imports stable
+
+Runtime-effect handler/rule validation, recovery policies, runtime failure
+policies, and repair-closure validation remain intentionally deferred to Packet
+03 and continue to execute through the legacy validator owner.
+
+Representative direct invalid-asset coverage for extracted families now includes:
+
+- graph duplicate route bindings and unknown entry-walk targets
+- stage output/producer mismatch and runtime failure recovery repair-role checks
+- mode model-binding out-of-scope stage maps
+- lifecycle unknown runtime effect rules and lifecycle source family/node checks
+- lane concurrency tuple arity checks
+
 ## Validation Groups
 
 | Group | Contract | Direct tests | Diagnostic substrings to preserve | Missing focused tests before extraction |

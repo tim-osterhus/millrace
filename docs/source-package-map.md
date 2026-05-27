@@ -35,7 +35,12 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
 - `compilation/` owns compiler internals behind `millrace_ai.compiler`,
   including workspace plan compilation, graph materialization/export,
   validation, mode resolution, policy compilation, capabilities, model aliases,
-  completion behavior, fingerprints, persistence, and currentness checks.
+  completion behavior, fingerprints, persistence, and currentness checks. The
+  validation surface is now a package facade
+  (`compilation/validation/__init__.py`) with focused validator modules for
+  graphs, stages, modes/model-assignment maps, artifact/document contracts,
+  work-family queue policy checks, request-context profile authority, lifecycle
+  checks, and lane conflict coverage.
 - `config/` owns runtime config models, loading, TOML-preserving mutations, and
   config-change boundary classification.
 - `contracts/` owns canonical typed runtime contracts behind the

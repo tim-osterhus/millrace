@@ -4,8 +4,14 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
+from millrace_ai.assets import discover_stage_kind_definitions
+from millrace_ai.compilation.outcomes import CompilerValidationError
+from millrace_ai.compilation.validation.graphs import validate_structural_graph_smoke
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
+from millrace_ai.contracts import Plane
 from millrace_ai.paths import bootstrap_workspace
 
 FIXTURE_ASSETS_ROOT = (
@@ -115,6 +121,15 @@ def _runtime_effect_operations_path(assets_root: Path) -> Path:
         / "registry"
         / "runtime_effect_operations"
         / "default_runtime_effect_operations.json"
+    )
+
+
+def _lifecycle_mutation_plans_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "lifecycle_mutation_plans"
+        / "default_lifecycle_mutations.json"
     )
 
 
@@ -601,6 +616,25 @@ def test_compile_rejects_mode_stage_map_outside_selected_loops(tmp_path: Path) -
     )
 
 
+def test_compile_rejects_mode_stage_model_binding_outside_selected_loops(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    mode_path = assets_root / "modes" / "default_codex.json"
+    payload = _load_json(mode_path)
+    payload["stage_model_bindings"]["professor"] = "gpt-5.5"
+    _write_json(mode_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "Mode map `stage_model_bindings` references stage outside selected loops: professor"
+        in _diagnostic_text(outcome)
+    )
+
+
 def test_compile_rejects_terminal_state_without_terminal_action(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     actions_path = assets_root / "registry" / "terminal_actions" / "default_terminal_actions.json"
@@ -632,6 +666,59 @@ def test_compile_rejects_terminal_action_with_unknown_lifecycle_plan(tmp_path: P
     assert outcome.active_plan is None
     assert (
         "terminal action complete_work_item references unknown lifecycle mutation plan missing_plan"
+        in _diagnostic_text(outcome)
+    )
+
+
+def test_compile_rejects_terminal_action_with_unknown_effect_rule(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    actions_path = assets_root / "registry" / "terminal_actions" / "default_terminal_actions.json"
+    payload = _load_json(actions_path)
+    payload["definitions"][0]["effect_rule_ids"] = ["ghost_effect_rule"]
+    _write_json(actions_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "terminal action complete_work_item references unknown runtime effect rule "
+        "ghost_effect_rule"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_lifecycle_plan_with_unknown_source_family(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    plans_path = _lifecycle_mutation_plans_path(assets_root)
+    payload = _load_json(plans_path)
+    payload["definitions"][0]["source_family_id"] = "ghost_family"
+    plan_id = payload["definitions"][0]["plan_id"]
+    _write_json(plans_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"lifecycle mutation plan {plan_id} references unknown source family ghost_family"
+        in _diagnostic_text(outcome)
+    )
+
+
+def test_compile_rejects_lifecycle_plan_with_unknown_source_node(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    plans_path = _lifecycle_mutation_plans_path(assets_root)
+    payload = _load_json(plans_path)
+    payload["definitions"][0]["source_node_id"] = "ghost_node"
+    plan_id = payload["definitions"][0]["plan_id"]
+    _write_json(plans_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"lifecycle mutation plan {plan_id} references unknown source node ghost_node"
         in _diagnostic_text(outcome)
     )
 
@@ -744,6 +831,25 @@ def test_compile_rejects_stage_kind_with_unknown_input_artifact(tmp_path: Path) 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert "stage kind integrator allows unknown input artifact ghost_artifact" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_stage_kind_output_artifact_without_contract_producer_match(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    payload = _load_json(builder_path)
+    payload["declared_output_artifacts"].append("blueprint_packet")
+    _write_json(builder_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "stage kind builder declares output artifact blueprint_packet, but artifact contract "
+        "blueprint_packet does not list that stage kind as a producer"
+    ) in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_terminal_state_with_unknown_artifact(tmp_path: Path) -> None:
@@ -2039,6 +2145,62 @@ def test_compile_rejects_graph_with_unrouted_legal_outcome(tmp_path: Path) -> No
     assert "graph execution.standard node builder has no route for legal outcome BUILDER_COMPLETE" in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_graph_with_duplicate_outcome_routes(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    payload = _load_json(graph_path)
+    duplicate = next(
+        edge
+        for edge in payload["edges"]
+        if edge["edge_id"] == "builder-complete-to-checker"
+    ).copy()
+    duplicate["edge_id"] = "builder-complete-to-checker-duplicate"
+    payload["edges"].append(duplicate)
+    _write_json(graph_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "graph execution.standard node builder has multiple routes for outcome "
+        "BUILDER_COMPLETE"
+    ) in _diagnostic_text(outcome)
+
+
+def test_graph_validator_rejects_entry_walk_with_unknown_target_node(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True, _diagnostic_text(outcome)
+    assert outcome.active_plan is not None
+
+    execution_graph = outcome.active_plan.execution_graph
+    transitions = list(execution_graph.compiled_transitions)
+    mutated_transition_index = next(
+        index
+        for index, transition in enumerate(transitions)
+        if transition.edge_id == "builder-complete-to-checker"
+    )
+    transitions[mutated_transition_index] = transitions[mutated_transition_index].model_copy(
+        update={"target_node_id": "ghost_node"}
+    )
+    mutated_execution_graph = execution_graph.model_copy(
+        update={"compiled_transitions": tuple(transitions)}
+    )
+    stage_kinds = {
+        stage_kind.stage_kind_id: stage_kind
+        for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
+    }
+
+    with pytest.raises(CompilerValidationError, match="entry walk reached unknown node ghost_node"):
+        validate_structural_graph_smoke(
+            graphs_by_plane={Plane.EXECUTION: mutated_execution_graph},
+            stage_kinds=stage_kinds,
+            terminal_actions_by_id=outcome.active_plan.terminal_actions_by_id,
+        )
+
+
 def test_compile_rejects_graph_route_with_illegal_source_outcome(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     graph_path = assets_root / "graphs" / "execution" / "standard.json"
@@ -2106,6 +2268,25 @@ def test_compile_rejects_stage_kind_runtime_stage_outside_plane(
     assert outcome.active_plan is None
     assert "Invalid stage kind definition in asset" in _diagnostic_text(outcome)
     assert "builder.json" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_runtime_failure_recovery_node_without_local_repair_role(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    graph_path = _planning_standard_graph_path(assets_root)
+    payload = _load_json(graph_path)
+    payload["runtime_failure_recovery"]["default_repair_node_id"] = "manager"
+    _write_json(graph_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "graph planning.standard runtime failure recovery node manager must declare "
+        "recovery_role=local_repair"
+    ) in _diagnostic_text(outcome)
 
 
 def test_compile_accepts_runtime_failure_recovery_node_with_noncanonical_runtime_stage(

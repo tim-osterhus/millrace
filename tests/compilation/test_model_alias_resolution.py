@@ -58,7 +58,11 @@ def test_unknown_stage_alias_warns_and_falls_back_to_loop_alias(tmp_path: Path) 
 
     assert contractor.model_assignment_alias_id == "fast"
     assert contractor.model_assignment_source == "loop:planning.blueprint"
-    assert any("missing" in warning for warning in diagnostics.warnings)
+    assert any(
+        "model assignment stage:contractor_blueprint references unknown alias 'missing'; "
+        "falling back" in warning
+        for warning in diagnostics.warnings
+    )
 
 
 def test_invalid_global_alias_warns_and_falls_back_to_builtin_standard(tmp_path: Path) -> None:
@@ -75,7 +79,11 @@ def test_invalid_global_alias_warns_and_falls_back_to_builtin_standard(tmp_path:
     assert builder.model_assignment_alias_id == "standard"
     assert builder.model_name == "gpt-5.5"
     assert builder.thinking_level == "medium"
-    assert any("broken" in warning for warning in diagnostics.warnings)
+    assert any(
+        "model assignment default selected invalid alias 'broken': model is empty or "
+        "contains unsupported characters; falling back" in warning
+        for warning in diagnostics.warnings
+    )
 
 
 def test_alias_values_are_trimmed_before_materialization(tmp_path: Path) -> None:

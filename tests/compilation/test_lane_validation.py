@@ -74,3 +74,19 @@ def test_compile_rejects_concurrency_overlap_without_lane_conflict_policy(tmp_pa
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert "lane conflict policy" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_concurrency_overlap_with_invalid_plane_arity(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    mode_path = assets_root / "modes" / "learning_codex.json"
+    payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    payload["concurrency_policy"]["may_run_concurrently"].append(
+        ["execution", "planning", "learning"]
+    )
+    _write_json(mode_path, payload)
+
+    outcome = _compile(tmp_path, mode_id="learning_codex", assets_root=assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert "may_run_concurrently entries must name exactly two planes" in _diagnostic_text(outcome)
