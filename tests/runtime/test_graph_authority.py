@@ -7,6 +7,7 @@ import pytest
 
 from millrace_ai.architecture import (
     CompiledGraphEntryPlan,
+    CompiledRunPlan,
     GraphLoopEntryDefinition,
     WorkItemFamilyDefinition,
 )
@@ -165,8 +166,78 @@ def test_custom_noncanonical_stage_kind_routes_with_compiled_runtime_stage(
     assert decision.reason == "builder:BUILDER_COMPLETE"
 
 
+def test_runtime_stage_compatibility_backfills_missing_canonical_node_stage(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+
+    payload = outcome.active_plan.model_dump(mode="json")
+    _remove_runtime_stage(payload["execution_graph"]["nodes"], node_id="builder")
+    _remove_runtime_stage(payload["graphs_by_plane"]["execution"]["nodes"], node_id="builder")
+
+    reloaded = CompiledRunPlan.model_validate(payload)
+    builder_node = next(node for node in reloaded.execution_graph.nodes if node.node_id == "builder")
+
+    assert builder_node.runtime_stage is ExecutionStageName.BUILDER
+
+
+def test_runtime_stage_compatibility_rejects_missing_noncanonical_node_stage(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+
+    payload = outcome.active_plan.model_dump(mode="json")
+    _update_node(payload["execution_graph"]["nodes"], node_id="builder", stage_kind_id="builder_custom")
+    _update_node(
+        payload["graphs_by_plane"]["execution"]["nodes"],
+        node_id="builder",
+        stage_kind_id="builder_custom",
+    )
+    _remove_runtime_stage(payload["execution_graph"]["nodes"], node_id="builder")
+    _remove_runtime_stage(payload["graphs_by_plane"]["execution"]["nodes"], node_id="builder")
+
+    with pytest.raises(
+        ValueError,
+        match="runtime_stage is required for noncanonical stage_kind_id builder_custom",
+    ):
+        CompiledRunPlan.model_validate(payload)
+
+
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def _remove_runtime_stage(nodes: list[dict[str, object]], *, node_id: str) -> None:
+    for node in nodes:
+        if node.get("node_id") == node_id:
+            node.pop("runtime_stage", None)
+            return
+    raise AssertionError(f"missing node payload for {node_id}")
+
+
+def _update_node(
+    nodes: list[dict[str, object]],
+    *,
+    node_id: str,
+    stage_kind_id: str,
+) -> None:
+    for node in nodes:
+        if node.get("node_id") == node_id:
+            node["stage_kind_id"] = stage_kind_id
+            return
+    raise AssertionError(f"missing node payload for {node_id}")
 
 
 def _custom_planning_family() -> WorkItemFamilyDefinition:

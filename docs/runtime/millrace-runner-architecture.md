@@ -122,6 +122,17 @@ which frozen node contract produced a run.
 - `model_assignment_alias_id`
 - `model_assignment_source`
 
+`stage` and `stage_kind_id` are intentionally different identities:
+
+- `stage_kind_id` is the graph-authoring and diagnostics identity.
+- `stage` is the runtime dispatch/normalization identity from compiled
+  `runtime_stage`.
+
+Compatibility behavior for older compiled plans keeps canonical nodes stable by
+backfilling missing `runtime_stage` from `stage_kind_id`; noncanonical stage
+kinds without `runtime_stage` fail with an explicit compatibility error before
+dispatch.
+
 It also carries the active node's `execution_capability_grants` and any
 `capability_support_decisions` produced by the runtime gate. The prompt context
 renders these as structured, prompt-safe summaries so stages can see whether a
@@ -140,6 +151,11 @@ plan. The renderer writes:
 rendered prompt-context path, and visible context artifact refs. Normalization
 persists those fields into stage-result metadata so `millrace runs show` can
 explain which context the stage actually saw.
+
+Request-context authority follows compiled node data first, then request
+overrides, then deterministic fallback to `<stage_kind_id>.default` and the
+profile's primary render plan. Unknown profile/render-plan ids are treated as
+operator-facing compatibility errors.
 
 Default running markers, legal terminal markers, and fallback
 `allowed_result_classes_by_outcome` values are derived from

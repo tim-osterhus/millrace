@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName, TaskDocument
+import pytest
+
+from millrace_ai.assets.workflows import load_builtin_workflow_primitives
+from millrace_ai.compilation.validation import (
+    CompilerValidationError,
+    _validate_request_context_profiles,
+)
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
+from millrace_ai.contracts import (
+    ExecutionStageName,
+    LearningStageName,
+    Plane,
+    PlanningStageName,
+    TaskDocument,
+    WorkItemKind,
+)
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
@@ -26,6 +44,17 @@ def _workspace(tmp_path: Path):
 
 def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
     raise AssertionError(f"stage runner should not be called in request context tests: {request.stage.value}")
+
+
+def _context_bundle(request: StageRunRequest) -> dict[str, object]:
+    assert request.context_bundle_path is not None
+    return json.loads(Path(request.context_bundle_path).read_text(encoding="utf-8"))
+
+
+def _render_manifest(request: StageRunRequest) -> dict[str, object]:
+    assert request.rendered_prompt_context_path is not None
+    manifest_path = Path(request.rendered_prompt_context_path).with_name("render_manifest.json")
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 def _task_doc(task_id: str) -> TaskDocument:
@@ -86,6 +115,194 @@ def test_stage_run_request_writes_default_context_artifacts(tmp_path: Path) -> N
     assert Path(request.context_bundle_path).is_file()
     assert Path(request.rendered_prompt_context_path).is_file()
     assert snapshot.active_run_id == request.run_id
+    engine.close()
+
+
+def test_stage_run_request_backfills_missing_node_profile_and_render_plan(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-legacy-ctx-001"))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    activate_claim_for_plane(engine, claim, Plane.EXECUTION)
+    assert engine.compiled_plan is not None
+
+    legacy_execution_graph = engine.compiled_plan.execution_graph.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(
+                    update={
+                        "request_context_profile_id": None,
+                        "context_render_plan_id": None,
+                    }
+                )
+                if node.node_id == "builder"
+                else node
+                for node in engine.compiled_plan.execution_graph.nodes
+            ),
+        }
+    )
+    engine.compiled_plan = engine.compiled_plan.model_copy(
+        update={
+            "execution_graph": legacy_execution_graph,
+            "graphs_by_plane": {
+                **engine.compiled_plan.graphs_by_plane,
+                Plane.EXECUTION: legacy_execution_graph,
+            },
+        }
+    )
+
+    stage_plan = engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.BUILDER)
+    assert stage_plan.request_context_profile_id is None
+    assert stage_plan.context_render_plan_id is None
+
+    request = engine._build_stage_run_request(stage_plan)
+    bundle = _context_bundle(request)
+    manifest = _render_manifest(request)
+
+    assert request.request_context_profile_id == "builder.default"
+    assert request.context_render_plan_id == "stage_request.default.v1"
+    assert bundle["profile_id"] == "builder.default"
+    assert bundle["render_plan_id"] == "stage_request.default.v1"
+    assert manifest["profile_id"] == "builder.default"
+    assert manifest["render_plan_id"] == "stage_request.default.v1"
+    engine.close()
+
+
+@pytest.mark.parametrize(
+    (
+        "stage",
+        "plane",
+        "node_id",
+        "stage_kind_id",
+        "work_item_kind",
+        "work_item_family_id",
+        "work_item_id",
+        "expected_profile_id",
+    ),
+    (
+        (
+            PlanningStageName.PLANNER,
+            Plane.PLANNING,
+            "planner",
+            "planner",
+            WorkItemKind.SPEC,
+            WorkItemKind.SPEC.value,
+            "spec-001",
+            "planner.default",
+        ),
+        (
+            PlanningStageName.RECON,
+            Plane.PLANNING,
+            "recon",
+            "recon",
+            WorkItemKind.PROBE,
+            WorkItemKind.PROBE.value,
+            "probe-001",
+            "recon.default",
+        ),
+        (
+            ExecutionStageName.INTEGRATOR,
+            Plane.EXECUTION,
+            "integrator",
+            "integrator",
+            WorkItemKind.TASK,
+            WorkItemKind.TASK.value,
+            "task-001",
+            "integrator.default",
+        ),
+        (
+            LearningStageName.ANALYST,
+            Plane.LEARNING,
+            "analyst",
+            "analyst",
+            WorkItemKind.LEARNING_REQUEST,
+            WorkItemKind.LEARNING_REQUEST.value,
+            "learning-request-001",
+            "analyst.default",
+        ),
+    ),
+)
+def test_generic_context_provider_parity_across_stage_families(
+    tmp_path: Path,
+    stage,
+    plane: Plane,
+    node_id: str,
+    stage_kind_id: str,
+    work_item_kind: WorkItemKind,
+    work_item_family_id: str,
+    work_item_id: str,
+    expected_profile_id: str,
+) -> None:
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(
+        paths,
+        stage_runner=_unused_stage_runner,
+        mode_id="learning_codex_integrated",
+    )
+    engine.startup()
+    assert engine.compiled_plan is not None
+
+    active_path_by_family = {
+        WorkItemKind.TASK.value: paths.tasks_active_dir / f"{work_item_id}.md",
+        WorkItemKind.PROBE.value: paths.probes_active_dir / f"{work_item_id}.md",
+        WorkItemKind.SPEC.value: paths.specs_active_dir / f"{work_item_id}.md",
+        WorkItemKind.LEARNING_REQUEST.value: paths.learning_requests_active_dir / f"{work_item_id}.md",
+    }
+    active_path = active_path_by_family[work_item_family_id]
+    request = StageRunRequest(
+        request_id=f"req-parity-{stage_kind_id}",
+        run_id=f"run-parity-{stage_kind_id}",
+        plane=plane,
+        stage=stage,
+        request_kind="learning_request"
+        if work_item_kind is WorkItemKind.LEARNING_REQUEST
+        else "active_work_item",
+        mode_id=engine.compiled_plan.mode_id,
+        compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+        node_id=node_id,
+        stage_kind_id=stage_kind_id,
+        entrypoint_path=f"millrace-agents/entrypoints/{plane.value}/{stage_kind_id}.md",
+        active_work_item_family_id=work_item_family_id,
+        active_work_item_kind=work_item_kind,
+        active_work_item_id=work_item_id,
+        active_work_item_path=str(active_path),
+        run_dir=str(paths.runs_dir / f"run-parity-{stage_kind_id}"),
+        summary_status_path=str(paths.execution_status_file),
+        runtime_snapshot_path=str(paths.runtime_snapshot_file),
+        recovery_counters_path=str(paths.recovery_counters_file),
+    )
+
+    enriched = attach_default_request_context(
+        workspace_root=paths.root,
+        request=request,
+        compiled_plan=engine.compiled_plan,
+    )
+    bundle = _context_bundle(enriched)
+    manifest = _render_manifest(enriched)
+    expected_ref = f"{work_item_family_id}:{work_item_id}"
+
+    assert enriched.request_context_profile_id == expected_profile_id
+    assert enriched.context_render_plan_id == "stage_request.default.v1"
+    assert enriched.context_artifact_refs == (expected_ref,)
+    assert bundle["profile_id"] == expected_profile_id
+    assert bundle["render_plan_id"] == "stage_request.default.v1"
+    assert bundle["visible_artifact_refs"] == [expected_ref]
+    assert bundle["included_provider_ids"] == []
+    assert bundle["redacted_provider_ids"] == []
+    assert bundle["omitted_provider_ids"] == []
+    assert manifest["profile_id"] == expected_profile_id
+    assert manifest["render_plan_id"] == "stage_request.default.v1"
+    assert manifest["visible_artifact_refs"] == [expected_ref]
+    assert manifest["redacted_artifact_refs"] == [
+        f"runtime_snapshot:{request.runtime_snapshot_path}",
+        f"recovery_counters:{request.recovery_counters_path}",
+    ]
     engine.close()
 
 
@@ -211,3 +428,229 @@ def test_request_context_prefers_compiled_node_profile_authority(
     assert enriched.context_render_plan_id == "stage_request.default.v1"
     assert enriched.context_artifact_refs == ("task:task-ctx-001",)
     engine.close()
+
+
+def test_request_context_rejects_unknown_node_profile_id(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-ctx-unknown-profile-001"))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    activate_claim_for_plane(engine, claim, Plane.EXECUTION)
+    assert engine.compiled_plan is not None
+
+    request = engine._build_stage_run_request(
+        engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.BUILDER)
+    ).model_copy(
+        update={
+            "request_context_profile_id": None,
+            "context_bundle_path": None,
+            "context_artifact_refs": (),
+            "context_render_plan_id": None,
+            "rendered_prompt_context_path": None,
+        }
+    )
+
+    compiled_authority = SimpleNamespace(
+        compiled_plan_id=request.compiled_plan_id,
+        request_context_profiles_by_id=engine.compiled_plan.request_context_profiles_by_id,
+        request_context_providers_by_id=engine.compiled_plan.request_context_providers_by_id,
+        request_context_render_plans_by_id=engine.compiled_plan.request_context_render_plans_by_id,
+        graphs_by_plane={
+            Plane.EXECUTION: SimpleNamespace(
+                nodes=(
+                    SimpleNamespace(
+                        plane=Plane.EXECUTION,
+                        node_id=request.node_id,
+                        stage_kind_id=request.stage_kind_id,
+                        request_context_profile_id="ghost.default",
+                        context_render_plan_id="stage_request.default.v1",
+                    ),
+                )
+            )
+        },
+        artifact_contracts_by_id={},
+    )
+
+    with pytest.raises(ValueError, match="request context profile 'ghost.default' is unavailable"):
+        attach_default_request_context(
+            workspace_root=paths.root,
+            request=request,
+            compiled_plan=compiled_authority,
+        )
+
+    engine.close()
+
+
+def test_request_context_rejects_unknown_node_render_plan_id(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-ctx-unknown-render-plan-001"))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    activate_claim_for_plane(engine, claim, Plane.EXECUTION)
+    assert engine.compiled_plan is not None
+
+    request = engine._build_stage_run_request(
+        engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.BUILDER)
+    ).model_copy(
+        update={
+            "request_context_profile_id": None,
+            "context_bundle_path": None,
+            "context_artifact_refs": (),
+            "context_render_plan_id": None,
+            "rendered_prompt_context_path": None,
+        }
+    )
+
+    compiled_authority = SimpleNamespace(
+        compiled_plan_id=request.compiled_plan_id,
+        request_context_profiles_by_id=engine.compiled_plan.request_context_profiles_by_id,
+        request_context_providers_by_id=engine.compiled_plan.request_context_providers_by_id,
+        request_context_render_plans_by_id=engine.compiled_plan.request_context_render_plans_by_id,
+        graphs_by_plane={
+            Plane.EXECUTION: SimpleNamespace(
+                nodes=(
+                    SimpleNamespace(
+                        plane=Plane.EXECUTION,
+                        node_id=request.node_id,
+                        stage_kind_id=request.stage_kind_id,
+                        request_context_profile_id="builder.default",
+                        context_render_plan_id="ghost.render_plan",
+                    ),
+                )
+            )
+        },
+        artifact_contracts_by_id={},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="request context render plan 'ghost.render_plan' is unavailable",
+    ):
+        attach_default_request_context(
+            workspace_root=paths.root,
+            request=request,
+            compiled_plan=compiled_authority,
+        )
+
+    engine.close()
+
+
+def _validation_inputs(tmp_path: Path):
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+    return outcome.active_plan, load_builtin_workflow_primitives()
+
+
+def test_request_context_validation_rejects_provider_profile_request_kind_mismatch(
+    tmp_path: Path,
+) -> None:
+    active_plan, primitives = _validation_inputs(tmp_path)
+    mutated_profiles = tuple(
+        profile.model_copy(update={"request_kind": "closure_target"})
+        if profile.profile_id == "builder.default"
+        else profile
+        for profile in primitives.request_context_profiles
+    )
+    mutated_primitives = replace(primitives, request_context_profiles=mutated_profiles)
+
+    with pytest.raises(
+        CompilerValidationError,
+        match=(
+            "request context profile builder.default request kind closure_target is not "
+            "supported by provider generic.active_work_item"
+        ),
+    ):
+        _validate_request_context_profiles(
+            artifact_contracts_by_id=active_plan.artifact_contracts_by_id,
+            graphs_by_plane=active_plan.graphs_by_plane,
+            request_context_profiles_by_id=active_plan.request_context_profiles_by_id,
+            request_context_providers_by_id=active_plan.request_context_providers_by_id,
+            request_context_render_plans_by_id=active_plan.request_context_render_plans_by_id,
+            workflow_primitives=mutated_primitives,
+        )
+
+
+def test_request_context_validation_rejects_missing_provider_capability(
+    tmp_path: Path,
+) -> None:
+    active_plan, primitives = _validation_inputs(tmp_path)
+    default_render_plan = active_plan.request_context_render_plans_by_id[
+        "stage_request.default.v1"
+    ]
+    mutated_render_plans_by_id = {
+        **active_plan.request_context_render_plans_by_id,
+        default_render_plan.render_plan_id: default_render_plan.model_copy(
+            update={
+                "required_provider_capabilities": (
+                    *default_render_plan.required_provider_capabilities,
+                    "missing_provider_capability",
+                )
+            }
+        ),
+    }
+
+    with pytest.raises(
+        CompilerValidationError,
+        match=(
+            "requires provider capabilities not declared by "
+            "generic.active_work_item: missing_provider_capability"
+        ),
+    ):
+        _validate_request_context_profiles(
+            artifact_contracts_by_id=active_plan.artifact_contracts_by_id,
+            graphs_by_plane=active_plan.graphs_by_plane,
+            request_context_profiles_by_id=active_plan.request_context_profiles_by_id,
+            request_context_providers_by_id=active_plan.request_context_providers_by_id,
+            request_context_render_plans_by_id=mutated_render_plans_by_id,
+            workflow_primitives=primitives,
+        )
+
+
+def test_request_context_validation_rejects_disallowed_render_plan_override(
+    tmp_path: Path,
+) -> None:
+    active_plan, primitives = _validation_inputs(tmp_path)
+    execution_graph = active_plan.execution_graph.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(update={"context_render_plan_id": "closure_target.default.v1"})
+                if node.node_id == "builder"
+                else node
+                for node in active_plan.execution_graph.nodes
+            ),
+        }
+    )
+    mutated_graphs_by_plane = {
+        **active_plan.graphs_by_plane,
+        Plane.EXECUTION: execution_graph,
+    }
+
+    with pytest.raises(
+        CompilerValidationError,
+        match=(
+            "graph node builder overrides request context render plan "
+            "stage_request.default.v1 with closure_target.default.v1, but profile "
+            "builder.default does not allow render plan overrides"
+        ),
+    ):
+        _validate_request_context_profiles(
+            artifact_contracts_by_id=active_plan.artifact_contracts_by_id,
+            graphs_by_plane=mutated_graphs_by_plane,
+            request_context_profiles_by_id=active_plan.request_context_profiles_by_id,
+            request_context_providers_by_id=active_plan.request_context_providers_by_id,
+            request_context_render_plans_by_id=active_plan.request_context_render_plans_by_id,
+            workflow_primitives=primitives,
+        )

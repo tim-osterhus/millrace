@@ -767,6 +767,43 @@ def test_normalize_persists_request_context_and_failure_origin_metadata(
     ]
 
 
+def test_normalize_persists_request_context_metadata_on_success(
+    tmp_path: Path,
+) -> None:
+    request = StageRunRequest(
+        **(
+            _request(tmp_path, stage="builder").model_dump(mode="python")
+            | {
+                "request_context_profile_id": "builder.default",
+                "context_bundle_path": str(tmp_path / "context" / "context.json"),
+                "context_artifact_refs": ("task:task-001", "spec:spec-001"),
+                "context_render_plan_id": "stage_request.default.v1",
+                "rendered_prompt_context_path": str(tmp_path / "context" / "prompt_context.md"),
+            }
+        )
+    )
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("### BUILDER_COMPLETE\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, exit_kind="completed", stdout_path=stdout_path),
+    )
+
+    assert envelope.result_class is ResultClass.SUCCESS
+    assert envelope.success is True
+    assert envelope.metadata["request_context_profile_id"] == "builder.default"
+    assert envelope.metadata["context_bundle_path"] == str(tmp_path / "context" / "context.json")
+    assert envelope.metadata["context_render_plan_id"] == "stage_request.default.v1"
+    assert envelope.metadata["rendered_prompt_context_path"] == str(
+        tmp_path / "context" / "prompt_context.md"
+    )
+    assert envelope.metadata["context_artifact_refs"] == [
+        "task:task-001",
+        "spec:spec-001",
+    ]
+
+
 def test_normalize_preserves_model_alias_provenance_on_malformed_terminal_output(
     tmp_path: Path,
 ) -> None:

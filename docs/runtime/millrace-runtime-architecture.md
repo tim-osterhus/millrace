@@ -366,6 +366,14 @@ Compile notes:
 - that compiled plan carries materialized node plans plus compiled entry,
   transition, recovery, learning-trigger, execution-capability,
   concurrency-policy, workflow-primitive, and closure-activation surfaces
+- materialized node plans carry `runtime_stage`, request-context profile
+  authority, and context render-plan authority for every compiled node
+- request-context authority resolves at runtime in this order: node-level
+  compiled authority, request-level explicit fields, then deterministic fallback
+  to `<stage_kind_id>.default` plus the profile's primary render plan
+- legacy compiled-plan compatibility backfills missing canonical
+  `runtime_stage`; noncanonical nodes missing `runtime_stage` are compatibility
+  errors before dispatch
 - built-in stage work-item ownership, queue claim order, terminal lifecycle
   intent, and runtime effect operation/runner lookup are read from compiled
   workflow authority rather than prompt prose or loose runtime tables
@@ -401,7 +409,8 @@ Run directories hold:
 The request-context artifacts are deterministic runtime-owned inputs. The
 prompt adapter reads `context/prompt_context.md`, while `context/context.json`
 and `context/render_manifest.json` preserve visible refs, omitted providers,
-operator-only redactions, and content hashes for later inspection.
+operator-only redactions, profile/render-plan ids, and content hashes for later
+inspection.
 
 The operator-facing `millrace runs ls/show/tail` commands inspect these
 persisted artifacts without taking runtime ownership.

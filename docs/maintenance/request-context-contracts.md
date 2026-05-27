@@ -31,14 +31,8 @@ Direct coverage:
 
 - `tests/runtime/test_request_context.py::test_stage_run_request_writes_default_context_artifacts`
 - `tests/runtime/test_request_context.py::test_default_request_context_uses_closure_target_ref_without_active_work_item`
+- `tests/runtime/test_request_context.py::test_generic_context_provider_parity_across_stage_families`
 - `tests/runners/test_runner.py::test_stage_run_request_accepts_closure_target_without_active_work_item`
-
-Missing before Batch 5:
-
-- Focused default-context coverage for Learning, Recon, and Integrator stages
-  once their expected generic references are explicitly named.
-- Focused default-context coverage for Planning stages other than Arbiter and
-  Blueprint.
 
 ### Compiled Plan And Stage Context
 
@@ -50,19 +44,52 @@ Stage requests are built from the compiled runtime stage plan. A custom stage
 kind selected by the active mode must survive the stage-plan lookup before
 request-context attachment.
 
+Provider/render-plan authority resolves in this order at request time:
+
+- node-level `request_context_profile_id` and `context_render_plan_id` from the
+  compiled node plan when present;
+- request-level fields when a caller supplied explicit context authority;
+- deterministic fallback to `<stage_kind_id>.default` and the profile's primary
+  render plan.
+
+Legacy compatibility:
+
+- missing node-level `request_context_profile_id` and
+  `context_render_plan_id` backfill deterministically from the fallback order
+  above;
+- missing canonical `runtime_stage` backfills from `stage_kind_id`;
+- missing `runtime_stage` for noncanonical stage kinds is a compatibility
+  error before dispatch.
+
 Direct coverage:
 
 - `tests/runtime/test_request_context.py::test_stage_run_request_writes_default_context_artifacts`
 - `tests/runtime/test_request_context.py::test_stage_plan_lookup_resolves_custom_stage_kind_by_runtime_stage`
+- `tests/runtime/test_request_context.py::test_stage_run_request_backfills_missing_node_profile_and_render_plan`
+- `tests/runtime/test_request_context.py::test_generic_context_provider_parity_across_stage_families`
+- `tests/runtime/test_graph_authority.py::test_runtime_stage_compatibility_backfills_missing_canonical_node_stage`
+- `tests/runtime/test_graph_authority.py::test_runtime_stage_compatibility_rejects_missing_noncanonical_node_stage`
 - `tests/runners/test_runner.py::test_render_stage_request_context_lines_includes_live_envelope_fields`
 - `tests/runners/test_runner.py::test_render_stage_request_context_lines_covers_all_stage_run_request_fields`
 
-Missing before Batch 5:
+### Provider And Render-Plan Authority Errors
 
-- Direct generic request-context tests for Planning, Execution, Learning,
-  Recon, and Integrator compiled stage plans. Current direct coverage is
-  Builder plus Arbiter closure-target behavior, with Blueprint covered
-  separately.
+Invalid request-context authority must fail with explicit compatibility or
+validation errors, not silent fallback:
+
+- unknown node-level request-context profile id;
+- unknown node-level render-plan id;
+- profile/provider request-kind mismatch;
+- render-plan capability requirements not declared by the provider;
+- disallowed node-level render-plan override when profile override is disabled.
+
+Direct coverage:
+
+- `tests/runtime/test_request_context.py::test_request_context_rejects_unknown_node_profile_id`
+- `tests/runtime/test_request_context.py::test_request_context_rejects_unknown_node_render_plan_id`
+- `tests/runtime/test_request_context.py::test_request_context_validation_rejects_provider_profile_request_kind_mismatch`
+- `tests/runtime/test_request_context.py::test_request_context_validation_rejects_missing_provider_capability`
+- `tests/runtime/test_request_context.py::test_request_context_validation_rejects_disallowed_render_plan_override`
 
 ### Capability Grants
 
@@ -100,13 +127,8 @@ Direct coverage:
 - `tests/runtime/test_request_context.py::test_request_context_render_excludes_operator_only_refs`
 - `tests/runtime/test_request_context.py::test_stage_run_request_writes_default_context_artifacts`
 - `tests/runtime/test_request_context.py::test_default_request_context_uses_closure_target_ref_without_active_work_item`
+- `tests/runtime/test_request_context.py::test_generic_context_provider_parity_across_stage_families`
 - `tests/runners/test_runner.py::test_normalize_persists_request_context_and_failure_origin_metadata`
-
-Missing before Batch 5:
-
-- A focused manifest assertion for default operator-only runtime snapshot and
-  recovery-counter refs. Current tests mainly assert prompt redaction through a
-  hand-built render plan.
 
 ### Prompt Input Assembly
 
@@ -123,14 +145,10 @@ Direct coverage:
 
 - `tests/runtime/test_request_context.py::test_request_context_render_excludes_operator_only_refs`
 - `tests/runtime/test_request_context.py::test_stage_run_request_writes_default_context_artifacts`
+- `tests/runtime/test_request_context.py::test_stage_run_request_backfills_missing_node_profile_and_render_plan`
+- `tests/runtime/test_request_context.py::test_generic_context_provider_parity_across_stage_families`
 - `tests/runners/test_runner.py::test_stage_prompt_includes_rendered_request_context`
 - `tests/runners/test_runner.py::test_render_stage_request_context_lines_covers_all_stage_run_request_fields`
-
-Missing before Batch 5:
-
-- A direct generic test that reads `context.json` and `render_manifest.json`
-  after default attachment and asserts the schema/kind/render ids. Existing
-  coverage checks file existence and selected normalized metadata.
 
 ### Runner Provenance
 
@@ -145,15 +163,10 @@ request-context module must not erase or rewrite them.
 Direct coverage:
 
 - `tests/runners/test_runner.py::test_normalize_persists_request_context_and_failure_origin_metadata`
+- `tests/runners/test_runner.py::test_normalize_persists_request_context_metadata_on_success`
 - `tests/runners/test_runner.py::test_normalize_rejects_raw_result_identity_mismatch`
 - `tests/runners/test_runner.py::test_normalize_preserves_token_usage_and_event_log_artifacts`
 - `tests/runners/test_runner.py::test_normalize_preserves_reconciled_timeout_evidence_on_success`
-
-Missing before Batch 5:
-
-- Provenance preservation tests for request-context metadata on successful
-  structured terminal-result normalization. Current focused provenance test is
-  on a runner-error path.
 
 ### Model Assignment Alias Provenance
 
@@ -192,13 +205,9 @@ store write authority from the prompt-visible provider set.
 
 Direct coverage:
 
+- `tests/runtime/test_blueprint_request_context.py::test_manager_blueprint_context_preserves_provider_and_render_plan_authority`
 - Secondary coverage through `tests/runtime/test_blueprint_request_context.py`
   Mechanic tests that consume failed Manager outputs.
-
-Missing before Batch 5:
-
-- A focused Manager context test that asserts included providers, omitted
-  providers, preferred output refs, and artifact-contract source.
 
 Batch 4 wait:
 
@@ -343,10 +352,10 @@ Batch 4 wait:
 
 - Keep generic renderer and default context movement separate from Blueprint
   provider movement.
-- Add generic coverage for Learning, Recon, Integrator, and additional Planning
-  stages before extracting compiled-plan/stage context helpers.
-- Add explicit success-path provenance tests for request-context and model
-  assignment metadata before moving runner provenance projection.
+- Preserve node/profile/render-plan fallback order and legacy compatibility
+  errors when splitting context authority helpers.
+- Keep runtime-stage canonical backfill and noncanonical compatibility errors in
+  direct tests if `MaterializedGraphNodePlan` is extracted.
 - Wait for Batch 4 before moving Manager, Contractor, Evaluator, Mechanic
   repair evidence, Blueprint store refs, preferred output paths, or legacy
   handler-id selectors.

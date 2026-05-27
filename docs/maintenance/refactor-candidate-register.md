@@ -330,11 +330,9 @@ Owned tests: `tests/runtime/test_request_context.py`,
 `tests/runners/test_runner.py`, `tests/runners/test_runners_codex_adapter.py`,
 and Blueprint integration coverage.
 
-Missing characterization: Direct coverage for generic Planning, Execution,
-Learning, Recon, and Integrator context plans; provider-level behavior
-contracts; operation-id-aware Blueprint repair context; and a coupling
-inventory that decides which Blueprint context logic becomes assets versus a
-registered provider.
+Missing characterization: Operation-id-aware Blueprint repair context and a
+coupling inventory that decides which Blueprint context logic becomes assets
+versus a registered provider.
 
 Likely extraction seams: render-plan models, generic context renderer,
 artifact-contract lookup, generic active-work providers, Blueprint context
@@ -507,6 +505,10 @@ start with behavior contracts and targeted async/lifecycle tests.
 - MR-MAINT-007 is now owned by FU-3. Any Blueprint-specific context behavior
   that remains after that packet should be an intentional registered provider,
   not a generic runtime branch.
+- FU-3 Batch 3 Packet 04 closed parity and compatibility coverage for generic
+  Planning/Execution/Learning contexts, Recon/Integrator contexts, legacy
+  node-level request-context/runtime-stage backfill behavior, and request-context
+  authority negative checks.
 - MR-MAINT-011 remains gated to FU-8 after lower-level seams land; splitting
   the supervisor first would mostly move complexity around.
 - MR-MAINT-003 and MR-MAINT-004 remain gated until the Batch 0 public API

@@ -239,6 +239,11 @@ def _manifest_for_request(request: StageRunRequest) -> dict[str, object]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
+def _context_bundle_for_request(request: StageRunRequest) -> dict[str, object]:
+    assert request.context_bundle_path is not None
+    return json.loads(Path(request.context_bundle_path).read_text(encoding="utf-8"))
+
+
 def _compiled_plan_with_artifact_contracts(
     compiled_plan_id: str = "compiled-plan-with-artifact-contracts",
 ):
@@ -323,6 +328,42 @@ def _manager_recovery_request(
         active_work_item_kind=WorkItemKind.SPEC,
         active_work_item_path=paths.specs_active_dir / f"{work_item_id}.md",
     ).model_copy(update={"run_id": run_dir.name, "run_dir": str(run_dir)})
+
+
+def test_manager_blueprint_context_preserves_provider_and_render_plan_authority(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    request = attach_default_request_context(
+        workspace_root=paths.root,
+        request=_request(
+            paths,
+            stage_kind_id="manager_blueprint",
+            active_work_item_id="spec-001",
+            active_work_item_family_id=WorkItemKind.SPEC.value,
+            active_work_item_kind=WorkItemKind.SPEC,
+            active_work_item_path=paths.specs_active_dir / "spec-001.md",
+        ),
+    )
+    manifest = _manifest_for_request(request)
+    bundle = _context_bundle_for_request(request)
+    refs = set(request.context_artifact_refs)
+    run_dir = Path(request.run_dir)
+
+    assert request.request_context_profile_id == "manager_blueprint.default"
+    assert request.context_render_plan_id == "blueprint.manager.default.v1"
+    assert bundle["profile_id"] == "manager_blueprint.default"
+    assert bundle["render_plan_id"] == "blueprint.manager.default.v1"
+    assert "active_source_work_item" in bundle["included_provider_ids"]
+    assert "root_lineage" in bundle["included_provider_ids"]
+    assert "blueprint_output_paths" in bundle["included_provider_ids"]
+    assert "execution_queue_mutation_authority" in bundle["omitted_provider_ids"]
+    assert "direct_blueprint_store_write_authority" in bundle["omitted_provider_ids"]
+    assert "runtime_control_state" in manifest["redacted_provider_ids"]
+    assert "spec:spec-001" in refs
+    assert f"preferred_output:{(run_dir / 'blueprint_manifest.json').as_posix()}" in refs
+    assert f"preferred_output:{(run_dir / 'blueprint_drafts.json').as_posix()}" in refs
+    assert f"{run_dir.relative_to(paths.root).as_posix()}/manager_blueprint_report.md" in refs
 
 
 def test_contractor_blueprint_context_excludes_full_manifest(tmp_path: Path) -> None:

@@ -241,8 +241,12 @@ cycles:
   projection, and operator handoff incident state.
 - `runtime/compiled_plans.py` preserves active-run launch-plan authority when
   config reload compiles a newer pending plan.
-- `runtime/request_context.py` owns deterministic per-request context bundles
-  and rendered prompt-context artifacts.
+- `runtime/request_context.py` is the compatibility facade for deterministic
+  per-request context rendering imports.
+- `runtime/context/` owns deterministic per-request context bundles, compiled
+  node/profile/render-plan authority resolution, provider-registry dispatch,
+  rendered prompt-context artifacts, generic provider behavior, and Blueprint
+  provider behavior isolated from the generic facade.
 - `runtime/effects/`, `runtime/effect_execution.py`, and
   `runtime/lifecycle_interpreter.py` own generic compiled runtime-effect and
   source-lifecycle application. `runtime/effects/registry.py` provides the
