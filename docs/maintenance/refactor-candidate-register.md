@@ -18,6 +18,40 @@ coverage to keep behavior stable.
   is inventoried.
 - Batch E: daemon supervisor work after lower-level runtime seams are stable.
 
+Follow-up wave labels:
+
+- FU-0: public API inventory and baseline guardrails.
+- FU-1: operation-id-first runtime effect dispatch authority.
+- FU-2: runtime effect operation runner decomposition.
+- FU-3: request context and runtime-stage materialization.
+- FU-4: work-family queue and lifecycle adapters.
+- FU-5: generic repair closure validation.
+- FU-6: compiler validation package decomposition.
+- FU-7: workflow primitive contract package decomposition.
+- FU-8: recovery decomposition and supervisor boundary readiness.
+- FU-9: final docs, negative checks, verification, and handoff.
+
+## Follow-Up Wave Ownership
+
+The original maintainability-refactor wave completed the audit, characterization,
+low-risk package splits, and Blueprint effect migration through Batch 4. The
+remaining debt is now owned by
+`mac-handoff/lab/for-codex/maintainability-follow-up-refactor/`:
+
+| Candidate | Follow-up owner | Notes |
+| --- | --- | --- |
+| MR-MAINT-001 | FU-2 | `runtime/blueprint_effects.py` stays a compatibility facade; operation implementation moves out of the large operations module. |
+| MR-MAINT-002 | FU-1 | Runtime effect dispatch becomes operation-id first while legacy handler metadata remains compatibility-only. |
+| MR-MAINT-003 | FU-6 | Compiler validation moves only after public symbols, operation dispatch, repair closure, and request/family seams are stable. |
+| MR-MAINT-004 | FU-7 | Workflow primitive contracts move after the public architecture export inventory is tested. |
+| MR-MAINT-005 | FU-4, FU-8 | Queue/lifecycle adapter work lands first; blocked recovery decomposition follows after adapter APIs are stable. |
+| MR-MAINT-006 | FU-8 | Runtime error recovery waits for lower-level dispatch, repair, request, and family seams. |
+| MR-MAINT-007 | FU-3 | Request-context provider/render-plan boundaries become compiler-visible before generic runtime code is split further. |
+| MR-MAINT-008 | Complete | Completed in the previous wave's low-risk package splits. |
+| MR-MAINT-009 | Complete | Completed in the previous wave's Doctor package split. |
+| MR-MAINT-010 | Complete | Completed in the previous wave's runner-normalization package split. |
+| MR-MAINT-011 | FU-8 | Supervisor work is limited to readiness/minimal split unless tests prove a strong seam. |
+
 ## Summary
 
 | ID | Source | Main reason to change | Dependency risk | Suggested batch | Dedicated spec |
@@ -448,11 +482,12 @@ start with behavior contracts and targeted async/lifecycle tests.
 
 ## Deferred Or Gated Work
 
-- Defer MR-MAINT-001 and MR-MAINT-002 to the dedicated Blueprint/effect
-  decoupling track. Treat them as architecture migration, not cleanup.
-- Defer the Blueprint-specific half of MR-MAINT-007 until the Blueprint
-  coupling inventory names which context providers remain intentional.
-- Defer MR-MAINT-011 until lower-level seams have landed; splitting the
-  supervisor first would mostly move complexity around.
-- Do not start MR-MAINT-003 or MR-MAINT-004 until each has an export and
-  diagnostics compatibility inventory.
+- MR-MAINT-001 and MR-MAINT-002 are now owned by this follow-up wave in FU-2
+  and FU-1. Treat them as architecture migration packets, not cleanup.
+- MR-MAINT-007 is now owned by FU-3. Any Blueprint-specific context behavior
+  that remains after that packet should be an intentional registered provider,
+  not a generic runtime branch.
+- MR-MAINT-011 remains gated to FU-8 after lower-level seams land; splitting
+  the supervisor first would mostly move complexity around.
+- MR-MAINT-003 and MR-MAINT-004 remain gated until the Batch 0 public API
+  inventory is committed and earlier follow-up gates pass.

@@ -27,6 +27,35 @@ operator docs that own shipped behavior.
   from Blueprint-specific request/repair context coupling.
 - `recovery-status-doctor-runner-contracts.md`: recovery, status, Doctor, and
   runner-normalization contracts for low-risk and recovery refactors.
+- `public-api-compatibility-inventory.md`: import and symbol surfaces that must
+  survive the follow-up source-to-package refactors.
+
+## Follow-Up Refactor Baseline
+
+Observed on Windows before follow-up Batch 0 source movement:
+
+- branch: `main`
+- commit: `18fd1339c15427552d4107f3f6c5a15c28391ab6`
+- `uv run --extra dev python -m pytest -q`: `1168 passed` in `1:30:18`
+- `uv run --with ruff ruff check src/millrace_ai tests scripts`: passed
+- `uv run --with mypy mypy src/millrace_ai`: passed across `254` source files
+- `uv run python scripts/maintenance/repo_shape_report.py`: passed
+
+Largest remaining source modules at this baseline:
+
+- `src/millrace_ai/runtime/effects/operations.py`: 2433 lines
+- `src/millrace_ai/compilation/validation.py`: 1382 lines
+- `src/millrace_ai/architecture/workflow_primitives.py`: 1277 lines
+- `src/millrace_ai/runtime/blocked_recovery.py`: 1159 lines
+- `src/millrace_ai/runtime/request_context.py`: 987 lines
+- `src/millrace_ai/runtime/completion_behavior.py`: 892 lines
+- `src/millrace_ai/runtime/supervisor.py`: 846 lines
+- `src/millrace_ai/workspace/operator_interventions.py`: 778 lines
+- `src/millrace_ai/runtime/error_recovery.py`: 775 lines
+- `src/millrace_ai/workspace/queue_selection.py`: 773 lines
+
+These metrics are not split criteria by themselves. They identify where the
+follow-up packet wave should look for cohesive reasons to change.
 
 ## Advisory Report
 
