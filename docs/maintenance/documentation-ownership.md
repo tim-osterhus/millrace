@@ -59,4 +59,3 @@ as the maintainability packets land:
 When a change affects a major topic, update the canonical owner first, then
 refresh related indexes and skill docs only where the reader needs a pointer or
 operator-facing consequence.
-

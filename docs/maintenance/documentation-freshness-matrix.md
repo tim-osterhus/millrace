@@ -38,4 +38,3 @@ source changes affect agent behavior:
   compatibility facades change, or package boundaries change.
 - Keep `../doc-index.md` and `codebase-stewardship.md` links in sync after this
   standalone page is integrated by the orchestrator.
-

@@ -254,4 +254,3 @@ extracting a view model with no output change. Doctor registry should follow,
 because its checks are read-only but issue ordering matters. Runner
 normalization should come after direct parser/provenance tests are added or
 identified, because it sits on the external adapter/runtime boundary.
-
