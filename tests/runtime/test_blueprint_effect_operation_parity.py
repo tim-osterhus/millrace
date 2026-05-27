@@ -27,6 +27,7 @@ from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.runtime import blueprint_effects
 from millrace_ai.runtime.effects import RuntimeEffectDecision, RuntimeEffectResult
 from millrace_ai.runtime.effects import operations as effect_operations
+from millrace_ai.runtime.effects.operation_runners import blueprint_evaluator, blueprint_manager
 from millrace_ai.workspace.blueprint_state import (
     enqueue_blueprint_draft,
     persist_blueprint_evaluation,
@@ -814,7 +815,7 @@ def test_manager_operation_matches_legacy_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_operation_enqueue = effect_operations.enqueue_blueprint_draft
+    original_operation_enqueue = blueprint_manager.enqueue_blueprint_draft
 
     def fail_second_operation_enqueue(paths, draft):
         if draft.draft_id == "draft-002":
@@ -822,7 +823,7 @@ def test_manager_operation_matches_legacy_partial_mutation(
         return original_operation_enqueue(paths, draft)
 
     monkeypatch.setattr(
-        effect_operations,
+        blueprint_manager,
         "enqueue_blueprint_draft",
         fail_second_operation_enqueue,
     )
@@ -1090,13 +1091,13 @@ def test_evaluator_approval_operation_matches_legacy_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_operation_enqueue = effect_operations.enqueue_task
+    original_operation_enqueue = blueprint_evaluator.enqueue_task
 
     def fail_operation_enqueue(paths, task):
         raise OSError("simulated task enqueue failure")
 
     assert original_operation_enqueue is not None
-    monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
+    monkeypatch.setattr(blueprint_evaluator, "enqueue_task", fail_operation_enqueue)
 
     _assert_evaluator_approval_parity(tmp_path, lambda paths, run_dir: None)
 
@@ -1150,7 +1151,7 @@ def test_mechanic_repair_operation_matches_legacy_partial_mutation(
     def fail_operation_enqueue(paths, task):
         raise OSError("simulated repaired task enqueue failure")
 
-    monkeypatch.setattr(effect_operations, "enqueue_task", fail_operation_enqueue)
+    monkeypatch.setattr(blueprint_evaluator, "enqueue_task", fail_operation_enqueue)
 
     _assert_mechanic_parity(tmp_path, lambda paths, run_dir: None)
 
@@ -1316,7 +1317,7 @@ def test_evaluator_rejection_operation_matches_legacy_partial_mutation(
         raise OSError("simulated critique persistence failure")
 
     monkeypatch.setattr(
-        effect_operations,
+        blueprint_evaluator,
         "persist_blueprint_critique",
         fail_operation_critique,
     )

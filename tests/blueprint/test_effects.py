@@ -33,7 +33,7 @@ from millrace_ai.runtime.effects import (
     SourceLifecycleAction,
     apply_runtime_effect_result,
 )
-from millrace_ai.runtime.effects import operations as effect_operations
+from millrace_ai.runtime.effects.operation_runners import blueprint_manager
 from millrace_ai.workspace.blueprint_state import (
     claim_next_blueprint_draft,
     enqueue_blueprint_draft,
@@ -1741,14 +1741,14 @@ def test_manager_partial_write_failure_requests_source_blockage(
             _draft("draft-002", draft_index=2, depends_on_draft_ids=("draft-001",)),
         ],
     )
-    original_enqueue = effect_operations.enqueue_blueprint_draft
+    original_enqueue = blueprint_manager.enqueue_blueprint_draft
 
     def fail_second_enqueue(paths_arg, draft):
         if draft.draft_id == "draft-002":
             raise OSError("simulated write failure")
         return original_enqueue(paths_arg, draft)
 
-    monkeypatch.setattr(effect_operations, "enqueue_blueprint_draft", fail_second_enqueue)
+    monkeypatch.setattr(blueprint_manager, "enqueue_blueprint_draft", fail_second_enqueue)
 
     result = blueprint_effects.manager_blueprint_manifest_to_blueprint_drafts(
         paths,
