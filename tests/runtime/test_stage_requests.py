@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import millrace_ai.runtime.stage_requests as stage_requests_module
+from millrace_ai.architecture import WorkItemFamilyDefinition
 from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
@@ -40,6 +41,40 @@ def _task_doc(task_id: str) -> TaskDocument:
     )
 
 
+def _custom_review_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_lifecycle_adapter_id="tests.custom.review.adapter",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "retry", "inspect"),
+    )
+
+
 def test_planning_queue_depth_uses_shared_inventory_for_blueprint_drafts(tmp_path) -> None:
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
     blueprint_queue = paths.runtime_root / "blueprints" / "drafts" / "queue"
@@ -51,6 +86,77 @@ def test_planning_queue_depth_uses_shared_inventory_for_blueprint_drafts(tmp_pat
     assert planning_queue_depth(engine) == 1
     assert queue_depths_by_plane(paths)[Plane.PLANNING] == 1
     assert family_counts(paths)["blueprint_draft"]["queue"] == 1
+
+
+def test_active_work_item_path_uses_family_adapter_for_blueprint_family(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    calls: list[str] = []
+
+    class _BlueprintAdapter:
+        def active_path(self, paths, *, work_item_id: str):
+            return paths.runtime_root / "planning" / "active-blueprints" / f"{work_item_id}.json"
+
+    def fake_queue_adapter_for_family_id(family_id: str):
+        calls.append(family_id)
+        return _BlueprintAdapter() if family_id == "blueprint_draft" else None
+
+    monkeypatch.setattr(
+        stage_requests_module,
+        "queue_adapter_for_family_id",
+        fake_queue_adapter_for_family_id,
+    )
+
+    engine = SimpleNamespace(paths=paths, compiled_plan=None)
+    active_path = stage_requests_module.active_work_item_path(
+        engine,
+        work_item_kind=None,
+        work_item_id="draft-001",
+        work_item_family_id="blueprint_draft",
+    )
+
+    assert active_path == paths.runtime_root / "planning" / "active-blueprints" / "draft-001.json"
+    assert calls == ["blueprint_draft"]
+
+
+def test_active_work_item_path_uses_custom_family_adapter_id_from_compiled_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    family = _custom_review_family()
+    requested_adapter_ids: list[str] = []
+
+    class _CustomAdapter:
+        def active_path(self, paths, *, work_item_id: str):
+            return paths.runtime_root / "custom" / "review-active" / f"{work_item_id}.json"
+
+    def fake_queue_adapter_for_id(adapter_id: str):
+        requested_adapter_ids.append(adapter_id)
+        return _CustomAdapter() if adapter_id == family.queue_lifecycle_adapter_id else None
+
+    monkeypatch.setattr(stage_requests_module, "queue_adapter_for_id", fake_queue_adapter_for_id)
+    monkeypatch.setattr(
+        stage_requests_module,
+        "queue_adapter_for_family_id",
+        lambda family_id: None,
+    )
+    engine = SimpleNamespace(
+        paths=paths,
+        compiled_plan=SimpleNamespace(work_item_families_by_id={family.family_id: family}),
+    )
+
+    active_path = stage_requests_module.active_work_item_path(
+        engine,
+        work_item_kind=None,
+        work_item_id="custom-001",
+        work_item_family_id=family.family_id,
+    )
+
+    assert active_path == paths.runtime_root / "custom" / "review-active" / "custom-001.json"
+    assert requested_adapter_ids == ["tests.custom.review.adapter"]
 
 
 def test_blueprint_stage_request_carries_model_alias_provenance(

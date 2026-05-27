@@ -500,33 +500,15 @@ def _locate_cancelable_work_item(
 
 
 def _locate_cancelable_for_kind(paths: WorkspacePaths, *, work_item_id: str, kind: WorkItemKind) -> list[_LocatedItem]:
-    directories: tuple[tuple[str, Path], ...]
-    if kind is WorkItemKind.TASK:
-        directories = (("queue", paths.tasks_queue_dir), ("blocked", paths.tasks_blocked_dir))
-    elif kind is WorkItemKind.PROBE:
-        directories = (("queue", paths.probes_queue_dir), ("blocked", paths.probes_blocked_dir))
-    elif kind is WorkItemKind.SPEC:
-        directories = (("queue", paths.specs_queue_dir), ("blocked", paths.specs_blocked_dir))
-    elif kind is WorkItemKind.INCIDENT:
-        directories = (("incoming", paths.incidents_incoming_dir), ("blocked", paths.incidents_blocked_dir))
-    elif kind is WorkItemKind.BLUEPRINT_DRAFT:
-        family = _work_item_families_by_id(paths).get(kind.value)
-        if family is None:
-            directories = ()
-        else:
-            return _locate_cancelable_for_family_definition(
-                paths,
-                work_item_id=work_item_id,
-                family=family,
-                work_item_kind=kind,
-            )
-    else:
-        directories = ()
-    return [
-        _LocatedItem(kind.value, kind, work_item_id, state, directory / f"{work_item_id}.md")
-        for state, directory in directories
-        if (directory / f"{work_item_id}.md").is_file()
-    ]
+    try:
+        return _locate_cancelable_for_family(
+            paths,
+            work_item_id=work_item_id,
+            family_id=kind.value,
+            work_item_kind=kind,
+        )
+    except QueueStateError:
+        return []
 
 
 def _locate_cancelable_for_family(

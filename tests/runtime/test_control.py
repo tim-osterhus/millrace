@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,6 +9,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from millrace_ai.architecture import WorkItemFamilyDefinition
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ActiveRunState,
     BlueprintDraftDocument,
@@ -159,6 +163,60 @@ def _spec_doc(spec_id: str) -> SpecDocument:
     )
 
 
+def _custom_review_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "inspect"),
+    )
+
+
+def _persist_custom_family(paths, family: WorkItemFamilyDefinition) -> None:
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+    updated = outcome.active_plan.model_copy(
+        update={
+            "work_item_families_by_id": {
+                **outcome.active_plan.work_item_families_by_id,
+                family.family_id: family,
+            }
+        }
+    )
+    (paths.state_dir / "compiled_plan.json").write_text(
+        updated.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _save_active_task_snapshot(
     paths,
     *,
@@ -179,6 +237,34 @@ def _save_active_task_snapshot(
                 "active_run_id": "run-active",
                 "active_work_item_kind": WorkItemKind.TASK,
                 "active_work_item_id": task_id,
+                "active_since": NOW,
+                "updated_at": NOW,
+            }
+        ),
+    )
+
+
+def _save_active_custom_review_snapshot(
+    paths,
+    *,
+    custom_id: str,
+    daemon_running: bool,
+) -> None:
+    snapshot = load_snapshot(paths)
+    save_snapshot(
+        paths,
+        snapshot.model_copy(
+            update={
+                "runtime_mode": RuntimeMode.DAEMON,
+                "process_running": daemon_running,
+                "paused": False,
+                "stop_requested": False,
+                "active_plane": Plane.PLANNING,
+                "active_stage": PlanningStageName.PLANNER,
+                "active_run_id": "run-custom-review",
+                "active_work_item_family_id": "custom_review",
+                "active_work_item_kind": None,
+                "active_work_item_id": custom_id,
                 "active_since": NOW,
                 "updated_at": NOW,
             }
@@ -739,6 +825,30 @@ def test_clear_stale_state_requeues_active_blueprint_draft(tmp_path: Path) -> No
     assert read_blueprint_draft(queued).status == "queued"
 
 
+def test_clear_stale_state_requeues_active_custom_family(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    family = _custom_review_family()
+    _persist_custom_family(paths, family)
+    active = paths.runtime_root / family.queue_dirs.active / "custom-stale.json"
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text(json.dumps({"custom_id": "custom-stale"}) + "\n", encoding="utf-8")
+    _save_active_custom_review_snapshot(paths, custom_id="custom-stale", daemon_running=False)
+    control = RuntimeControl(paths)
+
+    result = control.clear_stale_state(reason="operator clear stale")
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert not active.exists()
+    queued = paths.runtime_root / family.queue_dirs.queue / "custom-stale.json"
+    assert queued.is_file()
+    assert json.loads(queued.read_text(encoding="utf-8"))["custom_id"] == "custom-stale"
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_plane is None
+    assert snapshot.active_work_item_family_id is None
+    assert snapshot.active_work_item_id is None
+
+
 def test_clear_stale_state_uses_mailbox_when_daemon_is_running(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     _activate_task(paths, "task-001")
@@ -938,6 +1048,30 @@ def test_operator_intervention_controls_are_direct_without_daemon_owner(tmp_path
     assert not (paths.tasks_blocked_dir / "task-old.md").exists()
     snapshot = load_snapshot(paths)
     assert snapshot.queue_depth_execution == 1
+
+
+def test_operator_cancel_custom_family_is_direct_without_daemon_owner(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    family = _custom_review_family()
+    _persist_custom_family(paths, family)
+    source = paths.runtime_root / family.queue_dirs.queue / "custom-001.json"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(json.dumps({"custom_id": "custom-001"}) + "\n", encoding="utf-8")
+    control = RuntimeControl(paths)
+
+    result = control.cancel_work_item(
+        work_item_id="custom-001",
+        work_item_family_id="custom_review",
+        reason="operator cancelled custom work",
+    )
+
+    assert result.mode == "direct"
+    assert result.applied is True
+    assert result.artifact_path is not None
+    assert result.artifact_path.parent == paths.runtime_root / family.queue_dirs.canceled
+    assert result.artifact_path.suffix == ".json"
+    assert result.artifact_path.is_file()
+    assert not source.exists()
 
 
 def test_operator_intervention_controls_use_mailbox_when_daemon_owns_workspace(tmp_path: Path) -> None:

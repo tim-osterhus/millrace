@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.architecture import CompiledRunPlan, GraphLoopCompletionBehaviorDefinition
+from millrace_ai.architecture import (
+    CompiledRunPlan,
+    GraphLoopCompletionBehaviorDefinition,
+    WorkItemFamilyDefinition,
+)
+from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.contracts import (
     ClosureBlockingWorkRef,
     ClosureRootSource,
@@ -32,7 +37,11 @@ from millrace_ai.workspace.arbiter_state import (
     write_canonical_root_source_contract,
     write_canonical_root_spec_contract,
 )
-from millrace_ai.workspace.blueprint_state import list_open_blueprint_lineage_work_refs
+from millrace_ai.workspace.family_adapters import (
+    queue_adapter_for_family_id,
+    queue_adapter_for_id,
+    resolve_queue_lifecycle_adapter_id,
+)
 from millrace_ai.workspace.idea_sources import idea_source_artifact_path
 from millrace_ai.workspace.lineage_integrity import (
     LineageDriftDiagnostic,
@@ -44,6 +53,7 @@ from millrace_ai.workspace.work_inventory import WorkInventoryItemRef, closure_b
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
+    from millrace_ai.workspace.family_adapters import WorkFamilyQueueAdapter
 
 from .active_runs import active_run_from_closure_target, snapshot_with_active_run
 from .graph_authority import completion_activation_for_graph
@@ -169,20 +179,26 @@ def refresh_closure_target_readiness(
     engine: RuntimeEngine,
     target: ClosureTargetState,
 ) -> ClosureTargetState:
-    normal_refs = _closure_blocking_refs_from_inventory(
+    blocking_work_refs = _closure_blocking_refs_from_inventory(
         engine.paths,
         root_spec_id=target.root_spec_id,
         compiled_plan=engine.compiled_plan,
     )
-    blueprint_refs = list_open_blueprint_lineage_work_refs(
+    lineage_work_ids = _open_lineage_work_ids_from_adapters(
         engine.paths,
         root_spec_id=target.root_spec_id,
+        compiled_plan=engine.compiled_plan,
     )
-    blocking_work_refs = _unique_blocking_refs((*normal_refs, *blueprint_refs))
-    blocking_work_ids = _safe_bare_work_ids(blocking_work_refs)
+    blocking_work_refs = _unique_blocking_refs(blocking_work_refs)
+    blocking_work_ids = _unique_ids(
+        (
+            *lineage_work_ids,
+            *_safe_bare_work_ids(blocking_work_refs),
+        )
+    )
     updated = target.model_copy(
         update={
-            "closure_blocked_by_lineage_work": bool(blocking_work_refs),
+            "closure_blocked_by_lineage_work": bool(blocking_work_refs or blocking_work_ids),
             "blocking_work_ids": blocking_work_ids,
             "blocking_work_refs": blocking_work_refs,
         }
@@ -197,16 +213,56 @@ def _closure_blocking_refs_from_inventory(
     root_spec_id: str,
     compiled_plan: CompiledRunPlan | None,
 ) -> tuple[ClosureBlockingWorkRef, ...]:
-    refs = closure_blocking_refs(
-        paths,
-        root_spec_id=root_spec_id,
-        compiled_plan=compiled_plan,
-    )
     return tuple(
         _blocking_ref_from_inventory(paths, ref)
-        for ref in refs
-        if ref.family_id != WorkItemKind.BLUEPRINT_DRAFT.value
+        for ref in closure_blocking_refs(
+            paths,
+            root_spec_id=root_spec_id,
+            compiled_plan=compiled_plan,
+        )
     )
+
+
+def _open_lineage_work_ids_from_adapters(
+    paths: WorkspacePaths,
+    *,
+    root_spec_id: str,
+    compiled_plan: CompiledRunPlan | None,
+) -> tuple[str, ...]:
+    seen: set[str] = set()
+    work_item_ids: list[str] = []
+    for family in _work_item_families_for_lineage(compiled_plan):
+        adapter = _queue_adapter_for_family(family)
+        if adapter is None:
+            continue
+        for work_item_id in adapter.list_open_lineage_work_ids(
+            paths,
+            root_spec_id=root_spec_id,
+        ):
+            if work_item_id in seen:
+                continue
+            seen.add(work_item_id)
+            work_item_ids.append(work_item_id)
+    return tuple(work_item_ids)
+
+
+def _work_item_families_for_lineage(
+    compiled_plan: CompiledRunPlan | None,
+) -> tuple[WorkItemFamilyDefinition, ...]:
+    if compiled_plan is not None and compiled_plan.work_item_families_by_id:
+        return tuple(compiled_plan.work_item_families_by_id.values())
+    return load_builtin_workflow_primitives().work_item_families
+
+
+def _queue_adapter_for_family(
+    family: WorkItemFamilyDefinition,
+) -> WorkFamilyQueueAdapter | None:
+    adapter_id = resolve_queue_lifecycle_adapter_id(family)
+    if adapter_id is not None:
+        adapter = queue_adapter_for_id(adapter_id)
+        if adapter is not None:
+            return adapter
+    return queue_adapter_for_family_id(family.family_id)
 
 
 def _blocking_ref_from_inventory(

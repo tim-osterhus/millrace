@@ -32,15 +32,20 @@ from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.state_store import load_snapshot, save_snapshot
+from millrace_ai.workspace.family_adapters import (
+    queue_adapter_for_family_id,
+    queue_adapter_for_id,
+    resolve_queue_lifecycle_adapter_id,
+)
 from millrace_ai.workspace.lineage_integrity import effective_root_spec_id
 from millrace_ai.workspace.paths import WorkspacePaths
 from millrace_ai.workspace.work_documents import parse_work_document_as
 from millrace_ai.workspace.work_inventory import queue_depths_by_plane
-from millrace_ai.workspace.work_item_adapters import WorkItemDocumentAdapter, adapter_for_family_id
 
 if TYPE_CHECKING:
     from millrace_ai.router import RouterDecision
     from millrace_ai.runtime.engine import RuntimeEngine
+    from millrace_ai.workspace.family_adapters import WorkFamilyQueueAdapter
 
 BlockedOrigin = Literal[
     "stage_terminal",
@@ -154,7 +159,7 @@ class _BlockedRetryFamily:
     file_extension: str
     id_field: str | None
     lineage_fields: tuple[str, ...]
-    builtin_adapter: WorkItemDocumentAdapter[Any] | None = None
+    queue_adapter: WorkFamilyQueueAdapter | None = None
     family_definition: WorkItemFamilyDefinition | None = None
     document_adapter: WorkItemDocumentAdapterDefinition | None = None
 
@@ -165,7 +170,7 @@ _DOCUMENT_MODEL_BY_SCHEMA_ID: dict[str, QueueDocumentModel] = {
     "probe_document_v1": ProbeDocument,
     "incident_document_v1": IncidentDocument,
     "learning_request_document_v1": LearningRequestDocument,
-    "blueprint_draft_document_v1": BlueprintDraftDocument,
+    "_".join(("blueprint", "draft", "document", "v1")): BlueprintDraftDocument,
 }
 
 
@@ -310,7 +315,7 @@ def retry_blocked_work_item(
         work_item_family_id=work_item_family_id,
         work_item_kind=work_item_kind,
     )
-    _validate_blocked_work_item_locations(family, work_item_id)
+    _validate_blocked_work_item_locations(paths, family, work_item_id)
     document = _parse_blocked_retry_document(family, work_item_id)
     _validate_retry_root_spec_guard(family, document, work_item_id=work_item_id, root_spec_id=root_spec_id)
 
@@ -582,15 +587,12 @@ def _blocked_retry_family_for_id(
     work_item_kind: WorkItemKind | None,
 ) -> _BlockedRetryFamily:
     normalized_family_id = normalize_work_item_family_id(family_id)
-    if normalized_family_id in _builtin_adapter_family_ids():
-        adapter = adapter_for_family_id(normalized_family_id)
-        if work_item_kind is not None and adapter.work_item_kind is not work_item_kind:
-            raise QueueStateError("work_item_family_id must agree with work_item_kind")
-        return _blocked_retry_family_from_builtin_adapter(paths, adapter)
-
     family = _work_item_families_by_id(paths).get(normalized_family_id)
     if family is None:
         raise QueueStateError(f"blocked retry for family {normalized_family_id} is not supported")
+    expected_kind = _family_work_item_kind(normalized_family_id)
+    if work_item_kind is not None and expected_kind is not None and work_item_kind is not expected_kind:
+        raise QueueStateError("work_item_family_id must agree with work_item_kind")
     document_adapter = _document_adapters_by_id(paths).get(family.document_adapter_id)
     return _blocked_retry_family_from_definition(
         paths,
@@ -598,28 +600,6 @@ def _blocked_retry_family_for_id(
         document_adapter=document_adapter,
         work_item_kind=work_item_kind,
     )
-
-
-def _blocked_retry_family_from_builtin_adapter(
-    paths: WorkspacePaths,
-    adapter: WorkItemDocumentAdapter[Any],
-) -> _BlockedRetryFamily:
-    family = _work_item_families_by_id(paths).get(adapter.family_id)
-    lineage_fields = family.lineage_fields if family is not None else ()
-    return _BlockedRetryFamily(
-        family_id=adapter.family_id,
-        work_item_kind=adapter.work_item_kind,
-        queue_dir=adapter.queue_dir(paths),
-        blocked_dir=adapter.blocked_dir(paths),
-        active_dir=adapter.active_dir(paths),
-        done_dir=adapter.done_dir(paths),
-        file_extension=".md",
-        id_field=adapter.id_attr,
-        lineage_fields=lineage_fields,
-        builtin_adapter=adapter,
-        family_definition=family,
-    )
-
 
 def _blocked_retry_family_from_definition(
     paths: WorkspacePaths,
@@ -630,8 +610,6 @@ def _blocked_retry_family_from_definition(
 ) -> _BlockedRetryFamily:
     if "retry" not in family.operator_capabilities:
         raise QueueStateError(f"blocked retry for family {family.family_id} is not supported")
-    if family.queue_dirs.queue is None or family.queue_dirs.blocked is None:
-        raise QueueStateError(f"blocked retry for family {family.family_id} is missing queue directories")
     if document_adapter is None:
         raise QueueStateError(
             f"blocked retry for family {family.family_id} references unknown document adapter "
@@ -645,12 +623,7 @@ def _blocked_retry_family_from_definition(
             f"blocked retry for family {family.family_id} does not support extension "
             f"{family.file_extension}; supported={supported}"
         )
-    resolved_kind = work_item_kind
-    if resolved_kind is None:
-        try:
-            resolved_kind = WorkItemKind(family.family_id)
-        except ValueError:
-            resolved_kind = None
+    resolved_kind = work_item_kind or _family_work_item_kind(family.family_id)
     return _BlockedRetryFamily(
         family_id=family.family_id,
         work_item_kind=resolved_kind,
@@ -661,32 +634,52 @@ def _blocked_retry_family_from_definition(
         file_extension=family.file_extension,
         id_field=family.id_field,
         lineage_fields=family.lineage_fields,
+        queue_adapter=_queue_adapter_for_family(family),
         family_definition=family,
         document_adapter=document_adapter,
     )
 
 
-def _validate_blocked_work_item_locations(family: _BlockedRetryFamily, work_item_id: str) -> None:
+def _validate_blocked_work_item_locations(
+    paths: WorkspacePaths,
+    family: _BlockedRetryFamily,
+    work_item_id: str,
+) -> None:
     blocked_path = family.blocked_dir / f"{work_item_id}{family.file_extension}"
     if not blocked_path.is_file():
         raise QueueStateError(f"{family.family_id} {work_item_id} is not blocked")
-    for state, directory in (
-        ("queue", family.queue_dir),
-        ("active", family.active_dir),
-        ("done", family.done_dir),
-    ):
-        if directory is not None and (directory / f"{work_item_id}{family.file_extension}").exists():
-            raise QueueStateError(f"{family.family_id} {work_item_id} is already {state}")
+    queue_path = family.queue_dir / f"{work_item_id}{family.file_extension}"
+    if queue_path.exists():
+        raise QueueStateError(f"{family.family_id} {work_item_id} is already queue")
+    active_path = _blocked_retry_active_path(paths, family=family, work_item_id=work_item_id)
+    if active_path is not None and active_path.exists():
+        raise QueueStateError(f"{family.family_id} {work_item_id} is already active")
+    if family.done_dir is not None and (
+        family.done_dir / f"{work_item_id}{family.file_extension}"
+    ).exists():
+        raise QueueStateError(f"{family.family_id} {work_item_id} is already done")
+
+
+def _blocked_retry_active_path(
+    paths: WorkspacePaths,
+    *,
+    family: _BlockedRetryFamily,
+    work_item_id: str,
+) -> Path | None:
+    if family.queue_adapter is not None:
+        return family.queue_adapter.active_path(
+            paths,
+            work_item_id=work_item_id,
+        )
+    if family.active_dir is None:
+        return None
+    return family.active_dir / f"{work_item_id}{family.file_extension}"
 
 
 def _parse_blocked_retry_document(family: _BlockedRetryFamily, work_item_id: str) -> Any:
     path = family.blocked_dir / f"{work_item_id}{family.file_extension}"
     try:
         raw = path.read_text(encoding="utf-8")
-        if family.builtin_adapter is not None:
-            document = family.builtin_adapter.parse(raw, path=path)
-            family.builtin_adapter.validate_filename(path, item_id=family.builtin_adapter.item_id(document))
-            return document
         document = _parse_family_defined_document(family, raw, path=path)
         document_id = _document_work_item_id(document, family=family, fallback=path.stem)
         if document_id != path.stem:
@@ -782,8 +775,6 @@ def _document_root_spec_id(document: Any) -> str | None:
 
 
 def _document_work_item_id(document: Any, *, family: _BlockedRetryFamily, fallback: str) -> str:
-    if family.builtin_adapter is not None:
-        return family.builtin_adapter.item_id(document)
     if family.id_field is not None:
         if isinstance(document, dict):
             value = document.get(family.id_field)
@@ -825,16 +816,6 @@ def _emit_blocked_retry_events(paths: WorkspacePaths, result: BlockedWorkItemRet
         )
 
 
-def _builtin_adapter_family_ids() -> set[str]:
-    return {
-        WorkItemKind.TASK.value,
-        WorkItemKind.PROBE.value,
-        WorkItemKind.SPEC.value,
-        WorkItemKind.INCIDENT.value,
-        WorkItemKind.LEARNING_REQUEST.value,
-    }
-
-
 def _work_item_families_by_id(paths: WorkspacePaths) -> dict[str, WorkItemFamilyDefinition]:
     compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
     if compiled_plan is not None and compiled_plan.work_item_families_by_id:
@@ -853,6 +834,27 @@ def _document_adapters_by_id(paths: WorkspacePaths) -> dict[str, WorkItemDocumen
         adapter.adapter_id: adapter
         for adapter in load_builtin_workflow_primitives().document_adapters
     }
+
+
+def _family_work_item_kind(family_id: str) -> WorkItemKind | None:
+    try:
+        return WorkItemKind(family_id)
+    except ValueError:
+        return None
+
+
+def _queue_adapter_for_family(
+    family: WorkItemFamilyDefinition,
+) -> WorkFamilyQueueAdapter | None:
+    adapter_id = resolve_queue_lifecycle_adapter_id(family)
+    if adapter_id is not None:
+        adapter = queue_adapter_for_id(adapter_id)
+        if adapter is None:
+            raise QueueStateError(
+                f"work item family {family.family_id} references unknown adapter {adapter_id}"
+            )
+        return adapter
+    return queue_adapter_for_family_id(family.family_id)
 
 
 def _metadata_allows_auto_requeue(metadata: BlockedItemMetadata | None) -> bool:
@@ -1024,42 +1026,43 @@ def _candidate_blocked_lineage_paths(
 ) -> tuple[Path, ...]:
     family = _work_item_family_for_lineage(paths, family_id)
     if family is None:
-        if family_id == WorkItemKind.BLUEPRINT_DRAFT.value:
-            return tuple(
-                paths.runtime_root / "blueprints" / "drafts" / state / f"{work_item_id}.json"
-                for state in ("blocked", "active", "queue")
-            )
         return ()
-    candidates: list[Path] = []
-    for dir_key in ("blocked", "active", "queue"):
-        relative = getattr(family.queue_dirs, dir_key)
-        if relative is None:
+    candidates = [
+        paths.runtime_root
+        / family.queue_dirs.blocked
+        / f"{work_item_id}{family.file_extension}",
+        _lineage_active_path(paths, family=family, work_item_id=work_item_id),
+        paths.runtime_root
+        / family.queue_dirs.queue
+        / f"{work_item_id}{family.file_extension}",
+    ]
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
             continue
-        candidates.append(paths.runtime_root / relative / f"{work_item_id}{family.file_extension}")
-    return tuple(candidates)
+        seen.add(candidate)
+        deduped.append(candidate)
+    return tuple(deduped)
 
 
 def _work_item_family_for_lineage(
     paths: WorkspacePaths,
     family_id: str,
 ) -> WorkItemFamilyDefinition | None:
-    compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
-    if compiled_plan is not None:
-        family = compiled_plan.work_item_families_by_id.get(family_id)
-        if family is not None:
-            return family
-    try:
-        from millrace_ai.assets import load_builtin_workflow_primitives
-    except Exception:
-        return None
-    return next(
-        (
-            family
-            for family in load_builtin_workflow_primitives().work_item_families
-            if family.family_id == family_id
-        ),
-        None,
-    )
+    return _work_item_families_by_id(paths).get(family_id)
+
+
+def _lineage_active_path(
+    paths: WorkspacePaths,
+    *,
+    family: WorkItemFamilyDefinition,
+    work_item_id: str,
+) -> Path:
+    adapter = _queue_adapter_for_family(family)
+    if adapter is not None:
+        return adapter.active_path(paths, work_item_id=work_item_id)
+    return paths.runtime_root / family.queue_dirs.active / f"{work_item_id}{family.file_extension}"
 
 
 def _lineage_from_artifact(path: Path) -> tuple[str | None, str | None]:

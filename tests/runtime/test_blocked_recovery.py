@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+import millrace_ai.runtime.blocked_recovery as blocked_recovery_module
+from millrace_ai.architecture import WorkItemDocumentAdapterDefinition, WorkItemFamilyDefinition
+from millrace_ai.compiler import compile_and_persist_workspace_plan
+from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     BlueprintDraftDocument,
     ExecutionStageName,
@@ -319,6 +323,133 @@ def test_retry_blocked_work_item_refuses_unsupported_family(tmp_path) -> None:
         )
 
 
+def test_blocked_metadata_custom_family_reads_lineage_from_adapter_active_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    family = _custom_retry_family()
+    _persist_custom_retry_family(paths, family)
+
+    active_path = paths.runtime_root / "custom" / "reviews" / "adapter-active" / "custom-001.json"
+    active_path.parent.mkdir(parents=True, exist_ok=True)
+    active_path.write_text(
+        json.dumps(
+            {
+                "custom_id": "custom-001",
+                "root_spec_id": "spec-001",
+                "root_idea_id": "idea-001",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _Adapter:
+        def active_path(self, paths, *, work_item_id: str):
+            assert work_item_id == "custom-001"
+            return active_path
+
+    monkeypatch.setattr(
+        blocked_recovery_module,
+        "queue_adapter_for_id",
+        lambda adapter_id: _Adapter() if adapter_id == family.queue_lifecycle_adapter_id else None,
+    )
+
+    stage_result = StageResultEnvelope(
+        run_id="run-custom-lineage",
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.PLANNER,
+        work_item_family_id="custom_review",
+        work_item_id="custom-001",
+        terminal_result=PlanningTerminalResult.BLOCKED,
+        result_class=ResultClass.BLOCKED,
+        summary_status_marker="### BLOCKED",
+        success=False,
+        started_at=NOW,
+        completed_at=NOW,
+        metadata={"failure_class": "custom_blocked"},
+    )
+    decision = RouterDecision(
+        action=RouterAction.BLOCKED,
+        next_plane=None,
+        next_stage=None,
+        reason="custom blocked",
+        failure_class="custom_blocked",
+    )
+
+    metadata_path = write_blocked_item_metadata(
+        paths,
+        stage_result=stage_result,
+        decision=decision,
+        now=NOW,
+    )
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert payload["work_item_family_id"] == "custom_review"
+    assert payload["root_spec_id"] == "spec-001"
+    assert payload["root_idea_id"] == "idea-001"
+
+
+def test_retry_blocked_work_item_requeues_custom_family_via_adapter_family_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    family = _custom_retry_family()
+    _persist_custom_retry_family(paths, family)
+    blocked_path = paths.runtime_root / family.queue_dirs.blocked / "custom-001.json"
+    blocked_path.parent.mkdir(parents=True, exist_ok=True)
+    blocked_path.write_text(
+        json.dumps(
+            {
+                "custom_id": "custom-001",
+                "root_spec_id": "spec-001",
+                "root_idea_id": "idea-001",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    adapter_ids: list[str] = []
+
+    class _Adapter:
+        def active_path(self, paths, *, work_item_id: str):
+            return paths.runtime_root / "custom" / "reviews" / "adapter-active" / f"{work_item_id}.json"
+
+    def fake_queue_adapter_for_id(adapter_id: str):
+        adapter_ids.append(adapter_id)
+        if adapter_id == family.queue_lifecycle_adapter_id:
+            return _Adapter()
+        return None
+
+    monkeypatch.setattr(blocked_recovery_module, "queue_adapter_for_id", fake_queue_adapter_for_id)
+
+    result = retry_blocked_work_item(
+        paths,
+        work_item_family_id="custom_review",
+        work_item_id="custom-001",
+        reason="operator retry custom review",
+        actor="tests",
+        auto=False,
+        force=True,
+        root_spec_id="spec-001",
+    )
+
+    queued_path = paths.runtime_root / family.queue_dirs.queue / "custom-001.json"
+    assert result.work_item_family_id == "custom_review"
+    assert result.work_item_kind is None
+    assert queued_path.is_file()
+    assert not blocked_path.exists()
+    assert "tests.custom.review.adapter" in adapter_ids
+    audit_lines = [
+        json.loads(line)
+        for line in (queued_path.parent / "custom-001.requeue.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert audit_lines[0]["work_item_family_id"] == "custom_review"
+    assert audit_lines[0]["work_item_id"] == "custom-001"
+
+
 def _stage_retry_fixture(paths) -> None:
     queue = QueueStore(paths)
     queue.enqueue_task(_task("task-001"))
@@ -427,4 +558,78 @@ def _blueprint_draft(draft_id: str) -> BlueprintDraftDocument:
         status="queued",
         references=("lab/tasks/queue/remediation-05.md",),
         created_at=NOW,
+    )
+
+
+def _custom_retry_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_lifecycle_adapter_id="tests.custom.review.adapter",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("retry", "cancel", "inspect"),
+    )
+
+
+def _custom_retry_document_adapter() -> WorkItemDocumentAdapterDefinition:
+    return WorkItemDocumentAdapterDefinition(
+        adapter_id="custom_review_json_v1",
+        schema_id="custom_review_document_v1",
+        supported_file_extensions=(".json",),
+        family_ids=("custom_review",),
+        can_parse=True,
+        can_render=True,
+        can_summarize=True,
+        supports_dependencies=False,
+        supports_lineage=True,
+    )
+
+
+def _persist_custom_retry_family(paths, family: WorkItemFamilyDefinition) -> None:
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+    adapter = _custom_retry_document_adapter()
+    updated = outcome.active_plan.model_copy(
+        update={
+            "work_item_families_by_id": {
+                **outcome.active_plan.work_item_families_by_id,
+                family.family_id: family,
+            },
+            "document_adapters_by_id": {
+                **outcome.active_plan.document_adapters_by_id,
+                adapter.adapter_id: adapter,
+            },
+        }
+    )
+    (paths.state_dir / "compiled_plan.json").write_text(
+        updated.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
     )

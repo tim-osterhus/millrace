@@ -209,6 +209,9 @@ cycles:
   markdown used by closure-target creation.
 - `workspace/work_item_adapters.py` owns family-aware loading/rendering for
   built-in queue documents.
+- `workspace/family_adapters.py` owns work-family queue adapter contracts and
+  registry lookup for claim/lifecycle/requeue/lineage operations bound to
+  workflow family contracts.
 - `workspace/queue_lifecycle.py` applies compiled lifecycle mutation plans to
   source queue documents.
 - `workspace/blueprint_state.py` owns durable Blueprint manifest, draft,
@@ -243,6 +246,11 @@ cycles:
   config reload compiles a newer pending plan.
 - `runtime/request_context.py` is the compatibility facade for deterministic
   per-request context rendering imports.
+- `runtime/stage_requests.py`, `runtime/completion_behavior.py`,
+  `runtime/blocked_recovery.py`, and `workspace/operator_interventions.py`
+  consume family adapter resolution for family-scoped active-path, lineage,
+  and retry/cancellation location behavior instead of hard-coded family path
+  branches.
 - `runtime/context/` owns deterministic per-request context bundles, compiled
   node/profile/render-plan authority resolution, provider-registry dispatch,
   rendered prompt-context artifacts, generic provider behavior, and Blueprint

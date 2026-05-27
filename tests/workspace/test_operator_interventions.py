@@ -10,6 +10,7 @@ from millrace_ai.architecture import WorkItemFamilyDefinition
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
+    BlueprintDraftDocument,
     ExecutionStageName,
     IncidentDecision,
     IncidentDocument,
@@ -22,6 +23,7 @@ from millrace_ai.events import read_runtime_events
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.workspace.blueprint_state import enqueue_blueprint_draft
 from millrace_ai.workspace.operator_interventions import (
     archive_invalid_incident_artifact,
     cancel_incident,
@@ -68,6 +70,28 @@ def _incident_doc(incident_id: str) -> IncidentDocument:
         consultant_decision=IncidentDecision.NEEDS_PLANNING,
         opened_at=NOW,
         opened_by="tests",
+    )
+
+
+def _blueprint_draft_doc(draft_id: str) -> BlueprintDraftDocument:
+    return BlueprintDraftDocument(
+        draft_id=draft_id,
+        manifest_id="manifest-001",
+        root_spec_id="spec-root-001",
+        root_idea_id="idea-001",
+        source_spec_id="spec-root-001",
+        draft_index=1,
+        title=f"Blueprint Draft {draft_id}",
+        summary="operator intervention blueprint fixture",
+        scope=("src/millrace_ai/workspace/operator_interventions.py",),
+        target_paths=("src/millrace_ai/workspace/operator_interventions.py",),
+        acceptance_intent=("operator cancellation archives queued blueprint drafts",),
+        verification_intent=("pytest tests/workspace/test_operator_interventions.py -q",),
+        context_excerpt="cancel queued blueprint draft",
+        current_revision=0,
+        status="queued",
+        references=("lab/specs/pending/operator-interventions-blueprint.md",),
+        created_at=NOW,
     )
 
 
@@ -191,6 +215,32 @@ def test_cancel_custom_family_uses_persisted_family_contract(tmp_path: Path) -> 
     audit = _json_lines(result.destination_path.parent / "interventions.jsonl")
     assert audit[0]["work_item_family_id"] == "custom_review"
     assert audit[0]["work_item_kind"] is None
+
+
+def test_cancel_queued_blueprint_family_uses_family_contract(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    enqueue_blueprint_draft(paths, _blueprint_draft_doc("draft-cancel"))
+
+    result = cancel_work_item(
+        paths,
+        work_item_id="draft-cancel",
+        work_item_family_id="blueprint_draft",
+        reason="blueprint draft no longer needed",
+        actor="operator",
+        now=NOW,
+    )
+
+    assert result.action == "cancel"
+    assert result.work_item_family_id == "blueprint_draft"
+    assert result.work_item_kind is WorkItemKind.BLUEPRINT_DRAFT
+    assert result.source_state == "queued"
+    assert result.destination_state == "canceled"
+    assert result.destination_path.parent == paths.runtime_root / "blueprints" / "drafts" / "canceled"
+    assert result.destination_path.suffix == ".json"
+    assert result.destination_path.is_file()
+    events = read_runtime_events(paths)
+    assert events[-1].event_type == "work_item_cancelled"
+    assert events[-1].data["work_item_family_id"] == "blueprint_draft"
 
 
 def test_supersede_blocked_task_can_retarget_queued_dependents(tmp_path: Path) -> None:

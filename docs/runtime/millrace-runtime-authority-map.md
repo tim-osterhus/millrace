@@ -54,7 +54,9 @@ Public compatibility facades may re-export the same behavior.
 ### Request, runner, and normalization authority
 
 - `runtime/stage_requests.py` builds `StageRunRequest` from the active run,
-  active work item or closure target, and compiled node plan.
+  active work item or closure target, and compiled node plan. Active
+  work-item artifact-path resolution is delegated through work-family queue
+  adapters when family contracts declare them.
 - `runtime/request_context.py` writes deterministic request-context artifacts
   and prompt context.
 - `runtime/capability_gates.py` and `runtime/approvals.py` evaluate compiled
@@ -174,7 +176,8 @@ generated task/spec, completing a no-op probe, or blocking the probe.
 `runtime/lifecycle_interpreter.py`, `runtime/work_item_transitions.py`, and
 Blueprint-specific effect handlers apply compiled Planning mutations.
 `runtime/completion_behavior.py` opens a closure target when a root spec is
-claimed and snapshots canonical contracts.
+claimed, snapshots canonical contracts, and derives closure-blocking lineage
+through family adapter-backed lineage scans plus inventory-backed blocker refs.
 
 **Inspection/monitor visibility:** status shows Planning active stage, queue
 depths, root-source failures, closure-target state, and deferred roots.

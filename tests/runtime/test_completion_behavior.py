@@ -4,10 +4,11 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import millrace_ai.runtime.completion_behavior as completion_behavior
 import millrace_ai.runtime.supervisor as supervisor_module
-from millrace_ai.architecture import CompiledRunPlan
+from millrace_ai.architecture import CompiledRunPlan, WorkItemFamilyDefinition
 from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
@@ -250,6 +251,114 @@ def _write_idea(paths, idea_id: str) -> None:
     idea_path = paths.root / "ideas" / "inbox" / f"{idea_id}.md"
     idea_path.parent.mkdir(parents=True, exist_ok=True)
     idea_path.write_text(f"# {idea_id}\n\nSeed contract for {idea_id}.\n", encoding="utf-8")
+
+
+def _custom_review_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="custom_review",
+        plane=Plane.PLANNING,
+        entry_key="custom_review",
+        display_name="Custom Review",
+        document_kind="custom_review",
+        runtime_relative_dir="custom/reviews",
+        file_extension=".json",
+        schema_id="custom_review_document_v1",
+        document_adapter_id="custom_review_json_v1",
+        queue_lifecycle_adapter_id="tests.custom.review.adapter",
+        queue_dirs={
+            "queue": "custom/reviews/queue",
+            "active": "custom/reviews/active",
+            "done": "custom/reviews/done",
+            "blocked": "custom/reviews/blocked",
+            "canceled": "custom/reviews/canceled",
+        },
+        lifecycle_states=("queue", "active", "done", "blocked", "canceled"),
+        claimable_state="queue",
+        active_state="active",
+        done_state="done",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queue", "active", "blocked"),
+        default_entry_key="custom_review",
+        id_field="custom_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "retry", "inspect"),
+    )
+
+
+def _blueprint_review_family() -> WorkItemFamilyDefinition:
+    return WorkItemFamilyDefinition(
+        family_id="blueprint_draft",
+        plane=Plane.PLANNING,
+        entry_key="blueprint_draft",
+        display_name="Blueprint Draft",
+        document_kind="blueprint_draft",
+        runtime_relative_dir="blueprints/drafts",
+        file_extension=".json",
+        schema_id="blueprint_draft_document_v1",
+        document_adapter_id="blueprint_draft_markdown_v1",
+        queue_lifecycle_adapter_id="tests.blueprint.adapter",
+        queue_dirs={
+            "queue": "blueprints/drafts/queue",
+            "active": "blueprints/drafts/active",
+            "done": "blueprints/drafts/approved",
+            "blocked": "blueprints/drafts/blocked",
+            "canceled": "blueprints/drafts/canceled",
+        },
+        lifecycle_states=("queued", "active", "approved", "blocked", "canceled"),
+        claimable_state="queued",
+        active_state="active",
+        done_state="approved",
+        blocked_state="blocked",
+        canceled_state="canceled",
+        closure_blocking_states=("queued", "active", "blocked"),
+        default_entry_key="blueprint_draft",
+        id_field="draft_id",
+        created_at_field="created_at",
+        lineage_fields=("root_spec_id",),
+        operator_capabilities=("cancel", "retry", "inspect"),
+    )
+
+
+def test_open_lineage_work_ids_uses_adapters_for_blueprint_and_custom_families(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    blueprint_family = _blueprint_review_family()
+    custom_family = _custom_review_family()
+
+    class _Adapter:
+        def __init__(self, ids: tuple[str, ...]) -> None:
+            self._ids = ids
+
+        def list_open_lineage_work_ids(self, paths, *, root_spec_id: str) -> tuple[str, ...]:
+            del paths, root_spec_id
+            return self._ids
+
+    adapters = {
+        "tests.blueprint.adapter": _Adapter(("draft-001",)),
+        "tests.custom.review.adapter": _Adapter(("custom-001", "draft-001")),
+    }
+
+    monkeypatch.setattr(completion_behavior, "queue_adapter_for_id", adapters.get)
+    monkeypatch.setattr(completion_behavior, "queue_adapter_for_family_id", lambda family_id: None)
+
+    compiled_plan = SimpleNamespace(
+        work_item_families_by_id={
+            blueprint_family.family_id: blueprint_family,
+            custom_family.family_id: custom_family,
+        }
+    )
+
+    ids = completion_behavior._open_lineage_work_ids_from_adapters(
+        paths,
+        root_spec_id="spec-root-001",
+        compiled_plan=compiled_plan,
+    )
+
+    assert ids == ("draft-001", "custom-001")
 
 
 def test_activate_claim_opens_closure_target_and_snapshots_canonical_contracts(

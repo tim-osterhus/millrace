@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from millrace_ai.architecture import MaterializedGraphNodePlan
+from millrace_ai.architecture import MaterializedGraphNodePlan, WorkItemFamilyDefinition
 from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
@@ -26,10 +26,16 @@ from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.requests import RequestKind
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
+from millrace_ai.workspace.family_adapters import (
+    queue_adapter_for_family_id,
+    queue_adapter_for_id,
+    resolve_queue_lifecycle_adapter_id,
+)
 from millrace_ai.workspace.work_inventory import queue_depths_by_plane
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
+    from millrace_ai.workspace.family_adapters import WorkFamilyQueueAdapter
 
 from .active_runs import active_run_for_plane
 from .context import validate_stage_request_context_provider_implementation
@@ -375,23 +381,40 @@ def active_work_item_path(
 ) -> Path | None:
     if work_item_id is None:
         return None
-    if work_item_family_id is not None and engine.compiled_plan is not None:
-        family = engine.compiled_plan.work_item_families_by_id.get(work_item_family_id)
-        if family is not None:
-            return engine.paths.runtime_root / family.queue_dirs.active / f"{work_item_id}{family.file_extension}"
-    if work_item_kind is None:
+    family_id = work_item_family_id or (
+        work_item_kind.value if work_item_kind is not None else None
+    )
+    if family_id is None:
         return None
-    if work_item_kind is WorkItemKind.TASK:
-        return engine.paths.tasks_active_dir / f"{work_item_id}.md"
-    if work_item_kind is WorkItemKind.PROBE:
-        return engine.paths.probes_active_dir / f"{work_item_id}.md"
-    if work_item_kind is WorkItemKind.SPEC:
-        return engine.paths.specs_active_dir / f"{work_item_id}.md"
-    if work_item_kind is WorkItemKind.LEARNING_REQUEST:
-        return engine.paths.learning_requests_active_dir / f"{work_item_id}.md"
-    if work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
-        return engine.paths.runtime_root / "blueprints" / "drafts" / "active" / f"{work_item_id}.json"
-    return engine.paths.incidents_active_dir / f"{work_item_id}.md"
+    family = (
+        engine.compiled_plan.work_item_families_by_id.get(family_id)
+        if engine.compiled_plan is not None
+        else None
+    )
+    adapter = _queue_adapter_for_family(family_id=family_id, family=family)
+    if adapter is not None:
+        return adapter.active_path(engine.paths, work_item_id=work_item_id)
+    if family is None:
+        return None
+    return (
+        engine.paths.runtime_root
+        / family.queue_dirs.active
+        / f"{work_item_id}{family.file_extension}"
+    )
+
+
+def _queue_adapter_for_family(
+    *,
+    family_id: str,
+    family: WorkItemFamilyDefinition | None,
+) -> WorkFamilyQueueAdapter | None:
+    if family is not None:
+        adapter_id = resolve_queue_lifecycle_adapter_id(family)
+        if adapter_id is not None:
+            adapter = queue_adapter_for_id(adapter_id)
+            if adapter is not None:
+                return adapter
+    return queue_adapter_for_family_id(family_id)
 
 
 def execution_queue_depth(engine: RuntimeEngine) -> int:
