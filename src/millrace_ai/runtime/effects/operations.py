@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import copyfile
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import JsonValue, ValidationError
 
 from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
 from millrace_ai.contracts.blueprint import (
@@ -40,13 +38,10 @@ from millrace_ai.workspace.blueprint_state import (
     write_blueprint_manifest,
 )
 from millrace_ai.workspace.paths import WorkspacePaths
-from millrace_ai.workspace.queue_transitions import enqueue_task
 from millrace_ai.workspace.work_documents import read_work_document_as
 
 from ..artifact_contracts import (
     RuntimeArtifactError,
-    parse_resolved_run_artifact_as,
-    resolve_run_artifact,
 )
 from .models import (
     RuntimeEffectDecision,
@@ -54,6 +49,36 @@ from .models import (
     RuntimeEffectResult,
     SourceLifecycleAction,
     SourceLifecycleIntent,
+)
+from .operation_runners.artifacts import (
+    parse_required_run_artifact_as,
+    read_json_model,
+    read_json_model_list_payload,
+    read_json_model_payload,
+    read_required_run_artifact_text,
+)
+from .operation_runners.idempotency import (
+    ensure_contains_all,
+    normalized_markdown_content,
+    normalized_markdown_sha256,
+    normalized_model_payload,
+    read_markdown_checksum,
+    unique_tuple,
+)
+from .operation_runners.results import (
+    append_lifecycle_journal,
+    block_source_failure_result,
+    complete_source_success_result,
+    runtime_mutation_journal,
+)
+from .operation_runners.stores import copy_unique_file, effect_path
+from .operation_runners.types import ModelT
+from .operation_runners.work_items import (
+    enqueue_task_document as enqueue_task,
+)
+from .operation_runners.work_items import (
+    source_lifecycle_intent,
+    stage_result_work_item_kind,
 )
 
 if TYPE_CHECKING:
@@ -64,8 +89,6 @@ CONTRACTOR_BLUEPRINT_OPERATION_ID = "contractor_blueprint_candidate_persist"
 EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID = "evaluator_blueprint_approved_to_task"
 EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID = "evaluator_blueprint_rejected_to_draft_revision"
 MECHANIC_BLUEPRINT_REPAIR_OPERATION_ID = "mechanic_blueprint_repair_apply"
-
-BlueprintModelT = TypeVar("BlueprintModelT", bound=BaseModel)
 
 _DRAFT_STATES: tuple[str, ...] = (
     "queue",
@@ -376,8 +399,10 @@ def evaluator_blueprint_approved_to_task(
             BlueprintEvaluationDocument,
         )
         _validate_approval(evaluation, packet)
-        task = parse_resolved_run_artifact_as(
-            resolve_run_artifact(compiled_plan, "generated_task", run_dir),
+        task = parse_required_run_artifact_as(
+            compiled_plan,
+            "generated_task",
+            run_dir,
             TaskDocument,
         )
         _validate_generated_task(task, draft, packet)
@@ -525,8 +550,10 @@ def evaluator_blueprint_rejected_to_draft_revision(
             run_dir / "blueprint_evaluation.json",
             BlueprintEvaluationDocument,
         )
-        critique = parse_resolved_run_artifact_as(
-            resolve_run_artifact(compiled_plan, "blueprint_critique", run_dir),
+        critique = parse_required_run_artifact_as(
+            compiled_plan,
+            "blueprint_critique",
+            run_dir,
             BlueprintCritiqueDocument,
         )
         _validate_rejection(evaluation, critique, packet)
@@ -700,76 +727,42 @@ def evaluator_blueprint_rejected_to_draft_revision(
 
 def _read_manager_json_model(
     path: Path,
-    model: type[BlueprintModelT],
+    model: type[ModelT],
     *,
     missing_class: str,
     parse_class: str,
     schema_class: str,
-) -> BlueprintModelT:
-    payload = _read_manager_json_payload(
+) -> ModelT:
+    return read_json_model_payload(
         path,
+        model,
         missing_class=missing_class,
         parse_class=parse_class,
+        schema_class=schema_class,
+        error_factory=_ManagerBlueprintEffectError,
+        missing_message=f"required Blueprint artifact is missing: {path.name}",
+        read_error_message_prefix="required Blueprint artifact could not be read",
     )
-    try:
-        return model.model_validate(payload)
-    except ValidationError as exc:
-        raise _ManagerBlueprintEffectError(
-            schema_class,
-            f"{path.name} failed schema validation: {exc}",
-        ) from exc
 
 
 def _read_manager_json_model_list(
     path: Path,
-    model: type[BlueprintModelT],
+    model: type[ModelT],
     *,
     missing_class: str,
     parse_class: str,
     schema_class: str,
-) -> tuple[BlueprintModelT, ...]:
-    payload = _read_manager_json_payload(
+) -> tuple[ModelT, ...]:
+    return read_json_model_list_payload(
         path,
+        model,
         missing_class=missing_class,
         parse_class=parse_class,
+        schema_class=schema_class,
+        error_factory=_ManagerBlueprintEffectError,
+        missing_message=f"required Blueprint artifact is missing: {path.name}",
+        read_error_message_prefix="required Blueprint artifact could not be read",
     )
-    if not isinstance(payload, list):
-        raise _ManagerBlueprintEffectError(
-            schema_class,
-            f"{path.name} must be a JSON list",
-        )
-    try:
-        return tuple(model.model_validate(item) for item in payload)
-    except ValidationError as exc:
-        raise _ManagerBlueprintEffectError(
-            schema_class,
-            f"{path.name} failed schema validation: {exc}",
-        ) from exc
-
-
-def _read_manager_json_payload(
-    path: Path,
-    *,
-    missing_class: str,
-    parse_class: str,
-) -> object:
-    if not path.exists():
-        raise _ManagerBlueprintEffectError(
-            missing_class,
-            f"required Blueprint artifact is missing: {path.name}",
-        )
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise _ManagerBlueprintEffectError(
-            missing_class,
-            f"required Blueprint artifact could not be read: {path.name}: {exc}",
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise _ManagerBlueprintEffectError(
-            parse_class,
-            f"{path.name} is not valid JSON: {exc}",
-        ) from exc
 
 
 def _manager_manifest_exists_equivalent(
@@ -858,13 +851,12 @@ def _manager_success_result(
     message: str,
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
 ) -> RuntimeEffectResult:
-    return RuntimeEffectResult(
-        handler_id=MANAGER_BLUEPRINT_OPERATION_ID,
-        decision=RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE,
+    return complete_source_success_result(
+        MANAGER_BLUEPRINT_OPERATION_ID,
         created_paths=tuple(created_paths),
         source_lifecycle_intent=source_lifecycle_intent,
         message=message,
-        mutation_journal=_runtime_mutation_journal(mutation_journal),
+        mutation_journal=mutation_journal,
     )
 
 
@@ -877,27 +869,16 @@ def _manager_failure_result(
     include_source_lifecycle_intent: bool = True,
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
 ) -> RuntimeEffectResult:
-    return RuntimeEffectResult(
-        handler_id=MANAGER_BLUEPRINT_OPERATION_ID,
-        decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
-        created_paths=tuple(created_paths),
-        source_lifecycle_intent=(
-            _source_lifecycle_intent(
-                stage_result,
-                plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
-                action=SourceLifecycleAction.BLOCK,
-            )
-            if include_source_lifecycle_intent
-            else None
-        ),
+    return block_source_failure_result(
+        MANAGER_BLUEPRINT_OPERATION_ID,
+        stage_result,
         failure_class=failure_class,
         message=message,
-        mutation_phase=(
-            RuntimeEffectMutationPhase.PARTIAL_MUTATION
-            if created_paths
-            else RuntimeEffectMutationPhase.PRE_MUTATION
-        ),
-        mutation_journal=_runtime_mutation_journal(mutation_journal),
+        created_paths=created_paths,
+        lifecycle_plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
+        include_source_lifecycle_intent=include_source_lifecycle_intent,
+        mutation_journal=mutation_journal,
+        context="Blueprint runtime effect",
     )
 
 
@@ -963,16 +944,13 @@ def _append_lifecycle_journal(
     mutation_journal: Sequence[dict[str, JsonValue]],
     lifecycle_entry: dict[str, JsonValue] | None,
 ) -> tuple[dict[str, JsonValue], ...]:
-    entries = list(mutation_journal)
-    if lifecycle_entry is not None:
-        entries.append(lifecycle_entry)
-    return _runtime_mutation_journal(entries)
+    return append_lifecycle_journal(mutation_journal, lifecycle_entry)
 
 
 def _runtime_mutation_journal(
     entries: Sequence[dict[str, JsonValue]],
 ) -> tuple[dict[str, JsonValue], ...]:
-    return tuple(dict(entry) for entry in entries)
+    return runtime_mutation_journal(entries)
 
 
 def _validate_manager_output(
@@ -1023,18 +1001,16 @@ def _source_lifecycle_intent(
     plan_id: str,
     action: SourceLifecycleAction,
 ) -> SourceLifecycleIntent:
-    return SourceLifecycleIntent(
-        lifecycle_plan_id=plan_id,
+    return source_lifecycle_intent(
+        stage_result,
+        plan_id=plan_id,
         action=action,
-        work_item_kind=_stage_result_work_item_kind(stage_result),
-        work_item_id=stage_result.work_item_id,
+        context="Blueprint runtime effect",
     )
 
 
 def _stage_result_work_item_kind(stage_result: StageResultEnvelope) -> WorkItemKind:
-    if stage_result.work_item_kind is None:
-        raise QueueStateError("Blueprint runtime effect requires stage result work_item_kind")
-    return stage_result.work_item_kind
+    return stage_result_work_item_kind(stage_result, context="Blueprint runtime effect")
 
 
 def _complete_lifecycle_plan_id(work_item_kind: WorkItemKind) -> str:
@@ -1058,15 +1034,11 @@ def _block_lifecycle_plan_id(work_item_kind: WorkItemKind) -> str:
 
 
 def _effect_path(paths: WorkspacePaths, path: Path) -> str:
-    return path.relative_to(paths.root).as_posix()
+    return effect_path(paths, path)
 
 
-def _normalized_blueprint_model_payload(document: BaseModel) -> str:
-    return json.dumps(
-        document.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+def _normalized_blueprint_model_payload(document: ModelT) -> str:
+    return normalized_model_payload(document)
 
 
 def _manager_draft_identity_payload(draft: BlueprintDraftDocument) -> str:
@@ -1186,22 +1158,26 @@ def _candidate_markdown_path(paths: WorkspacePaths, blueprint_id: str) -> Path:
 
 
 def _normalized_markdown_content(content: str) -> str:
-    return content.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized_markdown_content(content)
 
 
 def _copy_unique_file(source: Path, destination: Path) -> None:
-    if destination.exists():
-        raise QueueStateError(f"Blueprint artifact already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = destination.with_name(f".{destination.name}.tmp")
-    copyfile(source, tmp_path)
-    tmp_path.replace(destination)
+    try:
+        copy_unique_file(
+            source,
+            destination,
+            exists_message=f"Blueprint artifact already exists: {destination}",
+        )
+    except FileExistsError as exc:
+        raise QueueStateError(str(exc)) from exc
 
 
-def _read_json_model(path: Path, model: type[BlueprintModelT]) -> BlueprintModelT:
-    if not path.exists():
-        raise QueueStateError(f"required Blueprint artifact is missing: {path.name}")
-    return model.model_validate_json(path.read_text(encoding="utf-8"))
+def _read_json_model(path: Path, model: type[ModelT]) -> ModelT:
+    return read_json_model(
+        path,
+        model,
+        missing_message=f"required Blueprint artifact is missing: {path.name}",
+    )
 
 
 def _contractor_failure_result(
@@ -1212,23 +1188,15 @@ def _contractor_failure_result(
     created_paths: Sequence[str],
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
 ) -> RuntimeEffectResult:
-    return RuntimeEffectResult(
-        handler_id=CONTRACTOR_BLUEPRINT_OPERATION_ID,
-        decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
-        created_paths=tuple(created_paths),
-        source_lifecycle_intent=_source_lifecycle_intent(
-            stage_result,
-            plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
-            action=SourceLifecycleAction.BLOCK,
-        ),
+    return block_source_failure_result(
+        CONTRACTOR_BLUEPRINT_OPERATION_ID,
+        stage_result,
         failure_class=failure_class,
         message=message,
-        mutation_phase=(
-            RuntimeEffectMutationPhase.PARTIAL_MUTATION
-            if created_paths
-            else RuntimeEffectMutationPhase.PRE_MUTATION
-        ),
-        mutation_journal=_runtime_mutation_journal(mutation_journal),
+        created_paths=created_paths,
+        lifecycle_plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
+        mutation_journal=mutation_journal,
+        context="Blueprint runtime effect",
     )
 
 
@@ -1422,8 +1390,10 @@ def _read_blueprint_repair_decision(
     run_dir: Path,
 ) -> BlueprintRepairDecisionDocument:
     try:
-        return parse_resolved_run_artifact_as(
-            resolve_run_artifact(compiled_plan, "blueprint_repair_decision", run_dir),
+        return parse_required_run_artifact_as(
+            compiled_plan,
+            "blueprint_repair_decision",
+            run_dir,
             BlueprintRepairDecisionDocument,
         )
     except RuntimeArtifactError as exc:
@@ -1445,8 +1415,10 @@ def _read_repaired_generated_task(
     run_dir: Path,
 ) -> TaskDocument:
     try:
-        return parse_resolved_run_artifact_as(
-            resolve_run_artifact(compiled_plan, "repaired_generated_task", run_dir),
+        return parse_required_run_artifact_as(
+            compiled_plan,
+            "repaired_generated_task",
+            run_dir,
             TaskDocument,
         )
     except RuntimeArtifactError as exc:
@@ -1468,8 +1440,7 @@ def _ensure_mechanic_report_present(
     run_dir: Path,
 ) -> None:
     try:
-        resolved = resolve_run_artifact(compiled_plan, "mechanic_report", run_dir)
-        resolved.path.read_text(encoding="utf-8")
+        read_required_run_artifact_text(compiled_plan, "mechanic_report", run_dir)
     except RuntimeArtifactError as exc:
         failure_class = (
             "blueprint_repaired_generated_task_missing"
@@ -1930,24 +1901,15 @@ def _ensure_markdown_checksum_matches(
 
 
 def _read_markdown_checksum(path: Path, *, failure_class: str) -> str:
-    try:
-        checksum = path.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise _ApprovalBlueprintEffectError(
-            failure_class,
-            f"markdown checksum cannot be read: {exc}",
-        ) from exc
-    if len(checksum) != 64 or any(char not in "0123456789abcdef" for char in checksum):
-        raise _ApprovalBlueprintEffectError(
-            failure_class,
-            f"markdown checksum is invalid: {path.name}",
-        )
-    return checksum
+    return read_markdown_checksum(
+        path,
+        failure_class=failure_class,
+        error_factory=_ApprovalBlueprintEffectError,
+    )
 
 
 def _normalized_markdown_sha256(content: str) -> str:
-    normalized = _normalized_markdown_content(content).encode("utf-8")
-    return hashlib.sha256(normalized).hexdigest()
+    return normalized_markdown_sha256(content)
 
 
 def _blueprint_critique_exists_equivalent(
@@ -2284,9 +2246,12 @@ def _ensure_contains_all(
     *,
     field_name: str,
 ) -> None:
-    missing = [item for item in expected if item not in actual]
-    if missing:
-        raise ValueError(f"{field_name} missing Blueprint item(s): {', '.join(missing)}")
+    ensure_contains_all(
+        actual,
+        expected,
+        field_name=field_name,
+        missing_label="Blueprint item(s)",
+    )
 
 
 def _move_candidate_markdown(
@@ -2332,23 +2297,15 @@ def _evaluator_failure_result(
     created_paths: Sequence[str],
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
 ) -> RuntimeEffectResult:
-    return RuntimeEffectResult(
-        handler_id=operation_id,
-        decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
-        created_paths=tuple(created_paths),
-        source_lifecycle_intent=_source_lifecycle_intent(
-            stage_result,
-            plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
-            action=SourceLifecycleAction.BLOCK,
-        ),
+    return block_source_failure_result(
+        operation_id,
+        stage_result,
         failure_class=failure_class,
         message=message,
-        mutation_phase=(
-            RuntimeEffectMutationPhase.PARTIAL_MUTATION
-            if created_paths
-            else RuntimeEffectMutationPhase.PRE_MUTATION
-        ),
-        mutation_journal=_runtime_mutation_journal(mutation_journal),
+        created_paths=created_paths,
+        lifecycle_plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
+        mutation_journal=mutation_journal,
+        context="Blueprint runtime effect",
     )
 
 
@@ -2416,7 +2373,7 @@ def _promotion_id(evaluation_id: str) -> str:
 
 
 def _unique_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(values))
+    return unique_tuple(values)
 
 
 __all__ = [
