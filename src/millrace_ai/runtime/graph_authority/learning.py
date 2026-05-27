@@ -17,7 +17,7 @@ def route_learning_stage_result_from_graph(
     stage_result: StageResultEnvelope,
 ) -> RouterDecision:
     validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.LEARNING)
-    source_stage = LearningStageName(stage_result.stage_kind_id)
+    source_stage = LearningStageName(stage_result.stage)
     outcome = LearningTerminalResult(stage_result.terminal_result)
     transition = transition_for_source(graph, source_node_id=stage_result.node_id, outcome=outcome.value)
 

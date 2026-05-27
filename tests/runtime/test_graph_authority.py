@@ -94,6 +94,77 @@ def test_custom_family_entry_key_can_activate_from_compiled_graph(tmp_path: Path
     assert activation.stage is PlanningStageName.PLANNER
 
 
+def test_custom_noncanonical_stage_kind_routes_with_compiled_runtime_stage(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+
+    custom_stage_kind_id = "builder_custom"
+    execution_graph = outcome.active_plan.execution_graph
+    updated_execution_graph = execution_graph.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(
+                    update={
+                        "stage_kind_id": custom_stage_kind_id,
+                        "runtime_stage": ExecutionStageName.BUILDER,
+                    }
+                )
+                if node.node_id == "builder"
+                else node
+                for node in execution_graph.nodes
+            ),
+            "compiled_entries": tuple(
+                entry.model_copy(update={"stage_kind_id": custom_stage_kind_id})
+                if entry.node_id == "builder"
+                else entry
+                for entry in execution_graph.compiled_entries
+            ),
+        }
+    )
+    plan = outcome.active_plan.model_copy(
+        update={
+            "execution_graph": updated_execution_graph,
+            "graphs_by_plane": {
+                **outcome.active_plan.graphs_by_plane,
+                Plane.EXECUTION: updated_execution_graph,
+            },
+        }
+    )
+
+    activation = work_item_activation_for_graph(plan, WorkItemKind.TASK)
+    assert activation.stage is ExecutionStageName.BUILDER
+    assert activation.stage_kind_id == custom_stage_kind_id
+
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    ).model_copy(update={"active_stage_kind_id": custom_stage_kind_id})
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(update={"stage_kind_id": custom_stage_kind_id})
+
+    decision = route_stage_result_from_graph(
+        plan,
+        snapshot,
+        stage_result,
+        RecoveryCounters(),
+        max_fix_cycles=2,
+        max_troubleshoot_attempts_before_consult=2,
+    )
+
+    assert decision.action.value == "run_stage"
+    assert decision.next_stage is ExecutionStageName.CHECKER
+    assert decision.reason == "builder:BUILDER_COMPLETE"
+
+
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
 

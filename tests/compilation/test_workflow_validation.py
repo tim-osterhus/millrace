@@ -1341,7 +1341,7 @@ def test_compile_rejects_graph_route_with_illegal_source_outcome(tmp_path: Path)
     assert "declares illegal outcome NOT_LEGAL for stage kind builder" in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_unmapped_runtime_failure_recovery_stage_kind(
+def test_compile_rejects_custom_stage_kind_without_runtime_stage(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
@@ -1375,7 +1375,22 @@ def test_compile_rejects_unmapped_runtime_failure_recovery_stage_kind(
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
-    assert (
-        "graph planning.standard runtime failure recovery node mechanic "
-        "uses unmapped stage kind diagnostician"
-    ) in _diagnostic_text(outcome)
+    assert "Invalid stage kind definition in asset" in _diagnostic_text(outcome)
+    assert "diagnostician.json" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_stage_kind_runtime_stage_outside_plane(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    builder_payload = _load_json(builder_path)
+    builder_payload["runtime_stage"] = "manager"
+    _write_json(builder_path, builder_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert "Invalid stage kind definition in asset" in _diagnostic_text(outcome)
+    assert "builder.json" in _diagnostic_text(outcome)

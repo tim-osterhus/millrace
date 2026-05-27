@@ -8,7 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from millrace_ai.contracts import CapabilityRequest, Plane, ResultClass
+from millrace_ai.contracts import CapabilityRequest, Plane, ResultClass, StageName
+from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 
 from .common import (
     dedupe_preserve_order,
@@ -43,6 +44,7 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
 
     stage_kind_id: str
     plane: Plane
+    runtime_stage: StageName | None = None
     display_name: str
     default_entrypoint_path: str
     required_skill_paths: tuple[str, ...] = Field(min_length=1)
@@ -74,6 +76,15 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
     @classmethod
     def validate_display_name(cls, value: str) -> str:
         return normalize_nonempty_text(value, field_label="display_name")
+
+    @field_validator("runtime_stage", mode="before")
+    @classmethod
+    def normalize_runtime_stage(cls, value: StageName | str | None) -> StageName | str | None:
+        if value is None:
+            return None
+        if isinstance(value, Enum):
+            return str(value.value)
+        return normalize_canonical_id(str(value), field_label="runtime_stage")
 
     @field_validator("default_entrypoint_path")
     @classmethod
@@ -184,6 +195,35 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
 
     @model_validator(mode="after")
     def validate_contract(self) -> "RegisteredStageKindDefinition":
+        runtime_stage = self.runtime_stage
+        if runtime_stage is None:
+            try:
+                runtime_stage = stage_name_for_plane(self.plane, self.stage_kind_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"stage kind {self.stage_kind_id} must declare runtime_stage because "
+                    "stage_kind_id is not a canonical stage for this plane"
+                ) from exc
+            self.runtime_stage = runtime_stage
+        else:
+            try:
+                stage_name_for_plane(self.plane, runtime_stage.value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"stage kind {self.stage_kind_id} runtime_stage {runtime_stage.value} "
+                    f"must belong to plane {self.plane.value}"
+                ) from exc
+
+        try:
+            canonical_stage = stage_name_for_plane(self.plane, self.stage_kind_id)
+        except ValueError:
+            canonical_stage = None
+        if canonical_stage is not None and self.runtime_stage is not canonical_stage:
+            raise ValueError(
+                f"stage kind {self.stage_kind_id} runtime_stage must match canonical stage "
+                f"{canonical_stage.value}"
+            )
+
         legal = set(self.legal_outcomes)
         if set(self.success_outcomes) - legal:
             raise ValueError("success_outcomes must be a subset of legal_outcomes")

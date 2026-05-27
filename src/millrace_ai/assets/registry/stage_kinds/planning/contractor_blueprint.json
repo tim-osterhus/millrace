@@ -3,6 +3,7 @@
   "kind": "registered_stage_kind",
   "stage_kind_id": "contractor_blueprint",
   "plane": "planning",
+  "runtime_stage": "manager",
   "display_name": "Contractor Blueprint",
   "default_entrypoint_path": "entrypoints/planning/contractor_blueprint.md",
   "required_skill_paths": [

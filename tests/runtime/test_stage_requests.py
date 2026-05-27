@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import millrace_ai.runtime.stage_requests as stage_requests_module
-from millrace_ai.contracts import ClosureTargetState, Plane
+from millrace_ai.contracts import ClosureTargetState, Plane, PlanningStageName
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime.engine import RuntimeEngine
@@ -82,6 +82,8 @@ def test_blueprint_stage_request_carries_model_alias_provenance(
 
     request = engine._build_closure_target_stage_run_request(contractor_plan, target)
 
+    assert request.stage is PlanningStageName.MANAGER
+    assert request.stage_kind_id == "contractor_blueprint"
     assert request.model_name == "gpt-5.5"
     assert request.thinking_level == "xhigh"
     assert request.closure_target_root_source_kind == "idea"

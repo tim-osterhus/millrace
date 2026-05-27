@@ -37,7 +37,7 @@ def route_execution_stage_result_from_graph(
     max_troubleshoot_attempts_before_consult: int,
 ) -> RouterDecision:
     validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.EXECUTION)
-    source_stage = ExecutionStageName(stage_result.stage_kind_id)
+    source_stage = ExecutionStageName(stage_result.stage)
     outcome = ExecutionTerminalResult(stage_result.terminal_result)
     source_node_id = stage_result.node_id
 

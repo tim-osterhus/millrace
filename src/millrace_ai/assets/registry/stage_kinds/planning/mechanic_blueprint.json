@@ -3,6 +3,7 @@
   "kind": "registered_stage_kind",
   "stage_kind_id": "mechanic_blueprint",
   "plane": "planning",
+  "runtime_stage": "mechanic",
   "display_name": "Mechanic Blueprint",
   "default_entrypoint_path": "entrypoints/planning/mechanic_blueprint.md",
   "required_skill_paths": [

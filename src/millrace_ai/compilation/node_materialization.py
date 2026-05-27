@@ -61,6 +61,11 @@ def materialize_graph_node_plan(
     loop_id: str,
 ) -> MaterializedGraphNodePlan:
     stage_kind = stage_kinds[node.stage_kind_id]
+    runtime_stage = stage_kind.runtime_stage
+    if runtime_stage is None:
+        raise ValueError(
+            f"stage kind {stage_kind.stage_kind_id} is missing required runtime_stage"
+        )
     stage_name = stage_name_for_identifier(node.stage_kind_id)
     stage_key = stage_name or node.stage_kind_id
     stage_config = config.stages.get(node.stage_kind_id)
@@ -144,6 +149,7 @@ def materialize_graph_node_plan(
         node_id=node.node_id,
         stage_kind_id=node.stage_kind_id,
         plane=plane,
+        runtime_stage=runtime_stage,
         entrypoint_path=entrypoint_path,
         entrypoint_contract_id=f"{node.node_id}.contract.v1",
         running_status_marker=stage_kind.running_status_marker,

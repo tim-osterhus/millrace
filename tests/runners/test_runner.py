@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from millrace_ai.contracts import ResultClass, TokenUsage
+from millrace_ai.contracts import ExecutionStageName, ResultClass, TokenUsage
 from millrace_ai.runner import (
     RunnerRawResult,
     StageRunRequest,
@@ -233,6 +233,29 @@ def test_normalize_uses_request_policy_not_global_stage_table(tmp_path: Path) ->
     assert envelope.terminal_result.value == "CHECKER_PASS"
     assert envelope.result_class is ResultClass.SUCCESS
     assert envelope.success is True
+
+
+def test_normalize_preserves_noncanonical_stage_kind_identity(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="builder").model_copy(
+        update={
+            "node_id": "builder_custom_node",
+            "stage_kind_id": "builder_custom",
+            "running_status_marker": "BUILDER_CUSTOM_RUNNING",
+        }
+    )
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("analysis output\n### BUILDER_COMPLETE\n", encoding="utf-8")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, stdout_path=stdout_path),
+    )
+
+    assert envelope.stage is ExecutionStageName.BUILDER
+    assert envelope.node_id == "builder_custom_node"
+    assert envelope.stage_kind_id == "builder_custom"
+    assert envelope.terminal_result.value == "BUILDER_COMPLETE"
+    assert envelope.result_class is ResultClass.SUCCESS
 
 
 def test_normalize_uses_root_spec_identity_for_closure_target_requests(tmp_path: Path) -> None:

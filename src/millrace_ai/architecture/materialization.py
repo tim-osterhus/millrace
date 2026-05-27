@@ -13,7 +13,9 @@ from millrace_ai.contracts import (
     Plane,
     PlaneConcurrencyPolicyDefinition,
     ResultClass,
+    StageName,
 )
+from millrace_ai.contracts.stage_metadata import stage_name_for_plane, stage_plane
 
 from .effect_operations import (
     RuntimeEffectOperationDefinition,
@@ -142,6 +144,7 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     node_id: str
     stage_kind_id: str
     plane: Plane
+    runtime_stage: StageName | None = None
     entrypoint_path: str
     entrypoint_contract_id: str | None = None
     running_status_marker: str
@@ -165,6 +168,15 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
 
     @model_validator(mode="after")
     def validate_timeout(self) -> "MaterializedGraphNodePlan":
+        if self.runtime_stage is None:
+            try:
+                self.runtime_stage = stage_name_for_plane(self.plane, self.stage_kind_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"runtime_stage is required for noncanonical stage_kind_id {self.stage_kind_id}"
+                ) from exc
+        elif stage_plane(self.runtime_stage) is not self.plane:
+            raise ValueError("runtime_stage must belong to node plane")
         if self.timeout_seconds < 0:
             raise ValueError("timeout_seconds must be >= 0")
         return self

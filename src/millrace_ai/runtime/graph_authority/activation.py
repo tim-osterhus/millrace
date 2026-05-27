@@ -12,7 +12,7 @@ from millrace_ai.contracts import LearningStageName, Plane, WorkItemKind
 from millrace_ai.contracts.work_refs import family_id_for_work_item_kind, normalize_work_item_family_id
 
 from .models import GraphActivationDecision
-from .stage_mapping import stage_for_stage_kind
+from .stage_mapping import node_plan_by_id
 
 
 def work_item_activation_for_graph(
@@ -41,7 +41,7 @@ def learning_stage_activation_for_graph(
     if graph_plan.learning_graph is None:
         raise ValueError("compiled graph is missing learning plane")
     for node in graph_plan.learning_graph.nodes:
-        if node.stage_kind_id == target_stage.value:
+        if node.runtime_stage == target_stage:
             return activation_from_node(
                 graph_plan.learning_graph,
                 node.node_id,
@@ -64,11 +64,15 @@ def activation_from_entry(
     for entry in graph.compiled_entries:
         compiled_entry_key = graph_loop_entry_key_value(entry.entry_key)
         if compiled_entry_key == entry_key:
+            node = node_plan_by_id(graph, entry.node_id)
+            runtime_stage = node.runtime_stage
+            if runtime_stage is None:
+                raise ValueError(f"compiled graph node `{node.node_id}` is missing runtime_stage")
             return GraphActivationDecision(
                 plane=graph.plane,
-                stage=stage_for_stage_kind(graph.plane, entry.stage_kind_id),
-                node_id=entry.node_id,
-                stage_kind_id=entry.stage_kind_id,
+                stage=runtime_stage,
+                node_id=node.node_id,
+                stage_kind_id=node.stage_kind_id,
                 entry_key=compiled_entry_key,
             )
     raise ValueError(f"compiled graph is missing `{entry_key}` activation entry")
@@ -82,9 +86,12 @@ def activation_from_node(
 ) -> GraphActivationDecision:
     for node in graph.nodes:
         if node.node_id == node_id:
+            runtime_stage = node.runtime_stage
+            if runtime_stage is None:
+                raise ValueError(f"compiled graph node `{node_id}` is missing runtime_stage")
             return GraphActivationDecision(
                 plane=graph.plane,
-                stage=stage_for_stage_kind(graph.plane, node.stage_kind_id),
+                stage=runtime_stage,
                 node_id=node.node_id,
                 stage_kind_id=node.stage_kind_id,
                 entry_key=entry_key,
@@ -96,11 +103,15 @@ def activation_from_completion_entry(
     graph: FrozenGraphPlanePlan,
     completion_entry: CompiledGraphCompletionEntryPlan,
 ) -> GraphActivationDecision:
+    node = node_plan_by_id(graph, completion_entry.node_id)
+    runtime_stage = node.runtime_stage
+    if runtime_stage is None:
+        raise ValueError(f"compiled graph node `{node.node_id}` is missing runtime_stage")
     return GraphActivationDecision(
         plane=graph.plane,
-        stage=stage_for_stage_kind(graph.plane, completion_entry.stage_kind_id),
-        node_id=completion_entry.node_id,
-        stage_kind_id=completion_entry.stage_kind_id,
+        stage=runtime_stage,
+        node_id=node.node_id,
+        stage_kind_id=node.stage_kind_id,
         entry_key=graph_loop_entry_key_value(completion_entry.entry_key),
     )
 

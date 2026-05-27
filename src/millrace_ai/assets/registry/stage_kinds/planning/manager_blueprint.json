@@ -3,6 +3,7 @@
   "kind": "registered_stage_kind",
   "stage_kind_id": "manager_blueprint",
   "plane": "planning",
+  "runtime_stage": "manager",
   "display_name": "Manager Blueprint",
   "default_entrypoint_path": "entrypoints/planning/manager_blueprint.md",
   "required_skill_paths": [

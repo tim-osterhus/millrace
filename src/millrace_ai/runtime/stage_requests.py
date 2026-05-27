@@ -18,6 +18,7 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 from millrace_ai.errors import StageWorkItemOwnershipError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.router import RouterAction, RouterDecision
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
 
 from .active_runs import active_run_for_plane
 from .error_recovery import build_runtime_error_request_fields
-from .graph_authority.stage_mapping import stage_for_stage_kind
 from .request_context import attach_default_request_context
 from .skill_evidence import write_skill_revision_evidence
 
@@ -315,10 +315,7 @@ def stage_plan_for(
             if node.plane is plane and node.node_id == node_id:
                 return node
     for node in graph.nodes:
-        if node.plane is plane and node.stage_kind_id == stage.value:
-            return node
-    for node in graph.nodes:
-        if node.plane is plane and stage_for_stage_kind(plane, node.stage_kind_id) == stage:
+        if node.plane is plane and node.runtime_stage == stage:
             return node
     raise KeyError(f"No compiled graph node plan for {plane.value}:{stage.value}")
 
@@ -451,7 +448,9 @@ def now() -> datetime:
 
 
 def _stage_name_for_node_plan(stage_plan: MaterializedGraphNodePlan) -> StageName:
-    return stage_for_stage_kind(stage_plan.plane, stage_plan.stage_kind_id)
+    if stage_plan.runtime_stage is not None:
+        return stage_plan.runtime_stage
+    return stage_name_for_plane(stage_plan.plane, stage_plan.stage_kind_id)
 
 
 def _status_file_for_plane(engine: RuntimeEngine, plane: Plane) -> Path:
