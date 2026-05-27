@@ -40,7 +40,9 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   (`compilation/validation/__init__.py`) with focused validator modules for
   graphs, stages, modes/model-assignment maps, artifact/document contracts,
   work-family queue policy checks, request-context profile authority, lifecycle
-  checks, and lane conflict coverage.
+  checks, lane conflict coverage, runtime-effect handlers/rules/operations,
+  operation-runner registry checks, runtime failure/recovery policy checks, and
+  generic repair-closure validation.
 - `config/` owns runtime config models, loading, TOML-preserving mutations, and
   config-change boundary classification.
 - `contracts/` owns canonical typed runtime contracts behind the
@@ -116,6 +118,10 @@ preserved unless an ADR or release note explicitly removes them:
   `ControlActionResult` from `runtime/control.py`.
 - `src/millrace_ai/__init__.py` intentionally exposes only `__version__`; richer
   surfaces live in named modules or package facades.
+- `src/millrace_ai/compilation/validation/__init__.py` is the stable compiler
+  validation facade; focused sibling modules own validator families.
+- `src/millrace_ai/compilation/effect_operations.py` remains a thin
+  compatibility facade for runtime-effect operation validation.
 - Package `__init__.py` files are public facades when they define `__all__`:
   `architecture`, `assets`, `assets.entrypoints`, `cli.status`, `compilation`,
   `config`, `contracts`, `doctor`, `runners`, `runners.normalization`,
@@ -316,15 +322,15 @@ cycles:
   without blocking config load.
 - `compilation/validation/` is the compiler-validation package facade that
   preserves the public `millrace_ai.compilation.validation` import surface.
-  The legacy compatibility implementation currently remains in
-  `compilation/validation.py`, and `compilation/validation/diagnostics.py`
-  owns tiny shared diagnostics helpers while validator-family decomposition
-  proceeds. Generic cross-asset compile checks for `route_to_node` repair
-  closure resolution (operation/failure scope, target-node outcome binding,
-  evidence artifacts, family scope, resume guards, and partial-mutation
-  support) remain in the legacy implementation; Blueprint recovery routes are
-  one instance of that generic validator, not a separate architectural
-  authority path.
+  `compilation/validation/diagnostics.py` owns tiny shared diagnostics helpers,
+  while focused modules own graph, stage, mode, artifact, work-family,
+  lifecycle, request-context, lane-conflict, runtime-effect, failure-policy,
+  and repair-closure checks. Generic cross-asset compile checks for
+  `route_to_node` repair closure resolution (operation/failure scope,
+  target-node outcome binding, evidence artifacts, family scope, resume guards,
+  and partial-mutation support) live in `compilation/validation/repair_closures.py`;
+  Blueprint recovery routes are one instance of that generic validator, not a
+  separate architectural authority path.
 - `contracts/` is the typed contract package behind the stable
   `millrace_ai.contracts` facade. Enums, stage metadata, work documents,
   execution-capability grants, stage-result envelopes, compiled graph exports,

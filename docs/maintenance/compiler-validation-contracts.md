@@ -1,11 +1,9 @@
 # Compiler Validation Contracts
 
-This page characterizes compiler validation behavior from the legacy
-implementation in `src/millrace_ai/compilation/validation.py`, exposed through
-the package facade in `src/millrace_ai/compilation/validation/__init__.py`.
-Batch 2 does not move production code; it records the behaviors, diagnostics,
-and focused test gaps that Batch 5 must preserve while extracting validator
-families.
+This page characterizes compiler validation behavior exposed through the
+package facade in `src/millrace_ai/compilation/validation/__init__.py`.
+Earlier batches recorded the behaviors, diagnostics, and focused test gaps that
+the validator-family extraction had to preserve.
 
 Diagnostic stability here means preserving useful substrings. The compiler does
 not expose structured validation error codes for these checks.
@@ -28,8 +26,8 @@ under `src/millrace_ai/compilation/validation/`:
 - `__init__.py` as the orchestration facade keeping public imports stable
 
 Runtime-effect handler/rule validation, recovery policies, runtime failure
-policies, and repair-closure validation remain intentionally deferred to Packet
-03 and continue to execute through the legacy validator owner.
+policies, and repair-closure validation were intentionally deferred to Packet
+03, which extracted them into their own modules.
 
 Representative direct invalid-asset coverage for extracted families now includes:
 
@@ -38,6 +36,28 @@ Representative direct invalid-asset coverage for extracted families now includes
 - mode model-binding out-of-scope stage maps
 - lifecycle unknown runtime effect rules and lifecycle source family/node checks
 - lane concurrency tuple arity checks
+
+## Batch 6 Packet 03 Status
+
+Packet 03 extracts the remaining runtime-effect and failure-policy validator
+families from the package facade into focused modules under
+`src/millrace_ai/compilation/validation/`:
+
+- `operation_runners.py` for runtime-effect runner ownership and legacy alias
+  registry validation/resolution helpers
+- `runtime_effects.py` for runtime-effect handler/rule validation and operation
+  catalog checks
+- `failure_policies.py` for workflow recovery policy and runtime failure policy
+  scope/plane/node checks
+- `repair_closures.py` for generic route-to-node repair-closure validation
+  (operation/failure resolution, mapping drift checks, evidence requirements,
+  resume guard checks)
+- `__init__.py` now calls these modules directly
+- `src/millrace_ai/compilation/effect_operations.py` is a compatibility facade
+  over the extracted runtime-effect operation validator
+
+The previous monolithic `compilation/validation.py` module has been removed.
+Normal imports continue to resolve through the package facade.
 
 ## Validation Groups
 

@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from collections.abc import Callable
-from pathlib import Path
-from types import ModuleType
-from typing import cast
-
 from millrace_ai.architecture import FrozenGraphPlanePlan, RegisteredStageKindDefinition
 from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane
 
-from ..effect_operations import validate_runtime_effect_operations
 from .artifacts import validate_artifact_contracts, validate_document_adapters
+from .failure_policies import (
+    validate_recovery_policies,
+    validate_runtime_failure_policies,
+)
 from .graphs import (
     graph_nodes_by_id,
     validate_graph_terminal_artifact_references,
@@ -24,6 +20,11 @@ from .lane_conflicts import validate_lane_conflict_coverage
 from .lifecycle import validate_lifecycle_plans, validate_terminal_actions
 from .modes import validate_mode_stage_maps
 from .request_context_profiles import validate_request_context_profiles
+from .runtime_effects import (
+    validate_runtime_effect_handlers,
+    validate_runtime_effect_operations,
+    validate_runtime_effect_rules,
+)
 from .stages import (
     stage_kinds_by_node_id,
     validate_entry_coverage,
@@ -35,43 +36,6 @@ from .work_families import (
     validate_graph_entries_are_claimable,
     validate_queue_claim_policies,
     validate_queue_lifecycle_adapters,
-)
-
-_LEGACY_MODULE_NAME = "millrace_ai.compilation._validation_legacy"
-
-
-def _load_legacy_validation_module() -> ModuleType:
-    loaded_module = sys.modules.get(_LEGACY_MODULE_NAME)
-    if loaded_module is not None:
-        return loaded_module
-
-    legacy_module_path = Path(__file__).resolve().parents[1] / "validation.py"
-    spec = importlib.util.spec_from_file_location(_LEGACY_MODULE_NAME, legacy_module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load compiler validation module from {legacy_module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[_LEGACY_MODULE_NAME] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_legacy_module = _load_legacy_validation_module()
-_validate_runtime_effect_handlers = cast(
-    Callable[..., None],
-    getattr(_legacy_module, "_validate_runtime_effect_handlers"),
-)
-_validate_runtime_effect_rules = cast(
-    Callable[..., None],
-    getattr(_legacy_module, "_validate_runtime_effect_rules"),
-)
-_validate_recovery_policies = cast(
-    Callable[..., None],
-    getattr(_legacy_module, "_validate_recovery_policies"),
-)
-_validate_runtime_failure_policies = cast(
-    Callable[..., None],
-    getattr(_legacy_module, "_validate_runtime_failure_policies"),
 )
 
 
@@ -203,12 +167,12 @@ def validate_workflow_primitives(
         stage_kinds=stage_kinds,
         lifecycle_plan_ids=lifecycle_plans_by_id,
     )
-    _validate_runtime_effect_handlers(
+    validate_runtime_effect_handlers(
         artifact_contracts_by_id=artifact_contracts_by_id,
         families_by_id=families_by_id,
         runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
     )
-    _validate_runtime_effect_rules(
+    validate_runtime_effect_rules(
         artifact_contracts_by_id=artifact_contracts_by_id,
         families_by_id=families_by_id,
         lifecycle_plans_by_id=lifecycle_plans_by_id,
@@ -227,13 +191,13 @@ def validate_workflow_primitives(
         runtime_effect_operations_by_id=runtime_effect_operations_by_id,
         runtime_effect_runners_by_id=runtime_effect_runners_by_id,
     )
-    _validate_recovery_policies(
+    validate_recovery_policies(
         workflow_primitives=workflow_primitives,
         stage_kinds_by_node_id=stage_kinds_by_node,
         stage_kinds=stage_kinds,
         terminal_state_ids=terminal_state_ids,
     )
-    _validate_runtime_failure_policies(
+    validate_runtime_failure_policies(
         workflow_primitives=workflow_primitives,
         artifact_contracts_by_id=artifact_contracts_by_id,
         families_by_id=families_by_id,

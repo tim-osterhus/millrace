@@ -42,7 +42,7 @@ remaining debt is now owned by
 | --- | --- | --- |
 | MR-MAINT-001 | FU-2 | `runtime/blueprint_effects.py` and `runtime/effects/operations.py` stay compatibility facades; operation implementations live under `runtime/effects/operation_runners/`. |
 | MR-MAINT-002 | FU-1 | Runtime effect dispatch becomes operation-id first while legacy handler metadata remains compatibility-only. |
-| MR-MAINT-003 | FU-6 | Compiler validation moves only after public symbols, operation dispatch, repair closure, and request/family seams are stable. |
+| MR-MAINT-003 | Complete | FU-6 split compiler validation into focused validator-family modules behind the stable package facade. |
 | MR-MAINT-004 | FU-7 | Workflow primitive contracts move after the public architecture export inventory is tested. |
 | MR-MAINT-005 | FU-4, FU-8 | Queue/lifecycle adapter work lands first; blocked recovery decomposition follows after adapter APIs are stable. |
 | MR-MAINT-006 | FU-8 | Runtime error recovery waits for lower-level dispatch, repair, request, and family seams. |
@@ -58,7 +58,7 @@ remaining debt is now owned by
 | --- | --- | --- | --- | --- | --- |
 | MR-MAINT-001 | `src/millrace_ai/runtime/effects/operation_runners/` | Blueprint durable mutation has moved to focused operation runners; legacy facades and handler-id compatibility surfaces remain. | Medium | Batch A | Required |
 | MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Core effect dispatch resolves operations through a registry seam, but failure routing and compatibility metadata still partly key on handler ids. | High | Batch A | Required |
-| MR-MAINT-003 | `src/millrace_ai/compilation/validation.py` | Many unrelated compiler rule families accumulate in one validation module. | High | Batch C | Required |
+| MR-MAINT-003 | `src/millrace_ai/compilation/validation/` | Compiler rule families now live in focused validator modules behind one package facade. | Complete | Batch C | Complete |
 | MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives.py` | Workflow primitive contracts span many contract families in one schema module. | Medium-high | Batch C | Required |
 | MR-MAINT-005 | `src/millrace_ai/runtime/blocked_recovery.py` | Blocked metadata, retry eligibility, queue mutation, lineage guards, and auto-recovery share one module. | High | Batch D | Optional, recommended |
 | MR-MAINT-006 | `src/millrace_ai/runtime/error_recovery.py` | Runtime exception context, repair routing, snapshot mutation, and reports are interleaved. | High | Batch D | Optional, recommended |
@@ -71,9 +71,9 @@ remaining debt is now owned by
 Batch B status: MR-MAINT-008, MR-MAINT-009, and MR-MAINT-010 landed in
 Batch 3 as behavior-preserving package splits with compatibility facades.
 
-Latest repo-shape snapshot from FU-2 Packet 03:
+Historical repo-shape snapshot from FU-2 Packet 03:
 
-- Largest source modules: `compilation/validation.py` (1494 lines),
+- Largest source modules at that point: `compilation/validation.py` (1494 lines),
   `architecture/workflow_primitives.py` (1408 lines),
   `runtime/effects/operation_runners/blueprint_evaluator.py` (1253 lines),
   `runtime/blocked_recovery.py` (1159 lines), and
@@ -172,13 +172,13 @@ decoupling track.
 
 ### MR-MAINT-003: Compiler Validation
 
-Source: `src/millrace_ai/compilation/validation.py`
+Source: `src/millrace_ai/compilation/validation/`
 
-Reason to change: The module validates mode maps, workflow primitive closure,
-graph topology, queue claim policy, artifact contracts, request-context
-profiles, lifecycle plans, runtime effects, recovery policies, failure
-policies, lane conflicts, and generic repair-route closure. New
-compiler features currently have a natural tendency to land in the same file.
+Status: Complete. The previous monolithic module was replaced by a package
+facade with focused validator-family modules for mode maps, workflow primitive
+closure, graph topology, queue claim policy, artifact contracts,
+request-context profiles, lifecycle plans, runtime effects, recovery policies,
+failure policies, lane conflicts, and generic repair-route closure.
 
 Blast radius: All mode compilation, shipped graph validation, custom workflow
 assets, compile diagnostics, stale-plan safety, loop authoring docs, and CLI

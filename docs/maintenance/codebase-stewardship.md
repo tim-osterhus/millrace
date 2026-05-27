@@ -44,7 +44,7 @@ Observed on Windows before follow-up Batch 0 source movement:
 Largest remaining source modules at this baseline:
 
 - `src/millrace_ai/runtime/effects/operations.py`: 2433 lines
-- `src/millrace_ai/compilation/validation.py`: 1382 lines
+- former `compilation/validation.py`: 1382 lines
 - `src/millrace_ai/architecture/workflow_primitives.py`: 1277 lines
 - `src/millrace_ai/runtime/blocked_recovery.py`: 1159 lines
 - `src/millrace_ai/runtime/request_context.py`: 987 lines
