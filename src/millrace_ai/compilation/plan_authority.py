@@ -12,6 +12,8 @@ _REQUIRED_WORKFLOW_AUTHORITY_ASSET_FAMILIES = frozenset(
         "runtime_effect_store",
         "runtime_effect_validator",
         "request_context_profile",
+        "request_context_provider",
+        "request_context_render_plan",
     }
 )
 
@@ -26,6 +28,9 @@ def has_required_workflow_authority(plan: CompiledRunPlan) -> bool:
         or not plan.runtime_effect_operations_by_id
         or not plan.effect_stores_by_id
         or not plan.effect_validators_by_id
+        or not plan.request_context_profiles_by_id
+        or not plan.request_context_providers_by_id
+        or not plan.request_context_render_plans_by_id
     ):
         return False
 

@@ -190,12 +190,17 @@ def compile_compiled_run_plan(
         for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
     }
     workflow_primitives = load_builtin_workflow_primitives(assets_root=assets_root)
+    request_context_profiles_by_id = _map_by_attr(
+        workflow_primitives.request_context_profiles,
+        "profile_id",
+    )
     graphs_by_plane = {
         plane: materialize_graph_plane_plan(
             graph_loop=graph_loop,
             mode=mode,
             config=config,
             stage_kinds=stage_kinds,
+            request_context_profiles_by_id=request_context_profiles_by_id,
         )
         for plane, graph_loop in graph_loops.items()
     }
@@ -271,6 +276,15 @@ def compile_compiled_run_plan(
                     workflow_primitives.lifecycle_mutation_plans,
                     "plan_id",
                 ),
+                "request_context_profiles_by_id": request_context_profiles_by_id,
+                "request_context_providers_by_id": _map_by_attr(
+                    workflow_primitives.request_context_providers,
+                    "provider_id",
+                ),
+                "request_context_render_plans_by_id": _map_by_attr(
+                    workflow_primitives.request_context_render_plans,
+                    "render_plan_id",
+                ),
                 "runtime_effect_handlers_by_id": _map_by_attr(
                     workflow_primitives.runtime_effect_handlers,
                     "handler_id",
@@ -341,6 +355,15 @@ def compile_compiled_run_plan(
         lifecycle_mutation_plans_by_id=_map_by_attr(
             workflow_primitives.lifecycle_mutation_plans,
             "plan_id",
+        ),
+        request_context_profiles_by_id=request_context_profiles_by_id,
+        request_context_providers_by_id=_map_by_attr(
+            workflow_primitives.request_context_providers,
+            "provider_id",
+        ),
+        request_context_render_plans_by_id=_map_by_attr(
+            workflow_primitives.request_context_render_plans,
+            "render_plan_id",
         ),
         runtime_effect_handlers_by_id=_map_by_attr(
             workflow_primitives.runtime_effect_handlers,

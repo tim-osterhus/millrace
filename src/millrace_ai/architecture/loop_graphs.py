@@ -82,12 +82,16 @@ class GraphLoopNodeDefinition(ArchitectureContractModel):
     model_name: str | None = None
     thinking_level: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1)
+    request_context_profile_id: str | None = None
+    context_render_plan_id: str | None = None
     execution_capability_requests: tuple[CapabilityRequest, ...] = ()
     execution_capability_policies: tuple[CapabilityPolicyOverride, ...] = ()
 
-    @field_validator("node_id", "stage_kind_id")
+    @field_validator("node_id", "stage_kind_id", "request_context_profile_id", "context_render_plan_id")
     @classmethod
-    def validate_canonical_ids(cls, value: str, info: object) -> str:
+    def validate_canonical_ids(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
         field_name = getattr(info, "field_name", None) or "canonical id"
         return normalize_canonical_id(value, field_label=field_name)
 

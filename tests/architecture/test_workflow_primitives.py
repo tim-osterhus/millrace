@@ -13,6 +13,7 @@ from millrace_ai.architecture import (
     OutcomeArtifactDefinition,
     PlaneQueueClaimPolicyDefinition,
     RequestContextProfileDefinition,
+    RequestContextProviderDefinition,
     RequestContextRenderPlan,
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationRunnerDefinition,
@@ -378,6 +379,8 @@ def test_request_context_profile_rejects_unsafe_output_path_preference() -> None
         RequestContextProfileDefinition(
             profile_id="builder.default",
             request_kind="task",
+            provider_id="generic.active_work_item",
+            primary_render_plan_id="stage_request.default.v1",
             required_providers=("active_work_item",),
             output_path_preferences={"report": "../report.md"},
             visibility_policy="active_item_only",
@@ -468,13 +471,22 @@ def test_exported_primitive_models_round_trip() -> None:
     )
     render_plan = RequestContextRenderPlan(
         render_plan_id="builder.default",
-        profile_id="builder.default",
         bundle_schema_version="1.0",
-        section_order=("active_work_item",),
+        included_sections=("active_work_item",),
+        required_provider_capabilities=("active_work_item",),
         artifact_ref_policy="path_only",
+        prompt_rendering_behavior="default_markdown",
         redaction_policy_id="default",
         max_inline_bytes_by_role={"task": 8192},
         missing_optional_provider_policy="omit",
+    )
+    provider = RequestContextProviderDefinition(
+        provider_id="generic.active_work_item",
+        python_registry_id="generic.active_work_item",
+        supported_request_kinds=("active_work_item",),
+        supported_planes=(Plane.EXECUTION,),
+        capabilities=("active_work_item",),
+        required_workspace_data_surfaces=("active_work_item",),
     )
     completion = WorkflowCompletionBehaviorDefinition(
         behavior_id="planning.closure",
@@ -505,6 +517,7 @@ def test_exported_primitive_models_round_trip() -> None:
     assert partition_selector.model_dump()["selector_id"] == "task.lineage"
     assert outcome_artifacts.model_dump()["outcome_id"] == "BUILDER_COMPLETE"
     assert render_plan.model_dump()["render_plan_id"] == "builder.default"
+    assert provider.model_dump()["provider_id"] == "generic.active_work_item"
     assert completion.model_dump()["behavior_id"] == "planning.closure"
     assert control.model_dump()["capability_id"] == "task.cancel"
     assert epoch.model_dump()["epoch_id"] == "v0.20"

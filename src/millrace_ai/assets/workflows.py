@@ -14,6 +14,8 @@ from millrace_ai.architecture import (
     LifecycleMutationPlanDefinition,
     PlaneQueueClaimPolicyDefinition,
     RequestContextProfileDefinition,
+    RequestContextProviderDefinition,
+    RequestContextRenderPlan,
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationDefinition,
     RuntimeEffectOperationRunnerDefinition,
@@ -38,6 +40,8 @@ from .effect_operations import (
 ASSETS_ROOT = Path(__file__).resolve().parent
 ARTIFACT_CONTRACT_REGISTRY_ROOT = Path("registry/artifact_contracts")
 REQUEST_CONTEXT_PROFILE_REGISTRY_ROOT = Path("registry/request_context_profiles")
+REQUEST_CONTEXT_PROVIDER_REGISTRY_ROOT = Path("registry/request_context_providers")
+REQUEST_CONTEXT_RENDER_PLAN_REGISTRY_ROOT = Path("registry/request_context_render_plans")
 WORK_ITEM_FAMILY_REGISTRY_ROOT = Path("registry/work_item_families")
 DOCUMENT_ADAPTER_REGISTRY_ROOT = Path("registry/document_adapters")
 QUEUE_CLAIM_POLICY_REGISTRY_ROOT = Path("registry/queue_claim_policies")
@@ -71,6 +75,8 @@ class WorkflowAssetError(AssetValidationError):
 class WorkflowPrimitiveBundle:
     artifact_contracts: tuple[ArtifactContractDefinition, ...]
     request_context_profiles: tuple[RequestContextProfileDefinition, ...]
+    request_context_providers: tuple[RequestContextProviderDefinition, ...]
+    request_context_render_plans: tuple[RequestContextRenderPlan, ...]
     work_item_families: tuple[WorkItemFamilyDefinition, ...]
     document_adapters: tuple[WorkItemDocumentAdapterDefinition, ...]
     queue_claim_policies: tuple[PlaneQueueClaimPolicyDefinition, ...]
@@ -94,6 +100,8 @@ def load_builtin_workflow_primitives(
     return WorkflowPrimitiveBundle(
         artifact_contracts=discover_artifact_contract_definitions(assets_root=assets_root),
         request_context_profiles=discover_request_context_profile_definitions(assets_root=assets_root),
+        request_context_providers=discover_request_context_provider_definitions(assets_root=assets_root),
+        request_context_render_plans=discover_request_context_render_plan_definitions(assets_root=assets_root),
         work_item_families=discover_work_item_family_definitions(assets_root=assets_root),
         document_adapters=discover_work_item_document_adapter_definitions(assets_root=assets_root),
         queue_claim_policies=discover_plane_queue_claim_policy_definitions(assets_root=assets_root),
@@ -183,6 +191,32 @@ def discover_request_context_profile_definitions(
         model=RequestContextProfileDefinition,
         id_attr="profile_id",
         asset_kind="request context profile",
+    )
+
+
+def discover_request_context_provider_definitions(
+    *,
+    assets_root: Path | None = None,
+) -> tuple[RequestContextProviderDefinition, ...]:
+    return _discover_definitions(
+        assets_root=assets_root,
+        registry_root=REQUEST_CONTEXT_PROVIDER_REGISTRY_ROOT,
+        model=RequestContextProviderDefinition,
+        id_attr="provider_id",
+        asset_kind="request context provider",
+    )
+
+
+def discover_request_context_render_plan_definitions(
+    *,
+    assets_root: Path | None = None,
+) -> tuple[RequestContextRenderPlan, ...]:
+    return _discover_definitions(
+        assets_root=assets_root,
+        registry_root=REQUEST_CONTEXT_RENDER_PLAN_REGISTRY_ROOT,
+        model=RequestContextRenderPlan,
+        id_attr="render_plan_id",
+        asset_kind="request context render plan",
     )
 
 
@@ -428,6 +462,8 @@ __all__ = [
     "QUEUE_CLAIM_POLICY_REGISTRY_ROOT",
     "RECOVERY_POLICY_REGISTRY_ROOT",
     "REQUEST_CONTEXT_PROFILE_REGISTRY_ROOT",
+    "REQUEST_CONTEXT_PROVIDER_REGISTRY_ROOT",
+    "REQUEST_CONTEXT_RENDER_PLAN_REGISTRY_ROOT",
     "RUNTIME_EFFECT_HANDLER_REGISTRY_ROOT",
     "RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT",
     "RUNTIME_EFFECT_RULE_REGISTRY_ROOT",
@@ -444,6 +480,8 @@ __all__ = [
     "discover_lifecycle_mutation_plan_definitions",
     "discover_plane_queue_claim_policy_definitions",
     "discover_request_context_profile_definitions",
+    "discover_request_context_provider_definitions",
+    "discover_request_context_render_plan_definitions",
     "discover_runtime_effect_handler_definitions",
     "discover_runtime_effect_runner_definitions",
     "discover_runtime_effect_operation_definitions",

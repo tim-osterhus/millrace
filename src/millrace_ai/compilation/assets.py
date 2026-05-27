@@ -19,6 +19,8 @@ from millrace_ai.assets import (
     QUEUE_CLAIM_POLICY_REGISTRY_ROOT,
     RECOVERY_POLICY_REGISTRY_ROOT,
     REQUEST_CONTEXT_PROFILE_REGISTRY_ROOT,
+    REQUEST_CONTEXT_PROVIDER_REGISTRY_ROOT,
+    REQUEST_CONTEXT_RENDER_PLAN_REGISTRY_ROOT,
     RUNTIME_EFFECT_HANDLER_REGISTRY_ROOT,
     RUNTIME_EFFECT_OPERATION_REGISTRY_ROOT,
     RUNTIME_EFFECT_RULE_REGISTRY_ROOT,
@@ -41,6 +43,8 @@ MISSING_ASSET_TOKEN = "missing"
 _WORKFLOW_PRIMITIVE_REF_SPECS = (
     ("artifact_contract", ARTIFACT_CONTRACT_REGISTRY_ROOT, "artifact_id"),
     ("request_context_profile", REQUEST_CONTEXT_PROFILE_REGISTRY_ROOT, "profile_id"),
+    ("request_context_provider", REQUEST_CONTEXT_PROVIDER_REGISTRY_ROOT, "provider_id"),
+    ("request_context_render_plan", REQUEST_CONTEXT_RENDER_PLAN_REGISTRY_ROOT, "render_plan_id"),
     ("work_item_family", WORK_ITEM_FAMILY_REGISTRY_ROOT, "family_id"),
     ("document_adapter", DOCUMENT_ADAPTER_REGISTRY_ROOT, "adapter_id"),
     ("queue_claim_policy", QUEUE_CLAIM_POLICY_REGISTRY_ROOT, "policy_id"),

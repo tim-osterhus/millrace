@@ -27,6 +27,8 @@ RuntimeEffectHandlerId = str
 RuntimeEffectOperationRunnerId = str
 RuntimeEffectRuleId = str
 RequestContextProfileId = str
+RequestContextProviderId = str
+RequestContextRenderPlanId = str
 ArtifactContractId = str
 RuntimeEffectMutationPhaseValue = Literal["pre_mutation", "partial_mutation", "unknown"]
 
@@ -822,17 +824,57 @@ class OutcomeArtifactDefinition(ArchitectureContractModel):
         return _normalize_unique_id_tuple(value, field_label=info.field_name or "artifact ids", allow_empty=True)
 
 
+class RequestContextProviderDefinition(ArchitectureContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["request_context_provider"] = "request_context_provider"
+    provider_id: RequestContextProviderId
+    python_registry_id: str
+    supported_request_kinds: tuple[str, ...] = Field(min_length=1)
+    supported_planes: tuple[Plane, ...] = Field(min_length=1)
+    capabilities: tuple[str, ...] = Field(min_length=1)
+    required_workspace_data_surfaces: tuple[str, ...] = ()
+
+    @field_validator("provider_id", "python_registry_id")
+    @classmethod
+    def validate_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _canonical(value, info)
+
+    @field_validator(
+        "supported_request_kinds",
+        "capabilities",
+        "required_workspace_data_surfaces",
+        mode="before",
+    )
+    @classmethod
+    def normalize_id_tuples(cls, value: object, info: ValidationInfo) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label=info.field_name or "request context provider id tuple",
+            allow_empty=info.field_name == "required_workspace_data_surfaces",
+        )
+
+    @field_validator("supported_planes")
+    @classmethod
+    def validate_supported_planes(cls, value: tuple[Plane, ...]) -> tuple[Plane, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("supported_planes may not contain duplicate planes")
+        return value
+
+
 class RequestContextProfileDefinition(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["request_context_profile"] = "request_context_profile"
     profile_id: RequestContextProfileId
     request_kind: str
-    required_providers: tuple[str, ...] = Field(min_length=1)
+    provider_id: RequestContextProviderId
+    primary_render_plan_id: RequestContextRenderPlanId
+    allow_render_plan_override: bool = False
+    required_providers: tuple[str, ...] = ()
     optional_providers: tuple[str, ...] = ()
     output_path_preferences: dict[str, str] = Field(default_factory=dict)
     visibility_policy: Literal["active_item_only", "lineage_summary", "lineage_full", "closure_target"]
 
-    @field_validator("profile_id", "request_kind")
+    @field_validator("profile_id", "request_kind", "provider_id", "primary_render_plan_id")
     @classmethod
     def validate_ids(cls, value: str, info: ValidationInfo) -> str:
         return _canonical(value, info)
@@ -868,18 +910,32 @@ class RequestContextProfileDefinition(ArchitectureContractModel):
 class RequestContextRenderPlan(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["request_context_render_plan"] = "request_context_render_plan"
-    render_plan_id: str
-    profile_id: RequestContextProfileId
-    bundle_schema_version: str
-    section_order: tuple[str, ...] = Field(min_length=1)
+    render_plan_id: RequestContextRenderPlanId
+    profile_id: RequestContextProfileId | None = None
+    bundle_schema_version: str = "1.0"
+    included_sections: tuple[str, ...] = Field(min_length=1)
+    required_provider_capabilities: tuple[str, ...] = ()
     artifact_ref_policy: Literal["path_only", "inline_if_small", "summary_only"]
+    prompt_rendering_behavior: Literal["default_markdown", "blueprint_markdown", "closure_markdown"]
     redaction_policy_id: str
     max_inline_bytes_by_role: dict[str, int] = Field(default_factory=dict)
     missing_optional_provider_policy: Literal["omit", "mention_absent"]
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_section_alias(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if "included_sections" not in payload and "section_order" in payload:
+            payload["included_sections"] = payload["section_order"]
+        return payload
+
     @field_validator("render_plan_id", "profile_id", "redaction_policy_id")
     @classmethod
-    def validate_ids(cls, value: str, info: ValidationInfo) -> str:
+    def validate_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None:
+            return None
         return _canonical(value, info)
 
     @field_validator("bundle_schema_version")
@@ -887,10 +943,14 @@ class RequestContextRenderPlan(ArchitectureContractModel):
     def validate_bundle_schema_version(cls, value: str) -> str:
         return normalize_nonempty_text(value, field_label="bundle_schema_version")
 
-    @field_validator("section_order", mode="before")
+    @field_validator("included_sections", "required_provider_capabilities", mode="before")
     @classmethod
-    def normalize_section_order(cls, value: object) -> tuple[str, ...]:
-        return _normalize_unique_id_tuple(value, field_label="section_order", allow_empty=False)
+    def normalize_id_tuples(cls, value: object, info: ValidationInfo) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label=info.field_name or "request context render plan id tuple",
+            allow_empty=info.field_name == "required_provider_capabilities",
+        )
 
     @field_validator("max_inline_bytes_by_role", mode="before")
     @classmethod
@@ -907,6 +967,10 @@ class RequestContextRenderPlan(ArchitectureContractModel):
                 raise ValueError("max_inline_bytes_by_role values must be non-negative")
             normalized[role] = limit
         return normalized
+
+    @property
+    def section_order(self) -> tuple[str, ...]:
+        return self.included_sections
 
 
 class WorkflowCompletionBehaviorDefinition(ArchitectureContractModel):
@@ -1383,7 +1447,10 @@ __all__ = [
     "QueueClaimPolicyId",
     "RequestContextProfileDefinition",
     "RequestContextProfileId",
+    "RequestContextProviderDefinition",
+    "RequestContextProviderId",
     "RequestContextRenderPlan",
+    "RequestContextRenderPlanId",
     "RuntimeEffectHandlerDefinition",
     "RuntimeEffectHandlerId",
     "RuntimeEffectMutationPhaseValue",

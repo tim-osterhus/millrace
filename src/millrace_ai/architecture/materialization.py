@@ -38,6 +38,9 @@ from .workflow_primitives import (
     LaneConflictPolicyDefinition,
     LifecycleMutationPlanDefinition,
     PlaneQueueClaimPolicyDefinition,
+    RequestContextProfileDefinition,
+    RequestContextProviderDefinition,
+    RequestContextRenderPlan,
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
@@ -157,6 +160,8 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     timeout_seconds: int = 0
     execution_capability_grants: tuple[ExecutionCapabilityGrant, ...] = ()
     execution_capability_warnings: tuple[str, ...] = ()
+    request_context_profile_id: str | None = None
+    context_render_plan_id: str | None = None
 
     @model_validator(mode="after")
     def validate_timeout(self) -> "MaterializedGraphNodePlan":
@@ -236,6 +241,9 @@ class CompiledRunPlan(ArchitectureContractModel):
     queue_claim_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition] = Field(default_factory=dict)
     terminal_actions_by_id: dict[str, TerminalActionDefinition] = Field(default_factory=dict)
     lifecycle_mutation_plans_by_id: dict[str, LifecycleMutationPlanDefinition] = Field(default_factory=dict)
+    request_context_profiles_by_id: dict[str, RequestContextProfileDefinition] = Field(default_factory=dict)
+    request_context_providers_by_id: dict[str, RequestContextProviderDefinition] = Field(default_factory=dict)
+    request_context_render_plans_by_id: dict[str, RequestContextRenderPlan] = Field(default_factory=dict)
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition] = Field(default_factory=dict)
     runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition] = Field(default_factory=dict)
     runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition] = Field(default_factory=dict)

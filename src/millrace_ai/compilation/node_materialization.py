@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from millrace_ai.architecture import GraphLoopNodeDefinition, MaterializedGraphNodePlan, RegisteredStageKindDefinition
+from millrace_ai.architecture import (
+    GraphLoopNodeDefinition,
+    MaterializedGraphNodePlan,
+    RegisteredStageKindDefinition,
+    RequestContextProfileDefinition,
+)
 from millrace_ai.architecture.common import dedupe_preserve_order
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -52,6 +57,7 @@ def materialize_graph_node_plan(
     mode: ModeDefinition,
     config: RuntimeConfig,
     stage_kinds: dict[str, RegisteredStageKindDefinition],
+    request_context_profiles_by_id: dict[str, RequestContextProfileDefinition],
     loop_id: str,
 ) -> MaterializedGraphNodePlan:
     stage_kind = stage_kinds[node.stage_kind_id]
@@ -124,6 +130,15 @@ def materialize_graph_node_plan(
     )
     if stage_config is not None and stage_config.timeout_seconds is not None:
         timeout_seconds = stage_config.timeout_seconds
+    request_context_profile_id = node.request_context_profile_id or f"{node.node_id}.default"
+    profile = request_context_profiles_by_id.get(request_context_profile_id)
+    context_render_plan_id = (
+        node.context_render_plan_id
+        if node.context_render_plan_id is not None
+        else profile.primary_render_plan_id
+        if profile is not None
+        else None
+    )
 
     return MaterializedGraphNodePlan(
         node_id=node.node_id,
@@ -147,6 +162,8 @@ def materialize_graph_node_plan(
         timeout_seconds=timeout_seconds,
         execution_capability_grants=capability_grants,
         execution_capability_warnings=capability_warnings,
+        request_context_profile_id=request_context_profile_id,
+        context_render_plan_id=context_render_plan_id,
     )
 
 

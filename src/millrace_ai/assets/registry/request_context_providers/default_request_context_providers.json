@@ -1,0 +1,82 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_provider",
+      "provider_id": "generic.active_work_item",
+      "python_registry_id": "generic.active_work_item",
+      "supported_request_kinds": ["active_work_item"],
+      "supported_planes": ["execution", "planning", "learning"],
+      "capabilities": ["active_work_item"],
+      "required_workspace_data_surfaces": [
+        "active_work_item",
+        "runtime_snapshot",
+        "recovery_counters"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_provider",
+      "provider_id": "generic.closure_target",
+      "python_registry_id": "generic.closure_target",
+      "supported_request_kinds": ["closure_target"],
+      "supported_planes": ["planning"],
+      "capabilities": ["closure_target"],
+      "required_workspace_data_surfaces": [
+        "active_closure_target",
+        "runtime_snapshot",
+        "recovery_counters"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_provider",
+      "provider_id": "blueprint.manager",
+      "python_registry_id": "blueprint.manager",
+      "supported_request_kinds": ["active_work_item"],
+      "supported_planes": ["planning"],
+      "capabilities": ["active_source_work_item", "root_lineage"],
+      "required_workspace_data_surfaces": [
+        "active_work_item",
+        "blueprint_manifest",
+        "root_lineage"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_provider",
+      "provider_id": "blueprint.contractor",
+      "python_registry_id": "blueprint.contractor",
+      "supported_request_kinds": ["active_work_item"],
+      "supported_planes": ["planning"],
+      "capabilities": ["active_blueprint_draft"],
+      "required_workspace_data_surfaces": ["active_blueprint_draft"]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_provider",
+      "provider_id": "blueprint.evaluator",
+      "python_registry_id": "blueprint.evaluator",
+      "supported_request_kinds": ["active_work_item"],
+      "supported_planes": ["planning"],
+      "capabilities": ["active_blueprint_draft", "candidate_blueprint"],
+      "required_workspace_data_surfaces": [
+        "active_blueprint_draft",
+        "candidate_blueprint"
+      ]
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "request_context_provider",
+      "provider_id": "blueprint.mechanic",
+      "python_registry_id": "blueprint.mechanic",
+      "supported_request_kinds": ["active_work_item"],
+      "supported_planes": ["planning"],
+      "capabilities": ["active_work_item", "runtime_failure_context"],
+      "required_workspace_data_surfaces": [
+        "active_work_item",
+        "runtime_failure_context"
+      ]
+    }
+  ]
+}

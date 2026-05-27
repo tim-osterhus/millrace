@@ -7,6 +7,7 @@ from millrace_ai.architecture import (
     FrozenGraphPlanePlan,
     GraphLoopDefinition,
     RegisteredStageKindDefinition,
+    RequestContextProfileDefinition,
 )
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import ModeDefinition, Plane, StageMapKey
@@ -24,6 +25,7 @@ def materialize_graph_plane_plan(
     mode: ModeDefinition,
     config: RuntimeConfig,
     stage_kinds: dict[str, RegisteredStageKindDefinition],
+    request_context_profiles_by_id: dict[str, RequestContextProfileDefinition],
 ) -> FrozenGraphPlanePlan:
     node_plans = tuple(
         materialize_graph_node_plan(
@@ -32,6 +34,7 @@ def materialize_graph_plane_plan(
             mode=mode,
             config=config,
             stage_kinds=stage_kinds,
+            request_context_profiles_by_id=request_context_profiles_by_id,
             loop_id=graph_loop.loop_id,
         )
         for node in graph_loop.nodes

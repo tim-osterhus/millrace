@@ -48,6 +48,24 @@ def _request_context_profiles_path(assets_root: Path) -> Path:
     )
 
 
+def _request_context_providers_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "request_context_providers"
+        / "default_request_context_providers.json"
+    )
+
+
+def _request_context_render_plans_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "request_context_render_plans"
+        / "default_request_context_render_plans.json"
+    )
+
+
 def _runtime_failure_policies_path(assets_root: Path) -> Path:
     return (
         assets_root
@@ -1103,6 +1121,122 @@ def test_compile_rejects_request_context_profile_with_invalid_output_filename(tm
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_materializes_request_context_provider_and_render_plan_authority(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True, outcome.diagnostics.errors
+    assert outcome.active_plan is not None
+    plan = outcome.active_plan
+    assert "builder.default" in plan.request_context_profiles_by_id
+    assert "generic.active_work_item" in plan.request_context_providers_by_id
+    assert "stage_request.default.v1" in plan.request_context_render_plans_by_id
+    builder = next(node for node in plan.execution_graph.nodes if node.node_id == "builder")
+    assert builder.request_context_profile_id == "builder.default"
+    assert builder.context_render_plan_id == "stage_request.default.v1"
+    assert any(
+        ref.asset_family == "request_context_provider"
+        and ref.logical_id == "request_context_provider:generic.active_work_item"
+        for ref in plan.resolved_assets
+    )
+    assert any(
+        ref.asset_family == "request_context_render_plan"
+        and ref.logical_id == "request_context_render_plan:stage_request.default.v1"
+        for ref in plan.resolved_assets
+    )
+
+
+def test_compile_rejects_request_context_profile_with_unknown_provider(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    profiles_path = _request_context_profiles_path(assets_root)
+    payload = _load_json(profiles_path)
+    payload["definitions"][0]["provider_id"] = "ghost.provider"
+    _write_json(profiles_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "request context profile builder.default references unknown provider ghost.provider"
+        in _diagnostic_text(outcome)
+    )
+
+
+def test_compile_rejects_request_context_profile_with_unknown_render_plan(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    profiles_path = _request_context_profiles_path(assets_root)
+    payload = _load_json(profiles_path)
+    payload["definitions"][0]["primary_render_plan_id"] = "ghost.render_plan"
+    _write_json(profiles_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "request context profile builder.default references unknown render plan ghost.render_plan"
+        in _diagnostic_text(outcome)
+    )
+
+
+def test_compile_rejects_request_context_provider_profile_kind_mismatch(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    profiles_path = _request_context_profiles_path(assets_root)
+    payload = _load_json(profiles_path)
+    payload["definitions"][0]["request_kind"] = "closure_target"
+    _write_json(profiles_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "request context profile builder.default request kind closure_target is not "
+        "supported by provider generic.active_work_item"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_request_context_render_plan_missing_provider_capability(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    render_plans_path = _request_context_render_plans_path(assets_root)
+    payload = _load_json(render_plans_path)
+    payload["definitions"][0]["required_provider_capabilities"].append("ghost_capability")
+    _write_json(render_plans_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "requires provider capabilities not declared by generic.active_work_item: "
+        "ghost_capability"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_disallowed_node_context_render_plan_override(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    payload = _load_json(graph_path)
+    payload["nodes"][0]["context_render_plan_id"] = "closure_target.default.v1"
+    _write_json(graph_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "graph node builder overrides request context render plan "
+        "stage_request.default.v1 with closure_target.default.v1, but profile "
+        "builder.default does not allow render plan overrides"
+    ) in _diagnostic_text(outcome)
+
+
 def test_compile_rejects_duplicate_effect_rule_binding(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     rules_dir = assets_root / "registry" / "runtime_effect_rules"
@@ -1115,12 +1249,12 @@ def test_compile_rejects_duplicate_effect_rule_binding(tmp_path: Path) -> None:
                     "schema_version": "1.0",
                     "kind": "runtime_effect_rule",
                     "rule_id": "duplicate_builder_effect_a",
-                    "effect_operation_id": "enqueue_task_a",
+                    "effect_operation_id": "mechanic_blueprint_repair_apply",
                     "source_node_id": "mechanic_blueprint",
-                    "on_outcomes": ["MECHANIC_BLUEPRINT_COMPLETE"],
-                    "handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
-                    "required_run_artifacts": ["blueprint_manifest", "blueprint_drafts"],
-                    "destination_family_id": "blueprint_draft",
+                    "on_outcomes": ["BLOCKED"],
+                    "handler_id": "mechanic_blueprint_repair_apply",
+                    "required_run_artifacts": ["blueprint_repair_decision", "mechanic_report"],
+                    "destination_family_id": "task",
                     "creates_work_items": True,
                     "duplicate_policy": "fail",
                     "partial_commit_policy": "block_source",
@@ -1132,12 +1266,12 @@ def test_compile_rejects_duplicate_effect_rule_binding(tmp_path: Path) -> None:
                     "schema_version": "1.0",
                     "kind": "runtime_effect_rule",
                     "rule_id": "duplicate_builder_effect_b",
-                    "effect_operation_id": "enqueue_task_b",
+                    "effect_operation_id": "mechanic_blueprint_repair_apply",
                     "source_node_id": "mechanic_blueprint",
-                    "on_outcomes": ["MECHANIC_BLUEPRINT_COMPLETE"],
-                    "handler_id": "manager_blueprint_manifest_to_blueprint_drafts",
-                    "required_run_artifacts": ["blueprint_manifest", "blueprint_drafts"],
-                    "destination_family_id": "blueprint_draft",
+                    "on_outcomes": ["BLOCKED"],
+                    "handler_id": "mechanic_blueprint_repair_apply",
+                    "required_run_artifacts": ["blueprint_repair_decision", "mechanic_report"],
+                    "destination_family_id": "task",
                     "creates_work_items": True,
                     "duplicate_policy": "fail",
                     "partial_commit_policy": "block_source",
@@ -1155,7 +1289,7 @@ def test_compile_rejects_duplicate_effect_rule_binding(tmp_path: Path) -> None:
     assert outcome.active_plan is None
     assert (
         "runtime effect rules duplicate_builder_effect_a and duplicate_builder_effect_b "
-        "both bind mechanic_blueprint outcome MECHANIC_BLUEPRINT_COMPLETE"
+        "both bind mechanic_blueprint outcome BLOCKED"
     ) in _diagnostic_text(outcome)
 
 

@@ -14,6 +14,8 @@ from millrace_ai.assets import (
     discover_artifact_contract_definitions,
     discover_plane_queue_claim_policy_definitions,
     discover_request_context_profile_definitions,
+    discover_request_context_provider_definitions,
+    discover_request_context_render_plan_definitions,
     discover_work_item_family_definitions,
     discover_workspace_schema_epoch_definitions,
     load_builtin_work_item_family_definitions,
@@ -320,6 +322,12 @@ def test_builtin_workflow_primitives_load_as_bundle() -> None:
     assert "evaluator_blueprint.default" in {
         profile.profile_id for profile in bundle.request_context_profiles
     }
+    assert "generic.active_work_item" in {
+        provider.provider_id for provider in bundle.request_context_providers
+    }
+    assert "stage_request.default.v1" in {
+        render_plan.render_plan_id for render_plan in bundle.request_context_render_plans
+    }
     assert bundle.recovery_policies
     assert bundle.runtime_failure_policies
     assert bundle.workspace_schema_epoch is not None
@@ -373,6 +381,8 @@ def test_discover_request_context_profile_definitions_loads_default_profiles() -
     profiles = discover_request_context_profile_definitions()
     by_id = {profile.profile_id: profile for profile in profiles}
 
+    assert by_id["builder.default"].provider_id == "generic.active_work_item"
+    assert by_id["builder.default"].primary_render_plan_id == "stage_request.default.v1"
     assert by_id["builder.default"].output_path_preferences == {
         "builder_summary": "builder_summary.md",
     }
@@ -386,6 +396,35 @@ def test_discover_request_context_profile_definitions_loads_default_profiles() -
         "generated_task": "generated_task.json",
         "blueprint_evaluation_report": "evaluator_blueprint_report.md",
     }
+
+
+def test_discover_request_context_provider_and_render_plan_definitions_load() -> None:
+    providers = {
+        provider.provider_id: provider
+        for provider in discover_request_context_provider_definitions()
+    }
+    render_plans = {
+        render_plan.render_plan_id: render_plan
+        for render_plan in discover_request_context_render_plan_definitions()
+    }
+
+    assert providers["generic.active_work_item"].python_registry_id == "generic.active_work_item"
+    assert providers["generic.active_work_item"].supported_planes == (
+        Plane.EXECUTION,
+        Plane.PLANNING,
+        Plane.LEARNING,
+    )
+    assert providers["blueprint.evaluator"].capabilities == (
+        "active_blueprint_draft",
+        "candidate_blueprint",
+    )
+    assert render_plans["stage_request.default.v1"].included_sections == (
+        "active_work_item",
+    )
+    assert render_plans["blueprint.evaluator.default.v1"].required_provider_capabilities == (
+        "active_blueprint_draft",
+        "candidate_blueprint",
+    )
 
 
 def test_workflow_primitives_discover_custom_work_item_families(tmp_path: Path) -> None:
