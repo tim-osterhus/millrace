@@ -39,6 +39,7 @@ from .workflow_primitives import (
     LifecycleMutationPlanDefinition,
     PlaneQueueClaimPolicyDefinition,
     RuntimeEffectHandlerDefinition,
+    RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeFailurePolicyDefinition,
     TerminalActionDefinition,
@@ -236,6 +237,7 @@ class CompiledRunPlan(ArchitectureContractModel):
     terminal_actions_by_id: dict[str, TerminalActionDefinition] = Field(default_factory=dict)
     lifecycle_mutation_plans_by_id: dict[str, LifecycleMutationPlanDefinition] = Field(default_factory=dict)
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition] = Field(default_factory=dict)
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition] = Field(default_factory=dict)
     runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition] = Field(default_factory=dict)
     effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition] = Field(default_factory=dict)
     effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition] = Field(default_factory=dict)

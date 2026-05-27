@@ -15,7 +15,8 @@
           "renderer_id": "builtin.json"
         }
       ],
-      "consumer_handler_ids": ["fixture_echo_effect"]
+      "consumer_handler_ids": ["fixture_echo_effect"],
+      "consumer_operation_ids": ["fixture_echo_effect"]
     }
   ]
 }

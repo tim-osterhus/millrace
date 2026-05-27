@@ -5,6 +5,7 @@ from __future__ import annotations
 from millrace_ai.architecture import (
     ArtifactContractDefinition,
     RuntimeEffectOperationDefinition,
+    RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
@@ -42,8 +43,14 @@ def validate_runtime_effect_operations(
     effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition],
     effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition],
     runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
 ) -> None:
     """Validate inert declarative operation catalogs against selected effect rules."""
+
+    runners_by_operation_id = _validate_runtime_effect_runners(
+        runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+        runtime_effect_runners_by_id=runtime_effect_runners_by_id,
+    )
 
     for rule in runtime_effect_rules_by_id.values():
         operation_id = rule.effect_operation_id
@@ -52,7 +59,13 @@ def validate_runtime_effect_operations(
             raise CompilerValidationError(
                 f"runtime effect rule {rule.rule_id} references unknown operation {operation_id}"
             )
-        _validate_rule_operation_compatibility(rule, operation)
+        runner = runners_by_operation_id.get(operation_id)
+        if runner is None:
+            raise CompilerValidationError(
+                f"runtime effect rule {rule.rule_id} references operation {operation_id} "
+                "without a runtime effect runner"
+            )
+        _validate_rule_operation_compatibility(rule, operation, runner)
 
     for validator in effect_validators_by_id.values():
         _validate_primitive_id(
@@ -146,11 +159,67 @@ def _validate_runtime_effect_operation(
         )
 
 
+def _validate_runtime_effect_runners(
+    *,
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
+) -> dict[str, RuntimeEffectOperationRunnerDefinition]:
+    runners_by_operation_id: dict[str, RuntimeEffectOperationRunnerDefinition] = {}
+    aliases_by_handler_id: dict[str, tuple[str, str]] = {}
+
+    for runner in runtime_effect_runners_by_id.values():
+        for operation_id in runner.operation_ids:
+            if operation_id not in runtime_effect_operations_by_id:
+                raise CompilerValidationError(
+                    f"runtime effect runner {runner.runner_id} references unknown operation "
+                    f"{operation_id}"
+                )
+            previous_runner = runners_by_operation_id.get(operation_id)
+            if previous_runner is not None:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation_id} is owned by multiple runners: "
+                    f"{previous_runner.runner_id}, {runner.runner_id}"
+                )
+            runners_by_operation_id[operation_id] = runner
+
+        for handler_id in runner.legacy_handler_ids:
+            alias_operation_id = runner.operation_id_for_legacy_handler(handler_id)
+            if alias_operation_id is None:
+                raise CompilerValidationError(
+                    f"runtime effect runner {runner.runner_id} maps legacy handler "
+                    f"{handler_id} ambiguously"
+                )
+            previous = aliases_by_handler_id.get(handler_id)
+            current = (alias_operation_id, runner.runner_id)
+            if previous is not None and previous != current:
+                previous_operation_id, previous_runner_id = previous
+                raise CompilerValidationError(
+                    f"legacy runtime effect handler {handler_id} is mapped to multiple "
+                    f"operations or runners: {previous_operation_id}/{previous_runner_id}, "
+                    f"{alias_operation_id}/{runner.runner_id}"
+                )
+            aliases_by_handler_id[handler_id] = current
+
+    for operation in runtime_effect_operations_by_id.values():
+        operation_runner = runners_by_operation_id.get(operation.operation_id)
+        if operation_runner is None:
+            continue
+        for handler_id in operation.legacy_handler_ids:
+            if operation_runner.operation_id_for_legacy_handler(handler_id) != operation.operation_id:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation.operation_id} legacy handler "
+                    f"{handler_id} is not mapped by runner {operation_runner.runner_id}"
+                )
+
+    return runners_by_operation_id
+
+
 def _validate_rule_operation_compatibility(
     rule: RuntimeEffectRuleDefinition,
     operation: RuntimeEffectOperationDefinition,
+    runner: RuntimeEffectOperationRunnerDefinition,
 ) -> None:
-    if rule.handler_id not in operation.legacy_handler_ids:
+    if rule.handler_id is not None and runner.operation_id_for_legacy_handler(rule.handler_id) != operation.operation_id:
         raise CompilerValidationError(
             f"runtime effect rule {rule.rule_id} handler {rule.handler_id} is not a legacy alias "
             f"for operation {operation.operation_id}"
@@ -173,6 +242,15 @@ def _validate_rule_operation_compatibility(
         raise CompilerValidationError(
             f"runtime effect rule {rule.rule_id} replay_policy does not match operation "
             f"{operation.operation_id}"
+        )
+    missing_capabilities = set(rule.required_handler_capabilities) - set(
+        runner.runtime_capabilities_for_operation(operation.operation_id)
+    )
+    if missing_capabilities:
+        capability = sorted(missing_capabilities)[0]
+        raise CompilerValidationError(
+            f"runtime effect rule {rule.rule_id} requires runner capability "
+            f"{capability} not declared by runner {runner.runner_id}"
         )
 
 

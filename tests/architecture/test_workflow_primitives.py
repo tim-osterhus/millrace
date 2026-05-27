@@ -15,6 +15,7 @@ from millrace_ai.architecture import (
     RequestContextProfileDefinition,
     RequestContextRenderPlan,
     RuntimeEffectHandlerDefinition,
+    RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeFailurePolicyDefinition,
     TerminalActionDefinition,
@@ -58,6 +59,7 @@ def test_artifact_contract_accepts_canonical_and_fallback_filename_adapters() ->
         ),
         producer_stage_kind_ids=("evaluator_blueprint", "recon"),
         consumer_handler_ids=("evaluator_blueprint_approved_to_task",),
+        consumer_operation_ids=("evaluator_blueprint_approved_to_task",),
         destination_family_id="task",
     )
 
@@ -309,6 +311,32 @@ def test_runtime_effect_handler_rejects_incoherent_lifecycle_metadata() -> None:
         )
 
 
+def test_runtime_effect_runner_maps_legacy_handler_aliases() -> None:
+    runner = RuntimeEffectOperationRunnerDefinition(
+        runner_id="legacy_python_handler",
+        operation_ids=("planner_disposition", "fixture_echo_effect"),
+        required_runtime_capabilities=("replay.planner_disposition",),
+        legacy_handler_ids=("planner_disposition", "fixture_echo_effect"),
+        legacy_handler_operation_ids={
+            "planner_disposition": "planner_disposition",
+            "fixture_echo_effect": "fixture_echo_effect",
+        },
+        result_display_aliases={"planner_disposition": "planner_disposition"},
+    )
+
+    assert runner.operation_id_for_legacy_handler("planner_disposition") == "planner_disposition"
+    assert runner.operation_id_for_legacy_handler("missing_handler") is None
+
+
+def test_runtime_effect_runner_rejects_ambiguous_multi_operation_alias() -> None:
+    with pytest.raises(ValidationError, match="legacy_handler_operation_ids"):
+        RuntimeEffectOperationRunnerDefinition(
+            runner_id="legacy_python_handler",
+            operation_ids=("planner_disposition", "fixture_echo_effect"),
+            legacy_handler_ids=("planner_disposition",),
+        )
+
+
 def test_runtime_effect_rule_rejects_missing_destination_for_work_item_handler() -> None:
     with pytest.raises(ValidationError, match="destination_family_id"):
         RuntimeEffectRuleDefinition(
@@ -325,6 +353,24 @@ def test_runtime_effect_rule_rejects_missing_destination_for_work_item_handler()
             lineage_policy="preserve_root",
             applies_before_route=False,
         )
+
+
+def test_runtime_effect_rule_accepts_operation_only_authority() -> None:
+    rule = RuntimeEffectRuleDefinition(
+        rule_id="planner_task_artifact",
+        effect_operation_id="planner-task-artifact",
+        source_node_id="planner",
+        on_outcomes=("PLANNER_COMPLETE",),
+        required_run_artifacts=("task_packet",),
+        creates_work_items=False,
+        duplicate_policy="idempotent",
+        partial_commit_policy="block_source",
+        replay_policy="resume_idempotently",
+        lineage_policy="preserve_root",
+        applies_before_route=False,
+    )
+
+    assert rule.handler_id is None
 
 
 def test_request_context_profile_rejects_unsafe_output_path_preference() -> None:

@@ -12,6 +12,7 @@ from millrace_ai.assets import (
     discover_effect_store_definitions,
     discover_effect_validator_definitions,
     discover_runtime_effect_operation_definitions,
+    discover_runtime_effect_runner_definitions,
     load_builtin_workflow_primitives,
 )
 from millrace_ai.errors import AssetValidationError, MillraceError
@@ -47,6 +48,7 @@ def test_effect_operation_errors_use_project_error_hierarchy() -> None:
 
 def test_builtin_effect_operation_assets_load() -> None:
     operations = discover_runtime_effect_operation_definitions()
+    runners = discover_runtime_effect_runner_definitions()
     stores = discover_effect_store_definitions()
     validators = discover_effect_validator_definitions()
 
@@ -57,6 +59,17 @@ def test_builtin_effect_operation_assets_load() -> None:
         "evaluator_blueprint_approved_to_task",
         "evaluator_blueprint_rejected_to_draft_revision",
         "mechanic_blueprint_repair_apply",
+    }
+    assert {runner.runner_id for runner in runners} >= {"legacy_python_handler"}
+    legacy_runner = next(
+        runner
+        for runner in runners
+        if runner.runner_id == "legacy_python_handler"
+    )
+    assert set(legacy_runner.operation_ids) >= {
+        "planner_disposition",
+        "manager_blueprint_manifest_to_blueprint_drafts",
+        "evaluator_blueprint_approved_to_task",
     }
     assert {store.store_id for store in stores} >= {
         "run_artifacts",
@@ -95,6 +108,9 @@ def test_workflow_primitive_bundle_includes_effect_operation_catalogs() -> None:
     assert "planner_disposition" in {
         operation.operation_id for operation in bundle.runtime_effect_operations
     }
+    assert "legacy_python_handler" in {
+        runner.runner_id for runner in bundle.runtime_effect_runners
+    }
     assert "mutation_journal" in {store.store_id for store in bundle.effect_stores}
     assert "planner_disposition.required_artifacts" in {
         validator.validator_id for validator in bundle.effect_validators
@@ -117,6 +133,24 @@ def test_discover_runtime_effect_operations_rejects_duplicate_ids(tmp_path: Path
         match=r"Duplicate discovered runtime effect operation id: planner_disposition",
     ):
         discover_runtime_effect_operation_definitions(assets_root=assets_root)
+
+
+def test_discover_runtime_effect_runners_rejects_duplicate_ids(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    runners_dir = assets_root / "registry" / "runtime_effect_runners"
+    default_path = runners_dir / "default_effect_runners.json"
+    duplicate_path = runners_dir / "duplicate_legacy_runner.json"
+    payload = json.loads(default_path.read_text(encoding="utf-8"))
+    duplicate_path.write_text(
+        json.dumps(payload["definitions"][0], indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        AssetValidationError,
+        match=r"Duplicate discovered runtime effect runner id: legacy_python_handler",
+    ):
+        discover_runtime_effect_runner_definitions(assets_root=assets_root)
 
 
 def test_invalid_effect_store_error_includes_path(tmp_path: Path) -> None:

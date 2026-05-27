@@ -275,6 +275,10 @@ def compile_compiled_run_plan(
                     workflow_primitives.runtime_effect_handlers,
                     "handler_id",
                 ),
+                "runtime_effect_runners_by_id": _map_by_attr(
+                    workflow_primitives.runtime_effect_runners,
+                    "runner_id",
+                ),
                 "runtime_effect_rules": workflow_primitives.runtime_effect_rules,
                 "runtime_effect_operations_by_id": _map_by_attr(
                     workflow_primitives.runtime_effect_operations,
@@ -341,6 +345,10 @@ def compile_compiled_run_plan(
         runtime_effect_handlers_by_id=_map_by_attr(
             workflow_primitives.runtime_effect_handlers,
             "handler_id",
+        ),
+        runtime_effect_runners_by_id=_map_by_attr(
+            workflow_primitives.runtime_effect_runners,
+            "runner_id",
         ),
         runtime_effect_operations_by_id=_map_by_attr(
             workflow_primitives.runtime_effect_operations,

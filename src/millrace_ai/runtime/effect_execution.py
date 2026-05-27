@@ -70,6 +70,11 @@ def apply_runtime_effect_for_stage_result(
     if effect_rule is None:
         return RuntimeEffectApplication(router_decision=router_decision)
     handler_id = effect_rule.handler_id
+    if handler_id is None:
+        raise RuntimeError(
+            f"runtime effect rule {effect_rule.rule_id} for operation "
+            f"{effect_rule.effect_operation_id} has no legacy handler_id"
+        )
     handler = _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for(handler_id)
     if handler is None:
         raise RuntimeError(f"runtime effect handler {handler_id} is not implemented")
@@ -277,9 +282,14 @@ def _with_runtime_effect_identity(
     effect_rule: RuntimeEffectRuleDefinition,
 ) -> RuntimeEffectResult:
     operation_id = effect_result.operation_id or getattr(effect_rule, "effect_operation_id", None)
+    legacy_rule_handler_id = effect_rule.handler_id
     runner_id = (
         effect_result.runner_id
-        or _RUNTIME_EFFECT_HANDLER_REGISTRY.runner_id_for(effect_rule.handler_id)
+        or (
+            _RUNTIME_EFFECT_HANDLER_REGISTRY.runner_id_for(legacy_rule_handler_id)
+            if legacy_rule_handler_id is not None
+            else None
+        )
     )
     legacy_handler_id = (
         effect_result.legacy_handler_id

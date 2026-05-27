@@ -73,12 +73,65 @@ def _runtime_effect_operations_path(assets_root: Path) -> Path:
     )
 
 
+def _runtime_effect_runners_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_runners"
+        / "default_effect_runners.json"
+    )
+
+
+def _runtime_effect_handlers_path(assets_root: Path) -> Path:
+    return assets_root / "registry" / "runtime_effect_handlers" / "default_effect_handlers.json"
+
+
+def _artifact_contracts_path(assets_root: Path) -> Path:
+    return assets_root / "registry" / "artifact_contracts" / "default_artifact_contracts.json"
+
+
 def _fixture_runtime_effect_operations_path(assets_root: Path) -> Path:
     return (
         assets_root
         / "registry"
         / "runtime_effect_operations"
         / "fixture_runtime_effect_operations.json"
+    )
+
+
+def _fixture_runtime_effect_runners_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_runners"
+        / "fixture_runtime_effect_runners.json"
+    )
+
+
+def _fixture_runtime_effect_handlers_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_handlers"
+        / "fixture_effect_handlers.json"
+    )
+
+
+def _fixture_artifact_contracts_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "artifact_contracts"
+        / "fixture_effect_artifacts.json"
+    )
+
+
+def _fixture_runtime_effect_rules_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_rules"
+        / "fixture_effect_rules.json"
     )
 
 
@@ -131,12 +184,18 @@ def test_compile_freezes_effect_operation_catalogs(tmp_path: Path) -> None:
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
     plan = outcome.active_plan
+    assert "legacy_python_handler" in plan.runtime_effect_runners_by_id
     assert "manager_blueprint_manifest_to_blueprint_drafts" in plan.runtime_effect_operations_by_id
     assert "mutation_journal" in plan.effect_stores_by_id
     assert "manager_blueprint_manifest_to_blueprint_drafts.required_artifacts" in plan.effect_validators_by_id
     assert any(
         ref.asset_family == "runtime_effect_operation"
         and ref.logical_id == "runtime_effect_operation:manager_blueprint_manifest_to_blueprint_drafts"
+        for ref in plan.resolved_assets
+    )
+    assert any(
+        ref.asset_family == "runtime_effect_runner"
+        and ref.logical_id == "runtime_effect_runner:legacy_python_handler"
         for ref in plan.resolved_assets
     )
 
@@ -155,6 +214,43 @@ def test_compile_rejects_effect_rule_with_unknown_operation(tmp_path: Path) -> N
     assert (
         "runtime effect rule manager_blueprint_manifest_to_blueprint_drafts "
         "references unknown operation missing_operation"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_effect_rule_without_operation_runner(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    runners_path = _runtime_effect_runners_path(assets_root)
+    payload = _load_json(runners_path)
+    legacy_runner = payload["definitions"][0]
+    legacy_runner["operation_ids"].remove("manager_blueprint_manifest_to_blueprint_drafts")
+    legacy_runner["legacy_handler_ids"].remove("manager_blueprint_manifest_to_blueprint_drafts")
+    legacy_runner["required_runtime_capabilities_by_operation_id"].pop(
+        "manager_blueprint_manifest_to_blueprint_drafts"
+    )
+    legacy_runner["legacy_handler_operation_ids"].pop("manager_blueprint_manifest_to_blueprint_drafts")
+    legacy_runner["result_display_aliases"].pop("manager_blueprint_manifest_to_blueprint_drafts")
+    _write_json(runners_path, payload)
+
+    rules_path = _runtime_effect_rules_path(assets_root)
+    rules_payload = _load_json(rules_path)
+    rules_payload["definitions"][0].pop("handler_id")
+    _write_json(rules_path, rules_payload)
+
+    contracts_path = _artifact_contracts_path(assets_root)
+    contracts_payload = _load_json(contracts_path)
+    for contract in contracts_payload["definitions"]:
+        if "manager_blueprint_manifest_to_blueprint_drafts" in contract.get("consumer_handler_ids", []):
+            contract.pop("consumer_handler_ids")
+            contract["consumer_operation_ids"] = ["manager_blueprint_manifest_to_blueprint_drafts"]
+    _write_json(contracts_path, contracts_payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime effect rule manager_blueprint_manifest_to_blueprint_drafts references operation "
+        "manager_blueprint_manifest_to_blueprint_drafts without a runtime effect runner"
     ) in _diagnostic_text(outcome)
 
 
@@ -240,6 +336,40 @@ def test_compile_rejects_runtime_failure_policy_operation_handler_drift(
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_stale_operation_legacy_alias_not_declared_by_runner(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    _manager_operation(payload)["legacy_handler_ids"].append("evaluator_blueprint_approved_to_task")
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime effect operation manager_blueprint_manifest_to_blueprint_drafts legacy handler "
+        "evaluator_blueprint_approved_to_task is not mapped by runner legacy_python_handler"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_uses_runner_aliases_for_runtime_failure_policy_compatibility(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    _manager_operation(payload)["legacy_handler_ids"] = []
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+
 def test_compile_rejects_effect_operation_with_unknown_store(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     operations_path = _runtime_effect_operations_path(assets_root)
@@ -291,6 +421,38 @@ def test_compile_rejects_non_blueprint_fixture_unknown_validator(
         "runtime effect operation fixture_echo_effect step validate_required_artifacts "
         "references unknown validator missing_fixture_validator"
     ) in _diagnostic_text(outcome)
+
+
+def test_compile_accepts_operation_only_rule_without_legacy_handler_definition(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    rules_path = _fixture_runtime_effect_rules_path(assets_root)
+    rules_payload = _load_json(rules_path)
+    rules_payload["definitions"][0].pop("handler_id")
+    _write_json(rules_path, rules_payload)
+
+    contracts_path = _fixture_artifact_contracts_path(assets_root)
+    contracts_payload = _load_json(contracts_path)
+    contracts_payload["definitions"][0].pop("consumer_handler_ids")
+    contracts_payload["definitions"][0]["consumer_operation_ids"] = ["fixture_echo_effect"]
+    _write_json(contracts_path, contracts_payload)
+
+    handlers_path = _fixture_runtime_effect_handlers_path(assets_root)
+    handlers_payload = _load_json(handlers_path)
+    handlers_payload["definitions"] = []
+    _write_json(handlers_path, handlers_payload)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    rule = next(
+        rule
+        for rule in outcome.active_plan.runtime_effect_rules
+        if rule.rule_id == "fixture_echo_effect_on_manager_complete"
+    )
+    assert rule.handler_id is None
 
 
 def test_compile_rejects_effect_validator_bound_to_unowned_artifact(tmp_path: Path) -> None:
@@ -394,6 +556,68 @@ def test_compile_rejects_multi_write_operation_without_partial_policy(tmp_path: 
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_duplicate_operation_runner_ownership(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    runners_dir = assets_root / "registry" / "runtime_effect_runners"
+    duplicate_path = runners_dir / "duplicate_operation_owner.json"
+    duplicate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "runtime_effect_runner",
+                "runner_id": "duplicate_planner_runner",
+                "operation_ids": ["planner_disposition"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime effect operation planner_disposition is owned by multiple runners"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_legacy_handler_alias_mapped_to_multiple_runners(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    operations_path = _fixture_runtime_effect_operations_path(assets_root)
+    operations_payload = _load_json(operations_path)
+    second_operation = dict(operations_payload["definitions"][0])
+    second_operation["operation_id"] = "fixture_echo_effect_revision"
+    second_operation["display_name"] = "Non-Blueprint fixture echo effect revision"
+    operations_payload["definitions"].append(second_operation)
+    _write_json(operations_path, operations_payload)
+
+    runners_path = _fixture_runtime_effect_runners_path(assets_root)
+    runners_payload = _load_json(runners_path)
+    runners_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_runner",
+            "runner_id": "fixture_echo_revision_runner",
+            "operation_ids": ["fixture_echo_effect_revision"],
+            "legacy_handler_ids": ["fixture_echo_effect"],
+        }
+    )
+    _write_json(runners_path, runners_payload)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "artifact contract fixture_effect_input legacy consumer handler fixture_echo_effect "
+        "maps to multiple runtime effect operations or runners"
+    ) in _diagnostic_text(outcome)
+
+
 def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     workspace_root = tmp_path / "workspace"
@@ -415,6 +639,7 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
         if ref.asset_family
         not in {
             "runtime_effect_operation",
+            "runtime_effect_runner",
             "runtime_effect_store",
             "runtime_effect_validator",
         }
@@ -423,6 +648,7 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
         update={
             "resolved_assets": old_resolved_assets,
             "runtime_effect_operations_by_id": {},
+            "runtime_effect_runners_by_id": {},
             "effect_stores_by_id": {},
             "effect_validators_by_id": {},
         }
@@ -458,10 +684,15 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
 
     assert refreshed.diagnostics.ok is True
     assert refreshed.active_plan is not None
+    assert refreshed.active_plan.runtime_effect_runners_by_id
     assert refreshed.active_plan.runtime_effect_operations_by_id
     assert refreshed.active_plan.effect_stores_by_id
     assert refreshed.active_plan.effect_validators_by_id
     assert any(
         ref.asset_family == "runtime_effect_operation"
+        for ref in refreshed.active_plan.resolved_assets
+    )
+    assert any(
+        ref.asset_family == "runtime_effect_runner"
         for ref in refreshed.active_plan.resolved_assets
     )

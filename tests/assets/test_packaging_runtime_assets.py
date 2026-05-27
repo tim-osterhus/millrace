@@ -73,6 +73,7 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
         "millrace_ai/assets/registry/queue_claim_policies/default_queue_claim_policies.json",
         "millrace_ai/assets/registry/recovery_policies/default_recovery_policies.json",
         "millrace_ai/assets/registry/runtime_effect_handlers/default_effect_handlers.json",
+        "millrace_ai/assets/registry/runtime_effect_runners/default_effect_runners.json",
         "millrace_ai/assets/registry/runtime_failure_policies/default_runtime_failure_policies.json",
         "millrace_ai/assets/registry/terminal_actions/default_terminal_actions.json",
         "millrace_ai/assets/registry/work_item_families/task.json",

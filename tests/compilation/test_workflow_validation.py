@@ -795,9 +795,9 @@ def test_compile_rejects_runtime_effect_rule_with_missing_handler_capability(
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "runtime effect rule contractor_blueprint_candidate_persist requires handler "
-        "capability repair.apply_repaired_generated_task not declared by handler "
-        "contractor_blueprint_candidate_persist"
+        "runtime effect rule contractor_blueprint_candidate_persist requires runner "
+        "capability repair.apply_repaired_generated_task not declared by runner "
+        "legacy_python_handler"
     ) in _diagnostic_text(outcome)
 
 

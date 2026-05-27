@@ -16,6 +16,7 @@ from millrace_ai.architecture import (
     RequestContextProfileDefinition,
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationDefinition,
+    RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
@@ -43,6 +44,7 @@ QUEUE_CLAIM_POLICY_REGISTRY_ROOT = Path("registry/queue_claim_policies")
 TERMINAL_ACTION_REGISTRY_ROOT = Path("registry/terminal_actions")
 LIFECYCLE_MUTATION_PLAN_REGISTRY_ROOT = Path("registry/lifecycle_mutation_plans")
 RUNTIME_EFFECT_HANDLER_REGISTRY_ROOT = Path("registry/runtime_effect_handlers")
+RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT = Path("registry/runtime_effect_runners")
 RUNTIME_EFFECT_RULE_REGISTRY_ROOT = Path("registry/runtime_effect_rules")
 RECOVERY_POLICY_REGISTRY_ROOT = Path("registry/recovery_policies")
 RUNTIME_FAILURE_POLICY_REGISTRY_ROOT = Path("registry/runtime_failure_policies")
@@ -75,6 +77,7 @@ class WorkflowPrimitiveBundle:
     terminal_actions: tuple[TerminalActionDefinition, ...]
     lifecycle_mutation_plans: tuple[LifecycleMutationPlanDefinition, ...]
     runtime_effect_handlers: tuple[RuntimeEffectHandlerDefinition, ...]
+    runtime_effect_runners: tuple[RuntimeEffectOperationRunnerDefinition, ...]
     runtime_effect_rules: tuple[RuntimeEffectRuleDefinition, ...]
     effect_stores: tuple[RuntimeEffectStoreDefinition, ...]
     effect_validators: tuple[RuntimeEffectValidatorDefinition, ...]
@@ -97,6 +100,7 @@ def load_builtin_workflow_primitives(
         terminal_actions=discover_terminal_action_definitions(assets_root=assets_root),
         lifecycle_mutation_plans=discover_lifecycle_mutation_plan_definitions(assets_root=assets_root),
         runtime_effect_handlers=discover_runtime_effect_handler_definitions(assets_root=assets_root),
+        runtime_effect_runners=discover_runtime_effect_runner_definitions(assets_root=assets_root),
         runtime_effect_rules=discover_runtime_effect_rule_definitions(assets_root=assets_root),
         effect_stores=discover_effect_store_definitions(assets_root=assets_root),
         effect_validators=discover_effect_validator_definitions(assets_root=assets_root),
@@ -244,6 +248,19 @@ def discover_runtime_effect_handler_definitions(
         model=RuntimeEffectHandlerDefinition,
         id_attr="handler_id",
         asset_kind="runtime effect handler",
+    )
+
+
+def discover_runtime_effect_runner_definitions(
+    *,
+    assets_root: Path | None = None,
+) -> tuple[RuntimeEffectOperationRunnerDefinition, ...]:
+    return _discover_definitions(
+        assets_root=assets_root,
+        registry_root=RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT,
+        model=RuntimeEffectOperationRunnerDefinition,
+        id_attr="runner_id",
+        asset_kind="runtime effect runner",
     )
 
 
@@ -412,6 +429,7 @@ __all__ = [
     "RECOVERY_POLICY_REGISTRY_ROOT",
     "REQUEST_CONTEXT_PROFILE_REGISTRY_ROOT",
     "RUNTIME_EFFECT_HANDLER_REGISTRY_ROOT",
+    "RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT",
     "RUNTIME_EFFECT_RULE_REGISTRY_ROOT",
     "RUNTIME_FAILURE_POLICY_REGISTRY_ROOT",
     "SHIPPED_WORK_ITEM_FAMILY_IDS",
@@ -427,6 +445,7 @@ __all__ = [
     "discover_plane_queue_claim_policy_definitions",
     "discover_request_context_profile_definitions",
     "discover_runtime_effect_handler_definitions",
+    "discover_runtime_effect_runner_definitions",
     "discover_runtime_effect_operation_definitions",
     "discover_runtime_effect_rule_definitions",
     "discover_runtime_failure_policy_definitions",

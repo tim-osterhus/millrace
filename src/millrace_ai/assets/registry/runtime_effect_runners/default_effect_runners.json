@@ -1,0 +1,70 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_runner",
+      "runner_id": "legacy_python_handler",
+      "operation_ids": [
+        "planner_disposition",
+        "manager_blueprint_manifest_to_blueprint_drafts",
+        "contractor_blueprint_candidate_persist",
+        "evaluator_blueprint_approved_to_task",
+        "evaluator_blueprint_rejected_to_draft_revision",
+        "mechanic_blueprint_repair_apply"
+      ],
+      "required_runtime_capabilities_by_operation_id": {
+        "planner_disposition": [
+          "replay.planner_disposition"
+        ],
+        "manager_blueprint_manifest_to_blueprint_drafts": [
+          "replay.blueprint_manifest_equivalent",
+          "replay.blueprint_manifest_legacy_identity",
+          "replay.blueprint_drafts_equivalent",
+          "duplicate.blueprint_manifest_same_id",
+          "duplicate.blueprint_draft_same_id"
+        ],
+        "contractor_blueprint_candidate_persist": [
+          "replay.blueprint_candidate_equivalent",
+          "duplicate.blueprint_candidate_same_id"
+        ],
+        "evaluator_blueprint_approved_to_task": [
+          "replay.blueprint_approval_equivalent",
+          "duplicate.generated_task_same_id"
+        ],
+        "evaluator_blueprint_rejected_to_draft_revision": [
+          "replay.blueprint_rejection_equivalent",
+          "duplicate.blueprint_rejection_same_id"
+        ],
+        "mechanic_blueprint_repair_apply": [
+          "repair.apply_repaired_generated_task",
+          "repair.generated_task_missing",
+          "repair.generated_task_invalid"
+        ]
+      },
+      "legacy_handler_ids": [
+        "planner_disposition",
+        "manager_blueprint_manifest_to_blueprint_drafts",
+        "contractor_blueprint_candidate_persist",
+        "evaluator_blueprint_approved_to_task",
+        "evaluator_blueprint_rejected_to_draft_revision",
+        "mechanic_blueprint_repair_apply"
+      ],
+      "legacy_handler_operation_ids": {
+        "planner_disposition": "planner_disposition",
+        "manager_blueprint_manifest_to_blueprint_drafts": "manager_blueprint_manifest_to_blueprint_drafts",
+        "contractor_blueprint_candidate_persist": "contractor_blueprint_candidate_persist",
+        "evaluator_blueprint_approved_to_task": "evaluator_blueprint_approved_to_task",
+        "evaluator_blueprint_rejected_to_draft_revision": "evaluator_blueprint_rejected_to_draft_revision",
+        "mechanic_blueprint_repair_apply": "mechanic_blueprint_repair_apply"
+      },
+      "result_display_aliases": {
+        "planner_disposition": "planner_disposition",
+        "manager_blueprint_manifest_to_blueprint_drafts": "manager_blueprint_manifest_to_blueprint_drafts",
+        "contractor_blueprint_candidate_persist": "contractor_blueprint_candidate_persist",
+        "evaluator_blueprint_approved_to_task": "evaluator_blueprint_approved_to_task",
+        "evaluator_blueprint_rejected_to_draft_revision": "evaluator_blueprint_rejected_to_draft_revision",
+        "mechanic_blueprint_repair_apply": "mechanic_blueprint_repair_apply"
+      }
+    }
+  ]
+}

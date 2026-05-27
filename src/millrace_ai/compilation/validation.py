@@ -18,6 +18,7 @@ from millrace_ai.architecture import (
     RegisteredStageKindDefinition,
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationDefinition,
+    RuntimeEffectOperationRunnerDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeFailurePolicyDefinition,
     TerminalActionDefinition,
@@ -114,6 +115,10 @@ def validate_workflow_primitives(
         handler.handler_id: handler
         for handler in workflow_primitives.runtime_effect_handlers
     }
+    runtime_effect_runners_by_id = {
+        runner.runner_id: runner
+        for runner in workflow_primitives.runtime_effect_runners
+    }
     runtime_effect_rules_by_id = {
         rule.rule_id: rule
         for rule in workflow_primitives.runtime_effect_rules
@@ -148,6 +153,8 @@ def validate_workflow_primitives(
         families_by_id=families_by_id,
         document_adapters_by_id=adapters_by_id,
         runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
+        runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+        runtime_effect_runners_by_id=runtime_effect_runners_by_id,
         stage_kinds=stage_kinds,
     )
     _validate_stage_artifact_references(
@@ -198,6 +205,8 @@ def validate_workflow_primitives(
         families_by_id=families_by_id,
         lifecycle_plans_by_id=lifecycle_plans_by_id,
         runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
+        runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+        runtime_effect_runners_by_id=runtime_effect_runners_by_id,
         runtime_effect_rules_by_id=runtime_effect_rules_by_id,
         stage_kinds_by_node_id=stage_kinds_by_node_id,
         stage_kinds=stage_kinds,
@@ -208,6 +217,7 @@ def validate_workflow_primitives(
         effect_stores_by_id=effect_stores_by_id,
         effect_validators_by_id=effect_validators_by_id,
         runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+        runtime_effect_runners_by_id=runtime_effect_runners_by_id,
     )
     _validate_recovery_policies(
         workflow_primitives=workflow_primitives,
@@ -220,6 +230,7 @@ def validate_workflow_primitives(
         families_by_id=families_by_id,
         runtime_effect_handlers_by_id=runtime_effect_handlers_by_id,
         runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+        runtime_effect_runners_by_id=runtime_effect_runners_by_id,
         runtime_effect_rules_by_id=runtime_effect_rules_by_id,
         graphs_by_plane=graphs_by_plane,
         stage_kinds_by_node_id=stage_kinds_by_node_id,
@@ -374,6 +385,8 @@ def _validate_artifact_contracts(
     families_by_id: dict[str, WorkItemFamilyDefinition],
     document_adapters_by_id: dict[str, WorkItemDocumentAdapterDefinition],
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
 ) -> None:
     known_adapter_ids = set(document_adapters_by_id) | set(_BUILT_IN_ARTIFACT_ADAPTER_IDS)
@@ -436,6 +449,73 @@ def _validate_artifact_contracts(
                     f"artifact contract {contract.artifact_id} declares consumer handler "
                     f"{handler_id}, but that handler does not consume {contract.artifact_id}"
                 )
+            operation_ids = _operation_ids_for_legacy_handler(
+                handler_id,
+                runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+                runtime_effect_runners_by_id=runtime_effect_runners_by_id,
+            )
+            if len(operation_ids) != 1:
+                if len(operation_ids) > 1:
+                    raise CompilerValidationError(
+                        f"artifact contract {contract.artifact_id} legacy consumer handler "
+                        f"{handler_id} maps to multiple runtime effect operations or runners"
+                    )
+                raise CompilerValidationError(
+                    f"artifact contract {contract.artifact_id} legacy consumer handler "
+                    f"{handler_id} does not map to exactly one runtime effect operation"
+                )
+            operation_id = next(iter(operation_ids))
+            if contract.consumer_operation_ids and operation_id not in contract.consumer_operation_ids:
+                raise CompilerValidationError(
+                    f"artifact contract {contract.artifact_id} handler {handler_id} maps to "
+                    f"operation {operation_id}, but consumer_operation_ids does not list it"
+                )
+            _validate_artifact_consumer_operation(
+                contract,
+                operation_id,
+                runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+            )
+        for operation_id in contract.consumer_operation_ids:
+            _validate_artifact_consumer_operation(
+                contract,
+                operation_id,
+                runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+            )
+
+
+def _validate_artifact_consumer_operation(
+    contract: ArtifactContractDefinition,
+    operation_id: str,
+    *,
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+) -> None:
+    operation = runtime_effect_operations_by_id.get(operation_id)
+    if operation is None:
+        raise CompilerValidationError(
+            f"artifact contract {contract.artifact_id} references unknown consumer "
+            f"operation {operation_id}"
+        )
+    declared_artifacts = set(operation.required_artifacts) | set(operation.produced_artifacts)
+    if contract.artifact_id not in declared_artifacts:
+        raise CompilerValidationError(
+            f"artifact contract {contract.artifact_id} declares consumer operation "
+            f"{operation_id}, but that operation does not consume {contract.artifact_id}"
+        )
+
+
+def _operation_ids_for_legacy_handler(
+    handler_id: str,
+    *,
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
+) -> set[str]:
+    del runtime_effect_operations_by_id
+    operation_ids: set[str] = set()
+    for runner in runtime_effect_runners_by_id.values():
+        runner_operation_id = runner.operation_id_for_legacy_handler(handler_id)
+        if runner_operation_id is not None:
+            operation_ids.add(runner_operation_id)
+    return operation_ids
 
 
 def _validate_artifact_adapter_semantics(
@@ -735,6 +815,8 @@ def _validate_runtime_effect_rules(
     families_by_id: dict[str, WorkItemFamilyDefinition],
     lifecycle_plans_by_id: dict[str, LifecycleMutationPlanDefinition],
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
     runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
@@ -743,39 +825,51 @@ def _validate_runtime_effect_rules(
     for rule in runtime_effect_rules_by_id.values():
         rule_id = getattr(rule, "rule_id")
         handler_id = getattr(rule, "handler_id")
-        if handler_id not in runtime_effect_handlers_by_id:
-            raise CompilerValidationError(
-                f"runtime effect rule {rule_id} references unknown handler "
-                f"{handler_id}"
-            )
-        handler = runtime_effect_handlers_by_id[handler_id]
-        handler_required_artifacts = set(getattr(handler, "required_artifacts"))
-        handler_declared_artifacts = handler_required_artifacts | set(
-            getattr(handler, "optional_artifacts")
-        )
-        handler_capabilities = set(getattr(handler, "declared_capabilities"))
-        for capability in getattr(rule, "required_handler_capabilities"):
-            if capability not in handler_capabilities:
+        handler_required_artifacts: set[str] = set()
+        handler_declared_artifacts: set[str] = set()
+        if handler_id is not None:
+            if handler_id not in runtime_effect_handlers_by_id:
                 raise CompilerValidationError(
-                    f"runtime effect rule {rule_id} requires handler capability "
-                    f"{capability} not declared by handler {handler_id}"
+                    f"runtime effect rule {rule_id} references unknown handler "
+                    f"{handler_id}"
                 )
+            operation_ids = _operation_ids_for_legacy_handler(
+                handler_id,
+                runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+                runtime_effect_runners_by_id=runtime_effect_runners_by_id,
+            )
+            if rule.effect_operation_id not in runtime_effect_operations_by_id:
+                raise CompilerValidationError(
+                    f"runtime effect rule {rule_id} references unknown operation "
+                    f"{rule.effect_operation_id}"
+                )
+            if rule.effect_operation_id not in operation_ids:
+                raise CompilerValidationError(
+                    f"runtime effect rule {rule_id} handler {handler_id} is not a legacy alias "
+                    f"for operation {rule.effect_operation_id}"
+                )
+            handler = runtime_effect_handlers_by_id[handler_id]
+            handler_required_artifacts = set(getattr(handler, "required_artifacts"))
+            handler_declared_artifacts = handler_required_artifacts | set(
+                getattr(handler, "optional_artifacts")
+            )
         rule_required_artifacts = set(getattr(rule, "required_run_artifacts"))
         for artifact_id in getattr(rule, "required_run_artifacts"):
             if artifact_id not in artifact_contracts_by_id:
                 raise CompilerValidationError(
                     f"runtime effect rule {rule_id} requires unknown artifact {artifact_id}"
                 )
-            if artifact_id not in handler_declared_artifacts:
+            if handler_id is not None and artifact_id not in handler_declared_artifacts:
                 raise CompilerValidationError(
                     f"runtime effect rule {rule_id} requires artifact {artifact_id} "
                     f"not declared by handler {handler_id}"
                 )
-        for artifact_id in sorted(handler_required_artifacts - rule_required_artifacts):
-            raise CompilerValidationError(
-                f"runtime effect handler {handler_id} requires artifact {artifact_id} "
-                f"missing from runtime effect rule {rule_id}"
-            )
+        if handler_id is not None:
+            for artifact_id in sorted(handler_required_artifacts - rule_required_artifacts):
+                raise CompilerValidationError(
+                    f"runtime effect handler {handler_id} requires artifact {artifact_id} "
+                    f"missing from runtime effect rule {rule_id}"
+                )
         destination_family_id = getattr(rule, "destination_family_id")
         if destination_family_id is not None and destination_family_id not in families_by_id:
             raise CompilerValidationError(
@@ -856,6 +950,7 @@ def _validate_runtime_failure_policies(
     families_by_id: dict[str, WorkItemFamilyDefinition],
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition],
     runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
     runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     stage_kinds_by_node_id: dict[str, RegisteredStageKindDefinition],
@@ -916,6 +1011,7 @@ def _validate_runtime_failure_policies(
             _validate_runtime_failure_policy_effect_identity_scope(
                 policy,
                 runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+                runtime_effect_runners_by_id=runtime_effect_runners_by_id,
             )
             if (
                 policy.action == "route_to_node"
@@ -1184,17 +1280,18 @@ def _validate_runtime_failure_policy_effect_identity_scope(
     policy: RuntimeFailurePolicyDefinition,
     *,
     runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
 ) -> None:
     if not policy.applies_to_handler_ids or not policy.applies_to_operation_ids:
         return
-    selected_operations = tuple(
-        runtime_effect_operations_by_id[operation_id]
-        for operation_id in policy.applies_to_operation_ids
-    )
     selected_handler_ids = set(policy.applies_to_handler_ids)
     legacy_handlers_by_operation_id = {
-        operation.operation_id: set(operation.legacy_handler_ids)
-        for operation in selected_operations
+        operation_id: _legacy_handler_ids_for_operation(
+            operation_id,
+            runtime_effect_operations_by_id=runtime_effect_operations_by_id,
+            runtime_effect_runners_by_id=runtime_effect_runners_by_id,
+        )
+        for operation_id in policy.applies_to_operation_ids
     }
     compatible_handler_ids = set().union(*legacy_handlers_by_operation_id.values())
     for handler_id in sorted(selected_handler_ids - compatible_handler_ids):
@@ -1208,6 +1305,21 @@ def _validate_runtime_failure_policy_effect_identity_scope(
                 f"runtime failure policy {policy.policy_id} operation {operation_id} has no "
                 "selected legacy handler alias"
             )
+
+
+def _legacy_handler_ids_for_operation(
+    operation_id: str,
+    *,
+    runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition],
+    runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition],
+) -> set[str]:
+    del runtime_effect_operations_by_id
+    legacy_handler_ids: set[str] = set()
+    for runner in runtime_effect_runners_by_id.values():
+        for handler_id in runner.legacy_handler_ids:
+            if runner.operation_id_for_legacy_handler(handler_id) == operation_id:
+                legacy_handler_ids.add(handler_id)
+    return legacy_handler_ids
 
 
 def _validate_runtime_failure_policy_node_reference(

@@ -59,6 +59,8 @@ facade for workflow primitive schemas. Expected post-package `__all__`:
 - `RuntimeEffectHandlerDefinition`
 - `RuntimeEffectHandlerId`
 - `RuntimeEffectMutationPhaseValue`
+- `RuntimeEffectOperationRunnerDefinition`
+- `RuntimeEffectOperationRunnerId`
 - `RuntimeEffectRuleDefinition`
 - `RuntimeEffectRuleId`
 - `RuntimeFailurePolicyDefinition`
@@ -138,6 +140,8 @@ workflow primitive contracts. Expected post-package `__all__`:
 - `RuntimeEffectMutationPhaseValue`
 - `RuntimeEffectOperationDefinition`
 - `RuntimeEffectOperationId`
+- `RuntimeEffectOperationRunnerDefinition`
+- `RuntimeEffectOperationRunnerId`
 - `RuntimeEffectOperationStepDefinition`
 - `RuntimeEffectPrimitiveId`
 - `RuntimeEffectRuleDefinition`
