@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from millrace_ai.architecture import RuntimeEffectOperationRunnerDefinition
 from millrace_ai.contracts import (
     IncidentDocument,
     PlanningStageName,
@@ -250,6 +251,18 @@ def test_runtime_effect_result_contract_accepts_lifecycle_intent() -> None:
     assert result.source_lifecycle_intent is not None
     assert result.source_lifecycle_intent.work_item_kind is WorkItemKind.TASK
     assert result.mutation_phase is RuntimeEffectMutationPhase.UNKNOWN
+
+
+def test_runtime_effect_result_contract_accepts_operation_only_identity() -> None:
+    result = RuntimeEffectResult(
+        operation_id="generated_task_artifact_to_task_queue",
+        runner_id="custom_effect_runner",
+        decision=RuntimeEffectDecision.CONTINUE_ROUTE,
+    )
+
+    assert result.handler_id is None
+    assert result.operation_id == "generated_task_artifact_to_task_queue"
+    assert result.runner_id == "custom_effect_runner"
 
 
 def test_lifecycle_intent_for_terminal_result_maps_success_and_blocked() -> None:
@@ -1184,12 +1197,19 @@ def test_stage_effect_application_reports_only_destination_queue_paths_as_spawne
         runtime_effect_rules=(
             SimpleNamespace(
                 rule_id="custom-task-promotion",
+                effect_operation_id="custom_task_promotion",
                 source_node_id="builder",
                 on_outcomes=("BUILDER_COMPLETE",),
-                handler_id="custom_task_promotion",
+                handler_id=None,
                 destination_family_id="task",
             ),
         ),
+        runtime_effect_runners_by_id={
+            "custom_effect_runner": RuntimeEffectOperationRunnerDefinition(
+                runner_id="custom_effect_runner",
+                operation_ids=("custom_task_promotion",),
+            )
+        },
         work_item_families_by_id={
             "task": SimpleNamespace(
                 queue_dirs=SimpleNamespace(queue="millrace-agents/tasks/queue")

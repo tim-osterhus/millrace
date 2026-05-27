@@ -134,6 +134,28 @@ def test_runtime_effect_failure_policy_matches_operation_id_without_handler_id()
     assert resolution.policy_id == "manager_partial_block"
 
 
+def test_runtime_effect_failure_policy_prefers_operation_id_over_handler_id() -> None:
+    failure = replace(
+        _manager_partial_mutation_failure(),
+        handler_id="stale_legacy_handler",
+        operation_id="manager_blueprint_manifest_to_blueprint_drafts",
+        legacy_handler_id="stale_legacy_handler",
+    )
+
+    resolution = interpret_runtime_effect_failure_policy(
+        (
+            _runtime_effect_failure_policy(
+                applies_to_operation_ids=("manager_blueprint_manifest_to_blueprint_drafts",),
+                applies_to_handler_ids=("manager_blueprint_manifest_to_blueprint_drafts",),
+            ),
+        ),
+        failure,
+    )
+
+    assert resolution is not None
+    assert resolution.policy_id == "manager_partial_block"
+
+
 def test_runtime_effect_failure_policy_matches_legacy_handler_alias() -> None:
     failure = replace(
         _manager_partial_mutation_failure(),

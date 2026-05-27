@@ -139,13 +139,13 @@ def _policy_matches_effect_failure(
         failure.mutation_phase,
     ):
         return False
-    if not _matches_optional_tuple(
-        _tuple_attr(policy, "applies_to_operation_ids"),
-        failure.operation_id,
-    ):
-        return False
-    if not _matches_optional_tuple_any(
-        _tuple_attr(policy, "applies_to_handler_ids"),
+    operation_ids = _tuple_attr(policy, "applies_to_operation_ids")
+    handler_ids = _tuple_attr(policy, "applies_to_handler_ids")
+    if operation_ids:
+        if not _matches_optional_tuple(operation_ids, failure.operation_id):
+            return False
+    elif handler_ids and not _matches_optional_tuple_any(
+        handler_ids,
         (failure.handler_id, failure.legacy_handler_id),
     ):
         return False

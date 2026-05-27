@@ -59,7 +59,7 @@ class SourceLifecycleIntent(BaseModel):
 class RuntimeEffectResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    handler_id: str
+    handler_id: str | None = None
     operation_id: str | None = None
     runner_id: str | None = None
     legacy_handler_id: str | None = None
@@ -70,6 +70,12 @@ class RuntimeEffectResult(BaseModel):
     message: str | None = None
     mutation_phase: RuntimeEffectMutationPhase = RuntimeEffectMutationPhase.UNKNOWN
     mutation_journal: tuple[dict[str, JsonValue], ...] = ()
+
+    @model_validator(mode="after")
+    def validate_runtime_effect_identity(self) -> "RuntimeEffectResult":
+        if self.handler_id is None and self.operation_id is None:
+            raise ValueError("runtime effect result requires handler_id or operation_id")
+        return self
 
 
 def lifecycle_intent_for_terminal_result(
@@ -109,6 +115,9 @@ def apply_runtime_effect_result(
             event_type="runtime_effect_destination_missing",
             data={
                 "handler_id": effect_result.handler_id,
+                "operation_id": effect_result.operation_id,
+                "runner_id": effect_result.runner_id,
+                "legacy_handler_id": effect_result.legacy_handler_id,
                 "missing_paths": list(missing_paths),
                 "work_item_family_id": intent.work_item_family_id if intent is not None else None,
                 "work_item_kind": (

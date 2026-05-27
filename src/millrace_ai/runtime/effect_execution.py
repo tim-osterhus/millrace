@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import JsonValue
 
@@ -19,6 +19,7 @@ from .blocked_recovery import write_blocked_item_metadata
 from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
 from .effects import (
     RuntimeEffectDecision,
+    RuntimeEffectHandler,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
     apply_runtime_effect_result,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 
 _RUNTIME_EFFECT_HANDLER_REGISTRY = default_legacy_runtime_effect_handler_registry()
 _HANDLERS_BY_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_id
+_HANDLERS_BY_OPERATION_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_operation_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,14 @@ class RuntimeEffectApplication:
     router_decision: RouterDecision
     spawned_paths: tuple[Path, ...] = ()
     source_lifecycle_applied: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeEffectOperationSelection:
+    operation_id: str
+    runner_id: str
+    legacy_handler_id: str | None
+    handler: RuntimeEffectHandler
 
 
 def apply_runtime_effect_for_stage_result(
@@ -69,19 +79,19 @@ def apply_runtime_effect_for_stage_result(
     effect_rule = _effect_rule_for(effective_plan, stage_result)
     if effect_rule is None:
         return RuntimeEffectApplication(router_decision=router_decision)
-    handler_id = effect_rule.handler_id
-    if handler_id is None:
-        raise RuntimeError(
-            f"runtime effect rule {effect_rule.rule_id} for operation "
-            f"{effect_rule.effect_operation_id} has no legacy handler_id"
-        )
-    handler = _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for(handler_id)
-    if handler is None:
-        raise RuntimeError(f"runtime effect handler {handler_id} is not implemented")
+    assert effective_plan is not None
+    operation_selection = _operation_selection_for_rule(
+        effective_plan,
+        effect_rule,
+        stage_result=stage_result,
+    )
 
     effect_result = _with_runtime_effect_identity(
-        handler(engine.paths, stage_result, Path(request.run_dir), effective_plan),
+        operation_selection.handler(engine.paths, stage_result, Path(request.run_dir), effective_plan),
         effect_rule=effect_rule,
+        operation_id=operation_selection.operation_id,
+        runner_id=operation_selection.runner_id,
+        legacy_handler_id=operation_selection.legacy_handler_id,
     )
     effect_result = _normalize_effect_failure_phase(effect_result)
     failure_policy_resolution = _runtime_effect_failure_policy_resolution(
@@ -177,7 +187,7 @@ def apply_runtime_effect_for_stage_result(
         return RuntimeEffectApplication(router_decision=router_decision, spawned_paths=spawned_paths)
     if applied.decision is RuntimeEffectDecision.RETRY_RECOVERY:
         failure_class = applied.failure_class or "runtime_effect_failed"
-        raise RuntimeError(f"{applied.handler_id} requested recovery: {failure_class}")
+        raise RuntimeError(f"{_effect_identity_for_message(applied)} requested recovery: {failure_class}")
 
     override_decision = _router_decision_for_effect(
         applied,
@@ -202,6 +212,112 @@ def _handler_id_for(
 ) -> str | None:
     rule = _effect_rule_for(compiled_plan, stage_result)
     return rule.handler_id if rule is not None else None
+
+
+def _operation_selection_for_rule(
+    compiled_plan: CompiledRunPlan,
+    effect_rule: RuntimeEffectRuleDefinition,
+    *,
+    stage_result: StageResultEnvelope,
+) -> _RuntimeEffectOperationSelection:
+    operation_id = effect_rule.effect_operation_id
+    runner = _operation_runner_for(compiled_plan, operation_id)
+    if runner is None:
+        raise RuntimeError(
+            "runtime effect operation runner is not materialized "
+            f"for operation {operation_id} on node {stage_result.node_id} "
+            f"via rule {effect_rule.rule_id}"
+        )
+    runner_id = str(getattr(runner, "runner_id"))
+    legacy_handler_id = _legacy_handler_id_for_operation(
+        runner,
+        operation_id,
+        rule_handler_id=effect_rule.handler_id,
+    )
+    handler = _handler_for_operation(operation_id, legacy_handler_id=legacy_handler_id)
+    if handler is None:
+        raise RuntimeError(
+            "runtime effect operation is not implemented "
+            f"for operation {operation_id} on runner {runner_id} "
+            f"via node {stage_result.node_id} rule {effect_rule.rule_id}"
+        )
+    return _RuntimeEffectOperationSelection(
+        operation_id=operation_id,
+        runner_id=runner_id,
+        legacy_handler_id=legacy_handler_id,
+        handler=handler,
+    )
+
+
+def _operation_runner_for(
+    compiled_plan: CompiledRunPlan,
+    operation_id: str,
+) -> object | None:
+    runners_by_id = getattr(compiled_plan, "runtime_effect_runners_by_id", {})
+    for runner in runners_by_id.values():
+        if operation_id in tuple(getattr(runner, "operation_ids", ())):
+            return cast(object, runner)
+    return None
+
+
+def _legacy_handler_id_for_operation(
+    runner: object,
+    operation_id: str,
+    *,
+    rule_handler_id: str | None,
+) -> str | None:
+    if (
+        rule_handler_id is not None
+        and _operation_id_for_legacy_handler(runner, rule_handler_id) == operation_id
+    ):
+        return rule_handler_id
+    result_display_aliases = getattr(runner, "result_display_aliases", {}) or {}
+    alias = result_display_aliases.get(operation_id)
+    if alias is not None:
+        return str(alias)
+    registry_alias = _RUNTIME_EFFECT_HANDLER_REGISTRY.legacy_handler_id_for_operation(operation_id)
+    if registry_alias is not None:
+        return registry_alias
+    if operation_id in tuple(getattr(runner, "legacy_handler_ids", ())):
+        return operation_id
+    return None
+
+
+def _operation_id_for_legacy_handler(runner: object, handler_id: str) -> str | None:
+    operation_id_for_legacy_handler = getattr(runner, "operation_id_for_legacy_handler", None)
+    if callable(operation_id_for_legacy_handler):
+        operation_id = operation_id_for_legacy_handler(handler_id)
+        return str(operation_id) if operation_id is not None else None
+    legacy_handler_ids = tuple(getattr(runner, "legacy_handler_ids", ()) or ())
+    if handler_id not in legacy_handler_ids:
+        return None
+    legacy_map = getattr(runner, "legacy_handler_operation_ids", {}) or {}
+    mapped_operation_id = legacy_map.get(handler_id)
+    if mapped_operation_id is not None:
+        return str(mapped_operation_id)
+    operation_ids = tuple(getattr(runner, "operation_ids", ()) or ())
+    if len(operation_ids) == 1:
+        return str(operation_ids[0])
+    return None
+
+
+def _handler_for_operation(
+    operation_id: str,
+    *,
+    legacy_handler_id: str | None,
+) -> RuntimeEffectHandler | None:
+    handler = (
+        _HANDLERS_BY_ID.get(operation_id)
+        or _HANDLERS_BY_OPERATION_ID.get(operation_id)
+        or _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for_operation(operation_id)
+    )
+    if handler is not None:
+        return handler
+    if legacy_handler_id is None:
+        return None
+    return _RUNTIME_EFFECT_HANDLER_REGISTRY.handler_for(legacy_handler_id) or _HANDLERS_BY_ID.get(
+        legacy_handler_id
+    )
 
 
 def _effect_rule_for(
@@ -280,33 +396,31 @@ def _with_runtime_effect_identity(
     effect_result: RuntimeEffectResult,
     *,
     effect_rule: RuntimeEffectRuleDefinition,
+    operation_id: str,
+    runner_id: str,
+    legacy_handler_id: str | None,
 ) -> RuntimeEffectResult:
-    operation_id = effect_result.operation_id or getattr(effect_rule, "effect_operation_id", None)
-    legacy_rule_handler_id = effect_rule.handler_id
-    runner_id = (
-        effect_result.runner_id
-        or (
-            _RUNTIME_EFFECT_HANDLER_REGISTRY.runner_id_for(legacy_rule_handler_id)
-            if legacy_rule_handler_id is not None
-            else None
-        )
-    )
-    legacy_handler_id = (
-        effect_result.legacy_handler_id
+    effective_operation_id = operation_id or effect_rule.effect_operation_id
+    effective_runner_id = runner_id
+    effective_legacy_handler_id = (
+        legacy_handler_id
+        or effect_result.legacy_handler_id
         or effect_result.handler_id
-        or effect_rule.handler_id
     )
+    effective_handler_id = legacy_handler_id or effect_result.handler_id or effective_legacy_handler_id
     if (
-        effect_result.operation_id == operation_id
-        and effect_result.runner_id == runner_id
-        and effect_result.legacy_handler_id == legacy_handler_id
+        effect_result.operation_id == effective_operation_id
+        and effect_result.runner_id == effective_runner_id
+        and effect_result.legacy_handler_id == effective_legacy_handler_id
+        and effect_result.handler_id == effective_handler_id
     ):
         return effect_result
     return effect_result.model_copy(
         update={
-            "operation_id": operation_id,
-            "runner_id": runner_id,
-            "legacy_handler_id": legacy_handler_id,
+            "handler_id": effective_handler_id,
+            "operation_id": effective_operation_id,
+            "runner_id": effective_runner_id,
+            "legacy_handler_id": effective_legacy_handler_id,
         }
     )
 
@@ -358,7 +472,7 @@ def _router_decision_for_failure_policy_route(
         next_stage=next_stage,
         next_node_id=resolution.target_node_id,
         next_stage_kind_id=target_node.stage_kind_id,
-        reason=f"runtime_effect_failure:{effect_result.handler_id}:{failure_class}",
+        reason=f"runtime_effect_failure:{_effect_identity_for_message(effect_result)}:{failure_class}",
         failure_class=failure_class,
     )
 
@@ -388,7 +502,9 @@ def _router_decision_for_default_runtime_repair(
     record_post_stage_exception_context(
         engine,
         stage_result=stage_result,
-        error=RuntimeError(f"{effect_result.handler_id}:{failure_class}: {message}"),
+        error=RuntimeError(
+            f"{_effect_identity_for_message(effect_result)}:{failure_class}: {message}"
+        ),
         router_decision=router_decision,
         stage_result_path=stage_result_path,
         error_code=_runtime_effect_error_code(stage_result.plane),
@@ -400,7 +516,7 @@ def _router_decision_for_default_runtime_repair(
             next_plane=None,
             next_stage=None,
             reason=(
-                f"runtime_effect_failure:{effect_result.handler_id}:"
+                f"runtime_effect_failure:{_effect_identity_for_message(effect_result)}:"
                 f"{failure_class}:repair_attempts_exhausted"
             ),
             failure_class=failure_class,
@@ -411,7 +527,10 @@ def _router_decision_for_default_runtime_repair(
         next_stage=repair_route.stage,
         next_node_id=repair_route.node_id,
         next_stage_kind_id=repair_route.stage_kind_id,
-        reason=f"runtime_effect_failure:{effect_result.handler_id}:{failure_class}:default_repair",
+        reason=(
+            f"runtime_effect_failure:{_effect_identity_for_message(effect_result)}:"
+            f"{failure_class}:default_repair"
+        ),
         failure_class=failure_class,
     )
 
@@ -432,7 +551,7 @@ def _router_decision_for_effect(
             action=RouterAction.IDLE,
             next_plane=None,
             next_stage=None,
-            reason=effect_result.handler_id,
+            reason=_effect_identity_for_message(effect_result),
         )
     if (
         failure_policy_resolution is not None
@@ -447,16 +566,23 @@ def _router_decision_for_effect(
             action=RouterAction.BLOCKED,
             next_plane=None,
             next_stage=None,
-            reason=f"runtime_effect_requires_operator:{effect_result.handler_id}:{failure_class}",
+            reason=(
+                f"runtime_effect_requires_operator:"
+                f"{_effect_identity_for_message(effect_result)}:{failure_class}"
+            ),
             failure_class=failure_class,
         )
     return RouterDecision(
         action=RouterAction.BLOCKED,
         next_plane=None,
         next_stage=None,
-        reason=effect_result.handler_id,
+        reason=_effect_identity_for_message(effect_result),
         failure_class=effect_result.failure_class,
     )
+
+
+def _effect_identity_for_message(effect_result: RuntimeEffectResult) -> str:
+    return effect_result.operation_id or effect_result.handler_id or "runtime_effect"
 
 
 def _clear_active_source_after_effect(
@@ -506,11 +632,7 @@ def _clear_active_source_after_effect(
         work_item_id=stage_result.work_item_id,
     )
     engine.counters = load_recovery_counters(engine.paths)
-    if (
-        decision.action is RouterAction.IDLE
-        and stage_result.plane is Plane.PLANNING
-        and stage_result.stage_kind_id == "manager_blueprint"
-    ):
+    if decision.action is RouterAction.IDLE and stage_result.plane is Plane.PLANNING:
         target = active_closure_target(engine)
         if target is not None:
             block_on_closure_lineage_drift_if_present(engine, target)
@@ -552,10 +674,13 @@ def _destination_family_id_for_effect(
         return None
     terminal_result = stage_result.terminal_result.value
     source_ids = {stage_result.node_id, stage_result.stage_kind_id}
+    operation_id = effect_result.operation_id
+    if operation_id is None:
+        return None
     matching_rules = tuple(
         rule
         for rule in compiled_plan.runtime_effect_rules
-        if rule.handler_id == effect_result.handler_id
+        if rule.effect_operation_id == operation_id
         and rule.source_node_id in source_ids
         and terminal_result in rule.on_outcomes
     )
