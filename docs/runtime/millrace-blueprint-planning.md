@@ -139,6 +139,11 @@ runtime-effect routes to `mechanic_blueprint` unless the selected Blueprint
 graph has the closed repair operation, a non-Mechanic resume guard, required
 repair artifacts, and operation/compatibility metadata alignment. Unsafe
 recovery emits `BLOCKED`.
+Blueprint uses the same generic repair-closure contract as non-Blueprint loops:
+`evaluator_blueprint_approved_to_task` declares closure metadata in
+`repair_closure_contracts`, and the `blueprint_approval_pre_mutation_effect_validation`
+policy is validated against those contracts instead of a Blueprint-only
+compiler path.
 
 ## Durable Artifacts
 

@@ -177,7 +177,7 @@ Source: `src/millrace_ai/compilation/validation.py`
 Reason to change: The module validates mode maps, workflow primitive closure,
 graph topology, queue claim policy, artifact contracts, request-context
 profiles, lifecycle plans, runtime effects, recovery policies, failure
-policies, lane conflicts, and Blueprint-specific repair-route closure. New
+policies, lane conflicts, and generic repair-route closure. New
 compiler features currently have a natural tendency to land in the same file.
 
 Blast radius: All mode compilation, shipped graph validation, custom workflow
@@ -190,8 +190,8 @@ and `tests/assets/test_blueprint_assets.py`.
 
 Missing characterization: A validator-family inventory, direct tests for each
 future validator module, diagnostic substring stability expectations per group,
-and a temporary disposition for Blueprint-specific repair-route checks until
-the declarative effect track replaces them.
+and direct negative coverage for explicit repair-closure mapping drift and
+out-of-scope mapping pairs.
 
 Likely extraction seams: graph topology, stage/stage-kind validation, artifact
 contracts, request-context profiles, queue policies, lifecycle and terminal

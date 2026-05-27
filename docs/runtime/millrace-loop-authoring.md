@@ -200,6 +200,26 @@ For the shipped foundation slice, primitives define:
   interpretation
 - the active workspace schema epoch
 
+Runtime-effect `route_to_node` recovery must satisfy the generic repair-closure
+contract, regardless of loop domain:
+
+- source operations declare `repair_closure_contracts` keyed by failure class
+- each contract declares `repair_operation_id`, `target_node_id`,
+  `target_terminal_outcome`, required repair evidence artifacts, affected source
+  family, lifecycle behavior, and partial/resume guard flags
+- policies that can resolve more than one operation or failure class must
+  declare explicit `repair_closure_mappings`; otherwise compile fails as
+  ambiguous
+- `applies_to_families` must exactly match the closure-affected source families
+- the target node/outcome must actually invoke the declared repair operation
+  through a runtime effect rule
+- every required repair evidence artifact must exist, be emitted by the target
+  stage kind, and be listed in that repair effect rule's `required_run_artifacts`
+- policies that can match `partial_mutation` require closure contracts with
+  `supports_partial_mutation=true`
+- contracts that require resume guards must target outcomes with a compiled
+  resume policy that carries `resume_stage` metadata and disallows self-routing
+
 The compiler validates primitive cross-references before any runtime start. A
 mode or graph is invalid if an entry, stage kind, terminal action, lifecycle
 plan, queue policy, runtime effect rule, or schema epoch reference cannot be

@@ -112,6 +112,21 @@ def test_builtin_effect_operation_assets_load() -> None:
     assert {contract.repair_operation_id for contract in approval_operation.repair_closure_contracts} == {
         "mechanic_blueprint_repair_apply"
     }
+    assert {contract.target_node_id for contract in approval_operation.repair_closure_contracts} == {
+        "mechanic_blueprint"
+    }
+    assert {contract.target_terminal_outcome for contract in approval_operation.repair_closure_contracts} == {
+        "MECHANIC_BLUEPRINT_COMPLETE"
+    }
+    assert {contract.affected_source_family_id for contract in approval_operation.repair_closure_contracts} == {
+        "blueprint_draft"
+    }
+    assert {contract.requires_resume_guard for contract in approval_operation.repair_closure_contracts} == {
+        True
+    }
+    assert {contract.supports_partial_mutation for contract in approval_operation.repair_closure_contracts} == {
+        False
+    }
 
 
 def test_workflow_primitive_bundle_includes_effect_operation_catalogs() -> None:
@@ -141,6 +156,15 @@ def test_workflow_primitive_bundle_includes_effect_operation_catalogs() -> None:
     }
     assert {mapping.repair_operation_id for mapping in repair_policy.repair_closure_mappings} == {
         "mechanic_blueprint_repair_apply"
+    }
+    assert {mapping.target_node_id for mapping in repair_policy.repair_closure_mappings} == {
+        "mechanic_blueprint"
+    }
+    assert {mapping.target_terminal_outcome for mapping in repair_policy.repair_closure_mappings} == {
+        "MECHANIC_BLUEPRINT_COMPLETE"
+    }
+    assert {mapping.affected_source_family_id for mapping in repair_policy.repair_closure_mappings} == {
+        "blueprint_draft"
     }
 
 

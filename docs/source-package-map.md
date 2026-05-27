@@ -309,6 +309,11 @@ cycles:
   precedence, fallback, and warning generation. Pydantic config intentionally
   accepts invalid alias payloads so compile diagnostics can warn and fall back
   without blocking config load.
+- `compilation/validation.py` owns generic cross-asset compile checks for
+  `route_to_node` repair closure resolution (operation/failure scope,
+  target-node outcome binding, evidence artifacts, family scope, resume guards,
+  and partial-mutation support). Blueprint recovery routes are one instance of
+  that generic validator, not a separate architectural authority path.
 - `contracts/` is the typed contract package behind the stable
   `millrace_ai.contracts` facade. Enums, stage metadata, work documents,
   execution-capability grants, stage-result envelopes, compiled graph exports,

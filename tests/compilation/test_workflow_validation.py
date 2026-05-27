@@ -8,11 +8,27 @@ from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.paths import bootstrap_workspace
 
+FIXTURE_ASSETS_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "non_blueprint_effect_assets"
+)
+FIXTURE_REPAIR_POLICY_ID = "fixture_non_blueprint_repair_route"
+FIXTURE_REPAIR_OPERATION_ID = "fixture_echo_repair_apply"
+FIXTURE_REPAIR_RULE_ID = "fixture_echo_repair_apply_on_mechanic_complete"
+FIXTURE_SECOND_OPERATION_ID = "fixture_echo_followup_effect"
+
 
 def _copy_builtin_assets(tmp_path: Path) -> Path:
     assets_root = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"
     shutil.copytree(assets_root, copied_root)
+    return copied_root
+
+
+def _copy_non_blueprint_fixture_assets(tmp_path: Path) -> Path:
+    copied_root = _copy_builtin_assets(tmp_path)
+    shutil.copytree(FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True)
     return copied_root
 
 
@@ -102,8 +118,299 @@ def _runtime_effect_operations_path(assets_root: Path) -> Path:
     )
 
 
+def _fixture_artifact_contracts_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "artifact_contracts"
+        / "fixture_effect_artifacts.json"
+    )
+
+
 def _blueprint_graph_path(assets_root: Path) -> Path:
     return assets_root / "graphs" / "planning" / "blueprint.json"
+
+
+def _planning_standard_graph_path(assets_root: Path) -> Path:
+    return assets_root / "graphs" / "planning" / "standard.json"
+
+
+def _fixture_runtime_effect_rules_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_rules"
+        / "fixture_effect_rules.json"
+    )
+
+
+def _fixture_runtime_effect_operations_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_operations"
+        / "fixture_runtime_effect_operations.json"
+    )
+
+
+def _fixture_runtime_effect_runners_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_runners"
+        / "fixture_runtime_effect_runners.json"
+    )
+
+
+def _fixture_runtime_effect_handlers_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_handlers"
+        / "fixture_effect_handlers.json"
+    )
+
+
+def _configure_non_blueprint_repair_route(assets_root: Path) -> None:
+    operations_path = _fixture_runtime_effect_operations_path(assets_root)
+    operations_payload = _load_json(operations_path)
+    fixture_operation = next(
+        definition
+        for definition in operations_payload["definitions"]
+        if definition["operation_id"] == "fixture_echo_effect"
+    )
+    fixture_operation["repair_closure_contracts"] = [
+        {
+            "failure_class": "fixture_effect_input_missing",
+            "repair_operation_id": FIXTURE_REPAIR_OPERATION_ID,
+            "target_node_id": "mechanic",
+            "target_terminal_outcome": "MECHANIC_COMPLETE",
+            "required_repair_evidence_artifact_ids": ["report"],
+            "affected_source_family_id": "spec",
+            "source_lifecycle_behavior_on_repair_success": "complete_source_work_item",
+            "source_lifecycle_behavior_on_repair_failure": "block_source_work_item",
+            "supports_partial_mutation": False,
+            "requires_resume_guard": True,
+        }
+    ]
+    operations_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_operation",
+            "operation_id": FIXTURE_REPAIR_OPERATION_ID,
+            "display_name": "Non-Blueprint fixture repair apply operation",
+            "legacy_handler_ids": [],
+            "required_artifacts": ["report"],
+            "steps": [
+                {
+                    "step_id": "dispatch_fixture_repair_runner",
+                    "primitive_id": "legacy_python_handler",
+                    "mutation_phase": "unknown",
+                    "reads_artifact_ids": ["report"],
+                    "store_id": "fixture_effect_log",
+                    "writes_store": True,
+                    "journal_event_type": "fixture_repair_result",
+                }
+            ],
+            "idempotency": {
+                "duplicate_policy": "fail",
+                "replay_policy": "resume_idempotently",
+            },
+            "failure_mappings": [
+                {
+                    "failure_class": "legacy_handler_failure",
+                    "mutation_phase": "unknown",
+                }
+            ],
+            "mutation_journal": {
+                "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+                "required_fields": [
+                    "operation_id",
+                    "rule_id",
+                    "run_id",
+                    "step_id",
+                    "mutation_phase",
+                ],
+                "record_step_ids": ["dispatch_fixture_repair_runner"],
+            },
+            "partial_commit_policy": "block_source",
+        }
+    )
+    _write_json(operations_path, operations_payload)
+
+    runners_path = _fixture_runtime_effect_runners_path(assets_root)
+    runners_payload = _load_json(runners_path)
+    runners_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_runner",
+            "runner_id": "fixture_repair_runner",
+            "operation_ids": [FIXTURE_REPAIR_OPERATION_ID],
+            "required_runtime_capabilities": [],
+            "legacy_handler_ids": [],
+            "result_display_aliases": {},
+        }
+    )
+    _write_json(runners_path, runners_payload)
+
+    rules_path = _fixture_runtime_effect_rules_path(assets_root)
+    rules_payload = _load_json(rules_path)
+    rules_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_rule",
+            "rule_id": FIXTURE_REPAIR_RULE_ID,
+            "effect_operation_id": FIXTURE_REPAIR_OPERATION_ID,
+            "source_node_id": "mechanic",
+            "on_outcomes": ["MECHANIC_COMPLETE"],
+            "required_run_artifacts": ["report"],
+            "creates_work_items": False,
+            "duplicate_policy": "fail",
+            "partial_commit_policy": "block_source",
+            "replay_policy": "resume_idempotently",
+            "lineage_policy": "preserve_root",
+            "applies_before_route": False,
+            "lifecycle_mutation_plan_id": None,
+        }
+    )
+    _write_json(rules_path, rules_payload)
+
+    policies_path = _runtime_failure_policies_path(assets_root)
+    policies_payload = _load_json(policies_path)
+    policies_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_failure_policy",
+            "policy_id": FIXTURE_REPAIR_POLICY_ID,
+            "applies_to_origins": ["runtime_effect"],
+            "applies_to_planes": ["planning"],
+            "applies_to_families": ["spec"],
+            "applies_to_failure_classes": ["fixture_effect_input_missing"],
+            "applies_to_mutation_phases": ["pre_mutation"],
+            "applies_to_operation_ids": ["fixture_echo_effect"],
+            "applies_to_handler_ids": ["fixture_echo_effect"],
+            "applies_to_source_node_ids": ["manager"],
+            "applies_to_source_terminal_state_ids": ["manager_complete"],
+            "action": "route_to_node",
+            "target_node_id": "mechanic",
+            "failure_class_template": "runtime_effect_failure",
+        }
+    )
+    _write_json(policies_path, policies_payload)
+
+
+def _append_second_non_blueprint_fixture_operation(assets_root: Path) -> None:
+    artifact_contracts_path = _fixture_artifact_contracts_path(assets_root)
+    artifact_contracts_payload = _load_json(artifact_contracts_path)
+    fixture_artifact = next(
+        definition
+        for definition in artifact_contracts_payload["definitions"]
+        if definition["artifact_id"] == "fixture_effect_input"
+    )
+    fixture_artifact["consumer_handler_ids"].append(FIXTURE_SECOND_OPERATION_ID)
+    fixture_artifact["consumer_operation_ids"].append(FIXTURE_SECOND_OPERATION_ID)
+    _write_json(artifact_contracts_path, artifact_contracts_payload)
+
+    handlers_path = _fixture_runtime_effect_handlers_path(assets_root)
+    handlers_payload = _load_json(handlers_path)
+    handlers_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_handler",
+            "handler_id": FIXTURE_SECOND_OPERATION_ID,
+            "source_planes": ["planning"],
+            "allowed_source_families": ["spec"],
+            "destination_kinds": [],
+            "required_artifacts": ["fixture_effect_input"],
+            "optional_artifacts": [],
+            "returns_source_lifecycle_intent": False,
+            "requires_lifecycle_mutation_plan": False,
+            "creates_work_items": False,
+            "declared_capabilities": [],
+            "failure_classes": [
+                "fixture_effect_input_missing",
+                "fixture_effect_invalid",
+                "legacy_handler_failure",
+            ],
+        }
+    )
+    _write_json(handlers_path, handlers_payload)
+
+    operations_path = _fixture_runtime_effect_operations_path(assets_root)
+    operations_payload = _load_json(operations_path)
+    operations_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_operation",
+            "operation_id": FIXTURE_SECOND_OPERATION_ID,
+            "display_name": "Non-Blueprint fixture followup effect",
+            "legacy_handler_ids": [FIXTURE_SECOND_OPERATION_ID],
+            "required_artifacts": ["fixture_effect_input"],
+            "steps": [
+                {
+                    "step_id": "validate_required_artifacts",
+                    "primitive_id": "artifact_presence",
+                    "mutation_phase": "pre_mutation",
+                    "reads_artifact_ids": ["fixture_effect_input"],
+                    "validator_ids": ["fixture_echo_effect.required_artifacts"],
+                },
+                {
+                    "step_id": "dispatch_fixture_followup_runner",
+                    "primitive_id": "legacy_python_handler",
+                    "mutation_phase": "unknown",
+                    "reads_artifact_ids": ["fixture_effect_input"],
+                    "store_id": "fixture_effect_log",
+                    "writes_store": True,
+                    "journal_event_type": "fixture_followup_result",
+                },
+            ],
+            "idempotency": {
+                "duplicate_policy": "fail",
+                "replay_policy": "resume_idempotently",
+            },
+            "failure_mappings": [
+                {
+                    "failure_class": "fixture_effect_input_missing",
+                    "mutation_phase": "pre_mutation",
+                    "validator_id": "fixture_echo_effect.required_artifacts",
+                },
+                {
+                    "failure_class": "legacy_handler_failure",
+                    "mutation_phase": "unknown",
+                },
+            ],
+            "mutation_journal": {
+                "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+                "required_fields": [
+                    "operation_id",
+                    "rule_id",
+                    "run_id",
+                    "step_id",
+                    "mutation_phase",
+                ],
+                "record_step_ids": ["dispatch_fixture_followup_runner"],
+            },
+            "partial_commit_policy": "block_source",
+        }
+    )
+    _write_json(operations_path, operations_payload)
+
+    runners_path = _fixture_runtime_effect_runners_path(assets_root)
+    runners_payload = _load_json(runners_path)
+    runners_payload["definitions"].append(
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_effect_runner",
+            "runner_id": "fixture_followup_runner",
+            "operation_ids": [FIXTURE_SECOND_OPERATION_ID],
+            "required_runtime_capabilities": [],
+            "legacy_handler_ids": [FIXTURE_SECOND_OPERATION_ID],
+            "result_display_aliases": {
+                FIXTURE_SECOND_OPERATION_ID: FIXTURE_SECOND_OPERATION_ID,
+            },
+        }
+    )
+    _write_json(runners_path, runners_payload)
 
 
 def _append_runtime_failure_policy(assets_root: Path, policy: dict) -> None:
@@ -770,6 +1077,245 @@ def test_compile_rejects_repair_route_with_extra_family_scope(tmp_path: Path) ->
         "runtime failure policy blueprint_approval_pre_mutation_effect_validation "
         "applies_to_families blueprint_draft, spec must exactly match repair "
         "closure affected source families: blueprint_draft"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_accepts_non_blueprint_repair_route_from_operation_contract(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True, outcome.diagnostics.errors
+    assert outcome.active_plan is not None
+    policy = outcome.active_plan.runtime_failure_policies_by_id[FIXTURE_REPAIR_POLICY_ID]
+    assert policy.action == "route_to_node"
+    assert policy.target_node_id == "mechanic"
+    assert policy.applies_to_operation_ids == ("fixture_echo_effect",)
+    repair_rule = next(
+        rule
+        for rule in outcome.active_plan.runtime_effect_rules
+        if rule.rule_id == FIXTURE_REPAIR_RULE_ID
+    )
+    assert repair_rule.effect_operation_id == FIXTURE_REPAIR_OPERATION_ID
+    assert repair_rule.on_outcomes == ("MECHANIC_COMPLETE",)
+
+
+def test_compile_rejects_non_blueprint_repair_route_with_unknown_repair_operation(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    operations_path = _fixture_runtime_effect_operations_path(assets_root)
+    operations_payload = _load_json(operations_path)
+    fixture_operation = next(
+        definition
+        for definition in operations_payload["definitions"]
+        if definition["operation_id"] == "fixture_echo_effect"
+    )
+    fixture_operation["repair_closure_contracts"][0]["repair_operation_id"] = "missing_fixture_repair"
+    _write_json(operations_path, operations_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} repair closure "
+        "fixture_echo_effect/fixture_effect_input_missing references unknown repair operation "
+        "missing_fixture_repair"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_missing_rule_artifact(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    rules_path = _fixture_runtime_effect_rules_path(assets_root)
+    rules_payload = _load_json(rules_path)
+    repair_rule = next(
+        definition
+        for definition in rules_payload["definitions"]
+        if definition["rule_id"] == FIXTURE_REPAIR_RULE_ID
+    )
+    repair_rule["required_run_artifacts"] = []
+    _write_json(rules_path, rules_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} target node mechanic outcome "
+        f"MECHANIC_COMPLETE rule {FIXTURE_REPAIR_RULE_ID} is missing required repair evidence "
+        "artifact report"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_with_wrong_family_scope(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    policies_path = _runtime_failure_policies_path(assets_root)
+    policies_payload = _load_json(policies_path)
+    fixture_policy = next(
+        definition
+        for definition in policies_payload["definitions"]
+        if definition["policy_id"] == FIXTURE_REPAIR_POLICY_ID
+    )
+    fixture_policy["applies_to_families"] = ["incident"]
+    _write_json(policies_path, policies_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} applies_to_families incident "
+        "must exactly match repair closure affected source families: spec"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_with_wrong_target_plane(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    policies_path = _runtime_failure_policies_path(assets_root)
+    policies_payload = _load_json(policies_path)
+    fixture_policy = next(
+        definition
+        for definition in policies_payload["definitions"]
+        if definition["policy_id"] == FIXTURE_REPAIR_POLICY_ID
+    )
+    fixture_policy["target_node_id"] = "builder"
+    _write_json(policies_path, policies_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} target node builder "
+        "is not in plane planning"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_with_wrong_target_terminal_outcome(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    operations_path = _fixture_runtime_effect_operations_path(assets_root)
+    operations_payload = _load_json(operations_path)
+    fixture_operation = next(
+        definition
+        for definition in operations_payload["definitions"]
+        if definition["operation_id"] == "fixture_echo_effect"
+    )
+    fixture_operation["repair_closure_contracts"][0]["target_terminal_outcome"] = "BLOCKED"
+    _write_json(operations_path, operations_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} target node mechanic outcome BLOCKED "
+        f"does not invoke repair operation {FIXTURE_REPAIR_OPERATION_ID}"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_without_explicit_operation_scope_when_ambiguous(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+    _append_second_non_blueprint_fixture_operation(assets_root)
+
+    policies_path = _runtime_failure_policies_path(assets_root)
+    policies_payload = _load_json(policies_path)
+    fixture_policy = next(
+        definition
+        for definition in policies_payload["definitions"]
+        if definition["policy_id"] == FIXTURE_REPAIR_POLICY_ID
+    )
+    fixture_policy.pop("applies_to_operation_ids")
+    fixture_policy["applies_to_handler_ids"] = [
+        "fixture_echo_effect",
+        FIXTURE_SECOND_OPERATION_ID,
+    ]
+    _write_json(policies_path, policies_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} must declare "
+        "repair_closure_mappings for multi-operation or multi-failure-class "
+        "route_to_node scope"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_without_resume_guard(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    graph_path = _planning_standard_graph_path(assets_root)
+    graph_payload = _load_json(graph_path)
+    graph_payload["dynamic_policies"]["resume_policies"] = [
+        policy
+        for policy in graph_payload["dynamic_policies"]["resume_policies"]
+        if policy["source_node_id"] != "mechanic"
+    ]
+    _write_json(graph_path, graph_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} target node mechanic "
+        "lacks resume guard for MECHANIC_COMPLETE"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_non_blueprint_repair_route_partial_mutation_without_support(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    _configure_non_blueprint_repair_route(assets_root)
+
+    policies_path = _runtime_failure_policies_path(assets_root)
+    policies_payload = _load_json(policies_path)
+    fixture_policy = next(
+        definition
+        for definition in policies_payload["definitions"]
+        if definition["policy_id"] == FIXTURE_REPAIR_POLICY_ID
+    )
+    fixture_policy["applies_to_mutation_phases"] = ["partial_mutation"]
+    _write_json(policies_path, policies_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        f"runtime failure policy {FIXTURE_REPAIR_POLICY_ID} applies to partial mutation but "
+        "repair closure fixture_echo_effect/fixture_effect_input_missing does not support "
+        "partial mutation"
     ) in _diagnostic_text(outcome)
 
 
