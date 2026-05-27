@@ -36,7 +36,7 @@ Before changing anything, load the relevant source-of-truth files:
 - `src/millrace_ai/contracts/`
 - `src/millrace_ai/architecture/stage_kinds.py`
 - `src/millrace_ai/architecture/loop_graphs.py`
-- `src/millrace_ai/architecture/workflow_primitives.py`
+- `src/millrace_ai/architecture/workflow_primitives/`
 - `src/millrace_ai/architecture/materialization.py`
 - `src/millrace_ai/compiler.py`
 - `src/millrace_ai/assets/modes.py`

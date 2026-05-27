@@ -233,6 +233,15 @@ def test_validation_import_resolves_to_package_facade() -> None:
     assert spec.submodule_search_locations is not None
 
 
+def test_workflow_primitives_import_resolves_to_package_facade() -> None:
+    spec = importlib.util.find_spec("millrace_ai.architecture.workflow_primitives")
+
+    assert spec is not None
+    assert spec.origin is not None
+    assert spec.origin.endswith("millrace_ai/architecture/workflow_primitives/__init__.py")
+    assert spec.submodule_search_locations is not None
+
+
 def test_effect_operations_facade_delegates_to_validation_package() -> None:
     effect_operations = importlib.import_module("millrace_ai.compilation.effect_operations")
 

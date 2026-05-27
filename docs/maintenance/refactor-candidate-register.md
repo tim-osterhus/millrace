@@ -59,7 +59,7 @@ remaining debt is now owned by
 | MR-MAINT-001 | `src/millrace_ai/runtime/effects/operation_runners/` | Blueprint durable mutation has moved to focused operation runners; legacy facades and handler-id compatibility surfaces remain. | Medium | Batch A | Required |
 | MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Core effect dispatch resolves operations through a registry seam, but failure routing and compatibility metadata still partly key on handler ids. | High | Batch A | Required |
 | MR-MAINT-003 | `src/millrace_ai/compilation/validation/` | Compiler rule families now live in focused validator modules behind one package facade. | Complete | Batch C | Complete |
-| MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives.py` | Workflow primitive contracts span many contract families in one schema module. | Medium-high | Batch C | Required |
+| MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives/` | Workflow primitive contracts span many contract families in one package facade. | Medium-high | Batch C | Required |
 | MR-MAINT-005 | `src/millrace_ai/runtime/blocked_recovery.py` | Blocked metadata, retry eligibility, queue mutation, lineage guards, and auto-recovery share one module. | High | Batch D | Optional, recommended |
 | MR-MAINT-006 | `src/millrace_ai/runtime/error_recovery.py` | Runtime exception context, repair routing, snapshot mutation, and reports are interleaved. | High | Batch D | Optional, recommended |
 | MR-MAINT-007 | `src/millrace_ai/runtime/request_context.py` | Generic request context rendering and Blueprint-specific context providers are coupled. | High | Batch D | Required for Blueprint half |
@@ -209,7 +209,7 @@ families and diagnostic contracts before code moves.
 
 ### MR-MAINT-004: Workflow Primitive Contracts
 
-Source: `src/millrace_ai/architecture/workflow_primitives.py`
+Source: `src/millrace_ai/architecture/workflow_primitives/`
 
 Reason to change: The module is a cohesive schema authority, but it now covers
 many contract families: artifact contracts, work-item families, document

@@ -22,7 +22,7 @@ The authoritative sources are:
 - `src/millrace_ai/contracts/`
 - `src/millrace_ai/architecture/stage_kinds.py`
 - `src/millrace_ai/architecture/loop_graphs.py`
-- `src/millrace_ai/architecture/workflow_primitives.py`
+- `src/millrace_ai/architecture/workflow_primitives/`
 - `src/millrace_ai/architecture/materialization.py`
 - `src/millrace_ai/compiler.py`
 - `src/millrace_ai/assets/modes.py`
@@ -182,7 +182,7 @@ Blueprint graph authoring has two additional invariants:
 
 Workflow primitive assets must validate against the primitive definition models
 in
-`src/millrace_ai/architecture/workflow_primitives.py`.
+`src/millrace_ai/architecture/workflow_primitives/`.
 
 For the shipped foundation slice, primitives define:
 

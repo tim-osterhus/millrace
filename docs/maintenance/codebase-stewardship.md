@@ -45,7 +45,8 @@ Largest remaining source modules at this baseline:
 
 - `src/millrace_ai/runtime/effects/operations.py`: 2433 lines
 - former `compilation/validation.py`: 1382 lines
-- `src/millrace_ai/architecture/workflow_primitives.py`: 1277 lines
+- `src/millrace_ai/architecture/workflow_primitives/`: 1277 lines before the
+  package scaffold split
 - `src/millrace_ai/runtime/blocked_recovery.py`: 1159 lines
 - `src/millrace_ai/runtime/request_context.py`: 987 lines
 - `src/millrace_ai/runtime/completion_behavior.py`: 892 lines
