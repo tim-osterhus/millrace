@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 from .active_runs import active_run_for_plane
+from .context import validate_stage_request_context_provider_implementation
 from .error_recovery import build_runtime_error_request_fields
 from .request_context import attach_default_request_context
 from .skill_evidence import write_skill_revision_evidence
@@ -72,6 +73,10 @@ def build_stage_run_request(
         stage_plan,
         request_kind=request_kind,
         active_work_item_family_id=active_work_item_family_id,
+    )
+    validate_stage_request_context_provider_implementation(
+        stage_plan=stage_plan,
+        compiled_plan=engine.compiled_plan,
     )
     run_id = active_run.run_id if active_run is not None else engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
@@ -218,6 +223,10 @@ def build_closure_target_stage_run_request(
 ) -> StageRunRequest:
     assert engine.snapshot is not None
     active_run = active_run_for_plane(engine.snapshot, stage_plan.plane)
+    validate_stage_request_context_provider_implementation(
+        stage_plan=stage_plan,
+        compiled_plan=engine.compiled_plan,
+    )
     run_id = active_run.run_id if active_run is not None else engine.snapshot.active_run_id or new_run_id()
     run_dir = engine.paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)

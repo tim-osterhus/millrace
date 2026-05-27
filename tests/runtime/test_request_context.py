@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName, TaskDocument
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -129,7 +130,7 @@ def test_default_request_context_uses_closure_target_ref_without_active_work_ite
     enriched = attach_default_request_context(workspace_root=paths.root, request=request)
 
     assert enriched.request_context_profile_id == "arbiter.default"
-    assert enriched.context_render_plan_id == "stage_request.default.v1"
+    assert enriched.context_render_plan_id == "closure_target.default.v1"
     assert enriched.context_artifact_refs == ("closure_target:spec-root-001",)
     assert enriched.active_work_item_id is None
     assert enriched.active_work_item_path is None
@@ -146,4 +147,67 @@ def test_stage_plan_lookup_resolves_custom_stage_kind_by_runtime_stage(tmp_path:
 
     assert mechanic_plan.node_id == "mechanic_blueprint"
     assert mechanic_plan.stage_kind_id == "mechanic_blueprint"
+    engine.close()
+
+
+def test_request_context_prefers_compiled_node_profile_authority(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-ctx-001"))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    activate_claim_for_plane(engine, claim, Plane.EXECUTION)
+
+    builder_plan = engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.BUILDER)
+    staged = engine._build_stage_run_request(builder_plan)
+    reset_request = staged.model_copy(
+        update={
+            "node_id": "custom-builder-node",
+            "request_context_profile_id": None,
+            "context_bundle_path": None,
+            "context_artifact_refs": (),
+            "context_render_plan_id": None,
+            "rendered_prompt_context_path": None,
+        }
+    )
+    assert engine.compiled_plan is not None
+    profile = engine.compiled_plan.request_context_profiles_by_id["integrator.default"]
+    provider = engine.compiled_plan.request_context_providers_by_id[profile.provider_id]
+    render_plan = engine.compiled_plan.request_context_render_plans_by_id[
+        "stage_request.default.v1"
+    ]
+    compiled_authority = SimpleNamespace(
+        compiled_plan_id=reset_request.compiled_plan_id,
+        request_context_profiles_by_id={"integrator.default": profile},
+        request_context_providers_by_id={provider.provider_id: provider},
+        request_context_render_plans_by_id={render_plan.render_plan_id: render_plan},
+        graphs_by_plane={
+            Plane.EXECUTION: SimpleNamespace(
+                nodes=(
+                    SimpleNamespace(
+                        plane=Plane.EXECUTION,
+                        node_id="custom-builder-node",
+                        stage_kind_id="builder",
+                        request_context_profile_id="integrator.default",
+                        context_render_plan_id="stage_request.default.v1",
+                    ),
+                )
+            )
+        },
+        artifact_contracts_by_id={},
+    )
+
+    enriched = attach_default_request_context(
+        workspace_root=paths.root,
+        request=reset_request,
+        compiled_plan=compiled_authority,
+    )
+
+    assert enriched.request_context_profile_id == "integrator.default"
+    assert enriched.context_render_plan_id == "stage_request.default.v1"
+    assert enriched.context_artifact_refs == ("task:task-ctx-001",)
     engine.close()

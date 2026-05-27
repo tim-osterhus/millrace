@@ -338,6 +338,7 @@ def test_contractor_blueprint_context_excludes_full_manifest(tmp_path: Path) -> 
     manifest = _manifest_for_request(request)
 
     assert request.request_context_profile_id == "contractor_blueprint.default"
+    assert request.context_render_plan_id == "blueprint.contractor.default.v1"
     assert "active_blueprint_draft" in manifest["included_provider_ids"]
     assert "draft_context_excerpt" in manifest["included_provider_ids"]
     assert "latest_critique" in manifest["included_provider_ids"]
@@ -366,6 +367,7 @@ def test_evaluator_blueprint_context_includes_manifest_and_prior_approvals(
     manifest = _manifest_for_request(request)
 
     assert request.request_context_profile_id == "evaluator_blueprint.default"
+    assert request.context_render_plan_id == "blueprint.evaluator.default.v1"
     assert "full_manifest" in manifest["included_provider_ids"]
     assert "candidate_blueprint" in manifest["included_provider_ids"]
     assert "prior_approved_blueprints" in manifest["included_provider_ids"]
@@ -629,6 +631,7 @@ def test_mechanic_blueprint_context_includes_manager_runtime_effect_failure_evid
     manifest = _manifest_for_request(request)
     refs = set(request.context_artifact_refs)
 
+    assert request.context_render_plan_id == "blueprint.mechanic.default.v1"
     assert "manager_runtime_effect_failure_context" in manifest["included_provider_ids"]
     assert f"failed_manager_run_dir:{run_dir.relative_to(paths.root).as_posix()}" in refs
     assert f"failed_stage_result:{stage_result_path.relative_to(paths.root).as_posix()}" in refs
@@ -710,6 +713,7 @@ def test_mechanic_blueprint_context_includes_evaluator_runtime_effect_failure_ev
     manifest = _manifest_for_request(request)
     refs = set(request.context_artifact_refs)
 
+    assert request.context_render_plan_id == "blueprint.mechanic.default.v1"
     assert "evaluator_runtime_effect_failure_context" in manifest["included_provider_ids"]
     assert f"failed_evaluator_run_dir:{run_dir.relative_to(paths.root).as_posix()}" in refs
     assert f"failed_stage_result:{stage_result_path.relative_to(paths.root).as_posix()}" in refs
