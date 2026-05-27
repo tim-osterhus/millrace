@@ -161,6 +161,7 @@ def test_work_item_family_accepts_valid_custom_family() -> None:
         file_extension=".md",
         schema_id="blueprint_draft_v1",
         document_adapter_id="blueprint_draft_markdown_v1",
+        queue_lifecycle_adapter_id="custom.queue_lifecycle.blueprint_draft",
         queue_dirs=WorkItemQueueDirs(
             queue="queued",
             active="active",
@@ -179,6 +180,31 @@ def test_work_item_family_accepts_valid_custom_family() -> None:
     assert family.family_id == "blueprint_draft"
     assert family.lifecycle_states == ("queued", "active", "done", "blocked")
     assert family.runtime_relative_dir == "planning/blueprint-drafts"
+    assert family.queue_lifecycle_adapter_id == "custom.queue_lifecycle.blueprint_draft"
+
+
+def test_work_item_family_backfills_builtin_queue_lifecycle_adapter_id() -> None:
+    family = WorkItemFamilyDefinition(
+        family_id="task",
+        plane=Plane.EXECUTION,
+        entry_key="task",
+        display_name="Task",
+        document_kind="task",
+        runtime_relative_dir="tasks",
+        schema_id="task_v1",
+        document_adapter_id="markdown_v1",
+        queue_dirs=WorkItemQueueDirs(
+            queue="queued",
+            active="active",
+            done="done",
+            blocked="blocked",
+        ),
+        lifecycle_states=("queued", "active", "done", "blocked"),
+        closure_blocking_states=("queued", "active", "blocked"),
+        id_field="task_id",
+    )
+
+    assert family.queue_lifecycle_adapter_id == "builtin.queue_lifecycle.task"
 
 
 def test_work_item_family_rejects_duplicate_lifecycle_states() -> None:

@@ -230,6 +230,44 @@ def test_compile_rejects_entry_family_missing_from_plane_claim_policy(tmp_path: 
     ) in _diagnostic_text(outcome)
 
 
+def test_compile_rejects_queue_claim_family_with_unknown_queue_lifecycle_adapter(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    task_path = assets_root / "registry" / "work_item_families" / "task.json"
+    payload = _load_json(task_path)
+    payload["queue_lifecycle_adapter_id"] = "missing.queue_lifecycle.adapter"
+    _write_json(task_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "queue claim family task references unknown queue lifecycle adapter "
+        "missing.queue_lifecycle.adapter"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_backfills_builtin_queue_lifecycle_adapter_for_legacy_family_asset(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    task_path = assets_root / "registry" / "work_item_families" / "task.json"
+    payload = _load_json(task_path)
+    payload.pop("queue_lifecycle_adapter_id", None)
+    _write_json(task_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True, outcome.diagnostics.errors
+    assert outcome.active_plan is not None
+    assert (
+        outcome.active_plan.work_item_families_by_id["task"].queue_lifecycle_adapter_id
+        == "builtin.queue_lifecycle.task"
+    )
+
+
 def test_compile_rejects_mode_stage_map_outside_selected_loops(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     mode_path = assets_root / "modes" / "default_codex.json"

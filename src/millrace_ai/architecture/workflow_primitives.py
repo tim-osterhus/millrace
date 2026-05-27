@@ -20,6 +20,7 @@ from .stage_kinds import ArchitectureContractModel
 WorkflowPrimitiveId = str
 WorkItemFamilyId = str
 DocumentAdapterId = str
+QueueLifecycleAdapterId = str
 QueueClaimPolicyId = str
 TerminalActionId = str
 LifecycleMutationPlanId = str
@@ -31,6 +32,20 @@ RequestContextProviderId = str
 RequestContextRenderPlanId = str
 ArtifactContractId = str
 RuntimeEffectMutationPhaseValue = Literal["pre_mutation", "partial_mutation", "unknown"]
+
+_BUILTIN_QUEUE_LIFECYCLE_ADAPTER_IDS: dict[str, QueueLifecycleAdapterId] = {
+    "task": "builtin.queue_lifecycle.task",
+    "spec": "builtin.queue_lifecycle.spec",
+    "probe": "builtin.queue_lifecycle.probe",
+    "incident": "builtin.queue_lifecycle.incident",
+    "learning_request": "builtin.queue_lifecycle.learning_request",
+    "blueprint_draft": "builtin.queue_lifecycle.blueprint_draft",
+}
+
+
+def builtin_queue_lifecycle_adapter_id_for_family(family_id: str) -> QueueLifecycleAdapterId | None:
+    normalized_family_id = normalize_canonical_id(family_id, field_label="family_id")
+    return _BUILTIN_QUEUE_LIFECYCLE_ADAPTER_IDS.get(normalized_family_id)
 
 
 class ArtifactFormat(str, Enum):
@@ -176,6 +191,7 @@ class WorkItemFamilyDefinition(ArchitectureContractModel):
     file_extension: str = ".json"
     schema_id: str
     document_adapter_id: DocumentAdapterId
+    queue_lifecycle_adapter_id: QueueLifecycleAdapterId | None = None
     queue_dirs: WorkItemQueueDirs
     lifecycle_states: tuple[str, ...] = Field(min_length=1)
     claimable_state: str = "queued"
@@ -240,6 +256,7 @@ class WorkItemFamilyDefinition(ArchitectureContractModel):
         "id_field",
         "created_at_field",
         "dependency_field",
+        "queue_lifecycle_adapter_id",
     )
     @classmethod
     def validate_optional_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
@@ -265,6 +282,10 @@ class WorkItemFamilyDefinition(ArchitectureContractModel):
             raise ValueError("closure_blocking_states must be declared in lifecycle_states")
         if self.default_entry_key is not None and self.default_entry_key != self.entry_key:
             raise ValueError("default_entry_key must match entry_key for this family")
+        if self.queue_lifecycle_adapter_id is None:
+            self.queue_lifecycle_adapter_id = builtin_queue_lifecycle_adapter_id_for_family(
+                self.family_id
+            )
         return self
 
 

@@ -10,6 +10,7 @@
   "file_extension": ".md",
   "schema_id": "task_document_v1",
   "document_adapter_id": "builtin_markdown_v1",
+  "queue_lifecycle_adapter_id": "builtin.queue_lifecycle.task",
   "queue_dirs": {
     "queue": "tasks/queue",
     "active": "tasks/active",

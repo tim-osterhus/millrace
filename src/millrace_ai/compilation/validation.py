@@ -33,6 +33,10 @@ from millrace_ai.architecture.loop_graphs import graph_loop_entry_key_value
 from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane, StageMapKey
 from millrace_ai.contracts.stage_metadata import stage_plane
+from millrace_ai.workspace.family_adapters import (
+    queue_adapter_for_id,
+    resolve_queue_lifecycle_adapter_id,
+)
 
 from .effect_operations import validate_runtime_effect_operations
 from .outcomes import CompilerValidationError
@@ -180,6 +184,10 @@ def validate_workflow_primitives(
     )
     _validate_queue_claim_policies(
         mode=mode,
+        families_by_id=families_by_id,
+        queue_policies_by_plane=queue_policies_by_plane,
+    )
+    _validate_queue_lifecycle_adapters(
         families_by_id=families_by_id,
         queue_policies_by_plane=queue_policies_by_plane,
     )
@@ -747,6 +755,33 @@ def _validate_queue_claim_policies(
                 raise CompilerValidationError(
                     f"queue claim policy {getattr(policy, 'policy_id')} includes family "
                     f"{family_id} from plane {family.plane.value}"
+                )
+
+
+def _validate_queue_lifecycle_adapters(
+    *,
+    families_by_id: dict[str, WorkItemFamilyDefinition],
+    queue_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition],
+) -> None:
+    for policy in queue_policies_by_plane.values():
+        for family_id in policy.family_order:
+            family = families_by_id[family_id]
+            adapter_id = resolve_queue_lifecycle_adapter_id(family)
+            if adapter_id is None:
+                raise CompilerValidationError(
+                    f"queue claim family {family.family_id} in policy {policy.policy_id} "
+                    "is missing queue lifecycle adapter id"
+                )
+            adapter = queue_adapter_for_id(adapter_id)
+            if adapter is None:
+                raise CompilerValidationError(
+                    f"queue claim family {family.family_id} references unknown queue "
+                    f"lifecycle adapter {adapter_id}"
+                )
+            if adapter.family_id != family.family_id:
+                raise CompilerValidationError(
+                    f"queue claim family {family.family_id} references queue lifecycle "
+                    f"adapter {adapter_id} bound to family {adapter.family_id}"
                 )
 
 

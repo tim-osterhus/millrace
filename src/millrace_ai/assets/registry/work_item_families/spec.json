@@ -10,6 +10,7 @@
   "file_extension": ".md",
   "schema_id": "spec_document_v1",
   "document_adapter_id": "builtin_markdown_v1",
+  "queue_lifecycle_adapter_id": "builtin.queue_lifecycle.spec",
   "queue_dirs": {
     "queue": "specs/queue",
     "active": "specs/active",

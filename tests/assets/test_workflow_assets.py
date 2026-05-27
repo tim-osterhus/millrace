@@ -167,6 +167,7 @@ def _write_custom_family_assets(assets_root: Path) -> None:
                 "file_extension": ".json",
                 "schema_id": "custom_review_document_v1",
                 "document_adapter_id": "custom_review_json_v1",
+                "queue_lifecycle_adapter_id": "custom.queue_lifecycle.custom_review",
                 "queue_dirs": {
                     "queue": "custom/reviews/queue",
                     "active": "custom/reviews/active",
@@ -251,13 +252,25 @@ def test_builtin_work_item_families_load_current_queue_families() -> None:
     assert by_id["task"].plane is Plane.EXECUTION
     assert by_id["task"].queue_dirs.queue == "tasks/queue"
     assert by_id["task"].done_state == "done"
+    assert by_id["task"].queue_lifecycle_adapter_id == "builtin.queue_lifecycle.task"
     assert by_id["spec"].plane is Plane.PLANNING
+    assert by_id["spec"].queue_lifecycle_adapter_id == "builtin.queue_lifecycle.spec"
     assert by_id["probe"].plane is Plane.PLANNING
+    assert by_id["probe"].queue_lifecycle_adapter_id == "builtin.queue_lifecycle.probe"
     assert by_id["incident"].claimable_state == "incoming"
     assert by_id["incident"].done_state == "resolved"
+    assert by_id["incident"].queue_lifecycle_adapter_id == "builtin.queue_lifecycle.incident"
     assert by_id["learning_request"].plane is Plane.LEARNING
+    assert (
+        by_id["learning_request"].queue_lifecycle_adapter_id
+        == "builtin.queue_lifecycle.learning_request"
+    )
     assert by_id["blueprint_draft"].plane is Plane.PLANNING
     assert by_id["blueprint_draft"].file_extension == ".json"
+    assert (
+        by_id["blueprint_draft"].queue_lifecycle_adapter_id
+        == "builtin.queue_lifecycle.blueprint_draft"
+    )
 
 
 def test_builtin_workflow_primitives_load_as_bundle() -> None:

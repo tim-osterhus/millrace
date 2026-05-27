@@ -10,6 +10,7 @@
   "file_extension": ".md",
   "schema_id": "incident_document_v1",
   "document_adapter_id": "builtin_markdown_v1",
+  "queue_lifecycle_adapter_id": "builtin.queue_lifecycle.incident",
   "queue_dirs": {
     "queue": "incidents/incoming",
     "active": "incidents/active",

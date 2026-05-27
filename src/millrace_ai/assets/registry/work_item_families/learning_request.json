@@ -10,6 +10,7 @@
   "file_extension": ".md",
   "schema_id": "learning_request_document_v1",
   "document_adapter_id": "builtin_markdown_v1",
+  "queue_lifecycle_adapter_id": "builtin.queue_lifecycle.learning_request",
   "queue_dirs": {
     "queue": "learning/requests/queue",
     "active": "learning/requests/active",

@@ -10,6 +10,7 @@
   "file_extension": ".json",
   "schema_id": "blueprint_draft_document_v1",
   "document_adapter_id": "blueprint_draft_markdown_v1",
+  "queue_lifecycle_adapter_id": "builtin.queue_lifecycle.blueprint_draft",
   "queue_dirs": {
     "queue": "blueprints/drafts/queue",
     "active": "blueprints/drafts/active",
