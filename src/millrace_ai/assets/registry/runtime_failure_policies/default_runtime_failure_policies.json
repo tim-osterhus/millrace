@@ -114,6 +114,42 @@
       "applies_to_source_terminal_state_ids": ["blueprint_approved"],
       "action": "route_to_node",
       "target_node_id": "mechanic_blueprint",
+      "repair_closure_mappings": [
+        {
+          "source_operation_id": "evaluator_blueprint_approved_to_task",
+          "failure_class": "generated_task_missing",
+          "repair_operation_id": "mechanic_blueprint_repair_apply",
+          "target_node_id": "mechanic_blueprint",
+          "target_terminal_outcome": "MECHANIC_BLUEPRINT_COMPLETE",
+          "required_repair_evidence_artifact_ids": [
+            "blueprint_repair_decision",
+            "mechanic_report",
+            "repaired_generated_task"
+          ],
+          "affected_source_family_id": "blueprint_draft",
+          "source_lifecycle_behavior_on_repair_success": "complete_source_work_item",
+          "source_lifecycle_behavior_on_repair_failure": "block_source_work_item",
+          "supports_partial_mutation": false,
+          "requires_resume_guard": true
+        },
+        {
+          "source_operation_id": "evaluator_blueprint_approved_to_task",
+          "failure_class": "generated_task_invalid",
+          "repair_operation_id": "mechanic_blueprint_repair_apply",
+          "target_node_id": "mechanic_blueprint",
+          "target_terminal_outcome": "MECHANIC_BLUEPRINT_COMPLETE",
+          "required_repair_evidence_artifact_ids": [
+            "blueprint_repair_decision",
+            "mechanic_report",
+            "repaired_generated_task"
+          ],
+          "affected_source_family_id": "blueprint_draft",
+          "source_lifecycle_behavior_on_repair_success": "complete_source_work_item",
+          "source_lifecycle_behavior_on_repair_failure": "block_source_work_item",
+          "supports_partial_mutation": false,
+          "requires_resume_guard": true
+        }
+      ],
       "failure_class_template": "runtime_effect_failure"
     }
   ]

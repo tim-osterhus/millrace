@@ -15,6 +15,7 @@ from .common import (
     normalize_nonempty_text,
     normalize_status,
 )
+from .effect_operations import RuntimeEffectRepairClosureContractDefinition
 from .stage_kinds import ArchitectureContractModel
 
 WorkflowPrimitiveId = str
@@ -1090,6 +1091,17 @@ class WorkflowRecoveryPolicyDefinition(ArchitectureContractModel):
         return self
 
 
+class RuntimeFailurePolicyRepairClosureMappingDefinition(
+    RuntimeEffectRepairClosureContractDefinition
+):
+    source_operation_id: str
+
+    @field_validator("source_operation_id")
+    @classmethod
+    def validate_source_operation_id(cls, value: str) -> str:
+        return normalize_canonical_id(value, field_label="source_operation_id")
+
+
 class RuntimeFailurePolicyDefinition(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["runtime_failure_policy"] = "runtime_failure_policy"
@@ -1120,6 +1132,7 @@ class RuntimeFailurePolicyDefinition(ArchitectureContractModel):
     threshold: int | None = Field(default=None, ge=1)
     counter_name: str | None = None
     failure_class_template: str
+    repair_closure_mappings: tuple[RuntimeFailurePolicyRepairClosureMappingDefinition, ...] = ()
     recovery_node_id: str | None = None
     target_node_id: str | None = None
     target_terminal_state_id: str | None = None
@@ -1186,6 +1199,52 @@ class RuntimeFailurePolicyDefinition(ArchitectureContractModel):
             raise ValueError("target_node_id is required for action=route_to_node")
         if (self.threshold is None) != (self.counter_name is None):
             raise ValueError("threshold and counter_name must be declared together")
+        if self.repair_closure_mappings:
+            if self.action != "route_to_node":
+                raise ValueError("repair_closure_mappings are only valid for action=route_to_node")
+            seen_pairs: set[tuple[str, str]] = set()
+            for mapping in self.repair_closure_mappings:
+                pair = (mapping.source_operation_id, mapping.failure_class)
+                if pair in seen_pairs:
+                    raise ValueError(
+                        "repair_closure_mappings may not contain duplicate "
+                        "source_operation_id + failure_class pairs"
+                    )
+                seen_pairs.add(pair)
+                if self.target_node_id is not None and mapping.target_node_id != self.target_node_id:
+                    raise ValueError(
+                        "repair_closure_mappings target_node_id must match policy target_node_id"
+                    )
+            if self.applies_to_failure_classes:
+                unknown_failure_classes = {
+                    mapping.failure_class
+                    for mapping in self.repair_closure_mappings
+                } - set(self.applies_to_failure_classes)
+                if unknown_failure_classes:
+                    raise ValueError(
+                        "repair_closure_mappings failure_class values must be included in "
+                        "applies_to_failure_classes"
+                    )
+            if self.applies_to_operation_ids:
+                unknown_operation_ids = {
+                    mapping.source_operation_id
+                    for mapping in self.repair_closure_mappings
+                } - set(self.applies_to_operation_ids)
+                if unknown_operation_ids:
+                    raise ValueError(
+                        "repair_closure_mappings source_operation_id values must be included in "
+                        "applies_to_operation_ids"
+                    )
+            if self.applies_to_families:
+                unknown_family_ids = {
+                    mapping.affected_source_family_id
+                    for mapping in self.repair_closure_mappings
+                } - set(self.applies_to_families)
+                if unknown_family_ids:
+                    raise ValueError(
+                        "repair_closure_mappings affected_source_family_id values must be included in "
+                        "applies_to_families"
+                    )
         return self
 
 
@@ -1480,6 +1539,7 @@ __all__ = [
     "RuntimeEffectRuleDefinition",
     "RuntimeEffectRuleId",
     "RuntimeFailurePolicyDefinition",
+    "RuntimeFailurePolicyRepairClosureMappingDefinition",
     "TerminalActionDefinition",
     "TerminalActionId",
     "WorkItemDocumentAdapterDefinition",

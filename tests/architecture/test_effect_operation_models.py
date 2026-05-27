@@ -8,9 +8,13 @@ from millrace_ai.architecture import (
     RuntimeEffectMutationJournalDefinition,
     RuntimeEffectOperationDefinition,
     RuntimeEffectOperationStepDefinition,
+    RuntimeEffectRepairClosureContractDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
+    RuntimeFailurePolicyDefinition,
+    RuntimeFailurePolicyRepairClosureMappingDefinition,
 )
+from millrace_ai.contracts import Plane
 
 
 def _journal() -> RuntimeEffectMutationJournalDefinition:
@@ -18,6 +22,15 @@ def _journal() -> RuntimeEffectMutationJournalDefinition:
         entry_id_template="{operation_id}:{run_id}:{step_id}",
         required_fields=("operation_id", "rule_id", "run_id", "step_id"),
         record_step_ids=("dispatch_legacy_handler",),
+    )
+
+
+def test_repair_closure_types_are_exported_from_architecture_surface() -> None:
+    assert RuntimeEffectRepairClosureContractDefinition.__name__ == (
+        "RuntimeEffectRepairClosureContractDefinition"
+    )
+    assert RuntimeFailurePolicyRepairClosureMappingDefinition.__name__ == (
+        "RuntimeFailurePolicyRepairClosureMappingDefinition"
     )
 
 
@@ -49,6 +62,22 @@ def test_runtime_effect_operation_model_round_trips_legacy_shell() -> None:
         failure_mappings=(
             {"failure_class": "legacy_handler_failure", "mutation_phase": "unknown"},
         ),
+        repair_closure_contracts=(
+            RuntimeEffectRepairClosureContractDefinition(
+                failure_class="legacy_handler_failure",
+                repair_operation_id="mechanic_blueprint_repair_apply",
+                target_node_id="mechanic_blueprint",
+                target_terminal_outcome="MECHANIC_BLUEPRINT_COMPLETE",
+                required_repair_evidence_artifact_ids=(
+                    "blueprint_repair_decision",
+                    "mechanic_report",
+                    "repaired_generated_task",
+                ),
+                affected_source_family_id="blueprint_draft",
+                source_lifecycle_behavior_on_repair_success="complete_source_work_item",
+                source_lifecycle_behavior_on_repair_failure="block_source_work_item",
+            ),
+        ),
         mutation_journal=_journal(),
         partial_commit_policy="block_source",
     )
@@ -58,6 +87,7 @@ def test_runtime_effect_operation_model_round_trips_legacy_shell() -> None:
     assert payload["operation_id"] == "manager_blueprint_manifest_to_blueprint_drafts"
     assert payload["steps"][1]["writes_store"] is True
     assert payload["mutation_journal"]["record_step_ids"] == ["dispatch_legacy_handler"]
+    assert payload["repair_closure_contracts"][0]["failure_class"] == "legacy_handler_failure"
 
 
 def test_runtime_effect_store_rejects_unsafe_paths() -> None:
@@ -112,6 +142,114 @@ def test_runtime_effect_operation_rejects_duplicate_steps() -> None:
             mutation_journal=RuntimeEffectMutationJournalDefinition(
                 entry_id_template="{operation_id}:{run_id}:{step_id}",
                 required_fields=("operation_id",),
+            ),
+        )
+
+
+def test_runtime_effect_operation_rejects_repair_closure_for_unknown_failure_class() -> None:
+    with pytest.raises(ValidationError, match="repair_closure_contracts failure_class"):
+        RuntimeEffectOperationDefinition(
+            operation_id="repair_unknown_failure_operation",
+            display_name="Repair unknown failure operation",
+            steps=(
+                RuntimeEffectOperationStepDefinition(
+                    step_id="validate",
+                    primitive_id="artifact_presence",
+                ),
+            ),
+            idempotency=RuntimeEffectIdempotencyDefinition(
+                duplicate_policy="fail",
+                replay_policy="resume_idempotently",
+            ),
+            failure_mappings=(
+                {"failure_class": "declared_failure", "mutation_phase": "pre_mutation"},
+            ),
+            repair_closure_contracts=(
+                RuntimeEffectRepairClosureContractDefinition(
+                    failure_class="undeclared_failure",
+                    repair_operation_id="mechanic_blueprint_repair_apply",
+                    target_node_id="mechanic_blueprint",
+                    target_terminal_outcome="MECHANIC_BLUEPRINT_COMPLETE",
+                    required_repair_evidence_artifact_ids=(
+                        "blueprint_repair_decision",
+                        "mechanic_report",
+                        "repaired_generated_task",
+                    ),
+                    affected_source_family_id="blueprint_draft",
+                    source_lifecycle_behavior_on_repair_success="complete_source_work_item",
+                    source_lifecycle_behavior_on_repair_failure="block_source_work_item",
+                ),
+            ),
+            mutation_journal=RuntimeEffectMutationJournalDefinition(
+                entry_id_template="{operation_id}:{run_id}:{step_id}",
+                required_fields=("operation_id",),
+            ),
+        )
+
+
+def test_runtime_failure_policy_accepts_repair_closure_mapping() -> None:
+    policy = RuntimeFailurePolicyDefinition(
+        policy_id="repair_route_policy",
+        applies_to_origins=("runtime_effect",),
+        applies_to_planes=(Plane.PLANNING,),
+        applies_to_families=("blueprint_draft",),
+        applies_to_failure_classes=("generated_task_missing",),
+        applies_to_operation_ids=("evaluator_blueprint_approved_to_task",),
+        action="route_to_node",
+        target_node_id="mechanic_blueprint",
+        failure_class_template="runtime_effect_failure",
+        repair_closure_mappings=(
+            {
+                "source_operation_id": "evaluator_blueprint_approved_to_task",
+                "failure_class": "generated_task_missing",
+                "repair_operation_id": "mechanic_blueprint_repair_apply",
+                "target_node_id": "mechanic_blueprint",
+                "target_terminal_outcome": "MECHANIC_BLUEPRINT_COMPLETE",
+                "required_repair_evidence_artifact_ids": (
+                    "blueprint_repair_decision",
+                    "mechanic_report",
+                    "repaired_generated_task",
+                ),
+                "affected_source_family_id": "blueprint_draft",
+                "source_lifecycle_behavior_on_repair_success": "complete_source_work_item",
+                "source_lifecycle_behavior_on_repair_failure": "block_source_work_item",
+                "supports_partial_mutation": False,
+                "requires_resume_guard": True,
+            },
+        ),
+    )
+
+    assert policy.repair_closure_mappings[0].source_operation_id == "evaluator_blueprint_approved_to_task"
+
+
+def test_runtime_failure_policy_rejects_repair_mapping_with_mismatched_target_node() -> None:
+    with pytest.raises(ValidationError, match="target_node_id"):
+        RuntimeFailurePolicyDefinition(
+            policy_id="repair_route_policy_bad_target",
+            applies_to_origins=("runtime_effect",),
+            applies_to_planes=(Plane.PLANNING,),
+            applies_to_families=("blueprint_draft",),
+            applies_to_failure_classes=("generated_task_missing",),
+            applies_to_operation_ids=("evaluator_blueprint_approved_to_task",),
+            action="route_to_node",
+            target_node_id="mechanic_blueprint",
+            failure_class_template="runtime_effect_failure",
+            repair_closure_mappings=(
+                {
+                    "source_operation_id": "evaluator_blueprint_approved_to_task",
+                    "failure_class": "generated_task_missing",
+                    "repair_operation_id": "mechanic_blueprint_repair_apply",
+                    "target_node_id": "other_repair_node",
+                    "target_terminal_outcome": "MECHANIC_BLUEPRINT_COMPLETE",
+                    "required_repair_evidence_artifact_ids": (
+                        "blueprint_repair_decision",
+                        "mechanic_report",
+                        "repaired_generated_task",
+                    ),
+                    "affected_source_family_id": "blueprint_draft",
+                    "source_lifecycle_behavior_on_repair_success": "complete_source_work_item",
+                    "source_lifecycle_behavior_on_repair_failure": "block_source_work_item",
+                },
             ),
         )
 

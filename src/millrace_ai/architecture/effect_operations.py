@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 
-from .common import normalize_canonical_id, normalize_nonempty_text
+from .common import normalize_canonical_id, normalize_nonempty_text, normalize_status
 from .stage_kinds import ArchitectureContractModel
 
 RuntimeEffectOperationId = str
@@ -127,6 +127,45 @@ class RuntimeEffectFailureMappingDefinition(ArchitectureContractModel):
         return normalize_canonical_id(value, field_label=info.field_name or "failure mapping id")
 
 
+class RuntimeEffectRepairClosureContractDefinition(ArchitectureContractModel):
+    failure_class: str
+    repair_operation_id: RuntimeEffectOperationId
+    target_node_id: str
+    target_terminal_outcome: str
+    required_repair_evidence_artifact_ids: tuple[str, ...] = Field(min_length=1)
+    affected_source_family_id: str
+    source_lifecycle_behavior_on_repair_success: str
+    source_lifecycle_behavior_on_repair_failure: str
+    supports_partial_mutation: bool = False
+    requires_resume_guard: bool = True
+
+    @field_validator(
+        "failure_class",
+        "repair_operation_id",
+        "target_node_id",
+        "affected_source_family_id",
+        "source_lifecycle_behavior_on_repair_success",
+        "source_lifecycle_behavior_on_repair_failure",
+    )
+    @classmethod
+    def validate_ids(cls, value: str, info: ValidationInfo) -> str:
+        return normalize_canonical_id(value, field_label=info.field_name or "repair closure id")
+
+    @field_validator("target_terminal_outcome")
+    @classmethod
+    def validate_target_terminal_outcome(cls, value: str) -> str:
+        return normalize_status(value, field_label="target_terminal_outcome")
+
+    @field_validator("required_repair_evidence_artifact_ids", mode="before")
+    @classmethod
+    def normalize_required_repair_artifacts(cls, value: object) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label="required_repair_evidence_artifact_ids",
+            allow_empty=False,
+        )
+
+
 class RuntimeEffectIdempotencyDefinition(ArchitectureContractModel):
     duplicate_policy: Literal["fail", "supersede", "idempotent"]
     replay_policy: Literal["resume_idempotently", "fail_if_seen", "require_operator"]
@@ -174,6 +213,7 @@ class RuntimeEffectOperationDefinition(ArchitectureContractModel):
     steps: tuple[RuntimeEffectOperationStepDefinition, ...] = Field(min_length=1)
     idempotency: RuntimeEffectIdempotencyDefinition
     failure_mappings: tuple[RuntimeEffectFailureMappingDefinition, ...] = Field(min_length=1)
+    repair_closure_contracts: tuple[RuntimeEffectRepairClosureContractDefinition, ...] = ()
     mutation_journal: RuntimeEffectMutationJournalDefinition
     partial_commit_policy: Literal["block_source", "pause_lane", "stop_daemon", "require_operator"] | None = None
 
@@ -204,6 +244,20 @@ class RuntimeEffectOperationDefinition(ArchitectureContractModel):
         unknown_journal_steps = set(self.mutation_journal.record_step_ids) - set(step_ids)
         if unknown_journal_steps:
             raise ValueError("mutation_journal record_step_ids must reference operation steps")
+        known_failure_classes = {mapping.failure_class for mapping in self.failure_mappings}
+        seen_repair_failures: set[str] = set()
+        for contract in self.repair_closure_contracts:
+            if contract.failure_class in seen_repair_failures:
+                raise ValueError(
+                    "repair_closure_contracts may not contain duplicate failure_class values"
+                )
+            seen_repair_failures.add(contract.failure_class)
+        unknown_repair_failures = seen_repair_failures - known_failure_classes
+        if unknown_repair_failures:
+            raise ValueError(
+                "repair_closure_contracts failure_class values must be declared in "
+                "failure_mappings"
+            )
         return self
 
 
@@ -270,6 +324,7 @@ __all__ = [
     "RuntimeEffectMutationPhaseValue",
     "RuntimeEffectOperationDefinition",
     "RuntimeEffectOperationId",
+    "RuntimeEffectRepairClosureContractDefinition",
     "RuntimeEffectOperationStepDefinition",
     "RuntimeEffectPrimitiveId",
     "RuntimeEffectStepId",

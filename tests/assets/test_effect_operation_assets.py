@@ -100,6 +100,18 @@ def test_builtin_effect_operation_assets_load() -> None:
         "mechanic_blueprint_repair_apply.required_artifacts",
         "mechanic_blueprint_repair_apply.repair_context",
     }
+    approval_operation = next(
+        operation
+        for operation in operations
+        if operation.operation_id == "evaluator_blueprint_approved_to_task"
+    )
+    assert {contract.failure_class for contract in approval_operation.repair_closure_contracts} == {
+        "generated_task_missing",
+        "generated_task_invalid",
+    }
+    assert {contract.repair_operation_id for contract in approval_operation.repair_closure_contracts} == {
+        "mechanic_blueprint_repair_apply"
+    }
 
 
 def test_workflow_primitive_bundle_includes_effect_operation_catalogs() -> None:
@@ -114,6 +126,21 @@ def test_workflow_primitive_bundle_includes_effect_operation_catalogs() -> None:
     assert "mutation_journal" in {store.store_id for store in bundle.effect_stores}
     assert "planner_disposition.required_artifacts" in {
         validator.validator_id for validator in bundle.effect_validators
+    }
+    policies_by_id = {
+        policy.policy_id: policy
+        for policy in bundle.runtime_failure_policies
+    }
+    repair_policy = policies_by_id["blueprint_approval_pre_mutation_effect_validation"]
+    assert {
+        (mapping.source_operation_id, mapping.failure_class)
+        for mapping in repair_policy.repair_closure_mappings
+    } == {
+        ("evaluator_blueprint_approved_to_task", "generated_task_missing"),
+        ("evaluator_blueprint_approved_to_task", "generated_task_invalid"),
+    }
+    assert {mapping.repair_operation_id for mapping in repair_policy.repair_closure_mappings} == {
+        "mechanic_blueprint_repair_apply"
     }
 
 
