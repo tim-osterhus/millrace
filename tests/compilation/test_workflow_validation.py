@@ -93,6 +93,15 @@ def _runtime_effect_rules_path(assets_root: Path) -> Path:
     )
 
 
+def _runtime_effect_operations_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_operations"
+        / "default_runtime_effect_operations.json"
+    )
+
+
 def _blueprint_graph_path(assets_root: Path) -> Path:
     return assets_root / "graphs" / "planning" / "blueprint.json"
 
@@ -697,11 +706,12 @@ def test_compile_rejects_runtime_effect_failure_policy_partial_mutation_route_to
         assets_root,
         _runtime_effect_policy(
             policy_id="bad_partial_mutation_route",
-            applies_to_families=["spec"],
-            applies_to_failure_classes=["blueprint_partial_mutation"],
+            applies_to_families=["blueprint_draft"],
+            applies_to_failure_classes=["generated_task_missing"],
             applies_to_mutation_phases=["partial_mutation"],
-            applies_to_handler_ids=["manager_blueprint_manifest_to_blueprint_drafts"],
-            applies_to_source_node_ids=["manager_blueprint"],
+            applies_to_handler_ids=["evaluator_blueprint_approved_to_task"],
+            applies_to_source_node_ids=["evaluator_blueprint"],
+            applies_to_source_terminal_state_ids=["blueprint_approved"],
             target_node_id="mechanic_blueprint",
         ),
     )
@@ -711,8 +721,55 @@ def test_compile_rejects_runtime_effect_failure_policy_partial_mutation_route_to
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "runtime failure policy bad_partial_mutation_route cannot route partial mutation "
-        "runtime effect failures to node mechanic_blueprint"
+        "runtime failure policy bad_partial_mutation_route applies to partial mutation but "
+        "repair closure evaluator_blueprint_approved_to_task/generated_task_missing does not "
+        "support partial mutation"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_repair_route_with_wildcard_family_scope(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    policies_path = _runtime_failure_policies_path(assets_root)
+    payload = _load_json(policies_path)
+    blueprint_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "blueprint_approval_pre_mutation_effect_validation"
+    )
+    blueprint_policy["applies_to_families"] = []
+    _write_json(policies_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime failure policy blueprint_approval_pre_mutation_effect_validation "
+        "route_to_node repair closure must declare applies_to_families matching "
+        "repair closure families: blueprint_draft"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_repair_route_with_extra_family_scope(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    policies_path = _runtime_failure_policies_path(assets_root)
+    payload = _load_json(policies_path)
+    blueprint_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "blueprint_approval_pre_mutation_effect_validation"
+    )
+    blueprint_policy["applies_to_families"] = ["blueprint_draft", "spec"]
+    _write_json(policies_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime failure policy blueprint_approval_pre_mutation_effect_validation "
+        "applies_to_families blueprint_draft, spec must exactly match repair "
+        "closure affected source families: blueprint_draft"
     ) in _diagnostic_text(outcome)
 
 
@@ -760,9 +817,9 @@ def test_compile_rejects_blueprint_recovery_route_without_mechanic_repair_effect
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "runtime failure policy blueprint_approval_pre_mutation_effect_validation routes to "
-        "mechanic_blueprint but recovery node lacks closed repair effect on "
-        "MECHANIC_BLUEPRINT_COMPLETE"
+        "runtime failure policy blueprint_approval_pre_mutation_effect_validation target node "
+        "mechanic_blueprint outcome MECHANIC_BLUEPRINT_COMPLETE does not invoke repair "
+        "operation mechanic_blueprint_repair_apply"
     ) in _diagnostic_text(outcome)
 
 
@@ -784,51 +841,55 @@ def test_compile_rejects_blueprint_recovery_route_without_mechanic_resume_guard(
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "runtime failure policy blueprint_approval_pre_mutation_effect_validation routes to "
-        "mechanic_blueprint but recovery node lacks resume guard for "
-        "MECHANIC_BLUEPRINT_COMPLETE"
+        "runtime failure policy blueprint_approval_pre_mutation_effect_validation target node "
+        "mechanic_blueprint lacks resume guard for MECHANIC_BLUEPRINT_COMPLETE"
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_blueprint_recovery_route_without_repair_capability(
+def test_compile_rejects_blueprint_recovery_route_without_declared_repair_artifact_emission(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    handlers_path = _runtime_effect_handlers_path(assets_root)
-    payload = _load_json(handlers_path)
-    handler = next(
+    operations_path = _runtime_effect_operations_path(assets_root)
+    operations_payload = _load_json(operations_path)
+    evaluator_operation = next(
         definition
-        for definition in payload["definitions"]
-        if definition["handler_id"] == "mechanic_blueprint_repair_apply"
+        for definition in operations_payload["definitions"]
+        if definition["operation_id"] == "evaluator_blueprint_approved_to_task"
     )
-    handler["declared_capabilities"] = [
-        capability
-        for capability in handler["declared_capabilities"]
-        if capability != "repair.generated_task_invalid"
-    ]
-    _write_json(handlers_path, payload)
-    rules_path = _runtime_effect_rules_path(assets_root)
-    rules_payload = _load_json(rules_path)
-    rule = next(
+    for contract in evaluator_operation["repair_closure_contracts"]:
+        if contract["failure_class"] == "generated_task_missing":
+            contract["required_repair_evidence_artifact_ids"] = [
+                "blueprint_repair_decision",
+                "mechanic_report",
+                "generated_task",
+            ]
+    _write_json(operations_path, operations_payload)
+
+    policies_path = _runtime_failure_policies_path(assets_root)
+    policies_payload = _load_json(policies_path)
+    policy = next(
         definition
-        for definition in rules_payload["definitions"]
-        if definition["rule_id"] == "mechanic_blueprint_repair_apply"
+        for definition in policies_payload["definitions"]
+        if definition["policy_id"] == "blueprint_approval_pre_mutation_effect_validation"
     )
-    rule["required_handler_capabilities"] = [
-        capability
-        for capability in rule["required_handler_capabilities"]
-        if capability != "repair.generated_task_invalid"
-    ]
-    _write_json(rules_path, rules_payload)
+    for mapping in policy["repair_closure_mappings"]:
+        if mapping["failure_class"] == "generated_task_missing":
+            mapping["required_repair_evidence_artifact_ids"] = [
+                "blueprint_repair_decision",
+                "mechanic_report",
+                "generated_task",
+            ]
+    _write_json(policies_path, policies_payload)
 
     outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "runtime failure policy blueprint_approval_pre_mutation_effect_validation routes "
-        "generated_task_invalid to mechanic_blueprint but repair effect "
-        "mechanic_blueprint_repair_apply lacks capability repair.generated_task_invalid"
+        "runtime failure policy blueprint_approval_pre_mutation_effect_validation repair "
+        "closure evaluator_blueprint_approved_to_task/generated_task_missing requires evidence "
+        "artifact generated_task not emitted by target node mechanic_blueprint"
     ) in _diagnostic_text(outcome)
 
 
@@ -854,6 +915,73 @@ def test_compile_rejects_runtime_effect_rule_with_missing_handler_capability(
         "runtime effect rule contractor_blueprint_candidate_persist requires runner "
         "capability repair.apply_repaired_generated_task not declared by runner "
         "legacy_python_handler"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_route_to_node_policy_with_ambiguous_multiclass_closure_without_explicit_mappings(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    policies_path = _runtime_failure_policies_path(assets_root)
+    payload = _load_json(policies_path)
+    blueprint_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "blueprint_approval_pre_mutation_effect_validation"
+    )
+    blueprint_policy.pop("repair_closure_mappings")
+    _write_json(policies_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime failure policy blueprint_approval_pre_mutation_effect_validation must declare "
+        "repair_closure_mappings for multi-operation or multi-failure-class route_to_node scope"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_accepts_single_closure_route_to_node_policy_without_explicit_mapping(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    policies_path = _runtime_failure_policies_path(assets_root)
+    payload = _load_json(policies_path)
+    blueprint_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "blueprint_approval_pre_mutation_effect_validation"
+    )
+    blueprint_policy["applies_to_failure_classes"] = ["generated_task_missing"]
+    blueprint_policy.pop("repair_closure_mappings")
+    _write_json(policies_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True, outcome.diagnostics.errors
+    assert outcome.active_plan is not None
+
+
+def test_compile_rejects_route_to_node_policy_target_without_local_repair_role(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _append_runtime_failure_policy(
+        assets_root,
+        _runtime_effect_policy(
+            policy_id="target_without_repair_role",
+            target_node_id="contractor_blueprint",
+        ),
+    )
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "runtime failure policy target_without_repair_role target node contractor_blueprint "
+        "must declare recovery_role=local_repair"
     ) in _diagnostic_text(outcome)
 
 
