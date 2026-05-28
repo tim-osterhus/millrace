@@ -37,6 +37,7 @@ from millrace_ai.workspace.arbiter_state import (
     write_canonical_root_source_contract,
     write_canonical_root_spec_contract,
 )
+from millrace_ai.workspace.blueprint_state import list_open_blueprint_lineage_work_refs
 from millrace_ai.workspace.family_adapters import (
     queue_adapter_for_family_id,
     queue_adapter_for_id,
@@ -179,17 +180,21 @@ def refresh_closure_target_readiness(
     engine: RuntimeEngine,
     target: ClosureTargetState,
 ) -> ClosureTargetState:
-    blocking_work_refs = _closure_blocking_refs_from_inventory(
+    normal_refs = _closure_blocking_refs_from_inventory(
         engine.paths,
         root_spec_id=target.root_spec_id,
         compiled_plan=engine.compiled_plan,
     )
+    blueprint_refs = list_open_blueprint_lineage_work_refs(
+        engine.paths,
+        root_spec_id=target.root_spec_id,
+    )
+    blocking_work_refs = _unique_blocking_refs((*normal_refs, *blueprint_refs))
     lineage_work_ids = _open_lineage_work_ids_from_adapters(
         engine.paths,
         root_spec_id=target.root_spec_id,
         compiled_plan=engine.compiled_plan,
     )
-    blocking_work_refs = _unique_blocking_refs(blocking_work_refs)
     blocking_work_ids = _unique_ids(
         (
             *lineage_work_ids,
@@ -220,6 +225,7 @@ def _closure_blocking_refs_from_inventory(
             root_spec_id=root_spec_id,
             compiled_plan=compiled_plan,
         )
+        if ref.family_id != WorkItemKind.BLUEPRINT_DRAFT.value
     )
 
 

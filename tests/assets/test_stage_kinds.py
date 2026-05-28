@@ -35,6 +35,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "schema_version": "1.0",
         "kind": "registered_stage_kind",
         "stage_kind_id": "synthetic_worker",
+        "runtime_stage": "builder",
         "plane": "execution",
         "display_name": "Synthetic Worker",
         "default_entrypoint_path": "entrypoints/execution/builder.md",
@@ -337,6 +338,7 @@ def test_stage_kind_id_mismatch_fails_deterministically(tmp_path: Path) -> None:
     stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
     payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
     payload["stage_kind_id"] = "wrong_id"
+    payload["runtime_stage"] = "builder"
     stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(ArchitectureAssetError, match="Stage kind asset id mismatch"):

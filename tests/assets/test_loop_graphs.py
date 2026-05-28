@@ -39,6 +39,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "schema_version": "1.0",
         "kind": "registered_stage_kind",
         "stage_kind_id": "synthetic_worker",
+        "runtime_stage": "builder",
         "plane": "execution",
         "display_name": "Synthetic Worker",
         "default_entrypoint_path": "entrypoints/execution/builder.md",
