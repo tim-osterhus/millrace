@@ -1,4 +1,9 @@
 <div align="center">
+  <p>
+    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/millrace-ai.svg"></a>
+    <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/tim-osterhus/millrace.svg"></a>
+  </p>
   <img
     src="docs/assets/images/millrace-icon-signal-transparent-glow.png"
     alt="Millrace signal mark"
@@ -6,14 +11,9 @@
   />
   <h1>Millrace</h1>
   <p><strong>Millrace is a local runtime for governed, long-running AI coding projects.</strong></p>
-  <p>
-    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/millrace-ai.svg"></a>
-    <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
-    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/tim-osterhus/millrace.svg"></a>
-  </p>
 </div>
 
-It is for operators who need an agent to keep working after a single chat or terminal session would usually lose state, drift, or stop. Millrace gives that work a queue, a compiled plan, durable run state, repair paths, approval gates, and evidence-backed completion.
+Millrace is defined primarily by two core ideas. The first is that sequential orchestration is superior to parallelization in terms of long-running autonomy, reliability, efficiency, and simplicity. Every added agent suffers from ever-greater diminishing returns, meaning the first running agent is the most efficient it'll ever get. And only having one agent to worry about at any given time makes governance far more robust. The second core idea is that the runtime owns the project state, not the agent. Millrace compiles workflow graphs, runner bindings, stage contracts, recovery rules, approvals, and closure behavior into one inspectable plan. A small daemon dispatches coding agents through that plan, applies their results through runtime-owned rules, and persists the evidence needed to resume, repair, inspect, or close the work later.
 
 Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still stabilizing, so pin patch versions when behavior matters.
 
