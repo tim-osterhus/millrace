@@ -10,7 +10,7 @@
     width="180"
   />
   <h1>Millrace</h1>
-  <p><strong>Millrace is a local runtime for governed, long-running AI coding projects.</strong></p>
+  <p><strong>Millrace is a local runtime for governed, long-running agentic workflows.</strong></p>
 </div>
 
 Millrace is defined primarily by two core ideas. The first is that sequential orchestration is superior to parallelization in terms of long-running autonomy, reliability, efficiency, and simplicity. Since every additional agent decreases efficiency and increases overhead, why not focus on maximizing the capabilities of that first one?
