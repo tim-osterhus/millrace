@@ -88,7 +88,8 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
 
 ## Maintainer And Architecture Docs
 
-- `source-package-map.md`: old-to-new module mapping and compatibility facades.
+- `source-package-map.md`: package ownership map and compatibility facade
+  boundaries after the follow-up refactor wave.
 - `maintenance/codebase-stewardship.md`: maintainer-facing map for
   documentation ownership, maintainability gates, refactor candidates, and
   characterization work.
@@ -98,6 +99,8 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
   that should be checked when those areas change.
 - `maintenance/refactor-candidate-register.md`: candidate ids, reasons to
   change, risk, tests, and extraction strategy for targeted refactor work.
+- `maintenance/public-api-compatibility-inventory.md`: frozen import and symbol
+  surfaces, plus final compatibility-facade status for the follow-up refactor.
 - `maintenance/blueprint-effect-behavior-matrix.md`: current Blueprint
   runtime-effect behavior and parity gaps before declarative migration.
 - `maintenance/compiler-validation-contracts.md`: validator-family contracts

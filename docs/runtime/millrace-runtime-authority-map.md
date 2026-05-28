@@ -57,14 +57,14 @@ Public compatibility facades may re-export the same behavior.
   active work item or closure target, and compiled node plan. Active
   work-item artifact-path resolution is delegated through work-family queue
   adapters when family contracts declare them.
-- `runtime/request_context.py` writes deterministic request-context artifacts
-  and prompt context.
+- `runtime/context/` writes deterministic request-context artifacts and prompt
+  context. `runtime/request_context.py` remains the compatibility facade.
 - `runtime/capability_gates.py` and `runtime/approvals.py` evaluate compiled
   execution-capability grants before runner invocation.
 - `runners/dispatcher.py` resolves the selected runner adapter.
 - runner adapters write runner-owned invocation/completion/stdout/stderr/event
   artifacts under the run directory and return `RunnerRawResult`.
-- `runners/normalization.py` converts raw runner output into
+- `runners/normalization/` converts raw runner output into
   `StageResultEnvelope`.
 
 ### Mutation and inspection authority
@@ -74,7 +74,7 @@ Public compatibility facades may re-export the same behavior.
   `runtime/lifecycle_interpreter.py`, and `workspace/queue_lifecycle.py` apply
   compiled operation-id-first runtime-effect and source-lifecycle intents.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
-  `runtime/effects/operations.py`, `runtime/closure_transitions.py`,
+  `runtime/effects/operation_runners/`, `runtime/closure_transitions.py`,
   `runtime/result_counters.py`, `runtime/stage_result_persistence.py`,
   `runtime/run_traces.py`, `runtime/snapshot_state.py`, and
   `workspace/*_state.py` own the durable mutations for their domains.
@@ -113,7 +113,7 @@ run-scoped artifacts under `millrace-agents/runs/<run_id>/`, such as
 `runner_prompt.*.md`, runner invocation/completion files, stdout/stderr, and
 stage-authored reports. The stage must not move task queue files directly.
 
-**Result normalization owner:** `runners/normalization.py` extracts the legal
+**Result normalization owner:** `runners/normalization/` extracts the legal
 terminal marker and metadata into `StageResultEnvelope`; runtime stage-result
 persistence writes the normalized JSON and status marker.
 
@@ -157,15 +157,15 @@ legacy-handler aliases, and completion behavior.
 
 **Runner request builder:** `runtime/stage_requests.py` builds
 `request_kind = active_work_item` requests with the active probe/spec path.
-`runtime/request_context.py` renders probe/spec context, visible refs, root
-lineage, and preferred output refs for strict handoff artifacts.
+`runtime/context/` renders probe/spec context, visible refs, root lineage, and
+preferred output refs for strict handoff artifacts.
 
 **Stage artifact owner:** Recon, Planner, Manager, Auditor, and repair stages
 write run-scoped artifacts such as `recon_packet.md`,
 `planner_disposition.json`, reports, or generated task/spec drafts. These are
 handoff artifacts for runtime consumption, not direct queue mutations.
 
-**Result normalization owner:** `runners/normalization.py` normalizes the
+**Result normalization owner:** `runners/normalization/` normalizes the
 stage terminal result. `runtime/stage_result_persistence.py` persists the
 stage result and Planning status marker.
 
@@ -174,7 +174,8 @@ handoff artifacts and persists canonical Recon packets before enqueuing a
 generated task/spec, completing a no-op probe, or blocking the probe.
 `runtime/planner_effects.py`, `runtime/effect_execution.py`,
 `runtime/lifecycle_interpreter.py`, `runtime/work_item_transitions.py`, and
-Blueprint-specific effect handlers apply compiled Planning mutations.
+Blueprint operation runners under `runtime/effects/operation_runners/` apply
+compiled Planning mutations.
 `runtime/completion_behavior.py` opens a closure target when a root spec is
 claimed, snapshots canonical contracts, and derives closure-blocking lineage
 through family adapter-backed lineage scans plus inventory-backed blocker refs.
@@ -222,7 +223,7 @@ use the supported remote optional-skill index and install workspace-local
 optional skills through the learning workflow, but the runtime still owns the
 learning request lifecycle.
 
-**Result normalization owner:** `runners/normalization.py` normalizes Learning
+**Result normalization owner:** `runners/normalization/` normalizes Learning
 terminal results and preserves request-kind, source refs, artifact paths, and
 compiled identity in the stage-result envelope.
 
@@ -264,8 +265,8 @@ runtime-effect operations plus legacy handlers for Blueprint terminal results,
 and freezes repair policies.
 
 **Runner request builder:** `runtime/stage_requests.py` builds active
-work-item requests for Blueprint stages. `runtime/request_context.py` resolves
-the manifest by `draft.manifest_id`, attaches relevant draft/packet/evaluation
+work-item requests for Blueprint stages. `runtime/context/` resolves the
+manifest by `draft.manifest_id`, attaches relevant draft/packet/evaluation
 state, and gives preferred refs for Blueprint repair artifacts when needed.
 
 **Stage artifact owner:** Manager Blueprint emits manifest/draft artifacts;
@@ -274,19 +275,20 @@ evaluation, critique, approved packet, and generated task artifacts; Mechanic
 Blueprint emits structured repair decisions and repaired task artifacts. These
 are stage artifacts only.
 
-**Result normalization owner:** `runners/normalization.py` normalizes
+**Result normalization owner:** `runners/normalization/` normalizes
 Blueprint terminal results and metadata. Stage-result persistence records the
 normalized result before runtime effect application.
 
-**Runtime mutation owner:** `runtime/effects/operations.py` applies compiled
-Blueprint runtime operations: persist manifests/drafts, queue drafts, persist
-candidate packets, route rejected drafts back to Contractor, approve drafts,
-write promotion records, enqueue generated execution tasks, apply safe
+**Runtime mutation owner:** `runtime/effects/operation_runners/` applies
+compiled Blueprint runtime operations: persist manifests/drafts, queue drafts,
+persist candidate packets, route rejected drafts back to Contractor, approve
+drafts, write promotion records, enqueue generated execution tasks, apply safe
 Mechanic repair actions, and block precise replay/partial-mutation failures.
 `runtime/effect_execution.py` selects those operations by compiled operation id
 and runner id; legacy handler ids are compatibility aliases, not dispatch
 authority.
-`runtime/blueprint_effects.py` is a legacy import facade, and
+`runtime/effects/operations.py` and `runtime/blueprint_effects.py` are legacy
+import facades, and
 `workspace/blueprint_state.py` owns durable Blueprint file layout helpers.
 
 **Inspection/monitor visibility:** status exposes Blueprint counters and latest
@@ -327,7 +329,7 @@ any closure target metadata needed by the Planning stage.
 artifacts in its run directory. It may propose work but does not directly move
 the incident or enqueue canonical queue work outside declared artifacts.
 
-**Result normalization owner:** `runners/normalization.py` normalizes the
+**Result normalization owner:** `runners/normalization/` normalizes the
 incident-stage terminal result. Stage-result persistence and run-trace writers
 record the concrete route and artifacts.
 
@@ -371,7 +373,7 @@ operator's original absolute import path.
 request-provided paths plus workspace-relative or public URL references present
 in the typed intake document.
 
-**Result normalization owner:** `runners/normalization.py` normalizes the
+**Result normalization owner:** `runners/normalization/` normalizes the
 terminal result. The source artifact's typed document adapter remains the
 parse/serialization authority for queue state.
 
@@ -418,7 +420,7 @@ and legacy idea fields only when the root is idea-shaped.
 through request-provided preferred paths or run-scoped report paths. It does
 not close the target, enqueue incidents, or move root work directly.
 
-**Result normalization owner:** `runners/normalization.py` normalizes Arbiter
+**Result normalization owner:** `runners/normalization/` normalizes Arbiter
 results onto `work_item_kind = spec` and `work_item_id = <root_spec_id>` while
 preserving closure root-source metadata.
 
@@ -479,7 +481,7 @@ payloads, and direct mutation helpers return control results for CLI output.
 direct mutation. `runtime/control_mailbox.py` writes daemon-safe envelopes.
 `runtime/control_mutations.py`, `runtime/mailbox_intake.py`,
 `workspace/operator_interventions.py`, `runtime/pause_state.py`,
-`runtime/approvals.py`, `runtime/blocked_recovery.py`, and
+`runtime/approvals.py`, `runtime/recovery/queue_mutation.py`, and
 `workspace/lineage_integrity.py` own the concrete safe mutations.
 
 **Inspection/monitor visibility:** CLI command output, mailbox processed/failed

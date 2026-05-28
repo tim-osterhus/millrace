@@ -158,11 +158,10 @@ workspace.
   with legacy handler-id fallback only for compatibility policies, including
   conservative Blueprint blocks and recoverable Mechanic Blueprint routes.
 - `src/millrace_ai/runtime/effects/operations.py`: shipped runtime operation
-  runners, including Blueprint manifest/draft promotion, packet persistence,
-  evaluator approval/rejection, replay handling, Mechanic repaired-task
-  application, and precise Blueprint failure classes. The
-  `runtime/blueprint_effects.py` module remains only as a compatibility facade
-  for legacy Blueprint handler imports.
+  compatibility facade over focused Blueprint operation-runner modules under
+  `src/millrace_ai/runtime/effects/operation_runners/`. The
+  `runtime/blueprint_effects.py` module remains a compatibility facade for
+  legacy Blueprint handler imports.
 - `src/millrace_ai/runtime/blueprint_recovery_diagnostics.py`: shared
   Blueprint runtime-effect repair diagnostics used by status and doctor to
   expose the structured repair contract, replay conflict classes,
@@ -170,9 +169,11 @@ workspace.
 - `src/millrace_ai/runtime/planner_effects.py`: Planner disposition handling
   for active-source continuation, emitted-child-spec completion/resolution, and
   blocked Planner outcomes.
-- `src/millrace_ai/runtime/request_context.py`: deterministic context bundles,
-  including Blueprint manifest resolution by `draft.manifest_id` and Mechanic
-  Blueprint repair output refs for recoverable runtime-effect failures.
+- `src/millrace_ai/runtime/request_context.py`: compatibility facade for the
+  runtime request-context surface exported from `src/millrace_ai/runtime/context/`.
+- `src/millrace_ai/runtime/context/`: request-context implementation package for
+  provider/render-plan resolution, context rendering, and Blueprint-specific
+  context helpers including repair-context refs.
 - `src/millrace_ai/runtime/lifecycle_interpreter.py`: runtime-facing bridge from
   source lifecycle intent to the workspace queue lifecycle interpreter.
 - `src/millrace_ai/runtime/monitoring.py`: runtime monitor event protocol and null monitor sink.
@@ -182,9 +183,14 @@ workspace.
 - `src/millrace_ai/runtime/tick_cycle.py`: serial one-tick orchestration used by
   bounded daemon execution and compatibility tests.
 - `src/millrace_ai/runtime/supervisor.py`: daemon-mode lane scheduler, lane-keyed worker registry, and serialized completion-application owner.
-- `src/millrace_ai/runtime/blocked_recovery.py`: blocked-work metadata,
-  blocked dependency retryability decisions, family-aware manual blocked
-  retry validation, and daemon idle-cycle transient dependency auto-recovery.
+- `src/millrace_ai/runtime/blocked_recovery.py`: compatibility facade for
+  blocked-recovery helpers backed by `src/millrace_ai/runtime/recovery/`.
+- `src/millrace_ai/runtime/recovery/`: focused recovery package for blocked
+  metadata, retry policy, queue mutation, environmental classification, runtime
+  error context persistence, reports, and repair-route helpers.
+- `src/millrace_ai/runtime/error_recovery.py`: runtime exception recovery
+  orchestration entrypoint that composes the focused `runtime/recovery/`
+  helpers while preserving the stable runtime import surface.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.

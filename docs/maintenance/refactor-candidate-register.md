@@ -40,33 +40,33 @@ remaining debt is now owned by
 
 | Candidate | Follow-up owner | Notes |
 | --- | --- | --- |
-| MR-MAINT-001 | FU-2 | `runtime/blueprint_effects.py` and `runtime/effects/operations.py` stay compatibility facades; operation implementations live under `runtime/effects/operation_runners/`. |
-| MR-MAINT-002 | FU-1 | Runtime effect dispatch becomes operation-id first while legacy handler metadata remains compatibility-only. |
+| MR-MAINT-001 | Complete | FU-2 moved Blueprint runtime-effect behavior into `runtime/effects/operation_runners/`; `runtime/blueprint_effects.py` and `runtime/effects/operations.py` are compatibility facades. |
+| MR-MAINT-002 | Complete | FU-1 landed operation-id-first effect dispatch and failure-policy matching with legacy handler ids kept as compatibility metadata only. |
 | MR-MAINT-003 | Complete | FU-6 split compiler validation into focused validator-family modules behind the stable package facade. |
-| MR-MAINT-004 | FU-7 | Workflow primitive contracts move after the public architecture export inventory is tested. |
-| MR-MAINT-005 | FU-4, FU-8 | Queue/lifecycle adapter work lands first; blocked recovery decomposition follows after adapter APIs are stable. |
-| MR-MAINT-006 | FU-8 | Runtime error recovery waits for lower-level dispatch, repair, request, and family seams. |
-| MR-MAINT-007 | FU-3 | Request-context provider/render-plan boundaries become compiler-visible before generic runtime code is split further. |
+| MR-MAINT-004 | Complete | FU-7 split workflow primitive contracts into package family modules while preserving the public facade exports. |
+| MR-MAINT-005 | Complete | FU-4 and FU-8 moved blocked-recovery mutation domains under `runtime/recovery/` with family-adapter-backed retry/lineage behavior and a thin compatibility facade. |
+| MR-MAINT-006 | Complete | FU-8 extracted error-context/report/repair-route helpers into `runtime/recovery/`; `runtime/error_recovery.py` remains the public orchestration entry module. |
+| MR-MAINT-007 | Complete | FU-3 moved provider/render-plan behavior to `runtime/context/` and kept `runtime/request_context.py` as a compatibility facade. |
 | MR-MAINT-008 | Complete | Completed in the previous wave's low-risk package splits. |
 | MR-MAINT-009 | Complete | Completed in the previous wave's Doctor package split. |
 | MR-MAINT-010 | Complete | Completed in the previous wave's runner-normalization package split. |
-| MR-MAINT-011 | FU-8 | Supervisor work is limited to readiness/minimal split unless tests prove a strong seam. |
+| MR-MAINT-011 | Deferred | FU-8 landed direct lifecycle characterization tests, but a structural split is still gated by tightly-coupled dispatch/completion/event lifecycle boundaries. |
 
 ## Summary
 
-| ID | Source | Main reason to change | Dependency risk | Suggested batch | Dedicated spec |
-| --- | --- | --- | --- | --- | --- |
-| MR-MAINT-001 | `src/millrace_ai/runtime/effects/operation_runners/` | Blueprint durable mutation has moved to focused operation runners; legacy facades and handler-id compatibility surfaces remain. | Medium | Batch A | Required |
-| MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Core effect dispatch resolves operations through a registry seam, but failure routing and compatibility metadata still partly key on handler ids. | High | Batch A | Required |
-| MR-MAINT-003 | `src/millrace_ai/compilation/validation/` | Compiler rule families now live in focused validator modules behind one package facade. | Complete | Batch C | Complete |
-| MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives/` | Workflow primitive contracts span many contract families in one package facade. | Medium-high | Batch C | Required |
-| MR-MAINT-005 | `src/millrace_ai/runtime/blocked_recovery.py` | Blocked metadata, retry eligibility, queue mutation, lineage guards, and auto-recovery share one module. | High | Batch D | Optional, recommended |
-| MR-MAINT-006 | `src/millrace_ai/runtime/error_recovery.py` | Runtime exception context, repair routing, snapshot mutation, and reports are interleaved. | High | Batch D | Optional, recommended |
-| MR-MAINT-007 | `src/millrace_ai/runtime/request_context.py` | Generic request context rendering and Blueprint-specific context providers are coupled. | High | Batch D | Required for Blueprint half |
-| MR-MAINT-008 | `src/millrace_ai/cli/status_view.py` | Data collection, view model assembly, text rendering, and JSON payload generation are mixed. | Medium | Batch B | Not required |
-| MR-MAINT-009 | `src/millrace_ai/doctor/` | Workspace checks, asset checks, compile checks, queue parsing, and output issue construction grow together. | Medium | Batch B | Not required |
-| MR-MAINT-010 | `src/millrace_ai/runners/normalization/` | Terminal extraction, transport classification, artifact checks, and provenance preservation are intertwined. | Medium | Batch B | Not required |
-| MR-MAINT-011 | `src/millrace_ai/runtime/supervisor.py` | Daemon dispatch, worker lifecycle, result application, recovery, and event emission share one orchestration file. | Very high | Batch E | Required |
+| ID | Source | Main reason to change | Dependency risk | Suggested batch | Dedicated spec | FU-9 status |
+| --- | --- | --- | --- | --- | --- | --- |
+| MR-MAINT-001 | `src/millrace_ai/runtime/effects/operation_runners/` | Blueprint durable mutation moved to focused operation-runner modules; public legacy facades remain for import compatibility. | Medium | Batch A | Required | Complete: FU-2 landed runner decomposition and preserved facade imports. |
+| MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Effect dispatch needed operation-id-first authority instead of legacy handler-id-first branching. | High | Batch A | Required | Complete: FU-1 switched dispatch/policy matching to operation ids, with legacy ids retained as compatibility metadata. |
+| MR-MAINT-003 | `src/millrace_ai/compilation/validation/` | Compiler rule families required decomposition behind one stable package surface. | Complete | Batch C | Complete | Complete: FU-6 replaced the monolith with validator-family modules. |
+| MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives/` | Workflow primitive contracts needed contract-family modularization under a stable facade. | Medium-high | Batch C | Required | Complete: FU-7 split family modules and preserved exported symbols. |
+| MR-MAINT-005 | `src/millrace_ai/runtime/recovery/` (compat facade `runtime/blocked_recovery.py`) | Blocked metadata/retry/queue mutation behavior needed domain seams and adapter-backed family logic. | High | Batch D | Optional, recommended | Complete: FU-4/FU-8 moved logic into `runtime/recovery/` and family adapters; module now acts as a facade. |
+| MR-MAINT-006 | `src/millrace_ai/runtime/recovery/` plus `runtime/error_recovery.py` | Exception-context, repair-route, and reporting concerns needed focused recovery subdomains. | High | Batch D | Optional, recommended | Complete: FU-8 extracted focused helpers into `runtime/recovery/`; `error_recovery.py` remains orchestration entrypoint. |
+| MR-MAINT-007 | `src/millrace_ai/runtime/context/` (compat facade `runtime/request_context.py`) | Generic rendering needed separation from Blueprint/provider-specific behavior. | High | Batch D | Required for Blueprint half | Complete: FU-3 moved provider/render-plan logic into `runtime/context/`; file is now a compatibility facade. |
+| MR-MAINT-008 | `src/millrace_ai/cli/status_view.py` | Status collection/rendering needed decomposition with output compatibility preserved. | Medium | Batch B | Not required | Complete: landed in previous wave as `cli/status/` with facade compatibility. |
+| MR-MAINT-009 | `src/millrace_ai/doctor/` | Doctor checks needed package-level organization by check family. | Medium | Batch B | Not required | Complete: landed in previous wave with check registry split. |
+| MR-MAINT-010 | `src/millrace_ai/runners/normalization/` | Runner normalization concerns needed package separation. | Medium | Batch B | Not required | Complete: landed in previous wave as `runners/normalization/` package split. |
+| MR-MAINT-011 | `src/millrace_ai/runtime/supervisor.py` | Daemon orchestration still combines dispatch, completion, recovery, and event projection. | Very high | Batch E | Required | Deferred: FU-8 characterization improved confidence, but structural split remains lifecycle-risky. |
 
 Batch B status: MR-MAINT-008, MR-MAINT-009, and MR-MAINT-010 landed in
 Batch 3 as behavior-preserving package splits with compatibility facades.
@@ -244,7 +244,8 @@ compatibility re-exports should be specified before moving classes.
 
 ### MR-MAINT-005: Blocked Recovery
 
-Source: `src/millrace_ai/runtime/blocked_recovery.py`
+Source: `src/millrace_ai/runtime/recovery/` with compatibility facade
+`src/millrace_ai/runtime/blocked_recovery.py`
 
 Reason to change: The module combines blocked metadata contracts, failure-scope
 classification, family resolution, queue document parsing, retry budget
@@ -279,7 +280,8 @@ movement beyond pure helper extraction.
 
 ### MR-MAINT-006: Runtime Error Recovery
 
-Source: `src/millrace_ai/runtime/error_recovery.py`
+Source: `src/millrace_ai/runtime/recovery/` plus orchestration entrypoint
+`src/millrace_ai/runtime/error_recovery.py`
 
 Reason to change: The module owns runtime error context IO, error-code
 classification, pre-dispatch and post-stage recovery scheduling, repair route
@@ -315,7 +317,8 @@ module controls failure recovery.
 
 ### MR-MAINT-007: Runtime Request Context
 
-Source: `src/millrace_ai/runtime/request_context.py`
+Source: `src/millrace_ai/runtime/context/` with compatibility facade
+`src/millrace_ai/runtime/request_context.py`
 
 Reason to change: Generic deterministic request-context rendering lives beside
 Blueprint-specific context plans for Manager, Contractor, Evaluator, and
@@ -507,18 +510,13 @@ event/monitor projection still share one tightly-coupled lifecycle boundary.
 
 ## Deferred Or Gated Work
 
-- MR-MAINT-001 and MR-MAINT-002 are now owned by this follow-up wave in FU-2
-  and FU-1. Treat them as architecture migration packets, not cleanup.
-- MR-MAINT-007 is now owned by FU-3. Any Blueprint-specific context behavior
-  that remains after that packet should be an intentional registered provider,
-  not a generic runtime branch.
-- FU-3 Batch 3 Packet 04 closed parity and compatibility coverage for generic
-  Planning/Execution/Learning contexts, Recon/Integrator contexts, legacy
-  node-level request-context/runtime-stage backfill behavior, and request-context
-  authority negative checks.
-- MR-MAINT-011 remains gated after FU-8 Packet 02 characterization: cancellation
-  and reload boundaries are now tested directly, but splitting is still deferred
-  because supervisor dispatch, completion mutation, and event projection are not
-  yet separable without widening lifecycle risk.
-- MR-MAINT-003 and MR-MAINT-004 remain gated until the Batch 0 public API
-  inventory is committed and earlier follow-up gates pass.
+- MR-MAINT-011 remains the only open deferred candidate after FU-9. FU-8 added
+  direct supervisor boundary characterization for cancellation, reload ordering,
+  and completion-drain durability, but a structural split is still deferred
+  because dispatch, completion mutation, and event projection remain tightly
+  coupled lifecycle boundaries.
+- MR-MAINT-001 through MR-MAINT-010 are complete for this follow-up wave. New
+  maintainability work should be filed as fresh candidates against current
+  hotspots (for example `runtime/effects/operation_runners/blueprint_evaluator.py`,
+  `runtime/completion_behavior.py`, and `runtime/context/blueprint.py`) rather
+  than re-opening the finished packet ids.

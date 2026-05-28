@@ -505,6 +505,10 @@ Blueprint monitoring checklist:
   `runtime_effect_mutation_phase`, `runtime_effect_failure_policy_id`,
   `runtime_effect_recovery_action`, `runtime_effect_source_lifecycle_*`, and
   `runtime_effect_created_path` lines.
+- Treat `runtime_effect_operation_id` plus `runtime_effect_runner_id` as the
+  dispatch authority. `runtime_effect_handler_id` and
+  `runtime_effect_legacy_handler_id` are compatibility metadata surfaces and may
+  be absent for operation-only effects.
 - Use `millrace status` and `millrace doctor` to inspect the latest repairable
   Evaluator approval generated-task failure context, structured repair
   contract, replay conflict classes, inert-artifact guard, and runtime

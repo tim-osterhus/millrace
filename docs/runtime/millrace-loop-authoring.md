@@ -38,9 +38,15 @@ The authoritative sources are:
 - `src/millrace_ai/assets/registry/stage_kinds/`
 - `src/millrace_ai/assets/registry/work_item_families/`
 - `src/millrace_ai/assets/registry/document_adapters/`
+- `src/millrace_ai/assets/registry/request_context_profiles/`
+- `src/millrace_ai/assets/registry/request_context_providers/`
+- `src/millrace_ai/assets/registry/request_context_render_plans/`
 - `src/millrace_ai/assets/registry/queue_claim_policies/`
 - `src/millrace_ai/assets/registry/terminal_actions/`
 - `src/millrace_ai/assets/registry/lifecycle_mutation_plans/`
+- `src/millrace_ai/assets/registry/runtime_effect_operations/`
+- `src/millrace_ai/assets/registry/runtime_effect_runners/`
+- `src/millrace_ai/assets/registry/runtime_effect_rules/`
 - `src/millrace_ai/assets/registry/runtime_effect_handlers/`
 - `src/millrace_ai/assets/registry/recovery_policies/`
 - `src/millrace_ai/assets/registry/runtime_failure_policies/`
@@ -186,16 +192,22 @@ in
 
 For the shipped foundation slice, primitives define:
 
-- work-item families for task, probe, spec, incident, and learning request
+- work-item families for task, probe, spec, incident, and learning request,
+  including queue-adapter authority that maps family ids to runtime/workspace
+  claim/lifecycle/requeue behavior
 - document adapters that map those families to the built-in markdown document
   contracts
+- request-context profiles, providers, and render plans that bind runtime
+  context behavior by compiled node authority
 - plane queue claim policies that decide which families a plane may claim and
   in what order
 - terminal actions and lifecycle mutation plans that explain how terminal
   outcomes become source lifecycle intents
-- runtime effect operations, stores, validators, effect rules, and temporary
-  legacy handler aliases that let terminal results request additional
-  runtime-owned effects without mutating queues directly from stage code
+- runtime effect operations, runners, stores, validators, and effect rules
+  that let terminal results request additional runtime-owned effects without
+  mutating queues directly from stage code
+- legacy runtime effect handler aliases only as compatibility metadata/facades
+  over the operation-id model
 - recovery and failure policies used by compiler validation and future runtime
   interpretation
 - the active workspace schema epoch

@@ -297,9 +297,10 @@ cycles:
   `runtime/recovery/` now owns focused recovery subdomains:
   `blocked_metadata.py`, `retry_policy.py`, `environmental.py`,
   `queue_mutation.py`, `error_context.py`, `reports.py`, `repair_routes.py`,
-  and recovery event helpers. `runtime/blocked_recovery.py` and
-  `runtime/error_recovery.py` remain compatibility facades so existing runtime
-  and CLI imports stay stable during the decomposition.
+  and recovery event helpers. `runtime/blocked_recovery.py` remains a
+  compatibility facade so existing runtime and CLI imports stay stable, while
+  `runtime/error_recovery.py` remains the public runtime recovery orchestration
+  entry module over those focused recovery helpers.
 - `runtime/artifact_contracts.py`, `runtime/stage_result_persistence.py`,
   `runtime/result_counters.py`, `runtime/recon_transitions.py`, and
   `runtime/work_item_transitions.py` keep post-stage artifact validation,

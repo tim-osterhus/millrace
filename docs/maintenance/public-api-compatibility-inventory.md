@@ -8,6 +8,9 @@ release-note path, and compatibility plan.
 Baseline: `18fd133` on `main` (`origin/main`) before follow-up Batch 0 source
 movement.
 
+FU-9 status: revalidated against `tests/test_public_import_surfaces.py` and
+live module `__all__` exports after the follow-up refactor wave.
+
 ## Import Surfaces
 
 The following module imports are compatibility contracts for this refactor wave:
@@ -55,7 +58,10 @@ facade for workflow primitive schemas. Expected post-package `__all__`:
 - `QueueClaimPolicyId`
 - `RequestContextProfileDefinition`
 - `RequestContextProfileId`
+- `RequestContextProviderDefinition`
+- `RequestContextProviderId`
 - `RequestContextRenderPlan`
+- `RequestContextRenderPlanId`
 - `RuntimeEffectHandlerDefinition`
 - `RuntimeEffectHandlerId`
 - `RuntimeEffectMutationPhaseValue`
@@ -64,6 +70,7 @@ facade for workflow primitive schemas. Expected post-package `__all__`:
 - `RuntimeEffectRuleDefinition`
 - `RuntimeEffectRuleId`
 - `RuntimeFailurePolicyDefinition`
+- `RuntimeFailurePolicyRepairClosureMappingDefinition`
 - `TerminalActionDefinition`
 - `TerminalActionId`
 - `WorkItemDocumentAdapterDefinition`
@@ -130,7 +137,10 @@ workflow primitive contracts. Expected post-package `__all__`:
 - `RegisteredStageKindDefinition`
 - `RequestContextProfileDefinition`
 - `RequestContextProfileId`
+- `RequestContextProviderDefinition`
+- `RequestContextProviderId`
 - `RequestContextRenderPlan`
+- `RequestContextRenderPlanId`
 - `ResolvedAssetRef`
 - `RuntimeEffectFailureMappingDefinition`
 - `RuntimeEffectHandlerDefinition`
@@ -144,6 +154,7 @@ workflow primitive contracts. Expected post-package `__all__`:
 - `RuntimeEffectOperationRunnerId`
 - `RuntimeEffectOperationStepDefinition`
 - `RuntimeEffectPrimitiveId`
+- `RuntimeEffectRepairClosureContractDefinition`
 - `RuntimeEffectRuleDefinition`
 - `RuntimeEffectRuleId`
 - `RuntimeEffectStepId`
@@ -152,6 +163,7 @@ workflow primitive contracts. Expected post-package `__all__`:
 - `RuntimeEffectValidatorDefinition`
 - `RuntimeEffectValidatorId`
 - `RuntimeFailurePolicyDefinition`
+- `RuntimeFailurePolicyRepairClosureMappingDefinition`
 - `StageIdempotencePolicy`
 - `TerminalActionDefinition`
 - `TerminalActionId`
@@ -169,22 +181,23 @@ workflow primitive contracts. Expected post-package `__all__`:
 
 ## Runtime Request Context
 
-`millrace_ai.runtime.request_context` remains the runtime rendering facade for
-runner request context:
+`millrace_ai.runtime.request_context` remains the public runtime rendering facade
+for runner request context:
 
 - `RenderedRequestContext`
 - `RequestContextRenderPlan`
 - `attach_default_request_context`
 - `render_request_context`
 
-Future provider/registry extraction must preserve these imports while moving
-generic and Blueprint-specific context providers behind narrower modules.
+FU-9 status: these imports are preserved while implementation ownership now lives
+under `millrace_ai.runtime.context`.
 
 ## Runtime Effect Operations
 
-`millrace_ai.runtime.effects.operations` is currently the public operation-runner
-facade. Batch 2 of the follow-up wave may split implementation modules, but
-this import path and these names stay compatible:
+`millrace_ai.runtime.effects.operations` is the public operation-runner
+compatibility facade. FU-2 moved implementation into
+`millrace_ai.runtime.effects.operation_runners`, and this import path plus these
+symbols remain stable:
 
 - `CONTRACTOR_BLUEPRINT_OPERATION_ID`
 - `EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID`
@@ -198,6 +211,17 @@ this import path and these names stay compatible:
 - `mechanic_blueprint_repair_apply`
 
 The constants are operation ids, not new public handler authority.
+
+## Final Facade Status (FU-9)
+
+- `millrace_ai.compilation.validation`: package facade (`compilation/validation/__init__.py`) with stable public validator exports.
+- `millrace_ai.architecture.workflow_primitives`: package facade (`architecture/workflow_primitives/__init__.py`) with stable contract-family exports.
+- `millrace_ai.runtime.request_context`: compatibility facade over
+  `runtime/context/`.
+- `millrace_ai.runtime.effects.operations`: compatibility facade over
+  `runtime/effects/operation_runners/`.
+- `millrace_ai.runtime.blueprint_effects`: compatibility facade over
+  `runtime/effects/operations.py`.
 
 ## Blueprint Effect Compatibility Facade
 

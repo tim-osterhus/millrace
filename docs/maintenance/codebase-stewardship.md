@@ -58,6 +58,35 @@ Largest remaining source modules at this baseline:
 These metrics are not split criteria by themselves. They identify where the
 follow-up packet wave should look for cohesive reasons to change.
 
+Post-wave snapshot from FU-9 Packet 01 (`uv run python scripts/maintenance/repo_shape_report.py`):
+
+- `src/millrace_ai/runtime/effects/operation_runners/blueprint_evaluator.py`: 1253 lines
+- `src/millrace_ai/runtime/completion_behavior.py`: 948 lines
+- `src/millrace_ai/runtime/supervisor.py`: 924 lines
+- `src/millrace_ai/runtime/effect_execution.py`: 806 lines
+- `src/millrace_ai/runtime/control_mutations.py`: 766 lines
+- `src/millrace_ai/runtime/context/blueprint.py`: 763 lines
+- `src/millrace_ai/workspace/operator_interventions.py`: 760 lines
+- `src/millrace_ai/runtime/inspection.py`: 757 lines
+- `src/millrace_ai/runtime/recovery/queue_mutation.py`: 752 lines
+- `src/millrace_ai/workspace/blueprint_state.py`: 716 lines
+
+Before/after notes from the follow-up wave:
+
+- `src/millrace_ai/runtime/effects/operations.py` dropped from a 2433-line
+  monolith to a 97-line compatibility facade; Blueprint operation logic now
+  lives under `runtime/effects/operation_runners/`.
+- former `compilation/validation.py` (1382 lines at baseline)
+  is now a package facade (`src/millrace_ai/compilation/validation/`) with
+  validator-family modules.
+- `src/millrace_ai/runtime/request_context.py` dropped from 987 lines to a
+  17-line compatibility facade over `src/millrace_ai/runtime/context/`.
+- `src/millrace_ai/runtime/blocked_recovery.py` dropped from 1159 lines to a
+  149-line compatibility facade over `src/millrace_ai/runtime/recovery/`.
+- `src/millrace_ai/runtime/error_recovery.py` remains a large orchestration
+  entrypoint (613 lines), but focused recovery domains now live under
+  `src/millrace_ai/runtime/recovery/`.
+
 ## Advisory Report
 
 Run the repository shape report when source ownership or documentation shape
