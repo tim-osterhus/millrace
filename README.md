@@ -1,14 +1,21 @@
-# Millrace
-
-Millrace is a local runtime for governed, long-running AI coding projects.
+<div align="center">
+  <img
+    src="docs/assets/images/millrace-icon-signal-transparent-glow.png"
+    alt="Millrace signal mark"
+    width="180"
+  />
+  <h1>Millrace</h1>
+  <p><strong>Millrace is a local runtime for governed, long-running AI coding projects.</strong></p>
+  <p>
+    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/millrace-ai.svg"></a>
+    <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/tim-osterhus/millrace.svg"></a>
+  </p>
+</div>
 
 It is for operators who need an agent to keep working after a single chat or terminal session would usually lose state, drift, or stop. Millrace gives that work a queue, a compiled plan, durable run state, repair paths, approval gates, and evidence-backed completion.
 
 Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still stabilizing, so pin patch versions when behavior matters.
-
-[![PyPI](https://img.shields.io/pypi/v/millrace-ai.svg)](https://pypi.org/project/millrace-ai/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/github/license/tim-osterhus/millrace.svg)](LICENSE)
 
 ```bash
 pip install millrace-ai
