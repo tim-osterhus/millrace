@@ -7,9 +7,9 @@ default runtime configuration:
 - planning loop: `planning.standard`
 - execution loop: `execution.standard`
 
-Learning-enabled modes (`learning_codex`, `learning_pi`,
-`learning_codex_integrated`, and `blueprint_learning_codex`) add
-`learning.standard`; this default-mode chart omits that optional claim path
+Learning-enabled modes (`learning_codex`, `efficient_learning_codex`,
+`learning_pi`, `learning_codex_integrated`, and `blueprint_learning_codex`)
+add `learning.standard`; this default-mode chart omits that optional claim path
 except where noted. `blueprint_learning_codex` uses `planning.blueprint`
 instead of the standard Planning topology.
 

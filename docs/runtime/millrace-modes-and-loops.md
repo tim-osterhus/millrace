@@ -43,6 +43,7 @@ The shipped canonical mode ids are:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
+- `efficient_learning_codex`
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`
@@ -151,6 +152,8 @@ The current mode shape is intentionally small:
 - `stage_model_bindings`
 - `stage_runner_bindings`
 - `stage_thinking_bindings`
+- `model_aliases`
+- `model_assignment`
 - `concurrency_policy`
 - `learning_trigger_rules`
 
@@ -178,6 +181,9 @@ The mode families differ primarily in `stage_runner_bindings`:
 - `default_pi` binds every shipped stage to `pi_rpc`
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
+- `efficient_learning_codex` binds the same standard learning topology to
+  `codex_cli`, leaves Integrator out of the active execution loop, and carries
+  mode-local model/depth alias assignments for each shipped standard stage
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` binds execution with Integrator plus planning to
   `codex_cli`
@@ -188,11 +194,14 @@ The mode families differ primarily in `stage_runner_bindings`:
 - `blueprint_learning_codex` binds execution, Blueprint Planning, and learning
   stages to `codex_cli`
 
-Entrypoint, skill-addition, and model maps otherwise remain empty in the
+Entrypoint, skill-addition, and direct model maps otherwise remain empty in the
 baseline. Harness-only presets keep topology identical; integrated presets
 intentionally select a more expensive execution topology. Learning modes add a
 compiled concurrency policy and learning trigger rules; those are explicit mode
-data, not prompt-only instructions.
+data, not prompt-only instructions. `efficient_learning_codex` is the one
+shipped mode that uses `model_aliases` and `model_assignment` inside the mode
+asset so its stage-cost profile can travel with the mode instead of depending
+on workspace-local alias defaults.
 
 Specialized repository-local workflows should provide their own workspace-local
 mode, loop, graph, and entrypoint assets under their owning project area, then
@@ -247,7 +256,9 @@ override and the selected adapter can use its own default behavior.
 ## Model Assignment Aliases
 
 Runtime config can assign model/depth policy by alias instead of editing every
-stage or mode map. The shipped aliases are:
+stage or mode map. Mode assets may also define mode-local aliases and
+assignments when a shipped mode owns a specific stage-cost profile. The shipped
+workspace config aliases are:
 
 - `fast`: `model = "gpt-5.4-mini"`, `thinking_level = "high"`
 - `standard`: `model = "gpt-5.5"`, `thinking_level = "medium"`
@@ -255,9 +266,18 @@ stage or mode map. The shipped aliases are:
 
 Alias assignment is compiler-owned and runs after graph-loop node defaults,
 stage config, and mode `stage_model_bindings` / `stage_thinking_bindings` have
-already been applied. Stage assignment wins over loop assignment, loop
-assignment wins over the global default alias, and the built-in `standard`
-alias is the final alias fallback before preserving the pre-alias assignment.
+already been applied. Workspace stage assignment wins over workspace loop
+assignment, which wins over mode stage assignment, mode loop assignment,
+mode default assignment, and the workspace global default alias. The built-in
+`standard` alias is the final alias fallback before preserving the pre-alias
+assignment.
+
+When the selected assignment comes from a mode map, the compiler resolves the
+alias against mode-local aliases first, then workspace aliases. When the
+selected assignment comes from workspace config, the compiler resolves workspace
+aliases first. This lets `efficient_learning_codex` define aliases such as
+`fast` with a different thinking level from the workspace default while still
+allowing explicit operator config to override the preset.
 
 Example:
 
@@ -362,10 +382,11 @@ Those are the fields that change the compiled runtime plan.
 Fields such as `usage_governance.*` are next-tick runtime settings and do not
 change selected modes, loops, or compiled node bindings.
 
-Use `learning_codex`, `learning_pi`, `learning_codex_integrated`, or
-`blueprint_learning_codex` only when the workspace should opt into runtime
-learning requests, the Analyst/Professor/Curator flow, and Planner-triggered
-Librarian optional-skill preparation.
+Use `learning_codex`, `efficient_learning_codex`, `learning_pi`,
+`learning_codex_integrated`, or `blueprint_learning_codex` only when the
+workspace should opt into runtime learning requests, the
+Analyst/Professor/Curator flow, and Planner-triggered Librarian optional-skill
+preparation.
 
 ## Operator View
 
@@ -395,8 +416,10 @@ Maintainers should think about loops and modes as separate contracts:
 - legacy loops remain shipped reference assets and should stay semantically
   aligned with the graph loops
 
-That separation is why a mode map cannot legally mention a stage that is not
-selected by the chosen loops.
+That separation is why topology-affecting mode maps cannot legally mention a
+stage that is not selected by the chosen loops. Model-assignment presets are
+non-topological: an inactive stage assignment is ignored unless a selected
+graph later includes that stage.
 
 The important operator consequence is that changing from `default_codex` to
 `default_pi` does not change the loop graph. It changes only the compiled

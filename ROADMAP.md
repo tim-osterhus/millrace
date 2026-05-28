@@ -211,14 +211,15 @@ Expected user impact:
 
 ### Learning Plane Stabilization
 
-The learning plane now ships as an opt-in mode family through `learning_codex`
-and `learning_pi`. Active work is to keep the Analyst, Professor, Curator, and
-Librarian flow grounded in runtime evidence and to avoid automatic skill
-changes without clear operator-controlled promotion. Generic success-triggered
-learning now starts at Analyst, Planner completion can trigger Librarian to
-prepare relevant remote optional skills, direct Curator triggers require
-explicit destination metadata, and reviewed no-change learning can terminate as
-no-op/done instead of creating noisy blocked artifacts.
+The learning plane now ships as an opt-in mode family through `learning_codex`,
+`efficient_learning_codex`, and `learning_pi`. Active work is to keep the
+Analyst, Professor, Curator, and Librarian flow grounded in runtime evidence
+and to avoid automatic skill changes without clear operator-controlled
+promotion. Generic success-triggered learning now starts at Analyst, Planner
+completion can trigger Librarian to prepare relevant remote optional skills,
+direct Curator triggers require explicit destination metadata, and reviewed
+no-change learning can terminate as no-op/done instead of creating noisy
+blocked artifacts.
 
 Expected user impact:
 

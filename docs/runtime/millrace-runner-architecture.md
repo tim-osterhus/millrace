@@ -97,6 +97,8 @@ The shipped canonical modes make that explicit:
 - `default_pi` binds every shipped stage to `pi_rpc`
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
+- `efficient_learning_codex` binds the same standard learning topology to
+  `codex_cli` and applies a mode-local model/depth alias profile
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
   while selecting the quality-first `execution.with_integrator` loop

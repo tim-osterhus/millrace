@@ -54,6 +54,7 @@ The authoritative sources are:
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
 - `src/millrace_ai/assets/modes/learning_codex.json`
+- `src/millrace_ai/assets/modes/efficient_learning_codex.json`
 - `src/millrace_ai/assets/modes/learning_pi.json`
 - `src/millrace_ai/assets/modes/default_codex_integrated.json`
 - `src/millrace_ai/assets/modes/learning_codex_integrated.json`
@@ -128,14 +129,18 @@ Today the important authoring rule is scope:
 - `stage_model_bindings`
 - `stage_runner_bindings`
 - `stage_thinking_bindings`
+- `model_aliases`
+- `model_assignment`
 - `concurrency_policy`
 - `learning_trigger_rules`
 
-may only reference planes, loops, or stages that exist in the selected plane
-loops.
+Topology-affecting maps must only reference planes, loops, or stages that
+exist in the selected plane loops.
 
 The compiler enforces that by building the set of selected stages first and then
-rejecting mode maps that refer outside that set.
+rejecting topology-affecting mode maps that refer outside that set. Model
+assignment presets are non-topological; inactive stage assignments are ignored
+until a selected graph includes that stage.
 
 Learning-trigger authoring has one additional safety rule: a rule that targets
 `curator` directly must include `target_skill_id` or

@@ -6,7 +6,7 @@ import re
 from typing import NamedTuple
 
 from millrace_ai.config import ModelAliasDefinition, RuntimeConfig
-from millrace_ai.contracts import StageMapKey
+from millrace_ai.contracts import ModeDefinition, ModeModelAliasDefinition, StageMapKey
 
 MODEL_ALIAS_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9._:/+-]+$")
 MODEL_ALIAS_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -25,6 +25,7 @@ class ModelAliasDecision(NamedTuple):
 def resolve_model_alias_assignment(
     *,
     config: RuntimeConfig,
+    mode: ModeDefinition,
     stage_key: StageMapKey,
     loop_id: str,
     existing_model_name: str | None,
@@ -42,9 +43,9 @@ def resolve_model_alias_assignment(
         )
 
     warnings: list[str] = []
-    candidates = _assignment_candidates(config, stage_key=stage_key, loop_id=loop_id)
+    candidates = _assignment_candidates(config, mode, stage_key=stage_key, loop_id=loop_id)
     for alias_id, source in candidates:
-        alias = _alias_definition(config, alias_id)
+        alias = _alias_definition(config, mode, alias_id, source=source)
         if alias is None:
             fallback_alias = _fallback_alias_definition(alias_id)
             if fallback_alias is None:
@@ -89,6 +90,7 @@ def resolve_model_alias_assignment(
 
 def _assignment_candidates(
     config: RuntimeConfig,
+    mode: ModeDefinition,
     *,
     stage_key: StageMapKey,
     loop_id: str,
@@ -101,13 +103,29 @@ def _assignment_candidates(
     loop_alias = config.model_assignment.by_loop.get(loop_id)
     if loop_alias is not None:
         candidates.append((loop_alias, f"loop:{loop_id}"))
+    mode_stage_alias = mode.model_assignment.by_stage.get(stage_key)
+    if mode_stage_alias is not None:
+        candidates.append((mode_stage_alias, f"mode:stage:{stage_lookup_key}"))
+    mode_loop_alias = mode.model_assignment.by_loop.get(loop_id)
+    if mode_loop_alias is not None:
+        candidates.append((mode_loop_alias, f"mode:loop:{loop_id}"))
+    if mode.model_assignment.default_alias is not None:
+        candidates.append((mode.model_assignment.default_alias, "mode:default"))
     candidates.append((config.model_assignment.default_alias, "default"))
     candidates.append(("standard", "builtin:standard"))
     return tuple(candidates)
 
 
-def _alias_definition(config: RuntimeConfig, alias_id: str) -> ModelAliasDefinition | None:
-    return config.model_aliases.get(alias_id)
+def _alias_definition(
+    config: RuntimeConfig,
+    mode: ModeDefinition,
+    alias_id: str,
+    *,
+    source: str,
+) -> ModelAliasDefinition | ModeModelAliasDefinition | None:
+    if source.startswith("mode:"):
+        return mode.model_aliases.get(alias_id) or config.model_aliases.get(alias_id)
+    return config.model_aliases.get(alias_id) or mode.model_aliases.get(alias_id)
 
 
 def _fallback_alias_definition(alias_id: str) -> ModelAliasDefinition | None:
@@ -116,7 +134,10 @@ def _fallback_alias_definition(alias_id: str) -> ModelAliasDefinition | None:
     return None
 
 
-def _alias_validation_error(alias_id: str, alias: ModelAliasDefinition) -> str | None:
+def _alias_validation_error(
+    alias_id: str,
+    alias: ModelAliasDefinition | ModeModelAliasDefinition,
+) -> str | None:
     if not MODEL_ALIAS_ID_PATTERN.fullmatch(alias_id):
         return "alias id is not a safe identifier"
     model = alias.model.strip() if alias.model is not None else ""

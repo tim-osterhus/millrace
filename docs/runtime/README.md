@@ -49,6 +49,9 @@ If you need the shipped mode-to-plane graph matrix or per-plane topology, use
 - Use `millrace-modes-and-loops.md` before selecting `default_codex_integrated`
   or `learning_codex_integrated`; those modes intentionally add an Integrator
   pass after Builder for higher assurance.
+- Use `millrace-modes-and-loops.md` before selecting
+  `efficient_learning_codex`; it keeps standard topology but carries a
+  mode-local model/depth profile.
 - Use `millrace-workspace-baselines-and-upgrades.md` when you need the explicit `init` / `upgrade` workflow for managed workspace assets.
 - Use `millrace-cli-reference.md` when you need `millrace skills`, daemon
   monitor, approvals, usage-governance, or status command details.

@@ -3491,6 +3491,7 @@ def test_modes_list_outputs_shipped_modes() -> None:
     assert "default_codex" in result.output
     assert "default_pi" in result.output
     assert "standard_plain -> default_codex" in result.output
+    assert "efficient_learning_codex" in result.output
     assert "default_codex_integrated" in result.output
     assert "learning_codex_integrated" in result.output
     assert "standard_role_augmented" not in result.output

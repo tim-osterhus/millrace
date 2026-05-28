@@ -209,7 +209,7 @@ The CLI also prints:
 ## Model Assignment Aliases
 
 The compiler owns model alias resolution. Runtime config ships three default
-aliases:
+workspace aliases:
 
 ```toml
 [model_aliases.fast]
@@ -230,15 +230,24 @@ default_alias = "standard"
 invalid_assignment_policy = "warn_fallback"
 ```
 
-The compiler first resolves the older node/model surfaces, then applies alias
-assignment as the final overlay:
+Mode assets may also carry mode-local aliases when a shipped mode owns a
+specific stage-cost profile. The compiler first resolves the older node/model
+surfaces, then applies alias assignment as the final overlay:
 
 1. graph-loop node defaults, `stages.<stage>.*`, and mode stage maps
-2. `model_assignment.by_stage.<stage>`
-3. `model_assignment.by_loop.<loop_id>`
-4. `model_assignment.default_alias`
-5. the built-in `standard` alias
-6. the pre-alias assignment when no alias can be used
+2. workspace `model_assignment.by_stage.<stage>`
+3. workspace `model_assignment.by_loop.<loop_id>`
+4. mode `model_assignment.by_stage.<stage>`
+5. mode `model_assignment.by_loop.<loop_id>`
+6. mode `model_assignment.default_alias`
+7. workspace `model_assignment.default_alias`
+8. the built-in `standard` alias
+9. the pre-alias assignment when no alias can be used
+
+Mode-selected assignments resolve mode-local alias definitions first; workspace
+config assignments resolve workspace alias definitions first. This preserves
+explicit operator overrides while allowing modes such as
+`efficient_learning_codex` to package local alias meanings.
 
 If `model_assignment.enabled = false`, the alias resolver does nothing and the
 pre-alias behavior is preserved. Unknown or syntactically invalid selected

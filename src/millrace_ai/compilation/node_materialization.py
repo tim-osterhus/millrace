@@ -109,6 +109,7 @@ def materialize_graph_node_plan(
     )
     alias_decision = resolve_model_alias_assignment(
         config=config,
+        mode=mode,
         stage_key=stage_key,
         loop_id=loop_id,
         existing_model_name=model_name,

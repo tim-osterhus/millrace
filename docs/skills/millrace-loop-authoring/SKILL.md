@@ -63,6 +63,7 @@ Before changing anything, load the relevant source-of-truth files:
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
 - `src/millrace_ai/assets/modes/learning_codex.json`
+- `src/millrace_ai/assets/modes/efficient_learning_codex.json`
 - `src/millrace_ai/assets/modes/learning_pi.json`
 - `src/millrace_ai/assets/modes/default_codex_integrated.json`
 - `src/millrace_ai/assets/modes/learning_codex_integrated.json`
@@ -123,7 +124,7 @@ stage topology or activation rules, such as:
 - a new stage kind with distinct legal outcomes or request fields
 - a new work-item family, claim policy, terminal lifecycle action, or runtime
   effect
-- a mode that selects different loops, entrypoints, runners, models, or
+- a mode that selects different loops, entrypoints, runners, models, aliases, or
   learning trigger policy
 
 Do not use a custom loop for:
@@ -152,8 +153,8 @@ For a new runtime shape, check which assets must change:
 - Legacy loop: add or update `src/millrace_ai/assets/loops/` when touching a
   shipped/default loop surface that should remain inspectable and compatible.
 - Mode: add or update `src/millrace_ai/assets/modes/` when selecting loops or
-  changing per-stage entrypoint, skill, runner, model, timeout, concurrency, or
-  learning-trigger policy.
+  changing per-stage entrypoint, skill, runner, model, alias, timeout,
+  concurrency, or learning-trigger policy.
 - Workflow primitives: add or update the relevant
   `src/millrace_ai/assets/registry/` assets when a loop changes queue family
   ownership, claim ordering, terminal lifecycle behavior, runtime effects,

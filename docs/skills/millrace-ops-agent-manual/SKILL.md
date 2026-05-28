@@ -120,6 +120,9 @@ Know which shipped harness posture you are validating:
   Analyst/Professor/Curator/Librarian learning plane for runtime learning
   requests, skill-improvement workflows, and post-Planner optional-skill
   preparation
+- `efficient_learning_codex` uses the same standard Codex learning topology as
+  `learning_codex`, keeps Integrator inactive by default, and carries
+  mode-local stage model/depth aliases for mixed-cost execution
 - `default_codex_integrated` and `learning_codex_integrated` are opt-in
   quality loops. They use Codex and select `execution.with_integrator`, so a
   successful Builder result always runs through Integrator before Checker.
@@ -369,6 +372,7 @@ millrace model-aliases set <alias> --model <model> --thinking-level <level> --wo
 millrace model-aliases assign-global <alias> --workspace <workspace>
 millrace model-aliases assign-loop <loop_id> <alias> --workspace <workspace>
 millrace model-aliases assign-stage <stage> <alias> --workspace <workspace>
+millrace compile validate --mode efficient_learning_codex --workspace <workspace>
 millrace compile validate --mode default_codex_integrated --workspace <workspace>
 millrace compile validate --mode blueprint_codex --workspace <workspace>
 millrace compile validate --mode blueprint_learning_codex --workspace <workspace>
@@ -599,8 +603,8 @@ Blueprint monitoring checklist:
   closure target; the supported fix is to repair the incident lineage, not to
   bypass the root.
 - `millrace skills create` and `millrace skills improve` require a
-  learning-enabled mode such as `learning_codex`, `learning_pi`, or
-  `learning_codex_integrated`, or `blueprint_learning_codex`
+  learning-enabled mode such as `learning_codex`, `efficient_learning_codex`,
+  `learning_pi`, `learning_codex_integrated`, or `blueprint_learning_codex`
 
 ## Monitoring And Intervention
 
@@ -729,7 +733,9 @@ Use intervention commands only when the runtime state actually justifies them:
   lives under `[model_assignment]`. Defaults are `fast`, `standard`, and
   `deep`, with `standard` selected globally. Use `millrace model-aliases ...`
   commands instead of hand-editing when possible; they preserve TOML comments
-  where possible and request daemon-safe reload by default.
+  where possible and request daemon-safe reload by default. Shipped modes can
+  also carry mode-local aliases; `efficient_learning_codex` uses that surface
+  so its stage profile does not depend on workspace-local alias defaults.
 - Config reload recompiles changes such as `runtime.default_mode` and
   `stages.<stage>.*`, `model_aliases.*`, and `model_assignment.*` on the
   daemon's next tick when a daemon owns the workspace. If the daemon was

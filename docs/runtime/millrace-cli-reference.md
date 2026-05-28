@@ -131,6 +131,9 @@ Integrated Codex modes remain opt-in: `default_codex_integrated` and
 `learning_codex_integrated` select `execution.with_integrator`, so every
 successful Builder run goes through Integrator before Checker. The integrated
 learning mode keeps the same Learning concurrency policy as `learning_codex`.
+`efficient_learning_codex` keeps the standard execution loop, leaves
+Integrator inactive by default, and uses the same Learning concurrency policy
+with a mode-local model/depth alias profile.
 `blueprint_learning_codex` keeps the standard execution loop, selects
 `planning.blueprint`, and uses the same Learning concurrency and
 Planner-to-Librarian trigger policy as `learning_codex`.
@@ -645,7 +648,9 @@ capabilities, and allows shell run and workspace write capability requests.
 
 Model aliases are configured under `[model_aliases.<alias>]` and selected under
 `[model_assignment]`. `config show` prints `model_assignment.*`, each
-`model_alias.<alias>`, and any loop or stage assignment overrides.
+`model_alias.<alias>`, and any loop or stage assignment overrides. Some shipped
+modes, such as `efficient_learning_codex`, also carry mode-local aliases; use
+`compile show --mode <mode>` to inspect the resolved per-node assignments.
 
 ### `millrace config validate [--mode MODE_ID]`
 
@@ -844,6 +849,7 @@ Lists built-in modes and loop references. Current packaged modes are:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
+- `efficient_learning_codex`
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`
@@ -965,9 +971,9 @@ Command summary:
 - `millrace skills export <SKILL_ID>`
 
 Create/improve workflows require a learning-enabled mode such as
-`learning_codex`, `learning_pi`, `learning_codex_integrated`, or
-`blueprint_learning_codex` because they enqueue learning requests for the
-Analyst/Professor/Curator skill-improvement path.
+`learning_codex`, `efficient_learning_codex`, `learning_pi`,
+`learning_codex_integrated`, or `blueprint_learning_codex` because they enqueue
+learning requests for the Analyst/Professor/Curator skill-improvement path.
 Install/list/show/search/refresh can be used for the deployed skill surface
 without changing the active runtime mode, and Librarian uses the same remote
 index/install surface after Planner in learning-enabled modes.

@@ -190,6 +190,9 @@ families:
   `src/millrace_ai/assets/modes/learning_pi.json` select execution, planning,
   and learning loops with compiler-frozen learning trigger rules, including
   Planner-to-Librarian optional-skill preparation
+- `src/millrace_ai/assets/modes/efficient_learning_codex.json` selects the
+  same standard learning topology as `learning_codex` while carrying a
+  mode-local model/depth alias profile and leaving Integrator inactive
 
 This asset set now owns runtime control-flow and workflow mutation authority
 after compilation. Legacy loop assets and root router modules still remain in
@@ -396,6 +399,7 @@ presets through canonical mode ids:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
+- `efficient_learning_codex`
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`

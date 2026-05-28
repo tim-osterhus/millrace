@@ -1,159 +1,132 @@
 # Millrace
 
+Millrace is a local runtime for governed, long-running AI coding projects.
+
+It is for operators who need an agent to keep working after a single chat or terminal session would usually lose state, drift, or stop. Millrace gives that work a queue, a compiled plan, durable run state, repair paths, approval gates, and evidence-backed completion.
+
+Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still stabilizing, so pin patch versions when behavior matters.
+
 [![PyPI](https://img.shields.io/pypi/v/millrace-ai.svg)](https://pypi.org/project/millrace-ai/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tim-osterhus/millrace.svg)](LICENSE)
 
-<p align="center">
-  <img
-    src="docs/assets/images/millrace-icon-signal-transparent-glow.png"
-    alt="Millrace signal mark"
-    width="260"
-  />
-</p>
-
-## Other agents win sprints. Millrace wins marathons.
-
-Raw agent harnesses - Codex, Claude Code, Gemini - are built for sprints. Give
-them a tight spec in a greenfield repo, let them rip, ship the result. They are
-very good at this.
-
-Millrace starts where those runs end. When the work spans sessions,
-accumulates state, needs to survive a crash without losing context, or has to
-gate on real acceptance criteria rather than "the agent said it was done",
-that is the problem Millrace was built for.
-
-Millrace is a governed runtime for long-running agent work. The harness still
-does the local stage work. Millrace owns the queue, the compiled plan, runtime
-state, recovery paths, and closure behavior around that work.
-
-> If you are an agent and your harness supports repo-local skills, for example
-> Codex or Claude Code, install
-> `docs/skills/millrace-autonomous-delegation/SKILL.md` when you have authority
-> to choose whether substantial work should enter Millrace. Once Millrace is
-> selected or explicitly requested, use
-> `docs/skills/millrace-ops-agent-manual/SKILL.md` as the operator runbook.
-
-### Agent Install Examples
-
-- Codex: if your environment supports repo-local skills, load
-  `docs/skills/millrace-autonomous-delegation/` for autonomous delegation
-  decisions and `docs/skills/millrace-ops-agent-manual/` for Millrace
-  operation. The entry files are each package's `SKILL.md`.
-- Claude Code: use the same package path or entry file as the local project
-  skill. Use the autonomous delegation skill only when the user or workspace
-  has granted that authority; otherwise follow the ops manual handshake.
-- Other harnesses: if the harness accepts a `SKILL.md`, point it at
-  `docs/skills/millrace-autonomous-delegation/SKILL.md` for the decision layer
-  and `docs/skills/millrace-ops-agent-manual/SKILL.md` for operation; if it
-  supports directory packages, prefer the containing directories.
-
-## Runtime Lifecycle
-
-Need the full implementation-accurate flow instead of the landing-page view?
-See [the standalone lifecycle chart](docs/runtime/millrace-runtime-lifecycle-diagram.md).
-
-```mermaid
-flowchart TD
-    A["Initialize workspace, then compile the plan"] --> B{"Deterministic tick loop"}
-    B --> C["Process control inputs:<br/>mailbox commands, watcher intake, reconciliation"]
-    C --> D{"Scheduler claim decision"}
-    D -- planning probe, incident, or spec --> E["Planning loop:<br/>classify probes,<br/>interpret specs and incidents,<br/>govern remediation, emit executable work"]
-    D -- execution task --> F["Execution loop:<br/>build, verify, repair, recover, update"]
-    D -- learning request --> K["Learning loop:<br/>analyze runtime evidence,<br/>prepare optional skills,<br/>curate accepted updates"]
-    D -- nothing claimable --> G{"Completion behavior eligible?"}
-    G -- yes --> H["Arbiter closure pass"]
-    G -- no --> I["Idle until the next tick"]
-    E --> J["Runtime applies results,<br/>persists state, and routes the next action"]
-    F --> J
-    K --> J
-    H --> J
-    J --> B
-    I --> B
+```bash
+pip install millrace-ai
+millrace init --workspace /path/to/workspace
+millrace compile validate --workspace /path/to/workspace
+millrace run daemon --max-ticks 1 --workspace /path/to/workspace
+millrace status --workspace /path/to/workspace
 ```
 
-Millrace does not try to replace raw harness reasoning with a thicker prompt.
-It wraps long-horizon work in a runtime with a few hard contracts:
+For the full system explanation, read `docs/millrace-technical-overview.md`.
 
-- **Explicit workspace lifecycle:** operators initialize workspaces with
-  `millrace init`, update the Python package with their package manager, and
-  use `millrace upgrade` only to preview or apply managed workspace asset
-  refreshes.
-- **Compiler-owned runtime structure:** startup and config reload compile a
-  fingerprinted plan; if inputs drift and the persisted plan is stale, the
-  daemon refuses to keep running on a last-known-good plan.
-- **Runtime-owned execution:** stage results are routed by the runtime,
-  mutation stays single-writer and serialized, and daemon scheduling follows
-  the compiled plane scheduler. Default modes are serial; learning-enabled
-  modes may run one Learning stage alongside one foreground Planning or
-  Execution stage.
-- **Bounded autonomous recovery:** when queued same-lineage tasks are stranded
-  behind a blocked predecessor caused by a classified transient runner,
-  network, provider, or timeout failure, the daemon can requeue that dependency
-  through an audited retry path. Semantic blocked states and durable local
-  setup failures still require operator review.
-- **Audited operator intervention:** when work is bad intake rather than a
-  retryable failure, operators can cancel, supersede, retarget, resolve,
-  archive, or retry supported blocked work items through CLI/control commands.
-  Live daemons receive those changes through the mailbox and apply them only at
-  safe no-active-run mutation boundaries.
-- **Opt-in quality loops:** integrated Codex modes use a more expensive
-  `builder -> integrator -> checker` execution path. Integrator reviews the
-  Builder diff, runs explicit or discoverable gates, and writes
-  `integration_report.md` before normal Checker QA.
-- **Probe-first intake:** lightweight probe requests enter Planning through
-  Recon, which researches enough repo evidence to route the request into a
-  generated execution task, a generated planning spec, a no-op, or a blocked
-  packet without letting stages mutate queues directly.
-- **Closure-safe remediation:** runtime-generated planning handoff incidents
-  preserve source work-item lineage, so same-root remediation remains claimable
-  while unrelated root specs stay backpressured. Arbiter activates only when no
-  lineage work remains and closure behavior is ready.
-- **Inspectable governance and evidence:** usage governance can pause and
-  auto-resume between stages when configured quota rules are reached. Compiled
-  execution capability grants describe which stage powers are granted, denied,
-  approval-gated, unsupported, enforced, or advisory, while typed terminal
-  results, status/monitor output, and persisted run artifacts keep post-run
-  inspection grounded in runtime evidence.
+## How Millrace Is Different
 
-The shipped core includes separate Planning and Execution loops.
-Learning-enabled modes add Analyst, Professor, Curator, and Librarian stages
-for evidence-backed skill improvement and post-Planner optional-skill
-preparation. Generic success-triggered learning is Analyst-first, Planner
-completion can trigger Librarian to install relevant remote optional skills
-into the workspace, and reviewed no-change learning can close as no-op instead
-of being treated as blocked.
-Blueprint Planning is available through opt-in `blueprint_codex` and
-`blueprint_learning_codex` modes. Both keep implementation inside the standard
-Execution loop, but route Planner output through Manager Blueprint, Contractor
-Blueprint, and Evaluator Blueprint before approved generated tasks enter
-Execution. The learning-enabled variant keeps the normal post-Planner Librarian
-trigger.
+Millrace is not another chat UI, coding harness, or graph library. It is the local runtime layer that decides what agent work is allowed to run, what state is durable, how recovery happens, and when the work can honestly close.
 
-For the full documentation map, see `docs/doc-index.md`. For operational
-details, see `docs/runtime/README.md`,
-`docs/runtime/millrace-cli-reference.md`, and
-`docs/runtime/millrace-workspace-baselines-and-upgrades.md`.
+| Compared with | What that tool is good at | What Millrace adds or changes |
+| --- | --- | --- |
+| [Claude Code](https://code.claude.com/docs/en/overview) | A coding agent that reads a repo, edits files, runs commands, and works from surfaces such as terminal, IDE, desktop, and web. | Millrace is not the coding model or chat surface. It wraps stage work in durable queues, compiled plans, restartable daemon state, operator controls, and evidence-backed closure. |
+| [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) | A low-level framework and runtime for building long-running, stateful agents and custom orchestration graphs. | Millrace ships an opinionated software-work runtime: Planning, Execution, optional Learning, queue intake, CLI operations, run artifacts, approval gates, and Arbiter closure are already part of the product. |
+| [Archon](https://archon.diy/) | A workflow engine for packaging AI coding workflows as YAML and running them across tools and channels. | Millrace is less about portable workflow recipes and more about runtime truth inside a managed workspace: one compiled plan, one daemon-owned mutation path, durable recovery, and inspectable completion state. |
+
+Use a direct coding agent when a single session is enough. Use Millrace when the work needs a real runtime around it.
+
+## What Millrace Does
+
+Millrace turns large AI-assisted software work into explicit runtime state:
+
+- **Queue intake:** tasks, specs, probes, incidents, ideas, learning requests, approvals, and operator commands enter through supported files or CLI commands.
+- **Compiled plans:** the selected mode, graph assets, runtime config, stage bindings, recovery policy, and completion behavior compile into a persisted plan before work runs.
+- **Stage execution:** a daemon claims one eligible stage at a time, hands the stage a contract, records artifacts, and routes the result through runtime-owned logic.
+- **Recovery:** retryable environmental failures can requeue through audited paths; real blocked states stay visible until an operator or recovery stage handles them.
+- **Closure:** work does not close because an agent says it is done. Arbiter closure runs only when the relevant lineage has no queued, active, or blocked work left.
+- **Inspection:** status, monitor output, run artifacts, traces, compile diagnostics, and CLI commands make the runtime state visible after each handoff.
+
+The base package is intentionally local and lightweight. Optional surfaces, such as the read-only dashboard, ship separately.
+
+## The Runtime Model
+
+Millrace runs three kinds of work planes:
+
+- **Planning:** turns specs, probes, and incidents into bounded executable work or remediation.
+- **Execution:** builds, checks, fixes, double-checks, escalates, and updates task work.
+- **Learning:** optionally reviews runtime evidence, prepares remote optional skills after Planner, and curates accepted skill improvements.
+
+The default modes keep Planning and Execution serial. Learning-enabled modes can run one Learning stage alongside one foreground Planning or Execution stage. Runtime-owned mutation remains serialized by the daemon.
+
+Current shipped modes include standard Codex and Pi modes, learning-enabled modes, opt-in Integrator quality modes, Blueprint Planning modes, and `efficient_learning_codex`, which uses standard Learning topology with a mode-local mixed-cost model profile. See `docs/runtime/millrace-modes-and-loops.md` and `docs/graphs/graphs-index.md` for the exact mode and graph matrix.
+
+## First Useful Run
+
+Create or choose a workspace, then initialize and inspect it:
+
+```bash
+export WORKSPACE=/absolute/path/to/your/workspace
+
+millrace init --workspace "$WORKSPACE"
+millrace compile validate --workspace "$WORKSPACE"
+millrace compile show --workspace "$WORKSPACE"
+millrace compile graph --workspace "$WORKSPACE"
+```
+
+Run one deterministic daemon tick:
+
+```bash
+millrace run daemon --max-ticks 1 --workspace "$WORKSPACE"
+millrace status --workspace "$WORKSPACE"
+```
+
+Run a visible daemon session:
+
+```bash
+millrace run daemon --monitor basic --workspace "$WORKSPACE"
+```
+
+The default daemon is quiet. `--monitor basic` prints a compact human-facing stream and throttles repeated `idle reason=no_work` lines to a long heartbeat so idle daemons do not flood logs.
+
+## Optional Dashboard
+
+`millrace-web` is a separate package. It serves a read-only local dashboard with Detail and Flow views over one or more workspaces.
+
+```bash
+pip install millrace-web
+millrace-web serve --workspace "$WORKSPACE"
+```
+
+The dashboard observes workspace state. It does not own the daemon, mutate queues, or replace CLI control commands.
+
+## Operator Surface
+
+Common commands:
+
+| Need | Command |
+| --- | --- |
+| Initialize managed workspace assets | `millrace init --workspace <workspace>` |
+| Preview or apply packaged asset updates | `millrace upgrade --workspace <workspace>` / `millrace upgrade --apply --workspace <workspace>` |
+| Validate the selected compiled plan | `millrace compile validate --workspace <workspace>` |
+| Inspect compiled node bindings | `millrace compile show --workspace <workspace>` |
+| Export the compiled graph | `millrace compile graph --workspace <workspace>` |
+| Inspect daemon state | `millrace status --workspace <workspace>` |
+| Run the daemon | `millrace run daemon --workspace <workspace>` |
+| Inspect queue state | `millrace queue ls --workspace <workspace>` |
+| Inspect runs | `millrace runs ls --workspace <workspace>` / `millrace runs show <run_id> --workspace <workspace>` |
+| Pause, resume, or stop a live daemon | `millrace control pause/resume/stop --workspace <workspace>` |
+| Manage approval-gated capabilities | `millrace approvals ls/show/approve/deny --workspace <workspace>` |
+| Manage optional skills | `millrace skills ls/search/install --workspace <workspace>` |
+
+The full CLI reference is `docs/runtime/millrace-cli-reference.md`.
 
 ## Early Proof
 
-Millrace's strongest early proof point is self-referential: Python
-`millrace-ai` built the first released Rust parity implementation of Millrace.
+Millrace's strongest early public proof is self-referential: Python `millrace-ai` drove the first released Rust parity implementation of Millrace.
 
-The campaign used Python `millrace-ai` `v0.16.1` in `learning_codex` mode to
-drive the Rust `millrace-ai` `v0.1.0` implementation from seeded parity ideas
-through planning, execution, QA, Arbiter closure, remediation, and release-ready
-workspace state. After the operator started the daemon, there were no
-pause/resume cycles, continuation prompts, or external code interventions. The
-run proceeded to completion with zero outside assistance. The only external
-post-run action was publication: Millrace's ops agent published the completed
-result to GitHub and as a Rust crate without touching the code Millrace had
-produced.
+That campaign used Python `millrace-ai` in `learning_codex` mode to move from seeded parity ideas through planning, execution, QA, Arbiter closure, remediation, and release-ready state. After the operator started the daemon, there were no pause/resume cycles, continuation prompts, or external code interventions. Publication to GitHub and crates.io happened after the completed workspace state was produced.
 
-Headline evidence from the autonomous build campaign:
+Headline evidence from the run:
 
 | Metric | Value |
-|------|------:|
+| --- | ---: |
 | Seeded parity slices | `8` |
 | Completed specs | `11` |
 | Completed tasks | `57` |
@@ -164,212 +137,52 @@ Headline evidence from the autonomous build campaign:
 | Input plus output tokens | `730,406,757` |
 | Cached-input share | `95.47%` |
 | Release tag | `v0.1.0` |
-| Release commit | `4c82685` |
 
-The release moved the Rust crate from an initial claimed package to a parity
-runtime across `193` changed files and `87,992` insertions. The finished crate
-also passed a post-publish real daemon smoke: an installed `millrace-ai v0.1.0`
-crate completed a real Codex-backed `builder -> checker -> updater` run in
-`6m 32.9s` and produced the expected filesystem output.
+The caveat matters: this proves Python Millrace could autonomously build the Rust parity runtime. It does not prove that every project can be completed without operator judgment.
 
-The caveat is important and narrow: this proves that Python Millrace could
-autonomously build the Rust parity runtime. It does not claim that the Rust
-crate independently self-hosted the whole port campaign.
+Full evidence pack: [millrace-rs-port-docs](https://github.com/tim-osterhus/millrace-rs-port-docs)
 
-Read the full public evidence pack here:
-
-- [millrace-rs-port-docs](https://github.com/tim-osterhus/millrace-rs-port-docs)
-
-## How Millrace Fits With Raw Harnesses
-
-Millrace is not a replacement for Codex, Claude Code, Aider, or similar raw
-agent harnesses. It is the runtime layer you put around them when the work is
-too long-running, stateful, or recovery-sensitive to trust to a single session.
-
-Think of the split this way:
-
-- the raw harness reasons locally, edits code, and emits a stage result
-- Millrace decides which stage runs next and what contract that stage receives
-- Millrace persists queue state, runtime snapshots, artifacts, and recovery
-  context after each handoff
-- the operator or ops agent decides when work enters the runtime and how the
-  workspace is configured
-
-If a direct Codex or Claude Code session is enough, use the direct session.
-Millrace matters when the work has crossed out of sprint territory.
-
-## When To Use Millrace
+## When To Use It
 
 Use Millrace when:
 
-- the work will outlast a single agent session
-- you want explicit stage gates instead of "done enough" chat conclusions
-- recovery and resumability matter
-- you need durable state, queue artifacts, and run history under
-  `<workspace>/millrace-agents/`
-- completion has to clear a real closure pass rather than informal optimism
-- an operator or ops agent is intentionally managing intake and runtime control
+- the work will outlast one agent session;
+- you need explicit stage gates, not informal chat conclusions;
+- recovery, restartability, and queue state matter;
+- you want run artifacts under `<workspace>/millrace-agents/`;
+- completion needs a closure pass with evidence;
+- an operator or ops agent is managing intake and runtime control.
 
 Do not use Millrace when:
 
-- the task is small, bounded, and cleanly handled in one direct session
-- the work is exploratory and governance would add more overhead than value
-- single-session throughput matters more than persistence and recovery
-- nobody is available to manage runtime configuration, intake, and workspace
-  hygiene
+- the task is small enough for one direct coding session;
+- raw iteration speed matters more than durable state;
+- the work is pure exploration;
+- nobody will manage workspace setup, config, approvals, or queue hygiene.
 
-## 60-Second Proof
+## Read Next
 
-Install:
+Start here:
 
-```bash
-pip install millrace-ai
-```
+- `docs/millrace-technical-overview.md`: the dense system explainer.
+- `docs/doc-index.md`: the documentation map.
+- `docs/runtime/README.md`: runtime docs by topic.
+- `docs/runtime/millrace-cli-reference.md`: supported commands.
+- `docs/runtime/millrace-workspace-baselines-and-upgrades.md`: init and upgrade behavior.
 
-Then point Millrace at a workspace:
-
-```bash
-export WORKSPACE=/absolute/path/to/your/workspace
-
-millrace init --workspace "$WORKSPACE"
-millrace compile validate --workspace "$WORKSPACE"
-millrace compile graph --workspace "$WORKSPACE"
-millrace run daemon --max-ticks 1 --workspace "$WORKSPACE"
-millrace status --workspace "$WORKSPACE"
-```
-
-That flow proves seven things quickly:
-
-- workspace bootstrap is explicit and creates the managed baseline under
-  `millrace-agents/`
-- the selected mode compiles into one persisted `compiled_plan.json` before execution
-- compile output fingerprints the selected mode, runtime config, and packaged
-  assets so `compile show` / `status` can report whether the plan is current
-  or stale
-- that compiled plan carries node bindings, execution capability grants, intake
-  entries, recovery policies, closure-target activation, and post-stage routing
-- `compile graph` exposes that legal topology as a stable compiled-stage-graph
-  export, while `runs trace <run_id>` shows the concrete path one run actually
-  followed
-- the shipped `default_codex` mode freezes closure behavior directly into that single compiled artifact
-- status and run inspection carry compiled-plan identity so operators can tie
-  runtime activity back to the compiled plan that produced it
-- the runtime can execute a deterministic tick and report persisted status
-
-For a visible long-running session, use `millrace run daemon --monitor basic`.
-The default daemon remains quiet unless that monitor is requested explicitly.
-The basic monitor is a human-facing stream: it compacts stage labels, shortens
-long run ids for display, omits unknown token filler, and leaves full ids and
-artifacts to `millrace runs ...` inspection commands.
-The basic monitor prints the first `idle reason=no_work` line immediately, then
-throttles repeated `no_work` idles to a 6-hour heartbeat until runtime
-activity or a different idle reason appears.
-Use `--monitor-log <path>` when you want the same clean monitor stream written
-to a file without necessarily printing live monitor lines to stdout.
-
-For an optional local dashboard, install the separate `millrace-web` package
-from PyPI and run `millrace-web serve --workspace "$WORKSPACE"`. The web
-dashboard is a read-only observer with Detail and Flow views; it is not
-included in the `millrace-ai` wheel and does not acquire runtime ownership
-locks.
-
-When the packaged workspace baseline changes, use `millrace upgrade` first to
-preview the managed-file classifications, then `millrace upgrade --apply` to
-apply safe baseline updates. This does not update the installed Python package;
-for runtime-code fixes, update `millrace-ai` through the environment's package
-manager first and verify with `millrace --version` or `millrace version`. If
-compile inputs drift and the persisted plan is stale, runtime startup and
-config reload refuse to keep running on the stale plan.
-
-Stage config supports all execution, planning, and learning stage names.
-`stages.<stage>.thinking_level` sets a runner-neutral per-stage thinking level
-that the compiler freezes into node bindings, stage requests, runner artifacts,
-persisted stage results, and run inspection. Codex translates it to
-`model_reasoning_effort="<value>"`; Pi translates it to `--thinking <value>`.
-The older `stages.<stage>.model_reasoning_effort` field remains accepted as a
-Codex compatibility alias.
-
-Execution capability policy is configured under `[execution_capabilities]`.
-Grant-affecting changes are recompile changes. Approval-gated grants are handled
-through `millrace approvals ls/show/approve/deny`, and `millrace runs show`
-prints compact per-stage grant/support summaries for completed or blocked runs.
-
-Canonical shipped modes today:
-
-- `default_codex`
-- `default_pi`
-- `default_codex_integrated`
-- `blueprint_codex`
-
-Learning-enabled shipped modes:
-
-- `learning_codex`
-- `learning_pi`
-- `learning_codex_integrated`
-- `blueprint_learning_codex`
-
-The standard learning modes use the same execution and planning topology as
-the default modes, while `blueprint_learning_codex` uses the Blueprint
-Planning topology. All learning-enabled modes add `learning.standard` and
-freeze learning trigger rules into the compiled plan.
-
-The integrated Codex modes are opt-in quality loops. They keep the same
-Planning and optional Learning behavior as their non-integrated counterparts,
-but select `execution.with_integrator` so every successful Builder result runs
-through Integrator before Checker. Existing workspaces receive those managed
-assets with `millrace upgrade --apply` after updating the installed package.
-
-The Blueprint Codex modes are opt-in Planning loops. They select
-`planning.blueprint`, use standard Execution, and validate implementation
-plans before promoting generated tasks. `blueprint_codex` omits Learning;
-`blueprint_learning_codex` adds `learning.standard`.
-
-Compatibility alias:
-
-- `standard_plain -> default_codex`
-
-## Read By Journey
-
-Need the single dense system explainer first?
-Start with `docs/millrace-technical-overview.md`.
-
-### Start Here
-
-- `docs/doc-index.md`
-- `docs/runtime/README.md`
-- `docs/skills/millrace-autonomous-delegation/SKILL.md` if you are authorized
-  to decide whether substantial work should use Millrace
-- `docs/skills/millrace-ops-agent-manual/SKILL.md` if you are operating
-  Millrace as an agent
-
-### Run It
-
-- `docs/runtime/millrace-cli-reference.md`
-- `docs/runtime/millrace-runtime-architecture.md`
-- `docs/runtime/millrace-usage-governance.md`
-
-### Understand It
+Understand the architecture:
 
 - `docs/runtime/millrace-compiler-and-frozen-plans.md`
+- `docs/runtime/millrace-runtime-architecture.md`
 - `docs/runtime/millrace-modes-and-loops.md`
 - `docs/graphs/graphs-index.md`
-- `docs/runtime/millrace-blueprint-planning.md`
 - `docs/runtime/millrace-arbiter-and-completion-behavior.md`
-- `docs/runtime/millrace-runner-architecture.md`
 
-### Extend It
+Operate it as an agent:
 
-- `docs/runtime/millrace-entrypoint-mapping.md`
-- `docs/runtime/millrace-loop-authoring.md`
-- `docs/skills/millrace-loop-authoring/SKILL.md`
-- `docs/source-package-map.md`
-
-## Status
-
-Millrace ships as a maintained pre-1.0 runtime line. If you depend on exact
-behavior, pin to a patch version and verify against the current CLI and docs
-rather than assuming every newer build is identical.
+- `docs/skills/millrace-ops-agent-manual/SKILL.md`
+- `docs/skills/millrace-autonomous-delegation/SKILL.md`
 
 ## License
 
-See `LICENSE`.
+Millrace is licensed under Apache-2.0. See `LICENSE`.

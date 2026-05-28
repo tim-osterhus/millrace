@@ -29,6 +29,7 @@ runtime configurations.
 | `default_codex` | Codex | `execution.standard`, `planning.standard` | Baseline Codex-backed runtime. It runs standard Execution and Planning without Learning or Integrator. |
 | `default_pi` | Pi | `execution.standard`, `planning.standard` | Pi-backed equivalent of `default_codex`. The graph topology is identical; only the stage runner bindings change. |
 | `learning_codex` | Codex | `execution.standard`, `planning.standard`, `learning.standard` | Adds the Learning plane to the Codex baseline. Learning may run concurrently with one foreground Execution or Planning stage and receives Analyst/Librarian trigger work. |
+| `efficient_learning_codex` | Codex | `execution.standard`, `planning.standard`, `learning.standard` | Uses the same topology as `learning_codex`, keeps Integrator off by default, and ships a mode-local model alias profile for mixed-cost Codex stage assignments. |
 | `learning_pi` | Pi | `execution.standard`, `planning.standard`, `learning.standard` | Pi-backed equivalent of `learning_codex`. The selected plane graphs and learning trigger rules are identical; the mode binds stages to `pi_rpc`. |
 | `default_codex_integrated` | Codex | `execution.with_integrator`, `planning.standard` | Uses the high-assurance Execution graph with Integrator after Builder. Planning remains standard and Learning is not selected. |
 | `learning_codex_integrated` | Codex | `execution.with_integrator`, `planning.standard`, `learning.standard` | Combines Integrator-backed Execution with the standard Learning plane. Learning trigger rules and concurrency policy match other learning-enabled modes. |
@@ -75,4 +76,3 @@ They also ship these learning triggers:
 - `../runtime/millrace-compiler-and-frozen-plans.md`
 - `../runtime/millrace-compiled-stage-graphs-and-run-traces.md`
 - `../runtime/millrace-blueprint-planning.md`
-

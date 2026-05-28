@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "efficient_learning_codex",
+  "loop_ids_by_plane": {
+    "execution": "execution.standard",
+    "planning": "planning.standard",
+    "learning": "learning.standard"
+  },
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "builder": "codex_cli",
+    "checker": "codex_cli",
+    "fixer": "codex_cli",
+    "doublechecker": "codex_cli",
+    "updater": "codex_cli",
+    "troubleshooter": "codex_cli",
+    "consultant": "codex_cli",
+    "recon": "codex_cli",
+    "planner": "codex_cli",
+    "manager": "codex_cli",
+    "mechanic": "codex_cli",
+    "auditor": "codex_cli",
+    "arbiter": "codex_cli",
+    "analyst": "codex_cli",
+    "professor": "codex_cli",
+    "curator": "codex_cli",
+    "librarian": "codex_cli"
+  },
+  "model_aliases": {
+    "maximum": {
+      "model": "gpt-5.5",
+      "thinking_level": "xhigh"
+    },
+    "super": {
+      "model": "gpt-5.5",
+      "thinking_level": "medium"
+    },
+    "high": {
+      "model": "gpt-5.4",
+      "thinking_level": "xhigh"
+    },
+    "medium": {
+      "model": "gpt-5.3-codex",
+      "thinking_level": "xhigh"
+    },
+    "fast": {
+      "model": "gpt-5.4-mini",
+      "thinking_level": "xhigh"
+    }
+  },
+  "model_assignment": {
+    "by_stage": {
+      "recon": "maximum",
+      "planner": "maximum",
+      "manager": "maximum",
+      "mechanic": "maximum",
+      "auditor": "maximum",
+      "arbiter": "maximum",
+      "analyst": "super",
+      "professor": "super",
+      "curator": "super",
+      "librarian": "super",
+      "builder": "medium",
+      "checker": "high",
+      "fixer": "medium",
+      "doublechecker": "high",
+      "troubleshooter": "maximum",
+      "integrator": "super",
+      "updater": "fast",
+      "consultant": "maximum"
+    }
+  },
+  "concurrency_policy": {
+    "mutually_exclusive_planes": [["execution", "planning"]],
+    "may_run_concurrently": [["learning", "execution"], ["learning", "planning"]]
+  },
+  "learning_trigger_rules": [
+    {
+      "rule_id": "execution.doublechecker.success-to-analyst",
+      "source_plane": "execution",
+      "source_stage": "doublechecker",
+      "on_terminal_results": ["DOUBLECHECK_PASS"],
+      "target_stage": "analyst",
+      "requested_action": "improve"
+    },
+    {
+      "rule_id": "execution.troubleshooter.recovery-to-analyst",
+      "source_plane": "execution",
+      "source_stage": "troubleshooter",
+      "on_terminal_results": ["TROUBLESHOOT_COMPLETE", "BLOCKED"],
+      "target_stage": "analyst",
+      "requested_action": "improve"
+    },
+    {
+      "rule_id": "execution.consultant.recovery-to-analyst",
+      "source_plane": "execution",
+      "source_stage": "consultant",
+      "on_terminal_results": ["CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"],
+      "target_stage": "analyst",
+      "requested_action": "improve"
+    },
+    {
+      "rule_id": "planning.planner.complete-to-librarian",
+      "source_plane": "planning",
+      "source_stage": "planner",
+      "on_terminal_results": ["PLANNER_COMPLETE"],
+      "target_stage": "librarian",
+      "requested_action": "install"
+    }
+  ]
+}

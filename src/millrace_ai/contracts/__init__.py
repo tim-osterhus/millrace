@@ -85,6 +85,8 @@ from .mailbox import (
 from .modes import (  # noqa: F401
     LearningTriggerRuleDefinition,
     ModeDefinition,
+    ModeModelAliasDefinition,
+    ModeModelAssignmentDefinition,
     PlaneConcurrencyPolicyDefinition,
     StageMapKey,
 )
@@ -205,6 +207,8 @@ __all__ = [
     "MailboxRetargetTaskDependencyPayload",
     "MailboxSupersedeTaskPayload",
     "ModeDefinition",
+    "ModeModelAliasDefinition",
+    "ModeModelAssignmentDefinition",
     "Plane",
     "PlaneConcurrencyPolicyDefinition",
     "PlannerDispositionDocument",

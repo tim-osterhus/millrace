@@ -63,6 +63,7 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
         "millrace_ai/assets/modes/default_codex.json",
         "millrace_ai/assets/modes/default_codex_integrated.json",
         "millrace_ai/assets/modes/default_pi.json",
+        "millrace_ai/assets/modes/efficient_learning_codex.json",
         "millrace_ai/assets/modes/blueprint_learning_codex.json",
         "millrace_ai/assets/registry/stage_kinds/execution/builder.json",
         "millrace_ai/assets/registry/stage_kinds/execution/integrator.json",

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.20.3
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.20.3`.
+- Keep the optional dashboard sidecar aligned with the Millrace
+  maintainability/refactor prerelease.
+
+## 0.20.2
+
+- Sync the package version and runtime dependency to `millrace-ai>=0.20.2`.
+- Keep the optional dashboard sidecar aligned with the Millrace
+  compiler/runtime/arbiter stabilization prerelease.
+
 ## 0.20.1
 
 - Sync the package version and runtime dependency to `millrace-ai>=0.20.1`.

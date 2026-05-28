@@ -26,6 +26,62 @@ from .stage_metadata import (
 StageMapKey = StageName | str
 
 
+class ModeModelAliasDefinition(ContractModel):
+    model: str | None = None
+    thinking_level: str | None = None
+
+
+class ModeModelAssignmentDefinition(ContractModel):
+    default_alias: str | None = None
+    by_loop: dict[str, str] = Field(default_factory=dict)
+    by_stage: dict[StageMapKey, str] = Field(default_factory=dict)
+
+    @field_validator("default_alias")
+    @classmethod
+    def normalize_default_alias(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("model assignment default_alias must not be empty")
+        return stripped
+
+    @field_validator("by_loop")
+    @classmethod
+    def normalize_loop_assignments(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for loop_id, alias_id in value.items():
+            loop_key = str(loop_id).strip()
+            alias = str(alias_id).strip()
+            if not loop_key:
+                raise ValueError("model assignment loop keys must not be empty")
+            if not alias:
+                raise ValueError("model assignment loop aliases must not be empty")
+            normalized[loop_key] = alias
+        return normalized
+
+    @field_validator("by_stage", mode="before")
+    @classmethod
+    def normalize_stage_assignment_keys(cls, value: object) -> object:
+        if value is None or not isinstance(value, dict):
+            return value
+        return {_normalize_stage_map_key(key): map_value for key, map_value in value.items()}
+
+    @field_validator("by_stage")
+    @classmethod
+    def normalize_stage_assignments(
+        cls,
+        value: dict[StageMapKey, str],
+    ) -> dict[StageMapKey, str]:
+        normalized: dict[StageMapKey, str] = {}
+        for stage, alias_id in value.items():
+            alias = str(alias_id).strip()
+            if not alias:
+                raise ValueError("model assignment stage aliases must not be empty")
+            normalized[stage] = alias
+        return normalized
+
+
 class LearningTriggerRuleDefinition(ContractModel):
     rule_id: str
     source_plane: Plane
@@ -107,6 +163,10 @@ class ModeDefinition(ContractModel):
     stage_model_bindings: dict[StageMapKey, str] = Field(default_factory=dict)
     stage_runner_bindings: dict[StageMapKey, str] = Field(default_factory=dict)
     stage_thinking_bindings: dict[StageMapKey, str | None] = Field(default_factory=dict)
+    model_aliases: dict[str, ModeModelAliasDefinition] = Field(default_factory=dict)
+    model_assignment: ModeModelAssignmentDefinition = Field(
+        default_factory=ModeModelAssignmentDefinition
+    )
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
     lane_conflict_policies: tuple[dict[str, object], ...] | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
@@ -199,6 +259,8 @@ class ModeDefinition(ContractModel):
 __all__ = [
     "LearningTriggerRuleDefinition",
     "ModeDefinition",
+    "ModeModelAliasDefinition",
+    "ModeModelAssignmentDefinition",
     "PlaneConcurrencyPolicyDefinition",
     "StageMapKey",
 ]
