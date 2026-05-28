@@ -13,6 +13,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-05-28
+
 ### Added
 
 - Added graph-declared default runtime repair routing so unclassified Planning
@@ -33,6 +35,15 @@ This file starts at `0.13.0`, the current documented public baseline.
   warnings and fall back instead of blocking daemon startup. Alias changes are
   recompile changes and use existing pending-plan reload semantics for active
   daemons.
+
+### Compatibility Notes
+
+- This is a prerelease stabilization build for the experimental `0.20.x`
+  workflow-graph and Blueprint Planning line. It has source and package smoke
+  coverage, but it has not yet received the same real-runner E2E efficacy
+  validation as `0.19.0`.
+- `millrace-ai` and `millrace-web` are released together as `0.20.2`;
+  `millrace-web` now depends on `millrace-ai>=0.20.2`.
 
 ## [0.20.1] - 2026-05-22
 
@@ -952,7 +963,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.20.2...HEAD
+[0.20.2]: https://github.com/tim-osterhus/millrace/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/tim-osterhus/millrace/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/tim-osterhus/millrace/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/tim-osterhus/millrace/compare/v0.18.6...v0.19.0
