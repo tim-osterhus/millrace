@@ -6,6 +6,8 @@
   "runtime_stage": "manager",
   "display_name": "Manager Blueprint",
   "default_entrypoint_path": "entrypoints/planning/manager_blueprint.md",
+  "request_context_profile_id": "manager_blueprint.default",
+  "context_render_plan_id": "blueprint.manager.default.v1",
   "required_skill_paths": [
     "skills/stage/planning/manager-blueprint-core/SKILL.md"
   ],
@@ -38,7 +40,10 @@
     "blueprint_manifest",
     "blueprint_drafts"
   ],
-  "allowed_work_item_families": ["spec", "incident"],
+  "allowed_work_item_families": [
+    "spec",
+    "incident"
+  ],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

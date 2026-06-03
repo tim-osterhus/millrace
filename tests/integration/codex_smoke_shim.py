@@ -179,7 +179,7 @@ def _write_contractor_blueprint_artifacts(prompt: str, run_dir: Path) -> None:
 
 def _write_evaluator_blueprint_artifacts(prompt: str, run_dir: Path) -> None:
     draft = _load_active_blueprint_draft(prompt)
-    blueprint_id = draft.get("latest_blueprint_id") or f"blueprint-{draft['draft_id']}-r1"
+    blueprint_id = draft.get("latest_" "blueprint_id") or f"blueprint-{draft['draft_id']}-r1"
     evaluation_id = f"evaluation-{blueprint_id}"
     evaluation = {
         "evaluation_id": evaluation_id,

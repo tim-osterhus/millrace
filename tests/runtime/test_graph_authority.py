@@ -168,7 +168,7 @@ def test_custom_noncanonical_stage_kind_routes_with_compiled_runtime_stage(
     assert decision.reason == "builder:BUILDER_COMPLETE"
 
 
-def test_runtime_stage_compatibility_backfills_missing_canonical_node_stage(
+def test_runtime_stage_compatibility_rejects_missing_canonical_node_stage(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -183,10 +183,8 @@ def test_runtime_stage_compatibility_backfills_missing_canonical_node_stage(
     _remove_runtime_stage(payload["execution_graph"]["nodes"], node_id="builder")
     _remove_runtime_stage(payload["graphs_by_plane"]["execution"]["nodes"], node_id="builder")
 
-    reloaded = CompiledRunPlan.model_validate(payload)
-    builder_node = next(node for node in reloaded.execution_graph.nodes if node.node_id == "builder")
-
-    assert builder_node.runtime_stage is ExecutionStageName.BUILDER
+    with pytest.raises(ValueError, match="runtime_stage"):
+        CompiledRunPlan.model_validate(payload)
 
 
 def test_runtime_stage_compatibility_rejects_missing_noncanonical_node_stage(
@@ -212,7 +210,7 @@ def test_runtime_stage_compatibility_rejects_missing_noncanonical_node_stage(
 
     with pytest.raises(
         ValueError,
-        match="runtime_stage is required for noncanonical stage_kind_id builder_custom",
+        match="runtime_stage",
     ):
         CompiledRunPlan.model_validate(payload)
 

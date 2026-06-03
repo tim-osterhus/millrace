@@ -17,16 +17,12 @@ from .effects import (
     RuntimeEffectDecision,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
-    SourceLifecycleAction,
-    SourceLifecycleIntent,
 )
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
 
 PLANNER_DISPOSITION_HANDLER_ID = "planner_disposition"
-_COMPLETE_PLAN_ID = "complete_source_after_effect"
-_BLOCK_PLAN_ID = "block_source_after_effect"
 
 
 def planner_disposition(
@@ -120,11 +116,6 @@ def planner_disposition(
         handler_id=PLANNER_DISPOSITION_HANDLER_ID,
         decision=RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE,
         created_paths=queued_paths,
-        source_lifecycle_intent=_source_lifecycle_intent(
-            stage_result,
-            plan_id=_COMPLETE_PLAN_ID,
-            action=SourceLifecycleAction.COMPLETE,
-        ),
         message=(
             "Planner disposition resolved active source after emitting child specs: "
             + ", ".join(disposition.emitted_spec_ids)
@@ -172,29 +163,9 @@ def _failure_result(
     return RuntimeEffectResult(
         handler_id=PLANNER_DISPOSITION_HANDLER_ID,
         decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
-        source_lifecycle_intent=_source_lifecycle_intent(
-            stage_result,
-            plan_id=_BLOCK_PLAN_ID,
-            action=SourceLifecycleAction.BLOCK,
-        ),
         failure_class=failure_class,
         message=message,
         mutation_phase=RuntimeEffectMutationPhase.PRE_MUTATION,
-    )
-
-
-def _source_lifecycle_intent(
-    stage_result: StageResultEnvelope,
-    *,
-    plan_id: str,
-    action: SourceLifecycleAction,
-) -> SourceLifecycleIntent:
-    return SourceLifecycleIntent(
-        lifecycle_plan_id=plan_id,
-        action=action,
-        work_item_family_id=stage_result.work_item_family_id,
-        work_item_kind=stage_result.work_item_kind,
-        work_item_id=stage_result.work_item_id,
     )
 
 

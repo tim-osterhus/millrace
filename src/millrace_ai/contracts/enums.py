@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from .terminal_outcomes import TerminalOutcome, TerminalResult
+
 
 class Plane(str, Enum):
     EXECUTION = "execution"
@@ -86,7 +88,7 @@ class LearningTerminalResult(str, Enum):
     BLOCKED = "BLOCKED"
 
 
-TerminalResult = ExecutionTerminalResult | PlanningTerminalResult | LearningTerminalResult
+BuiltInTerminalResult = ExecutionTerminalResult | PlanningTerminalResult | LearningTerminalResult
 
 
 class ResultClass(str, Enum):
@@ -217,6 +219,7 @@ class LoopEdgeKind(str, Enum):
 __all__ = [
     "ExecutionStageName",
     "ExecutionTerminalResult",
+    "BuiltInTerminalResult",
     "IncidentDecision",
     "IncidentSeverity",
     "IncidentStatusHint",
@@ -237,6 +240,7 @@ __all__ = [
     "StageName",
     "TaskStatusHint",
     "TerminalResult",
+    "TerminalOutcome",
     "WatcherMode",
     "WorkItemKind",
 ]

@@ -9,8 +9,9 @@ from typing import Literal
 from pydantic import model_validator
 
 from .base import ContractModel
-from .enums import Plane, RuntimeErrorCode, StageName, TerminalResult, WorkItemKind
+from .enums import Plane, RuntimeErrorCode, StageName, WorkItemKind
 from .stage_metadata import stage_plane
+from .terminal_outcomes import TerminalOutcome
 from .work_refs import coerce_family_and_kind
 
 
@@ -40,7 +41,7 @@ class RuntimeErrorContext(ContractModel):
     run_id: str
 
     router_action: str | None = None
-    terminal_result: TerminalResult | None = None
+    terminal_result: TerminalOutcome | None = None
     stage_result_path: str | None = None
     report_path: str
 

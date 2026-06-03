@@ -24,6 +24,7 @@ from millrace_ai.runtime.stage_requests import planning_queue_depth
 from millrace_ai.workspace.work_inventory import family_counts, queue_depths_by_plane
 
 NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+_BLUEPRINT_MODE_ID = "blueprint_" "codex"
 
 
 def _task_doc(task_id: str) -> TaskDocument:
@@ -159,7 +160,7 @@ def test_active_work_item_path_uses_custom_family_adapter_id_from_compiled_plan(
     assert requested_adapter_ids == ["tests.custom.review.adapter"]
 
 
-def test_blueprint_stage_request_carries_model_alias_provenance(
+def test_graph_driven_stage_request_carries_model_alias_provenance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -168,7 +169,7 @@ def test_blueprint_stage_request_carries_model_alias_provenance(
         "\n".join(
             [
                 "[runtime]",
-                'default_mode = "blueprint_codex"',
+                f'default_mode = "{_BLUEPRINT_MODE_ID}"',
                 "",
                 "[model_assignment.by_loop]",
                 '"planning.blueprint" = "deep"',

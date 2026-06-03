@@ -25,7 +25,7 @@ If you need the shipped mode-to-plane graph matrix or per-plane topology, use
 - `millrace-usage-governance.md`: shipped v1 default-off runtime-owned usage accounting, automatic pause/resume behavior, subscription telemetry, config-reload next-tick behavior, and operator visibility.
 - `millrace-execution-capabilities.md`: typed execution capability grants, runtime pre-dispatch gating, approval-required grants, advisory enforcement language, and inspection output.
 - `millrace-compiler-and-frozen-plans.md`: mode resolution, asset loading, compiled-plan freezing, workflow primitive authority, scheduler lane policy, workspace schema epoch checks, compile-input fingerprints, current-vs-stale plan status, baseline manifest identity, stale-plan refusal, and `compile validate` / `compile show`.
-- `millrace-compiled-stage-graphs-and-run-traces.md`: compiled topology exports, per-run `run_trace.json` artifacts, CLI trace inspection, fallback behavior for older runs, and Web UI Flow data sources.
+- `millrace-compiled-stage-graphs-and-run-traces.md`: compiled topology exports, per-run `run_trace.json` artifacts, CLI trace inspection, graph-resolved versus inferred terminal metadata, and Web UI Flow data sources.
 - `millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage topology, opt-in integrated quality loops, learning plane, Librarian optional-skill preparation, no-op learning terminals, compiled concurrency policy, learning triggers, and compile-time stage maps.
 - `millrace-blueprint-planning.md`: opt-in Blueprint Planning loop behavior, runtime effects, draft/packet/evaluation/repair artifacts, closure suppression, and operator inspection.
 - `millrace-loop-authoring.md`: maintainer rules for changing loop and mode assets without violating compiler and contract boundaries.
@@ -50,8 +50,8 @@ If you need the shipped mode-to-plane graph matrix or per-plane topology, use
   or `learning_codex_integrated`; those modes intentionally add an Integrator
   pass after Builder for higher assurance.
 - Use `millrace-modes-and-loops.md` before selecting
-  `efficient_learning_codex`; it keeps standard topology but carries a
-  mode-local model/depth profile.
+  `efficient_learning_mixed`; it keeps standard topology but carries a
+  mode-local mixed Codex/Pi model/depth profile.
 - Use `millrace-workspace-baselines-and-upgrades.md` when you need the explicit `init` / `upgrade` workflow for managed workspace assets.
 - Use `millrace-cli-reference.md` when you need `millrace skills`, daemon
   monitor, approvals, usage-governance, or status command details.

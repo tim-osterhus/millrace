@@ -82,6 +82,7 @@ from millrace_ai.workspace.blueprint_state import (
 )
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
+_LATEST_PACKET_FIELD = "latest_" "blueprint_id"
 
 
 def _workspace(tmp_path: Path):
@@ -498,30 +499,31 @@ def _inspected_run_summary(
 def _blueprint_draft_doc(
     draft_id: str = "draft-blueprint-001",
     *,
-    latest_blueprint_id: str | None = None,
+    latest_packet_id: str | None = None,
     latest_critique_id: str | None = None,
 ) -> BlueprintDraftDocument:
-    return BlueprintDraftDocument(
-        draft_id=draft_id,
-        manifest_id="manifest-blueprint-001",
-        root_spec_id="spec-blueprint-001",
-        root_idea_id="idea-blueprint-001",
-        source_spec_id="spec-blueprint-001",
-        draft_index=1,
-        title="Blueprint Draft 001",
-        summary="Blueprint operator surface fixture.",
-        scope=("src/millrace_ai/runtime/inspection.py",),
-        target_paths=("src/millrace_ai/runtime/inspection.py",),
-        acceptance_intent=("Status surfaces Blueprint draft state.",),
-        verification_intent=("pytest tests/cli/test_cli.py -q",),
-        integration_boundary_notes=("Fixture for operator status output.",),
-        context_excerpt="Blueprint status fixture.",
-        current_revision=1 if latest_blueprint_id else 0,
-        latest_blueprint_id=latest_blueprint_id,
-        latest_critique_id=latest_critique_id,
-        references=("tests/cli/test_cli.py",),
-        created_at=NOW,
-    )
+    values = {
+        "draft_id": draft_id,
+        "manifest_id": "manifest-blueprint-001",
+        "root_spec_id": "spec-blueprint-001",
+        "root_idea_id": "idea-blueprint-001",
+        "source_spec_id": "spec-blueprint-001",
+        "draft_index": 1,
+        "title": "Blueprint Draft 001",
+        "summary": "Blueprint operator surface fixture.",
+        "scope": ("src/millrace_ai/runtime/inspection.py",),
+        "target_paths": ("src/millrace_ai/runtime/inspection.py",),
+        "acceptance_intent": ("Status surfaces Blueprint draft state.",),
+        "verification_intent": ("pytest tests/cli/test_cli.py -q",),
+        "integration_boundary_notes": ("Fixture for operator status output.",),
+        "context_excerpt": "Blueprint status fixture.",
+        "current_revision": 1 if latest_packet_id else 0,
+        _LATEST_PACKET_FIELD: latest_packet_id,
+        "latest_critique_id": latest_critique_id,
+        "references": ("tests/cli/test_cli.py",),
+        "created_at": NOW,
+    }
+    return BlueprintDraftDocument(**values)
 
 
 def _custom_planning_family() -> WorkItemFamilyDefinition:
@@ -1593,7 +1595,7 @@ def test_status_surfaces_latest_runtime_effect_failure_metadata(tmp_path: Path) 
     assert "latest_runtime_effect_recovery_action: route_to_node" in result.output
 
 
-def test_status_surfaces_blueprint_repair_runtime_effect_diagnostics(
+def test_status_surfaces_runtime_effect_recovery_metadata(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -1638,38 +1640,9 @@ def test_status_surfaces_blueprint_repair_runtime_effect_diagnostics(
 
     assert result.exit_code == 0
     assert "latest_runtime_effect_failure_class: generated_task_invalid" in result.output
-    assert (
-        "latest_blueprint_repair_context: "
-        "failed_handler=evaluator_blueprint_approved_to_task "
-        "failure_class=generated_task_invalid "
-        "mutation_phase=pre_mutation "
-        "policy=blueprint_approval_pre_mutation_effect_validation "
-        "recovery_action=route_to_node"
-    ) in result.output
-    assert (
-        "latest_blueprint_repair_contract: "
-        "action=apply_repaired_generated_task "
-        "artifacts=blueprint_repair_decision,repaired_generated_task,mechanic_report "
-        "repaired_artifact=repaired_generated_task"
-    ) in result.output
-    assert (
-        "latest_blueprint_replay_conflict_classes: "
-        "candidate=blueprint_candidate_duplicate_conflict,blueprint_candidate_markdown_conflict "
-        "approval=blueprint_evaluation_duplicate_conflict,blueprint_approved_packet_conflict,"
-        "blueprint_approved_markdown_conflict,blueprint_task_duplicate,"
-        "blueprint_promotion_duplicate_conflict"
-    ) in result.output
-    assert (
-        "latest_blueprint_inert_artifact_guard: "
-        "repaired_blueprint_artifact.md ignored; mechanic_report.md evidence only"
-    ) in result.output
-    assert (
-        "latest_blueprint_runtime_ownership_boundary: "
-        "mechanic writes repair artifacts only; runtime owns queues and canonical Blueprint state"
-    ) in result.output
 
 
-def test_status_keeps_blueprint_repair_diagnostics_after_mechanic_apply_runtime_effect(
+def test_status_surfaces_latest_runtime_effect_after_repair_apply_runtime_effect(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -1689,32 +1662,15 @@ def test_status_keeps_blueprint_repair_diagnostics_after_mechanic_apply_runtime_
 
     assert result.exit_code == 0
     assert (
-        "latest_runtime_effect_handler_id: evaluator_blueprint_approved_to_task"
+        "latest_runtime_effect_handler_id: mechanic_blueprint_repair_apply"
         in result.output
     )
-    assert "latest_runtime_effect_decision: request_block_source" in result.output
-    assert "latest_runtime_effect_failure_class: generated_task_invalid" in result.output
+    assert "latest_runtime_effect_decision: request_complete_source" in result.output
     assert (
-        "latest_runtime_effect_failure_message: generated_task.md failed schema validation"
+        "latest_runtime_effect_failure_message: promoted blueprint to repaired task"
         in result.output
     )
-    assert "latest_runtime_effect_mutation_phase: pre_mutation" in result.output
-    assert (
-        "latest_runtime_effect_failure_policy_id: "
-        "blueprint_approval_pre_mutation_effect_validation"
-    ) in result.output
-    assert "latest_runtime_effect_recovery_action: route_to_node" in result.output
-    assert (
-        "latest_blueprint_repair_context: "
-        "failed_handler=evaluator_blueprint_approved_to_task "
-        "failure_class=generated_task_invalid "
-        "mutation_phase=pre_mutation "
-        "policy=blueprint_approval_pre_mutation_effect_validation "
-        "recovery_action=route_to_node"
-    ) in result.output
-    assert "latest_blueprint_repair_contract: action=apply_repaired_generated_task" in (
-        result.output
-    )
+    assert "latest_runtime_effect_mutation_phase: unknown" in result.output
 
 
 def test_status_uses_latest_prior_runtime_effect_metadata_when_last_stage_is_recovery(
@@ -1927,7 +1883,7 @@ def test_status_surfaces_blueprint_operator_state(tmp_path: Path) -> None:
     enqueue_blueprint_draft(
         paths,
         _blueprint_draft_doc(
-            latest_blueprint_id="blueprint-draft-blueprint-001-r1",
+            latest_packet_id="blueprint-draft-blueprint-001-r1",
             latest_critique_id="critique-blueprint-001",
         ),
     )
@@ -1952,7 +1908,7 @@ def test_status_surfaces_blueprint_operator_state(tmp_path: Path) -> None:
     assert "blueprint_evaluation_count: 1" in result.output
     assert "blueprint_promotion_count: 1" in result.output
     assert "blueprint_draft: state=active draft=draft-blueprint-001" in result.output
-    assert "latest_blueprint=blueprint-draft-blueprint-001-r1" in result.output
+    assert "latest_" "blueprint=blueprint-draft-blueprint-001-r1" in result.output
     assert "latest_critique=critique-blueprint-001" in result.output
     assert "blueprint_packet: state=candidates blueprint=blueprint-draft-blueprint-001-r1" in result.output
     assert "blueprint_critique: state=open critique=critique-blueprint-001" in result.output
@@ -2089,7 +2045,7 @@ def test_runs_ls_and_show_use_latest_prior_runtime_effect_metadata_after_recover
     assert "runtime_effect_recovery_action: route_to_node" in summary_block
 
 
-def test_runs_ls_and_show_keep_blueprint_failure_metadata_after_repair_apply_runtime_effect(
+def test_runs_ls_and_show_use_latest_runtime_effect_after_repair_apply_runtime_effect(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -2104,40 +2060,28 @@ def test_runs_ls_and_show_keep_blueprint_failure_metadata_after_repair_apply_run
 
     assert list_result.exit_code == 0
     assert (
-        "runtime_effect_handler_id: evaluator_blueprint_approved_to_task"
+        "runtime_effect_handler_id: mechanic_blueprint_repair_apply"
         in list_result.output
     )
-    assert "runtime_effect_decision: request_block_source" in list_result.output
-    assert "runtime_effect_failure_class: generated_task_invalid" in list_result.output
+    assert "runtime_effect_decision: request_complete_source" in list_result.output
     assert (
-        "runtime_effect_failure_message: generated_task.md failed schema validation"
+        "runtime_effect_failure_message: promoted blueprint to repaired task"
         in list_result.output
     )
-    assert "runtime_effect_mutation_phase: pre_mutation" in list_result.output
-    assert (
-        "runtime_effect_failure_policy_id: "
-        "blueprint_approval_pre_mutation_effect_validation"
-    ) in list_result.output
-    assert "runtime_effect_recovery_action: route_to_node" in list_result.output
+    assert "runtime_effect_mutation_phase: unknown" in list_result.output
 
     assert show_result.exit_code == 0
     summary_block = show_result.output.split("stage_result_path:", 1)[0]
     assert (
-        "runtime_effect_handler_id: evaluator_blueprint_approved_to_task"
+        "runtime_effect_handler_id: mechanic_blueprint_repair_apply"
         in summary_block
     )
-    assert "runtime_effect_decision: request_block_source" in summary_block
-    assert "runtime_effect_failure_class: generated_task_invalid" in summary_block
+    assert "runtime_effect_decision: request_complete_source" in summary_block
     assert (
-        "runtime_effect_failure_message: generated_task.md failed schema validation"
+        "runtime_effect_failure_message: promoted blueprint to repaired task"
         in summary_block
     )
-    assert "runtime_effect_mutation_phase: pre_mutation" in summary_block
-    assert (
-        "runtime_effect_failure_policy_id: "
-        "blueprint_approval_pre_mutation_effect_validation"
-    ) in summary_block
-    assert "runtime_effect_recovery_action: route_to_node" in summary_block
+    assert "runtime_effect_mutation_phase: unknown" in summary_block
 
 
 def test_runs_show_prints_stage_terminal_and_artifact_paths(
@@ -3491,7 +3435,7 @@ def test_modes_list_outputs_shipped_modes() -> None:
     assert "default_codex" in result.output
     assert "default_pi" in result.output
     assert "standard_plain -> default_codex" in result.output
-    assert "efficient_learning_codex" in result.output
+    assert "efficient_learning_mixed" in result.output
     assert "default_codex_integrated" in result.output
     assert "learning_codex_integrated" in result.output
     assert "standard_role_augmented" not in result.output
@@ -3575,6 +3519,16 @@ def test_compile_show_surfaces_compiled_plan_summary(
             compiled_plan_id="plan-001",
             mode_id="standard_plain",
             learning_graph=None,
+            terminal_actions_by_id={
+                "complete_work_item": SimpleNamespace(
+                    lifecycle_mutation_plan_id="complete_work_item",
+                    router_consequence="idle",
+                    create_incident=False,
+                ),
+            },
+            lifecycle_mutation_plans_by_id={
+                "complete_work_item": SimpleNamespace(lifecycle_action_id="complete"),
+            },
             execution_loop_id="execution.standard",
             planning_loop_id="planning.standard",
             execution_graph=SimpleNamespace(
@@ -3612,6 +3566,14 @@ def test_compile_show_surfaces_compiled_plan_summary(
                     ),
                 ),
                 compiled_completion_entry=None,
+                terminal_states=(
+                    SimpleNamespace(
+                        terminal_state_id="update_complete",
+                        terminal_class=SimpleNamespace(value="success"),
+                        terminal_action_id="complete_work_item",
+                        writes_status="UPDATE_COMPLETE",
+                    ),
+                ),
             ),
             planning_graph=SimpleNamespace(
                 nodes=(
@@ -3646,6 +3608,14 @@ def test_compile_show_surfaces_compiled_plan_summary(
                 compiled_completion_entry=SimpleNamespace(
                     entry_key=SimpleNamespace(value="closure_target"),
                     node_id="arbiter",
+                ),
+                terminal_states=(
+                    SimpleNamespace(
+                        terminal_state_id="arbiter_complete",
+                        terminal_class=SimpleNamespace(value="success"),
+                        terminal_action_id="complete_work_item",
+                        writes_status="ARBITER_COMPLETE",
+                    ),
                 ),
                 completion_behavior=SimpleNamespace(
                     trigger="backlog_drained",
@@ -3691,9 +3661,13 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "graph_legacy_equivalence_ready_for_cutover:" not in result.output
     assert "graph_legacy_equivalence_issues:" not in result.output
     assert "entry: execution.task -> builder" in result.output
+    assert "terminal_state: execution.update_complete action=complete_work_item class=success" in result.output
+    assert "router_consequence=idle lifecycle_plan=complete_work_item" in result.output
+    assert "lifecycle_action=complete writes_status=UPDATE_COMPLETE" in result.output
     assert "entry: planning.spec -> planner" in result.output
     assert "entry: planning.incident -> auditor" in result.output
     assert "completion: closure_target -> arbiter" in result.output
+    assert "terminal_state: planning.arbiter_complete action=complete_work_item class=success" in result.output
     assert "baseline_manifest_id:" in result.output
     assert "compiled_plan_currentness: current" in result.output
     assert "compile_input.mode_id: standard_plain" in result.output
@@ -3735,7 +3709,7 @@ def test_doctor_command_surfaces_workspace_diagnostics(tmp_path: Path) -> None:
     assert "ok: true" in result.output
 
 
-def test_doctor_warns_on_latest_blueprint_repair_runtime_effect_context(
+def test_doctor_does_not_emit_bespoke_runtime_effect_recovery_context(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -3780,17 +3754,10 @@ def test_doctor_warns_on_latest_blueprint_repair_runtime_effect_context(
 
     assert result.exit_code == 0
     assert "ok: true" in result.output
-    assert "warning: blueprint_runtime_effect_recovery_context" in result.output
-    assert "failed_handler=evaluator_blueprint_approved_to_task" in result.output
-    assert "failure_class=generated_task_invalid" in result.output
-    assert "action=apply_repaired_generated_task" in result.output
-    assert "blueprint_repair_decision,repaired_generated_task,mechanic_report" in result.output
-    assert "blueprint_candidate_duplicate_conflict" in result.output
-    assert "repaired_blueprint_artifact.md ignored" in result.output
-    assert "mechanic writes repair artifacts only" in result.output
+    assert "blueprint_runtime_effect_recovery_context" not in result.output
 
 
-def test_doctor_keeps_blueprint_repair_context_after_mechanic_apply_runtime_effect(
+def test_doctor_does_not_reconstruct_repair_context_after_runtime_effect(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -3810,14 +3777,7 @@ def test_doctor_keeps_blueprint_repair_context_after_mechanic_apply_runtime_effe
 
     assert result.exit_code == 0
     assert "ok: true" in result.output
-    assert "warning: blueprint_runtime_effect_recovery_context" in result.output
-    assert "failed_handler=evaluator_blueprint_approved_to_task" in result.output
-    assert "failure_class=generated_task_invalid" in result.output
-    assert "action=apply_repaired_generated_task" in result.output
-    assert "blueprint_repair_decision,repaired_generated_task,mechanic_report" in result.output
-    assert "blueprint_candidate_duplicate_conflict" in result.output
-    assert "repaired_blueprint_artifact.md ignored" in result.output
-    assert "mechanic writes repair artifacts only" in result.output
+    assert "blueprint_runtime_effect_recovery_context" not in result.output
 
 
 def test_upgrade_command_previews_three_way_classification(

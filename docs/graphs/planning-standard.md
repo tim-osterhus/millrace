@@ -124,7 +124,7 @@ Blocked recovery:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
-- `efficient_learning_codex`
+- `efficient_learning_mixed`
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`

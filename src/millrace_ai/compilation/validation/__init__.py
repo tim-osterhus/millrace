@@ -156,16 +156,18 @@ def validate_workflow_primitives(
         families_by_id=families_by_id,
         stage_kinds=stage_kinds,
     )
-    validate_terminal_actions(
-        graphs_by_plane=graphs_by_plane,
-        terminal_actions_by_id=terminal_actions_by_id,
-        lifecycle_plans_by_id=lifecycle_plans_by_id,
-        runtime_effect_rules_by_id=runtime_effect_rules_by_id,
-    )
     validate_lifecycle_plans(
+        graphs_by_plane=graphs_by_plane,
         families_by_id=families_by_id,
         stage_kinds=stage_kinds,
         lifecycle_plan_ids=lifecycle_plans_by_id,
+    )
+    validate_terminal_actions(
+        graphs_by_plane=graphs_by_plane,
+        families_by_id=families_by_id,
+        terminal_actions_by_id=terminal_actions_by_id,
+        lifecycle_plans_by_id=lifecycle_plans_by_id,
+        runtime_effect_rules_by_id=runtime_effect_rules_by_id,
     )
     validate_runtime_effect_handlers(
         artifact_contracts_by_id=artifact_contracts_by_id,

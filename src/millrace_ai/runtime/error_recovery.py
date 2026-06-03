@@ -31,6 +31,9 @@ from .active_runs import (
 )
 from .compiled_plans import CompiledPlanAuthorityError
 from .failure_policy import RuntimeFailureBoundary, classify_failure_origin
+from .graph_authority.terminal_actions import (
+    decision_from_runtime_failure_recovery_exhaustion,
+)
 from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
 from .recon_transitions import ReconHandoffInvalidError
 from .recovery.error_context import (
@@ -102,11 +105,21 @@ def schedule_post_stage_exception_recovery(
     )
     if repair_route is None or runtime_repair_attempts_exhausted(engine, repair_route):
         reason_suffix = "repair_unavailable" if repair_route is None else "repair_attempts_exhausted"
-        blocked_decision = RouterDecision(
+        reason = f"runtime_exception:{resolved_error_code.value}:{reason_suffix}"
+        blocked_decision = (
+            decision_from_runtime_failure_recovery_exhaustion(
+                engine.compiled_plan,
+                stage_result.plane,
+                reason=reason,
+                failure_class=resolved_error_code.value,
+            )
+            if repair_route is not None
+            else None
+        ) or RouterDecision(
             action=RouterAction.BLOCKED,
             next_plane=None,
             next_stage=None,
-            reason=f"runtime_exception:{resolved_error_code.value}:{reason_suffix}",
+            reason=reason,
             failure_class=resolved_error_code.value,
         )
         engine._set_plane_status_marker(
@@ -278,6 +291,23 @@ def schedule_pre_dispatch_exception_recovery(
 
     if repair_route is None or runtime_repair_attempts_exhausted(engine, repair_route):
         reason_suffix = "repair_unavailable" if repair_route is None else "repair_attempts_exhausted"
+        reason = f"runtime_exception:{error_code.value}:{reason_suffix}"
+        blocked_decision = (
+            decision_from_runtime_failure_recovery_exhaustion(
+                engine.compiled_plan,
+                plane,
+                reason=reason,
+                failure_class=error_code.value,
+            )
+            if repair_route is not None
+            else None
+        ) or RouterDecision(
+            action=RouterAction.BLOCKED,
+            next_plane=None,
+            next_stage=None,
+            reason=reason,
+            failure_class=error_code.value,
+        )
         marker = engine._set_plane_status_marker(
             plane=plane,
             marker=BLOCKED_MARKER,
@@ -350,13 +380,7 @@ def schedule_pre_dispatch_exception_recovery(
                 "report_path": context.report_path,
             },
         )
-        return RouterDecision(
-            action=RouterAction.BLOCKED,
-            next_plane=None,
-            next_stage=None,
-            reason=f"runtime_exception:{error_code.value}:{reason_suffix}",
-            failure_class=error_code.value,
-        )
+        return blocked_decision
 
     marker = engine._set_plane_status_marker(
         plane=plane,

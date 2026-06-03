@@ -27,6 +27,7 @@ def route_stage_result_from_graph(
         if max_troubleshoot_attempts_before_consult < 1:
             raise ValueError("max_troubleshoot_attempts_before_consult must be >= 1")
         return route_execution_stage_result_from_graph(
+            graph_plan,
             graph_plan.execution_graph,
             snapshot,
             stage_result,
@@ -38,6 +39,7 @@ def route_stage_result_from_graph(
         if graph_plan.learning_graph is None:
             raise ValueError("compiled graph is missing learning plane")
         return route_learning_stage_result_from_graph(
+            graph_plan,
             graph_plan.learning_graph,
             snapshot,
             stage_result,
@@ -45,6 +47,7 @@ def route_stage_result_from_graph(
     if max_mechanic_attempts < 1:
         raise ValueError("max_mechanic_attempts must be >= 1")
     return route_planning_stage_result_from_graph(
+        graph_plan,
         graph_plan.planning_graph,
         snapshot,
         stage_result,

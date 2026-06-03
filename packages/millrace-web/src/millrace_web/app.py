@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from millrace_web.models import EventsResponse, HealthResponse, WorkspacesResponse
 from millrace_web.services.compiled_plan_reader import (
     read_compiled_plan_summary,
-    read_compiled_stage_graph_exports,
+    read_compiled_stage_graph_export_payloads,
     read_stage_graphs,
 )
 from millrace_web.services.event_stream import list_event_summaries, sse_events
@@ -91,7 +91,7 @@ def create_app(
 
     @app.get("/api/workspaces/{workspace_id}/compiled-plan/graphs")
     def compiled_plan_graphs_route(workspace_id: str) -> object:
-        return {"graphs": read_compiled_stage_graph_exports(_workspace_or_404(registry, workspace_id))}
+        return {"graphs": read_compiled_stage_graph_export_payloads(_workspace_or_404(registry, workspace_id))}
 
     @app.get("/api/workspaces/{workspace_id}/arbiter")
     def arbiter_route(workspace_id: str) -> object:

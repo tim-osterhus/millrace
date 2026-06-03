@@ -5,6 +5,8 @@
   "plane": "learning",
   "display_name": "Curator",
   "default_entrypoint_path": "entrypoints/learning/curator.md",
+  "request_context_profile_id": "curator.default",
+  "context_render_plan_id": "stage_request.default.v1",
   "required_skill_paths": [
     "skills/stage/learning/curator-core/SKILL.md"
   ],
@@ -42,7 +44,9 @@
     "stage_result",
     "skill_update"
   ],
-  "allowed_work_item_families": ["learning_request"],
+  "allowed_work_item_families": [
+    "learning_request"
+  ],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",
@@ -57,5 +61,6 @@
   "can_start_incidents": false,
   "can_start_learning_requests": false,
   "recovery_role": null,
-  "closure_role": false
+  "closure_role": false,
+  "runtime_stage": "curator"
 }

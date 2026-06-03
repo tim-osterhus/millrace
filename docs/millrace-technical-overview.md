@@ -221,7 +221,7 @@ The compiler currently ships with baseline, learning-enabled, integrated, and
 Blueprint built-in modes:
 
 - baseline modes: `default_codex`, `default_pi`
-- learning-enabled modes: `learning_codex`, `efficient_learning_codex`,
+- learning-enabled modes: `learning_codex`, `efficient_learning_mixed`,
   `learning_pi`, `learning_codex_integrated`, `blueprint_learning_codex`
 - integrated quality modes: `default_codex_integrated`,
   `learning_codex_integrated`
@@ -304,9 +304,9 @@ expressed:
 - `default_pi` binds all shipped stages to `pi_rpc`
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
-- `efficient_learning_codex` binds the same standard loops to `codex_cli`,
-  keeps Integrator inactive, and assigns stage model/depth through mode-local
-  aliases
+- `efficient_learning_mixed` binds the same standard loops to a mixed
+  Codex/Pi runner profile, keeps Integrator inactive, and assigns stage
+  model/depth through mode-local aliases
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
   while selecting `execution.with_integrator`
@@ -323,10 +323,10 @@ Model selection can be controlled through the compiler-owned
 `model_aliases` / `model_assignment` surface. Workspace config ships `fast`,
 `standard`, and `deep` aliases, and operators can assign aliases globally, by
 loop, or by stage with `millrace model-aliases ...`. Mode assets may also carry
-mode-local aliases; `efficient_learning_codex` uses that mechanism so its
-mixed-cost Codex profile is part of the mode rather than an accidental
-workspace default. Workspace stage and loop assignments still take precedence
-over mode-local assignments.
+mode-local aliases; `efficient_learning_mixed` uses that mechanism so its
+mixed Codex/Pi profile is part of the mode rather than an accidental workspace
+default. Workspace stage and loop assignments still take precedence over
+mode-local assignments.
 
 Integrated Codex modes are quality-first and more expensive. Their execution
 path is:
@@ -464,7 +464,7 @@ The current learning loop is:
 - `curator`
 - `librarian`
 
-Learning is opt-in through `learning_codex`, `efficient_learning_codex`,
+Learning is opt-in through `learning_codex`, `efficient_learning_mixed`,
 `learning_pi`, `learning_codex_integrated`, or `blueprint_learning_codex`.
 Its normal path is Analyst evidence analysis, Professor synthesis, then Curator
 acceptance and skill-update curation. Librarian is a targeted one-off Learning

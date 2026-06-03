@@ -10,8 +10,6 @@ PUBLIC_IMPORT_SURFACES = (
     "millrace_ai.architecture.workflow_primitives",
     "millrace_ai.architecture",
     "millrace_ai.runtime.request_context",
-    "millrace_ai.runtime.effects.operations",
-    "millrace_ai.runtime.blueprint_effects",
 )
 
 INTERNAL_VALIDATION_IMPORT_SURFACES = (
@@ -159,30 +157,6 @@ EXPECTED_PUBLIC_SYMBOLS: dict[str, tuple[str, ...]] = {
         "RequestContextRenderPlan",
         "attach_default_request_context",
         "render_request_context",
-    ),
-    "millrace_ai.runtime.effects.operations": (
-        "CONTRACTOR_BLUEPRINT_OPERATION_ID",
-        "EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID",
-        "EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID",
-        "MANAGER_BLUEPRINT_OPERATION_ID",
-        "MECHANIC_BLUEPRINT_REPAIR_OPERATION_ID",
-        "contractor_blueprint_candidate_persist",
-        "evaluator_blueprint_approved_to_task",
-        "evaluator_blueprint_rejected_to_draft_revision",
-        "manager_blueprint_manifest_to_blueprint_drafts",
-        "mechanic_blueprint_repair_apply",
-    ),
-    "millrace_ai.runtime.blueprint_effects": (
-        "CONTRACTOR_BLUEPRINT_HANDLER_ID",
-        "EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID",
-        "EVALUATOR_BLUEPRINT_REJECTION_HANDLER_ID",
-        "MANAGER_BLUEPRINT_HANDLER_ID",
-        "MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID",
-        "contractor_blueprint_candidate_persist",
-        "evaluator_blueprint_approved_to_task",
-        "evaluator_blueprint_rejected_to_draft_revision",
-        "manager_blueprint_manifest_to_blueprint_drafts",
-        "mechanic_blueprint_repair_apply",
     ),
 }
 

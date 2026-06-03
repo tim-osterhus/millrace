@@ -174,7 +174,7 @@ def apply_router_decision(
         return ()
 
     if decision.action is RouterAction.IDLE:
-        apply_idle_router_decision(engine, stage_result)
+        apply_idle_router_decision(engine, stage_result, decision=decision)
         if stage_result.stage is PlanningStageName.MANAGER:
             target = active_closure_target(engine)
             if target is not None:

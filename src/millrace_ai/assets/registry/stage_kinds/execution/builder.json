@@ -5,6 +5,8 @@
   "plane": "execution",
   "display_name": "Builder",
   "default_entrypoint_path": "entrypoints/execution/builder.md",
+  "request_context_profile_id": "builder.default",
+  "context_render_plan_id": "stage_request.default.v1",
   "required_skill_paths": [
     "skills/stage/execution/builder-core/SKILL.md"
   ],
@@ -34,7 +36,9 @@
     "stage_result",
     "report"
   ],
-  "allowed_work_item_families": ["task"],
+  "allowed_work_item_families": [
+    "task"
+  ],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",
@@ -48,5 +52,6 @@
   "can_start_specs": false,
   "can_start_incidents": false,
   "recovery_role": null,
-  "closure_role": false
+  "closure_role": false,
+  "runtime_stage": "builder"
 }

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
-    PlanningTerminalResult,
     ReconDecision,
     ReconPacketDocument,
     RootIntakeKind,
@@ -50,33 +49,18 @@ def apply_recon_router_decision(
 ) -> tuple[Path, ...]:
     """Persist Recon artifacts, enqueue routed work, then finish the active probe."""
 
-    terminal_result = PlanningTerminalResult(stage_result.terminal_result)
-    if (
-        terminal_result
-        in {
-            PlanningTerminalResult.RECON_TO_EXECUTION,
-            PlanningTerminalResult.RECON_TO_PLANNING,
-            PlanningTerminalResult.RECON_NOOP,
-        }
-        and decision.action is not RouterAction.IDLE
-    ):
+    recon_route = _recon_route_from_decision(decision, stage_result)
+    if recon_route in {"to_execution", "to_planning", "noop"} and decision.action is not RouterAction.IDLE:
         raise ValueError("successful recon terminal results require an idle router decision")
-    if (
-        terminal_result
-        in {
-            PlanningTerminalResult.RECON_BLOCKED,
-            PlanningTerminalResult.BLOCKED,
-        }
-        and decision.action is not RouterAction.BLOCKED
-    ):
+    if recon_route == "blocked" and decision.action is not RouterAction.BLOCKED:
         raise ValueError("blocked recon terminal results require a blocked router decision")
 
     try:
         packet = _read_and_persist_packet(engine, stage_result, compiled_plan=compiled_plan)
-        _validate_packet_for_stage_result(packet, stage_result, terminal_result)
+        _validate_packet_for_stage_result(packet, stage_result, recon_route)
 
         spawned: tuple[Path, ...] = ()
-        if terminal_result is PlanningTerminalResult.RECON_TO_EXECUTION:
+        if recon_route == "to_execution":
             spawned = (
                 _enqueue_generated_task(
                     engine,
@@ -85,9 +69,9 @@ def apply_recon_router_decision(
                     compiled_plan=compiled_plan,
                 ),
             )
-            apply_idle_router_decision(engine, stage_result)
+            apply_idle_router_decision(engine, stage_result, decision=decision)
             return spawned
-        if terminal_result is PlanningTerminalResult.RECON_TO_PLANNING:
+        if recon_route == "to_planning":
             spawned = (
                 _enqueue_generated_spec(
                     engine,
@@ -96,10 +80,10 @@ def apply_recon_router_decision(
                     compiled_plan=compiled_plan,
                 ),
             )
-            apply_idle_router_decision(engine, stage_result)
+            apply_idle_router_decision(engine, stage_result, decision=decision)
             return spawned
-        if terminal_result is PlanningTerminalResult.RECON_NOOP:
-            apply_idle_router_decision(engine, stage_result)
+        if recon_route == "noop":
+            apply_idle_router_decision(engine, stage_result, decision=decision)
             return ()
 
         apply_blocked_router_decision(
@@ -134,19 +118,42 @@ def _read_and_persist_packet(
 def _validate_packet_for_stage_result(
     packet: ReconPacketDocument,
     stage_result: StageResultEnvelope,
-    terminal_result: PlanningTerminalResult,
+    recon_route: str,
 ) -> None:
     if packet.probe_id != stage_result.work_item_id:
         raise ValueError("recon packet probe_id must match active probe")
     expected_decision = {
-        PlanningTerminalResult.RECON_TO_EXECUTION: ReconDecision.TO_EXECUTION,
-        PlanningTerminalResult.RECON_TO_PLANNING: ReconDecision.TO_PLANNING,
-        PlanningTerminalResult.RECON_NOOP: ReconDecision.NOOP,
-        PlanningTerminalResult.RECON_BLOCKED: ReconDecision.BLOCKED,
-        PlanningTerminalResult.BLOCKED: ReconDecision.BLOCKED,
-    }[terminal_result]
+        "to_execution": ReconDecision.TO_EXECUTION,
+        "to_planning": ReconDecision.TO_PLANNING,
+        "noop": ReconDecision.NOOP,
+        "blocked": ReconDecision.BLOCKED,
+    }[recon_route]
     if packet.decision is not expected_decision:
         raise ValueError("recon packet decision must match terminal result")
+
+
+def _recon_route_from_decision(
+    decision: RouterDecision,
+    stage_result: StageResultEnvelope,
+) -> str:
+    runtime_operation_id = decision.runtime_operation_id
+    route = _RECON_ROUTE_BY_RUNTIME_OPERATION.get(runtime_operation_id or "")
+    if route is not None:
+        return route
+    terminal_state = decision.terminal_state_id or "unknown"
+    terminal_action = decision.terminal_action_id or "unknown"
+    outcome = stage_result.terminal_result.value
+    if runtime_operation_id is None:
+        raise ValueError(
+            "recon terminal result requires terminal action runtime_operation_id; "
+            "recompile or update the compiled plan so terminal action "
+            f"{terminal_action} selected by terminal state {terminal_state} "
+            f"declares a Recon runtime operation for outcome {outcome}"
+        )
+    raise ValueError(
+        "recon terminal action declares unsupported runtime_operation_id "
+        f"{runtime_operation_id}; recompile or update terminal action assets"
+    )
 
 
 def _enqueue_generated_task(
@@ -253,3 +260,11 @@ def _append_required_references(
 
 
 __all__ = ["ReconHandoffInvalidError", "apply_recon_router_decision", "is_recon_stage_result"]
+
+
+_RECON_ROUTE_BY_RUNTIME_OPERATION = {
+    "recon.enqueue_task": "to_execution",
+    "recon.enqueue_spec": "to_planning",
+    "recon.noop": "noop",
+    "recon.block_work_item": "blocked",
+}

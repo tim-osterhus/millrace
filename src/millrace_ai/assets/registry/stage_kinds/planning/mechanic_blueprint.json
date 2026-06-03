@@ -6,6 +6,8 @@
   "runtime_stage": "mechanic",
   "display_name": "Mechanic Blueprint",
   "default_entrypoint_path": "entrypoints/planning/mechanic_blueprint.md",
+  "request_context_profile_id": "mechanic_blueprint.default",
+  "context_render_plan_id": "blueprint.mechanic.default.v1",
   "required_skill_paths": [
     "skills/stage/planning/mechanic-blueprint-core/SKILL.md"
   ],
@@ -40,7 +42,12 @@
     "blueprint_repair_decision",
     "repaired_generated_task"
   ],
-  "allowed_work_item_families": ["probe", "spec", "incident", "blueprint_draft"],
+  "allowed_work_item_families": [
+    "probe",
+    "spec",
+    "incident",
+    "blueprint_draft"
+  ],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

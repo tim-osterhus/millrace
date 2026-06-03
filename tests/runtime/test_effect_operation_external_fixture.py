@@ -25,7 +25,7 @@ ASSETS_ROOT = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "ass
 FIXTURE_ASSETS_ROOT = (
     Path(__file__).resolve().parents[1]
     / "fixtures"
-    / "non_blueprint_effect_assets"
+    / "non_default_effect_assets"
 )
 NOW = datetime(2026, 5, 26, tzinfo=UTC)
 FIXTURE_HANDLER_ID = "fixture_echo_effect"
@@ -52,7 +52,7 @@ def test_effect_execution_import_keeps_blueprint_runner_modules_lazy() -> None:
     )
 
 
-def _copy_assets_with_non_blueprint_fixture(tmp_path: Path) -> Path:
+def _copy_assets_with_non_default_fixture(tmp_path: Path) -> Path:
     copied_root = tmp_path / "assets"
     shutil.copytree(ASSETS_ROOT, copied_root)
     shutil.copytree(FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True)
@@ -60,7 +60,7 @@ def _copy_assets_with_non_blueprint_fixture(tmp_path: Path) -> Path:
 
 
 def _compile_fixture_plan(tmp_path: Path, monkeypatch: Any):
-    assets_root = _copy_assets_with_non_blueprint_fixture(tmp_path)
+    assets_root = _copy_assets_with_non_default_fixture(tmp_path)
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
     outcome = compile_and_persist_workspace_plan(
@@ -137,7 +137,7 @@ def _install_fixture_registry(monkeypatch: Any) -> None:
     monkeypatch.setattr(effect_execution, "_HANDLERS_BY_ID", registry.handlers_by_id)
 
 
-def test_non_blueprint_fixture_effect_compiles_through_normal_plan_path(
+def test_non_default_fixture_effect_compiles_through_normal_plan_path(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -153,7 +153,7 @@ def test_non_blueprint_fixture_effect_compiles_through_normal_plan_path(
     assert not (ASSETS_ROOT.parent / "runtime" / "fixture_effects.py").exists()
 
 
-def test_non_blueprint_fixture_effect_executes_via_registered_operation_runner(
+def test_non_default_fixture_effect_executes_via_registered_operation_runner(
     tmp_path: Path,
     monkeypatch,
 ) -> None:

@@ -22,6 +22,7 @@ class RequestContextRenderPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     render_plan_id: str
+    provider_id: str
     context_bundle_path: str
     rendered_prompt_context_path: str | None = None
     profile_id: str = "stage.default"
@@ -38,6 +39,8 @@ class RequestContextRenderPlan(BaseModel):
     def validate_plan(self) -> "RequestContextRenderPlan":
         if not self.render_plan_id.strip():
             raise ValueError("render_plan_id is required")
+        if not self.provider_id.strip():
+            raise ValueError("provider_id is required")
         if not self.context_bundle_path.strip():
             raise ValueError("context_bundle_path is required")
         if not self.profile_id.strip():

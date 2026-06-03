@@ -116,6 +116,55 @@ process.stdout.write(JSON.stringify({ total: totalIncoming(queues), rows: queueR
     assert "undefined" not in payload["rows"]
 
 
+def test_static_dashboard_orders_flow_nodes_from_graph_topology() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required for static dashboard JavaScript smoke test")
+    app_js = Path(__file__).resolve().parents[1] / "src" / "millrace_web" / "static" / "assets" / "app.js"
+    script = """
+const fs = require("fs");
+global.window = { location: { search: "" } };
+const raw = fs.readFileSync(process.argv[1], "utf8");
+const source = raw.slice(0, raw.lastIndexOf('$("detail-button").addEventListener'));
+eval(source);
+const graph = {
+  plane: "execution",
+  nodes: [
+    { node_id: "last", label: "last" },
+    { node_id: "first", label: "first" },
+    { node_id: "middle", label: "middle" },
+  ],
+  edges: [
+    { source_node_id: "first", target_node_id: "middle", outcome: "NEXT", kind: "success" },
+    { source_node_id: "middle", target_node_id: "last", outcome: "DONE", kind: "success" },
+  ],
+};
+const tooltip = terminalTooltip({
+  terminal_state_id: "update_complete",
+  terminal_action_id: "complete_work_item",
+  terminal_action_router_consequence: "idle",
+  lifecycle_mutation_plan_id: "complete_work_item",
+  lifecycle_action_id: "complete",
+  terminal_writes_status: "UPDATE_COMPLETE",
+});
+process.stdout.write(JSON.stringify({
+  ordered: orderNodesForPlane(graph).map((node) => node.node_id),
+  tooltip,
+}));
+"""
+    result = subprocess.run(
+        [node, "-e", script, str(app_js)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["ordered"] == ["first", "middle", "last"]
+    assert "action: complete_work_item" in payload["tooltip"]
+    assert "lifecycle action: complete" in payload["tooltip"]
+
+
 def test_api_rejects_unregistered_workspace_ids(tmp_path: Path) -> None:
     paths = initialize_workspace(tmp_path / "registered")
     client = TestClient(create_app(workspaces=[paths.root]))

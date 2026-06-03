@@ -426,13 +426,25 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             "node_id": stage_result.node_id,
             "stage_kind_id": stage_result.stage_kind_id,
             "terminal_result": stage_result.terminal_result.value,
-            "failure_class": stage_result.metadata.get("failure_class"),
+            "failure_class": router_decision.failure_class
+            or stage_result.metadata.get("failure_class"),
             "troubleshoot_report_path": (
                 stage_result.report_artifact or request.preferred_troubleshoot_report_path
             ),
             "next_stage": router_decision.next_stage.value if router_decision.next_stage else None,
             "next_node_id": router_decision.next_node_id,
             "next_stage_kind_id": router_decision.next_stage_kind_id,
+            "terminal_state_id": router_decision.terminal_state_id,
+            "terminal_action_id": router_decision.terminal_action_id,
+            "terminal_action_router_consequence": (
+                router_decision.terminal_action_router_consequence
+            ),
+            "lifecycle_mutation_plan_id": router_decision.lifecycle_mutation_plan_id,
+            "lifecycle_action_id": router_decision.lifecycle_action_id,
+            "terminal_writes_status": router_decision.terminal_writes_status,
+            "create_incident": router_decision.create_incident,
+            "runtime_operation_id": router_decision.runtime_operation_id
+            or stage_result.metadata.get("runtime_effect_operation_id"),
             "reason": router_decision.reason,
         },
     )
@@ -450,10 +462,19 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         node_id=stage_result.node_id,
         stage_kind_id=stage_result.stage_kind_id,
         terminal_result=stage_result.terminal_result.value,
-        failure_class=stage_result.metadata.get("failure_class"),
+        failure_class=router_decision.failure_class or stage_result.metadata.get("failure_class"),
         next_stage=router_decision.next_stage.value if router_decision.next_stage else None,
         next_node_id=router_decision.next_node_id,
         next_stage_kind_id=router_decision.next_stage_kind_id,
+        terminal_state_id=router_decision.terminal_state_id,
+        terminal_action_id=router_decision.terminal_action_id,
+        terminal_action_router_consequence=router_decision.terminal_action_router_consequence,
+        lifecycle_mutation_plan_id=router_decision.lifecycle_mutation_plan_id,
+        lifecycle_action_id=router_decision.lifecycle_action_id,
+        terminal_writes_status=router_decision.terminal_writes_status,
+        create_incident=router_decision.create_incident,
+        runtime_operation_id=router_decision.runtime_operation_id
+        or stage_result.metadata.get("runtime_effect_operation_id"),
         reason=router_decision.reason,
     )
     engine._evaluate_usage_governance(

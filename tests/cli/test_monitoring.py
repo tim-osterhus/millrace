@@ -126,6 +126,38 @@ def test_basic_terminal_monitor_renders_runtime_effect_failure_metadata() -> Non
     assert "recovery=route_to_node" in output
 
 
+def test_basic_terminal_monitor_renders_router_terminal_metadata() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="router_decision",
+            occurred_at=NOW,
+            payload={
+                "action": "idle",
+                "plane": "execution",
+                "reason": "updater_complete",
+                "terminal_state_id": "update_complete",
+                "terminal_action_id": "complete_work_item",
+                "terminal_action_router_consequence": "idle",
+                "lifecycle_mutation_plan_id": "complete_work_item",
+                "lifecycle_action_id": "complete",
+                "terminal_writes_status": "UPDATE_COMPLETE",
+                "runtime_operation_id": "operation.complete_work_item",
+            },
+        )
+    )
+
+    output = stream.getvalue()
+    assert "terminal=update_complete" in output
+    assert "action=complete_work_item" in output
+    assert "consequence=idle" in output
+    assert "lifecycle=complete_work_item" in output
+    assert "lifecycle_action=complete" in output
+    assert "writes=UPDATE_COMPLETE" in output
+    assert "operation=operation.complete_work_item" in output
+
+
 def test_basic_terminal_monitor_compacts_stage_start_identity_and_run_id() -> None:
     stream = StringIO()
     monitor = BasicTerminalMonitor(stream=stream)

@@ -131,9 +131,10 @@ Integrated Codex modes remain opt-in: `default_codex_integrated` and
 `learning_codex_integrated` select `execution.with_integrator`, so every
 successful Builder run goes through Integrator before Checker. The integrated
 learning mode keeps the same Learning concurrency policy as `learning_codex`.
-`efficient_learning_codex` keeps the standard execution loop, leaves
+`efficient_learning_mixed` keeps the standard execution loop, leaves
 Integrator inactive by default, and uses the same Learning concurrency policy
-with a mode-local model/depth alias profile.
+with a mode-local mixed Codex/Pi model/depth alias profile. DeepSeek stages use
+`pi_rpc`; Codex stages use `codex_cli`.
 `blueprint_learning_codex` keeps the standard execution loop, selects
 `planning.blueprint`, and uses the same Learning concurrency and
 Planner-to-Librarian trigger policy as `learning_codex`.
@@ -159,6 +160,9 @@ with a different reason, resets the heartbeat.
 used with `--monitor none` for a quiet foreground daemon that still leaves a
 clean monitor trail, or with `--monitor basic` to mirror the same live stream
 to both stdout and a file.
+When router metadata is available, the basic monitor also shows compact
+terminal-state/action/lifecycle/runtime-operation details, plus failure-class
+and incident markers, on the relevant route lines.
 
 ## Status Commands
 
@@ -269,11 +273,6 @@ machine-readable status payload with the same key state, including:
 - `latest_runtime_effect_mutation_phase`
 - `latest_runtime_effect_failure_policy_id`
 - `latest_runtime_effect_recovery_action`
-- `latest_blueprint_repair_context`
-- `latest_blueprint_repair_contract`
-- `latest_blueprint_replay_conflict_classes`
-- `latest_blueprint_inert_artifact_guard`
-- `latest_blueprint_runtime_ownership_boundary`
 
 ### `millrace status watch`
 
@@ -298,6 +297,9 @@ Use `artifact_status` for the stage-result parse/validation state and
 when present. A run can therefore show `artifact_status: valid` and
 `runtime_outcome: blocked` when a schema-valid stage result failed during a
 runtime effect or recovery route.
+The rendered run rows also include terminal metadata provenance plus
+terminal-state/action, router consequence, lifecycle plan/action,
+writes-status, incident, and runtime-operation fields when available.
 
 ### `millrace runs show <RUN_ID>`
 
@@ -318,6 +320,23 @@ Top-level run fields now include:
 - `runtime_effect_failure_class`
 - `runtime_effect_failure_message`
 - `runtime_effect_failure_policy_id`
+- `terminal_state_id`
+- `terminal_action_id`
+- `terminal_action_router_consequence`
+- `lifecycle_mutation_plan_id`
+- `lifecycle_action_id`
+- `terminal_writes_status`
+- `terminal_metadata_source`
+- `terminal_create_incident`
+- `runtime_operation_id`
+
+`terminal_metadata_source` distinguishes graph-resolved router output from
+derived inspection fallback data. When a run falls back to stage-result
+artifacts, the provenance makes the inferred metadata visible instead of
+silently presenting it as authoritative trace data. The label is
+`graph_resolved` for router-written edge metadata, `inferred` for fallback
+inspection data derived from stage results, and `unknown` when no authoritative
+edge metadata is available.
 
 Each stage-result block now includes:
 
@@ -368,6 +387,13 @@ Prints the primary tailable artifact for one run. Millrace prefers the troublesh
 Prints the graph-shaped trace for one run. New runs persist
 `millrace-agents/runs/<run_id>/run_trace.json`; older runs without that file are
 derived from stage-result artifacts and reported with a fallback note.
+Trace edges in the text output carry compact terminal metadata parts when
+available: `terminal_metadata`, `action`, `consequence`, `lifecycle_plan`,
+`lifecycle_action`, `writes_status`, `runtime_operation`, and
+`create_incident`.
+The JSON output preserves the same edge provenance via `terminal_metadata_source`
+so graph-resolved trace edges stay distinguishable from inferred fallback
+inspection data.
 
 Options:
 
@@ -649,7 +675,7 @@ capabilities, and allows shell run and workspace write capability requests.
 Model aliases are configured under `[model_aliases.<alias>]` and selected under
 `[model_assignment]`. `config show` prints `model_assignment.*`, each
 `model_alias.<alias>`, and any loop or stage assignment overrides. Some shipped
-modes, such as `efficient_learning_codex`, also carry mode-local aliases; use
+modes, such as `efficient_learning_mixed`, also carry mode-local aliases; use
 `compile show --mode <mode>` to inspect the resolved per-node assignments.
 
 ### `millrace config validate [--mode MODE_ID]`
@@ -736,6 +762,9 @@ Compiles and prints operator inspectability surface:
 - per-stage `thinking_level` when configured
 - per-stage model-assignment alias provenance when configured
 - per-stage execution capability grants and warnings
+- terminal-state entries with `action`, `router_consequence`, `lifecycle_plan`,
+  `lifecycle_action`, `writes_status`, `runtime_operation_id=none`, and
+  `create_incident` details
 - Codex compatibility `model_reasoning_effort` when configured
 - entrypoint path per stage
 - `stage_kind_id`
@@ -849,7 +878,7 @@ Lists built-in modes and loop references. Current packaged modes are:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
-- `efficient_learning_codex`
+- `efficient_learning_mixed`
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`
@@ -971,7 +1000,7 @@ Command summary:
 - `millrace skills export <SKILL_ID>`
 
 Create/improve workflows require a learning-enabled mode such as
-`learning_codex`, `efficient_learning_codex`, `learning_pi`,
+`learning_codex`, `efficient_learning_mixed`, `learning_pi`,
 `learning_codex_integrated`, or `blueprint_learning_codex` because they enqueue
 learning requests for the Analyst/Professor/Curator skill-improvement path.
 Install/list/show/search/refresh can be used for the deployed skill surface

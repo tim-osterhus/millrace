@@ -83,6 +83,46 @@ def _render_compile_show_lines(paths: WorkspacePaths, outcome: CompileOutcome) -
         lines.append(
             f"completion: {graph_loop_entry_key_value(completion_entry.entry_key)} -> {completion_entry.node_id}"
         )
+    graph_pairs = [
+        (plan.execution_graph, "execution"),
+        (plan.planning_graph, "planning"),
+    ]
+    if learning_graph is not None:
+        graph_pairs.append((learning_graph, "learning"))
+    for graph, plane_name in graph_pairs:
+        terminal_actions_by_id = getattr(plan, "terminal_actions_by_id", {})
+        lifecycle_plans_by_id = getattr(plan, "lifecycle_mutation_plans_by_id", {})
+        for state in getattr(graph, "terminal_states", ()):
+            terminal_class = getattr(state.terminal_class, "value", state.terminal_class)
+            terminal_action_id = getattr(state, "terminal_action_id", None)
+            terminal_action = (
+                terminal_actions_by_id.get(terminal_action_id)
+                if isinstance(terminal_action_id, str)
+                else None
+            )
+            lifecycle_plan_id = (
+                getattr(terminal_action, "lifecycle_mutation_plan_id", None)
+                if terminal_action is not None
+                else None
+            )
+            lifecycle_plan = (
+                lifecycle_plans_by_id.get(lifecycle_plan_id)
+                if lifecycle_plan_id is not None
+                else None
+            )
+            lines.append(
+                f"terminal_state: {plane_name}.{state.terminal_state_id} "
+                f"action={terminal_action_id or 'none'} "
+                f"class={terminal_class} "
+                f"router_consequence={getattr(terminal_action, 'router_consequence', None) or 'none'} "
+                f"lifecycle_plan={lifecycle_plan_id or 'none'} "
+                "lifecycle_action="
+                f"{getattr(lifecycle_plan, 'lifecycle_action_id', None) or 'none'} "
+                f"writes_status={getattr(state, 'writes_status', None) or 'none'} "
+                f"runtime_operation_id=none "
+                "create_incident="
+                f"{'true' if getattr(terminal_action, 'create_incident', False) else 'false'}"
+            )
 
     completion_behavior = getattr(plan.planning_graph, "completion_behavior", None)
     if completion_behavior is not None:

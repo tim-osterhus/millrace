@@ -8,12 +8,15 @@ from millrace_ai.architecture import (
     CompiledGraphTransitionPlan,
     FrozenGraphPlanePlan,
     GraphLoopTerminalStateDefinition,
+    LifecycleMutationPlanDefinition,
+    TerminalActionDefinition,
 )
 from millrace_ai.contracts import ExecutionStageName, PlanningStageName, RuntimeSnapshot, StageResultEnvelope
 from millrace_ai.router import RouterAction, RouterDecision
 
 from .counters import counter_key_from_snapshot
 from .stage_mapping import node_plan_by_id, stage_for_node
+from .terminal_actions import decision_from_terminal_state_action
 
 
 def decision_from_resume_policy(
@@ -37,46 +40,31 @@ def decision_from_resume_policy(
         target_node_id = normalized
         break
 
-    if source_stage is ExecutionStageName.TROUBLESHOOTER:
-        return RouterDecision(
-            action=RouterAction.RUN_STAGE,
-            next_plane=graph.plane,
-            next_stage=stage_for_node(graph, target_node_id),
-            next_node_id=target_node_id,
-            next_stage_kind_id=node_plan_by_id(graph, target_node_id).stage_kind_id,
-            reason="troubleshoot_complete",
-        )
-    if source_stage is ExecutionStageName.CONSULTANT:
-        return RouterDecision(
-            action=RouterAction.RUN_STAGE,
-            next_plane=graph.plane,
-            next_stage=stage_for_node(graph, target_node_id),
-            next_node_id=target_node_id,
-            next_stage_kind_id=node_plan_by_id(graph, target_node_id).stage_kind_id,
-            reason="consultant_local_recovery",
-        )
-    if source_stage is PlanningStageName.MECHANIC:
-        return RouterDecision(
-            action=RouterAction.RUN_STAGE,
-            next_plane=graph.plane,
-            next_stage=stage_for_node(graph, target_node_id),
-            next_node_id=target_node_id,
-            next_stage_kind_id=node_plan_by_id(graph, target_node_id).stage_kind_id,
-            reason="mechanic_complete",
-        )
-    raise ValueError(f"unsupported resume-policy source stage: {source_stage.value}")
+    return RouterDecision(
+        action=RouterAction.RUN_STAGE,
+        next_plane=graph.plane,
+        next_stage=stage_for_node(graph, target_node_id),
+        next_node_id=target_node_id,
+        next_stage_kind_id=node_plan_by_id(graph, target_node_id).stage_kind_id,
+        reason=policy.route_reason or f"{source_stage.value}:{policy.on_outcome}",
+    )
 
 
 def decision_from_threshold_resolution(
+    graphs_by_plane: dict,
     graph: FrozenGraphPlanePlan,
     snapshot: RuntimeSnapshot,
     *,
     source_stage: ExecutionStageName | PlanningStageName,
     policy: CompiledGraphThresholdPolicyPlan,
+    terminal_actions_by_id: dict[str, TerminalActionDefinition],
+    lifecycle_mutation_plans_by_id: dict[str, LifecycleMutationPlanDefinition],
     failure_class: str,
     reason: str,
 ) -> RouterDecision:
     counter_key = counter_key_from_snapshot(snapshot, failure_class)
+    counter_mutation_name = _policy_exhausted_counter_mutation_name(policy)
+    decision_reason = policy.exhausted_route_reason or reason
     if policy.exhausted_target_node_id is not None:
         return RouterDecision(
             action=RouterAction.RUN_STAGE,
@@ -84,25 +72,40 @@ def decision_from_threshold_resolution(
             next_stage=stage_for_node(graph, policy.exhausted_target_node_id),
             next_node_id=policy.exhausted_target_node_id,
             next_stage_kind_id=node_plan_by_id(graph, policy.exhausted_target_node_id).stage_kind_id,
-            reason=reason,
+            reason=decision_reason,
             failure_class=failure_class,
+            counter_mutation_name=counter_mutation_name,
+            recovery_counter_name=counter_mutation_name,
             counter_key=counter_key,
         )
 
     assert policy.exhausted_terminal_state_id is not None
     terminal_state = terminal_state_by_id(graph, policy.exhausted_terminal_state_id)
-    if terminal_state.terminal_class.value != "blocked":
-        raise ValueError(
-            f"unsupported threshold terminal class for {source_stage.value}:{terminal_state.terminal_class.value}"
-        )
-    return RouterDecision(
-        action=RouterAction.BLOCKED,
-        next_plane=None,
-        next_stage=None,
-        reason=f"{reason}:mechanic_attempts_exhausted",
+    return decision_from_terminal_state_action(
+        graphs_by_plane,
+        graph=graph,
+        terminal_state=terminal_state,
+        terminal_actions_by_id=terminal_actions_by_id,
+        lifecycle_mutation_plans_by_id=lifecycle_mutation_plans_by_id,
+        reason=decision_reason,
         failure_class=failure_class,
+        recovery_counter_name=counter_mutation_name,
         counter_key=counter_key,
     )
+
+
+def _policy_counter_mutation_name(policy: CompiledGraphThresholdPolicyPlan) -> str | None:
+    counter_name = policy.recovery_counter_mutation_name or policy.counter_name
+    return counter_name.value
+
+
+def _policy_exhausted_counter_mutation_name(
+    policy: CompiledGraphThresholdPolicyPlan,
+) -> str | None:
+    counter_name = policy.exhausted_counter_mutation_name or policy.recovery_counter_mutation_name
+    if counter_name is None:
+        return None
+    return counter_name.value
 
 
 def transition_for_source(
@@ -151,6 +154,18 @@ def threshold_policy_for_source(
     )
 
 
+def threshold_policy_for_transition(
+    graph: FrozenGraphPlanePlan,
+    *,
+    source_node_id: str,
+    outcome: str,
+) -> CompiledGraphThresholdPolicyPlan | None:
+    for policy in graph.compiled_threshold_policies:
+        if source_node_id in policy.source_node_ids and policy.on_outcome == outcome:
+            return policy
+    return None
+
+
 def terminal_state_by_id(
     graph: FrozenGraphPlanePlan,
     terminal_state_id: str,
@@ -167,5 +182,6 @@ __all__ = [
     "resume_policy_for_source",
     "terminal_state_by_id",
     "threshold_policy_for_source",
+    "threshold_policy_for_transition",
     "transition_for_source",
 ]

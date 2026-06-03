@@ -307,6 +307,7 @@ def test_terminal_action_rejects_missing_lifecycle_plan() -> None:
             terminal_action_id="complete_source",
             terminal_class="success",
             lifecycle_mutation_plan_id="",
+            router_consequence="idle",
         )
 
 
@@ -314,9 +315,13 @@ def test_lifecycle_mutation_plan_rejects_mutation_without_action() -> None:
     with pytest.raises(ValidationError, match="lifecycle_action_id"):
         LifecycleMutationPlanDefinition(
             plan_id="complete_task",
-            source_node_id="builder",
+            source_scope="graph_node",
+            source_graph_node_id="builder",
+            outcome_scope="outcome",
             outcome_id="BUILDER_COMPLETE",
+            source_family_scope="family",
             source_family_id="task",
+            applicability_contexts=("graph_transition",),
             owner="terminal_action",
             source_from_state="active",
             source_to_state="done",
@@ -583,6 +588,7 @@ def test_architecture_request_context_models_remain_distinct_from_runtime_render
     )
     runtime_render_plan = RuntimeRequestContextRenderPlan(
         render_plan_id="stage_request.default.v1",
+        provider_id="generic.active_work_item",
         context_bundle_path="run/context_bundle.json",
         rendered_prompt_context_path="run/context.md",
     )

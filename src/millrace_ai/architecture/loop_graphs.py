@@ -20,8 +20,6 @@ from .stage_kinds import ArchitectureContractModel
 
 _ALLOWED_ENTRYPOINT_PREFIX = "entrypoints/"
 _ALLOWED_SKILL_PREFIX = "skills/"
-_DEFAULT_CLOSURE_ROOT_SOURCE_KINDS = ("idea", "probe", "manual", "spec", "incident")
-
 
 class GraphLoopEntryKey(str, Enum):
     TASK = "task"
@@ -71,6 +69,7 @@ class GraphLoopCounterName(str, Enum):
     FIX_CYCLE_COUNT = "fix_cycle_count"
     TROUBLESHOOT_ATTEMPT_COUNT = "troubleshoot_attempt_count"
     MECHANIC_ATTEMPT_COUNT = "mechanic_attempt_count"
+    CONSULTANT_INVOCATIONS = "consultant_invocations"
 
 
 class GraphLoopNodeDefinition(ArchitectureContractModel):
@@ -175,14 +174,20 @@ class GraphLoopEntryDefinition(ArchitectureContractModel):
 class GraphLoopTerminalStateDefinition(ArchitectureContractModel):
     terminal_state_id: str
     terminal_class: GraphLoopTerminalClass
+    terminal_action_id: str
     writes_status: str
+    router_reason: str | None = None
+    failure_class_template: str | None = None
     emits_artifacts: tuple[str, ...] = ()
     ends_plane_run: bool = True
 
-    @field_validator("terminal_state_id")
+    @field_validator("terminal_state_id", "terminal_action_id", "router_reason", "failure_class_template")
     @classmethod
-    def validate_terminal_state_id(cls, value: str) -> str:
-        return normalize_canonical_id(value, field_label="terminal_state_id")
+    def validate_terminal_state_id(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        field_name = getattr(info, "field_name", None) or "terminal_state_id"
+        return normalize_canonical_id(value, field_label=field_name)
 
     @field_validator("writes_status")
     @classmethod
@@ -202,7 +207,6 @@ class GraphLoopTerminalStateDefinition(ArchitectureContractModel):
             for item in value
         ]
         return dedupe_preserve_order(normalized)
-
 
 class GraphLoopEdgeDefinition(ArchitectureContractModel):
     edge_id: str
@@ -262,7 +266,7 @@ class GraphLoopEdgeDefinition(ArchitectureContractModel):
 
 
 class GraphLoopRootSourcePolicyDefinition(ArchitectureContractModel):
-    accepted_kinds: tuple[str, ...] = _DEFAULT_CLOSURE_ROOT_SOURCE_KINDS
+    accepted_kinds: tuple[str, ...] = Field(min_length=1)
     resolution: Literal["runtime_inventory"] = "runtime_inventory"
 
     @field_validator("accepted_kinds")
@@ -283,9 +287,7 @@ class GraphLoopCompletionBehaviorDefinition(ArchitectureContractModel):
     target_node_id: str
     request_kind: Literal["closure_target"]
     target_selector: Literal["active_closure_target"]
-    root_source_policy: GraphLoopRootSourcePolicyDefinition = Field(
-        default_factory=GraphLoopRootSourcePolicyDefinition
-    )
+    root_source_policy: GraphLoopRootSourcePolicyDefinition
     rubric_policy: Literal["reuse_or_create"]
     blocked_work_policy: Literal["suppress"]
     skip_if_already_closed: bool = True
@@ -313,15 +315,19 @@ class GraphLoopResumePolicyDefinition(ArchitectureContractModel):
     default_target_node_id: str
     metadata_stage_keys: tuple[str, ...] = ()
     disallowed_target_node_ids: tuple[str, ...] = ()
+    route_reason: str | None = None
 
     @field_validator(
         "policy_id",
         "source_node_id",
         "default_target_node_id",
+        "route_reason",
         mode="before",
     )
     @classmethod
-    def validate_canonical_refs(cls, value: str, info: object) -> str:
+    def validate_canonical_refs(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
         field_name = getattr(info, "field_name", None) or "canonical id"
         return normalize_canonical_id(str(value), field_label=field_name)
 
@@ -355,8 +361,22 @@ class GraphLoopThresholdPolicyDefinition(ArchitectureContractModel):
     threshold: int = Field(ge=1)
     exhausted_target_node_id: str | None = None
     exhausted_terminal_state_id: str | None = None
+    recovery_counter_mutation_name: GraphLoopCounterName | None = None
+    exhausted_counter_mutation_name: GraphLoopCounterName | None = None
+    route_reason: str | None = None
+    exhausted_route_reason: str | None = None
+    default_failure_class_template: str | None = None
+    exhausted_failure_class_template: str | None = None
 
-    @field_validator("policy_id", "exhausted_target_node_id", "exhausted_terminal_state_id")
+    @field_validator(
+        "policy_id",
+        "exhausted_target_node_id",
+        "exhausted_terminal_state_id",
+        "route_reason",
+        "exhausted_route_reason",
+        "default_failure_class_template",
+        "exhausted_failure_class_template",
+    )
     @classmethod
     def validate_canonical_refs(cls, value: str | None, info: object) -> str | None:
         if value is None:
@@ -436,6 +456,7 @@ class GraphLoopDefinition(ArchitectureContractModel):
     edges: tuple[GraphLoopEdgeDefinition, ...] = Field(min_length=1)
     entry_nodes: tuple[GraphLoopEntryDefinition, ...] = Field(min_length=1)
     terminal_states: tuple[GraphLoopTerminalStateDefinition, ...] = Field(min_length=1)
+    handoff_terminal_only_outcomes: tuple[str, ...] = ()
     dynamic_policies: GraphLoopDynamicPoliciesDefinition | None = None
     runtime_failure_recovery: GraphLoopRuntimeFailureRecoveryDefinition | None = None
     completion_behavior: GraphLoopCompletionBehaviorDefinition | None = None
@@ -444,6 +465,20 @@ class GraphLoopDefinition(ArchitectureContractModel):
     @classmethod
     def validate_loop_id(cls, value: str) -> str:
         return normalize_canonical_id(value, field_label="loop_id")
+
+    @field_validator("handoff_terminal_only_outcomes", mode="before")
+    @classmethod
+    def normalize_handoff_terminal_only_outcomes(
+        cls,
+        value: tuple[str, ...] | list[str] | None,
+    ) -> tuple[str, ...]:
+        if not value:
+            return ()
+        normalized = [
+            normalize_status(str(item), field_label="handoff terminal-only outcome")
+            for item in value
+        ]
+        return dedupe_preserve_order(normalized)
 
     @model_validator(mode="after")
     def validate_graph(self) -> "GraphLoopDefinition":

@@ -4,10 +4,10 @@
   "loop_id": "learning.standard",
   "plane": "learning",
   "nodes": [
-    {"node_id": "analyst", "stage_kind_id": "analyst"},
-    {"node_id": "professor", "stage_kind_id": "professor"},
-    {"node_id": "curator", "stage_kind_id": "curator"},
-    {"node_id": "librarian", "stage_kind_id": "librarian"}
+    {"node_id": "analyst", "stage_kind_id": "analyst", "request_context_profile_id": "analyst.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "professor", "stage_kind_id": "professor", "request_context_profile_id": "professor.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "curator", "stage_kind_id": "curator", "request_context_profile_id": "curator.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "librarian", "stage_kind_id": "librarian", "request_context_profile_id": "librarian.default", "context_render_plan_id": "stage_request.default.v1"}
   ],
   "entry_nodes": [
     {"entry_key": "learning_request", "node_id": "analyst"}
@@ -27,12 +27,12 @@
     {"edge_id": "librarian-blocked-to-terminal-blocked", "from_node_id": "librarian", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"}
   ],
   "terminal_states": [
-    {"terminal_state_id": "analyst_noop", "terminal_class": "no_op", "writes_status": "ANALYST_NOOP", "emits_artifacts": ["stage_result", "research_packet"]},
-    {"terminal_state_id": "learning_complete", "terminal_class": "success", "writes_status": "CURATOR_COMPLETE", "emits_artifacts": ["stage_result", "skill_update"]},
-    {"terminal_state_id": "professor_noop", "terminal_class": "no_op", "writes_status": "PROFESSOR_NOOP", "emits_artifacts": ["stage_result", "professor_notes"]},
-    {"terminal_state_id": "curator_noop", "terminal_class": "no_op", "writes_status": "CURATOR_NOOP", "emits_artifacts": ["stage_result", "curator_decision"]},
-    {"terminal_state_id": "librarian_complete", "terminal_class": "success", "writes_status": "LIBRARIAN_COMPLETE", "emits_artifacts": ["stage_result", "skill_install_report"]},
-    {"terminal_state_id": "librarian_noop", "terminal_class": "no_op", "writes_status": "LIBRARIAN_NOOP", "emits_artifacts": ["stage_result", "skill_install_report"]},
-    {"terminal_state_id": "blocked", "terminal_class": "blocked", "writes_status": "BLOCKED", "emits_artifacts": ["stage_result", "report"]}
+    {"terminal_state_id": "analyst_noop", "terminal_class": "no_op", "terminal_action_id": "no_op_complete_work_item", "writes_status": "ANALYST_NOOP", "emits_artifacts": ["stage_result", "research_packet"]},
+    {"terminal_state_id": "learning_complete", "terminal_class": "success", "terminal_action_id": "complete_work_item", "writes_status": "CURATOR_COMPLETE", "emits_artifacts": ["stage_result", "skill_update"]},
+    {"terminal_state_id": "professor_noop", "terminal_class": "no_op", "terminal_action_id": "no_op_complete_work_item", "writes_status": "PROFESSOR_NOOP", "emits_artifacts": ["stage_result", "professor_notes"]},
+    {"terminal_state_id": "curator_noop", "terminal_class": "no_op", "terminal_action_id": "no_op_complete_work_item", "writes_status": "CURATOR_NOOP", "emits_artifacts": ["stage_result", "curator_decision"]},
+    {"terminal_state_id": "librarian_complete", "terminal_class": "success", "terminal_action_id": "complete_work_item", "writes_status": "LIBRARIAN_COMPLETE", "emits_artifacts": ["stage_result", "skill_install_report"]},
+    {"terminal_state_id": "librarian_noop", "terminal_class": "no_op", "terminal_action_id": "no_op_complete_work_item", "writes_status": "LIBRARIAN_NOOP", "emits_artifacts": ["stage_result", "skill_install_report"]},
+    {"terminal_state_id": "blocked", "terminal_class": "blocked", "terminal_action_id": "block_work_item", "writes_status": "BLOCKED", "emits_artifacts": ["stage_result", "report"]}
   ]
 }

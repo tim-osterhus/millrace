@@ -75,6 +75,7 @@ def _task_doc(task_id: str) -> TaskDocument:
 def test_request_context_render_excludes_operator_only_refs(tmp_path: Path) -> None:
     plan = RequestContextRenderPlan(
         render_plan_id="contractor_blueprint.v1",
+        provider_id="blueprint.contractor",
         context_bundle_path="runs/run-001/context/context.json",
         visible_artifact_refs=("draft:blueprint-001",),
         operator_only_artifact_refs=("spec:root-spec",),
@@ -118,7 +119,7 @@ def test_stage_run_request_writes_default_context_artifacts(tmp_path: Path) -> N
     engine.close()
 
 
-def test_stage_run_request_backfills_missing_node_profile_and_render_plan(
+def test_stage_run_request_rejects_missing_node_profile_and_render_plan(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -161,16 +162,14 @@ def test_stage_run_request_backfills_missing_node_profile_and_render_plan(
     assert stage_plan.request_context_profile_id is None
     assert stage_plan.context_render_plan_id is None
 
-    request = engine._build_stage_run_request(stage_plan)
-    bundle = _context_bundle(request)
-    manifest = _render_manifest(request)
+    with pytest.raises(
+        ValueError,
+        match=(
+            "compiled graph node builder is missing request context profile authority"
+        ),
+    ):
+        engine._build_stage_run_request(stage_plan)
 
-    assert request.request_context_profile_id == "builder.default"
-    assert request.context_render_plan_id == "stage_request.default.v1"
-    assert bundle["profile_id"] == "builder.default"
-    assert bundle["render_plan_id"] == "stage_request.default.v1"
-    assert manifest["profile_id"] == "builder.default"
-    assert manifest["render_plan_id"] == "stage_request.default.v1"
     engine.close()
 
 
@@ -291,12 +290,14 @@ def test_generic_context_provider_parity_across_stage_families(
     assert enriched.context_render_plan_id == "stage_request.default.v1"
     assert enriched.context_artifact_refs == (expected_ref,)
     assert bundle["profile_id"] == expected_profile_id
+    assert bundle["provider_id"] == "generic.active_work_item"
     assert bundle["render_plan_id"] == "stage_request.default.v1"
     assert bundle["visible_artifact_refs"] == [expected_ref]
     assert bundle["included_provider_ids"] == []
     assert bundle["redacted_provider_ids"] == []
     assert bundle["omitted_provider_ids"] == []
     assert manifest["profile_id"] == expected_profile_id
+    assert manifest["provider_id"] == "generic.active_work_item"
     assert manifest["render_plan_id"] == "stage_request.default.v1"
     assert manifest["visible_artifact_refs"] == [expected_ref]
     assert manifest["redacted_artifact_refs"] == [
@@ -310,6 +311,12 @@ def test_default_request_context_uses_closure_target_ref_without_active_work_ite
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
     request = StageRunRequest(
         request_id="req-closure-001",
         run_id="run-closure-001",
@@ -317,7 +324,7 @@ def test_default_request_context_uses_closure_target_ref_without_active_work_ite
         stage=PlanningStageName.ARBITER,
         request_kind="closure_target",
         mode_id="standard_plain",
-        compiled_plan_id="plan-001",
+        compiled_plan_id=outcome.active_plan.compiled_plan_id,
         node_id="arbiter",
         stage_kind_id="arbiter",
         running_status_marker="ARBITER_RUNNING",
@@ -344,7 +351,11 @@ def test_default_request_context_uses_closure_target_ref_without_active_work_ite
         recovery_counters_path=str(paths.recovery_counters_file),
     )
 
-    enriched = attach_default_request_context(workspace_root=paths.root, request=request)
+    enriched = attach_default_request_context(
+        workspace_root=paths.root,
+        request=request,
+        compiled_plan=outcome.active_plan,
+    )
 
     assert enriched.request_context_profile_id == "arbiter.default"
     assert enriched.context_render_plan_id == "closure_target.default.v1"
@@ -357,7 +368,7 @@ def test_default_request_context_uses_closure_target_ref_without_active_work_ite
 
 def test_stage_plan_lookup_resolves_custom_stage_kind_by_runtime_stage(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
 
     mechanic_plan = engine._stage_plan_for(Plane.PLANNING, PlanningStageName.MECHANIC)

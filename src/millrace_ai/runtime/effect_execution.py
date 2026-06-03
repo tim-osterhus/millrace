@@ -23,6 +23,8 @@ from .effects import (
     RuntimeEffectHandlerRegistry,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
+    SourceLifecycleAction,
+    SourceLifecycleIntent,
     apply_runtime_effect_result,
 )
 from .effects.legacy import default_legacy_runtime_effect_handler_registry
@@ -37,6 +39,9 @@ from .failure_policy import (
     interpret_runtime_effect_failure_policy,
 )
 from .graph_authority.stage_mapping import node_plan_by_id, stage_for_node
+from .graph_authority.terminal_actions import (
+    decision_from_runtime_failure_recovery_exhaustion,
+)
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan, RuntimeEffectRuleDefinition
@@ -143,6 +148,40 @@ def apply_runtime_effect_for_stage_result(
             compiled_plan=effective_plan,
         )
         if override_decision is not None:
+            if override_decision.action is RouterAction.BLOCKED:
+                effect_result = _with_source_lifecycle_intent_from_effect_rule(
+                    effect_result,
+                    stage_result=stage_result,
+                    effect_rule=effect_rule,
+                    action=SourceLifecycleAction.BLOCK,
+                )
+                applied = apply_runtime_effect_result(
+                    engine.paths,
+                    effect_result,
+                    compiled_plan=effective_plan,
+                )
+                _annotate_stage_result_with_effect(
+                    stage_result,
+                    applied,
+                    stage_result_path,
+                    recovery_action="default_runtime_repair",
+                )
+                _emit_runtime_effect_event(
+                    engine,
+                    stage_result=stage_result,
+                    effect_result=applied,
+                    failure_policy_action="default_runtime_repair",
+                )
+                _clear_active_source_after_effect(
+                    engine,
+                    stage_result=stage_result,
+                    decision=override_decision,
+                    stage_result_path=stage_result_path,
+                )
+                return RuntimeEffectApplication(
+                    router_decision=override_decision,
+                    source_lifecycle_applied=applied.source_lifecycle_intent is not None,
+                )
             _annotate_stage_result_with_effect(
                 stage_result,
                 effect_result,
@@ -157,6 +196,11 @@ def apply_runtime_effect_for_stage_result(
             )
             return RuntimeEffectApplication(router_decision=override_decision)
 
+    effect_result = _with_source_lifecycle_intent_from_effect_rule(
+        effect_result,
+        stage_result=stage_result,
+        effect_rule=effect_rule,
+    )
     applied = apply_runtime_effect_result(
         engine.paths,
         effect_result,
@@ -403,6 +447,89 @@ def _normalize_effect_failure_phase(effect_result: RuntimeEffectResult) -> Runti
     return effect_result
 
 
+def _with_source_lifecycle_intent_from_effect_rule(
+    effect_result: RuntimeEffectResult,
+    *,
+    stage_result: StageResultEnvelope,
+    effect_rule: RuntimeEffectRuleDefinition,
+    action: SourceLifecycleAction | None = None,
+) -> RuntimeEffectResult:
+    if effect_result.source_lifecycle_intent is not None:
+        return effect_result
+    if action is None:
+        if effect_result.decision is RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE:
+            action = SourceLifecycleAction.COMPLETE
+        elif effect_result.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE:
+            action = SourceLifecycleAction.BLOCK
+        else:
+            return effect_result
+    if (
+        action is SourceLifecycleAction.COMPLETE
+        and effect_result.decision is not RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+    ):
+        return effect_result
+    if (
+        action is SourceLifecycleAction.BLOCK
+        and effect_result.decision is not RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    ):
+        return effect_result
+    lifecycle_plan_id = _source_lifecycle_plan_id_for_effect_rule(
+        stage_result=stage_result,
+        effect_rule=effect_rule,
+        action=action,
+    )
+    if lifecycle_plan_id is None:
+        return effect_result
+    return effect_result.model_copy(
+        update={
+            "source_lifecycle_intent": SourceLifecycleIntent(
+                lifecycle_plan_id=lifecycle_plan_id,
+                action=action,
+                work_item_family_id=stage_result.work_item_family_id,
+                work_item_kind=stage_result.work_item_kind,
+                work_item_id=stage_result.work_item_id,
+            )
+        }
+    )
+
+
+def _source_lifecycle_plan_id_for_effect_rule(
+    *,
+    stage_result: StageResultEnvelope,
+    effect_rule: RuntimeEffectRuleDefinition,
+    action: SourceLifecycleAction,
+) -> str | None:
+    family_id = stage_result.work_item_family_id
+    if family_id is None and stage_result.work_item_kind is not None:
+        family_id = stage_result.work_item_kind.value
+    if action is SourceLifecycleAction.COMPLETE:
+        family_map = getattr(
+            effect_rule,
+            "source_completion_lifecycle_mutation_plan_ids_by_family",
+            {},
+        ) or {}
+        if family_id in family_map:
+            return str(family_map[family_id])
+        explicit_plan_id = getattr(
+            effect_rule,
+            "source_completion_lifecycle_mutation_plan_id",
+            None,
+        )
+        if explicit_plan_id is not None:
+            return str(explicit_plan_id)
+        legacy_plan_id = getattr(effect_rule, "lifecycle_mutation_plan_id", None)
+        return str(legacy_plan_id) if legacy_plan_id is not None else None
+    family_map = getattr(
+        effect_rule,
+        "source_blocking_lifecycle_mutation_plan_ids_by_family",
+        {},
+    ) or {}
+    if family_id in family_map:
+        return str(family_map[family_id])
+    explicit_plan_id = getattr(effect_rule, "source_blocking_lifecycle_mutation_plan_id", None)
+    return str(explicit_plan_id) if explicit_plan_id is not None else None
+
+
 def _with_runtime_effect_identity(
     effect_result: RuntimeEffectResult,
     *,
@@ -522,14 +649,23 @@ def _router_decision_for_default_runtime_repair(
         repair_stage=repair_route.stage,
     )
     if runtime_repair_attempts_exhausted(engine, repair_route):
+        reason = (
+            f"runtime_effect_failure:{_effect_identity_for_message(effect_result)}:"
+            f"{failure_class}:repair_attempts_exhausted"
+        )
+        exhausted_decision = decision_from_runtime_failure_recovery_exhaustion(
+            compiled_plan,
+            stage_result.plane,
+            reason=reason,
+            failure_class=failure_class,
+        )
+        if exhausted_decision is not None:
+            return exhausted_decision
         return RouterDecision(
             action=RouterAction.BLOCKED,
             next_plane=None,
             next_stage=None,
-            reason=(
-                f"runtime_effect_failure:{_effect_identity_for_message(effect_result)}:"
-                f"{failure_class}:repair_attempts_exhausted"
-            ),
+            reason=reason,
             failure_class=failure_class,
         )
     return RouterDecision(
@@ -543,6 +679,8 @@ def _router_decision_for_default_runtime_repair(
             f"{failure_class}:default_repair"
         ),
         failure_class=failure_class,
+        counter_mutation_name=repair_route.counter_name,
+        recovery_counter_name=repair_route.counter_name,
     )
 
 

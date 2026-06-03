@@ -44,9 +44,11 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
 
     stage_kind_id: str
     plane: Plane
-    runtime_stage: StageName | None = None
+    runtime_stage: StageName
     display_name: str
     default_entrypoint_path: str
+    request_context_profile_id: str | None = None
+    context_render_plan_id: str | None = None
     required_skill_paths: tuple[str, ...] = Field(min_length=1)
     suggested_skill_paths: tuple[str, ...] = ()
     running_status_marker: str
@@ -67,10 +69,13 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
     recovery_role: RecoveryRole | None = None
     closure_role: bool = False
 
-    @field_validator("stage_kind_id")
+    @field_validator("stage_kind_id", "request_context_profile_id", "context_render_plan_id")
     @classmethod
-    def validate_stage_kind_id(cls, value: str) -> str:
-        return normalize_canonical_id(value, field_label="stage_kind_id")
+    def validate_canonical_ids(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        field_name = getattr(info, "field_name", None) or "canonical id"
+        return normalize_canonical_id(value, field_label=field_name)
 
     @field_validator("display_name")
     @classmethod
@@ -196,23 +201,13 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
     @model_validator(mode="after")
     def validate_contract(self) -> "RegisteredStageKindDefinition":
         runtime_stage = self.runtime_stage
-        if runtime_stage is None:
-            try:
-                runtime_stage = stage_name_for_plane(self.plane, self.stage_kind_id)
-            except ValueError as exc:
-                raise ValueError(
-                    f"stage kind {self.stage_kind_id} must declare runtime_stage because "
-                    "stage_kind_id is not a canonical stage for this plane"
-                ) from exc
-            self.runtime_stage = runtime_stage
-        else:
-            try:
-                stage_name_for_plane(self.plane, runtime_stage.value)
-            except ValueError as exc:
-                raise ValueError(
-                    f"stage kind {self.stage_kind_id} runtime_stage {runtime_stage.value} "
-                    f"must belong to plane {self.plane.value}"
-                ) from exc
+        try:
+            stage_name_for_plane(self.plane, runtime_stage.value)
+        except ValueError as exc:
+            raise ValueError(
+                f"stage kind {self.stage_kind_id} runtime_stage {runtime_stage.value} "
+                f"must belong to plane {self.plane.value}"
+            ) from exc
 
         try:
             canonical_stage = stage_name_for_plane(self.plane, self.stage_kind_id)

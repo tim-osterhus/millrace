@@ -12,10 +12,8 @@ from ..models import (
     RuntimeEffectDecision,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
-    SourceLifecycleAction,
     SourceLifecycleIntent,
 )
-from .work_items import source_lifecycle_intent as build_source_lifecycle_intent
 
 
 def runtime_mutation_journal(
@@ -44,30 +42,19 @@ def mutation_phase_for_created_paths(
 
 def block_source_failure_result(
     operation_id: str,
-    stage_result: StageResultEnvelope,
+    _stage_result: StageResultEnvelope,
     *,
     failure_class: str,
     message: str,
     created_paths: Sequence[str],
-    lifecycle_plan_id: str,
-    include_source_lifecycle_intent: bool = True,
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
-    context: str = "runtime effect",
+    _context: str = "runtime effect",
 ) -> RuntimeEffectResult:
     return RuntimeEffectResult(
         handler_id=operation_id,
         decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
         created_paths=tuple(created_paths),
-        source_lifecycle_intent=(
-            build_source_lifecycle_intent(
-                stage_result,
-                plan_id=lifecycle_plan_id,
-                action=SourceLifecycleAction.BLOCK,
-                context=context,
-            )
-            if include_source_lifecycle_intent
-            else None
-        ),
+        source_lifecycle_intent=None,
         failure_class=failure_class,
         message=message,
         mutation_phase=mutation_phase_for_created_paths(created_paths),

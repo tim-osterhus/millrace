@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from millrace_ai.architecture.loop_graphs import GraphLoopCounterName
 from millrace_ai.contracts import Plane, RecoveryCounterEntry, RecoveryCounters, RuntimeSnapshot, StageResultEnvelope
 from millrace_ai.router import counter_key_for_failure_class
 
@@ -21,6 +22,27 @@ def counter_attempts(
     if plane is Plane.EXECUTION:
         return entry.troubleshoot_attempt_count
     return entry.mechanic_attempt_count
+
+
+def counter_attempts_for_name(
+    snapshot: RuntimeSnapshot,
+    counters: RecoveryCounters,
+    failure_class: str,
+    *,
+    counter_name: GraphLoopCounterName,
+) -> int:
+    if counter_name is GraphLoopCounterName.FIX_CYCLE_COUNT:
+        return snapshot.fix_cycle_count
+    entry = matching_counter_entry(snapshot, counters, failure_class)
+    if entry is None:
+        return 0
+    if counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT:
+        return entry.troubleshoot_attempt_count
+    if counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT:
+        return entry.mechanic_attempt_count
+    if counter_name is GraphLoopCounterName.CONSULTANT_INVOCATIONS:
+        return entry.consultant_invocations
+    raise ValueError(f"unsupported recovery counter name: {counter_name.value}")
 
 
 def matching_counter_entry(
@@ -77,6 +99,7 @@ def normalize_failure_class(failure_class: str) -> str:
 
 __all__ = [
     "counter_attempts",
+    "counter_attempts_for_name",
     "counter_key_from_snapshot",
     "matching_counter_entry",
     "normalize_failure_class",

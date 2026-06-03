@@ -11,14 +11,11 @@ from millrace_ai.architecture import (
 from millrace_ai.architecture.common import dedupe_preserve_order
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
-    ExecutionStageName,
-    LearningStageName,
     ModeDefinition,
     Plane,
-    PlanningStageName,
     StageName,
 )
-from millrace_ai.contracts.stage_metadata import STAGE_NAME_BY_VALUE, stage_name_for_value
+from millrace_ai.contracts.stage_metadata import stage_name_for_value
 
 from .capabilities import compile_execution_capability_grants
 from .entrypoint_overrides import validate_entrypoint_override
@@ -26,28 +23,10 @@ from .model_aliases import resolve_model_alias_assignment
 
 DEFAULT_STAGE_TIMEOUT_SECONDS = 3600
 
-REQUIRED_SKILLS_BY_STAGE: dict[StageName, tuple[str, ...]] = {
-    ExecutionStageName.BUILDER: ("skills/stage/execution/builder-core/SKILL.md",),
-    ExecutionStageName.CHECKER: ("skills/stage/execution/checker-core/SKILL.md",),
-    ExecutionStageName.FIXER: ("skills/stage/execution/fixer-core/SKILL.md",),
-    ExecutionStageName.DOUBLECHECKER: ("skills/stage/execution/doublechecker-core/SKILL.md",),
-    ExecutionStageName.UPDATER: ("skills/stage/execution/updater-core/SKILL.md",),
-    ExecutionStageName.TROUBLESHOOTER: ("skills/stage/execution/troubleshooter-core/SKILL.md",),
-    ExecutionStageName.CONSULTANT: ("skills/stage/execution/consultant-core/SKILL.md",),
-    PlanningStageName.RECON: ("skills/stage/planning/recon-core/SKILL.md",),
-    PlanningStageName.PLANNER: ("skills/stage/planning/planner-core/SKILL.md",),
-    PlanningStageName.MANAGER: ("skills/stage/planning/manager-core/SKILL.md",),
-    PlanningStageName.MECHANIC: ("skills/stage/planning/mechanic-core/SKILL.md",),
-    PlanningStageName.AUDITOR: ("skills/stage/planning/auditor-core/SKILL.md",),
-    PlanningStageName.ARBITER: ("skills/stage/planning/arbiter-core/SKILL.md",),
-    LearningStageName.ANALYST: ("skills/stage/learning/analyst-core/SKILL.md",),
-    LearningStageName.PROFESSOR: ("skills/stage/learning/professor-core/SKILL.md",),
-    LearningStageName.CURATOR: ("skills/stage/learning/curator-core/SKILL.md",),
-    LearningStageName.LIBRARIAN: ("skills/stage/learning/librarian-core/SKILL.md",),
-}
-
 def required_skills_for_stage(stage: StageName) -> tuple[str, ...]:
-    return REQUIRED_SKILLS_BY_STAGE.get(stage, ())
+    from millrace_ai.assets import load_stage_kind_definition
+
+    return load_stage_kind_definition(stage.value).required_skill_paths
 
 
 def materialize_graph_node_plan(
@@ -62,10 +41,6 @@ def materialize_graph_node_plan(
 ) -> MaterializedGraphNodePlan:
     stage_kind = stage_kinds[node.stage_kind_id]
     runtime_stage = stage_kind.runtime_stage
-    if runtime_stage is None:
-        raise ValueError(
-            f"stage kind {stage_kind.stage_kind_id} is missing required runtime_stage"
-        )
     stage_name = stage_name_for_identifier(node.stage_kind_id)
     stage_key = stage_name or node.stage_kind_id
     stage_config = config.stages.get(node.stage_kind_id)
@@ -136,14 +111,15 @@ def materialize_graph_node_plan(
     )
     if stage_config is not None and stage_config.timeout_seconds is not None:
         timeout_seconds = stage_config.timeout_seconds
-    request_context_profile_id = node.request_context_profile_id or f"{node.node_id}.default"
-    profile = request_context_profiles_by_id.get(request_context_profile_id)
+    request_context_profile_id = (
+        node.request_context_profile_id
+        if node.request_context_profile_id is not None
+        else stage_kind.request_context_profile_id
+    )
     context_render_plan_id = (
         node.context_render_plan_id
         if node.context_render_plan_id is not None
-        else profile.primary_render_plan_id
-        if profile is not None
-        else None
+        else stage_kind.context_render_plan_id
     )
 
     return MaterializedGraphNodePlan(
@@ -183,8 +159,6 @@ def stage_name_for_identifier(identifier: str) -> StageName | None:
 
 __all__ = [
     "DEFAULT_STAGE_TIMEOUT_SECONDS",
-    "REQUIRED_SKILLS_BY_STAGE",
-    "STAGE_NAME_BY_VALUE",
     "materialize_graph_node_plan",
     "required_skills_for_stage",
     "stage_name_for_identifier",

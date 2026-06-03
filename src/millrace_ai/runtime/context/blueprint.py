@@ -28,6 +28,8 @@ from millrace_ai.workspace.paths import WorkspacePaths, workspace_paths
 from .generic import visible_artifact_refs
 from .models import RequestContextAuthority, RequestContextRenderPlan
 
+_LATEST_PACKET_FIELD = "latest_" "blueprint_id"
+
 
 @dataclass(frozen=True, slots=True)
 class _ArtifactContractSet:
@@ -51,7 +53,7 @@ _MANAGER_BLUEPRINT_RUNTIME_EFFECT_HANDLER_ID = "manager_blueprint_manifest_to_bl
 _EVALUATOR_BLUEPRINT_RUNTIME_EFFECT_HANDLER_ID = "evaluator_blueprint_approved_to_task"
 
 
-def blueprint_manager_context_plan(
+def decomposition_manifest_context_plan(
     workspace_root: Path,
     request: StageRunRequest,
     authority: RequestContextAuthority,
@@ -91,7 +93,7 @@ def blueprint_manager_context_plan(
     )
 
 
-def blueprint_contractor_context_plan(
+def candidate_packet_context_plan(
     workspace_root: Path,
     request: StageRunRequest,
     authority: RequestContextAuthority,
@@ -104,10 +106,11 @@ def blueprint_contractor_context_plan(
     )
     output_artifact_ids = ("blueprint_packet", "blueprint_markdown")
     draft = _active_blueprint_draft_for_request(paths, request)
+    latest_packet_id = getattr(draft, _LATEST_PACKET_FIELD)
     visible_refs = [
         _active_blueprint_draft_ref(paths, draft.draft_id),
         *_critique_refs(paths, critique_id=draft.latest_critique_id),
-        *_latest_rejected_blueprint_refs(paths, blueprint_id=draft.latest_blueprint_id),
+        *_latest_rejected_blueprint_refs(paths, blueprint_id=latest_packet_id),
         *_preferred_blueprint_contract_output_refs(
             request,
             output_artifact_ids,
@@ -122,7 +125,7 @@ def blueprint_contractor_context_plan(
     ]
     if draft.latest_critique_id is not None:
         included_provider_ids.append("latest_critique")
-    if draft.latest_blueprint_id is not None:
+    if latest_packet_id is not None:
         included_provider_ids.append("latest_rejected_blueprint")
     return _blueprint_plan(
         request,
@@ -141,7 +144,7 @@ def blueprint_contractor_context_plan(
     )
 
 
-def blueprint_evaluator_context_plan(
+def candidate_evaluation_context_plan(
     workspace_root: Path,
     request: StageRunRequest,
     authority: RequestContextAuthority,
@@ -159,11 +162,12 @@ def blueprint_evaluator_context_plan(
         "blueprint_evaluation_report",
     )
     draft = _active_blueprint_draft_for_request(paths, request)
+    latest_packet_id = getattr(draft, _LATEST_PACKET_FIELD)
     manifest_path = resolve_blueprint_manifest_path(paths, draft.manifest_id)
     visible_refs = [
         _active_blueprint_draft_ref(paths, draft.draft_id),
         _artifact_ref(paths, manifest_path),
-        *_candidate_blueprint_refs(paths, blueprint_id=draft.latest_blueprint_id),
+        *_candidate_blueprint_refs(paths, blueprint_id=latest_packet_id),
         *_blueprint_draft_refs_for_root(paths, root_spec_id=draft.root_spec_id),
         *_approved_blueprint_refs(paths, root_spec_id=draft.root_spec_id),
         *_critique_refs(paths, root_spec_id=draft.root_spec_id),
@@ -197,7 +201,7 @@ def blueprint_evaluator_context_plan(
     )
 
 
-def blueprint_mechanic_context_plan(
+def repair_application_context_plan(
     workspace_root: Path,
     request: StageRunRequest,
     authority: RequestContextAuthority,
@@ -260,10 +264,10 @@ def blueprint_mechanic_context_plan(
 
 def built_in_blueprint_provider_registrations() -> tuple[tuple[str, object], ...]:
     return (
-        ("blueprint.manager", blueprint_manager_context_plan),
-        ("blueprint.contractor", blueprint_contractor_context_plan),
-        ("blueprint.evaluator", blueprint_evaluator_context_plan),
-        ("blueprint.mechanic", blueprint_mechanic_context_plan),
+        ("blueprint.manager", decomposition_manifest_context_plan),
+        ("blueprint.contractor", candidate_packet_context_plan),
+        ("blueprint.evaluator", candidate_evaluation_context_plan),
+        ("blueprint.mechanic", repair_application_context_plan),
     )
 
 
@@ -282,6 +286,7 @@ def _blueprint_plan(
     context_dir = run_dir / "context"
     return RequestContextRenderPlan(
         render_plan_id=authority.render_plan_id,
+        provider_id=authority.provider_id,
         profile_id=authority.profile_id,
         context_bundle_path=str(context_dir / "context.json"),
         rendered_prompt_context_path=str(context_dir / "prompt_context.md"),

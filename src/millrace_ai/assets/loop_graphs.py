@@ -17,12 +17,6 @@ from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent
 GRAPH_LOOPS_ROOT = Path("graphs")
-_RECON_HANDOFF_OUTCOMES = {
-    "RECON_TO_EXECUTION",
-    "RECON_TO_PLANNING",
-    "RECON_NOOP",
-    "RECON_BLOCKED",
-}
 
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
     "execution.standard": Path("graphs/execution/standard.json"),
@@ -47,11 +41,12 @@ def load_builtin_graph_loop_definition(
     root = _resolve_assets_root(assets_root)
     graph_path = _resolve_graph_loop_path(loop_id, root)
     payload = _load_json_asset(graph_path, asset_kind="graph loop")
+    _validate_terminal_state_action_declarations(payload)
 
     try:
         graph_loop = GraphLoopDefinition.model_validate(payload)
     except ValidationError as exc:
-        first_error = exc.errors()[0]["msg"] if exc.errors() else "validation failed"
+        first_error = _format_validation_error(exc)
         raise GraphLoopAssetError(
             f"Invalid graph loop definition in asset: {graph_path} ({first_error})"
         ) from exc
@@ -150,15 +145,14 @@ def _validate_graph_loop_against_stage_kinds(
     for edge in graph_loop.edges:
         source_node = node_map[edge.from_node_id]
         source_stage_kind = stage_kinds[source_node.stage_kind_id]
-        if (
-            source_stage_kind.stage_kind_id == "recon"
-            and edge.kind is not GraphLoopEdgeKind.TERMINAL
-            and any(outcome in _RECON_HANDOFF_OUTCOMES for outcome in edge.on_outcomes)
+        if edge.kind is not GraphLoopEdgeKind.TERMINAL and any(
+            outcome in graph_loop.handoff_terminal_only_outcomes
+            for outcome in edge.on_outcomes
         ):
             raise GraphLoopAssetError(
-                f"Graph loop {graph_loop.loop_id} edge {edge.edge_id} declares Recon "
+                f"Graph loop {graph_loop.loop_id} edge {edge.edge_id} declares "
                 "handoff outcomes that target a non-terminal edge. "
-                "Recon handoff outcomes must target terminal states so typed promotion "
+                "Handoff terminal-only outcomes must target terminal states so typed promotion "
                 "can enqueue task/spec work explicitly."
             )
         for outcome in edge.on_outcomes:
@@ -252,14 +246,44 @@ def _load_json_asset(path: Path, *, asset_kind: str) -> dict[str, Any]:
 
 def _load_graph_loop_definition_at_path(path: Path) -> GraphLoopDefinition:
     payload = _load_json_asset(path, asset_kind="graph loop")
+    _validate_terminal_state_action_declarations(payload)
 
     try:
         return GraphLoopDefinition.model_validate(payload)
     except ValidationError as exc:
-        first_error = exc.errors()[0]["msg"] if exc.errors() else "validation failed"
+        first_error = _format_validation_error(exc)
         raise GraphLoopAssetError(
             f"Invalid graph loop definition in asset: {path} ({first_error})"
         ) from exc
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "validation failed"
+    first = errors[0]
+    loc = ".".join(str(part) for part in first.get("loc", ()))
+    message = str(first.get("msg", "validation failed"))
+    if not loc:
+        return message
+    return f"{loc}: {message}"
+
+
+def _validate_terminal_state_action_declarations(payload: dict[str, Any]) -> None:
+    terminal_states = payload.get("terminal_states")
+    if not isinstance(terminal_states, list):
+        return
+
+    for terminal_state in terminal_states:
+        if not isinstance(terminal_state, dict):
+            continue
+        terminal_state_id = terminal_state.get("terminal_state_id")
+        if not isinstance(terminal_state_id, str) or not terminal_state_id.strip():
+            continue
+        if "terminal_action_id" not in terminal_state:
+            raise GraphLoopAssetError(
+                f"terminal state {terminal_state_id} must declare terminal_action_id"
+            )
 
 
 __all__ = [

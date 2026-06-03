@@ -5,7 +5,7 @@ from pathlib import Path
 
 from millrace_ai.contracts import Plane, ResultClass, StageResultEnvelope, WorkItemKind
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
-from millrace_ai.runtime.blueprint_recovery_diagnostics import (
+from millrace_ai.runtime.runtime_effect_status import (
     latest_runtime_effect_status_metadata,
     runtime_effect_status_metadata_from_stage_result,
 )
@@ -75,7 +75,7 @@ def _mechanic_apply_stage_result(*, completed_at: datetime = NOW) -> StageResult
     )
 
 
-def test_blueprint_repair_diagnostics_accept_operation_identity() -> None:
+def test_runtime_effect_status_metadata_accepts_operation_identity() -> None:
     metadata = runtime_effect_status_metadata_from_stage_result(
         _approval_failure_stage_result(),
     )
@@ -83,16 +83,11 @@ def test_blueprint_repair_diagnostics_accept_operation_identity() -> None:
     assert metadata["latest_runtime_effect_operation_id"] == (
         "evaluator_blueprint_approved_to_task"
     )
-    assert metadata["latest_blueprint_repair_context"] == (
-        "failed_handler=evaluator_blueprint_approved_to_task "
-        "failure_class=generated_task_invalid "
-        "mutation_phase=pre_mutation "
-        "policy=blueprint_approval_pre_mutation_effect_validation "
-        "recovery_action=route_to_node"
-    )
+    assert metadata["latest_runtime_effect_failure_class"] == "generated_task_invalid"
+    assert metadata["latest_runtime_effect_recovery_action"] == "route_to_node"
 
 
-def test_blueprint_repair_diagnostics_preserve_failed_context_after_repair_apply(
+def test_latest_runtime_effect_status_uses_latest_prior_effect_when_last_stage_has_none(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -104,19 +99,13 @@ def test_blueprint_repair_diagnostics_preserve_failed_context_after_repair_apply
         _approval_failure_stage_result(completed_at=NOW).model_dump_json(indent=2) + "\n",
         encoding="utf-8",
     )
-    repair_path.write_text(
-        _mechanic_apply_stage_result(
-            completed_at=NOW + timedelta(seconds=1),
-        ).model_dump_json(indent=2)
-        + "\n",
-        encoding="utf-8",
-    )
+    repair_result = _mechanic_apply_stage_result(completed_at=NOW + timedelta(seconds=1))
+    repair_result.metadata.clear()
+    repair_path.write_text(repair_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     metadata = latest_runtime_effect_status_metadata(paths, str(repair_path))
 
     assert metadata["latest_runtime_effect_operation_id"] == (
         "evaluator_blueprint_approved_to_task"
     )
-    assert metadata["latest_blueprint_repair_contract"].startswith(
-        "action=apply_repaired_generated_task",
-    )
+    assert metadata["latest_runtime_effect_failure_class"] == "generated_task_invalid"

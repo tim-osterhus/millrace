@@ -22,7 +22,6 @@ from .queue_checks import check_queue_parseability
 from .workspace_checks import (
     check_baseline_manifest,
     check_blueprint_manifest_diagnostics,
-    check_blueprint_runtime_effect_recovery_context,
     check_closure_lineage_integrity,
     check_manifest_tracked_managed_files,
     check_runtime_ownership_lock,
@@ -72,7 +71,6 @@ def default_doctor_checks() -> tuple[DoctorCheck, ...]:
         check_task_lifecycle_uniqueness,
         check_closure_lineage_integrity,
         check_stopped_daemon_with_open_graph_work,
-        check_blueprint_runtime_effect_recovery_context,
         check_manifest_tracked_managed_files,
         check_mode_and_loop_assets,
         check_entrypoint_assets,

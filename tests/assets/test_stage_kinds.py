@@ -101,6 +101,8 @@ def test_builtin_stage_kinds_load_and_validate() -> None:
         Plane.LEARNING,
     }
     assert all(stage_kind.required_skill_paths for stage_kind in stage_kinds)
+    assert all(stage_kind.request_context_profile_id for stage_kind in stage_kinds)
+    assert all(stage_kind.context_render_plan_id for stage_kind in stage_kinds)
     assert all(stage_kind.success_outcomes for stage_kind in stage_kinds)
     assert all(
         set(stage_kind.success_outcomes).issubset(stage_kind.legal_outcomes)
@@ -228,7 +230,7 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert librarian.can_start_learning_requests is True
 
 
-def test_blueprint_stage_kind_assets_load_as_discovered_extensions() -> None:
+def test_graph_driven_stage_kind_assets_load_as_discovered_extensions() -> None:
     discovered = {stage_kind.stage_kind_id: stage_kind for stage_kind in discover_stage_kind_definitions()}
 
     for stage_kind_id in (
@@ -330,6 +332,17 @@ def test_stage_kind_requires_allowed_result_classes_by_outcome(tmp_path: Path) -
     stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(ArchitectureAssetError, match="Invalid stage kind definition in asset"):
+        load_builtin_stage_kind_definition("builder", assets_root=assets_root)
+
+
+def test_stage_kind_requires_runtime_stage_declaration(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
+    payload.pop("runtime_stage", None)
+    stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ArchitectureAssetError, match="runtime_stage"):
         load_builtin_stage_kind_definition("builder", assets_root=assets_root)
 
 

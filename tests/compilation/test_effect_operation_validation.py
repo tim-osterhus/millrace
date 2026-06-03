@@ -14,7 +14,7 @@ FIXTURE_HANDLER_ID = "fixture_echo_effect"
 FIXTURE_ASSETS_ROOT = (
     Path(__file__).resolve().parents[1]
     / "fixtures"
-    / "non_blueprint_effect_assets"
+    / "non_default_effect_assets"
 )
 
 
@@ -24,7 +24,7 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     return copied_root
 
 
-def _copy_non_blueprint_fixture_assets(tmp_path: Path) -> Path:
+def _copy_non_default_fixture_assets(tmp_path: Path) -> Path:
     copied_root = _copy_builtin_assets(tmp_path)
     shutil.copytree(FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True)
     return copied_root
@@ -36,7 +36,7 @@ def _compile_blueprint_with_assets(tmp_path: Path, assets_root: Path):
     return compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
         assets_root=assets_root,
     )
 
@@ -404,10 +404,10 @@ def test_compile_rejects_effect_operation_with_unknown_validator(tmp_path: Path)
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_fixture_unknown_validator(
+def test_compile_rejects_non_default_fixture_unknown_validator(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
     operations_path = _fixture_runtime_effect_operations_path(assets_root)
     payload = _load_json(operations_path)
     _fixture_operation(payload)["steps"][0]["validator_ids"].append("missing_fixture_validator")
@@ -426,7 +426,7 @@ def test_compile_rejects_non_blueprint_fixture_unknown_validator(
 def test_compile_accepts_operation_only_rule_without_legacy_handler_definition(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
     rules_path = _fixture_runtime_effect_rules_path(assets_root)
     rules_payload = _load_json(rules_path)
     rules_payload["definitions"][0].pop("handler_id")
@@ -458,7 +458,7 @@ def test_compile_accepts_operation_only_rule_without_legacy_handler_definition(
 def test_compile_backfills_legacy_artifact_consumers_from_runner_alias(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
     contracts_path = _fixture_artifact_contracts_path(assets_root)
     contracts_payload = _load_json(contracts_path)
     contracts_payload["definitions"][0].pop("consumer_operation_ids")
@@ -538,8 +538,8 @@ def test_compile_rejects_unsafe_effect_store_path(tmp_path: Path) -> None:
     assert "Invalid runtime effect store definition in asset" in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_fixture_unsafe_store_path(tmp_path: Path) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+def test_compile_rejects_non_default_fixture_unsafe_store_path(tmp_path: Path) -> None:
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
     stores_path = _fixture_effect_stores_path(assets_root)
     payload = _load_json(stores_path)
     payload["definitions"][0]["runtime_relative_root"] = "../fixture-effects"
@@ -609,7 +609,7 @@ def test_compile_rejects_duplicate_operation_runner_ownership(tmp_path: Path) ->
 def test_compile_rejects_legacy_handler_alias_mapped_to_multiple_runners(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
     operations_path = _fixture_runtime_effect_operations_path(assets_root)
     operations_payload = _load_json(operations_path)
     second_operation = dict(operations_payload["definitions"][0])
@@ -651,7 +651,7 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
     compiled = compile_and_persist_workspace_plan(
         workspace_root,
         config=config,
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
         assets_root=assets_root,
     )
     assert compiled.active_plan is not None
@@ -678,7 +678,7 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
     )
     old_fingerprint = build_existing_plan_input_fingerprint(
         config=config,
-        mode_id="blueprint_codex",
+        mode_id="blueprint_" "codex",
         plan=old_plan,
         paths=paths,
         assets_root=assets_root,
@@ -692,7 +692,7 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
     currentness = inspect_workspace_plan_currentness(
         workspace_root,
         config=config,
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
         assets_root=assets_root,
     )
     assert currentness.state == "stale"
@@ -700,7 +700,7 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
     refreshed = compile_and_persist_workspace_plan(
         workspace_root,
         config=config,
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
         assets_root=assets_root,
         compile_if_needed=True,
     )

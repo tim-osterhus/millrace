@@ -23,7 +23,15 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": "complete_spec_source_after_blueprint_effect"
+      "lifecycle_mutation_plan_id": "complete_spec_source_after_blueprint_effect",
+      "source_completion_lifecycle_mutation_plan_ids_by_family": {
+        "spec": "complete_spec_source_after_blueprint_effect",
+        "incident": "complete_incident_source_after_blueprint_effect"
+      },
+      "source_blocking_lifecycle_mutation_plan_ids_by_family": {
+        "spec": "block_spec_source_after_blueprint_effect",
+        "incident": "block_incident_source_after_blueprint_effect"
+      }
     },
     {
       "schema_version": "1.0",
@@ -44,7 +52,8 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": null
+      "lifecycle_mutation_plan_id": null,
+      "source_blocking_lifecycle_mutation_plan_id": "block_blueprint_draft_after_effect"
     },
     {
       "schema_version": "1.0",
@@ -66,7 +75,9 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect"
+      "lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect",
+      "source_completion_lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect",
+      "source_blocking_lifecycle_mutation_plan_id": "block_blueprint_draft_after_effect"
     },
     {
       "schema_version": "1.0",
@@ -87,7 +98,8 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": null
+      "lifecycle_mutation_plan_id": null,
+      "source_blocking_lifecycle_mutation_plan_id": "block_blueprint_draft_after_effect"
     },
     {
       "schema_version": "1.0",
@@ -114,7 +126,9 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect"
+      "lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect",
+      "source_completion_lifecycle_mutation_plan_id": "approve_blueprint_draft_after_effect",
+      "source_blocking_lifecycle_mutation_plan_id": "block_blueprint_draft_after_effect"
     }
   ]
 }

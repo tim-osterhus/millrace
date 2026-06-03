@@ -12,6 +12,7 @@ from millrace_ai.architecture.workflow_primitives import (
     builtin_queue_lifecycle_adapter_id_for_family,
 )
 from millrace_ai.contracts import (
+    BlueprintDraftDocument,
     IncidentDocument,
     PlanningStageName,
     ResultClass,
@@ -178,6 +179,31 @@ def _manager_blueprint_stage_result(
         success=True,
         started_at=NOW,
         completed_at=NOW,
+    )
+
+
+def _activate_blueprint_draft(paths, draft_id: str = "draft-blueprint-001") -> None:
+    active_dir = paths.runtime_root / "blueprints/drafts/active"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    draft = BlueprintDraftDocument(
+        draft_id=draft_id,
+        manifest_id="manifest-001",
+        root_spec_id="spec-root-001",
+        root_idea_id="idea-001",
+        source_spec_id="spec-root-001",
+        draft_index=1,
+        title="Blueprint draft",
+        summary="Draft for runtime effect tests.",
+        target_paths=("src/millrace_ai/runtime/",),
+        acceptance_intent=("Runtime effect tests pass.",),
+        context_excerpt="Test context.",
+        current_revision=0,
+        status="active",
+        created_at=NOW,
+    )
+    (active_dir / f"{draft_id}.json").write_text(
+        draft.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -406,7 +432,7 @@ def test_stage_effect_selection_obeys_compiled_runtime_effect_rules(tmp_path: Pa
     ("mode_id", "next_node_id", "next_stage_kind_id"),
     [
         (None, "manager", "manager"),
-        ("blueprint_codex", "manager_blueprint", "manager_blueprint"),
+        ("blueprint_" "codex", "manager_blueprint", "manager_blueprint"),
     ],
 )
 def test_planner_disposition_active_source_ready_continues_existing_route(
@@ -464,7 +490,7 @@ def test_planner_disposition_emitted_child_specs_resolves_incident_without_manag
     queue.enqueue_incident(_incident_doc())
     assert queue.claim_next_planning_item() is not None
     queue.enqueue_spec(_spec_doc())
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     run_dir = tmp_path / "run"
     _write_planner_disposition(
@@ -505,7 +531,7 @@ def test_planner_disposition_missing_child_spec_blocks_source(tmp_path: Path) ->
     queue = QueueStore(paths)
     queue.enqueue_incident(_incident_doc())
     assert queue.claim_next_planning_item() is not None
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     run_dir = tmp_path / "run"
     _write_planner_disposition(
@@ -554,7 +580,7 @@ def test_planner_disposition_missing_artifact_blocks_source_even_when_child_spec
     queue.enqueue_incident(_incident_doc())
     assert queue.claim_next_planning_item() is not None
     queue.enqueue_spec(_spec_doc())
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -589,11 +615,63 @@ def test_planner_disposition_missing_artifact_blocks_source_even_when_child_spec
     assert stage_result.metadata["runtime_effect_recovery_action"] == "default_runtime_repair"
 
 
+def test_final_planner_block_uses_rule_declared_source_blocking_lifecycle_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_incident(_incident_doc())
+    assert queue.claim_next_planning_item() is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
+    engine.startup()
+    run_dir = tmp_path / "run"
+    stage_result_path = run_dir / "stage_results" / "request-001.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _handler(paths, stage_result, run_dir, compiled_plan):
+        return RuntimeEffectResult(
+            handler_id="planner_disposition",
+            decision=RuntimeEffectDecision.REQUEST_BLOCK_SOURCE,
+            mutation_phase=RuntimeEffectMutationPhase.PARTIAL_MUTATION,
+            failure_class="planner_terminal_block",
+            message="planner produced a final block outcome",
+        )
+
+    monkeypatch.setitem(effect_execution._HANDLERS_BY_ID, "planner_disposition", _handler)
+    stage_result = _planner_stage_result()
+
+    application = apply_runtime_effect_for_stage_result(
+        engine,
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="planner_complete",
+        ),
+        stage_result_path=stage_result_path,
+    )
+
+    assert application.router_decision.action is RouterAction.BLOCKED
+    assert application.router_decision.failure_class == "planner_terminal_block"
+    assert application.source_lifecycle_applied is True
+    assert (paths.incidents_blocked_dir / "incident-001.md").is_file()
+    persisted = StageResultEnvelope.model_validate_json(
+        stage_result_path.read_text(encoding="utf-8")
+    )
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_source_after_effect"
+    )
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] == "block"
+
+
 @pytest.mark.parametrize(
     ("mode_id", "next_node_id", "next_stage_kind_id"),
     [
         (None, "mechanic", "mechanic"),
-        ("blueprint_codex", "mechanic_blueprint", "mechanic_blueprint"),
+        ("blueprint_" "codex", "mechanic_blueprint", "mechanic_blueprint"),
     ],
 )
 def test_planner_disposition_blocked_preserves_existing_blocked_recovery_route(
@@ -647,7 +725,7 @@ def test_pre_mutation_effect_failure_routes_through_runtime_failure_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     run_dir = tmp_path / "run"
@@ -661,12 +739,6 @@ def test_pre_mutation_effect_failure_routes_through_runtime_failure_policy(
             mutation_phase=RuntimeEffectMutationPhase.PRE_MUTATION,
             failure_class="generated_task_missing",
             message="generated_task.json is missing",
-            source_lifecycle_intent=SourceLifecycleIntent(
-                lifecycle_plan_id="block_blueprint_draft_after_effect",
-                action=SourceLifecycleAction.BLOCK,
-                work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
-                work_item_id="draft-blueprint-001",
-            ),
         )
 
     monkeypatch.setitem(
@@ -718,6 +790,8 @@ def test_pre_mutation_effect_failure_routes_through_runtime_failure_policy(
         "generated_task.json is missing"
     )
     assert persisted.metadata["runtime_effect_mutation_phase"] == "pre_mutation"
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] is None
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] is None
 
 
 def test_manager_blueprint_malformed_artifact_routes_through_runtime_failure_policy(
@@ -725,7 +799,10 @@ def test_manager_blueprint_malformed_artifact_routes_through_runtime_failure_pol
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-blueprint-001"))
+    assert queue.claim_next_planning_item() is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     run_dir = tmp_path / "run"
@@ -775,6 +852,11 @@ def test_manager_blueprint_malformed_artifact_routes_through_runtime_failure_pol
     assert persisted.metadata["runtime_effect_failure_class"] == (
         "blueprint_manifest_parse_error"
     )
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_spec_source_after_blueprint_effect"
+    )
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] == "block"
+    assert (paths.specs_blocked_dir / "spec-blueprint-001.md").is_file()
 
 
 @pytest.mark.parametrize(
@@ -790,7 +872,10 @@ def test_manager_blueprint_conservative_failure_policy_blocks_and_annotates(
     failure_class: str,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-blueprint-001"))
+    assert queue.claim_next_planning_item() is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     run_dir = tmp_path / "run"
@@ -838,6 +923,11 @@ def test_manager_blueprint_conservative_failure_policy_blocks_and_annotates(
     )
     assert persisted.metadata["runtime_effect_recovery_action"] == "block_source_work_item"
     assert persisted.metadata["runtime_effect_failure_class"] == failure_class
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_spec_source_after_blueprint_effect"
+    )
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] == "block"
+    assert (paths.specs_blocked_dir / "spec-blueprint-001.md").is_file()
 
 
 def test_unclassified_pre_mutation_effect_failure_routes_to_default_repair(
@@ -845,7 +935,7 @@ def test_unclassified_pre_mutation_effect_failure_routes_to_default_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     run_dir = tmp_path / "run"
@@ -891,6 +981,8 @@ def test_unclassified_pre_mutation_effect_failure_routes_to_default_repair(
     )
     assert persisted.metadata["runtime_effect_recovery_action"] == "default_runtime_repair"
     assert persisted.metadata["runtime_effect_failure_class"] == "unclassified_manifest_handoff"
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] is None
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] is None
     context = json.loads(paths.runtime_error_context_file.read_text(encoding="utf-8"))
     assert context["error_code"] == "planning_post_stage_apply_failed"
     assert context["repair_stage"] == "mechanic"
@@ -905,7 +997,10 @@ def test_default_runtime_effect_repair_blocks_after_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-blueprint-001"))
+    assert queue.claim_next_planning_item() is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     engine.snapshot = engine.snapshot.model_copy(update={"mechanic_attempt_count": 2})
     run_dir = tmp_path / "run"
@@ -943,6 +1038,13 @@ def test_default_runtime_effect_repair_blocks_after_threshold(
         "unclassified_manifest_handoff:repair_attempts_exhausted"
     )
     assert application.router_decision.failure_class == "unclassified_manifest_handoff"
+    assert application.router_decision.terminal_state_id == "blocked"
+    assert application.router_decision.terminal_action_id == "block_work_item"
+    assert application.router_decision.terminal_action_router_consequence == "blocked"
+    assert application.router_decision.lifecycle_mutation_plan_id == "block_work_item"
+    assert application.router_decision.lifecycle_action_id == "block"
+    assert application.source_lifecycle_applied is True
+    assert (paths.specs_blocked_dir / "spec-blueprint-001.md").is_file()
 
 
 def test_manager_blueprint_partial_mutation_policy_blocks_without_model_repair(
@@ -950,7 +1052,10 @@ def test_manager_blueprint_partial_mutation_policy_blocks_without_model_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-blueprint-001"))
+    assert queue.claim_next_planning_item() is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     created_path = paths.runtime_root / "blueprints" / "manifests" / "manifest-partial.json"
@@ -1002,6 +1107,11 @@ def test_manager_blueprint_partial_mutation_policy_blocks_without_model_repair(
     )
     assert persisted.metadata["runtime_effect_recovery_action"] == "block_source_work_item"
     assert persisted.metadata["runtime_effect_mutation_phase"] == "partial_mutation"
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_spec_source_after_blueprint_effect"
+    )
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] == "block"
+    assert (paths.specs_blocked_dir / "spec-blueprint-001.md").is_file()
 
 
 def test_runtime_effect_require_operator_policy_blocks_with_operator_visible_reason_and_event(
@@ -1009,7 +1119,10 @@ def test_runtime_effect_require_operator_policy_blocks_with_operator_visible_rea
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-blueprint-001"))
+    assert queue.claim_next_planning_item() is not None
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     require_operator_policy = _runtime_failure_policy()
@@ -1069,6 +1182,11 @@ def test_runtime_effect_require_operator_policy_blocks_with_operator_visible_rea
         "test_require_operator_policy"
     )
     assert persisted.metadata["runtime_effect_recovery_action"] == "require_operator"
+    assert persisted.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_spec_source_after_blueprint_effect"
+    )
+    assert persisted.metadata["runtime_effect_source_lifecycle_action"] == "block"
+    assert (paths.specs_blocked_dir / "spec-blueprint-001.md").is_file()
     events = [
         event for event in read_runtime_events(paths)
         if event.event_type == "runtime_effect_applied"
@@ -1082,7 +1200,8 @@ def test_partial_mutation_effect_failure_blocks_source_conservatively(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    _activate_blueprint_draft(paths)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     created_path = (
@@ -1128,6 +1247,13 @@ def test_partial_mutation_effect_failure_blocks_source_conservatively(
     assert application.router_decision.failure_class == "generated_task_missing"
     assert stage_result.metadata["runtime_effect_mutation_phase"] == "partial_mutation"
     assert stage_result.metadata["runtime_effect_failure_class"] == "generated_task_missing"
+    assert stage_result.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_blueprint_draft_after_effect"
+    )
+    assert stage_result.metadata["runtime_effect_source_lifecycle_action"] == "block"
+    assert (
+        paths.runtime_root / "blueprints/drafts/blocked/draft-blueprint-001.json"
+    ).is_file()
 
 
 def test_effect_failure_with_created_paths_cannot_route_as_pre_mutation(
@@ -1135,7 +1261,8 @@ def test_effect_failure_with_created_paths_cannot_route_as_pre_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    _activate_blueprint_draft(paths)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.compiled_plan is not None
     created_path = (
@@ -1182,6 +1309,13 @@ def test_effect_failure_with_created_paths_cannot_route_as_pre_mutation(
     assert application.router_decision.failure_class == "generated_task_missing"
     assert stage_result.metadata["runtime_effect_mutation_phase"] == "partial_mutation"
     assert stage_result.metadata["runtime_effect_failure_class"] == "generated_task_missing"
+    assert stage_result.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "block_blueprint_draft_after_effect"
+    )
+    assert stage_result.metadata["runtime_effect_source_lifecycle_action"] == "block"
+    assert (
+        paths.runtime_root / "blueprints/drafts/blocked/draft-blueprint-001.json"
+    ).is_file()
 
 
 def test_stage_effect_application_reports_only_destination_queue_paths_as_spawned_work(

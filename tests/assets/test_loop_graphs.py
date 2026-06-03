@@ -102,12 +102,14 @@ def _write_synthetic_graph_loop_asset(assets_root: Path) -> None:
             {
                 "terminal_state_id": "synthetic_complete",
                 "terminal_class": "success",
+                "terminal_action_id": "complete_work_item",
                 "writes_status": "SYNTHETIC_COMPLETE",
                 "emits_artifacts": ["stage_result", "report"],
             },
             {
                 "terminal_state_id": "blocked",
                 "terminal_class": "blocked",
+                "terminal_action_id": "block_work_item",
                 "writes_status": "BLOCKED",
                 "emits_artifacts": ["stage_result", "report"],
             },
@@ -149,6 +151,17 @@ def test_builtin_graph_loops_load_and_validate() -> None:
     assert all(graph.nodes for graph in graph_loops)
     assert all(graph.edges for graph in graph_loops)
     assert all(graph.terminal_states for graph in graph_loops)
+
+
+def test_builtin_graph_nodes_declare_request_context_authority() -> None:
+    for graph in load_builtin_graph_loop_definitions():
+        for node in graph.nodes:
+            assert node.request_context_profile_id is not None, (
+                f"{graph.loop_id}:{node.node_id} is missing request_context_profile_id"
+            )
+            assert node.context_render_plan_id is not None, (
+                f"{graph.loop_id}:{node.node_id} is missing context_render_plan_id"
+            )
 
 
 def test_shipped_graph_loop_ids_are_stable() -> None:
@@ -289,7 +302,7 @@ def test_learning_graph_loop_exposes_learning_request_entrypoint() -> None:
     } == {GraphLoopTerminalClass.NO_OP}
 
 
-def test_blueprint_planning_graph_routes_drafts_through_contract_review() -> None:
+def test_graph_driven_planning_graph_routes_drafts_through_contract_review() -> None:
     planning = load_builtin_graph_loop_definition("planning.blueprint")
     entry_nodes = {entry.entry_key.value: entry.node_id for entry in planning.entry_nodes}
     nodes = {node.node_id: node for node in planning.nodes}
@@ -433,7 +446,32 @@ def test_recon_handoff_edge_to_planner_fails_deterministically(tmp_path: Path) -
             break
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    with pytest.raises(GraphLoopAssetError, match="Recon handoff outcomes must target terminal states"):
+    with pytest.raises(
+        GraphLoopAssetError,
+        match="Handoff terminal-only outcomes must target terminal states",
+    ):
+        load_builtin_graph_loop_definition("planning.standard", assets_root=assets_root)
+
+
+def test_missing_terminal_action_id_fails_asset_validation(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload["terminal_states"][0].pop("terminal_action_id", None)
+    graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(GraphLoopAssetError, match="terminal_action_id"):
+        load_builtin_graph_loop_definition("execution.standard", assets_root=assets_root)
+
+
+def test_missing_completion_root_source_policy_fails_asset_validation(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload["completion_behavior"].pop("root_source_policy", None)
+    graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(GraphLoopAssetError, match="root_source_policy"):
         load_builtin_graph_loop_definition("planning.standard", assets_root=assets_root)
 
 

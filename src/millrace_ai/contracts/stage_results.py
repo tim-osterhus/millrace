@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, field_serializer, model_validator
 
 from .base import ContractModel
-from .enums import Plane, ResultClass, StageName, TerminalResult, WorkItemKind
-from .stage_metadata import stage_plane
+from .enums import Plane, ResultClass, StageName, WorkItemKind
+from .stage_metadata import stage_plane, terminal_result_for_plane
+from .terminal_outcomes import TerminalOutcome, terminal_outcome_value
 from .token_usage import TokenUsage
 from .work_refs import coerce_family_and_kind
 
@@ -27,7 +28,7 @@ class StageResultEnvelope(ContractModel):
     work_item_kind: WorkItemKind | None = None
     work_item_id: str
 
-    terminal_result: TerminalResult
+    terminal_result: TerminalOutcome
     result_class: ResultClass
     summary_status_marker: str
 
@@ -70,6 +71,12 @@ class StageResultEnvelope(ContractModel):
 
         if stage_plane(self.stage) != self.plane:
             raise ValueError("stage must belong to plane")
+        known_terminal_result = terminal_result_for_plane(
+            self.plane,
+            terminal_outcome_value(self.terminal_result),
+        )
+        if known_terminal_result is not None:
+            self.terminal_result = known_terminal_result
         if not self.node_id:
             self.node_id = self.stage.value
         if not self.stage_kind_id:
@@ -90,6 +97,10 @@ class StageResultEnvelope(ContractModel):
             raise ValueError("non-success result_class requires success=false")
 
         return self
+
+    @field_serializer("terminal_result")
+    def serialize_terminal_result(self, value: TerminalOutcome) -> str:
+        return terminal_outcome_value(value)
 
 
 __all__ = ["StageResultEnvelope"]

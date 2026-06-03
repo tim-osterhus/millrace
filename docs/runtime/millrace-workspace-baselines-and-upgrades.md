@@ -201,7 +201,7 @@ After `upgrade --apply`, the workspace baseline may be newer than the persisted
 compiled plan. In that case, `millrace status` will report the compiled plan as
 `stale` until the workspace is recompiled.
 New packaged modes, graph assets, entrypoints, or stage-core skills, such as
-`efficient_learning_codex`, `default_codex_integrated`,
+`efficient_learning_mixed`, `default_codex_integrated`,
 `learning_codex_integrated`, `blueprint_learning_codex`,
 `execution.with_integrator`, and Librarian's learning assets, are managed
 workspace assets. Existing workspaces must apply the baseline refresh before

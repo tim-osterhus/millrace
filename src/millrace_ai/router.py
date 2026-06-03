@@ -41,7 +41,17 @@ class RouterDecision:
     reason: str
     next_node_id: str | None = None
     next_stage_kind_id: str | None = None
+    terminal_state_id: str | None = None
+    terminal_action_id: str | None = None
+    terminal_action_router_consequence: str | None = None
+    terminal_action_non_mutating: bool = False
+    lifecycle_mutation_plan_id: str | None = None
+    lifecycle_action_id: str | None = None
+    terminal_writes_status: str | None = None
     failure_class: str | None = None
+    runtime_operation_id: str | None = None
+    counter_mutation_name: str | None = None
+    recovery_counter_name: str | None = None
     counter_key: str | None = None
     create_incident: bool = False
 

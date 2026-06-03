@@ -1235,7 +1235,7 @@ def test_learning_core_skills_back_artifact_handoff_contracts() -> None:
     assert "LIBRARIAN_NOOP" in librarian
 
 
-def test_blueprint_entrypoints_and_core_skills_back_artifact_contracts() -> None:
+def test_graph_driven_entrypoints_and_core_skills_back_artifact_contracts() -> None:
     planning_dir = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning"
     skills_dir = SKILLS_DIR / "stage" / "planning"
 

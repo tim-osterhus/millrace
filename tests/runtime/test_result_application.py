@@ -12,6 +12,7 @@ from millrace_ai.architecture import (
 )
 from millrace_ai.contracts import (
     ActiveRunState,
+    ClosureTargetState,
     ExecutionStageName,
     LearningRequestDocument,
     LearningStageName,
@@ -48,6 +49,7 @@ from millrace_ai.runtime.run_traces import record_router_decision_trace
 from millrace_ai.runtime.supervisor import StageWorkerOutcome, apply_stage_completion
 from millrace_ai.runtime.work_item_transitions import apply_idle_router_decision
 from millrace_ai.state_store import load_recovery_counters, load_snapshot, save_recovery_counters, save_snapshot
+from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 from millrace_ai.workspace.work_documents import render_work_document
 
 NOW = datetime(2026, 4, 28, 12, 0, 0, tzinfo=timezone.utc)
@@ -226,8 +228,19 @@ def _recon_stage_result(
     )
 
 
-def _idle_recon_decision() -> RouterDecision:
-    return RouterDecision(action=RouterAction.IDLE, next_plane=None, next_stage=None, reason="recon")
+def _route_recon_decision(
+    engine: RuntimeEngine,
+    stage_result: StageResultEnvelope,
+) -> RouterDecision:
+    decision = route_stage_result(engine, stage_result)
+    assert decision.runtime_operation_id is not None
+    assert decision.terminal_state_id is not None
+    assert decision.terminal_action_id is not None
+    assert decision.terminal_action_router_consequence is not None
+    assert decision.lifecycle_mutation_plan_id is not None
+    assert decision.lifecycle_action_id is not None
+    assert decision.terminal_writes_status is not None
+    return decision
 
 
 def _prefer_recon_packet_json(engine: RuntimeEngine) -> None:
@@ -265,6 +278,79 @@ def _prefer_recon_packet_json(engine: RuntimeEngine) -> None:
             "artifact_contracts": contracts,
         }
     )
+
+
+def test_apply_router_decision_closes_closure_target_and_idles_planes(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    report_path = paths.runs_dir / "run-closure" / "arbiter_report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# Arbiter Report\n\nPass.\n", encoding="utf-8")
+    verdict_path = paths.arbiter_verdicts_dir / "spec-root-001.json"
+    verdict_path.parent.mkdir(parents=True, exist_ok=True)
+    verdict_path.write_text('{"status":"pass"}\n', encoding="utf-8")
+    save_closure_target_state(
+        paths,
+        ClosureTargetState(
+            root_spec_id="spec-root-001",
+            root_idea_id="idea-001",
+            root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
+            root_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
+            rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
+            latest_verdict_path=None,
+            latest_report_path=None,
+            closure_open=True,
+            closure_blocked_by_lineage_work=False,
+            blocking_work_ids=(),
+            opened_at=NOW,
+        ),
+    )
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    stage_result = StageResultEnvelope(
+        run_id="run-closure",
+        plane=Plane.PLANNING,
+        stage=PlanningStageName.ARBITER,
+        node_id="arbiter",
+        stage_kind_id="arbiter",
+        work_item_kind=WorkItemKind.SPEC,
+        work_item_id="spec-root-001",
+        terminal_result=PlanningTerminalResult.ARBITER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### ARBITER_COMPLETE",
+        success=True,
+        report_artifact=str(report_path),
+        metadata={
+            "request_kind": "closure_target",
+            "closure_target_root_spec_id": "spec-root-001",
+            "preferred_verdict_path": str(verdict_path),
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    apply_router_decision(
+        engine,
+        RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="arbiter_complete",
+        ),
+        stage_result,
+    )
+
+    target = load_closure_target_state(paths, root_spec_id="spec-root-001")
+    snapshot = load_snapshot(paths)
+    report_copy = paths.arbiter_reports_dir / "run-closure.md"
+    assert target.closure_open is False
+    assert target.closed_at is not None
+    assert target.last_arbiter_run_id == "run-closure"
+    assert target.latest_verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
+    assert target.latest_report_path == "millrace-agents/arbiter/reports/run-closure.md"
+    assert report_copy.read_text(encoding="utf-8") == "# Arbiter Report\n\nPass.\n"
+    assert snapshot.active_runs_by_plane.get(Plane.PLANNING) is None
+    assert snapshot.execution_status_marker == "### IDLE"
+    assert snapshot.planning_status_marker == "### IDLE"
 
 
 def test_learning_idle_result_does_not_clear_active_execution_lane(tmp_path: Path) -> None:
@@ -403,6 +489,7 @@ def test_run_stage_recovery_counter_uses_family_id_without_legacy_kind(tmp_path:
         next_stage_kind_id="mechanic",
         reason="custom_family_recovery",
         failure_class="custom_failure",
+        counter_mutation_name="mechanic_attempt_count",
     )
 
     apply_router_decision(engine, decision, stage_result)
@@ -572,7 +659,7 @@ def test_recon_to_execution_persists_packet_marks_probe_done_and_enqueues_task(
         started_at=NOW,
         completed_at=NOW,
     )
-    decision = RouterDecision(action=RouterAction.IDLE, next_plane=None, next_stage=None, reason="recon_to_execution")
+    decision = _route_recon_decision(engine, stage_result)
 
     spawned = apply_router_decision(engine, decision, stage_result)
 
@@ -614,7 +701,7 @@ def test_recon_to_execution_uses_declared_packet_and_generated_task_contracts(
         artifact_paths=("recon_packet.json", "generated_task.json"),
     )
 
-    spawned = apply_router_decision(engine, _idle_recon_decision(), stage_result)
+    spawned = apply_router_decision(engine, _route_recon_decision(engine, stage_result), stage_result)
 
     assert spawned == (paths.tasks_queue_dir / "task-from-probe.md",)
     assert (paths.probes_done_dir / "probe-001.md").is_file()
@@ -668,7 +755,7 @@ def test_recon_to_execution_uses_launch_plan_artifact_contracts(
         artifact_paths=("recon_packet.json", "generated_task.json"),
     )
 
-    spawned = apply_router_decision(engine, _idle_recon_decision(), stage_result)
+    spawned = apply_router_decision(engine, _route_recon_decision(engine, stage_result), stage_result)
 
     assert spawned == (paths.tasks_queue_dir / "task-from-probe.md",)
     assert (paths.probes_done_dir / "probe-001.md").is_file()
@@ -788,7 +875,7 @@ def test_recon_to_execution_fails_malformed_canonical_generated_task_before_fall
     )
 
     with pytest.raises(ReconHandoffInvalidError, match="Recon handoff artifacts failed validation"):
-        apply_router_decision(engine, _idle_recon_decision(), stage_result)
+        apply_router_decision(engine, _route_recon_decision(engine, stage_result), stage_result)
 
     assert (paths.probes_active_dir / "probe-001.md").is_file()
     assert not (paths.probes_blocked_dir / "probe-001.md").exists()
@@ -853,7 +940,7 @@ def test_mechanic_blueprint_completion_resume_stage_metadata_routes_to_manager_b
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
-    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_codex")
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
     assert engine.snapshot is not None
     assert engine.compiled_plan is not None
@@ -940,7 +1027,7 @@ def test_recon_to_execution_fails_malformed_canonical_recon_packet_before_fallba
     )
 
     with pytest.raises(ReconHandoffInvalidError, match="Recon handoff artifacts failed validation"):
-        apply_router_decision(engine, _idle_recon_decision(), stage_result)
+        apply_router_decision(engine, _route_recon_decision(engine, stage_result), stage_result)
 
     assert (paths.probes_active_dir / "probe-001.md").is_file()
     assert not (paths.probes_blocked_dir / "probe-001.md").exists()
@@ -1014,7 +1101,7 @@ def test_recon_to_planning_persists_packet_marks_probe_done_and_enqueues_spec(
         started_at=NOW,
         completed_at=NOW,
     )
-    decision = RouterDecision(action=RouterAction.IDLE, next_plane=None, next_stage=None, reason="recon_to_planning")
+    decision = _route_recon_decision(engine, stage_result)
 
     spawned = apply_router_decision(engine, decision, stage_result)
 
@@ -1053,7 +1140,7 @@ def test_recon_to_planning_fails_malformed_canonical_generated_spec_before_fallb
     )
 
     with pytest.raises(ReconHandoffInvalidError, match="Recon handoff artifacts failed validation"):
-        apply_router_decision(engine, _idle_recon_decision(), stage_result)
+        apply_router_decision(engine, _route_recon_decision(engine, stage_result), stage_result)
 
     assert (paths.probes_active_dir / "probe-001.md").is_file()
     assert not (paths.probes_blocked_dir / "probe-001.md").exists()

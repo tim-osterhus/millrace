@@ -15,7 +15,7 @@ from millrace_ai.runners.normalization.terminal_results import (
 )
 from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest, _TerminalExtraction
 
-_TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z_]+)\s*$")
+_TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z0-9_]+)\s*$")
 
 
 class _StructuredTerminalResultPayload(BaseModel):

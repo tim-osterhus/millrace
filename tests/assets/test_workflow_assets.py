@@ -350,6 +350,10 @@ def test_builtin_workflow_primitives_load_as_bundle() -> None:
         "complete_work_item",
         "block_work_item",
         "idle_plane",
+        "recon_enqueue_task",
+        "recon_enqueue_spec",
+        "recon_noop",
+        "recon_block_work_item",
     }
     assert {plan.plan_id for plan in bundle.lifecycle_mutation_plans} >= {
         "complete_work_item",

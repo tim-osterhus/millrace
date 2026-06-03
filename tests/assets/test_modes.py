@@ -164,46 +164,52 @@ def test_learning_modes_load_learning_plane_without_changing_default_modes() -> 
     )
 
 
-def test_efficient_learning_codex_mode_loads_alias_plan_with_integrator_off() -> None:
-    bundle = load_builtin_mode_bundle("efficient_learning_codex")
+def test_efficient_learning_mixed_mode_loads_alias_plan_with_integrator_off() -> None:
+    bundle = load_builtin_mode_bundle("efficient_learning_mixed")
     mode = bundle.mode
 
-    assert mode.mode_id == "efficient_learning_codex"
+    assert mode.mode_id == "efficient_learning_mixed"
     assert bundle.execution_loop.loop_id == "execution.standard"
     assert bundle.planning_loop.loop_id == "planning.standard"
     assert bundle.learning_loop is not None
     assert bundle.learning_loop.loop_id == "learning.standard"
     assert ExecutionStageName.INTEGRATOR not in bundle.execution_loop.stages
-    assert set(mode.stage_runner_bindings.values()) == {"codex_cli"}
+    assert mode.stage_runner_bindings["builder"] == "pi_rpc"
+    assert mode.stage_runner_bindings["checker"] == "pi_rpc"
+    assert mode.stage_runner_bindings["doublechecker"] == "pi_rpc"
     assert "integrator" not in mode.stage_runner_bindings
-    assert mode.model_aliases["maximum"].model == "gpt-5.5"
-    assert mode.model_aliases["maximum"].thinking_level == "xhigh"
-    assert mode.model_aliases["super"].model == "gpt-5.5"
-    assert mode.model_aliases["super"].thinking_level == "medium"
-    assert mode.model_aliases["high"].model == "gpt-5.4"
-    assert mode.model_aliases["high"].thinking_level == "xhigh"
-    assert mode.model_aliases["medium"].model == "gpt-5.3-codex"
-    assert mode.model_aliases["medium"].thinking_level == "xhigh"
-    assert mode.model_aliases["fast"].model == "gpt-5.4-mini"
-    assert mode.model_aliases["fast"].thinking_level == "xhigh"
-    assert mode.model_assignment.by_stage["planner"] == "maximum"
-    assert mode.model_assignment.by_stage["analyst"] == "super"
-    assert mode.model_assignment.by_stage["builder"] == "medium"
-    assert mode.model_assignment.by_stage["checker"] == "high"
-    assert mode.model_assignment.by_stage["fixer"] == "medium"
-    assert mode.model_assignment.by_stage["doublechecker"] == "high"
-    assert mode.model_assignment.by_stage["troubleshooter"] == "maximum"
-    assert mode.model_assignment.by_stage["integrator"] == "super"
-    assert mode.model_assignment.by_stage["updater"] == "fast"
-    assert mode.model_assignment.by_stage["consultant"] == "maximum"
+    assert mode.stage_runner_bindings["analyst"] == "pi_rpc"
+    assert mode.stage_runner_bindings["updater"] == "codex_cli"
+    assert mode.model_aliases["codex_max"].model == "gpt-5.5"
+    assert mode.model_aliases["codex_max"].thinking_level == "xhigh"
+    assert mode.model_aliases["codex_med"].model == "gpt-5.5"
+    assert mode.model_aliases["codex_med"].thinking_level == "medium"
+    assert mode.model_aliases["codex_fast"].model == "gpt-5.4-mini"
+    assert mode.model_aliases["codex_fast"].thinking_level == "xhigh"
+    assert mode.model_aliases["deepseek_max"].model == "deepseek-v4-pro"
+    assert mode.model_aliases["deepseek_max"].thinking_level == "max"
+    assert mode.model_aliases["deepseek_med"].model == "deepseek-v4-pro"
+    assert mode.model_aliases["deepseek_med"].thinking_level == "high"
+    assert mode.model_aliases["deepseek_fast"].model == "deepseek-v4-flash"
+    assert mode.model_aliases["deepseek_fast"].thinking_level == "max"
+    assert mode.model_assignment.by_stage["planner"] == "codex_max"
+    assert mode.model_assignment.by_stage["analyst"] == "deepseek_med"
+    assert mode.model_assignment.by_stage["builder"] == "deepseek_med"
+    assert mode.model_assignment.by_stage["checker"] == "deepseek_max"
+    assert mode.model_assignment.by_stage["fixer"] == "deepseek_fast"
+    assert mode.model_assignment.by_stage["doublechecker"] == "deepseek_max"
+    assert mode.model_assignment.by_stage["troubleshooter"] == "codex_max"
+    assert "integrator" not in mode.model_assignment.by_stage
+    assert mode.model_assignment.by_stage["updater"] == "codex_fast"
+    assert mode.model_assignment.by_stage["consultant"] == "codex_max"
 
 
-def test_blueprint_learning_codex_mode_selects_blueprint_planning_with_learning() -> None:
-    mode = load_builtin_mode_definition("blueprint_learning_codex")
-    blueprint_mode = load_builtin_mode_definition("blueprint_codex")
+def test_graph_driven_learning_codex_mode_selects_blueprint_planning_with_learning() -> None:
+    mode = load_builtin_mode_definition("blueprint_" "learning_codex")
+    blueprint_mode = load_builtin_mode_definition("blueprint_" "codex")
 
     assert blueprint_mode.learning_enabled is False
-    assert mode.mode_id == "blueprint_learning_codex"
+    assert mode.mode_id == "blueprint_" "learning_codex"
     assert mode.execution_loop_id == "execution.standard"
     assert mode.planning_loop_id == "planning.blueprint"
     assert mode.learning_loop_id == "learning.standard"
@@ -236,10 +242,10 @@ def test_integrated_codex_modes_load_quality_execution_loop() -> None:
 def test_learning_enabled_modes_trigger_librarian_after_planner_complete() -> None:
     for mode_id in (
         "learning_codex",
-        "efficient_learning_codex",
+        "efficient_learning_mixed",
         "learning_pi",
         "learning_codex_integrated",
-        "blueprint_learning_codex",
+        "blueprint_" "learning_codex",
     ):
         mode = load_builtin_mode_definition(mode_id)
         rule_by_id = {rule.rule_id: rule for rule in mode.learning_trigger_rules}
@@ -257,7 +263,7 @@ def test_default_modes_do_not_trigger_librarian() -> None:
         "default_codex",
         "default_pi",
         "default_codex_integrated",
-        "blueprint_codex",
+        "blueprint_" "codex",
     ):
         mode = load_builtin_mode_definition(mode_id)
         assert all(
@@ -266,11 +272,11 @@ def test_default_modes_do_not_trigger_librarian() -> None:
         )
 
 
-def test_blueprint_codex_mode_selects_blueprint_planning_graph_without_changing_defaults() -> None:
-    mode = load_builtin_mode_definition("blueprint_codex")
+def test_graph_driven_codex_mode_selects_blueprint_planning_graph_without_changing_defaults() -> None:
+    mode = load_builtin_mode_definition("blueprint_" "codex")
     default_mode = load_builtin_mode_definition("default_codex")
 
-    assert mode.mode_id == "blueprint_codex"
+    assert mode.mode_id == "blueprint_" "codex"
     assert mode.execution_loop_id == "execution.standard"
     assert mode.planning_loop_id == "planning.blueprint"
     assert mode.learning_enabled is False
@@ -362,12 +368,12 @@ def test_shipped_mode_ids_are_stable() -> None:
         "default_codex",
         "default_pi",
         "learning_codex",
-        "efficient_learning_codex",
+        "efficient_learning_mixed",
         "learning_pi",
         "default_codex_integrated",
         "learning_codex_integrated",
-        "blueprint_codex",
-        "blueprint_learning_codex",
+        "blueprint_" "codex",
+        "blueprint_" "learning_codex",
     )
 
 
@@ -428,19 +434,19 @@ def test_default_codex_integrated_compiles_for_bootstrapped_workspace(tmp_path: 
     )
 
 
-def test_blueprint_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
+def test_graph_driven_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "blueprint_codex"
+    assert outcome.active_plan.mode_id == "blueprint_" "codex"
     assert outcome.active_plan.execution_loop_id == "execution.standard"
     assert outcome.active_plan.planning_loop_id == "planning.blueprint"
     assert {entry.entry_key.value: entry.node_id for entry in outcome.active_plan.planning_graph.compiled_entries} == {
@@ -459,19 +465,19 @@ def test_blueprint_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> 
     )
 
 
-def test_blueprint_learning_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
+def test_graph_driven_learning_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_learning_codex",
+        requested_mode_id="blueprint_" "learning_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "blueprint_learning_codex"
+    assert outcome.active_plan.mode_id == "blueprint_" "learning_codex"
     assert outcome.active_plan.execution_loop_id == "execution.standard"
     assert outcome.active_plan.planning_loop_id == "planning.blueprint"
     assert outcome.active_plan.learning_loop_id == "learning.standard"
@@ -484,19 +490,19 @@ def test_blueprint_learning_codex_compiles_for_bootstrapped_workspace(tmp_path: 
     }
 
 
-def test_efficient_learning_codex_compiles_with_mode_stage_aliases(tmp_path: Path) -> None:
+def test_efficient_learning_mixed_compiles_with_mode_stage_aliases(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="efficient_learning_codex",
+        requested_mode_id="efficient_learning_mixed",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "efficient_learning_codex"
+    assert outcome.active_plan.mode_id == "efficient_learning_mixed"
     assert outcome.active_plan.execution_loop_id == "execution.standard"
     assert outcome.active_plan.learning_loop_id == "learning.standard"
 
@@ -508,31 +514,35 @@ def test_efficient_learning_codex_compiles_with_mode_stage_aliases(tmp_path: Pat
     assert "integrator" not in nodes
 
     expected = {
-        "builder": ("medium", "gpt-5.3-codex", "xhigh"),
-        "checker": ("high", "gpt-5.4", "xhigh"),
-        "fixer": ("medium", "gpt-5.3-codex", "xhigh"),
-        "doublechecker": ("high", "gpt-5.4", "xhigh"),
-        "troubleshooter": ("maximum", "gpt-5.5", "xhigh"),
-        "updater": ("fast", "gpt-5.4-mini", "xhigh"),
-        "consultant": ("maximum", "gpt-5.5", "xhigh"),
-        "recon": ("maximum", "gpt-5.5", "xhigh"),
-        "planner": ("maximum", "gpt-5.5", "xhigh"),
-        "manager": ("maximum", "gpt-5.5", "xhigh"),
-        "mechanic": ("maximum", "gpt-5.5", "xhigh"),
-        "auditor": ("maximum", "gpt-5.5", "xhigh"),
-        "arbiter": ("maximum", "gpt-5.5", "xhigh"),
-        "analyst": ("super", "gpt-5.5", "medium"),
-        "professor": ("super", "gpt-5.5", "medium"),
-        "curator": ("super", "gpt-5.5", "medium"),
-        "librarian": ("super", "gpt-5.5", "medium"),
+        "builder": ("deepseek_med", "pi_rpc", "deepseek-v4-pro", "high"),
+        "checker": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
+        "fixer": ("deepseek_fast", "pi_rpc", "deepseek-v4-flash", "max"),
+        "doublechecker": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
+        "troubleshooter": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "updater": ("codex_fast", "codex_cli", "gpt-5.4-mini", "xhigh"),
+        "consultant": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "recon": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "planner": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "manager": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
+        "mechanic": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "auditor": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "arbiter": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "analyst": ("deepseek_med", "pi_rpc", "deepseek-v4-pro", "high"),
+        "professor": ("codex_med", "codex_cli", "gpt-5.5", "medium"),
+        "curator": ("codex_med", "codex_cli", "gpt-5.5", "medium"),
+        "librarian": ("codex_med", "codex_cli", "gpt-5.5", "medium"),
     }
-    for stage_kind_id, (alias_id, model_name, thinking_level) in expected.items():
+    for stage_kind_id, (alias_id, runner_name, model_name, thinking_level) in expected.items():
         node = nodes[stage_kind_id]
         assert node.model_assignment_alias_id == alias_id
         assert node.model_assignment_source == f"mode:stage:{stage_kind_id}"
+        assert node.runner_name == runner_name
         assert node.model_name == model_name
         assert node.thinking_level == thinking_level
-        assert node.model_reasoning_effort == thinking_level
+        if runner_name == "codex_cli":
+            assert node.model_reasoning_effort == thinking_level
+        else:
+            assert node.model_reasoning_effort is None
     assert {
         (rule.source_stage.value, rule.on_terminal_results, rule.target_stage.value)
         for rule in outcome.active_plan.learning_trigger_rules

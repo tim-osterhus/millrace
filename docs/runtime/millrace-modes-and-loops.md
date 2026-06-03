@@ -43,7 +43,7 @@ The shipped canonical mode ids are:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
-- `efficient_learning_codex`
+- `efficient_learning_mixed`
 - `learning_pi`
 - `default_codex_integrated`
 - `learning_codex_integrated`
@@ -108,6 +108,34 @@ The graph-loop surface does two things today:
 
 That graph surface is real, typed, and runtime-authoritative for both request
 binding and control flow.
+
+### Custom Graph Nodes And Custom Stage Kinds
+
+Millrace supports custom graph nodes and custom stage kinds over canonical
+runtime stages. Shipped stage-kind assets declare `runtime_stage` and
+`required_skill_paths`; node materialization reads required skills from those
+assets rather than a hardcoded stage map. The compiler validates that each
+materialized node carries a known `stage_kind_id` and that stage kind is
+registered in the shipped or workspace-local asset root. Custom stage kinds
+can declare their own `runtime_stage` mapping, entrypoint contract,
+request-context profile, and render-plan authority.
+
+Custom graph nodes use the same typed node-and-edge contract as shipped nodes.
+A graph node selects a registered stage kind and inherits its runtime stage,
+required skills, runner binding, and request-context authority. Mode maps
+such as `stage_entrypoint_overrides`, `stage_skill_additions`, and
+`stage_runner_bindings` apply uniformly whether the node references a shipped
+or custom stage kind.
+
+Arbitrary runtime stages (stage kinds without a declared `runtime_stage`) are
+**not supported yet**. Every node must resolve to a known runtime stage through
+its stage kind or a mode/workspace config overlay. Stale compiled plans missing
+canonical `runtime_stage` on materialized nodes fail with clear recompile or
+update guidance.
+
+Workspace-local mode, graph, stage-kind, and entrypoint assets live under the
+workspace runtime asset root and are not part of the core Millrace package.
+Compile with the active workspace asset root to use custom assets.
 
 ## Shipped Plane Graphs
 
@@ -181,9 +209,10 @@ The mode families differ primarily in `stage_runner_bindings`:
 - `default_pi` binds every shipped stage to `pi_rpc`
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
-- `efficient_learning_codex` binds the same standard learning topology to
-  `codex_cli`, leaves Integrator out of the active execution loop, and carries
-  mode-local model/depth alias assignments for each shipped standard stage
+- `efficient_learning_mixed` binds the same standard learning topology to a
+  mixed Codex/Pi runner profile, leaves Integrator out of the active execution
+  loop, and carries mode-local model/depth alias assignments for each shipped
+  standard stage
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` binds execution with Integrator plus planning to
   `codex_cli`
@@ -198,10 +227,11 @@ Entrypoint, skill-addition, and direct model maps otherwise remain empty in the
 baseline. Harness-only presets keep topology identical; integrated presets
 intentionally select a more expensive execution topology. Learning modes add a
 compiled concurrency policy and learning trigger rules; those are explicit mode
-data, not prompt-only instructions. `efficient_learning_codex` is the one
-shipped mode that uses `model_aliases` and `model_assignment` inside the mode
-asset so its stage-cost profile can travel with the mode instead of depending
-on workspace-local alias defaults.
+data, not prompt-only instructions. `efficient_learning_mixed` is the one
+shipped mode that uses `model_aliases`, `model_assignment`, and
+`stage_runner_bindings` inside the mode asset so its mixed Codex/Pi
+stage-cost profile can travel with the mode instead of depending on
+workspace-local alias defaults.
 
 Specialized repository-local workflows should provide their own workspace-local
 mode, loop, graph, and entrypoint assets under their owning project area, then
@@ -275,9 +305,35 @@ assignment.
 When the selected assignment comes from a mode map, the compiler resolves the
 alias against mode-local aliases first, then workspace aliases. When the
 selected assignment comes from workspace config, the compiler resolves workspace
-aliases first. This lets `efficient_learning_codex` define aliases such as
-`fast` with a different thinking level from the workspace default while still
-allowing explicit operator config to override the preset.
+aliases first. This lets `efficient_learning_mixed` define aliases such as
+`codex_max` and `deepseek_fast` with different meanings from workspace
+defaults while still allowing explicit operator config to override the preset.
+
+`efficient_learning_mixed` ships these mode-local aliases:
+
+| Alias | Runner Family | Model | Thinking Level |
+| --- | --- | --- | --- |
+| `codex_max` | Codex | `gpt-5.5` | `xhigh` |
+| `codex_med` | Codex | `gpt-5.5` | `medium` |
+| `codex_fast` | Codex | `gpt-5.4-mini` | `xhigh` |
+| `deepseek_max` | Pi | `deepseek-v4-pro` | `max` |
+| `deepseek_med` | Pi | `deepseek-v4-pro` | `high` |
+| `deepseek_fast` | Pi | `deepseek-v4-flash` | `max` |
+
+Its active standard-topology stage assignments are:
+
+| Alias | Stages |
+| --- | --- |
+| `codex_max` | `arbiter`, `troubleshooter`, `mechanic`, `planner`, `recon`, `consultant`, `auditor` |
+| `codex_med` | `librarian`, `curator`, `professor` |
+| `codex_fast` | `updater` |
+| `deepseek_max` | `manager`, `checker`, `doublechecker` |
+| `deepseek_med` | `builder`, `analyst` |
+| `deepseek_fast` | `fixer` |
+
+Integrator remains inactive because the mode selects `execution.standard`.
+The compiler rejects stage maps for nodes outside the selected loop, so
+Integrator does not receive an active assignment in this mode.
 
 Example:
 
@@ -382,7 +438,7 @@ Those are the fields that change the compiled runtime plan.
 Fields such as `usage_governance.*` are next-tick runtime settings and do not
 change selected modes, loops, or compiled node bindings.
 
-Use `learning_codex`, `efficient_learning_codex`, `learning_pi`,
+Use `learning_codex`, `efficient_learning_mixed`, `learning_pi`,
 `learning_codex_integrated`, or `blueprint_learning_codex` only when the
 workspace should opt into runtime learning requests, the
 Analyst/Professor/Curator flow, and Planner-triggered Librarian optional-skill

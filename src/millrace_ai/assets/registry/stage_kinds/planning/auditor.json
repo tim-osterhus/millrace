@@ -5,6 +5,8 @@
   "plane": "planning",
   "display_name": "Auditor",
   "default_entrypoint_path": "entrypoints/planning/auditor.md",
+  "request_context_profile_id": "auditor.default",
+  "context_render_plan_id": "stage_request.default.v1",
   "required_skill_paths": [
     "skills/stage/planning/auditor-core/SKILL.md"
   ],
@@ -34,7 +36,9 @@
     "stage_result",
     "incident_report"
   ],
-  "allowed_work_item_families": ["incident"],
+  "allowed_work_item_families": [
+    "incident"
+  ],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",
@@ -48,5 +52,6 @@
   "can_start_specs": false,
   "can_start_incidents": true,
   "recovery_role": null,
-  "closure_role": false
+  "closure_role": false,
+  "runtime_stage": "auditor"
 }

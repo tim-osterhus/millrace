@@ -60,7 +60,7 @@ follow-up packet wave should look for cohesive reasons to change.
 
 Post-wave snapshot from FU-9 Packet 01 (`uv run python scripts/maintenance/repo_shape_report.py`):
 
-- `src/millrace_ai/runtime/effects/operation_runners/blueprint_evaluator.py`: 1253 lines
+- `src/millrace_ai/runtime/effects/operation_runners/candidate_evaluation.py`: 1253 lines
 - `src/millrace_ai/runtime/completion_behavior.py`: 948 lines
 - `src/millrace_ai/runtime/supervisor.py`: 924 lines
 - `src/millrace_ai/runtime/effect_execution.py`: 806 lines

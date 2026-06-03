@@ -5,9 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
-    ExecutionStageName,
-    ExecutionTerminalResult,
-    PlanningStageName,
     RecoveryCounterEntry,
     RecoveryCounters,
     RuntimeSnapshot,
@@ -32,53 +29,27 @@ def increment_route_counters(
     work_item_family_id = snapshot.active_work_item_family_id
     work_item_kind = snapshot.active_work_item_kind
     work_item_id = snapshot.active_work_item_id
-    if work_item_family_id is None or work_item_id is None:
+    if (work_item_family_id is None and work_item_kind is None) or work_item_id is None:
         return snapshot
-    if decision.next_stage is ExecutionStageName.TROUBLESHOOTER:
+    counter_mutation_name = decision.counter_mutation_name or decision.recovery_counter_name
+    if counter_mutation_name is not None:
         snapshot = increment_counter_field(
             engine,
             snapshot,
             engine.counters,
-            failure_class=decision.failure_class or "recoverable_failure",
+            failure_class=decision.failure_class or _default_failure_class_for_counter(counter_mutation_name),
             work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
-            field="troubleshoot_attempt_count",
-        )
-    elif decision.next_stage is PlanningStageName.MECHANIC:
-        snapshot = increment_counter_field(
-            engine,
-            snapshot,
-            engine.counters,
-            failure_class=decision.failure_class or "recoverable_failure",
-            work_item_family_id=work_item_family_id,
-            work_item_kind=work_item_kind,
-            work_item_id=work_item_id,
-            field="mechanic_attempt_count",
-        )
-    elif decision.next_stage is ExecutionStageName.CONSULTANT:
-        snapshot = increment_counter_field(
-            engine,
-            snapshot,
-            engine.counters,
-            failure_class=decision.failure_class or "recoverable_failure",
-            work_item_family_id=work_item_family_id,
-            work_item_kind=work_item_kind,
-            work_item_id=work_item_id,
-            field="consultant_invocations",
-        )
-    elif stage_result.terminal_result is ExecutionTerminalResult.FIX_NEEDED:
-        snapshot = increment_counter_field(
-            engine,
-            snapshot,
-            engine.counters,
-            failure_class=decision.failure_class or "fix_cycle",
-            work_item_family_id=work_item_family_id,
-            work_item_kind=work_item_kind,
-            work_item_id=work_item_id,
-            field="fix_cycle_count",
+            field=counter_mutation_name,
         )
     return snapshot
+
+
+def _default_failure_class_for_counter(counter_name: str) -> str:
+    if counter_name == "fix_cycle_count":
+        return "fix_cycle"
+    return "recoverable_failure"
 
 
 def increment_counter_field(

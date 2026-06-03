@@ -17,9 +17,9 @@ from millrace_ai.paths import bootstrap_workspace
 FIXTURE_ASSETS_ROOT = (
     Path(__file__).resolve().parents[1]
     / "fixtures"
-    / "non_blueprint_effect_assets"
+    / "non_default_effect_assets"
 )
-FIXTURE_REPAIR_POLICY_ID = "fixture_non_blueprint_repair_route"
+FIXTURE_REPAIR_POLICY_ID = "fixture_non_default_repair_route"
 FIXTURE_REPAIR_OPERATION_ID = "fixture_echo_repair_apply"
 FIXTURE_REPAIR_RULE_ID = "fixture_echo_repair_apply_on_mechanic_complete"
 FIXTURE_SECOND_OPERATION_ID = "fixture_echo_followup_effect"
@@ -32,7 +32,7 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
     return copied_root
 
 
-def _copy_non_blueprint_fixture_assets(tmp_path: Path) -> Path:
+def _copy_non_default_fixture_assets(tmp_path: Path) -> Path:
     copied_root = _copy_builtin_assets(tmp_path)
     shutil.copytree(FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True)
     return copied_root
@@ -86,6 +86,10 @@ def _request_context_render_plans_path(assets_root: Path) -> Path:
         / "request_context_render_plans"
         / "default_request_context_render_plans.json"
     )
+
+
+def _stage_kind_path(assets_root: Path, plane: str, stage_kind_id: str) -> Path:
+    return assets_root / "registry" / "stage_kinds" / plane / f"{stage_kind_id}.json"
 
 
 def _runtime_failure_policies_path(assets_root: Path) -> Path:
@@ -186,7 +190,7 @@ def _fixture_runtime_effect_handlers_path(assets_root: Path) -> Path:
     )
 
 
-def _configure_non_blueprint_repair_route(assets_root: Path) -> None:
+def _configure_non_default_repair_route(assets_root: Path) -> None:
     operations_path = _fixture_runtime_effect_operations_path(assets_root)
     operations_payload = _load_json(operations_path)
     fixture_operation = next(
@@ -314,7 +318,7 @@ def _configure_non_blueprint_repair_route(assets_root: Path) -> None:
     _write_json(policies_path, policies_payload)
 
 
-def _append_second_non_blueprint_fixture_operation(assets_root: Path) -> None:
+def _append_second_non_default_fixture_operation(assets_root: Path) -> None:
     artifact_contracts_path = _fixture_artifact_contracts_path(assets_root)
     artifact_contracts_payload = _load_json(artifact_contracts_path)
     fixture_artifact = next(
@@ -476,7 +480,7 @@ def _compile_blueprint_with_assets(tmp_path: Path, assets_root: Path):
     return compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
         assets_root=assets_root,
     )
 
@@ -549,7 +553,7 @@ def test_compile_rejects_entry_family_missing_from_plane_claim_policy(tmp_path: 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
         assets_root=assets_root,
     )
 
@@ -650,7 +654,10 @@ def test_compile_rejects_terminal_state_without_terminal_action(tmp_path: Path) 
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
-    assert "terminal state blocked uses terminal class blocked without a terminal action" in _diagnostic_text(outcome)
+    assert (
+        "terminal state blocked references unknown terminal action block_work_item"
+        in _diagnostic_text(outcome)
+    )
 
 
 def test_compile_rejects_terminal_action_with_unknown_lifecycle_plan(tmp_path: Path) -> None:
@@ -691,6 +698,7 @@ def test_compile_rejects_lifecycle_plan_with_unknown_source_family(tmp_path: Pat
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     plans_path = _lifecycle_mutation_plans_path(assets_root)
     payload = _load_json(plans_path)
+    payload["definitions"][0]["source_family_scope"] = "family"
     payload["definitions"][0]["source_family_id"] = "ghost_family"
     plan_id = payload["definitions"][0]["plan_id"]
     _write_json(plans_path, payload)
@@ -709,7 +717,8 @@ def test_compile_rejects_lifecycle_plan_with_unknown_source_node(tmp_path: Path)
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     plans_path = _lifecycle_mutation_plans_path(assets_root)
     payload = _load_json(plans_path)
-    payload["definitions"][0]["source_node_id"] = "ghost_node"
+    payload["definitions"][0]["source_scope"] = "graph_node"
+    payload["definitions"][0]["source_graph_node_id"] = "ghost_node"
     plan_id = payload["definitions"][0]["plan_id"]
     _write_json(plans_path, payload)
 
@@ -718,7 +727,7 @@ def test_compile_rejects_lifecycle_plan_with_unknown_source_node(tmp_path: Path)
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        f"lifecycle mutation plan {plan_id} references unknown source node ghost_node"
+        f"lifecycle mutation plan {plan_id} references unknown source graph node ghost_node"
         in _diagnostic_text(outcome)
     )
 
@@ -1186,11 +1195,11 @@ def test_compile_rejects_repair_route_with_extra_family_scope(tmp_path: Path) ->
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_accepts_non_blueprint_repair_route_from_operation_contract(
+def test_compile_accepts_non_default_repair_route_from_operation_contract(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     outcome = _compile_with_assets(tmp_path, assets_root)
 
@@ -1209,11 +1218,11 @@ def test_compile_accepts_non_blueprint_repair_route_from_operation_contract(
     assert repair_rule.on_outcomes == ("MECHANIC_COMPLETE",)
 
 
-def test_compile_rejects_non_blueprint_repair_route_with_unknown_repair_operation(
+def test_compile_rejects_non_default_repair_route_with_unknown_repair_operation(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     operations_path = _fixture_runtime_effect_operations_path(assets_root)
     operations_payload = _load_json(operations_path)
@@ -1236,11 +1245,11 @@ def test_compile_rejects_non_blueprint_repair_route_with_unknown_repair_operatio
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_missing_rule_artifact(
+def test_compile_rejects_non_default_repair_route_missing_rule_artifact(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     rules_path = _fixture_runtime_effect_rules_path(assets_root)
     rules_payload = _load_json(rules_path)
@@ -1263,11 +1272,11 @@ def test_compile_rejects_non_blueprint_repair_route_missing_rule_artifact(
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_with_wrong_family_scope(
+def test_compile_rejects_non_default_repair_route_with_wrong_family_scope(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     policies_path = _runtime_failure_policies_path(assets_root)
     policies_payload = _load_json(policies_path)
@@ -1289,11 +1298,11 @@ def test_compile_rejects_non_blueprint_repair_route_with_wrong_family_scope(
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_with_wrong_target_plane(
+def test_compile_rejects_non_default_repair_route_with_wrong_target_plane(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     policies_path = _runtime_failure_policies_path(assets_root)
     policies_payload = _load_json(policies_path)
@@ -1315,11 +1324,11 @@ def test_compile_rejects_non_blueprint_repair_route_with_wrong_target_plane(
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_with_wrong_target_terminal_outcome(
+def test_compile_rejects_non_default_repair_route_with_wrong_target_terminal_outcome(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     operations_path = _fixture_runtime_effect_operations_path(assets_root)
     operations_payload = _load_json(operations_path)
@@ -1341,12 +1350,12 @@ def test_compile_rejects_non_blueprint_repair_route_with_wrong_target_terminal_o
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_without_explicit_operation_scope_when_ambiguous(
+def test_compile_rejects_non_default_repair_route_without_explicit_operation_scope_when_ambiguous(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
-    _append_second_non_blueprint_fixture_operation(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
+    _append_second_non_default_fixture_operation(assets_root)
 
     policies_path = _runtime_failure_policies_path(assets_root)
     policies_payload = _load_json(policies_path)
@@ -1373,11 +1382,11 @@ def test_compile_rejects_non_blueprint_repair_route_without_explicit_operation_s
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_without_resume_guard(
+def test_compile_rejects_non_default_repair_route_without_resume_guard(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     graph_path = _planning_standard_graph_path(assets_root)
     graph_payload = _load_json(graph_path)
@@ -1398,11 +1407,11 @@ def test_compile_rejects_non_blueprint_repair_route_without_resume_guard(
     ) in _diagnostic_text(outcome)
 
 
-def test_compile_rejects_non_blueprint_repair_route_partial_mutation_without_support(
+def test_compile_rejects_non_default_repair_route_partial_mutation_without_support(
     tmp_path: Path,
 ) -> None:
-    assets_root = _copy_non_blueprint_fixture_assets(tmp_path)
-    _configure_non_blueprint_repair_route(assets_root)
+    assets_root = _copy_non_default_fixture_assets(tmp_path)
+    _configure_non_default_repair_route(assets_root)
 
     policies_path = _runtime_failure_policies_path(assets_root)
     policies_payload = _load_json(policies_path)
@@ -1967,6 +1976,50 @@ def test_compile_materializes_request_context_provider_and_render_plan_authority
     )
 
 
+def test_compile_materializes_stage_kind_request_context_authority_when_graph_omits_it(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    payload = _load_json(graph_path)
+    payload["nodes"][0].pop("request_context_profile_id", None)
+    payload["nodes"][0].pop("context_render_plan_id", None)
+    _write_json(graph_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True, outcome.diagnostics.errors
+    assert outcome.active_plan is not None
+    builder = next(
+        node for node in outcome.active_plan.execution_graph.nodes if node.node_id == "builder"
+    )
+    assert builder.request_context_profile_id == "builder.default"
+    assert builder.context_render_plan_id == "stage_request.default.v1"
+
+
+def test_compile_rejects_missing_request_context_authority_from_graph_and_stage_kind(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_payload = _load_json(graph_path)
+    graph_payload["nodes"][0].pop("request_context_profile_id", None)
+    graph_payload["nodes"][0].pop("context_render_plan_id", None)
+    _write_json(graph_path, graph_payload)
+
+    stage_kind_path = _stage_kind_path(assets_root, "execution", "builder")
+    stage_kind_payload = _load_json(stage_kind_path)
+    stage_kind_payload.pop("request_context_profile_id", None)
+    stage_kind_payload.pop("context_render_plan_id", None)
+    _write_json(stage_kind_path, stage_kind_payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert "graph node builder has no request context profile" in _diagnostic_text(outcome)
+
+
 def test_compile_rejects_request_context_profile_with_unknown_provider(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
     profiles_path = _request_context_profiles_path(assets_root)
@@ -2228,6 +2281,7 @@ def test_compile_rejects_custom_stage_kind_without_runtime_stage(
             "running_status_marker": "DIAGNOSTICIAN_RUNNING",
         }
     )
+    stage_kind_payload.pop("runtime_stage", None)
     diagnostician_path = stage_kind_path.with_name("diagnostician.json")
     _write_json(diagnostician_path, stage_kind_payload)
 

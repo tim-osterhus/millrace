@@ -14,6 +14,7 @@ QueueClaimPolicyId = str
 TerminalActionId = str
 LifecycleMutationPlanId = str
 RuntimeEffectHandlerId = str
+TerminalActionRuntimeOperationId = str
 RuntimeEffectOperationRunnerId = str
 RuntimeEffectRuleId = str
 RequestContextProfileId = str
@@ -35,4 +36,3 @@ _BUILTIN_QUEUE_LIFECYCLE_ADAPTER_IDS: dict[str, QueueLifecycleAdapterId] = {
 def builtin_queue_lifecycle_adapter_id_for_family(family_id: str) -> QueueLifecycleAdapterId | None:
     normalized_family_id = normalize_canonical_id(family_id, field_label="family_id")
     return _BUILTIN_QUEUE_LIFECYCLE_ADAPTER_IDS.get(normalized_family_id)
-

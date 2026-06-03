@@ -64,7 +64,14 @@ Millrace runs three kinds of work planes:
 
 The default modes keep Planning and Execution serial. Learning-enabled modes can run one Learning stage alongside one foreground Planning or Execution stage. Runtime-owned mutation remains serialized by the daemon.
 
-Current shipped modes include standard Codex and Pi modes, learning-enabled modes, opt-in Integrator quality modes, Blueprint Planning modes, and `efficient_learning_codex`, which uses standard Learning topology with a mode-local mixed-cost model profile. See `docs/runtime/millrace-modes-and-loops.md` and `docs/graphs/graphs-index.md` for the exact mode and graph matrix.
+Current shipped modes include standard Codex and Pi modes, learning-enabled modes, opt-in Integrator quality modes, Blueprint Planning modes, and `efficient_learning_mixed`, which uses standard Learning topology with a mode-local mixed Codex/Pi model profile. See `docs/runtime/millrace-modes-and-loops.md` and `docs/graphs/graphs-index.md` for the exact mode and graph matrix.
+
+Millrace supports custom graph nodes and custom stage kinds over canonical
+runtime stages. Workspace-local assets for modes, graphs, stage kinds, and
+entrypoints can declare new node types without altering the core package.
+Arbitrary runtime stages (stage kinds without a declared `runtime_stage`) are
+not yet supported. See `docs/runtime/millrace-modes-and-loops.md` for the
+authoritative stage-kind and graph-node contract.
 
 ## First Useful Run
 

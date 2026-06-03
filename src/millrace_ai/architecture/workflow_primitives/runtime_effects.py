@@ -217,6 +217,16 @@ class RuntimeEffectRuleDefinition(ArchitectureContractModel):
     lineage_policy: Literal["preserve_root", "require_root", "derive_from_source"]
     applies_before_route: bool
     lifecycle_mutation_plan_id: LifecycleMutationPlanId | None = None
+    source_completion_lifecycle_mutation_plan_id: LifecycleMutationPlanId | None = None
+    source_blocking_lifecycle_mutation_plan_id: LifecycleMutationPlanId | None = None
+    source_completion_lifecycle_mutation_plan_ids_by_family: dict[
+        WorkItemFamilyId,
+        LifecycleMutationPlanId,
+    ] = Field(default_factory=dict)
+    source_blocking_lifecycle_mutation_plan_ids_by_family: dict[
+        WorkItemFamilyId,
+        LifecycleMutationPlanId,
+    ] = Field(default_factory=dict)
 
     @field_validator(
         "rule_id",
@@ -225,6 +235,8 @@ class RuntimeEffectRuleDefinition(ArchitectureContractModel):
         "handler_id",
         "destination_family_id",
         "lifecycle_mutation_plan_id",
+        "source_completion_lifecycle_mutation_plan_id",
+        "source_blocking_lifecycle_mutation_plan_id",
     )
     @classmethod
     def validate_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
@@ -250,6 +262,35 @@ class RuntimeEffectRuleDefinition(ArchitectureContractModel):
             field_label="required_handler_capabilities",
             allow_empty=True,
         )
+
+    @field_validator(
+        "source_completion_lifecycle_mutation_plan_ids_by_family",
+        "source_blocking_lifecycle_mutation_plan_ids_by_family",
+        mode="before",
+    )
+    @classmethod
+    def normalize_lifecycle_plan_maps(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(f"{info.field_name or 'lifecycle plan map'} must be a mapping")
+        normalized: dict[str, str] = {}
+        for raw_family_id, raw_plan_id in value.items():
+            family_id = normalize_canonical_id(
+                str(raw_family_id),
+                field_label=f"{info.field_name or 'lifecycle plan map'} key",
+            )
+            if family_id in normalized:
+                raise ValueError(f"duplicate {info.field_name or 'lifecycle plan map'} key: {family_id}")
+            normalized[family_id] = normalize_canonical_id(
+                str(raw_plan_id),
+                field_label=f"{info.field_name or 'lifecycle plan map'} value",
+            )
+        return normalized
 
     @model_validator(mode="after")
     def validate_destination(self) -> "RuntimeEffectRuleDefinition":

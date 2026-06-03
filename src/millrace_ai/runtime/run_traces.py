@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 from pydantic import ValidationError
 
@@ -345,8 +345,10 @@ def _edge_from_decision(
     spawned_work: tuple[RunTraceSpawnedWorkRef, ...],
 ) -> RunTraceEdge:
     target_node_id = decision.next_node_id if decision.action is RouterAction.RUN_STAGE else None
-    terminal_state_id = None if target_node_id is not None else _terminal_state_id(stage_result, decision)
-    target_or_terminal = target_node_id or f"terminal:{terminal_state_id}" or decision.action.value
+    terminal_state_id = None if target_node_id is not None else decision.terminal_state_id
+    target_or_terminal = target_node_id or (
+        f"terminal:{terminal_state_id}" if terminal_state_id is not None else decision.action.value
+    )
     return RunTraceEdge(
         trace_edge_id=(
             f"{source_trace_node_id}--{stage_result.terminal_result.value}--{target_or_terminal}"
@@ -356,6 +358,16 @@ def _edge_from_decision(
         edge_kind=_edge_kind_from_decision(stage_result, decision),
         target_node_id=target_node_id,
         terminal_state_id=terminal_state_id,
+        terminal_action_id=decision.terminal_action_id,
+        terminal_action_router_consequence=decision.terminal_action_router_consequence,
+        lifecycle_mutation_plan_id=decision.lifecycle_mutation_plan_id,
+        lifecycle_action_id=decision.lifecycle_action_id,
+        terminal_writes_status=decision.terminal_writes_status,
+        terminal_metadata_source=_terminal_metadata_source(decision),
+        failure_class=decision.failure_class or _string_metadata(stage_result, "failure_class"),
+        create_incident=decision.create_incident,
+        runtime_operation_id=decision.runtime_operation_id
+        or _string_metadata(stage_result, "runtime_effect_operation_id"),
         spawned_work=spawned_work,
         decision_reason=decision.reason,
         decided_at=stage_result.completed_at,
@@ -454,10 +466,22 @@ def _trace_node_id(stage_result: StageResultEnvelope, fallback_index: int | None
     return f"{stage_result.stage.value}-{stage_result.terminal_result.value.lower()}"
 
 
-def _terminal_state_id(stage_result: StageResultEnvelope, decision: RouterDecision) -> str | None:
-    if decision.action is RouterAction.BLOCKED:
-        return "blocked"
-    return str(stage_result.terminal_result.value).lower()
+def _terminal_metadata_source(
+    decision: RouterDecision,
+) -> Literal["graph_resolved", "inferred", "unknown"]:
+    if any(
+        (
+            decision.terminal_state_id,
+            decision.terminal_action_id,
+            decision.lifecycle_mutation_plan_id,
+            decision.lifecycle_action_id,
+            decision.terminal_writes_status,
+        )
+    ):
+        return "graph_resolved"
+    if decision.action in {RouterAction.IDLE, RouterAction.BLOCKED, RouterAction.HANDOFF}:
+        return "unknown"
+    return "unknown"
 
 
 def _status_from_decision(decision: RouterDecision) -> RunTraceStatus:

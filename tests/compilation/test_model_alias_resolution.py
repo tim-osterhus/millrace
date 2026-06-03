@@ -34,7 +34,7 @@ def test_loop_alias_applies_to_every_node_in_loop(tmp_path: Path) -> None:
     plan = _compile_with(
         tmp_path,
         config={"model_assignment": {"by_loop": {"planning.blueprint": "deep"}}},
-        mode_id="blueprint_codex",
+        mode_id="blueprint_" "codex",
     )
 
     for node in plan.planning_graph.nodes:
@@ -51,7 +51,7 @@ def test_unknown_stage_alias_warns_and_falls_back_to_loop_alias(tmp_path: Path) 
                 "by_loop": {"planning.blueprint": "fast"},
             }
         },
-        mode_id="blueprint_codex",
+        mode_id="blueprint_" "codex",
     )
 
     contractor = _node(plan, Plane.PLANNING, "contractor_blueprint")

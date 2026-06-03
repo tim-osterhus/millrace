@@ -70,12 +70,31 @@ def _suppress_repeated_idle_noise(events: list[EventSummary]) -> list[EventSumma
 
 def _details(data: dict[str, object]) -> str:
     if "reason" in data:
-        return f"reason={data['reason']}"
+        parts = [f"reason={data['reason']}"]
+        parts.extend(_terminal_detail_parts(data))
+        return " ".join(parts)
     preferred = ("terminal_result", "next_stage", "compiled_plan_id", "artifact_path")
     parts = [f"{key}={data[key]}" for key in preferred if key in data and data[key] is not None]
+    parts.extend(_terminal_detail_parts(data))
     return " ".join(parts)
+
+
+def _terminal_detail_parts(data: dict[str, object]) -> list[str]:
+    preferred = (
+        "terminal_state_id",
+        "terminal_action_id",
+        "terminal_action_router_consequence",
+        "lifecycle_mutation_plan_id",
+        "lifecycle_action_id",
+        "terminal_writes_status",
+        "runtime_operation_id",
+        "failure_class",
+    )
+    parts = [f"{key}={data[key]}" for key in preferred if data.get(key) is not None]
+    if data.get("create_incident") is True:
+        parts.append("create_incident=true")
+    return parts
 
 
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
-

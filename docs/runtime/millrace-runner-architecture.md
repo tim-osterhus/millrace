@@ -97,8 +97,9 @@ The shipped canonical modes make that explicit:
 - `default_pi` binds every shipped stage to `pi_rpc`
 - `learning_codex` binds execution, planning, and learning stages to
   `codex_cli`
-- `efficient_learning_codex` binds the same standard learning topology to
-  `codex_cli` and applies a mode-local model/depth alias profile
+- `efficient_learning_mixed` binds the same standard learning topology to a
+  mixed Codex/Pi runner profile and applies a mode-local model/depth alias
+  profile. DeepSeek stages use `pi_rpc`; Codex stages use `codex_cli`.
 - `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
 - `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
   while selecting the quality-first `execution.with_integrator` loop
@@ -154,10 +155,11 @@ rendered prompt-context path, and visible context artifact refs. Normalization
 persists those fields into stage-result metadata so `millrace runs show` can
 explain which context the stage actually saw.
 
-Request-context authority follows compiled node data first, then request
-overrides, then deterministic fallback to `<stage_kind_id>.default` and the
-profile's primary render plan. Unknown profile/render-plan ids are treated as
-operator-facing compatibility errors.
+Request-context authority follows graph/stage-kind-declared compiled node data
+first, then request-level explicit fields. Missing or unknown profile/render-plan
+ids are treated as operator-facing stale-plan compatibility errors with
+recompile/update guidance; runtime no longer infers authority from
+`<stage_kind_id>.default`.
 
 Default running markers, legal terminal markers, and fallback
 `allowed_result_classes_by_outcome` values are derived from

@@ -65,6 +65,18 @@ def _render_run_show_lines(summary: InspectedRunSummary) -> tuple[str, ...]:
             f"{_value(summary.runtime_effect_failure_policy_id)}"
         ),
         f"runtime_effect_recovery_action: {_value(summary.runtime_effect_recovery_action)}",
+        f"terminal_state_id: {_value(summary.terminal_state_id)}",
+        f"terminal_action_id: {_value(summary.terminal_action_id)}",
+        (
+            "terminal_action_router_consequence: "
+            f"{_value(summary.terminal_action_router_consequence)}"
+        ),
+        f"lifecycle_mutation_plan_id: {_value(summary.lifecycle_mutation_plan_id)}",
+        f"lifecycle_action_id: {_value(summary.lifecycle_action_id)}",
+        f"terminal_writes_status: {_value(summary.terminal_writes_status)}",
+        f"terminal_metadata_source: {_value(summary.terminal_metadata_source)}",
+        f"terminal_create_incident: {'true' if summary.terminal_create_incident else 'false'}",
+        f"runtime_operation_id: {_value(summary.runtime_operation_id)}",
         f"started_at: {_value(summary.started_at)}",
         f"completed_at: {_value(summary.completed_at)}",
         f"duration_seconds: {_value(summary.duration_seconds)}",
@@ -218,6 +230,17 @@ def _render_compiled_graph_lines(
                 else f"terminal:{edge.terminal_state_id}"
             )
             lines.append(f"  {edge.source_node_id} --{edge.outcome}--> {target}")
+        for state in graph.terminal_states:
+            lines.append(
+                "  terminal_state "
+                f"{state.terminal_state_id}: "
+                f"action={_value(state.terminal_action_id)} "
+                f"router_consequence={_value(state.terminal_action_router_consequence)} "
+                f"lifecycle_plan={_value(state.lifecycle_mutation_plan_id)} "
+                f"lifecycle_action={_value(state.lifecycle_action_id)} "
+                f"writes_status={state.writes_status} "
+                f"create_incident={'true' if state.create_incident else 'false'}"
+            )
     return tuple(lines)
 
 
@@ -250,8 +273,33 @@ def _render_run_trace_lines(trace: RunTraceGraph) -> tuple[str, ...]:
             or edge.target_node_id
             or f"terminal:{edge.terminal_state_id}"
         )
-        lines.append(f"{source_label} {edge.outcome} -> {target}")
+        parts = [f"{source_label} {edge.outcome} -> {target}"]
+        terminal_parts = _trace_edge_terminal_parts(edge)
+        if terminal_parts:
+            parts.append(" ".join(terminal_parts))
+        lines.append(" ".join(parts))
     return tuple(lines)
+
+
+def _trace_edge_terminal_parts(edge: object) -> tuple[str, ...]:
+    parts: list[str] = []
+    if getattr(edge, "terminal_metadata_source", "unknown") != "unknown":
+        parts.append(f"terminal_metadata={getattr(edge, 'terminal_metadata_source')}")
+    if getattr(edge, "terminal_action_id", None) is not None:
+        parts.append(f"action={getattr(edge, 'terminal_action_id')}")
+    if getattr(edge, "terminal_action_router_consequence", None) is not None:
+        parts.append(f"consequence={getattr(edge, 'terminal_action_router_consequence')}")
+    if getattr(edge, "lifecycle_mutation_plan_id", None) is not None:
+        parts.append(f"lifecycle_plan={getattr(edge, 'lifecycle_mutation_plan_id')}")
+    if getattr(edge, "lifecycle_action_id", None) is not None:
+        parts.append(f"lifecycle_action={getattr(edge, 'lifecycle_action_id')}")
+    if getattr(edge, "terminal_writes_status", None) is not None:
+        parts.append(f"writes_status={getattr(edge, 'terminal_writes_status')}")
+    if getattr(edge, "runtime_operation_id", None) is not None:
+        parts.append(f"runtime_operation={getattr(edge, 'runtime_operation_id')}")
+    if getattr(edge, "create_incident", False):
+        parts.append("create_incident=true")
+    return tuple(parts)
 
 
 def _render_token_usage_lines(token_usage: TokenUsage | None) -> tuple[str, ...]:

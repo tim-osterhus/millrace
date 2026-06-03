@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from millrace_ai.contracts import ResultClass, TerminalResult
-from millrace_ai.contracts.stage_metadata import terminal_result_for_plane
+from millrace_ai.contracts import ResultClass, TerminalOutcome
 from millrace_ai.runners.requests import StageRunRequest
 
 
 def terminal_result_for_request(
     request: StageRunRequest,
     token: str,
-) -> TerminalResult | None:
+) -> TerminalOutcome | None:
     if f"### {token}" not in request.legal_terminal_markers:
         return None
-    return terminal_result_for_plane(request.plane, token)
+    return TerminalOutcome(token)
 
 
 def resolve_result_class(

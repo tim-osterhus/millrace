@@ -97,13 +97,7 @@ def _export_graph(
             if entry.node_id in nodes_by_id
         ),
         terminal_states=tuple(
-            GraphExportTerminalState(
-                terminal_state_id=state.terminal_state_id,
-                terminal_class=state.terminal_class.value,
-                writes_status=state.writes_status,
-                emits_artifacts=state.emits_artifacts,
-                ends_plane_run=state.ends_plane_run,
-            )
+            _export_terminal_state(plan, state)
             for state in graph.terminal_states
         ),
         runtime_failure_recovery=(
@@ -120,6 +114,40 @@ def _export_graph(
         ),
         source_refs=plan.source_refs,
         exported_at=datetime.now(timezone.utc),
+    )
+
+
+def _export_terminal_state(plan: CompiledRunPlan, state: object) -> GraphExportTerminalState:
+    terminal_action_id = getattr(state, "terminal_action_id", None)
+    terminal_action = (
+        plan.terminal_actions_by_id.get(terminal_action_id)
+        if isinstance(terminal_action_id, str)
+        else None
+    )
+    lifecycle_plan_id = (
+        terminal_action.lifecycle_mutation_plan_id if terminal_action is not None else None
+    )
+    lifecycle_plan = (
+        plan.lifecycle_mutation_plans_by_id.get(lifecycle_plan_id)
+        if lifecycle_plan_id is not None
+        else None
+    )
+    return GraphExportTerminalState(
+        terminal_state_id=state.terminal_state_id,
+        terminal_class=state.terminal_class.value,
+        writes_status=state.writes_status,
+        terminal_action_id=terminal_action_id,
+        terminal_action_router_consequence=(
+            terminal_action.router_consequence if terminal_action is not None else None
+        ),
+        lifecycle_mutation_plan_id=lifecycle_plan_id,
+        lifecycle_action_id=(
+            lifecycle_plan.lifecycle_action_id if lifecycle_plan is not None else None
+        ),
+        failure_class=terminal_action.failure_class if terminal_action is not None else None,
+        create_incident=terminal_action.create_incident if terminal_action is not None else False,
+        emits_artifacts=state.emits_artifacts,
+        ends_plane_run=state.ends_plane_run,
     )
 
 

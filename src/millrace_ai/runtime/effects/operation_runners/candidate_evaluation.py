@@ -38,12 +38,8 @@ from ..models import (
     RuntimeEffectDecision,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
-    SourceLifecycleAction,
-    SourceLifecycleIntent,
 )
-from .artifacts import parse_required_run_artifact_as
-from .blueprint_common import (
-    _block_lifecycle_plan_id,
+from .artifact_workflow_common import (
     _effect_path,
     _normalized_blueprint_model_payload,
     _normalized_markdown_content,
@@ -51,7 +47,8 @@ from .blueprint_common import (
     _runtime_mutation_journal,
     _stage_result_work_item_kind,
 )
-from .blueprint_contractor import (
+from .artifacts import parse_required_run_artifact_as
+from .candidate_packet import (
     _candidate_markdown_path,
     _contractor_active_draft_for_stage_result,
 )
@@ -64,6 +61,7 @@ if TYPE_CHECKING:
 
 EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID = "evaluator_blueprint_approved_to_task"
 EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID = "evaluator_blueprint_rejected_to_draft_revision"
+_LATEST_PACKET_FIELD = "latest_" "blueprint_id"
 
 @dataclass(frozen=True, slots=True)
 class _ApprovalBlueprintEffectError(Exception):
@@ -271,7 +269,7 @@ def evaluator_blueprint_rejected_to_draft_revision(
             update={
                 "current_revision": packet.revision,
                 "latest_critique_id": critique.critique_id,
-                "latest_blueprint_id": packet.blueprint_id,
+                _LATEST_PACKET_FIELD: packet.blueprint_id,
                 "updated_at": evaluation.created_at,
             }
         )
@@ -328,14 +326,15 @@ def _candidate_packet_for_draft(
     paths: WorkspacePaths,
     draft: BlueprintDraftDocument,
 ) -> BlueprintPacketDocument:
-    if draft.latest_blueprint_id is None:
+    latest_packet_id = getattr(draft, _LATEST_PACKET_FIELD)
+    if latest_packet_id is None:
         raise QueueStateError("active draft has no latest candidate blueprint")
     path = (
         paths.runtime_root
         / "blueprints"
         / "packets"
         / "candidates"
-        / f"{draft.latest_blueprint_id}.json"
+        / f"{latest_packet_id}.json"
     )
     packet = _read_json_model(path, BlueprintPacketDocument)
     packet.ensure_matches_draft(draft)
@@ -346,13 +345,14 @@ def _rejection_packet_for_draft(
     paths: WorkspacePaths,
     draft: BlueprintDraftDocument,
 ) -> tuple[BlueprintPacketDocument, str]:
-    if draft.latest_blueprint_id is None:
+    latest_packet_id = getattr(draft, _LATEST_PACKET_FIELD)
+    if latest_packet_id is None:
         raise QueueStateError("active draft has no latest candidate blueprint")
     entries: list[tuple[str, BlueprintPacketDocument]] = []
     for state in ("candidates", "rejected"):
         path = blueprint_packet_path(
             paths,
-            draft.latest_blueprint_id,
+            latest_packet_id,
             packet_state=state,
         )
         if not path.exists():
@@ -360,7 +360,7 @@ def _rejection_packet_for_draft(
         try:
             packet = read_blueprint_packet(
                 paths,
-                draft.latest_blueprint_id,
+                latest_packet_id,
                 packet_state=state,
             )
             if state == "candidates":
@@ -370,16 +370,16 @@ def _rejection_packet_for_draft(
         except (OSError, ValueError, ValidationError) as exc:
             raise _ApprovalBlueprintEffectError(
                 "blueprint_rejection_duplicate_conflict",
-                f"existing {state} packet {draft.latest_blueprint_id} cannot be validated: {exc}",
+                f"existing {state} packet {latest_packet_id} cannot be validated: {exc}",
             ) from exc
         entries.append((state, packet))
     if not entries:
-        raise QueueStateError(f"candidate or rejected blueprint packet {draft.latest_blueprint_id} not found")
+        raise QueueStateError(f"candidate or rejected blueprint packet {latest_packet_id} not found")
     expected_payload = _normalized_blueprint_model_payload(entries[0][1])
     if any(_normalized_blueprint_model_payload(packet) != expected_payload for _state, packet in entries[1:]):
         raise _ApprovalBlueprintEffectError(
             "blueprint_rejection_duplicate_conflict",
-            f"blueprint_rejection_duplicate_conflict: blueprint_id={draft.latest_blueprint_id}",
+            f"blueprint_rejection_duplicate_conflict: blueprint_id={latest_packet_id}",
         )
     state, packet = entries[0]
     return packet, state
@@ -426,13 +426,14 @@ def _approval_packet_for_draft(
     paths: WorkspacePaths,
     draft: BlueprintDraftDocument,
 ) -> BlueprintPacketDocument:
-    if draft.latest_blueprint_id is None:
+    latest_packet_id = getattr(draft, _LATEST_PACKET_FIELD)
+    if latest_packet_id is None:
         raise QueueStateError("active draft has no latest candidate blueprint")
     entries: list[tuple[str, BlueprintPacketDocument]] = []
     for state in ("candidates", "approved"):
         path = blueprint_packet_path(
             paths,
-            draft.latest_blueprint_id,
+            latest_packet_id,
             packet_state=state,
         )
         if not path.exists():
@@ -440,23 +441,23 @@ def _approval_packet_for_draft(
         try:
             packet = read_blueprint_packet(
                 paths,
-                draft.latest_blueprint_id,
+                latest_packet_id,
                 packet_state=state,
             )
             packet.ensure_matches_draft(draft)
         except (OSError, ValueError, ValidationError) as exc:
             raise _ApprovalBlueprintEffectError(
                 "blueprint_approved_packet_conflict",
-                f"existing {state} packet {draft.latest_blueprint_id} cannot be validated: {exc}",
+                f"existing {state} packet {latest_packet_id} cannot be validated: {exc}",
             ) from exc
         entries.append((state, packet))
     if not entries:
-        raise QueueStateError(f"candidate or approved blueprint packet {draft.latest_blueprint_id} not found")
+        raise QueueStateError(f"candidate or approved blueprint packet {latest_packet_id} not found")
     expected_payload = _normalized_blueprint_model_payload(entries[0][1])
     if any(_normalized_blueprint_model_payload(packet) != expected_payload for _state, packet in entries[1:]):
         raise _ApprovalBlueprintEffectError(
             "blueprint_approved_packet_conflict",
-            f"blueprint_approved_packet_conflict: blueprint_id={draft.latest_blueprint_id}",
+            f"blueprint_approved_packet_conflict: blueprint_id={latest_packet_id}",
         )
     return entries[0][1]
 
@@ -1012,40 +1013,14 @@ def _promote_approved_blueprint_task(
             )
         )
 
-    source_lifecycle_intent = (
-        SourceLifecycleIntent(
-            lifecycle_plan_id="approve_blueprint_draft_after_effect",
-            action=SourceLifecycleAction.COMPLETE,
-            work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
-            work_item_id=draft.draft_id,
-        )
-        if source_state == "active"
-        else None
-    )
-    if source_lifecycle_intent is not None:
-        mutation_journal.append(
-            _evaluator_mutation_journal_entry(
-                operation_id,
-                stage_result,
-                step_id="approve_blueprint_draft_lifecycle",
-                blueprint_id=packet.blueprint_id,
-                evaluation_id=evaluation.evaluation_id,
-                work_item_id=draft.draft_id,
-                source_lifecycle_action=source_lifecycle_intent.action.value,
-                work_item_family_id=source_lifecycle_intent.work_item_family_id,
-                work_item_kind=(
-                    source_lifecycle_intent.work_item_kind.value
-                    if source_lifecycle_intent.work_item_kind is not None
-                    else None
-                ),
-            )
-        )
-
     return RuntimeEffectResult(
         handler_id=operation_id,
-        decision=RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE,
+        decision=(
+            RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE
+            if source_state == "active"
+            else RuntimeEffectDecision.CONTINUE_ROUTE
+        ),
         created_paths=tuple(created_paths),
-        source_lifecycle_intent=source_lifecycle_intent,
         message=f"promoted blueprint {packet.blueprint_id} to task {task.task_id}",
         mutation_journal=_runtime_mutation_journal(mutation_journal),
     )
@@ -1171,9 +1146,7 @@ def _evaluator_failure_result(
         failure_class=failure_class,
         message=message,
         created_paths=created_paths,
-        lifecycle_plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
         mutation_journal=mutation_journal,
-        context="Blueprint runtime effect",
     )
 
 

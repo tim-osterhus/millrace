@@ -1009,6 +1009,39 @@ def test_learning_pre_dispatch_failure_keeps_foreground_active_run_and_blocks_le
     engine.close()
 
 
+def test_pre_dispatch_recovery_exhaustion_uses_terminal_action_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    assert engine.snapshot is not None
+    engine.snapshot = engine.snapshot.model_copy(update={"mechanic_attempt_count": 2})
+
+    decision = schedule_pre_dispatch_exception_recovery(
+        engine,
+        error=RuntimeError("planning setup exploded after repair threshold"),
+        plane=Plane.PLANNING,
+        failed_stage=PlanningStageName.MANAGER,
+        work_item_family_id=WorkItemKind.SPEC.value,
+        work_item_kind=WorkItemKind.SPEC,
+        work_item_id="spec-runtime-failure",
+        run_id="run-runtime-failure",
+    )
+
+    assert decision.action.value == "blocked"
+    assert decision.reason == (
+        "runtime_exception:planning_pre_dispatch_failed:repair_attempts_exhausted"
+    )
+    assert decision.failure_class == "planning_pre_dispatch_failed"
+    assert decision.terminal_state_id == "blocked"
+    assert decision.terminal_action_id == "block_work_item"
+    assert decision.terminal_action_router_consequence == "blocked"
+    assert decision.lifecycle_mutation_plan_id == "block_work_item"
+    assert decision.lifecycle_action_id == "block"
+    engine.close()
+
+
 def test_maybe_activate_completion_stage_backfills_open_target_from_done_root_spec(
     tmp_path: Path,
 ) -> None:

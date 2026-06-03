@@ -7,9 +7,11 @@ from pathlib import Path
 import millrace_ai
 from millrace_ai.cli.monitoring import BasicTerminalMonitor
 from millrace_ai.contracts import ExecutionStageName, LearningRequestDocument, TaskDocument
+from millrace_ai.events import read_runtime_events
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
+from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.monitoring import (
@@ -167,6 +169,61 @@ def test_runtime_tick_emits_stage_router_and_status_events(tmp_path: Path) -> No
     assert completed.payload["run_id"]
     assert completed.payload["duration_seconds"] == 1.0
     assert completed.payload["summary_status_marker"] == "### BUILDER_COMPLETE"
+
+
+def test_runtime_tick_router_events_preserve_graph_authority_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    monitor = CaptureMonitor()
+    engine = RuntimeEngine(paths, stage_runner=_builder_complete_runner, monitor=monitor)
+    engine.startup()
+
+    def route_with_terminal_metadata(*_args, **_kwargs) -> RouterDecision:
+        return RouterDecision(
+            action=RouterAction.RUN_STAGE,
+            next_plane=None,
+            next_stage=ExecutionStageName.CHECKER,
+            next_node_id="checker",
+            next_stage_kind_id="checker",
+            reason="test_graph_authority_metadata",
+            terminal_state_id="builder_complete",
+            terminal_action_id="continue_to_checker",
+            terminal_action_router_consequence="run_stage",
+            lifecycle_mutation_plan_id="keep_task_active",
+            lifecycle_action_id="noop",
+            terminal_writes_status="BUILDER_COMPLETE",
+            failure_class="graph_failure_class",
+            runtime_operation_id="operation.continue_to_checker",
+            create_incident=True,
+        )
+
+    monkeypatch.setattr(engine, "_route_stage_result", route_with_terminal_metadata)
+
+    engine.tick()
+
+    runtime_event = next(
+        event for event in read_runtime_events(paths) if event.event_type == "router_decision"
+    )
+    monitor_event = next(event for event in monitor.events if event.event_type == "router_decision")
+    expected = {
+        "terminal_state_id": "builder_complete",
+        "terminal_action_id": "continue_to_checker",
+        "terminal_action_router_consequence": "run_stage",
+        "lifecycle_mutation_plan_id": "keep_task_active",
+        "lifecycle_action_id": "noop",
+        "terminal_writes_status": "BUILDER_COMPLETE",
+        "failure_class": "graph_failure_class",
+        "create_incident": True,
+        "runtime_operation_id": "operation.continue_to_checker",
+    }
+
+    for key, value in expected.items():
+        assert runtime_event.data[key] == value
+        assert monitor_event.payload[key] == value
 
 
 def test_runtime_effect_monitor_payload_preserves_operator_diagnostic_fields() -> None:

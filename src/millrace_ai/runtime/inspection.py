@@ -12,14 +12,6 @@ from pydantic import ValidationError
 
 from millrace_ai.contracts import RunTraceGraph, StageResultEnvelope, TokenUsage, WorkItemKind
 from millrace_ai.paths import WorkspacePaths, workspace_paths
-from millrace_ai.runtime.blueprint_recovery_diagnostics import (
-    BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES,
-    BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
-    BLUEPRINT_APPROVAL_REPAIR_OPERATION_ID,
-    BLUEPRINT_APPROVAL_REPAIR_POLICY_ID,
-    BLUEPRINT_REPAIR_APPLY_HANDLER_ID,
-    BLUEPRINT_REPAIR_APPLY_OPERATION_ID,
-)
 from millrace_ai.runtime.run_traces import (
     inspect_run_trace as _inspect_run_trace,
 )
@@ -124,6 +116,15 @@ class InspectedRunSummary:
     runtime_effect_mutation_phase: str | None = None
     runtime_effect_failure_policy_id: str | None = None
     runtime_effect_recovery_action: str | None = None
+    terminal_state_id: str | None = None
+    terminal_action_id: str | None = None
+    terminal_action_router_consequence: str | None = None
+    lifecycle_mutation_plan_id: str | None = None
+    lifecycle_action_id: str | None = None
+    terminal_writes_status: str | None = None
+    terminal_metadata_source: str = "unknown"
+    terminal_create_incident: bool = False
+    runtime_operation_id: str | None = None
 
 
 def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
@@ -349,6 +350,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         inspected_stage_results
     )
     runtime_outcome = _runtime_outcome_for_run(resolved_run_dir, latest_stage_result, status)
+    latest_trace_edge = _latest_trace_edge(resolved_run_dir)
     return InspectedRunSummary(
         run_id=resolved_run_dir.name,
         run_dir=str(resolved_run_dir),
@@ -435,6 +437,39 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
             if latest_runtime_effect_stage_result
             else None
         ),
+        terminal_state_id=(
+            latest_trace_edge.terminal_state_id if latest_trace_edge is not None else None
+        ),
+        terminal_action_id=(
+            latest_trace_edge.terminal_action_id if latest_trace_edge is not None else None
+        ),
+        terminal_action_router_consequence=(
+            latest_trace_edge.terminal_action_router_consequence
+            if latest_trace_edge is not None
+            else None
+        ),
+        lifecycle_mutation_plan_id=(
+            latest_trace_edge.lifecycle_mutation_plan_id
+            if latest_trace_edge is not None
+            else None
+        ),
+        lifecycle_action_id=(
+            latest_trace_edge.lifecycle_action_id if latest_trace_edge is not None else None
+        ),
+        terminal_writes_status=(
+            latest_trace_edge.terminal_writes_status if latest_trace_edge is not None else None
+        ),
+        terminal_metadata_source=(
+            latest_trace_edge.terminal_metadata_source
+            if latest_trace_edge is not None
+            else ("inferred" if not (resolved_run_dir / "run_trace.json").is_file() else "unknown")
+        ),
+        terminal_create_incident=(
+            latest_trace_edge.create_incident if latest_trace_edge is not None else False
+        ),
+        runtime_operation_id=(
+            latest_trace_edge.runtime_operation_id if latest_trace_edge is not None else None
+        ),
     )
 
 
@@ -496,65 +531,8 @@ def _latest_runtime_effect_stage_result(
 ) -> InspectedStageResult | None:
     for stage_result in reversed(stage_results):
         if _stage_result_has_runtime_effect_metadata(stage_result):
-            if _is_blueprint_repair_apply_stage_result(stage_result):
-                repair_context = _latest_blueprint_approval_repair_stage_result(
-                    stage_results
-                )
-                if repair_context is not None:
-                    return repair_context
             return stage_result
     return None
-
-
-def _latest_blueprint_approval_repair_stage_result(
-    stage_results: list[InspectedStageResult],
-) -> InspectedStageResult | None:
-    for stage_result in reversed(stage_results):
-        if _is_blueprint_approval_repair_stage_result(stage_result):
-            return stage_result
-    return None
-
-
-def _is_blueprint_repair_apply_stage_result(stage_result: InspectedStageResult) -> bool:
-    return (
-        _matches_runtime_effect_identity(
-            stage_result,
-            operation_id=BLUEPRINT_REPAIR_APPLY_OPERATION_ID,
-            legacy_handler_id=BLUEPRINT_REPAIR_APPLY_HANDLER_ID,
-        )
-        and stage_result.runtime_effect_decision == "request_complete_source"
-    )
-
-
-def _is_blueprint_approval_repair_stage_result(stage_result: InspectedStageResult) -> bool:
-    return (
-        _matches_runtime_effect_identity(
-            stage_result,
-            operation_id=BLUEPRINT_APPROVAL_REPAIR_OPERATION_ID,
-            legacy_handler_id=BLUEPRINT_APPROVAL_REPAIR_HANDLER_ID,
-        )
-        and stage_result.runtime_effect_decision == "request_block_source"
-        and stage_result.runtime_effect_failure_class
-        in BLUEPRINT_APPROVAL_REPAIR_FAILURE_CLASSES
-        and stage_result.runtime_effect_mutation_phase == "pre_mutation"
-        and stage_result.runtime_effect_failure_policy_id
-        == BLUEPRINT_APPROVAL_REPAIR_POLICY_ID
-        and stage_result.runtime_effect_recovery_action == "route_to_node"
-    )
-
-
-def _matches_runtime_effect_identity(
-    stage_result: InspectedStageResult,
-    *,
-    operation_id: str,
-    legacy_handler_id: str,
-) -> bool:
-    if stage_result.runtime_effect_operation_id is not None:
-        return stage_result.runtime_effect_operation_id == operation_id
-    return (
-        stage_result.runtime_effect_handler_id == legacy_handler_id
-        or stage_result.runtime_effect_legacy_handler_id == legacy_handler_id
-    )
 
 
 def _stage_result_has_runtime_effect_metadata(stage_result: InspectedStageResult) -> bool:
@@ -575,6 +553,14 @@ def _stage_result_has_runtime_effect_metadata(stage_result: InspectedStageResult
             stage_result.runtime_effect_recovery_action,
         )
     )
+
+
+def _latest_trace_edge(run_dir: Path):
+    trace_path = run_dir / "run_trace.json"
+    if not trace_path.is_file():
+        return None
+    trace = _inspect_run_trace(run_dir)
+    return trace.edges[-1] if trace.edges else None
 
 
 def _runtime_outcome_for_missing_stage_results(run_dir: Path) -> RunRuntimeOutcome:

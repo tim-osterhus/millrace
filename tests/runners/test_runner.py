@@ -258,6 +258,41 @@ def test_normalize_preserves_noncanonical_stage_kind_identity(tmp_path: Path) ->
     assert envelope.result_class is ResultClass.SUCCESS
 
 
+def test_normalize_structured_output_preserves_custom_request_identity(tmp_path: Path) -> None:
+    request = _request(tmp_path, stage="builder").model_copy(
+        update={
+            "node_id": "builder_custom_node",
+            "stage_kind_id": "builder_custom",
+            "running_status_marker": "BUILDER_CUSTOM_RUNNING",
+            "legal_terminal_markers": ("### BUILDER_COMPLETE",),
+            "allowed_result_classes_by_outcome": {
+                "BUILDER_COMPLETE": (ResultClass.SUCCESS,),
+            },
+        }
+    )
+    terminal_path = tmp_path / "stage_terminal_result.json"
+    terminal_path.write_text(
+        json.dumps(
+            {
+                "stage": "builder",
+                "terminal_result": "BUILDER_COMPLETE",
+                "result_class": "success",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, terminal_result_path=terminal_path),
+    )
+
+    assert envelope.node_id == "builder_custom_node"
+    assert envelope.stage_kind_id == "builder_custom"
+    assert envelope.detected_marker == "### BUILDER_COMPLETE"
+    assert envelope.metadata["normalization_source"] == "structured_result_file"
+
+
 def test_normalize_uses_root_spec_identity_for_closure_target_requests(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="arbiter", request_kind="closure_target")
     stdout_path = tmp_path / "runner_stdout.txt"

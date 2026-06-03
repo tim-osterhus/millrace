@@ -100,6 +100,15 @@ def _trace_summary(trace: RunTraceGraph) -> RunTraceSummary:
                 target_node_id=edge.target_node_id,
                 target_trace_node_id=edge.target_trace_node_id,
                 terminal_state_id=edge.terminal_state_id,
+                terminal_action_id=edge.terminal_action_id,
+                terminal_action_router_consequence=edge.terminal_action_router_consequence,
+                lifecycle_mutation_plan_id=edge.lifecycle_mutation_plan_id,
+                lifecycle_action_id=edge.lifecycle_action_id,
+                terminal_writes_status=edge.terminal_writes_status,
+                terminal_metadata_source=edge.terminal_metadata_source,
+                failure_class=edge.failure_class,
+                create_incident=edge.create_incident,
+                runtime_operation_id=edge.runtime_operation_id,
                 edge_kind=edge.edge_kind,
             )
             for edge in trace.edges

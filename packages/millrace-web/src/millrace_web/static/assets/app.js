@@ -200,10 +200,11 @@ function graphRenderKey(summary, graphs, activeRuns, variant) {
 
 function renderFlowLane(graph, summary, activeRuns) {
   const plane = graph.plane || "execution";
-  const orderedNodes = orderNodesForPlane(plane, graph.nodes || []);
+  const orderedNodes = orderNodesForPlane(graph);
   const activeNodeId = summary.runtime.active_node_id;
   const trace = traceForPlane(summary, plane);
   const traceNodesByNodeId = new Map((trace?.nodes || []).filter((node) => node.plane === plane).map((node) => [node.node_id, node]));
+  const terminalEdgesBySource = new Map((graph.edges || []).filter((edge) => edge.terminal_state_id).map((edge) => [edge.source_node_id, edge]));
   const traceOutcomeByNodeId = new Map(
     (trace?.edges || [])
       .map((edge) => {
@@ -225,7 +226,7 @@ function renderFlowLane(graph, summary, activeRuns) {
       if (active) classes.push("active");
       if (tracedNode) classes.push("trace-visited");
       if (idleHighlight) classes.push("idle-highlight");
-      const title = [node.node_id, traceOutcome ? `last outcome: ${traceOutcome}` : ""].filter(Boolean).join(" · ");
+      const title = [node.node_id, traceOutcome ? `last outcome: ${traceOutcome}` : "", terminalTooltip(terminalEdgesBySource.get(node.node_id))].filter(Boolean).join(" · ");
       const outcome = traceOutcome ? `<span class="trace-result">${escapeHtml(compactTerminal(traceOutcome))}</span>` : "";
       return `<span class="${classes.join(" ")}" style="--i: ${index}" title="${escapeHtml(title)}"><span class="flow-label">${escapeHtml(node.label || node.node_id)}</span>${outcome}<span class="flow-trace" aria-hidden="true"></span></span>`;
     })
@@ -241,17 +242,45 @@ function traceForPlane(summary, plane) {
   return traces.find((trace) => (trace.nodes || []).some((node) => node.plane === plane)) || null;
 }
 
-function orderNodesForPlane(plane, nodes) {
-  const preferred = {
-    execution: ["builder", "checker", "fixer", "doublechecker", "updater", "troubleshooter", "consultant"],
-    learning: ["analyst", "professor", "curator"],
-    planning: ["planner", "manager", "mechanic", "auditor", "arbiter"],
-  }[plane] || [];
-  if (!preferred.length) return nodes;
+function orderNodesForPlane(graph) {
+  const nodes = graph.nodes || [];
   const byId = new Map(nodes.map((node) => [node.node_id, node]));
-  const ordered = preferred.map((nodeId) => byId.get(nodeId)).filter(Boolean);
+  const outgoing = new Map(nodes.map((node) => [node.node_id, []]));
+  const indegree = new Map(nodes.map((node) => [node.node_id, 0]));
+  (graph.edges || []).forEach((edge) => {
+    if (!edge.target_node_id || !byId.has(edge.source_node_id) || !byId.has(edge.target_node_id)) {
+      return;
+    }
+    outgoing.get(edge.source_node_id).push(edge.target_node_id);
+    indegree.set(edge.target_node_id, (indegree.get(edge.target_node_id) || 0) + 1);
+  });
+  const queue = nodes.filter((node) => (indegree.get(node.node_id) || 0) === 0);
+  const ordered = [];
+  while (queue.length) {
+    const node = queue.shift();
+    ordered.push(node);
+    (outgoing.get(node.node_id) || []).forEach((targetId) => {
+      indegree.set(targetId, (indegree.get(targetId) || 0) - 1);
+      if ((indegree.get(targetId) || 0) === 0) {
+        queue.push(byId.get(targetId));
+      }
+    });
+  }
   const seen = new Set(ordered.map((node) => node.node_id));
   return ordered.concat(nodes.filter((node) => !seen.has(node.node_id)));
+}
+
+function terminalTooltip(edge) {
+  if (!edge) return "";
+  return [
+    edge.terminal_state_id ? `terminal: ${edge.terminal_state_id}` : "",
+    edge.terminal_action_id ? `action: ${edge.terminal_action_id}` : "",
+    edge.terminal_action_router_consequence ? `consequence: ${edge.terminal_action_router_consequence}` : "",
+    edge.lifecycle_mutation_plan_id ? `lifecycle: ${edge.lifecycle_mutation_plan_id}` : "",
+    edge.lifecycle_action_id ? `lifecycle action: ${edge.lifecycle_action_id}` : "",
+    edge.terminal_writes_status ? `writes: ${edge.terminal_writes_status}` : "",
+    edge.terminal_create_incident ? "creates incident" : "",
+  ].filter(Boolean).join(" · ");
 }
 
 function fallbackGraphs(summary) {

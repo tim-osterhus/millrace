@@ -17,10 +17,6 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths
-from millrace_ai.runtime.blueprint_recovery_diagnostics import (
-    latest_runtime_effect_stage_result,
-    runtime_effect_status_metadata_from_stage_result,
-)
 from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import (
     collect_reconciliation_signals,
@@ -102,16 +98,6 @@ def check_stopped_daemon_with_open_graph_work(context: DoctorContext) -> None:
         context.paths,
         snapshot=context.snapshot,
         compiled_plan=context.compiled_plan,
-        warnings=context.warnings,
-    )
-
-
-def check_blueprint_runtime_effect_recovery_context(context: DoctorContext) -> None:
-    if context.snapshot is None:
-        return
-    _validate_blueprint_runtime_effect_recovery_context(
-        context.paths,
-        snapshot=context.snapshot,
         warnings=context.warnings,
     )
 
@@ -488,35 +474,6 @@ def _validate_blueprint_manifest_diagnostics(
         )
 
 
-def _validate_blueprint_runtime_effect_recovery_context(
-    paths: WorkspacePaths,
-    *,
-    snapshot: RuntimeSnapshot,
-    warnings: list[DoctorIssue],
-) -> None:
-    latest = latest_runtime_effect_stage_result(paths, snapshot.last_stage_result_path)
-    if latest is None:
-        return
-    metadata = runtime_effect_status_metadata_from_stage_result(latest.stage_result)
-    context = metadata.get("latest_blueprint_repair_context")
-    contract = metadata.get("latest_blueprint_repair_contract")
-    conflicts = metadata.get("latest_blueprint_replay_conflict_classes")
-    inert_guard = metadata.get("latest_blueprint_inert_artifact_guard")
-    ownership = metadata.get("latest_blueprint_runtime_ownership_boundary")
-    if not all((context, contract, conflicts, inert_guard, ownership)):
-        return
-    warnings.append(
-        DoctorIssue(
-            code="blueprint_runtime_effect_recovery_context",
-            message=(
-                f"{context}; {contract}; replay_conflicts={conflicts}; "
-                f"inert_artifact_guard={inert_guard}; {ownership}"
-            ),
-            path=latest.path,
-        )
-    )
-
-
 def _validate_stopped_daemon_with_open_graph_work(
     paths: WorkspacePaths,
     *,
@@ -587,7 +544,6 @@ def _workspace_relative_path(paths: WorkspacePaths, path: Path) -> str:
 __all__ = [
     "check_baseline_manifest",
     "check_blueprint_manifest_diagnostics",
-    "check_blueprint_runtime_effect_recovery_context",
     "check_closure_lineage_integrity",
     "check_manifest_tracked_managed_files",
     "check_runtime_ownership_lock",

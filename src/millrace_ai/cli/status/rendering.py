@@ -20,11 +20,6 @@ _LATEST_RUNTIME_EFFECT_STATUS_KEYS = (
     "latest_runtime_effect_mutation_phase",
     "latest_runtime_effect_failure_policy_id",
     "latest_runtime_effect_recovery_action",
-    "latest_blueprint_repair_context",
-    "latest_blueprint_repair_contract",
-    "latest_blueprint_replay_conflict_classes",
-    "latest_blueprint_inert_artifact_guard",
-    "latest_blueprint_runtime_ownership_boundary",
 )
 
 

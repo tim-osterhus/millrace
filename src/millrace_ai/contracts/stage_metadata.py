@@ -17,8 +17,8 @@ from .enums import (
     PlanningTerminalResult,
     ResultClass,
     StageName,
-    TerminalResult,
 )
+from .terminal_outcomes import TerminalOutcome
 
 SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -452,7 +452,7 @@ def known_stage_values_for_plane(plane: Plane) -> set[str]:
     }
 
 
-def terminal_result_for_plane(plane: Plane, token: str) -> TerminalResult | None:
+def terminal_result_for_plane(plane: Plane, token: str) -> TerminalOutcome | None:
     try:
         if plane is Plane.EXECUTION:
             return ExecutionTerminalResult(token)
@@ -463,7 +463,7 @@ def terminal_result_for_plane(plane: Plane, token: str) -> TerminalResult | None
         return None
 
 
-def blocked_terminal_for_plane(plane: Plane) -> TerminalResult:
+def blocked_terminal_for_plane(plane: Plane) -> TerminalOutcome:
     if plane is Plane.EXECUTION:
         return ExecutionTerminalResult.BLOCKED
     if plane is Plane.LEARNING:

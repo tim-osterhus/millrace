@@ -40,7 +40,7 @@ remaining debt is now owned by
 
 | Candidate | Follow-up owner | Notes |
 | --- | --- | --- |
-| MR-MAINT-001 | Complete | FU-2 moved Blueprint runtime-effect behavior into `runtime/effects/operation_runners/`; `runtime/blueprint_effects.py` and `runtime/effects/operations.py` are compatibility facades. |
+| MR-MAINT-001 | Complete | FU-2 moved Blueprint runtime-effect behavior into `runtime/effects/operation_runners/`; the Blueprint runtime-effect compatibility facades have since been retired. |
 | MR-MAINT-002 | Complete | FU-1 landed operation-id-first effect dispatch and failure-policy matching with legacy handler ids kept as compatibility metadata only. |
 | MR-MAINT-003 | Complete | FU-6 split compiler validation into focused validator-family modules behind the stable package facade. |
 | MR-MAINT-004 | Complete | FU-7 split workflow primitive contracts into package family modules while preserving the public facade exports. |
@@ -75,12 +75,12 @@ Historical repo-shape snapshot from FU-2 Packet 03:
 
 - Largest source modules at that point: `compilation/validation.py` (1494 lines),
   `architecture/workflow_primitives.py` (1408 lines),
-  `runtime/effects/operation_runners/blueprint_evaluator.py` (1253 lines),
+  `runtime/effects/operation_runners/candidate_evaluation.py` (1253 lines),
   `runtime/blocked_recovery.py` (1159 lines), and
   `runtime/request_context.py` (987 lines).
 - Effect-operation debt moved from a monolithic operations module to focused
   runner modules. The remaining hotspot is
-  `operation_runners/blueprint_evaluator.py`, which still combines approval,
+  `operation_runners/candidate_evaluation.py`, which still combines approval,
   rejection, promotion, critique persistence, checksum/idempotency, and repair
   support helpers.
 
@@ -89,26 +89,24 @@ Historical repo-shape snapshot from FU-2 Packet 03:
 ### MR-MAINT-001: Blueprint Runtime Effects
 
 Source: `src/millrace_ai/runtime/effects/operation_runners/`, especially the
-Blueprint runner modules, with compatibility facades in
-`src/millrace_ai/runtime/blueprint_effects.py` and
-`src/millrace_ai/runtime/effects/operations.py`.
+Blueprint runner modules.
 
 Reason to change: Manager, Contractor, Evaluator, and Mechanic Blueprint
 durable mutations now run through focused modules in
 `runtime/effects/operation_runners/` and compiled operation assets. The old
-Blueprint and operations modules remain compatibility facades for old imports,
-legacy handler-id names, and diagnostics that should now patch focused runner
-modules for implementation behavior.
+Blueprint and operations compatibility facades have been retired; diagnostics
+and tests should patch focused runner modules for implementation behavior.
 
 Blast radius: Blueprint workspace state, runtime effect failure classes,
 runtime failure policy routing, repair artifacts, generated task promotion,
 queue lifecycle mutation, run traces, status and doctor diagnostics, and old
 compiled-plan compatibility.
 
-Owned tests: `tests/blueprint/test_effects.py`,
-`tests/integration/test_blueprint_planning_loop.py`,
-`tests/runtime/test_runtime_effects.py`, and Blueprint-adjacent CLI/status
-coverage in `tests/cli/test_cli.py`.
+Owned tests: `tests/runtime/test_effect_execution.py`,
+`tests/runtime/test_runtime_effects.py`,
+`tests/runtime/test_effect_operation_external_fixture.py`,
+`tests/integration/test_custom_graph_runtime_authority.py`, and
+Blueprint-adjacent CLI/status coverage in `tests/cli/test_cli.py`.
 
 Missing characterization: Remaining direct gaps are divergent duplicate
 Mechanic repair outputs, unsupported repair actions, and full-suite coverage
@@ -148,7 +146,7 @@ source metadata, stage-result metadata, monitor events, and spawned-work traces.
 Owned tests: `tests/runtime/test_runtime_effects.py`,
 `tests/runtime/test_result_application.py`, `tests/runtime/test_run_traces.py`,
 `tests/runtime/test_runtime_failure_policy.py`, and integration coverage through
-`tests/integration/test_blueprint_planning_loop.py`.
+`tests/integration/test_custom_graph_runtime_authority.py`.
 
 Missing characterization: Operation-id and legacy-handler-id dual-key behavior,
 registry failure cases, non-Blueprint declarative effect execution, exact event
@@ -186,7 +184,7 @@ assets, compile diagnostics, stale-plan safety, loop authoring docs, and CLI
 
 Owned tests: `tests/compilation/test_workflow_validation.py`,
 `tests/integration/test_compiler.py`, `tests/assets/test_workflow_assets.py`,
-and `tests/assets/test_blueprint_assets.py`.
+and `tests/assets/test_workflow_assets.py`.
 
 Missing characterization: A validator-family inventory, direct tests for each
 future validator module, diagnostic substring stability expectations per group,
@@ -329,7 +327,7 @@ Blueprint planning behavior, Mechanic repair inputs, artifact contract
 preferences, model provenance visibility, and runner adapter prompts.
 
 Owned tests: `tests/runtime/test_request_context.py`,
-`tests/runtime/test_blueprint_request_context.py`,
+`tests/runtime/test_request_context_assets.py`,
 `tests/runners/test_runner.py`, `tests/runners/test_runners_codex_adapter.py`,
 and Blueprint integration coverage.
 
@@ -517,6 +515,6 @@ event/monitor projection still share one tightly-coupled lifecycle boundary.
   coupled lifecycle boundaries.
 - MR-MAINT-001 through MR-MAINT-010 are complete for this follow-up wave. New
   maintainability work should be filed as fresh candidates against current
-  hotspots (for example `runtime/effects/operation_runners/blueprint_evaluator.py`,
+  hotspots (for example `runtime/effects/operation_runners/candidate_evaluation.py`,
   `runtime/completion_behavior.py`, and `runtime/context/blueprint.py`) rather
   than re-opening the finished packet ids.

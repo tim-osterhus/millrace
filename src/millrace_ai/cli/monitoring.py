@@ -273,7 +273,39 @@ def _render_router_decision(payload: Mapping[str, object]) -> str:
     reason = _optional_string(payload.get("reason"))
     if reason is not None:
         parts.append(f"reason={reason}")
+    parts.extend(_terminal_metadata_parts(payload))
     return " ".join(parts)
+
+
+def _terminal_metadata_parts(payload: Mapping[str, object]) -> tuple[str, ...]:
+    parts: list[str] = []
+    terminal_state = _optional_string(payload.get("terminal_state_id"))
+    if terminal_state is not None:
+        parts.append(f"terminal={terminal_state}")
+    action = _optional_string(payload.get("terminal_action_id"))
+    if action is not None:
+        parts.append(f"action={action}")
+    consequence = _optional_string(payload.get("terminal_action_router_consequence"))
+    if consequence is not None:
+        parts.append(f"consequence={consequence}")
+    lifecycle_plan = _optional_string(payload.get("lifecycle_mutation_plan_id"))
+    if lifecycle_plan is not None:
+        parts.append(f"lifecycle={lifecycle_plan}")
+    lifecycle_action = _optional_string(payload.get("lifecycle_action_id"))
+    if lifecycle_action is not None:
+        parts.append(f"lifecycle_action={lifecycle_action}")
+    writes_status = _optional_string(payload.get("terminal_writes_status"))
+    if writes_status is not None:
+        parts.append(f"writes={writes_status}")
+    runtime_operation = _optional_string(payload.get("runtime_operation_id"))
+    if runtime_operation is not None:
+        parts.append(f"operation={runtime_operation}")
+    failure_class = _optional_string(payload.get("failure_class"))
+    if failure_class is not None:
+        parts.append(f"failure={failure_class}")
+    if payload.get("create_incident") is True:
+        parts.append("incident=true")
+    return tuple(parts)
 
 
 def _render_status_marker_changed(

@@ -6,6 +6,8 @@
   "runtime_stage": "manager",
   "display_name": "Evaluator Blueprint",
   "default_entrypoint_path": "entrypoints/planning/evaluator_blueprint.md",
+  "request_context_profile_id": "evaluator_blueprint.default",
+  "context_render_plan_id": "blueprint.evaluator.default.v1",
   "required_skill_paths": [
     "skills/stage/planning/evaluator-blueprint-core/SKILL.md"
   ],
@@ -45,7 +47,9 @@
     "blueprint_critique",
     "generated_task"
   ],
-  "allowed_work_item_families": ["blueprint_draft"],
+  "allowed_work_item_families": [
+    "blueprint_draft"
+  ],
   "idempotence_policy": "retry_safe_with_key",
   "allowed_overrides": [
     "entrypoint_path",

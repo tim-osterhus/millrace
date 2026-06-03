@@ -115,6 +115,7 @@ from .runtime_snapshot import (
     RuntimeSnapshot,
 )
 from .stage_results import StageResultEnvelope
+from .terminal_outcomes import TerminalOutcome, terminal_outcome_value
 from .token_usage import TokenUsage
 from .work_documents import (  # noqa: F401
     ClosureBlockingWorkRef,
@@ -246,6 +247,7 @@ __all__ = [
     "TaskDocument",
     "TaskStatusHint",
     "TerminalResult",
+    "TerminalOutcome",
     "TokenUsage",
     "WatcherMode",
     "WorkItemKind",
@@ -256,4 +258,5 @@ __all__ = [
     "normalize_capability_id",
     "normalize_work_item_family_id",
     "plane_for_work_item_family_id",
+    "terminal_outcome_value",
 ]

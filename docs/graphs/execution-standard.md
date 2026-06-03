@@ -113,7 +113,7 @@ Blocked recovery:
 - `default_codex`
 - `default_pi`
 - `learning_codex`
-- `efficient_learning_codex`
+- `efficient_learning_mixed`
 - `learning_pi`
 - `blueprint_codex`
 - `blueprint_learning_codex`

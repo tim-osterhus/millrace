@@ -12,11 +12,10 @@ from millrace_ai.contracts import (
     LearningTriggerRuleDefinition,
     Plane,
     PlaneConcurrencyPolicyDefinition,
-    PlanningStageName,
     ResultClass,
     StageName,
 )
-from millrace_ai.contracts.stage_metadata import stage_name_for_plane, stage_plane
+from millrace_ai.contracts.stage_metadata import stage_plane
 
 from .effect_operations import (
     RuntimeEffectOperationDefinition,
@@ -118,6 +117,7 @@ class CompiledGraphResumePolicyPlan(ArchitectureContractModel):
     default_target_node_id: str
     metadata_stage_keys: tuple[str, ...] = ()
     disallowed_target_node_ids: tuple[str, ...] = ()
+    route_reason: str | None = None
 
 
 class CompiledGraphThresholdPolicyPlan(ArchitectureContractModel):
@@ -128,6 +128,12 @@ class CompiledGraphThresholdPolicyPlan(ArchitectureContractModel):
     threshold: int = Field(ge=1)
     exhausted_target_node_id: str | None = None
     exhausted_terminal_state_id: str | None = None
+    recovery_counter_mutation_name: GraphLoopCounterName | None = None
+    exhausted_counter_mutation_name: GraphLoopCounterName | None = None
+    route_reason: str | None = None
+    exhausted_route_reason: str | None = None
+    default_failure_class_template: str | None = None
+    exhausted_failure_class_template: str | None = None
 
     @model_validator(mode="after")
     def validate_target_shape(self) -> "CompiledGraphThresholdPolicyPlan":
@@ -145,7 +151,7 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
     node_id: str
     stage_kind_id: str
     plane: Plane
-    runtime_stage: StageName | None = None
+    runtime_stage: StageName
     entrypoint_path: str
     entrypoint_contract_id: str | None = None
     running_status_marker: str
@@ -169,33 +175,11 @@ class MaterializedGraphNodePlan(ArchitectureContractModel):
 
     @model_validator(mode="after")
     def validate_timeout(self) -> "MaterializedGraphNodePlan":
-        if self.runtime_stage is None:
-            runtime_stage = _legacy_runtime_stage_backfill(self.plane, self.stage_kind_id)
-            if runtime_stage is None:
-                raise ValueError(
-                    f"runtime_stage is required for noncanonical stage_kind_id {self.stage_kind_id}"
-                )
-            self.runtime_stage = runtime_stage
-        elif stage_plane(self.runtime_stage) is not self.plane:
+        if stage_plane(self.runtime_stage) is not self.plane:
             raise ValueError("runtime_stage must belong to node plane")
         if self.timeout_seconds < 0:
             raise ValueError("timeout_seconds must be >= 0")
         return self
-
-
-_LEGACY_RUNTIME_STAGE_BACKFILL: dict[tuple[Plane, str], StageName] = {
-    (Plane.PLANNING, "manager_blueprint"): PlanningStageName.MANAGER,
-    (Plane.PLANNING, "contractor_blueprint"): PlanningStageName.MANAGER,
-    (Plane.PLANNING, "evaluator_blueprint"): PlanningStageName.MANAGER,
-    (Plane.PLANNING, "mechanic_blueprint"): PlanningStageName.MECHANIC,
-}
-
-
-def _legacy_runtime_stage_backfill(plane: Plane, stage_kind_id: str) -> StageName | None:
-    try:
-        return stage_name_for_plane(plane, stage_kind_id)
-    except ValueError:
-        return _LEGACY_RUNTIME_STAGE_BACKFILL.get((plane, stage_kind_id))
 
 
 class FrozenGraphPlanePlan(ArchitectureContractModel):

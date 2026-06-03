@@ -135,7 +135,11 @@ def validate_stage_request_context_provider_implementation(
     if not profiles_by_id or not providers_by_id:
         return
 
-    profile_id = stage_plan.request_context_profile_id or f"{stage_plan.stage_kind_id}.default"
+    profile_id = stage_plan.request_context_profile_id
+    if profile_id is None:
+        raise ValueError(
+            f"compiled graph node {stage_plan.node_id} is missing request context profile authority"
+        )
     raw_profile = profiles_by_id.get(profile_id)
     if raw_profile is None:
         raise ValueError(
@@ -175,22 +179,44 @@ def resolve_request_context_authority(
         request_compiled_plan_id=request.compiled_plan_id,
     )
     node = _compiled_node_for_request(compiled_plan, request=request)
-    profile_id = (
+    node_profile_id = (
         str(getattr(node, "request_context_profile_id"))
         if node is not None and getattr(node, "request_context_profile_id", None) is not None
-        else request.request_context_profile_id
-        or f"{request.stage_kind_id}.default"
+        else None
     )
+    profile_id = node_profile_id or request.request_context_profile_id
+    if profile_id is None:
+        authority_source = (
+            f"compiled graph node {request.node_id}"
+            if node is not None
+            else f"stage request {request.request_id}"
+        )
+        raise ValueError(
+            f"{authority_source} is missing request context profile authority; "
+            "recompile the workspace plan from graph or stage-kind assets that declare "
+            "request_context_profile_id"
+        )
     raw_profile = profiles_by_id.get(profile_id)
     if raw_profile is None:
         raise ValueError(f"request context profile {profile_id!r} is unavailable")
     profile = cast(RequestContextProfileDefinition, raw_profile)
-    render_plan_id = (
+    node_render_plan_id = (
         str(getattr(node, "context_render_plan_id"))
         if node is not None and getattr(node, "context_render_plan_id", None) is not None
-        else request.context_render_plan_id
-        or profile.primary_render_plan_id
+        else None
     )
+    render_plan_id = node_render_plan_id or request.context_render_plan_id
+    if render_plan_id is None:
+        authority_source = (
+            f"compiled graph node {request.node_id}"
+            if node is not None
+            else f"stage request {request.request_id}"
+        )
+        raise ValueError(
+            f"{authority_source} is missing context render plan authority; "
+            "recompile the workspace plan from graph or stage-kind assets that declare "
+            "context_render_plan_id"
+        )
     raw_render_plan = render_plans_by_id.get(render_plan_id)
     if raw_render_plan is None:
         raise ValueError(f"request context render plan {render_plan_id!r} is unavailable")

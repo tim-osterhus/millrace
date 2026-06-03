@@ -39,7 +39,10 @@ def load_builtin_stage_kind_definition(
     try:
         stage_kind = RegisteredStageKindDefinition.model_validate(payload)
     except ValidationError as exc:
-        raise ArchitectureAssetError(f"Invalid stage kind definition in asset: {asset_path}") from exc
+        first_error = _format_validation_error(exc)
+        raise ArchitectureAssetError(
+            f"Invalid stage kind definition in asset: {asset_path} ({first_error})"
+        ) from exc
 
     if stage_kind.stage_kind_id != stage_kind_id:
         raise ArchitectureAssetError(
@@ -156,9 +159,24 @@ def _load_stage_kind_definition_at_path(path: Path) -> RegisteredStageKindDefini
     try:
         stage_kind = RegisteredStageKindDefinition.model_validate(payload)
     except ValidationError as exc:
-        raise ArchitectureAssetError(f"Invalid stage kind definition in asset: {path}") from exc
+        first_error = _format_validation_error(exc)
+        raise ArchitectureAssetError(
+            f"Invalid stage kind definition in asset: {path} ({first_error})"
+        ) from exc
 
     return stage_kind
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "validation failed"
+    first = errors[0]
+    loc = ".".join(str(part) for part in first.get("loc", ()))
+    message = str(first.get("msg", "validation failed"))
+    if not loc:
+        return message
+    return f"{loc}: {message}"
 
 
 def _validate_builtin_stage_kind_matches_metadata(

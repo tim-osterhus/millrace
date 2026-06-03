@@ -205,8 +205,8 @@ store write authority from the prompt-visible provider set.
 
 Direct coverage:
 
-- `tests/runtime/test_blueprint_request_context.py::test_manager_blueprint_context_preserves_provider_and_render_plan_authority`
-- Secondary coverage through `tests/runtime/test_blueprint_request_context.py`
+- `tests/runtime/test_request_context_assets.py::test_manager_blueprint_context_preserves_provider_and_render_plan_authority`
+- Secondary coverage through `tests/runtime/test_request_context_assets.py`
   Mechanic tests that consume failed Manager outputs.
 
 Batch 4 wait:
@@ -223,7 +223,7 @@ all drafts, prior approved Blueprints, and queue mutation authority.
 
 Direct coverage:
 
-- `tests/runtime/test_blueprint_request_context.py::test_contractor_blueprint_context_excludes_full_manifest`
+- `tests/runtime/test_request_context_assets.py::test_contractor_blueprint_context_excludes_full_manifest`
 
 Missing before Batch 5:
 
@@ -248,11 +248,11 @@ legacy names.
 
 Direct coverage:
 
-- `tests/runtime/test_blueprint_request_context.py::test_evaluator_blueprint_context_includes_manifest_and_prior_approvals`
-- `tests/runtime/test_blueprint_request_context.py::test_evaluator_blueprint_context_excludes_unrelated_root_history`
-- `tests/runtime/test_blueprint_request_context.py::test_evaluator_blueprint_context_resolves_same_root_manifests_by_manifest_id`
-- `tests/runtime/test_blueprint_request_context.py::test_evaluator_blueprint_context_uses_compiled_artifact_contract_filenames`
-- `tests/runtime/test_blueprint_request_context.py::test_request_context_rejects_mismatched_compiled_plan_authority`
+- `tests/runtime/test_request_context_assets.py::test_evaluator_blueprint_context_includes_manifest_and_prior_approvals`
+- `tests/runtime/test_request_context_assets.py::test_evaluator_blueprint_context_excludes_unrelated_root_history`
+- `tests/runtime/test_request_context_assets.py::test_evaluator_blueprint_context_resolves_same_root_manifests_by_manifest_id`
+- `tests/runtime/test_request_context_assets.py::test_evaluator_blueprint_context_uses_compiled_artifact_contract_filenames`
+- `tests/runtime/test_request_context_assets.py::test_request_context_rejects_mismatched_compiled_plan_authority`
 
 Missing before Batch 5:
 
@@ -280,11 +280,11 @@ falls back to the latest completed eligible Manager failure.
 
 Direct coverage:
 
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_includes_manager_runtime_effect_failure_evidence`
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_includes_evaluator_runtime_effect_failure_evidence`
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_prefers_manager_failure_matching_request`
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_falls_back_to_latest_completed_manager_failure`
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_normalizes_multiline_failure_message_refs`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_includes_manager_runtime_effect_failure_evidence`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_includes_evaluator_runtime_effect_failure_evidence`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_prefers_manager_failure_matching_request`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_falls_back_to_latest_completed_manager_failure`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_normalizes_multiline_failure_message_refs`
 
 Missing before Batch 5:
 
@@ -309,8 +309,8 @@ plan id.
 
 Direct coverage:
 
-- `tests/runtime/test_blueprint_request_context.py::test_evaluator_blueprint_context_uses_compiled_artifact_contract_filenames`
-- `tests/runtime/test_blueprint_request_context.py::test_request_context_rejects_mismatched_compiled_plan_authority`
+- `tests/runtime/test_request_context_assets.py::test_evaluator_blueprint_context_uses_compiled_artifact_contract_filenames`
+- `tests/runtime/test_request_context_assets.py::test_request_context_rejects_mismatched_compiled_plan_authority`
 
 Missing before Batch 5:
 
@@ -336,8 +336,8 @@ are both available in runtime traces and repair artifacts.
 
 Direct coverage:
 
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_includes_evaluator_runtime_effect_failure_evidence`
-- `tests/runtime/test_blueprint_request_context.py::test_mechanic_blueprint_context_prefers_manager_failure_matching_request`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_includes_evaluator_runtime_effect_failure_evidence`
+- `tests/runtime/test_request_context_assets.py::test_mechanic_blueprint_context_prefers_manager_failure_matching_request`
 
 Missing before Batch 5:
 

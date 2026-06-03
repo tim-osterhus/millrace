@@ -40,6 +40,21 @@ def _render_runs_ls_lines(paths: WorkspacePaths) -> tuple[str, ...]:
                     f"{_value(summary.runtime_effect_failure_policy_id)}"
                 ),
                 f"runtime_effect_recovery_action: {_value(summary.runtime_effect_recovery_action)}",
+                f"terminal_state_id: {_value(summary.terminal_state_id)}",
+                f"terminal_action_id: {_value(summary.terminal_action_id)}",
+                (
+                    "terminal_action_router_consequence: "
+                    f"{_value(summary.terminal_action_router_consequence)}"
+                ),
+                f"lifecycle_mutation_plan_id: {_value(summary.lifecycle_mutation_plan_id)}",
+                f"lifecycle_action_id: {_value(summary.lifecycle_action_id)}",
+                f"terminal_writes_status: {_value(summary.terminal_writes_status)}",
+                f"terminal_metadata_source: {_value(summary.terminal_metadata_source)}",
+                (
+                    "terminal_create_incident: "
+                    f"{'true' if summary.terminal_create_incident else 'false'}"
+                ),
+                f"runtime_operation_id: {_value(summary.runtime_operation_id)}",
             )
         )
     return tuple(lines)

@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import LearningStageName, LearningTerminalResult, Plane, StageResultEnvelope
+from millrace_ai.contracts import (
+    LearningStageName,
+    LearningTerminalResult,
+    Plane,
+    StageResultEnvelope,
+    terminal_outcome_value,
+)
 from millrace_ai.events import write_runtime_event
 
 if TYPE_CHECKING:
@@ -79,7 +85,7 @@ def _promotion_artifacts(stage_result: StageResultEnvelope) -> tuple[str, ...]:
         return ()
     if stage_result.stage is not LearningStageName.CURATOR:
         return ()
-    if stage_result.terminal_result is not LearningTerminalResult.CURATOR_COMPLETE:
+    if terminal_outcome_value(stage_result.terminal_result) != LearningTerminalResult.CURATOR_COMPLETE.value:
         return ()
     return tuple(
         artifact

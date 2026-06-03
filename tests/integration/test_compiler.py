@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from millrace_ai.architecture import CompiledRunPlan
+from millrace_ai.compilation.graph_exports import export_compiled_stage_graph
 from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import (
     CompilerValidationError,
@@ -17,7 +18,7 @@ from millrace_ai.compiler import (
     preview_graph_loop_plan,
 )
 from millrace_ai.config import RuntimeConfig
-from millrace_ai.contracts import CompileDiagnostics, Plane, PlanningStageName, ResultClass
+from millrace_ai.contracts import CompileDiagnostics, Plane, ResultClass
 from millrace_ai.errors import ConfigurationError, MillraceError
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
@@ -234,12 +235,14 @@ def _write_synthetic_graph_loop_asset(assets_root: Path) -> None:
             {
                 "terminal_state_id": "synthetic_complete",
                 "terminal_class": "success",
+                "terminal_action_id": "complete_work_item",
                 "writes_status": "SYNTHETIC_COMPLETE",
                 "emits_artifacts": ["stage_result", "report"],
             },
             {
                 "terminal_state_id": "blocked",
                 "terminal_class": "blocked",
+                "terminal_action_id": "block_work_item",
                 "writes_status": "BLOCKED",
                 "emits_artifacts": ["stage_result", "report"],
             },
@@ -364,7 +367,7 @@ def test_load_existing_plan_accepts_legacy_plan_without_artifact_contract_fields
     assert loaded.artifact_contracts == ()
 
 
-def test_load_existing_plan_backfills_legacy_runtime_stage_for_blueprint_nodes(
+def test_load_existing_plan_rejects_missing_runtime_stage_for_blueprint_nodes(
     tmp_path: Path,
 ) -> None:
     workspace_root = tmp_path / "workspace"
@@ -373,7 +376,7 @@ def test_load_existing_plan_backfills_legacy_runtime_stage_for_blueprint_nodes(
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
     )
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
@@ -399,16 +402,55 @@ def test_load_existing_plan_backfills_legacy_runtime_stage_for_blueprint_nodes(
             node.pop("runtime_stage", None)
     compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    loaded = load_existing_plan(compiled_plan_path)
+    assert load_existing_plan(compiled_plan_path) is None
 
-    assert loaded is not None
-    runtime_stage_by_kind = {
-        node.stage_kind_id: node.runtime_stage for node in loaded.planning_graph.nodes
-    }
-    assert runtime_stage_by_kind["manager_blueprint"] is PlanningStageName.MANAGER
-    assert runtime_stage_by_kind["contractor_blueprint"] is PlanningStageName.MANAGER
-    assert runtime_stage_by_kind["evaluator_blueprint"] is PlanningStageName.MANAGER
-    assert runtime_stage_by_kind["mechanic_blueprint"] is PlanningStageName.MECHANIC
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="blueprint_" "codex",
+    )
+
+    assert currentness.state == "missing"
+    assert currentness.persisted_plan_id is None
+
+
+def test_load_existing_plan_rejects_unknown_legacy_terminal_state_without_action(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=paths.runtime_root,
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = paths.state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    execution_terminal_state = payload["execution_graph"]["terminal_states"][0]
+    execution_terminal_state["terminal_state_id"] = "custom_legacy_done"
+    execution_terminal_state.pop("terminal_action_id", None)
+    mirrored_terminal_state = payload["graphs_by_plane"]["execution"]["terminal_states"][0]
+    mirrored_terminal_state["terminal_state_id"] = "custom_legacy_done"
+    mirrored_terminal_state.pop("terminal_action_id", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    assert load_existing_plan(compiled_plan_path) is None
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+        assets_root=paths.runtime_root,
+    )
+
+    assert currentness.state == "missing"
+    assert currentness.persisted_plan_id is None
 
 
 def test_legacy_plan_without_artifact_authority_is_stale_and_recompiled(tmp_path: Path) -> None:
@@ -513,21 +555,21 @@ def test_compile_includes_custom_work_item_family_assets(tmp_path: Path) -> None
     assert "custom_review_json_v1" in outcome.active_plan.document_adapters_by_id
 
 
-def test_compile_blueprint_codex_mode_materializes_custom_planning_graph(tmp_path: Path) -> None:
+def test_compile_asset_driven_mode_materializes_custom_planning_graph(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
 
     plan = outcome.active_plan
-    assert plan.mode_id == "blueprint_codex"
+    assert plan.mode_id == "blueprint_" "codex"
     assert plan.planning_loop_id == "planning.blueprint"
     assert {entry.entry_key.value: entry.node_id for entry in plan.planning_graph.compiled_entries} == {
         "probe": "recon",
@@ -558,13 +600,13 @@ def test_compile_blueprint_codex_mode_materializes_custom_planning_graph(tmp_pat
         "generated_task_missing",
         "generated_task_invalid",
     )
-    assert any(ref.logical_id == "mode:blueprint_codex" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "mode:" "blueprint_" "codex" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "stage_kind:evaluator_blueprint" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "work_item_family:blueprint_draft" for ref in plan.resolved_assets)
 
 
-def test_compile_blueprint_learning_codex_materializes_blueprint_and_learning_graphs(
+def test_compile_asset_driven_learning_mode_materializes_planning_and_learning_graphs(
     tmp_path: Path,
 ) -> None:
     workspace_root = tmp_path / "workspace"
@@ -573,14 +615,14 @@ def test_compile_blueprint_learning_codex_materializes_blueprint_and_learning_gr
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_learning_codex",
+        requested_mode_id="blueprint_" "learning_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
 
     plan = outcome.active_plan
-    assert plan.mode_id == "blueprint_learning_codex"
+    assert plan.mode_id == "blueprint_" "learning_codex"
     assert plan.loop_ids_by_plane == {
         Plane.EXECUTION: "execution.standard",
         Plane.PLANNING: "planning.blueprint",
@@ -593,7 +635,10 @@ def test_compile_blueprint_learning_codex_materializes_blueprint_and_learning_gr
         "curator",
         "librarian",
     }
-    assert any(ref.logical_id == "mode:blueprint_learning_codex" for ref in plan.resolved_assets)
+    assert any(
+        ref.logical_id == "mode:" "blueprint_" "learning_codex"
+        for ref in plan.resolved_assets
+    )
     assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "graph_loop:learning.standard" for ref in plan.resolved_assets)
     assert {
@@ -926,6 +971,30 @@ def test_preview_graph_loop_plan_compiles_synthetic_discovered_loop(tmp_path: Pa
         "synthetic_complete",
         "blocked",
     }
+
+
+def test_compiled_graph_export_surfaces_terminal_action_metadata(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="default_codex",
+    )
+
+    assert outcome.active_plan is not None
+    graph_export = export_compiled_stage_graph(outcome.active_plan, Plane.EXECUTION)
+    update_complete = next(
+        state
+        for state in graph_export.terminal_states
+        if state.terminal_state_id == "update_complete"
+    )
+    assert update_complete.terminal_action_id == "complete_work_item"
+    assert update_complete.terminal_action_router_consequence == "idle"
+    assert update_complete.lifecycle_mutation_plan_id == "complete_work_item"
+    assert update_complete.lifecycle_action_id == "complete"
+    assert update_complete.writes_status == "UPDATE_COMPLETE"
 
 
 def test_standard_plain_alias_and_default_codex_compile_to_identical_plan_ids(

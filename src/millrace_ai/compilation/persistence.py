@@ -31,9 +31,20 @@ def load_existing_plan(path: Path) -> CompiledRunPlan | None:
         return None
 
     try:
-        return CompiledRunPlan.model_validate_json(payload)
+        plan = CompiledRunPlan.model_validate_json(payload)
     except ValidationError:
         return None
+    if not _has_complete_terminal_action_links(plan):
+        return None
+    return plan
+
+
+def _has_complete_terminal_action_links(plan: CompiledRunPlan) -> bool:
+    for graph in plan.graphs_by_plane.values():
+        for state in graph.terminal_states:
+            if not state.terminal_action_id:
+                return False
+    return True
 
 
 def atomic_write_json(path: Path, payload: dict[str, object]) -> None:

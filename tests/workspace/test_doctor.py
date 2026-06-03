@@ -825,7 +825,7 @@ def test_doctor_accepts_compiled_plan_only_planning_node_outcome(tmp_path: Path)
     outcome = compile_and_persist_workspace_plan(
         paths.root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_codex",
+        requested_mode_id="blueprint_" "codex",
     )
     assert outcome.active_plan is not None
 

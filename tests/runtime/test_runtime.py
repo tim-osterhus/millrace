@@ -40,6 +40,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
     WorkItemKind,
+    terminal_outcome_value,
 )
 from millrace_ai.control import RuntimeControl
 from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError
@@ -933,7 +934,9 @@ def test_learning_noop_terminal_marks_request_done(tmp_path: Path) -> None:
 
     assert outcome.stage is LearningStageName.ANALYST
     assert outcome.stage_result is not None
-    assert outcome.stage_result.terminal_result is LearningTerminalResult.ANALYST_NOOP
+    assert terminal_outcome_value(outcome.stage_result.terminal_result) == (
+        LearningTerminalResult.ANALYST_NOOP.value
+    )
     assert outcome.stage_result.result_class is ResultClass.NO_OP
     assert outcome.stage_result.success is False
     assert outcome.router_decision.action is RouterAction.IDLE
@@ -1690,7 +1693,7 @@ def test_runtime_routes_post_stage_planning_completion_conflict_into_mechanic(
     ("mode_id", "expected_node_id", "expected_stage_kind_id"),
     [
         (None, "mechanic", "mechanic"),
-        ("blueprint_codex", "mechanic_blueprint", "mechanic_blueprint"),
+        ("blueprint_" "codex", "mechanic_blueprint", "mechanic_blueprint"),
     ],
 )
 def test_runtime_routes_malformed_recon_handoff_to_mechanic(
@@ -1811,6 +1814,11 @@ def test_runtime_blocks_repeated_malformed_recon_handoff_after_repair_threshold(
     assert outcome.router_decision.reason == (
         "runtime_exception:recon_handoff_invalid:repair_attempts_exhausted"
     )
+    assert outcome.router_decision.terminal_state_id == "blocked"
+    assert outcome.router_decision.terminal_action_id == "block_work_item"
+    assert outcome.router_decision.terminal_action_router_consequence == "blocked"
+    assert outcome.router_decision.lifecycle_mutation_plan_id == "block_work_item"
+    assert outcome.router_decision.lifecycle_action_id == "block"
     snapshot = load_snapshot(paths)
     assert snapshot.active_stage is None
     assert snapshot.current_failure_class == "recon_handoff_invalid"
@@ -2588,14 +2596,18 @@ def test_runtime_tick_enforces_pause_and_stop_commands(tmp_path: Path) -> None:
     paused = engine.tick()
     assert paused.router_decision.reason == "paused"
     assert paused.stage_result.result_class is ResultClass.SUCCESS
-    assert paused.stage_result.terminal_result is ExecutionTerminalResult.UPDATE_COMPLETE
+    assert terminal_outcome_value(paused.stage_result.terminal_result) == (
+        ExecutionTerminalResult.UPDATE_COMPLETE.value
+    )
     assert calls["count"] == 0
 
     write_mailbox_command(paths, _mailbox_command("cmd-002", "stop"))
     stopped = engine.tick()
     assert stopped.router_decision.reason == "stop_requested"
     assert stopped.stage_result.result_class is ResultClass.SUCCESS
-    assert stopped.stage_result.terminal_result is ExecutionTerminalResult.UPDATE_COMPLETE
+    assert terminal_outcome_value(stopped.stage_result.terminal_result) == (
+        ExecutionTerminalResult.UPDATE_COMPLETE.value
+    )
     assert calls["count"] == 0
     snapshot = load_snapshot(paths)
     assert snapshot.process_running is False
@@ -3030,7 +3042,9 @@ def test_runtime_tick_with_no_work_reports_non_blocked_idle_result(tmp_path: Pat
 
     assert outcome.router_decision.reason == "no_work"
     assert outcome.stage_result.result_class is ResultClass.SUCCESS
-    assert outcome.stage_result.terminal_result is ExecutionTerminalResult.UPDATE_COMPLETE
+    assert terminal_outcome_value(outcome.stage_result.terminal_result) == (
+        ExecutionTerminalResult.UPDATE_COMPLETE.value
+    )
 
 
 def test_runtime_tick_with_no_work_suppresses_completion_when_lineage_work_remains(

@@ -241,6 +241,127 @@ def test_record_router_decision_trace_includes_spawned_learning_request(
     assert trace.edges[0].spawned_work[0].reason == "learning_trigger"
 
 
+def test_router_decision_trace_records_resolved_terminal_action_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    run_dir = paths.runs_dir / "run-terminal-action"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    stage_result_path = stage_results_dir / "request-001.json"
+    stage_result = StageResultEnvelope(
+        run_id="run-terminal-action",
+        plane="execution",
+        stage=ExecutionStageName.UPDATER,
+        node_id="updater",
+        stage_kind_id="updater",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.UPDATE_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### UPDATE_COMPLETE",
+        success=True,
+        metadata={"request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW + timedelta(seconds=2),
+        duration_seconds=2,
+    )
+    stage_result_path.write_text(stage_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    upsert_stage_result_trace_node(
+        paths,
+        run_dir=run_dir,
+        stage_result=stage_result,
+        stage_result_path=stage_result_path,
+    )
+
+    record_router_decision_trace(
+        paths,
+        run_dir=run_dir,
+        stage_result=stage_result,
+        decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="updater_complete",
+            terminal_state_id="update_complete",
+            terminal_action_id="complete_work_item",
+            terminal_action_router_consequence="idle",
+            runtime_operation_id="recon.enqueue_task",
+            lifecycle_mutation_plan_id="complete_work_item",
+            lifecycle_action_id="complete",
+            terminal_writes_status="UPDATE_COMPLETE",
+        ),
+    )
+
+    trace = RunTraceGraph.model_validate_json(
+        (run_dir / "run_trace.json").read_text(encoding="utf-8")
+    )
+    edge = trace.edges[0]
+    assert edge.terminal_state_id == "update_complete"
+    assert edge.terminal_action_id == "complete_work_item"
+    assert edge.terminal_action_router_consequence == "idle"
+    assert edge.runtime_operation_id == "recon.enqueue_task"
+    assert edge.lifecycle_mutation_plan_id == "complete_work_item"
+    assert edge.lifecycle_action_id == "complete"
+    assert edge.terminal_writes_status == "UPDATE_COMPLETE"
+    assert edge.terminal_metadata_source == "graph_resolved"
+
+
+def test_router_decision_trace_does_not_infer_terminal_state_from_raw_outcome(
+    tmp_path: Path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    run_dir = paths.runs_dir / "run-fallback-terminal"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    stage_result_path = stage_results_dir / "request-001.json"
+    stage_result = StageResultEnvelope(
+        run_id="run-fallback-terminal",
+        plane="execution",
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result="CUSTOM_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### CUSTOM_COMPLETE",
+        success=True,
+        metadata={"request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW + timedelta(seconds=2),
+        duration_seconds=2,
+    )
+    stage_result_path.write_text(stage_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    upsert_stage_result_trace_node(
+        paths,
+        run_dir=run_dir,
+        stage_result=stage_result,
+        stage_result_path=stage_result_path,
+    )
+
+    record_router_decision_trace(
+        paths,
+        run_dir=run_dir,
+        stage_result=stage_result,
+        decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="custom_complete_legacy",
+        ),
+    )
+
+    trace = RunTraceGraph.model_validate_json(
+        (run_dir / "run_trace.json").read_text(encoding="utf-8")
+    )
+    edge = trace.edges[0]
+    assert edge.outcome == "CUSTOM_COMPLETE"
+    assert edge.terminal_state_id is None
+    assert edge.terminal_action_id is None
+    assert edge.terminal_metadata_source == "unknown"
+
+
 def test_spawned_work_ref_from_path_preserves_blueprint_draft_family(tmp_path: Path) -> None:
     stage_result = StageResultEnvelope(
         run_id="run-blueprint",

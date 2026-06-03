@@ -363,3 +363,91 @@ def test_runtime_effect_operation_only_metadata_can_omit_legacy_handler(
     assert stage_result.metadata["runtime_effect_operation_id"] == "operation_only_effect"
     assert stage_result.metadata["runtime_effect_runner_id"] == "operation_only_runner"
     assert stage_result.metadata["runtime_effect_legacy_handler_id"] is None
+
+
+def test_runtime_effect_dispatch_resolves_source_lifecycle_from_rule_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    captured: list[RuntimeEffectResult] = []
+
+    def _operation_handler(paths, stage_result, run_dir, compiled_plan):
+        return RuntimeEffectResult(
+            operation_id="complete_source_effect",
+            decision=RuntimeEffectDecision.REQUEST_COMPLETE_SOURCE,
+            message="completed by runner without lifecycle plan authority",
+        )
+
+    def _apply_effect_result(paths, effect_result, *, compiled_plan=None):
+        captured.append(effect_result)
+        return effect_result
+
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_OPERATION_ID,
+        "complete_source_effect",
+        _operation_handler,
+    )
+    monkeypatch.setattr(effect_execution, "apply_runtime_effect_result", _apply_effect_result)
+    monkeypatch.setattr(effect_execution, "_clear_active_source_after_effect", lambda *args, **kwargs: None)
+    stage_result = StageResultEnvelope(
+        run_id="run-rule-lifecycle",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_family_id="task",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_rules=(
+            SimpleNamespace(
+                rule_id="complete_source_rule",
+                effect_operation_id="complete_source_effect",
+                source_node_id="builder",
+                on_outcomes=("BUILDER_COMPLETE",),
+                handler_id=None,
+                destination_family_id=None,
+                lifecycle_mutation_plan_id="complete_source_after_effect",
+            ),
+        ),
+        runtime_effect_runners_by_id={
+            "operation_only_runner": RuntimeEffectOperationRunnerDefinition(
+                runner_id="operation_only_runner",
+                operation_ids=("complete_source_effect",),
+            )
+        },
+        runtime_failure_policies_by_id={},
+        work_item_families_by_id={},
+    )
+
+    application = apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(tmp_path / "run")),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert application.router_decision.action is RouterAction.IDLE
+    assert application.source_lifecycle_applied is True
+    assert captured
+    assert captured[0].source_lifecycle_intent is not None
+    assert captured[0].source_lifecycle_intent.lifecycle_plan_id == "complete_source_after_effect"
+    assert captured[0].source_lifecycle_intent.work_item_family_id == "task"
+    assert captured[0].source_lifecycle_intent.work_item_id == "task-001"
+    assert stage_result.metadata["runtime_effect_source_lifecycle_plan_id"] == (
+        "complete_source_after_effect"
+    )

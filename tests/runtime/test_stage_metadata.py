@@ -92,6 +92,7 @@ def _compiled_node_plan(
     return MaterializedGraphNodePlan(
         node_id=stage_kind_id,
         stage_kind_id=stage_kind_id,
+        runtime_stage=PlanningStageName(stage_kind_id),
         plane=Plane.PLANNING,
         entrypoint_path="entrypoints/planning/planner.md",
         running_status_marker="PLANNER_RUNNING",

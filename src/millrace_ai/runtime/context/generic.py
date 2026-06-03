@@ -20,10 +20,6 @@ def generic_active_work_item_context_plan(
     authority: RequestContextAuthority,
     compiled_plan: CompiledRunPlan | None,
 ) -> RequestContextRenderPlan:
-    if authority.profile_id == "recon.default":
-        return recon_context_plan(workspace_root, request, authority, compiled_plan)
-    if authority.profile_id == "integrator.default":
-        return integrator_context_plan(workspace_root, request, authority, compiled_plan)
     if request.plane is Plane.EXECUTION:
         return generic_execution_context_plan(workspace_root, request, authority, compiled_plan)
     if request.plane is Plane.LEARNING:
@@ -113,6 +109,7 @@ def _default_context_plan(
     rendered_prompt_context_path = context_dir / "prompt_context.md"
     return RequestContextRenderPlan(
         render_plan_id=authority.render_plan_id,
+        provider_id=authority.provider_id,
         profile_id=authority.profile_id,
         context_bundle_path=str(context_bundle_path),
         rendered_prompt_context_path=str(rendered_prompt_context_path),

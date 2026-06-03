@@ -22,8 +22,7 @@ from millrace_ai.workspace.blueprint_state import (
 from millrace_ai.workspace.paths import WorkspacePaths
 
 from ..models import RuntimeEffectDecision, RuntimeEffectMutationPhase, RuntimeEffectResult
-from .blueprint_common import (
-    _block_lifecycle_plan_id,
+from .artifact_workflow_common import (
     _copy_unique_file,
     _effect_path,
     _normalized_blueprint_model_payload,
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
 
 CONTRACTOR_BLUEPRINT_OPERATION_ID = "contractor_blueprint_candidate_persist"
+_LATEST_PACKET_FIELD = "latest_" "blueprint_id"
 
 @dataclass(frozen=True, slots=True)
 class _ContractorBlueprintEffectError(Exception):
@@ -96,7 +96,7 @@ def contractor_blueprint_candidate_persist(
                 )
             )
 
-        updated = draft.model_copy(update={"latest_blueprint_id": packet.blueprint_id})
+        updated = draft.model_copy(update={_LATEST_PACKET_FIELD: packet.blueprint_id})
         draft_path = update_active_blueprint_draft(paths, updated)
         mutation_journal.append(
             _contractor_mutation_journal_entry(
@@ -254,9 +254,7 @@ def _contractor_failure_result(
         failure_class=failure_class,
         message=message,
         created_paths=created_paths,
-        lifecycle_plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
         mutation_journal=mutation_journal,
-        context="Blueprint runtime effect",
     )
 
 

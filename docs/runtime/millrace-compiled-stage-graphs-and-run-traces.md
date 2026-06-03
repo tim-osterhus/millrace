@@ -14,8 +14,12 @@ compiled export and per-run trace inspection surfaces.
 
 The run trace graph is historical evidence for one concrete run. It records
 which stage-request instances ran, which terminal outcomes they produced, which
-runtime routing decision was applied, which artifacts were written, and which
-follow-up work was spawned. New runs write
+graph-resolved or inferred terminal-action/lifecycle/runtime-operation metadata
+was applied, which artifacts were written, and which follow-up work was
+spawned. Trace edges carry terminal-state/action, router consequence, lifecycle
+plan/action, terminal writes status, failure class, incident creation, runtime
+operation, and terminal metadata source fields so graph-resolved edges stay
+distinct from inferred fallback summaries. New runs write
 `<workspace>/millrace-agents/runs/<run_id>/run_trace.json`.
 
 Do not describe the compiled topology as a DAG. Shipped control-flow graphs can
@@ -61,7 +65,9 @@ Existing run directories from older releases are still inspectable. If
 `run_trace.json` is absent, Millrace derives a read-only fallback trace from
 stage-result artifacts and marks it `incomplete`. If `run_trace.json` is
 malformed, Millrace returns a fallback trace with a diagnostic note and leaves
-the original stage results untouched.
+the original stage results untouched. Run inspection surfaces `graph_resolved`,
+`inferred`, and `unknown` provenance labels so derived traces do not masquerade
+as authoritative router output.
 
 Trace writing is best-effort and runtime-owned. Stage workers do not write
 traces directly, and trace data is never used as a second source of routing
@@ -74,9 +80,11 @@ The optional `millrace-web` package uses the same graph and trace readers:
 - `/api/workspaces/<workspace_id>/compiled-plan/graphs` returns compiled graph
   exports.
 - `/api/workspaces/<workspace_id>/runs/<run_id>/trace` returns a compact run
-  trace summary.
-- The Flow view renders compiled topology as the stable lane structure and
-  overlays active runtime state plus recent trace outcomes when available.
+  trace summary with terminal-action/lifecycle/runtime-operation provenance
+  when available.
+- The Flow view renders compiled topology as the stable lane structure, orders
+  nodes from the compiled graph, and overlays active runtime state plus recent
+  trace outcomes and terminal-action/lifecycle tooltips when available.
 
 The dashboard remains read-only. It does not acquire the daemon ownership lock
 and does not expose queue or control mutation routes.

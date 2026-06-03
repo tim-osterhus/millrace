@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_serializer, model_validator
 
 from .base import ContractModel
 from .enums import LoopEdgeKind, Plane, StageName, TerminalResult
-from .stage_metadata import legal_terminal_results, stage_plane
+from .stage_metadata import legal_terminal_results, stage_plane, terminal_result_for_plane
+from .terminal_outcomes import terminal_outcome_value
 
 
 class CompletionBehaviorDefinition(ContractModel):
@@ -26,6 +27,18 @@ class CompletionBehaviorDefinition(ContractModel):
 
     @model_validator(mode="after")
     def validate_completion_behavior(self) -> "CompletionBehaviorDefinition":
+        known_pass_result = terminal_result_for_plane(
+            stage_plane(self.stage),
+            terminal_outcome_value(self.on_pass_terminal_result),
+        )
+        if known_pass_result is not None:
+            self.on_pass_terminal_result = known_pass_result
+        known_gap_result = terminal_result_for_plane(
+            stage_plane(self.stage),
+            terminal_outcome_value(self.on_gap_terminal_result),
+        )
+        if known_gap_result is not None:
+            self.on_gap_terminal_result = known_gap_result
         if self.on_pass_terminal_result == self.on_gap_terminal_result:
             raise ValueError("completion behavior pass/gap results must differ")
         legal_results = legal_terminal_results(self.stage)
@@ -34,6 +47,10 @@ class CompletionBehaviorDefinition(ContractModel):
         if self.on_gap_terminal_result.value not in legal_results:
             raise ValueError("on_gap_terminal_result is not legal for completion stage")
         return self
+
+    @field_serializer("on_pass_terminal_result", "on_gap_terminal_result")
+    def serialize_terminal_result(self, value: TerminalResult) -> str:
+        return terminal_outcome_value(value)
 
 
 class LoopEdgeDefinition(ContractModel):
@@ -62,6 +79,10 @@ class LoopEdgeDefinition(ContractModel):
             raise ValueError("non-terminal edges require target_stage")
 
         return self
+
+    @field_serializer("on_terminal_result", "terminal_result")
+    def serialize_terminal_result(self, value: TerminalResult | None) -> str | None:
+        return terminal_outcome_value(value) if value is not None else None
 
 
 class LoopConfigDefinition(ContractModel):
@@ -128,6 +149,10 @@ class LoopConfigDefinition(ContractModel):
             raise ValueError("loop must include at least one terminal edge")
 
         return self
+
+    @field_serializer("terminal_results")
+    def serialize_terminal_results(self, value: tuple[TerminalResult, ...]) -> tuple[str, ...]:
+        return tuple(terminal_outcome_value(result) for result in value)
 
 
 __all__ = [

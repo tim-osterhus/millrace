@@ -114,6 +114,12 @@ class StageEdgeSummary(WebModel):
     terminal_state_id: str | None = None
     outcome: str
     kind: str
+    terminal_action_id: str | None = None
+    terminal_action_router_consequence: str | None = None
+    lifecycle_mutation_plan_id: str | None = None
+    lifecycle_action_id: str | None = None
+    terminal_writes_status: str | None = None
+    terminal_create_incident: bool = False
 
 
 class StageGraphSummary(WebModel):
@@ -167,6 +173,15 @@ class TraceEdgeSummary(WebModel):
     target_node_id: str | None = None
     target_trace_node_id: str | None = None
     terminal_state_id: str | None = None
+    terminal_action_id: str | None = None
+    terminal_action_router_consequence: str | None = None
+    lifecycle_mutation_plan_id: str | None = None
+    lifecycle_action_id: str | None = None
+    terminal_writes_status: str | None = None
+    terminal_metadata_source: str = "unknown"
+    failure_class: str | None = None
+    create_incident: bool = False
+    runtime_operation_id: str | None = None
     edge_kind: str
 
 

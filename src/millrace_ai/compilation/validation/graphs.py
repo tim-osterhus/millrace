@@ -47,12 +47,12 @@ def validate_structural_graph_smoke(
     stage_kinds: dict[str, RegisteredStageKindDefinition],
     terminal_actions_by_id: dict[str, TerminalActionDefinition],
 ) -> None:
-    terminal_classes = {
-        getattr(action, "terminal_class")
-        for action in terminal_actions_by_id.values()
-    }
     for graph in graphs_by_plane.values():
         nodes_by_id = {node.node_id: node for node in graph.nodes}
+        terminal_states_by_id = {
+            state.terminal_state_id: state
+            for state in graph.terminal_states
+        }
         routed_outcomes: dict[str, set[str]] = {node.node_id: set() for node in graph.nodes}
         for transition in graph.compiled_transitions:
             if transition.outcome in routed_outcomes[transition.source_node_id]:
@@ -62,15 +62,12 @@ def validate_structural_graph_smoke(
                 )
             routed_outcomes[transition.source_node_id].add(transition.outcome)
             if transition.terminal_state_id is not None:
-                terminal_state = next(
-                    state
-                    for state in graph.terminal_states
-                    if state.terminal_state_id == transition.terminal_state_id
-                )
-                if terminal_state.terminal_class.value not in terminal_classes:
+                terminal_state = terminal_states_by_id[transition.terminal_state_id]
+                action_id = getattr(terminal_state, "terminal_action_id", None)
+                if action_id is None or action_id not in terminal_actions_by_id:
                     raise CompilerValidationError(
-                        f"terminal state {terminal_state.terminal_state_id} uses terminal "
-                        f"class {terminal_state.terminal_class.value} without a terminal action"
+                        f"terminal transition {transition.edge_id} targets terminal state "
+                        f"{terminal_state.terminal_state_id} without a valid terminal action"
                     )
 
         for node in graph.nodes:

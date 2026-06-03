@@ -16,7 +16,9 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": "complete_source_after_effect"
+      "lifecycle_mutation_plan_id": "complete_source_after_effect",
+      "source_completion_lifecycle_mutation_plan_id": "complete_source_after_effect",
+      "source_blocking_lifecycle_mutation_plan_id": "block_source_after_effect"
     },
     {
       "schema_version": "1.0",
@@ -34,7 +36,9 @@
       "replay_policy": "resume_idempotently",
       "lineage_policy": "preserve_root",
       "applies_before_route": true,
-      "lifecycle_mutation_plan_id": "block_source_after_effect"
+      "lifecycle_mutation_plan_id": "block_source_after_effect",
+      "source_completion_lifecycle_mutation_plan_id": "complete_source_after_effect",
+      "source_blocking_lifecycle_mutation_plan_id": "block_source_after_effect"
     }
   ]
 }

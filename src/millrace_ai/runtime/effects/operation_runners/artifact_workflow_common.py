@@ -11,13 +11,12 @@ from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
 from millrace_ai.errors import QueueStateError
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from ..models import SourceLifecycleAction, SourceLifecycleIntent
 from .artifacts import read_json_model
 from .idempotency import normalized_markdown_content, normalized_model_payload
 from .results import append_lifecycle_journal, runtime_mutation_journal
 from .stores import copy_unique_file, effect_path
 from .types import ModelT
-from .work_items import source_lifecycle_intent, stage_result_work_item_kind
+from .work_items import stage_result_work_item_kind
 
 
 def _append_lifecycle_journal(
@@ -33,42 +32,8 @@ def _runtime_mutation_journal(
     return runtime_mutation_journal(entries)
 
 
-def _source_lifecycle_intent(
-    stage_result: StageResultEnvelope,
-    *,
-    plan_id: str,
-    action: SourceLifecycleAction,
-) -> SourceLifecycleIntent:
-    return source_lifecycle_intent(
-        stage_result,
-        plan_id=plan_id,
-        action=action,
-        context="Blueprint runtime effect",
-    )
-
-
 def _stage_result_work_item_kind(stage_result: StageResultEnvelope) -> WorkItemKind:
     return stage_result_work_item_kind(stage_result, context="Blueprint runtime effect")
-
-
-def _complete_lifecycle_plan_id(work_item_kind: WorkItemKind) -> str:
-    if work_item_kind is WorkItemKind.SPEC:
-        return "complete_spec_source_after_blueprint_effect"
-    if work_item_kind is WorkItemKind.INCIDENT:
-        return "complete_incident_source_after_blueprint_effect"
-    if work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
-        return "approve_blueprint_draft_after_effect"
-    return "complete_source_after_effect"
-
-
-def _block_lifecycle_plan_id(work_item_kind: WorkItemKind) -> str:
-    if work_item_kind is WorkItemKind.SPEC:
-        return "block_spec_source_after_blueprint_effect"
-    if work_item_kind is WorkItemKind.INCIDENT:
-        return "block_incident_source_after_blueprint_effect"
-    if work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
-        return "block_blueprint_draft_after_effect"
-    return "block_source_after_effect"
 
 
 def _effect_path(paths: WorkspacePaths, path: Path) -> str:
@@ -103,14 +68,11 @@ def _read_json_model(path: Path, model: type[ModelT]) -> ModelT:
 
 __all__ = [
     "_append_lifecycle_journal",
-    "_block_lifecycle_plan_id",
-    "_complete_lifecycle_plan_id",
     "_copy_unique_file",
     "_effect_path",
     "_normalized_blueprint_model_payload",
     "_normalized_markdown_content",
     "_read_json_model",
     "_runtime_mutation_journal",
-    "_source_lifecycle_intent",
     "_stage_result_work_item_kind",
 ]

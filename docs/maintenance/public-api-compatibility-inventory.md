@@ -20,8 +20,6 @@ The following module imports are compatibility contracts for this refactor wave:
 - `millrace_ai.architecture.workflow_primitives`
 - `millrace_ai.architecture`
 - `millrace_ai.runtime.request_context`
-- `millrace_ai.runtime.effects.operations`
-- `millrace_ai.runtime.blueprint_effects`
 
 `tests/test_public_import_surfaces.py` protects these imports.
 
@@ -194,23 +192,10 @@ under `millrace_ai.runtime.context`.
 
 ## Runtime Effect Operations
 
-`millrace_ai.runtime.effects.operations` is the public operation-runner
-compatibility facade. FU-2 moved implementation into
-`millrace_ai.runtime.effects.operation_runners`, and this import path plus these
-symbols remain stable:
-
-- `CONTRACTOR_BLUEPRINT_OPERATION_ID`
-- `EVALUATOR_BLUEPRINT_APPROVAL_OPERATION_ID`
-- `EVALUATOR_BLUEPRINT_REJECTION_OPERATION_ID`
-- `MANAGER_BLUEPRINT_OPERATION_ID`
-- `MECHANIC_BLUEPRINT_REPAIR_OPERATION_ID`
-- `contractor_blueprint_candidate_persist`
-- `evaluator_blueprint_approved_to_task`
-- `evaluator_blueprint_rejected_to_draft_revision`
-- `manager_blueprint_manifest_to_blueprint_drafts`
-- `mechanic_blueprint_repair_apply`
-
-The constants are operation ids, not new public handler authority.
+The `millrace_ai.runtime.effects.operations` compatibility facade has been
+retired. Runtime-effect operation behavior is selected from compiled asset
+metadata and implemented, where Python mutation code is still required, under
+`millrace_ai.runtime.effects.operation_runners`.
 
 ## Final Facade Status (FU-9)
 
@@ -218,27 +203,12 @@ The constants are operation ids, not new public handler authority.
 - `millrace_ai.architecture.workflow_primitives`: package facade (`architecture/workflow_primitives/__init__.py`) with stable contract-family exports.
 - `millrace_ai.runtime.request_context`: compatibility facade over
   `runtime/context/`.
-- `millrace_ai.runtime.effects.operations`: compatibility facade over
-  `runtime/effects/operation_runners/`.
-- `millrace_ai.runtime.blueprint_effects`: compatibility facade over
-  `runtime/effects/operations.py`.
+- Runtime-effect operation compatibility facades have been retired; use
+  compiled runtime-effect operation/rule/runner metadata and focused operation
+  runner modules for implementation tests.
 
 ## Blueprint Effect Compatibility Facade
 
-`millrace_ai.runtime.blueprint_effects` is a temporary compatibility facade for
-old imports and legacy handler-id names. It must remain importable through the
-next public release unless a later ADR changes that plan:
-
-- `CONTRACTOR_BLUEPRINT_HANDLER_ID`
-- `EVALUATOR_BLUEPRINT_APPROVAL_HANDLER_ID`
-- `EVALUATOR_BLUEPRINT_REJECTION_HANDLER_ID`
-- `MANAGER_BLUEPRINT_HANDLER_ID`
-- `MECHANIC_BLUEPRINT_REPAIR_HANDLER_ID`
-- `contractor_blueprint_candidate_persist`
-- `evaluator_blueprint_approved_to_task`
-- `evaluator_blueprint_rejected_to_draft_revision`
-- `manager_blueprint_manifest_to_blueprint_drafts`
-- `mechanic_blueprint_repair_apply`
-
-The facade delegates to operation runners and must not regain durable mutation
-logic.
+The Blueprint effect compatibility facade has been retired. Operation behavior
+is selected by compiled runtime-effect metadata and implemented in focused
+operation-runner modules.

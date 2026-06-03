@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from .base import ContractModel
 from .enums import (
@@ -13,11 +13,11 @@ from .enums import (
     ReloadOutcome,
     RuntimeMode,
     StageName,
-    TerminalResult,
     WatcherMode,
     WorkItemKind,
 )
 from .stage_metadata import stage_plane
+from .terminal_outcomes import TerminalOutcome, terminal_outcome_value
 from .work_refs import coerce_family_and_kind
 
 ActiveRunRequestKind = Literal["active_work_item", "closure_target", "learning_request"]
@@ -183,7 +183,7 @@ class RuntimeSnapshot(ContractModel):
     queue_depth_learning: int = 0
     queue_depths_by_plane: dict[Plane, int] = Field(default_factory=dict)
 
-    last_terminal_result: TerminalResult | None = None
+    last_terminal_result: TerminalOutcome | None = None
     last_stage_result_path: str | None = None
 
     current_failure_class: str | None = None
@@ -383,6 +383,10 @@ class RuntimeSnapshot(ContractModel):
             self.pause_sources = ("operator",)
 
         return self
+
+    @field_serializer("last_terminal_result")
+    def serialize_last_terminal_result(self, value: TerminalOutcome | None) -> str | None:
+        return terminal_outcome_value(value) if value is not None else None
 
     def _project_active_runs_into_legacy_fields(self) -> None:
         if not self.active_runs_by_plane:

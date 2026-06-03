@@ -4,13 +4,13 @@
   "loop_id": "execution.standard",
   "plane": "execution",
   "nodes": [
-    {"node_id": "builder", "stage_kind_id": "builder"},
-    {"node_id": "checker", "stage_kind_id": "checker"},
-    {"node_id": "fixer", "stage_kind_id": "fixer"},
-    {"node_id": "doublechecker", "stage_kind_id": "doublechecker"},
-    {"node_id": "updater", "stage_kind_id": "updater"},
-    {"node_id": "troubleshooter", "stage_kind_id": "troubleshooter"},
-    {"node_id": "consultant", "stage_kind_id": "consultant"}
+    {"node_id": "builder", "stage_kind_id": "builder", "request_context_profile_id": "builder.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "checker", "stage_kind_id": "checker", "request_context_profile_id": "checker.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "fixer", "stage_kind_id": "fixer", "request_context_profile_id": "fixer.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "doublechecker", "stage_kind_id": "doublechecker", "request_context_profile_id": "doublechecker.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "updater", "stage_kind_id": "updater", "request_context_profile_id": "updater.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "troubleshooter", "stage_kind_id": "troubleshooter", "request_context_profile_id": "troubleshooter.default", "context_render_plan_id": "stage_request.default.v1"},
+    {"node_id": "consultant", "stage_kind_id": "consultant", "request_context_profile_id": "consultant.default", "context_render_plan_id": "stage_request.default.v1"}
   ],
   "entry_nodes": [
     {"entry_key": "task", "node_id": "builder"}
@@ -35,9 +35,9 @@
     {"edge_id": "consultant-blocked-to-terminal-blocked", "from_node_id": "consultant", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"}
   ],
   "terminal_states": [
-    {"terminal_state_id": "update_complete", "terminal_class": "success", "writes_status": "UPDATE_COMPLETE", "emits_artifacts": ["stage_result", "report"]},
-    {"terminal_state_id": "needs_planning", "terminal_class": "escalate_planning", "writes_status": "NEEDS_PLANNING", "emits_artifacts": ["stage_result", "incident_report"]},
-    {"terminal_state_id": "blocked", "terminal_class": "blocked", "writes_status": "BLOCKED", "emits_artifacts": ["stage_result", "report"]}
+    {"terminal_state_id": "update_complete", "terminal_class": "success", "terminal_action_id": "complete_work_item", "writes_status": "UPDATE_COMPLETE", "router_reason": "updater_complete", "emits_artifacts": ["stage_result", "report"]},
+    {"terminal_state_id": "needs_planning", "terminal_class": "escalate_planning", "terminal_action_id": "escalate_to_planning", "writes_status": "NEEDS_PLANNING", "router_reason": "consultant_needs_planning", "emits_artifacts": ["stage_result", "incident_report"]},
+    {"terminal_state_id": "blocked", "terminal_class": "blocked", "terminal_action_id": "block_work_item", "writes_status": "BLOCKED", "router_reason": "consultant_blocked", "failure_class_template": "consultant_blocked", "emits_artifacts": ["stage_result", "report"]}
   ],
   "dynamic_policies": {
     "resume_policies": [
@@ -47,7 +47,8 @@
         "on_outcome": "TROUBLESHOOT_COMPLETE",
         "default_target_node_id": "builder",
         "metadata_stage_keys": ["resume_stage"],
-        "disallowed_target_node_ids": ["consultant"]
+        "disallowed_target_node_ids": ["consultant"],
+        "route_reason": "troubleshoot_complete"
       },
       {
         "policy_id": "execution.consultant.resume",
@@ -55,7 +56,8 @@
         "on_outcome": "CONSULT_COMPLETE",
         "default_target_node_id": "troubleshooter",
         "metadata_stage_keys": ["target_stage", "resume_stage"],
-        "disallowed_target_node_ids": ["consultant"]
+        "disallowed_target_node_ids": ["consultant"],
+        "route_reason": "consultant_local_recovery"
       }
     ],
     "threshold_policies": [
@@ -65,7 +67,12 @@
         "on_outcome": "FIX_NEEDED",
         "counter_name": "fix_cycle_count",
         "threshold": 2,
-        "exhausted_target_node_id": "troubleshooter"
+        "exhausted_target_node_id": "troubleshooter",
+        "recovery_counter_mutation_name": "fix_cycle_count",
+        "route_reason": "fix_needed",
+        "exhausted_route_reason": "fix_cycle_exhausted",
+        "default_failure_class_template": "fix_cycle",
+        "exhausted_failure_class_template": "fix_cycle_exhausted"
       },
       {
         "policy_id": "execution.blocked.recovery",
@@ -73,7 +80,9 @@
         "on_outcome": "BLOCKED",
         "counter_name": "troubleshoot_attempt_count",
         "threshold": 2,
-        "exhausted_target_node_id": "consultant"
+        "exhausted_target_node_id": "consultant",
+        "recovery_counter_mutation_name": "troubleshoot_attempt_count",
+        "exhausted_counter_mutation_name": "consultant_invocations"
       }
     ]
   },

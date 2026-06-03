@@ -22,9 +22,9 @@ from millrace_ai.workspace.paths import WorkspacePaths
 
 from ...artifact_contracts import RuntimeArtifactError
 from ..models import RuntimeEffectResult
+from .artifact_workflow_common import _read_json_model
 from .artifacts import parse_required_run_artifact_as, read_required_run_artifact_text
-from .blueprint_common import _read_json_model
-from .blueprint_evaluator import (
+from .candidate_evaluation import (
     _approval_draft_for_stage_result,
     _approval_packet_for_draft,
     _ApprovalBlueprintEffectError,

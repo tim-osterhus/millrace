@@ -63,7 +63,7 @@ Before changing anything, load the relevant source-of-truth files:
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
 - `src/millrace_ai/assets/modes/learning_codex.json`
-- `src/millrace_ai/assets/modes/efficient_learning_codex.json`
+- `src/millrace_ai/assets/modes/efficient_learning_mixed.json`
 - `src/millrace_ai/assets/modes/learning_pi.json`
 - `src/millrace_ai/assets/modes/default_codex_integrated.json`
 - `src/millrace_ai/assets/modes/learning_codex_integrated.json`

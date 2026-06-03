@@ -100,6 +100,15 @@ class RunTraceEdge(ContractModel):
     target_node_id: str | None = None
     target_trace_node_id: str | None = None
     terminal_state_id: str | None = None
+    terminal_action_id: str | None = None
+    terminal_action_router_consequence: str | None = None
+    lifecycle_mutation_plan_id: str | None = None
+    lifecycle_action_id: str | None = None
+    terminal_writes_status: str | None = None
+    terminal_metadata_source: Literal["graph_resolved", "inferred", "unknown"] = "unknown"
+    failure_class: str | None = None
+    create_incident: bool = False
+    runtime_operation_id: str | None = None
     spawned_work: tuple[RunTraceSpawnedWorkRef, ...] = ()
     decision_reason: str | None = None
     decided_at: datetime

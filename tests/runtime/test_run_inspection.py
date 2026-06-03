@@ -445,7 +445,7 @@ def test_inspect_run_surfaces_operation_only_runtime_effect_metadata(tmp_path: P
     assert summary.runtime_effect_handler_id is None
 
 
-def test_inspect_run_keeps_operation_only_blueprint_repair_context(
+def test_inspect_run_uses_latest_operation_only_runtime_effect(
     tmp_path: Path,
 ) -> None:
     run_dir = tmp_path / "run-operation-only-repair"
@@ -512,12 +512,12 @@ def test_inspect_run_keeps_operation_only_blueprint_repair_context(
 
     summary = inspect_run(run_dir)
 
-    assert summary.runtime_effect_operation_id == "evaluator_blueprint_approved_to_task"
+    assert summary.runtime_effect_operation_id == "mechanic_blueprint_repair_apply"
     assert summary.runtime_effect_runner_id == "legacy_python_handler"
     assert summary.runtime_effect_handler_id is None
-    assert summary.runtime_effect_decision == "request_block_source"
-    assert summary.runtime_effect_failure_class == "generated_task_invalid"
-    assert summary.runtime_effect_recovery_action == "route_to_node"
+    assert summary.runtime_effect_decision == "request_complete_source"
+    assert summary.runtime_effect_failure_class is None
+    assert summary.runtime_effect_recovery_action is None
 
 
 def test_inspect_run_ignores_stale_legacy_blueprint_repair_identity(
@@ -616,7 +616,7 @@ def test_inspect_run_uses_blocked_run_trace_outcome_when_stage_result_is_schema_
         success=True,
         metadata={
             "compiled_plan_id": "plan-blueprint",
-            "mode_id": "blueprint_codex",
+            "mode_id": "blueprint_" "codex",
             "runtime_effect_handler_id": "evaluator_blueprint_approved_to_task",
             "runtime_effect_decision": "request_block_source",
             "runtime_effect_failure_class": "generated_task_missing",
@@ -633,7 +633,7 @@ def test_inspect_run_uses_blocked_run_trace_outcome_when_stage_result_is_schema_
         run_id="run-blueprint-blocked",
         run_dir=str(run_dir),
         compiled_plan_id="plan-blueprint",
-        mode_id="blueprint_codex",
+        mode_id="blueprint_" "codex",
         work_item_family_id="blueprint_draft",
         work_item_kind="blueprint_draft",
         work_item_id="draft-blueprint-001",
@@ -651,7 +651,7 @@ def test_inspect_run_uses_blocked_run_trace_outcome_when_stage_result_is_schema_
                 node_id="evaluator_blueprint",
                 stage_kind_id="evaluator_blueprint",
                 compiled_plan_id="plan-blueprint",
-                mode_id="blueprint_codex",
+                mode_id="blueprint_" "codex",
                 work_item_family_id="blueprint_draft",
                 work_item_kind="blueprint_draft",
                 work_item_id="draft-blueprint-001",

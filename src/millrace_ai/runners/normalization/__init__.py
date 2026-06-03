@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from millrace_ai.contracts import (
-    ExecutionTerminalResult,
-    LearningTerminalResult,
-    PlanningTerminalResult,
-    ResultClass,
-    StageResultEnvelope,
-)
+from millrace_ai.contracts import ResultClass, StageResultEnvelope, TerminalOutcome
 from millrace_ai.contracts.stage_metadata import blocked_terminal_for_plane
 from millrace_ai.runners.normalization.artifacts import (
     merge_artifact_paths,
@@ -95,10 +89,7 @@ def normalize_stage_result(
     result_class = extraction.result_class
     assert isinstance(result_class, ResultClass)
     terminal_result = extraction.terminal_result
-    assert isinstance(
-        terminal_result,
-        (ExecutionTerminalResult, PlanningTerminalResult, LearningTerminalResult),
-    )
+    assert isinstance(terminal_result, TerminalOutcome)
     report_artifact = resolved_report_artifact(request)
 
     return StageResultEnvelope(

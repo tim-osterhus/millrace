@@ -135,8 +135,8 @@ Direct tests:
 - `tests/cli/test_cli.py::test_status_surfaces_usage_governance_pause_context`
 - `tests/cli/test_cli.py::test_status_surfaces_failure_class_and_retry_counters`
 - `tests/cli/test_cli.py::test_status_surfaces_latest_runtime_effect_failure_metadata`
-- `tests/cli/test_cli.py::test_status_surfaces_blueprint_repair_runtime_effect_diagnostics`
-- `tests/cli/test_cli.py::test_status_keeps_blueprint_repair_diagnostics_after_mechanic_apply_runtime_effect`
+- `tests/cli/test_cli.py::test_status_surfaces_runtime_effect_recovery_metadata`
+- `tests/cli/test_cli.py::test_status_surfaces_latest_runtime_effect_after_repair_apply_runtime_effect`
 - `tests/cli/test_cli.py::test_status_uses_latest_prior_runtime_effect_metadata_when_last_stage_is_recovery`
 - `tests/cli/test_cli.py::test_status_json_surfaces_blocked_idle_context_and_runtime_error_report`
 - `tests/cli/test_cli.py::test_status_surfaces_closure_target_state`
@@ -180,8 +180,8 @@ Direct tests:
 - `tests/workspace/test_doctor.py::test_doctor_flags_stale_runtime_ownership_lock`
 - `tests/workspace/test_doctor.py::test_doctor_flags_missing_baseline_manifest`
 - `tests/cli/test_cli.py::test_doctor_command_surfaces_workspace_diagnostics`
-- `tests/cli/test_cli.py::test_doctor_warns_on_latest_blueprint_repair_runtime_effect_context`
-- `tests/cli/test_cli.py::test_doctor_keeps_blueprint_repair_context_after_mechanic_apply_runtime_effect`
+- `tests/cli/test_cli.py::test_doctor_does_not_emit_bespoke_runtime_effect_recovery_context`
+- `tests/cli/test_cli.py::test_doctor_does_not_reconstruct_repair_context_after_runtime_effect`
 
 Missing characterization before movement:
 
@@ -231,7 +231,7 @@ identity.
 
 Direct tests:
 
-- `tests/runtime/test_stage_requests.py::test_blueprint_stage_request_carries_model_alias_provenance`
+- `tests/runtime/test_stage_requests.py::test_stage_request_carries_model_alias_provenance_for_custom_stage_kinds`
 - `tests/runners/test_runner.py::test_normalize_persists_request_context_and_failure_origin_metadata`
 - `tests/runners/test_runner.py::test_render_stage_request_context_lines_covers_all_stage_run_request_fields`
 - `tests/compilation/test_model_alias_resolution.py::test_stage_alias_overrides_stage_config`

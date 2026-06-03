@@ -73,6 +73,9 @@ Public compatibility facades may re-export the same behavior.
 - `runtime/effect_execution.py`, `runtime/effects/`,
   `runtime/lifecycle_interpreter.py`, and `workspace/queue_lifecycle.py` apply
   compiled operation-id-first runtime-effect and source-lifecycle intents.
+  Runtime-effect rules declare source completion/blocking consequence metadata
+  for `REQUEST_COMPLETE_SOURCE` and `REQUEST_BLOCK_SOURCE`, while repair-route
+  exceptions remain failure-policy-owned.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
   `runtime/effects/operation_runners/`, `runtime/closure_transitions.py`,
   `runtime/result_counters.py`, `runtime/stage_result_persistence.py`,
@@ -127,7 +130,8 @@ active runs, emit events, and apply post-stage usage governance.
 **Inspection/monitor visibility:** `millrace status`, `millrace queue ls/show`,
 `millrace runs ls/show/trace`, `run_trace.json`, stage-result JSON, runtime
 events, and the basic monitor show the active task, compiled identity, route,
-terminal result, artifacts, counters, and blocker details.
+terminal metadata provenance, terminal result, artifacts, counters, blocker
+details, and runtime-operation/incident markers.
 
 **Root-source contract:** not every task is a root source. For closure-scoped
 tasks, task metadata must preserve the root spec/root source lineage inherited
@@ -175,7 +179,10 @@ generated task/spec, completing a no-op probe, or blocking the probe.
 `runtime/planner_effects.py`, `runtime/effect_execution.py`,
 `runtime/lifecycle_interpreter.py`, `runtime/work_item_transitions.py`, and
 Blueprint operation runners under `runtime/effects/operation_runners/` apply
-compiled Planning mutations.
+compiled Planning mutations. For runtime-effect results, `effect_execution.py`
+applies effect-rule-declared source completion/blocking lifecycle intent
+before queue mutation, while repair-route exceptions stay failure-policy-
+owned.
 `runtime/completion_behavior.py` opens a closure target when a root spec is
 claimed, snapshots canonical contracts, and derives closure-blocking lineage
 through family adapter-backed lineage scans plus inventory-backed blocker refs.
@@ -287,12 +294,12 @@ Mechanic repair actions, and block precise replay/partial-mutation failures.
 `runtime/effect_execution.py` selects those operations by compiled operation id
 and runner id; legacy handler ids are compatibility aliases, not dispatch
 authority.
-`runtime/effects/operations.py` and `runtime/blueprint_effects.py` are legacy
-import facades, and
-`workspace/blueprint_state.py` owns durable Blueprint file layout helpers.
+`runtime/effects/operation_runners/` contains the Python executors for
+operations that still need file mutation code, and `workspace/blueprint_state.py`
+owns durable Blueprint file layout helpers.
 
 **Inspection/monitor visibility:** status exposes Blueprint counters and latest
-repair context; `runs show/trace` exposes runtime-effect operation, runner,
+runtime-effect metadata; `runs show/trace` exposes runtime-effect operation, runner,
 legacy handler, failure class, source lifecycle, created paths, and compiled
 identity; doctor checks closure/Blueprint health; raw Blueprint state remains inspectable under
 `millrace-agents/blueprints/`.

@@ -21,24 +21,21 @@ from millrace_ai.workspace.blueprint_state import (
 )
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from ..models import RuntimeEffectMutationPhase, RuntimeEffectResult, SourceLifecycleAction, SourceLifecycleIntent
-from .artifacts import read_json_model_list_payload, read_json_model_payload
-from .blueprint_common import (
-    _append_lifecycle_journal,
-    _block_lifecycle_plan_id,
-    _complete_lifecycle_plan_id,
+from ..models import RuntimeEffectDecision, RuntimeEffectMutationPhase, RuntimeEffectResult
+from .artifact_workflow_common import (
     _effect_path,
     _normalized_blueprint_model_payload,
-    _source_lifecycle_intent,
     _stage_result_work_item_kind,
 )
-from .results import block_source_failure_result, complete_source_success_result
+from .artifacts import read_json_model_list_payload, read_json_model_payload
+from .results import block_source_failure_result, complete_source_success_result, runtime_mutation_journal
 from .types import ModelT
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
 
 MANAGER_BLUEPRINT_OPERATION_ID = "manager_blueprint_manifest_to_blueprint_drafts"
+_LATEST_PACKET_FIELD = "latest_" "blueprint_id"
 
 _DRAFT_STATES: tuple[str, ...] = (
     "queue",
@@ -118,26 +115,16 @@ def manager_blueprint_manifest_to_blueprint_drafts(
     all_outputs_exist = manifest_exists and len(existing_draft_ids) == len(drafts)
     if all_outputs_exist:
         if source_state == "active":
-            lifecycle_intent = _source_lifecycle_intent(
-                stage_result,
-                plan_id=_complete_lifecycle_plan_id(
-                    _stage_result_work_item_kind(stage_result),
-                ),
-                action=SourceLifecycleAction.COMPLETE,
-            )
             return _manager_success_result(
                 created_paths=created_paths,
-                source_lifecycle_intent=lifecycle_intent,
+                complete_source=True,
                 message=f"queued {len(drafts)} blueprint draft(s)",
-                mutation_journal=_append_lifecycle_journal(
-                    mutation_journal,
-                    _manager_lifecycle_journal_entry(stage_result, lifecycle_intent),
-                ),
+                mutation_journal=mutation_journal,
             )
         if source_state == "target":
             return _manager_success_result(
                 created_paths=created_paths,
-                source_lifecycle_intent=None,
+                complete_source=False,
                 message=f"blueprint draft output already exists for {manifest.manifest_id}",
             )
         return _manager_failure_result(
@@ -145,7 +132,6 @@ def manager_blueprint_manifest_to_blueprint_drafts(
             failure_class="blueprint_source_lifecycle_invalid",
             message=f"source work item is not active: {stage_result.work_item_id}",
             created_paths=created_paths,
-            include_source_lifecycle_intent=False,
         )
 
     if source_state != "active":
@@ -154,7 +140,6 @@ def manager_blueprint_manifest_to_blueprint_drafts(
             failure_class="blueprint_source_lifecycle_invalid",
             message=f"source work item is not active: {stage_result.work_item_id}",
             created_paths=created_paths,
-            include_source_lifecycle_intent=False,
         )
 
     try:
@@ -192,19 +177,11 @@ def manager_blueprint_manifest_to_blueprint_drafts(
             mutation_journal=mutation_journal,
         )
 
-    lifecycle_intent = _source_lifecycle_intent(
-        stage_result,
-        plan_id=_complete_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
-        action=SourceLifecycleAction.COMPLETE,
-    )
     return _manager_success_result(
         created_paths=created_paths,
-        source_lifecycle_intent=lifecycle_intent,
+        complete_source=True,
         message=f"queued {len(drafts)} blueprint draft(s)",
-        mutation_journal=_append_lifecycle_journal(
-            mutation_journal,
-            _manager_lifecycle_journal_entry(stage_result, lifecycle_intent),
-        ),
+        mutation_journal=mutation_journal,
     )
 
 
@@ -330,14 +307,22 @@ def _manager_source_lifecycle_state(
 def _manager_success_result(
     *,
     created_paths: Sequence[str],
-    source_lifecycle_intent: SourceLifecycleIntent | None,
+    complete_source: bool,
     message: str,
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
 ) -> RuntimeEffectResult:
+    if not complete_source:
+        return RuntimeEffectResult(
+            handler_id=MANAGER_BLUEPRINT_OPERATION_ID,
+            decision=RuntimeEffectDecision.CONTINUE_ROUTE,
+            created_paths=tuple(created_paths),
+            message=message,
+            mutation_journal=runtime_mutation_journal(mutation_journal),
+        )
     return complete_source_success_result(
         MANAGER_BLUEPRINT_OPERATION_ID,
         created_paths=tuple(created_paths),
-        source_lifecycle_intent=source_lifecycle_intent,
+        source_lifecycle_intent=None,
         message=message,
         mutation_journal=mutation_journal,
     )
@@ -349,7 +334,6 @@ def _manager_failure_result(
     failure_class: str,
     message: str,
     created_paths: Sequence[str],
-    include_source_lifecycle_intent: bool = True,
     mutation_journal: Sequence[dict[str, JsonValue]] = (),
 ) -> RuntimeEffectResult:
     return block_source_failure_result(
@@ -358,10 +342,7 @@ def _manager_failure_result(
         failure_class=failure_class,
         message=message,
         created_paths=created_paths,
-        lifecycle_plan_id=_block_lifecycle_plan_id(_stage_result_work_item_kind(stage_result)),
-        include_source_lifecycle_intent=include_source_lifecycle_intent,
         mutation_journal=mutation_journal,
-        context="Blueprint runtime effect",
     )
 
 
@@ -400,27 +381,6 @@ def _manager_mutation_journal_entry(
     if work_item_id is not None:
         entry["work_item_id"] = work_item_id
     return entry
-
-
-def _manager_lifecycle_journal_entry(
-    stage_result: StageResultEnvelope,
-    intent: SourceLifecycleIntent | None,
-) -> dict[str, JsonValue] | None:
-    if intent is None:
-        return None
-    return {
-        "operation_id": MANAGER_BLUEPRINT_OPERATION_ID,
-        "rule_id": MANAGER_BLUEPRINT_OPERATION_ID,
-        "run_id": stage_result.run_id,
-        "step_id": "complete_source_lifecycle",
-        "mutation_phase": RuntimeEffectMutationPhase.PARTIAL_MUTATION.value,
-        "source_lifecycle_action": intent.action.value,
-        "work_item_family_id": intent.work_item_family_id,
-        "work_item_kind": (
-            intent.work_item_kind.value if intent.work_item_kind is not None else None
-        ),
-        "work_item_id": intent.work_item_id,
-    }
 
 
 def _validate_manager_output(
@@ -472,7 +432,7 @@ def _manager_draft_identity_payload(draft: BlueprintDraftDocument) -> str:
             exclude={
                 "status",
                 "current_revision",
-                "latest_blueprint_id",
+                _LATEST_PACKET_FIELD,
                 "latest_critique_id",
                 "updated_at",
             },

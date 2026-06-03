@@ -51,6 +51,12 @@ class GraphExportTerminalState(ContractModel):
     terminal_state_id: str
     terminal_class: str
     writes_status: str
+    terminal_action_id: str | None = None
+    terminal_action_router_consequence: str | None = None
+    lifecycle_mutation_plan_id: str | None = None
+    lifecycle_action_id: str | None = None
+    failure_class: str | None = None
+    create_incident: bool = False
     emits_artifacts: tuple[str, ...] = ()
     ends_plane_run: bool = True
 
