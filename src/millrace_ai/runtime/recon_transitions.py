@@ -49,7 +49,7 @@ def apply_recon_router_decision(
 ) -> tuple[Path, ...]:
     """Persist Recon artifacts, enqueue routed work, then finish the active probe."""
 
-    recon_route = _recon_route_from_decision(decision, stage_result)
+    recon_route = _recon_route_from_decision(decision, stage_result, compiled_plan=compiled_plan)
     if recon_route in {"to_execution", "to_planning", "noop"} and decision.action is not RouterAction.IDLE:
         raise ValueError("successful recon terminal results require an idle router decision")
     if recon_route == "blocked" and decision.action is not RouterAction.BLOCKED:
@@ -135,8 +135,22 @@ def _validate_packet_for_stage_result(
 def _recon_route_from_decision(
     decision: RouterDecision,
     stage_result: StageResultEnvelope,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> str:
     runtime_operation_id = decision.runtime_operation_id
+    if runtime_operation_id is not None and compiled_plan is not None:
+        operation = compiled_plan.runtime_operations_by_id.get(runtime_operation_id)
+        if operation is None:
+            raise ValueError(
+                "recon terminal action declares unknown runtime_operation_id "
+                f"{runtime_operation_id}; recompile or update terminal action assets"
+            )
+        if "terminal_action" not in operation.allowed_contexts:
+            raise ValueError(
+                f"recon terminal action runtime operation {runtime_operation_id} "
+                f"does not allow terminal_action context"
+            )
     route = _RECON_ROUTE_BY_RUNTIME_OPERATION.get(runtime_operation_id or "")
     if route is not None:
         return route

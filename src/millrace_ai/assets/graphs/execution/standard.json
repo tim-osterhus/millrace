@@ -4,40 +4,217 @@
   "loop_id": "execution.standard",
   "plane": "execution",
   "nodes": [
-    {"node_id": "builder", "stage_kind_id": "builder", "request_context_profile_id": "builder.default", "context_render_plan_id": "stage_request.default.v1"},
-    {"node_id": "checker", "stage_kind_id": "checker", "request_context_profile_id": "checker.default", "context_render_plan_id": "stage_request.default.v1"},
-    {"node_id": "fixer", "stage_kind_id": "fixer", "request_context_profile_id": "fixer.default", "context_render_plan_id": "stage_request.default.v1"},
-    {"node_id": "doublechecker", "stage_kind_id": "doublechecker", "request_context_profile_id": "doublechecker.default", "context_render_plan_id": "stage_request.default.v1"},
-    {"node_id": "updater", "stage_kind_id": "updater", "request_context_profile_id": "updater.default", "context_render_plan_id": "stage_request.default.v1"},
-    {"node_id": "troubleshooter", "stage_kind_id": "troubleshooter", "request_context_profile_id": "troubleshooter.default", "context_render_plan_id": "stage_request.default.v1"},
-    {"node_id": "consultant", "stage_kind_id": "consultant", "request_context_profile_id": "consultant.default", "context_render_plan_id": "stage_request.default.v1"}
+    {
+      "node_id": "builder",
+      "stage_kind_id": "builder"
+    },
+    {
+      "node_id": "checker",
+      "stage_kind_id": "checker"
+    },
+    {
+      "node_id": "fixer",
+      "stage_kind_id": "fixer"
+    },
+    {
+      "node_id": "doublechecker",
+      "stage_kind_id": "doublechecker"
+    },
+    {
+      "node_id": "updater",
+      "stage_kind_id": "updater"
+    },
+    {
+      "node_id": "troubleshooter",
+      "stage_kind_id": "troubleshooter"
+    },
+    {
+      "node_id": "consultant",
+      "stage_kind_id": "consultant"
+    }
   ],
   "entry_nodes": [
-    {"entry_key": "task", "node_id": "builder"}
+    {
+      "entry_key": "task",
+      "node_id": "builder"
+    }
   ],
   "edges": [
-    {"edge_id": "builder-complete-to-checker", "from_node_id": "builder", "to_node_id": "checker", "on_outcomes": ["BUILDER_COMPLETE"]},
-    {"edge_id": "builder-blocked-to-troubleshooter", "from_node_id": "builder", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "checker-pass-to-updater", "from_node_id": "checker", "to_node_id": "updater", "on_outcomes": ["CHECKER_PASS"]},
-    {"edge_id": "checker-fix-needed-to-fixer", "from_node_id": "checker", "to_node_id": "fixer", "on_outcomes": ["FIX_NEEDED"]},
-    {"edge_id": "checker-blocked-to-troubleshooter", "from_node_id": "checker", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "fixer-complete-to-doublechecker", "from_node_id": "fixer", "to_node_id": "doublechecker", "on_outcomes": ["FIXER_COMPLETE"]},
-    {"edge_id": "fixer-blocked-to-troubleshooter", "from_node_id": "fixer", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "doublechecker-pass-to-updater", "from_node_id": "doublechecker", "to_node_id": "updater", "on_outcomes": ["DOUBLECHECK_PASS"]},
-    {"edge_id": "doublechecker-fix-needed-to-fixer", "from_node_id": "doublechecker", "to_node_id": "fixer", "on_outcomes": ["FIX_NEEDED"]},
-    {"edge_id": "doublechecker-blocked-to-troubleshooter", "from_node_id": "doublechecker", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "updater-complete-to-terminal-update-complete", "from_node_id": "updater", "terminal_state_id": "update_complete", "on_outcomes": ["UPDATE_COMPLETE"], "kind": "terminal"},
-    {"edge_id": "updater-blocked-to-troubleshooter", "from_node_id": "updater", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "troubleshooter-complete-to-builder", "from_node_id": "troubleshooter", "to_node_id": "builder", "on_outcomes": ["TROUBLESHOOT_COMPLETE"]},
-    {"edge_id": "troubleshooter-blocked-to-troubleshooter", "from_node_id": "troubleshooter", "to_node_id": "troubleshooter", "on_outcomes": ["BLOCKED"]},
-    {"edge_id": "consultant-complete-to-troubleshooter", "from_node_id": "consultant", "to_node_id": "troubleshooter", "on_outcomes": ["CONSULT_COMPLETE"]},
-    {"edge_id": "consultant-needs-planning-to-terminal-needs-planning", "from_node_id": "consultant", "terminal_state_id": "needs_planning", "on_outcomes": ["NEEDS_PLANNING"], "kind": "terminal"},
-    {"edge_id": "consultant-blocked-to-terminal-blocked", "from_node_id": "consultant", "terminal_state_id": "blocked", "on_outcomes": ["BLOCKED"], "kind": "terminal"}
+    {
+      "edge_id": "builder-complete-to-checker",
+      "from_node_id": "builder",
+      "to_node_id": "checker",
+      "on_outcomes": [
+        "BUILDER_COMPLETE"
+      ]
+    },
+    {
+      "edge_id": "builder-blocked-to-troubleshooter",
+      "from_node_id": "builder",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "BLOCKED"
+      ]
+    },
+    {
+      "edge_id": "checker-pass-to-updater",
+      "from_node_id": "checker",
+      "to_node_id": "updater",
+      "on_outcomes": [
+        "CHECKER_PASS"
+      ]
+    },
+    {
+      "edge_id": "checker-fix-needed-to-fixer",
+      "from_node_id": "checker",
+      "to_node_id": "fixer",
+      "on_outcomes": [
+        "FIX_NEEDED"
+      ]
+    },
+    {
+      "edge_id": "checker-blocked-to-troubleshooter",
+      "from_node_id": "checker",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "BLOCKED"
+      ]
+    },
+    {
+      "edge_id": "fixer-complete-to-doublechecker",
+      "from_node_id": "fixer",
+      "to_node_id": "doublechecker",
+      "on_outcomes": [
+        "FIXER_COMPLETE"
+      ]
+    },
+    {
+      "edge_id": "fixer-blocked-to-troubleshooter",
+      "from_node_id": "fixer",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "BLOCKED"
+      ]
+    },
+    {
+      "edge_id": "doublechecker-pass-to-updater",
+      "from_node_id": "doublechecker",
+      "to_node_id": "updater",
+      "on_outcomes": [
+        "DOUBLECHECK_PASS"
+      ]
+    },
+    {
+      "edge_id": "doublechecker-fix-needed-to-fixer",
+      "from_node_id": "doublechecker",
+      "to_node_id": "fixer",
+      "on_outcomes": [
+        "FIX_NEEDED"
+      ]
+    },
+    {
+      "edge_id": "doublechecker-blocked-to-troubleshooter",
+      "from_node_id": "doublechecker",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "BLOCKED"
+      ]
+    },
+    {
+      "edge_id": "updater-complete-to-terminal-update-complete",
+      "from_node_id": "updater",
+      "terminal_state_id": "update_complete",
+      "on_outcomes": [
+        "UPDATE_COMPLETE"
+      ],
+      "kind": "terminal"
+    },
+    {
+      "edge_id": "updater-blocked-to-troubleshooter",
+      "from_node_id": "updater",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "BLOCKED"
+      ]
+    },
+    {
+      "edge_id": "troubleshooter-complete-to-builder",
+      "from_node_id": "troubleshooter",
+      "to_node_id": "builder",
+      "on_outcomes": [
+        "TROUBLESHOOT_COMPLETE"
+      ]
+    },
+    {
+      "edge_id": "troubleshooter-blocked-to-troubleshooter",
+      "from_node_id": "troubleshooter",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "BLOCKED"
+      ]
+    },
+    {
+      "edge_id": "consultant-complete-to-troubleshooter",
+      "from_node_id": "consultant",
+      "to_node_id": "troubleshooter",
+      "on_outcomes": [
+        "CONSULT_COMPLETE"
+      ]
+    },
+    {
+      "edge_id": "consultant-needs-planning-to-terminal-needs-planning",
+      "from_node_id": "consultant",
+      "terminal_state_id": "needs_planning",
+      "on_outcomes": [
+        "NEEDS_PLANNING"
+      ],
+      "kind": "terminal"
+    },
+    {
+      "edge_id": "consultant-blocked-to-terminal-blocked",
+      "from_node_id": "consultant",
+      "terminal_state_id": "blocked",
+      "on_outcomes": [
+        "BLOCKED"
+      ],
+      "kind": "terminal"
+    }
   ],
   "terminal_states": [
-    {"terminal_state_id": "update_complete", "terminal_class": "success", "terminal_action_id": "complete_work_item", "writes_status": "UPDATE_COMPLETE", "router_reason": "updater_complete", "emits_artifacts": ["stage_result", "report"]},
-    {"terminal_state_id": "needs_planning", "terminal_class": "escalate_planning", "terminal_action_id": "escalate_to_planning", "writes_status": "NEEDS_PLANNING", "router_reason": "consultant_needs_planning", "emits_artifacts": ["stage_result", "incident_report"]},
-    {"terminal_state_id": "blocked", "terminal_class": "blocked", "terminal_action_id": "block_work_item", "writes_status": "BLOCKED", "router_reason": "consultant_blocked", "failure_class_template": "consultant_blocked", "emits_artifacts": ["stage_result", "report"]}
+    {
+      "terminal_state_id": "update_complete",
+      "terminal_class": "success",
+      "terminal_action_id": "complete_work_item",
+      "writes_status": "UPDATE_COMPLETE",
+      "router_reason": "updater_complete",
+      "emits_artifacts": [
+        "stage_result",
+        "report"
+      ]
+    },
+    {
+      "terminal_state_id": "needs_planning",
+      "terminal_class": "escalate_planning",
+      "terminal_action_id": "escalate_to_planning",
+      "writes_status": "NEEDS_PLANNING",
+      "router_reason": "consultant_needs_planning",
+      "emits_artifacts": [
+        "stage_result",
+        "incident_report"
+      ]
+    },
+    {
+      "terminal_state_id": "blocked",
+      "terminal_class": "blocked",
+      "terminal_action_id": "block_work_item",
+      "writes_status": "BLOCKED",
+      "router_reason": "consultant_blocked",
+      "failure_class_template": "consultant_blocked",
+      "emits_artifacts": [
+        "stage_result",
+        "report"
+      ]
+    }
   ],
   "dynamic_policies": {
     "resume_policies": [
@@ -46,49 +223,59 @@
         "source_node_id": "troubleshooter",
         "on_outcome": "TROUBLESHOOT_COMPLETE",
         "default_target_node_id": "builder",
-        "metadata_stage_keys": ["resume_stage"],
-        "disallowed_target_node_ids": ["consultant"],
-        "route_reason": "troubleshoot_complete"
+        "metadata_stage_keys": [
+          "resume_stage"
+        ],
+        "disallowed_target_node_ids": [
+          "consultant"
+        ]
       },
       {
         "policy_id": "execution.consultant.resume",
         "source_node_id": "consultant",
         "on_outcome": "CONSULT_COMPLETE",
         "default_target_node_id": "troubleshooter",
-        "metadata_stage_keys": ["target_stage", "resume_stage"],
-        "disallowed_target_node_ids": ["consultant"],
-        "route_reason": "consultant_local_recovery"
+        "metadata_stage_keys": [
+          "target_stage",
+          "resume_stage"
+        ],
+        "disallowed_target_node_ids": [
+          "consultant"
+        ]
       }
     ],
     "threshold_policies": [
       {
         "policy_id": "execution.fix-needed.exhaustion",
-        "source_node_ids": ["checker", "doublechecker"],
+        "source_node_ids": [
+          "checker",
+          "doublechecker"
+        ],
         "on_outcome": "FIX_NEEDED",
         "counter_name": "fix_cycle_count",
         "threshold": 2,
-        "exhausted_target_node_id": "troubleshooter",
-        "recovery_counter_mutation_name": "fix_cycle_count",
-        "route_reason": "fix_needed",
-        "exhausted_route_reason": "fix_cycle_exhausted",
-        "default_failure_class_template": "fix_cycle",
-        "exhausted_failure_class_template": "fix_cycle_exhausted"
+        "exhausted_target_node_id": "troubleshooter"
       },
       {
         "policy_id": "execution.blocked.recovery",
-        "source_node_ids": ["builder", "checker", "fixer", "doublechecker", "updater", "troubleshooter"],
+        "source_node_ids": [
+          "builder",
+          "checker",
+          "fixer",
+          "doublechecker",
+          "updater",
+          "troubleshooter"
+        ],
         "on_outcome": "BLOCKED",
         "counter_name": "troubleshoot_attempt_count",
         "threshold": 2,
         "exhausted_target_node_id": "consultant",
-        "recovery_counter_mutation_name": "troubleshoot_attempt_count",
         "exhausted_counter_mutation_name": "consultant_invocations"
       }
     ]
   },
   "runtime_failure_recovery": {
     "default_repair_node_id": "troubleshooter",
-    "default_failure_class_template": "runtime_failure_recovery",
     "counter_name": "troubleshoot_attempt_count",
     "threshold": 2,
     "exhausted_terminal_state_id": "blocked"

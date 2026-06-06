@@ -658,3 +658,95 @@ def test_invalid_workflow_asset_error_includes_path(tmp_path: Path) -> None:
 
     with pytest.raises(WorkflowAssetError, match=r"Invalid work item family definition in asset: .*task\.json"):
         load_builtin_work_item_family_definitions(assets_root=assets_root)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler policy discovery and round-trip tests
+# ---------------------------------------------------------------------------
+
+
+def _scheduler_definition(subset: int = 0) -> dict:
+    payload = _load_json(
+        ASSETS_ROOT / "registry" / "scheduler_policies" / "default_two_plane.json"
+    )
+    return payload["definitions"][subset]
+
+
+def _scheduler_three_plane_definition() -> dict:
+    payload = _load_json(
+        ASSETS_ROOT / "registry" / "scheduler_policies" / "default_three_plane.json"
+    )
+    return payload["definitions"][0]
+
+
+def test_discover_scheduler_policy_definitions_loads_builtins() -> None:
+    """Builtin scheduler policy definitions are discovered from packaged assets."""
+    from millrace_ai.architecture import WorkflowPlaneSchedulerPolicyDefinition
+    from millrace_ai.assets import discover_scheduler_policy_definitions
+
+    policies = discover_scheduler_policy_definitions()
+    by_id = {policy.policy_id: policy for policy in policies}
+
+    assert "default.two_plane" in by_id
+    assert "default.three_plane" in by_id
+
+    two = by_id["default.two_plane"]
+    assert isinstance(two, WorkflowPlaneSchedulerPolicyDefinition)
+    assert two.plane_order == ("execution", "planning")
+    assert len(two.lanes) == 2
+    assert not two.experimental_multi_lane
+
+    three = by_id["default.three_plane"]
+    assert three.plane_order == ("execution", "planning", "learning")
+    assert len(three.lanes) == 3
+    assert len(three.lane_conflict_policies) == 2
+
+
+def test_shipped_scheduler_policy_payloads_round_trip() -> None:
+    """Both shipped scheduler policy payloads survive model validation round-trip."""
+    from millrace_ai.architecture import WorkflowPlaneSchedulerPolicyDefinition
+
+    two_payload = _scheduler_definition(0)
+    three_payload = _scheduler_three_plane_definition()
+
+    _assert_round_trip(WorkflowPlaneSchedulerPolicyDefinition, two_payload)
+    _assert_round_trip(WorkflowPlaneSchedulerPolicyDefinition, three_payload)
+
+
+def test_workflow_primitive_bundle_includes_scheduler_policies() -> None:
+    """The workflow primitive bundle includes scheduler_policies."""
+    bundle = load_builtin_workflow_primitives()
+
+    policy_ids = {policy.policy_id for policy in bundle.scheduler_policies}
+    assert "default.two_plane" in policy_ids
+    assert "default.three_plane" in policy_ids
+
+
+def test_discover_scheduler_policy_rejects_duplicate_ids(tmp_path: Path) -> None:
+    """Duplicate scheduler policy IDs are rejected."""
+    assets_root = _copy_builtin_assets(tmp_path)
+    policy_dir = assets_root / "registry" / "scheduler_policies"
+    duplicate_path = policy_dir / "duplicate_two_plane.json"
+    duplicate_path.write_text(
+        json.dumps(_scheduler_definition(0), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    from millrace_ai.assets import discover_scheduler_policy_definitions
+
+    with pytest.raises(
+        WorkflowAssetError,
+        match=r"Duplicate discovered scheduler policy id: default\.two_plane",
+    ):
+        discover_scheduler_policy_definitions(assets_root=assets_root)
+
+
+def test_shipped_runtime_operation_payloads_round_trip() -> None:
+    """Shipped runtime operation payloads survive model validation round-trip."""
+    from millrace_ai.architecture.effect_operations import RuntimeOperationDefinition
+
+    ops_payload = _load_json(
+        ASSETS_ROOT / "registry" / "runtime_operations" / "default_runtime_operations.json"
+    )
+    for definition in ops_payload["definitions"]:
+        _assert_round_trip(RuntimeOperationDefinition, definition)

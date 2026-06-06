@@ -247,6 +247,10 @@ class RuntimeSnapshot(ContractModel):
         if queue_depths:
             payload["queue_depths_by_plane"] = queue_depths
 
+        snapshot_plan_id = payload.get("compiled_plan_id") or "legacy-unknown"
+        snapshot_plan_fingerprint = (
+            payload.get("compiled_plan_fingerprint") or snapshot_plan_id or "legacy-unknown"
+        )
         active_runs = dict(payload.get("active_runs_by_plane") or {})
         if not active_runs and payload.get("active_stage") is not None:
             active_plane = payload.get("active_plane")
@@ -283,10 +287,8 @@ class RuntimeSnapshot(ContractModel):
                     "run_id": active_run_id,
                     # Older snapshots only had snapshot-level plan authority.
                     # This projection is intentionally confined to legacy active_* state.
-                    "compiled_plan_id": payload.get("compiled_plan_id") or "legacy-unknown",
-                    "compiled_plan_fingerprint": payload.get("compiled_plan_fingerprint")
-                    or payload.get("compiled_plan_id")
-                    or "legacy-unknown",
+                    "compiled_plan_id": snapshot_plan_id,
+                    "compiled_plan_fingerprint": snapshot_plan_fingerprint,
                     "request_kind": request_kind,
                     "work_item_family_id": family_id,
                     "work_item_kind": legacy_kind,
@@ -294,10 +296,18 @@ class RuntimeSnapshot(ContractModel):
                     "active_since": active_since,
                 }
         if active_runs:
+            active_runs = {
+                plane: _backfill_active_run_plan_identity(
+                    active_run,
+                    compiled_plan_id=snapshot_plan_id,
+                    compiled_plan_fingerprint=snapshot_plan_fingerprint,
+                )
+                for plane, active_run in active_runs.items()
+            }
             payload["active_runs_by_plane"] = active_runs
 
         if not payload.get("compiled_plan_fingerprint"):
-            payload["compiled_plan_fingerprint"] = payload.get("compiled_plan_id") or "legacy-unknown"
+            payload["compiled_plan_fingerprint"] = snapshot_plan_fingerprint
 
         if payload.get("active_stage") is None:
             payload["active_node_id"] = None
@@ -410,6 +420,22 @@ def _foreground_active_run(active_runs_by_plane: dict[Plane, ActiveRunState]) ->
         if active_run is not None:
             return active_run
     raise ValueError("active_runs_by_plane cannot be empty")
+
+
+def _backfill_active_run_plan_identity(
+    active_run: object,
+    *,
+    compiled_plan_id: str,
+    compiled_plan_fingerprint: str,
+) -> object:
+    if not isinstance(active_run, dict):
+        return active_run
+    normalized = dict(active_run)
+    if not str(normalized.get("compiled_plan_id") or "").strip():
+        normalized["compiled_plan_id"] = compiled_plan_id
+    if not str(normalized.get("compiled_plan_fingerprint") or "").strip():
+        normalized["compiled_plan_fingerprint"] = compiled_plan_fingerprint
+    return normalized
 
 
 __all__ = [

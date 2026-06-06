@@ -518,3 +518,95 @@ event/monitor projection still share one tightly-coupled lifecycle boundary.
   hotspots (for example `runtime/effects/operation_runners/candidate_evaluation.py`,
   `runtime/completion_behavior.py`, and `runtime/context/blueprint.py`) rather
   than re-opening the finished packet ids.
+
+## Active Compatibility Wrappers
+
+These modules survive as compatibility wrappers or facades only. They preserve
+public import compatibility and test coverage but no longer own active semantic
+authority for ordering, operation validity, or dispatch decisions.
+
+### `src/millrace_ai/router.py`
+
+Stable compatibility facade preserved for import compatibility. Active
+runtime dispatch does not call its legacy plane-specific entrypoints
+(`next_execution_step`, `next_planning_step`, `route_execution_recovery`,
+`route_planning_recovery`). The runtime calls `route_stage_result_from_graph`
+in `runtime/graph_authority/routing.py`, which validates stage-result identity
+and delegates to the generic compiled-graph router.
+
+Legacy helpers (`counter_key_for_failure_class`, `_normalize_failure_class`)
+are shared by the graph-authority counters module and remain here to avoid a
+hidden import restructuring.
+
+### `src/millrace_ai/runtime/graph_authority/execution.py` and `planning.py`
+
+Thin compatibility wrappers over the generic compiled-graph router. All public
+exports are preserved for import compatibility. These modules forward to
+`route_generic_stage_result_from_graph` with plane-specific terminal-reason
+and failure-class formatter callbacks. They do not own independent dispatch
+logic.
+
+### `src/millrace_ai/runtime/graph_authority/learning.py`
+
+Standalone compatibility surface. The learning plane has no threshold or
+resume policies yet, so it has not been folded into the generic pattern. All
+public exports are preserved for import compatibility.
+
+### `src/millrace_ai/runtime/effect_execution.py`
+
+Core runtime-effect dispatch uses operation-id-first resolution. Legacy
+handler ids (`legacy_handler_id`) are preserved only as compatibility
+metadata for failure-policy matching. The active dispatch path resolves
+effect runners through the compiled operation registry, not through legacy
+handler-id-first branching. Legacy handler ids in failure policies must be
+aliases for the selected operation ids; otherwise compile validation rejects
+the policy.
+
+### `src/millrace_ai/runtime/request_context.py`
+
+Compatibility facade over `runtime/context/`. Provider/render-plan resolution
+and context rendering moved to the `runtime/context/` package. This facade
+preserves the public import surface.
+
+### `src/millrace_ai/runtime/blocked_recovery.py`
+
+Compatibility facade over `runtime/recovery/`. Blocked metadata, retry
+policy, queue mutation, environmental classification, runtime error context
+persistence, reports, and repair-route helpers were moved to focused modules
+in `runtime/recovery/`. This facade preserves the public import surface.
+
+### `src/millrace_ai/runtime/effects/legacy.py`
+
+Legacy runtime-effect handler registry preserved as compatibility aliases.
+The registry provides `legacy_handler_id_for_operation()` lookup for
+operation-id-first dispatch in `effect_execution.py`. These handler ids are
+compatibility metadata only; they do not own active dispatch authority.
+
+## Generic Engine Boundary Seams
+
+These rows cover the generic-engine boundary seams identified in ADR-0012
+through ADR-0015 (docs/adr/0012-core-kernel-boundary.md through
+docs/adr/0015-extension-package-manifests.md). Each seam represents a
+workflow-semantic concern that the runtime kernel must not own, per
+ADR-0012. The target home for each seam is one of: graph/config assets,
+extension packages, or workflow primitive contracts.
+Every row specifies the current owner, the target owner, the target
+artifact or interface, and a precise done condition. This register is the
+only migration ledger for this work; no parallel ledger exists elsewhere.
+
+| Seam | Current Location | Current Owner | Target Owner | Target Artifact / Interface | Done Condition |
+| --- | --- | --- | --- | --- | --- |
+| Per-plane graph routing | `src/millrace_ai/runtime/graph_authority/generic_router.py` (active), `routing.py` (dispatch facade), `execution.py`/`planning.py` (compatibility wrappers), `learning.py` (standalone deferred) | Runtime kernel → graph assets / compiled plan (core migrated) | Graph assets / compiled plan | Per-plane graph topology JSON assets | **Core migration complete.** `Plane` enum branches eliminated from active routing dispatch. `route_stage_result_from_graph` in `routing.py` validates identity then delegates to `route_generic_stage_result_from_graph` in `generic_router.py`, which resolves the compiled graph plan by plane-key lookup. `execution.py`/`planning.py` are thin compatibility wrappers. `learning.py` remains standalone — the learning plane has no threshold or resume policies, so integration into the generic pattern is deferred until those policies exist. `router.py` at the package root is a compatibility surface with deferred legacy entrypoints documented. |
+| Recon terminal-operation registry | `src/millrace_ai/runtime/recon_transitions.py` | Runtime kernel | Compiled registry assets / compiled plan | Runtime-operation registry assets + terminal-action `runtime_operation_id` | **Migration complete.** `_TERMINAL_ACTION_RUNTIME_OPERATION_IDS` fixed whitelist removed from active source. Terminal-action `runtime_operation_id` references are validated at compile time against `CompiledRunPlan.runtime_operations_by_id` (existence, `allowed_contexts` must include `terminal_action`, required capabilities). At dispatch, `graph_authority/terminal_actions.py` resolves the operation id from the compiled terminal action, and `recon_transitions.py` maps it through the `_RECON_ROUTE_BY_RUNTIME_OPERATION` table. Shipped operations cover `recon.enqueue_task`, `recon.enqueue_spec`, `recon.noop`, `recon.block_work_item`, `lifecycle.complete_work_item`, and `lifecycle.block_work_item`. |
+| Plane claim order and scheduler dispatch authority | `src/millrace_ai/runtime/activation.py` + `src/millrace_ai/runtime/scheduler_policy.py` + `src/millrace_ai/runtime/tick_cycle.py` + `src/millrace_ai/runtime/supervisor.py` + `src/millrace_ai/runtime/recovery/repair_routes.py` + `src/millrace_ai/runtime/completion_behavior.py` | Runtime kernel | Compiled plan / scheduler-policy registry assets | `WorkflowPlaneSchedulerPolicyDefinition` compiled into `CompiledRunPlan.scheduler_policy` | **Migration complete.** Hard-coded `_FOREGROUND_PLANES` and `_DISPATCH_ORDER` removed from supervisor. Foreground claim order, closure-target priority inversion, learning eligibility, and four residual-surface helpers (fallback entry behavior, targeted Learning routing, recovery fallback routing, claim deferral/backpressure) are interpreted from the shared compiled scheduler-policy interpreter (`scheduler_policy.py`) used by `activation.py`, `tick_cycle.py`, `supervisor.py`, `repair_routes.py`, and `completion_behavior.py`. Scheduler policies are selected by explicit `mode.scheduler_policy_id` or compiler auto-selection (`default.three_plane` for learning modes, `default.two_plane` otherwise). Lane membership and lane conflict policies are read from compiled policy by `lanes.py` and `lane_conflicts.py`. |
+| Plane claim order | `src/millrace_ai/runtime/activation.py` + `src/millrace_ai/runtime/plane_concurrency.py` | Runtime kernel | Compiled plan / graph assets | Plane claim policy definition in graph-loop assets | **Scheduler-policy migration covers this.** Foreground claim order is now interpreted from compiled scheduler policy by `runtime/scheduler_policy.py`. Per-plane queue claim policies (family order, closure lineage policy) remain authoritative for in-plane family selection. |
+| Work-family activation | `src/millrace_ai/runtime/graph_authority/activation.py` | Runtime kernel | Graph assets | Work-item family activation metadata in graph-loop assets | Activation decisions for work-item families resolve through compiled graph activation metadata; no kernel-level family branching logic. |
+| Execution and learning queue claim paths | `src/millrace_ai/runtime/activation.py` + `src/millrace_ai/runtime/tick_cycle.py` | Runtime kernel | Compiled plan / queue policy | Plane queue claim policy definitions | Queue claim paths for execution and learning planes use compiled claim policy metadata; no plane-specific hard-coded claim branching in kernel. |
+| Built-in family branching | `src/millrace_ai/runtime/completion_behavior.py` | Runtime kernel | Extension packages | Work-family branch manifests | All built-in family branching (closure, Blueprint, spec) dispatches through registered work-family adapters; no hard-coded `WorkItemKind` branches in `completion_behavior.py`. |
+| Fixed counters | `src/millrace_ai/runtime/graph_authority/counters.py` | Runtime kernel | Compiled plan | Counter mutation metadata in compiled graph | Counter selection and mutation is driven entirely by compiled policy metadata; no plane-enum branches in counter helpers. |
+| Plane-specific status | `src/millrace_ai/cli/status_view.py` + `src/millrace_ai/runtime/monitoring.py` | Runtime kernel | Extension packages | Status provider manifests | Status rendering for each plane is collected from registered status providers; no hard-coded plane-specific status logic in CLI. |
+| Runtime-effect handler dispatch | `src/millrace_ai/runtime/effect_execution.py` + `src/millrace_ai/runtime/effects/legacy.py` | Runtime kernel | Extension packages | Operation-step manifests / extension package manifest | **Core migration complete.** Effect dispatch uses operation-id-first resolution. Legacy handler ids in `effect_execution.py` and the `effects/legacy.py` registry are preserved as compatibility metadata only for failure-policy matching and import compatibility. Legacy handler ids in failure policies must be aliases for the selected operation ids; otherwise compile validation rejects the policy. Active dispatch does not branch on legacy handler ids. |
+| Closure behavior | `src/millrace_ai/runtime/closure_transitions.py` + `src/millrace_ai/runtime/completion_behavior.py` | Runtime kernel | Extension packages | Closure lifecycle operation steps | Closure-target lifecycle behavior (arbiter routing, handoff incidents, lineage blocking) dispatches through registered operation steps; no hard-coded closure lifecycle logic in kernel. |
+| Blueprint behavior | `src/millrace_ai/runtime/context/blueprint.py` + `src/millrace_ai/runtime/effects/operation_runners/` | Runtime kernel | Extension packages | Blueprint context provider manifests + operation-step manifests | Blueprint-specific request-context providers, operation runners, and document contracts live in extension packages; kernel imports no Blueprint-specific schemas. |
+| Learning behavior | `src/millrace_ai/runtime/learning_promotions.py` + `src/millrace_ai/runtime/learning_triggers.py` | Runtime kernel | Extension packages | Learning operation-step manifests | Learning promotion (Analyst→Professor→Curator) and Librarian trigger behavior dispatches through registered operation steps; no hard-coded Learning stage ordering in kernel. |
+| Static stage legality | `src/millrace_ai/contracts/stage_metadata.py` | Shipped registry (runtime) | Graph assets / stage-kind assets | Stage-kind registry JSON assets | `stage_metadata.py` is scoped to shipped-stage defaults; all custom stage legality derives from stage-kind assets and compiled graph metadata. |

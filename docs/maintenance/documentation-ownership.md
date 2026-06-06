@@ -23,7 +23,7 @@ source boundaries change.
 | CLI command surface | `docs/runtime/millrace-cli-reference.md` | `docs/skills/millrace-ops-agent-manual/SKILL.md` |
 | Web dashboard sidecar | `packages/millrace-web/README.md` | `docs/source-package-map.md`, `docs/runtime/millrace-compiled-stage-graphs-and-run-traces.md` |
 | Operator manual | `docs/skills/millrace-ops-agent-manual/SKILL.md` | `docs/runtime/millrace-cli-reference.md`, `docs/runtime/millrace-runtime-error-codes.md` |
-| Source package map | `docs/source-package-map.md` | `docs/maintenance/codebase-stewardship.md`, planned `docs/maintenance/refactor-candidate-register.md` |
+| Source package map | `docs/source-package-map.md` | `docs/maintenance/codebase-stewardship.md`, `docs/maintenance/refactor-candidate-register.md` |
 | Release verification | `docs/adr/0004-release-verification-contract.md` | `docs/source-package-map.md`, `docs/runtime/README.md`, planned `docs/maintenance/release-readiness-maintainability-refactor.md` |
 
 ## Duplicated Or Stale Sections To Reconcile

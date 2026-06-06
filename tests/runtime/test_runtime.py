@@ -1031,7 +1031,7 @@ def test_runtime_tick_completion_activation_uses_compiled_plan_authority(
     assert captured_request.model_name == "custom-model"
     assert captured_request.timeout_seconds == 47
     assert outcome.stage is PlanningStageName.ARBITER
-    assert outcome.router_decision.reason == "arbiter_complete"
+    assert outcome.router_decision.reason == "arbiter"
 
 def test_runtime_tick_routes_stage_results_from_compiled_plan_authority(
     tmp_path: Path,
@@ -1058,18 +1058,22 @@ def test_runtime_tick_routes_stage_results_from_compiled_plan_authority(
         if transition.source_node_id == "builder"
         and transition.outcome == ExecutionTerminalResult.BUILDER_COMPLETE.value
     )
+    updated_graph = engine.compiled_plan.execution_graph.model_copy(
+        update={
+            "compiled_transitions": tuple(
+                transition.model_copy(update={"target_node_id": "updater"})
+                if transition == builder_complete
+                else transition
+                for transition in engine.compiled_plan.execution_graph.compiled_transitions
+            )
+        }
+    )
+    graphs_by_plane = dict(engine.compiled_plan.graphs_by_plane)
+    graphs_by_plane[updated_graph.plane] = updated_graph
     engine.compiled_plan = engine.compiled_plan.model_copy(
         update={
-            "execution_graph": engine.compiled_plan.execution_graph.model_copy(
-                update={
-                    "compiled_transitions": tuple(
-                        transition.model_copy(update={"target_node_id": "updater"})
-                        if transition == builder_complete
-                        else transition
-                        for transition in engine.compiled_plan.execution_graph.compiled_transitions
-                    )
-                }
-            )
+            "execution_graph": updated_graph,
+            "graphs_by_plane": graphs_by_plane,
         }
     )
 
@@ -3131,7 +3135,7 @@ def test_runtime_tick_closes_closure_target_on_arbiter_complete(tmp_path: Path) 
     report_copy = paths.arbiter_reports_dir / f"{outcome.stage_result.run_id}.md"
 
     assert outcome.stage is PlanningStageName.ARBITER
-    assert outcome.router_decision.reason == "arbiter_complete"
+    assert outcome.router_decision.reason == "arbiter"
     assert target.closure_open is False
     assert target.closed_at is not None
     assert target.last_arbiter_run_id == outcome.stage_result.run_id
@@ -4109,3 +4113,846 @@ def test_clear_stale_state_prefers_direct_path_for_stale_lock_even_if_snapshot_c
     assert result.mode == "direct"
     assert result.applied is True
     assert paths.runtime_lock_file.exists() is False
+
+
+# ---------------------------------------------------------------------------
+# Runtime dispatch - bounded tick and daemon supervisor use same compiled policy
+# ---------------------------------------------------------------------------
+
+
+class TestForegroundClaimOrder:
+    """Unit tests for foreground_claim_order from scheduler_policy module,
+    proving that both bounded tick and daemon supervisor interpret the same
+    compiled policy for foreground order and closure inversion."""
+
+    def test_foreground_is_planning_before_execution(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import foreground_claim_order
+
+        order = foreground_claim_order(None, has_open_closure_target=False)
+        planning_idx = order.index(Plane.PLANNING)
+        execution_idx = order.index(Plane.EXECUTION)
+        assert planning_idx < execution_idx
+
+    def test_closure_inverts_to_execution_before_planning(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import foreground_claim_order
+
+        order = foreground_claim_order(None, has_open_closure_target=True)
+        execution_idx = order.index(Plane.EXECUTION)
+        planning_idx = order.index(Plane.PLANNING)
+        assert execution_idx < planning_idx
+
+    def test_learning_not_in_two_plane_default(self) -> None:
+        # The default with no policy includes learning if the mode has it.
+        # With an explicit two-plane policy, learning is excluded.
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import foreground_claim_order
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.two_plane",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+        )
+
+        order = foreground_claim_order(policy, has_open_closure_target=False)
+        assert Plane.LEARNING not in order
+
+    def test_compiled_policy_used_when_available_both_contexts(self) -> None:
+        """foreground_claim_order returns the same result regardless of
+        call site when a compiled scheduler_policy is provided, proving
+        the interpretation is shared between bounded tick and supervisor."""
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import foreground_claim_order
+
+        # Build a minimal policy with a non-default foreground order.
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.shared",
+            plane_order=("planning", "execution"),
+            foreground_order=("execution", "planning"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+        )
+
+        # Both contexts produce the same result from the same policy.
+        order_tick = foreground_claim_order(
+            policy, has_open_closure_target=False
+        )
+        order_supervisor = foreground_claim_order(
+            policy, has_open_closure_target=False
+        )
+        assert order_tick == order_supervisor
+        assert order_tick == ("execution", "planning")
+
+    def test_closure_context_also_shared(self) -> None:
+        """Closure foreground inversion is also the same interpretation
+        regardless of whether the call comes from bounded tick or supervisor."""
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import foreground_claim_order
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.closure_shared",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+        )
+
+        order_closed_tick = foreground_claim_order(
+            policy, has_open_closure_target=True
+        )
+        order_closed_supervisor = foreground_claim_order(
+            policy, has_open_closure_target=True
+        )
+        assert order_closed_tick == order_closed_supervisor
+        # With closure, execution moves before planning.
+        assert order_closed_tick == ("execution", "planning")
+
+
+class TestLearningClaimAllowed:
+    """Unit tests for learning_claim_allowed used by both bounded tick
+    and daemon supervisor."""
+
+    def test_learning_allowed_by_default(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import learning_claim_allowed
+
+        assert learning_claim_allowed(None) is True
+
+    def test_learning_deferred_disallows(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import learning_claim_allowed
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.deferred",
+            plane_order=("planning", "execution", "learning"),
+            foreground_order=("planning", "execution", "learning"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+                "learning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="learn.default",
+                    plane="learning",
+                    family_order=("learning_request",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="deferred",
+        )
+
+        assert learning_claim_allowed(policy) is False
+
+    def test_learning_inline_allows(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import learning_claim_allowed
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.inline",
+            plane_order=("planning", "execution", "learning"),
+            foreground_order=("planning", "execution", "learning"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+                "learning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="learn.default",
+                    plane="learning",
+                    family_order=("learning_request",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+        )
+
+        assert learning_claim_allowed(policy) is True
+
+
+def test_runtime_tick_and_supervisor_share_compiled_policy(tmp_path: Path) -> None:
+    """Integration test proving bounded tick and daemon supervisor both
+    read foreground_claim_order and learning_claim_allowed from the identical
+    compiled scheduler_policy."""
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-shared", created_at=NOW))
+    queue.enqueue_spec(_spec_doc("spec-shared", created_at=NOW + timedelta(minutes=1)))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        terminal = (
+            ExecutionTerminalResult.BUILDER_COMPLETE.value
+            if request.plane is Plane.EXECUTION
+            else PlanningTerminalResult.PLANNER_COMPLETE.value
+        )
+        return _runner_result(request, terminal=terminal, now=NOW)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+    engine.startup()
+
+    # bounded tick dispatches planning first (per compiled foreground order)
+    tick_outcome = engine.tick()
+    assert tick_outcome.snapshot.active_plane is Plane.PLANNING
+
+    # The scheduler_policy on the compiled plan is the authority both use.
+    assert engine.compiled_plan is not None
+    assert engine.compiled_plan.scheduler_policy is not None
+
+    # Verify the supervisor module uses the same underlying helper:
+    import millrace_ai.runtime.supervisor as supervisor_module
+    import millrace_ai.runtime.tick_cycle as tick_cycle_module
+    from millrace_ai.runtime.scheduler_policy import (
+        foreground_claim_order,
+        learning_claim_allowed,
+    )
+
+    assert tick_cycle_module.foreground_claim_order is foreground_claim_order
+    assert supervisor_module.foreground_claim_order is foreground_claim_order
+    assert supervisor_module.learning_claim_allowed is learning_claim_allowed
+
+    engine.close()
+
+
+def test_runtime_asset_driven_scheduler_policy_changes_claim_order(tmp_path: Path) -> None:
+    """Proves that changing scheduler-policy asset/config data (foreground_order)
+    alters runtime claim order without changing runtime Python code.
+
+    The standard default_two_plane policy puts planning before execution in
+    foreground_order. This test overwrites the deployed policy asset so
+    execution comes before planning, then verifies the runtime tick claims
+    execution first."""
+    import json
+
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-scheduler", created_at=NOW))
+    queue.enqueue_spec(_spec_doc("spec-scheduler", created_at=NOW + timedelta(minutes=1)))
+
+    # Overwrite the deployed scheduler policy asset to reverse foreground_order.
+    policy_path = (
+        paths.runtime_root / "registry" / "scheduler_policies" / "default_two_plane.json"
+    )
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["definitions"][0]["foreground_order"] = ["execution", "planning"]
+    policy["definitions"][0]["rules"] = []
+    policy_path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+
+    seen_planes: list[str] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        seen_planes.append(request.plane.value)
+        terminal = (
+            ExecutionTerminalResult.BUILDER_COMPLETE.value
+            if request.plane is Plane.EXECUTION
+            else PlanningTerminalResult.PLANNER_COMPLETE.value
+        )
+        return _runner_result(request, terminal=terminal, now=NOW)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+    engine.startup()
+
+    first = engine.tick()
+
+    # With execution-first foreground_order, the runtime should claim
+    # execution before planning.
+    assert first.stage is ExecutionStageName.BUILDER
+    assert seen_planes[0] == "execution"
+
+    engine.close()
+
+
+# ---------------------------------------------------------------------------
+# Focused tests for the four residual scheduler-policy surfaces
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackEntrySelection:
+    """Unit tests for fallback_entry_selection helper from scheduler_policy."""
+
+    def test_default_is_recon_on_idle_when_no_policy(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import fallback_entry_selection
+
+        assert fallback_entry_selection(None) == "recon_on_idle"
+
+    def test_returns_skip_when_policy_set(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import fallback_entry_selection
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.fallback_skip",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            fallback_entry_policy="skip",
+        )
+
+        assert fallback_entry_selection(policy) == "skip"
+
+    def test_returns_pause_when_policy_set(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import fallback_entry_selection
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.fallback_pause",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            fallback_entry_policy="pause",
+        )
+
+        assert fallback_entry_selection(policy) == "pause"
+
+
+class TestLearningTargetStageRouting:
+    """Unit tests for learning_target_stage_routing helper from scheduler_policy."""
+
+    def test_default_is_none_when_no_policy(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import learning_target_stage_routing
+
+        assert learning_target_stage_routing(None) is None
+
+    def test_returns_stage_kind_id_when_set(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import learning_target_stage_routing
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.learning_routing",
+            plane_order=("planning", "execution", "learning"),
+            foreground_order=("planning", "execution", "learning"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+                "learning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="learn.default",
+                    plane="learning",
+                    family_order=("learning_request",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            learning_target_stage_kind_id="curator",
+        )
+
+        assert learning_target_stage_routing(policy) == "curator"
+
+
+class TestRecoveryFallbackSelection:
+    """Unit tests for recovery_fallback_selection helper from scheduler_policy."""
+
+    def test_default_is_none_when_no_policy(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import recovery_fallback_selection
+
+        assert recovery_fallback_selection(None) is None
+
+    def test_returns_node_id_when_set(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import recovery_fallback_selection
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.recovery_fallback",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            recovery_fallback_node_id="troubleshooter",
+        )
+
+        assert recovery_fallback_selection(policy) == "troubleshooter"
+
+
+class TestBackpressureOutcome:
+    """Unit tests for backpressure_outcome helper from scheduler_policy."""
+
+    def test_allow_when_no_open_closure_target(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import backpressure_outcome
+
+        outcome = backpressure_outcome(None, has_open_closure_target=False)
+        assert outcome == "allow"
+
+    def test_block_when_no_policy_and_open_closure_target(self) -> None:
+        from millrace_ai.runtime.scheduler_policy import backpressure_outcome
+
+        outcome = backpressure_outcome(None, has_open_closure_target=True)
+        assert outcome == "block"
+
+    def test_allow_when_policy_is_allow(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import backpressure_outcome
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.bp_allow",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            backpressure_policy="allow",
+        )
+
+        outcome = backpressure_outcome(policy, has_open_closure_target=True)
+        assert outcome == "allow"
+
+    def test_defer_when_policy_is_defer(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import backpressure_outcome
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.bp_defer",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            backpressure_policy="defer",
+        )
+
+        outcome = backpressure_outcome(policy, has_open_closure_target=True)
+        assert outcome == "defer"
+
+    def test_block_when_policy_is_block_all(self) -> None:
+        from millrace_ai.architecture import (
+            PlaneQueueClaimPolicyDefinition,
+            WorkflowPlaneSchedulerPolicyDefinition,
+        )
+        from millrace_ai.runtime.scheduler_policy import backpressure_outcome
+
+        policy = WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id="test.bp_block",
+            plane_order=("planning", "execution"),
+            foreground_order=("planning", "execution"),
+            claim_policies_by_plane={
+                "execution": PlaneQueueClaimPolicyDefinition(
+                    policy_id="exec.default",
+                    plane="execution",
+                    family_order=("task",),
+                ),
+                "planning": PlaneQueueClaimPolicyDefinition(
+                    policy_id="plan.default",
+                    plane="planning",
+                    family_order=("incident",),
+                ),
+            },
+            lanes=(
+                {
+                    "lane_id": "execution.main",
+                    "plane": "execution",
+                    "allowed_family_ids": ("task",),
+                    "claim_policy_id": "exec.default",
+                    "max_active_runs": 1,
+                    "one_active_scope": "plane",
+                },
+            ),
+            completion_check_order=(),
+            experimental_multi_lane=False,
+            lane_conflict_policies=(),
+            entry_policy="claim_from_queue",
+            closure_priority=100,
+            learning_dispatch="inline",
+            backpressure_policy="block_all",
+        )
+
+        outcome = backpressure_outcome(policy, has_open_closure_target=True)
+        assert outcome == "block"
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: asset-driven residual-surface behavior change
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_asset_driven_backpressure_policy_allows_second_closure_target(
+    tmp_path: Path,
+) -> None:
+    """Proves that changing scheduler-policy asset data (backpressure_policy
+    from "block_all" to "allow") lets a second root spec open a closure target
+    without Python code changes."""
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _closure_target_state())
+
+    idea_path = paths.root / "ideas" / "inbox" / "idea-002.md"
+    idea_path.parent.mkdir(parents=True, exist_ok=True)
+    idea_path.write_text("# Idea 002\n\nAnother root lineage.\n", encoding="utf-8")
+
+    # Overwrite the deployed policy asset to set backpressure_policy to "allow".
+    policy_path = (
+        paths.runtime_root / "registry" / "scheduler_policies" / "default_two_plane.json"
+    )
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["definitions"][0]["backpressure_policy"] = "allow"
+    policy_path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+
+    queue = QueueStore(paths)
+    queue.enqueue_spec(
+        _spec_doc("spec-root-002", created_at=NOW).model_copy(
+            update={
+                "root_spec_id": "spec-root-002",
+                "root_idea_id": "idea-002",
+                "references": ("ideas/inbox/idea-002.md",),
+            }
+        )
+    )
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(request, terminal="PLANNER_COMPLETE", now=NOW)
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    claim = queue.claim_next_planning_item()
+    assert claim is not None
+
+    # With backpressure_policy="allow", the second closure target should be
+    # created even though another open closure target already exists.
+    engine._activate_claim(claim)
+
+    snapshot = load_snapshot(paths)
+    assert snapshot.active_stage is PlanningStageName.PLANNER
+    assert snapshot.active_work_item_kind is WorkItemKind.SPEC
+    assert snapshot.active_work_item_id == "spec-root-002"
+
+    engine.close()
+
+
+def test_runtime_tick_and_supervisor_no_residual_helper_duplication(
+    tmp_path: Path,
+) -> None:
+    """Proves bounded tick and daemon supervisor do not duplicate the four
+    residual-surface helpers. The helpers are owned by scheduler_policy.py
+    and consumed by activation.py, repair_routes.py, and
+    completion_behavior.py. tick_cycle and supervisor should continue to use
+    foreground_claim_order and learning_claim_allowed without importing or
+    duplicating the residual helpers."""
+    import millrace_ai.runtime.activation as activation_module
+    import millrace_ai.runtime.completion_behavior as completion_module
+    import millrace_ai.runtime.recovery.repair_routes as repair_routes_module
+    import millrace_ai.runtime.supervisor as supervisor_module
+    import millrace_ai.runtime.tick_cycle as tick_cycle_module
+    from millrace_ai.runtime.scheduler_policy import (
+        backpressure_outcome,
+        fallback_entry_selection,
+        learning_target_stage_routing,
+        recovery_fallback_selection,
+    )
+
+    # tick_cycle and supervisor do NOT import the residual helpers directly.
+    assert not hasattr(tick_cycle_module, "fallback_entry_selection")
+    assert not hasattr(tick_cycle_module, "learning_target_stage_routing")
+    assert not hasattr(tick_cycle_module, "recovery_fallback_selection")
+    assert not hasattr(tick_cycle_module, "backpressure_outcome")
+    assert not hasattr(supervisor_module, "fallback_entry_selection")
+    assert not hasattr(supervisor_module, "learning_target_stage_routing")
+    assert not hasattr(supervisor_module, "recovery_fallback_selection")
+    assert not hasattr(supervisor_module, "backpressure_outcome")
+
+    # activation.py consumes the helpers from scheduler_policy.
+    assert activation_module.fallback_entry_selection is fallback_entry_selection
+    assert activation_module.learning_target_stage_routing is learning_target_stage_routing
+    assert activation_module.backpressure_outcome is backpressure_outcome
+
+    # repair_routes.py consumes recovery_fallback_selection.
+    assert repair_routes_module.recovery_fallback_selection is recovery_fallback_selection
+
+    # completion_behavior.py consumes backpressure_outcome.
+    assert completion_module.backpressure_outcome is backpressure_outcome

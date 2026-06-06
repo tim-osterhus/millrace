@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "minimal_three_plane",
+  "loop_ids_by_plane": {
+    "execution": "execution.minimal_three_plane",
+    "planning": "planning.minimal_three_plane",
+    "learning": "learning.minimal_three_plane"
+  },
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "basic_worker": "pi_rpc",
+    "basic_planner": "pi_rpc",
+    "basic_learner": "pi_rpc"
+  }
+}

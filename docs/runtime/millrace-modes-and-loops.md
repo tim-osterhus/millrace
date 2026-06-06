@@ -54,6 +54,42 @@ Compatibility alias:
 
 - `standard_plain -> default_codex`
 
+## Discoverable Non-Shipped Fixtures
+
+Millrace also ships a minimal architecture proof fixture that is discoverable
+through asset discovery but is **not** a shipped default mode. It is not
+present in `SHIPPED_MODE_IDS` and does not change the default product surface.
+
+### `minimal_three_plane`
+
+`minimal_three_plane` is a three-plane architecture proof fixture. It proves
+that simple graph-defined workflows can compile and execute against the current
+canonical plane infrastructure using only generic lifecycle terminal actions.
+
+Key properties:
+
+- It selects all three canonical planes (`execution`, `planning`, `learning`)
+  and uses one custom minimal graph loop per plane:
+  `execution.minimal_three_plane`, `planning.minimal_three_plane`,
+  `learning.minimal_three_plane`.
+- Each plane uses a single custom stage kind bound to a canonical
+  `runtime_stage`:
+  - `basic_worker` (execution) → `runtime_stage: builder`
+  - `basic_planner` (planning) → `runtime_stage: planner`
+  - `basic_learner` (learning) → `runtime_stage: analyst`
+- The fixture uses only generic lifecycle terminal actions
+  (`complete_work_item`, `block_work_item`, `no_op_complete_work_item`).
+- It contains no domain-specific workflow identifiers: no Recon, Blueprint,
+  closure target, Arbiter, Manager, Mechanic, planner disposition, candidate
+  evaluation, or learning promotion.
+- It is discoverable as a mode asset and compiles successfully, but it is not
+  a shipped product mode and is not listed in `SHIPPED_MODE_IDS`.
+
+This fixture intentionally limits itself to the current canonical plane IDs and
+canonical `runtime_stage` values. **Arbitrary plane IDs and arbitrary runtime
+stages are deferred** to the generic stage and plane registry work tracked in
+ADR-0013.
+
 ## What A Legacy Loop Defines
 
 Loop assets validate as `LoopConfigDefinition` through the
@@ -137,6 +173,10 @@ Workspace-local mode, graph, stage-kind, and entrypoint assets live under the
 workspace runtime asset root and are not part of the core Millrace package.
 Compile with the active workspace asset root to use custom assets.
 
+The `minimal_three_plane` fixture (see "Discoverable Non-Shipped Fixtures"
+above) is an example of custom stage kinds and graph loops that are
+package-shipped for testing but remain outside the default product surface.
+
 ## Shipped Plane Graphs
 
 Detailed topology for each shipped plane graph now lives under `docs/graphs/`.
@@ -183,7 +223,12 @@ The current mode shape is intentionally small:
 - `model_aliases`
 - `model_assignment`
 - `concurrency_policy`
+- `scheduler_policy_id`
 - `learning_trigger_rules`
+
+Modes may optionally set `scheduler_policy_id` to select a compiled scheduler
+policy explicitly; if omitted, the compiler chooses the shipped default that
+matches the selected plane set.
 
 Baseline modes point at:
 
@@ -226,12 +271,12 @@ The mode families differ primarily in `stage_runner_bindings`:
 Entrypoint, skill-addition, and direct model maps otherwise remain empty in the
 baseline. Harness-only presets keep topology identical; integrated presets
 intentionally select a more expensive execution topology. Learning modes add a
-compiled concurrency policy and learning trigger rules; those are explicit mode
-data, not prompt-only instructions. `efficient_learning_mixed` is the one
-shipped mode that uses `model_aliases`, `model_assignment`, and
-`stage_runner_bindings` inside the mode asset so its mixed Codex/Pi
-stage-cost profile can travel with the mode instead of depending on
-workspace-local alias defaults.
+compiled scheduler policy, concurrency policy, and learning trigger rules;
+those are explicit mode data, not prompt-only instructions.
+`efficient_learning_mixed` is the one shipped mode that uses `model_aliases`,
+`model_assignment`, and `stage_runner_bindings` inside the mode asset so its
+mixed Codex/Pi stage-cost profile can travel with the mode instead of
+depending on workspace-local alias defaults.
 
 Specialized repository-local workflows should provide their own workspace-local
 mode, loop, graph, and entrypoint assets under their owning project area, then
@@ -402,7 +447,8 @@ handoff.
 intake entries, normalized closure-target activation entry when completion
 behavior is present, normalized compiled transition indexes, compiled resume and
 threshold recovery policies, terminal states, loop ids by plane, optional
-learning trigger rules, and optional scheduler lane/concurrency policy.
+learning trigger rules, and the compiled scheduler policy selected for the
+mode.
 
 For operator inspection, `millrace compile graph --workspace <workspace>` exports
 the selected compiled topology as stable graph contracts. That output describes

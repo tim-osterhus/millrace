@@ -60,6 +60,26 @@ def _append_terminal_action(assets_root: Path, definition: dict) -> None:
     _write_json(path, payload)
 
 
+def _append_runtime_operation(assets_root: Path, definition: dict) -> None:
+    path = assets_root / "registry" / "runtime_operations" / "default_runtime_operations.json"
+    payload = _load_json(path)
+    payload["definitions"].append(definition)
+    _write_json(path, payload)
+
+
+def _mutate_runtime_operation(
+    assets_root: Path, operation_id: str, **updates: object
+) -> None:
+    path = assets_root / "registry" / "runtime_operations" / "default_runtime_operations.json"
+    payload = _load_json(path)
+    for definition in payload["definitions"]:
+        if definition.get("operation_id") == operation_id:
+            definition.update(updates)
+            _write_json(path, payload)
+            return
+    raise AssertionError(f"missing runtime operation {operation_id}")
+
+
 def _add_updater_alias_terminal(
     assets_root: Path,
     *,
@@ -565,3 +585,227 @@ def test_terminal_actions_declare_router_consequences(tmp_path: Path) -> None:
     assert handoff.handoff_entry_key == "incident"
     assert handoff.create_incident is True
     assert handoff.failure_class == "terminal_escalate_planning"
+
+
+# --- Tests proving _TERMINAL_ACTION_RUNTIME_OPERATION_IDS is no longer authority ---
+
+
+def test_compile_accepts_runtime_operation_not_in_old_whitelist(
+    tmp_path: Path,
+) -> None:
+    """An operation registered in runtime_operations_by_id is accepted even
+    when it was never part of the old fixed _TERMINAL_ACTION_RUNTIME_OPERATION_IDS
+    whitelist."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _append_runtime_operation(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_operation",
+            "operation_id": "recon.custom_action",
+            "allowed_contexts": ["terminal_action"],
+            "required_capabilities": [],
+            "mutation_phase": "unknown",
+            "idempotency": {
+                "duplicate_policy": "idempotent",
+                "replay_policy": "resume_idempotently",
+            },
+        },
+    )
+    _append_terminal_action(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "terminal_action",
+            "terminal_action_id": "test_custom_recon",
+            "terminal_class": "success",
+            "lifecycle_mutation_plan_id": "complete_work_item",
+            "runtime_operation_id": "recon.custom_action",
+            "router_consequence": "idle",
+        },
+    )
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    actions = outcome.active_plan.terminal_actions_by_id
+    assert actions["test_custom_recon"].runtime_operation_id == "recon.custom_action"
+
+
+def test_compile_rejects_terminal_action_operation_missing_allowed_context(
+    tmp_path: Path,
+) -> None:
+    """A runtime operation that does not allow terminal_action context is rejected
+    when referenced from a terminal action."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _append_runtime_operation(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_operation",
+            "operation_id": "recon.effect_only",
+            "allowed_contexts": ["runtime_effect"],
+            "required_capabilities": [],
+            "mutation_phase": "unknown",
+            "idempotency": {
+                "duplicate_policy": "fail",
+                "replay_policy": "fail_if_seen",
+            },
+        },
+    )
+    actions_path = (
+        assets_root / "registry" / "terminal_actions" / "default_terminal_actions.json"
+    )
+    payload = _load_json(actions_path)
+    payload["definitions"][0]["runtime_operation_id"] = "recon.effect_only"
+    _write_json(actions_path, payload)
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert "does not allow terminal_action context" in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_terminal_action_operation_unknown_required_capability(
+    tmp_path: Path,
+) -> None:
+    """A runtime operation with a required_capability that is not a known
+    runtime operation ID and not in the fixed terminal-action execution
+    capability set is rejected."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _mutate_runtime_operation(
+        assets_root,
+        "recon.enqueue_task",
+        required_capabilities=["nonexistent.capability"],
+    )
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "requires capability nonexistent.capability which is not in the"
+        in _diagnostic_text(outcome)
+    )
+
+
+def test_compile_accepts_terminal_action_operation_with_execution_capability(
+    tmp_path: Path,
+) -> None:
+    """A runtime operation whose required_capability is in the fixed
+    terminal-action execution capability set is accepted."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _append_runtime_operation(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_operation",
+            "operation_id": "recon.with_exec_cap",
+            "allowed_contexts": ["terminal_action"],
+            "required_capabilities": ["runner.invoke"],
+            "mutation_phase": "unknown",
+            "idempotency": {
+                "duplicate_policy": "idempotent",
+                "replay_policy": "resume_idempotently",
+            },
+        },
+    )
+    _append_terminal_action(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "terminal_action",
+            "terminal_action_id": "test_exec_cap",
+            "terminal_class": "success",
+            "lifecycle_mutation_plan_id": "complete_work_item",
+            "runtime_operation_id": "recon.with_exec_cap",
+            "router_consequence": "idle",
+        },
+    )
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+
+def test_compile_rejects_terminal_action_operation_with_self_referential_capability(
+    tmp_path: Path,
+) -> None:
+    """A runtime operation whose required_capability is its own operation_id
+    (a registered runtime operation, not in the fixed terminal-action execution
+    capability set) is rejected."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _append_runtime_operation(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "runtime_operation",
+            "operation_id": "recon.self_ref",
+            "allowed_contexts": ["terminal_action"],
+            "required_capabilities": ["recon.self_ref"],
+            "mutation_phase": "unknown",
+            "idempotency": {
+                "duplicate_policy": "idempotent",
+                "replay_policy": "resume_idempotently",
+            },
+        },
+    )
+    _append_terminal_action(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "terminal_action",
+            "terminal_action_id": "test_self_ref",
+            "terminal_class": "success",
+            "lifecycle_mutation_plan_id": "complete_work_item",
+            "runtime_operation_id": "recon.self_ref",
+            "router_consequence": "idle",
+        },
+    )
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "requires capability recon.self_ref which is not in the fixed "
+        "terminal-action execution capability set"
+    ) in _diagnostic_text(outcome)
+
+
+# --- Focused test: terminal action with generic lifecycle runtime operation ---
+
+
+def test_compile_accepts_terminal_action_with_lifecycle_runtime_operation_id(
+    tmp_path: Path,
+) -> None:
+    """A terminal action can reference a generic lifecycle runtime operation
+    (lifecycle.complete_work_item) as its runtime_operation_id and compile
+    successfully. This proves lifecycle operations are valid in terminal-action
+    context and the registry-based validation accepts them."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+    _append_terminal_action(
+        assets_root,
+        {
+            "schema_version": "1.0",
+            "kind": "terminal_action",
+            "terminal_action_id": "test_lifecycle_complete",
+            "terminal_class": "success",
+            "lifecycle_mutation_plan_id": "complete_work_item",
+            "runtime_operation_id": "lifecycle.complete_work_item",
+            "router_consequence": "idle",
+        },
+    )
+
+    outcome = _compile_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    actions = outcome.active_plan.terminal_actions_by_id
+    assert (
+        actions["test_lifecycle_complete"].runtime_operation_id
+        == "lifecycle.complete_work_item"
+    )

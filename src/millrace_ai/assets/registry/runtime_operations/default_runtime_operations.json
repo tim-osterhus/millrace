@@ -1,0 +1,76 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_operation",
+      "operation_id": "recon.enqueue_task",
+      "allowed_contexts": ["terminal_action"],
+      "required_capabilities": ["runner.invoke"],
+      "mutation_phase": "unknown",
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "fail_if_seen"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_operation",
+      "operation_id": "recon.enqueue_spec",
+      "allowed_contexts": ["terminal_action"],
+      "required_capabilities": ["runner.invoke"],
+      "mutation_phase": "unknown",
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "fail_if_seen"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_operation",
+      "operation_id": "recon.noop",
+      "allowed_contexts": ["terminal_action"],
+      "required_capabilities": [],
+      "mutation_phase": "unknown",
+      "idempotency": {
+        "duplicate_policy": "idempotent",
+        "replay_policy": "resume_idempotently"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_operation",
+      "operation_id": "recon.block_work_item",
+      "allowed_contexts": ["terminal_action"],
+      "required_capabilities": ["runner.invoke"],
+      "mutation_phase": "unknown",
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "fail_if_seen"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_operation",
+      "operation_id": "lifecycle.complete_work_item",
+      "allowed_contexts": ["terminal_action"],
+      "required_capabilities": ["runner.invoke"],
+      "mutation_phase": "partial_mutation",
+      "idempotency": {
+        "duplicate_policy": "idempotent",
+        "replay_policy": "resume_idempotently"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_operation",
+      "operation_id": "lifecycle.block_work_item",
+      "allowed_contexts": ["terminal_action"],
+      "required_capabilities": ["runner.invoke"],
+      "mutation_phase": "partial_mutation",
+      "idempotency": {
+        "duplicate_policy": "idempotent",
+        "replay_policy": "resume_idempotently"
+      }
+    }
+  ]
+}

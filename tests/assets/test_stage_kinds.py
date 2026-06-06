@@ -358,6 +358,48 @@ def test_stage_kind_id_mismatch_fails_deterministically(tmp_path: Path) -> None:
         load_builtin_stage_kind_definition("builder", assets_root=assets_root)
 
 
+def test_fixture_stage_kinds_are_discoverable() -> None:
+    discovered = {stage_kind.stage_kind_id: stage_kind for stage_kind in discover_stage_kind_definitions()}
+
+    for stage_kind_id in ("basic_worker", "basic_planner", "basic_learner"):
+        assert stage_kind_id in discovered
+        assert load_stage_kind_definition(stage_kind_id) == discovered[stage_kind_id]
+
+    basic_worker = discovered["basic_worker"]
+    basic_planner = discovered["basic_planner"]
+    basic_learner = discovered["basic_learner"]
+
+    assert basic_worker.runtime_stage is ExecutionStageName.BUILDER
+    assert basic_worker.plane is Plane.EXECUTION
+    assert basic_worker.request_context_profile_id == "builder.default"
+    assert basic_worker.context_render_plan_id == "stage_request.default.v1"
+    assert basic_worker.display_name == "Basic Worker"
+    assert basic_worker.running_status_marker == "BASIC_EXECUTION_RUNNING"
+    assert basic_worker.legal_outcomes == ("BASIC_EXECUTION_COMPLETE", "BASIC_EXECUTION_BLOCKED")
+    assert basic_worker.success_outcomes == ("BASIC_EXECUTION_COMPLETE",)
+    assert basic_worker.allowed_work_item_families == ("task",)
+
+    assert basic_planner.runtime_stage is PlanningStageName.PLANNER
+    assert basic_planner.plane is Plane.PLANNING
+    assert basic_planner.request_context_profile_id == "planner.default"
+    assert basic_planner.context_render_plan_id == "stage_request.default.v1"
+    assert basic_planner.display_name == "Basic Planner"
+    assert basic_planner.running_status_marker == "BASIC_PLANNING_RUNNING"
+    assert basic_planner.legal_outcomes == ("BASIC_PLANNING_COMPLETE", "BASIC_PLANNING_BLOCKED")
+    assert basic_planner.success_outcomes == ("BASIC_PLANNING_COMPLETE",)
+    assert basic_planner.allowed_work_item_families == ("spec",)
+
+    assert basic_learner.runtime_stage is LearningStageName.ANALYST
+    assert basic_learner.plane is Plane.LEARNING
+    assert basic_learner.request_context_profile_id == "analyst.default"
+    assert basic_learner.context_render_plan_id == "stage_request.default.v1"
+    assert basic_learner.display_name == "Basic Learner"
+    assert basic_learner.running_status_marker == "BASIC_LEARNING_RUNNING"
+    assert basic_learner.legal_outcomes == ("BASIC_LEARNING_COMPLETE", "BASIC_LEARNING_NOOP", "BASIC_LEARNING_BLOCKED")
+    assert basic_learner.success_outcomes == ("BASIC_LEARNING_COMPLETE",)
+    assert basic_learner.allowed_work_item_families == ("learning_request",)
+
+
 def test_discover_stage_kind_definitions_includes_synthetic_stage_kind(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     _write_synthetic_stage_kind_asset(assets_root)

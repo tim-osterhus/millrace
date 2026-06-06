@@ -516,3 +516,150 @@ def test_handoff_result_uses_terminal_action_failure_class_for_incident(
     assert len(spawned) == 1
     incident = read_work_document_as(spawned[0], model=IncidentDocument)
     assert incident.failure_class == "terminal_escalate_planning"
+
+
+# ── minimal three-plane fixture runtime tests ───────────────────────────────
+
+
+def _minimal_three_plane_engine(paths) -> RuntimeEngine:
+    engine = RuntimeEngine(
+        paths, stage_runner=_unused_stage_runner, mode_id="minimal_three_plane"
+    )
+    engine.startup()
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+    return engine
+
+
+def test_minimal_three_plane_fixture_planning_complete_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-001"))
+    assert queue.claim_next_planning_item() is not None
+
+    engine = _minimal_three_plane_engine(paths)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.PLANNING: ActiveRunState(
+                    plane=Plane.PLANNING,
+                    stage=PlanningStageName.PLANNER,
+                    node_id="basic_planner",
+                    stage_kind_id="basic_planner",
+                    run_id="run-mtp-plan-complete",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.SPEC,
+                    work_item_id="spec-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.PLANNING,
+            "active_stage": PlanningStageName.PLANNER,
+            "active_node_id": "basic_planner",
+            "active_stage_kind_id": "basic_planner",
+            "active_run_id": "run-mtp-plan-complete",
+            "active_work_item_kind": WorkItemKind.SPEC,
+            "active_work_item_id": "spec-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-plan-complete",
+        plane="planning",
+        stage="planner",
+        node_id="basic_planner",
+        stage_kind_id="basic_planner",
+        work_item_kind=WorkItemKind.SPEC,
+        work_item_id="spec-001",
+        terminal_result="BASIC_PLANNING_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BASIC_PLANNING_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.specs_done_dir / "spec-001.md").is_file()
+    assert not (paths.specs_active_dir / "spec-001.md").exists()
+
+
+def test_minimal_three_plane_fixture_planning_block_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_spec(_spec_doc("spec-001"))
+    assert queue.claim_next_planning_item() is not None
+
+    engine = _minimal_three_plane_engine(paths)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.PLANNING: ActiveRunState(
+                    plane=Plane.PLANNING,
+                    stage=PlanningStageName.PLANNER,
+                    node_id="basic_planner",
+                    stage_kind_id="basic_planner",
+                    run_id="run-mtp-plan-block",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.SPEC,
+                    work_item_id="spec-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.PLANNING,
+            "active_stage": PlanningStageName.PLANNER,
+            "active_node_id": "basic_planner",
+            "active_stage_kind_id": "basic_planner",
+            "active_run_id": "run-mtp-plan-block",
+            "active_work_item_kind": WorkItemKind.SPEC,
+            "active_work_item_id": "spec-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-plan-block",
+        plane="planning",
+        stage="planner",
+        node_id="basic_planner",
+        stage_kind_id="basic_planner",
+        work_item_kind=WorkItemKind.SPEC,
+        work_item_id="spec-001",
+        terminal_result="BASIC_PLANNING_BLOCKED",
+        result_class=ResultClass.BLOCKED,
+        summary_status_marker="### BASIC_PLANNING_BLOCKED",
+        success=False,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.specs_blocked_dir / "spec-001.md").is_file()
+    assert not (paths.specs_active_dir / "spec-001.md").exists()

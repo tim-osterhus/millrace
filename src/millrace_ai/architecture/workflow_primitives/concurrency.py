@@ -210,6 +210,65 @@ class LaneConflictPolicyDefinition(ArchitectureContractModel):
         return pairs[0]
 
 
+class SchedulerPolicyPredicateDefinition(ArchitectureContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["scheduler_policy_predicate"] = "scheduler_policy_predicate"
+    predicate_id: str
+    description: str = ""
+    predicate_kind: Literal[
+        "closure_target_open",
+        "closure_target_closed",
+        "learning_request_pending",
+        "plane_backlog_present",
+        "always",
+    ]
+    operator: Literal["eq", "neq", "in", "not_in", "and", "or"] = "eq"
+    operand: str | tuple[str, ...] | None = None
+
+    @field_validator("predicate_id")
+    @classmethod
+    def validate_predicate_id(cls, value: str) -> str:
+        return normalize_canonical_id(value, field_label="predicate_id")
+
+
+class SchedulerPolicyRuleDefinition(ArchitectureContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["scheduler_policy_rule"] = "scheduler_policy_rule"
+    rule_id: str
+    description: str = ""
+    predicate_id: str | None = None
+    predicate_kind: Literal[
+        "closure_target_open",
+        "closure_target_closed",
+        "learning_request_pending",
+        "plane_backlog_present",
+        "always",
+    ] | None = None
+    effect: Literal[
+        "invert_plane_order",
+        "promote_plane",
+        "dispatch_learning_before_plane_evaluation",
+        "dispatch_learning_after_plane_evaluation",
+        "block_plane",
+        "set_closure_priority",
+    ]
+    target_plane: Plane | None = None
+    priority_value: int | None = None
+    order_override: tuple[Plane, ...] | None = None
+
+    @field_validator("rule_id")
+    @classmethod
+    def validate_rule_id(cls, value: str) -> str:
+        return normalize_canonical_id(value, field_label="rule_id")
+
+    @field_validator("order_override")
+    @classmethod
+    def validate_order_override(cls, value: tuple[Plane, ...] | None) -> tuple[Plane, ...] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("order_override may not contain duplicate planes")
+        return value
+
+
 class WorkflowPlaneSchedulerPolicyDefinition(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["workflow_plane_scheduler_policy"] = "workflow_plane_scheduler_policy"
@@ -221,6 +280,16 @@ class WorkflowPlaneSchedulerPolicyDefinition(ArchitectureContractModel):
     completion_check_order: tuple[Plane, ...] = ()
     experimental_multi_lane: bool = False
     lane_conflict_policies: tuple[LaneConflictPolicyDefinition, ...] = ()
+    foreground_order: tuple[Plane, ...] | None = None
+    entry_policy: Literal["claim_from_queue", "recon_on_idle", "skip_when_backlog"] = "claim_from_queue"
+    closure_priority: int = 100
+    learning_dispatch: Literal["inline", "deferred", "interleaved"] = "inline"
+    fallback_entry_policy: Literal["recon_on_idle", "skip", "pause"] = "recon_on_idle"
+    learning_target_stage_kind_id: str | None = None
+    recovery_fallback_node_id: str | None = None
+    backpressure_policy: Literal["block_all", "defer", "allow"] = "block_all"
+    predicates: tuple[SchedulerPolicyPredicateDefinition, ...] = ()
+    rules: tuple[SchedulerPolicyRuleDefinition, ...] = ()
 
     @field_validator("policy_id", "concurrency_policy_id")
     @classmethod
@@ -235,6 +304,20 @@ class WorkflowPlaneSchedulerPolicyDefinition(ArchitectureContractModel):
         if len(set(value)) != len(value):
             raise ValueError(f"{info.field_name or 'plane tuple'} may not contain duplicate planes")
         return value
+
+    @field_validator("foreground_order")
+    @classmethod
+    def validate_foreground_order(cls, value: tuple[Plane, ...] | None) -> tuple[Plane, ...] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("foreground_order may not contain duplicate planes")
+        return value
+
+    @field_validator("learning_target_stage_kind_id", "recovery_fallback_node_id")
+    @classmethod
+    def validate_optional_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None:
+            return None
+        return _canonical(value, info)
 
     @model_validator(mode="after")
     def validate_scheduler_closure(self) -> "WorkflowPlaneSchedulerPolicyDefinition":
@@ -291,4 +374,29 @@ class WorkflowPlaneSchedulerPolicyDefinition(ArchitectureContractModel):
                             raise ValueError(
                                 f"lane conflict policy missing for lane pair {pair[0]} + {pair[1]}"
                             )
+        if self.foreground_order is not None:
+            unknown_foreground = set(self.foreground_order) - plane_set
+            if unknown_foreground:
+                raise ValueError(
+                    "foreground_order may only reference planes in plane_order"
+                )
+        predicate_ids: set[str] = set()
+        for predicate in self.predicates:
+            if predicate.predicate_id in predicate_ids:
+                raise ValueError(f"duplicate predicate_id: {predicate.predicate_id}")
+            predicate_ids.add(predicate.predicate_id)
+        for rule in self.rules:
+            if rule.predicate_id is not None and rule.predicate_id not in predicate_ids:
+                raise ValueError(
+                    f"rule {rule.rule_id} references unknown predicate_id: {rule.predicate_id}"
+                )
+            if rule.target_plane is not None and rule.target_plane not in plane_set:
+                raise ValueError(
+                    f"rule {rule.rule_id} references unknown target_plane: {rule.target_plane.value}"
+                )
+        if self.learning_target_stage_kind_id is not None:
+            if Plane.LEARNING not in plane_set:
+                raise ValueError(
+                    "learning_target_stage_kind_id is only valid when learning plane is present"
+                )
         return self

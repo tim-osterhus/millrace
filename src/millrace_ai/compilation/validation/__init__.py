@@ -25,6 +25,7 @@ from .runtime_effects import (
     validate_runtime_effect_operations,
     validate_runtime_effect_rules,
 )
+from .scheduler_policies import validate_scheduler_policy_compile
 from .stages import (
     stage_kinds_by_node_id,
     validate_entry_coverage,
@@ -100,6 +101,10 @@ def validate_workflow_primitives(
         for render_plan in workflow_primitives.request_context_render_plans
     }
     claim_policies_by_plane = queue_policies_by_plane(workflow_primitives)
+    runtime_operations_by_id = {
+        op.operation_id: op
+        for op in workflow_primitives.runtime_operations
+    }
     node_plans_by_id = graph_nodes_by_id(graphs_by_plane.values())
     stage_kinds_by_node = stage_kinds_by_node_id(
         graph_nodes_by_id=node_plans_by_id,
@@ -168,6 +173,7 @@ def validate_workflow_primitives(
         terminal_actions_by_id=terminal_actions_by_id,
         lifecycle_plans_by_id=lifecycle_plans_by_id,
         runtime_effect_rules_by_id=runtime_effect_rules_by_id,
+        runtime_operations_by_id=runtime_operations_by_id,
     )
     validate_runtime_effect_handlers(
         artifact_contracts_by_id=artifact_contracts_by_id,
@@ -223,8 +229,20 @@ def validate_workflow_primitives(
     )
 
 
+def validate_scheduler_policy(
+    *,
+    mode: ModeDefinition,
+    workflow_primitives: WorkflowPrimitiveBundle,
+) -> None:
+    validate_scheduler_policy_compile(
+        mode=mode,
+        workflow_primitives=workflow_primitives,
+    )
+
+
 __all__ = [
     "validate_lane_conflict_coverage",
     "validate_mode_stage_maps",
+    "validate_scheduler_policy",
     "validate_workflow_primitives",
 ]

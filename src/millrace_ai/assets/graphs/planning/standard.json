@@ -6,39 +6,27 @@
   "nodes": [
     {
       "node_id": "recon",
-      "stage_kind_id": "recon",
-      "request_context_profile_id": "recon.default",
-      "context_render_plan_id": "stage_request.default.v1"
+      "stage_kind_id": "recon"
     },
     {
       "node_id": "planner",
-      "stage_kind_id": "planner",
-      "request_context_profile_id": "planner.default",
-      "context_render_plan_id": "stage_request.default.v1"
+      "stage_kind_id": "planner"
     },
     {
       "node_id": "manager",
-      "stage_kind_id": "manager",
-      "request_context_profile_id": "manager.default",
-      "context_render_plan_id": "stage_request.default.v1"
+      "stage_kind_id": "manager"
     },
     {
       "node_id": "mechanic",
-      "stage_kind_id": "mechanic",
-      "request_context_profile_id": "mechanic.default",
-      "context_render_plan_id": "stage_request.default.v1"
+      "stage_kind_id": "mechanic"
     },
     {
       "node_id": "auditor",
-      "stage_kind_id": "auditor",
-      "request_context_profile_id": "auditor.default",
-      "context_render_plan_id": "stage_request.default.v1"
+      "stage_kind_id": "auditor"
     },
     {
       "node_id": "arbiter",
-      "stage_kind_id": "arbiter",
-      "request_context_profile_id": "arbiter.default",
-      "context_render_plan_id": "closure_target.default.v1"
+      "stage_kind_id": "arbiter"
     }
   ],
   "entry_nodes": [
@@ -299,8 +287,7 @@
         ],
         "disallowed_target_node_ids": [
           "mechanic"
-        ],
-        "route_reason": "mechanic_complete"
+        ]
       }
     ],
     "threshold_policies": [
@@ -315,17 +302,9 @@
         "on_outcome": "BLOCKED",
         "counter_name": "mechanic_attempt_count",
         "threshold": 2,
-        "exhausted_terminal_state_id": "blocked",
-        "recovery_counter_mutation_name": "mechanic_attempt_count"
+        "exhausted_terminal_state_id": "blocked"
       }
     ]
-  },
-  "runtime_failure_recovery": {
-    "default_repair_node_id": "mechanic",
-    "default_failure_class_template": "runtime_failure_recovery",
-    "counter_name": "mechanic_attempt_count",
-    "threshold": 2,
-    "exhausted_terminal_state_id": "blocked"
   },
   "completion_behavior": {
     "trigger": "backlog_drained",
@@ -355,5 +334,11 @@
     "RECON_TO_PLANNING",
     "RECON_NOOP",
     "RECON_BLOCKED"
-  ]
+  ],
+  "runtime_failure_recovery": {
+    "default_repair_node_id": "mechanic",
+    "counter_name": "mechanic_attempt_count",
+    "threshold": 2,
+    "exhausted_terminal_state_id": "blocked"
+  }
 }

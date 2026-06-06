@@ -21,6 +21,7 @@ from .effect_operations import (
     RuntimeEffectOperationDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
+    RuntimeOperationDefinition,
 )
 from .loop_graphs import (
     GraphLoopCompletionBehaviorDefinition,
@@ -259,6 +260,7 @@ class CompiledRunPlan(ArchitectureContractModel):
     runtime_effect_handlers_by_id: dict[str, RuntimeEffectHandlerDefinition] = Field(default_factory=dict)
     runtime_effect_runners_by_id: dict[str, RuntimeEffectOperationRunnerDefinition] = Field(default_factory=dict)
     runtime_effect_operations_by_id: dict[str, RuntimeEffectOperationDefinition] = Field(default_factory=dict)
+    runtime_operations_by_id: dict[str, RuntimeOperationDefinition] = Field(default_factory=dict)
     effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition] = Field(default_factory=dict)
     effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition] = Field(default_factory=dict)
     workflow_recovery_policies_by_id: dict[str, WorkflowRecoveryPolicyDefinition] = Field(default_factory=dict)

@@ -1,0 +1,101 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "workflow_plane_scheduler_policy",
+      "policy_id": "default.two_plane",
+      "plane_order": ["execution", "planning"],
+      "concurrency_policy_id": null,
+      "lanes": [
+        {
+          "schema_version": "1.0",
+          "kind": "workflow_lane",
+          "lane_id": "execution.main",
+          "plane": "execution",
+          "allowed_family_ids": ["task"],
+          "claim_policy_id": "execution.default",
+          "max_active_runs": 1,
+          "one_active_scope": "plane"
+        },
+        {
+          "schema_version": "1.0",
+          "kind": "workflow_lane",
+          "lane_id": "planning.main",
+          "plane": "planning",
+          "allowed_family_ids": ["incident", "blueprint_draft", "probe", "spec"],
+          "claim_policy_id": "planning.default",
+          "max_active_runs": 1,
+          "one_active_scope": "plane"
+        }
+      ],
+      "claim_policies_by_plane": {
+        "execution": {
+          "schema_version": "1.0",
+          "kind": "plane_queue_claim_policy",
+          "policy_id": "execution.default",
+          "plane": "execution",
+          "family_order": ["task"],
+          "closure_lineage_policy": "defer_unrelated",
+          "empty_behavior": "idle"
+        },
+        "planning": {
+          "schema_version": "1.0",
+          "kind": "plane_queue_claim_policy",
+          "policy_id": "planning.default",
+          "plane": "planning",
+          "family_order": ["incident", "blueprint_draft", "probe", "spec"],
+          "closure_lineage_policy": "defer_unrelated",
+          "empty_behavior": "check_completion"
+        }
+      },
+      "completion_check_order": ["execution", "planning"],
+      "experimental_multi_lane": false,
+      "lane_conflict_policies": [],
+      "foreground_order": ["planning", "execution"],
+      "entry_policy": "claim_from_queue",
+      "closure_priority": 100,
+      "learning_dispatch": "inline",
+      "fallback_entry_policy": "recon_on_idle",
+      "learning_target_stage_kind_id": null,
+      "recovery_fallback_node_id": null,
+      "backpressure_policy": "block_all",
+      "predicates": [
+        {
+          "schema_version": "1.0",
+          "kind": "scheduler_policy_predicate",
+          "predicate_id": "no.closure.target",
+          "description": "No open closure target is active",
+          "predicate_kind": "closure_target_closed"
+        },
+        {
+          "schema_version": "1.0",
+          "kind": "scheduler_policy_predicate",
+          "predicate_id": "open.closure.target",
+          "description": "An open closure target is active",
+          "predicate_kind": "closure_target_open"
+        }
+      ],
+      "rules": [
+        {
+          "schema_version": "1.0",
+          "kind": "scheduler_policy_rule",
+          "rule_id": "default.planning.first",
+          "description": "Without an open closure target, claim Planning before Execution",
+          "predicate_id": "no.closure.target",
+          "effect": "invert_plane_order",
+          "order_override": ["planning", "execution"]
+        },
+        {
+          "schema_version": "1.0",
+          "kind": "scheduler_policy_rule",
+          "rule_id": "closure.execution.first",
+          "description": "With an open closure target, claim Execution before Planning",
+          "predicate_id": "open.closure.target",
+          "effect": "invert_plane_order",
+          "priority_value": 100,
+          "order_override": ["execution", "planning"]
+        }
+      ]
+    }
+  ]
+}

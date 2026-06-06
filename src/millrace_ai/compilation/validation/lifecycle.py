@@ -13,6 +13,7 @@ from millrace_ai.architecture import (
     LifecycleMutationPlanDefinition,
     RegisteredStageKindDefinition,
     RuntimeEffectRuleDefinition,
+    RuntimeOperationDefinition,
     TerminalActionDefinition,
     WorkItemFamilyDefinition,
 )
@@ -24,12 +25,11 @@ from ..outcomes import CompilerValidationError
 _ANY_SOURCE_NODE = "any"
 _ANY_SOURCE_FAMILY = "any"
 _RUNTIME_FAILURE_EXHAUSTED_OUTCOME = "RUNTIME_FAILURE_EXHAUSTED"
-_TERMINAL_ACTION_RUNTIME_OPERATION_IDS = frozenset(
+_TERMINAL_ACTION_EXECUTION_CAPABILITY_IDS = frozenset(
     {
-        "recon.enqueue_task",
-        "recon.enqueue_spec",
-        "recon.noop",
-        "recon.block_work_item",
+        "runner.invoke",
+        "workspace.read",
+        "artifact.write",
     }
 )
 
@@ -53,6 +53,7 @@ def validate_terminal_actions(
     terminal_actions_by_id: dict[str, TerminalActionDefinition],
     lifecycle_plans_by_id: dict[str, LifecycleMutationPlanDefinition],
     runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
+    runtime_operations_by_id: dict[str, RuntimeOperationDefinition],
 ) -> None:
     for action in terminal_actions_by_id.values():
         plan_id = getattr(action, "lifecycle_mutation_plan_id")
@@ -68,14 +69,27 @@ def validate_terminal_actions(
                     f"unknown runtime effect rule {rule_id}"
                 )
         runtime_operation_id = getattr(action, "runtime_operation_id", None)
-        if (
-            runtime_operation_id is not None
-            and runtime_operation_id not in _TERMINAL_ACTION_RUNTIME_OPERATION_IDS
-        ):
-            raise CompilerValidationError(
-                f"terminal action {getattr(action, 'terminal_action_id')} references "
-                f"unknown runtime operation {runtime_operation_id}"
-            )
+        if runtime_operation_id is not None:
+            operation = runtime_operations_by_id.get(runtime_operation_id)
+            if operation is None:
+                raise CompilerValidationError(
+                    f"terminal action {getattr(action, 'terminal_action_id')} references "
+                    f"unknown runtime operation {runtime_operation_id}"
+                )
+            if "terminal_action" not in operation.allowed_contexts:
+                raise CompilerValidationError(
+                    f"terminal action {getattr(action, 'terminal_action_id')} references "
+                    f"runtime operation {runtime_operation_id} which does not allow "
+                    f"terminal_action context (allowed: {', '.join(sorted(operation.allowed_contexts))})"
+                )
+            for capability_id in operation.required_capabilities:
+                if capability_id not in _TERMINAL_ACTION_EXECUTION_CAPABILITY_IDS:
+                    raise CompilerValidationError(
+                        f"terminal action {getattr(action, 'terminal_action_id')} runtime "
+                        f"operation {runtime_operation_id} requires capability "
+                        f"{capability_id} which is not in the fixed terminal-action "
+                        f"execution capability set"
+                    )
 
     for graph in graphs_by_plane.values():
         for state in graph.terminal_states:

@@ -489,6 +489,75 @@ def test_invalid_resume_policy_target_fails_deterministically(tmp_path: Path) ->
         load_builtin_graph_loop_definition("execution.standard", assets_root=assets_root)
 
 
+def test_fixture_graph_loops_are_discoverable() -> None:
+    discovered = {graph.loop_id: graph for graph in discover_graph_loop_definitions()}
+
+    for loop_id in (
+        "execution.minimal_three_plane",
+        "planning.minimal_three_plane",
+        "learning.minimal_three_plane",
+    ):
+        assert loop_id in discovered
+        assert load_graph_loop_definition(loop_id) == discovered[loop_id]
+
+
+def test_fixture_graph_loops_canonical_entry_keys_and_minimal_terminal_wiring() -> None:
+    execution = load_graph_loop_definition("execution.minimal_three_plane")
+    planning = load_graph_loop_definition("planning.minimal_three_plane")
+    learning = load_graph_loop_definition("learning.minimal_three_plane")
+
+    execution_entry_nodes = {entry.entry_key.value: entry.node_id for entry in execution.entry_nodes}
+    planning_entry_nodes = {entry.entry_key.value: entry.node_id for entry in planning.entry_nodes}
+    learning_entry_nodes = {entry.entry_key.value: entry.node_id for entry in learning.entry_nodes}
+
+    assert execution.plane is Plane.EXECUTION
+    assert execution_entry_nodes == {"task": "basic_worker"}
+    assert [node.stage_kind_id for node in execution.nodes] == ["basic_worker"]
+    assert {state.terminal_state_id for state in execution.terminal_states} == {
+        "worker_complete",
+        "blocked",
+    }
+    assert {
+        state.terminal_state_id: state.terminal_class
+        for state in execution.terminal_states
+    } == {
+        "worker_complete": GraphLoopTerminalClass.SUCCESS,
+        "blocked": GraphLoopTerminalClass.BLOCKED,
+    }
+
+    assert planning.plane is Plane.PLANNING
+    assert planning_entry_nodes == {"spec": "basic_planner"}
+    assert [node.stage_kind_id for node in planning.nodes] == ["basic_planner"]
+    assert {state.terminal_state_id for state in planning.terminal_states} == {
+        "planner_complete",
+        "blocked",
+    }
+    assert {
+        state.terminal_state_id: state.terminal_class
+        for state in planning.terminal_states
+    } == {
+        "planner_complete": GraphLoopTerminalClass.SUCCESS,
+        "blocked": GraphLoopTerminalClass.BLOCKED,
+    }
+
+    assert learning.plane is Plane.LEARNING
+    assert learning_entry_nodes == {"learning_request": "basic_learner"}
+    assert [node.stage_kind_id for node in learning.nodes] == ["basic_learner"]
+    assert {state.terminal_state_id for state in learning.terminal_states} == {
+        "learner_complete",
+        "learner_noop",
+        "blocked",
+    }
+    assert {
+        state.terminal_state_id: state.terminal_class
+        for state in learning.terminal_states
+    } == {
+        "learner_complete": GraphLoopTerminalClass.SUCCESS,
+        "learner_noop": GraphLoopTerminalClass.NO_OP,
+        "blocked": GraphLoopTerminalClass.BLOCKED,
+    }
+
+
 def test_discover_graph_loop_definitions_includes_synthetic_graph_loop(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     _write_synthetic_stage_kind_asset(assets_root)

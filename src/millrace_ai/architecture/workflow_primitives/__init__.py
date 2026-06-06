@@ -11,6 +11,8 @@ from .completion import WorkflowCompletionBehaviorDefinition
 from .concurrency import (
     LaneConflictPolicyDefinition,
     PlaneQueueClaimPolicyDefinition,
+    SchedulerPolicyPredicateDefinition,
+    SchedulerPolicyRuleDefinition,
     WorkflowLaneDefinition,
     WorkflowPlaneSchedulerPolicyDefinition,
     WorkItemPartitionSelectorDefinition,
@@ -93,6 +95,8 @@ __all__ = [
     "WorkItemQueueDirs",
     "WorkflowCompletionBehaviorDefinition",
     "WorkflowLaneDefinition",
+    "SchedulerPolicyPredicateDefinition",
+    "SchedulerPolicyRuleDefinition",
     "WorkflowPlaneSchedulerPolicyDefinition",
     "WorkflowPrimitiveId",
     "WorkflowRecoveryPolicyDefinition",

@@ -46,6 +46,7 @@ from .plan_authority import has_required_workflow_authority
 from .validation import (
     validate_lane_conflict_coverage,
     validate_mode_stage_maps,
+    validate_scheduler_policy,
     validate_workflow_primitives,
 )
 
@@ -218,6 +219,11 @@ def compile_compiled_run_plan(
     scheduler_policy = _build_scheduler_policy(
         mode=mode,
         queue_claim_policies_by_plane=queue_claim_policies_by_plane,
+        workflow_primitives=workflow_primitives,
+    )
+    validate_scheduler_policy(
+        mode=mode,
+        workflow_primitives=workflow_primitives,
     )
     validate_lane_conflict_coverage(
         scheduler_policy=scheduler_policy,
@@ -296,6 +302,10 @@ def compile_compiled_run_plan(
                 "runtime_effect_rules": workflow_primitives.runtime_effect_rules,
                 "runtime_effect_operations_by_id": _map_by_attr(
                     workflow_primitives.runtime_effect_operations,
+                    "operation_id",
+                ),
+                "runtime_operations_by_id": _map_by_attr(
+                    workflow_primitives.runtime_operations,
                     "operation_id",
                 ),
                 "effect_stores_by_id": _map_by_attr(
@@ -377,6 +387,10 @@ def compile_compiled_run_plan(
             workflow_primitives.runtime_effect_operations,
             "operation_id",
         ),
+        runtime_operations_by_id=_map_by_attr(
+            workflow_primitives.runtime_operations,
+            "operation_id",
+        ),
         effect_stores_by_id=_map_by_attr(
             workflow_primitives.effect_stores,
             "store_id",
@@ -443,7 +457,74 @@ def _build_scheduler_policy(
     *,
     mode: ModeDefinition,
     queue_claim_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition],
+    workflow_primitives: object,
 ) -> WorkflowPlaneSchedulerPolicyDefinition:
+    if mode.scheduler_policy_id is not None:
+        policy_id = mode.scheduler_policy_id
+        scheduler_policies_by_id = {
+            policy.policy_id: policy
+            for policy in getattr(workflow_primitives, "scheduler_policies", ())
+        }
+        if policy_id in scheduler_policies_by_id:
+            resolved = scheduler_policies_by_id[policy_id]
+            if mode.lane_conflict_policies is not None:
+                resolved = resolved.model_copy(
+                    update={
+                        "lane_conflict_policies": tuple(
+                            LaneConflictPolicyDefinition.model_validate(policy)
+                            for policy in mode.lane_conflict_policies
+                        )
+                    }
+                )
+            return resolved
+        raise CompilerValidationError(
+            f"mode {mode.mode_id} references unknown scheduler policy: {policy_id}"
+        )
+
+    planes = tuple(mode.loop_ids_by_plane)
+    has_learning = Plane.LEARNING in mode.loop_ids_by_plane
+    auto_policy_id = f"{mode.mode_id}.scheduler"
+
+    scheduler_policies_by_id = {
+        policy.policy_id: policy
+        for policy in getattr(workflow_primitives, "scheduler_policies", ())
+    }
+
+    default_policy_id = "default.three_plane" if has_learning else "default.two_plane"
+    base_policy = scheduler_policies_by_id.get(default_policy_id)
+
+    if base_policy is not None and set(base_policy.plane_order) == set(planes):
+        policy_plane_order = base_policy.plane_order
+        lanes = tuple(
+            WorkflowLaneDefinition(
+                lane_id=f"{plane.value}.main",
+                plane=plane,
+                allowed_family_ids=queue_claim_policies_by_plane[plane].family_order,
+                claim_policy_id=queue_claim_policies_by_plane[plane].policy_id,
+                max_active_runs=1,
+            )
+            for plane in policy_plane_order
+        )
+        if mode.lane_conflict_policies is not None:
+            lane_conflict_policies = tuple(
+                LaneConflictPolicyDefinition.model_validate(policy)
+                for policy in mode.lane_conflict_policies
+            )
+        elif mode.concurrency_policy is not None:
+            lane_conflict_policies = _default_lane_conflict_policies(mode)
+        else:
+            lane_conflict_policies = ()
+        return base_policy.model_copy(
+            update={
+                "policy_id": auto_policy_id,
+                "concurrency_policy_id": (
+                    f"{mode.mode_id}.concurrency" if mode.concurrency_policy is not None else None
+                ),
+                "lane_conflict_policies": lane_conflict_policies,
+                "claim_policies_by_plane": queue_claim_policies_by_plane,
+            }
+        )
+
     lanes = tuple(
         WorkflowLaneDefinition(
             lane_id=f"{plane.value}.main",
@@ -461,8 +542,12 @@ def _build_scheduler_policy(
             LaneConflictPolicyDefinition.model_validate(policy)
             for policy in mode.lane_conflict_policies
         )
+    foreground_order = tuple(
+        p for p in (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING)
+        if p in mode.loop_ids_by_plane
+    )
     return WorkflowPlaneSchedulerPolicyDefinition(
-        policy_id=f"{mode.mode_id}.scheduler",
+        policy_id=auto_policy_id,
         plane_order=tuple(mode.loop_ids_by_plane),
         concurrency_policy_id=(
             f"{mode.mode_id}.concurrency" if mode.concurrency_policy is not None else None
@@ -472,6 +557,7 @@ def _build_scheduler_policy(
         completion_check_order=tuple(mode.loop_ids_by_plane),
         experimental_multi_lane=False,
         lane_conflict_policies=lane_conflict_policies,
+        foreground_order=foreground_order,
     )
 
 

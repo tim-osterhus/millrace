@@ -54,6 +54,28 @@ Millrace has five layers:
 4. stage-runner dispatch into an external harness
 5. persisted artifacts and inspection surfaces
 
+This five-layer model describes the operational flow: how data moves through
+the system from workspace input through resolved structure, runtime
+dispatch, runner execution, and durable persistence. In parallel, Millrace has
+a four-layer authority model that describes which code owns which decisions:
+
+1. **Compiler**: freezes operator config, modes, graphs, and workflow primitives
+   into a compiled run plan that is the runtime-authoritative execution contract.
+2. **Runtime kernel**: owns tick orchestration, graph-authority routing,
+   result application, recovery, and durable state persistence, but must not
+   own workflow semantics (see ADR-0012).
+3. **Extension and primitive packages**: declare new operation runners,
+   terminal actions, context providers, document adapters, and recovery
+   policies through registered manifests without modifying the kernel
+   (see ADR-0014, ADR-0015).
+4. **Graph and config packages**: declare topology, stage kinds, lifecycle
+   mutation plans, runtime-effect rules, and recovery policies through
+   JSON assets that the compiler validates and freezes (see ADR-0013).
+
+These authority layers complement the operational layers. The operational model
+describes *what happens*; the authority model describes *who decides*. See
+ADR-0012 through ADR-0015 for the full boundary definitions.
+
 In practice:
 
 - the operator points Millrace at a workspace

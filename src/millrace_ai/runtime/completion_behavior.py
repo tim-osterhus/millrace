@@ -52,6 +52,8 @@ from millrace_ai.workspace.lineage_integrity import (
 from millrace_ai.workspace.work_documents import parse_work_document_as
 from millrace_ai.workspace.work_inventory import WorkInventoryItemRef, closure_blocking_refs
 
+from .scheduler_policy import backpressure_outcome
+
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
     from millrace_ai.workspace.family_adapters import WorkFamilyQueueAdapter
@@ -460,6 +462,14 @@ def _prepare_closure_target_for_spec(
     if len(actionable_targets) > 1:
         raise WorkspaceStateError("multiple actionable open closure targets found")
     if actionable_targets:
+        # Consult scheduler-policy backpressure before blocking.
+        outcome = backpressure_outcome(
+            engine.compiled_plan.scheduler_policy if engine.compiled_plan is not None else None,
+            has_open_closure_target=True,
+        )
+        if outcome == "allow":
+            target = _create_closure_target_for_spec(engine, spec_path=spec_path, spec=spec)
+            return ClosureTargetPreparation(allowed=True, target=target)
         return ClosureTargetPreparation(
             allowed=False,
             open_root_spec_id=actionable_targets[0].root_spec_id,

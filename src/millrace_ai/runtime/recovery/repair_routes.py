@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from millrace_ai.compilation.validation.repair_closures import resolve_route_to_node_repair_closures
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plane, PlanningStageName, StageResultEnvelope
 from millrace_ai.runtime.graph_authority.stage_mapping import node_plan_by_id, stage_for_node
+from millrace_ai.runtime.scheduler_policy import recovery_fallback_selection
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
@@ -44,6 +45,34 @@ def runtime_repair_route_for_plane(
     )
     if policy_route is not None:
         return policy_route
+
+    # Consult scheduler-policy default recovery fallback before
+    # falling through to graph.runtime_failure_recovery.
+    scheduler_fallback_node_id = recovery_fallback_selection(
+        plan.scheduler_policy
+    )
+    if scheduler_fallback_node_id is not None:
+        try:
+            repair_node = node_plan_by_id(graph, scheduler_fallback_node_id)
+            repair_stage = stage_for_node(graph, repair_node.node_id)
+        except ValueError:
+            pass
+        else:
+            return RuntimeRepairRoute(
+                node_id=repair_node.node_id,
+                stage_kind_id=repair_node.stage_kind_id,
+                stage=repair_stage,
+                counter_name=(
+                    graph.runtime_failure_recovery.counter_name.value
+                    if graph.runtime_failure_recovery is not None
+                    else None
+                ),
+                threshold=(
+                    graph.runtime_failure_recovery.threshold
+                    if graph.runtime_failure_recovery is not None
+                    else None
+                ),
+            )
 
     if graph.runtime_failure_recovery is None:
         return None

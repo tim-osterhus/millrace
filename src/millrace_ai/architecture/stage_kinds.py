@@ -234,11 +234,7 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
             ResultClass.RECOVERABLE_FAILURE,
         }
         for outcome, result_classes in self.allowed_result_classes_by_outcome.items():
-            if outcome == "BLOCKED":
-                if set(result_classes) - blocked_result_classes:
-                    raise ValueError(
-                        "BLOCKED outcome may only allow blocked or recoverable_failure result classes"
-                    )
+            if set(result_classes).issubset(blocked_result_classes):
                 continue
             if len(result_classes) != 1:
                 raise ValueError(

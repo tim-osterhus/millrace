@@ -43,14 +43,34 @@ That compiled plan freezes:
 - per-node execution capability grants and grant warnings
 - compiled transitions, resume policies, threshold policies, and completion
   behavior
-- learning trigger rules, including direct-Curator destination metadata,
-  Planner-to-Librarian optional-skill preparation, and scheduler
-  lane/concurrency policy when the selected mode declares them
+- learning trigger rules, including direct-Curator destination metadata and
+  Planner-to-Librarian optional-skill preparation
+- compiled scheduler policy selected by explicit `scheduler_policy_id` or
+  compiler default, including lane membership, plane order, claim-policy
+  references, family order, entry policy, fallback entry behavior,
+  learning target-stage routing, recovery fallback routing,
+  backpressure/deferral policy, predicate-backed rules, foreground
+  ordering, completion/closure priority fallback, learning dispatch, and rule
+  priority
 - workflow primitives: work-item families, document adapters, queue claim
-  policies, terminal actions, lifecycle mutation plans, runtime effect handlers,
-  recovery policies, runtime failure policies, runtime effect rules, and the
-  active workspace schema epoch
+  policies, scheduler policies, terminal actions, lifecycle mutation plans,
+  runtime effect handlers, runtime operation registry assets, recovery
+  policies, runtime failure policies, runtime effect rules, and the active
+  workspace schema epoch
 - resolved asset references and content hashes
+
+The compiler validates terminal-action `runtime_operation_id` references
+against the compiled runtime operation registry. Operations must exist in
+`runtime_operations_by_id` and declare `terminal_action` in their
+`allowed_contexts`. Operations without terminal-action context, unknown
+operation ids, and missing required capabilities all fail compilation.
+
+At dispatch time, Recon routing reads the registered operation id from the
+compiled terminal action and maps it to the same task/spec/no-op/blocked
+behavior through an operation-id-keyed route table. The fixed
+`_TERMINAL_ACTION_RUNTIME_OPERATION_IDS` whitelist has been removed from
+active source; the authoritative operation ids come from compiled registry
+assets.
 
 The runtime then consumes that compiled authority during startup, routing,
 reconciliation, and run inspection.
@@ -70,12 +90,31 @@ Current compile authority comes from:
 - `modes/`
 - `graphs/`
 - `registry/stage_kinds/`
+- `registry/runtime_operations/` — runtime-operation definitions keyed by
+  operation id, with `allowed_contexts` (`terminal_action` or
+  `runtime_effect`), `required_capabilities`, `mutation_phase`, and
+  `idempotency` policy. Shipped assets seed the Recon terminal operations
+  (`recon.enqueue_task`, `recon.enqueue_spec`, `recon.noop`,
+  `recon.block_work_item`) and generic lifecycle operations
+  (`lifecycle.complete_work_item`, `lifecycle.block_work_item`).
+- `registry/scheduler_policies/` — scheduler-policy definitions with lane
+  membership, plane order, claim-policy references, family order,
+  foreground order, closure priority, fallback entry policy,
+  learning target-stage routing, recovery fallback routing,
+  backpressure/deferral policy, predicate-backed rules, learning
+  dispatch mode, and lane conflict policies. Shipped assets include
+  `default.two_plane` and `default.three_plane`; the compiler auto-selects the
+  matching default when a mode omits `scheduler_policy_id`. The compiler also
+  validates rule predicate references, rule target planes, rule
+  `order_override` values, residual-surface field constraints
+  (`learning_target_stage_kind_id` requires the learning plane), and
+  identifier canonicalization before freezing the plan.
 - workflow primitive registry assets under `registry/work_item_families/`,
   `registry/document_adapters/`, `registry/queue_claim_policies/`,
-  `registry/terminal_actions/`, `registry/lifecycle_mutation_plans/`,
+  `registry/terminal_actions/`,
+  `registry/lifecycle_mutation_plans/`,
   `registry/runtime_effect_handlers/`, `registry/recovery_policies/`,
-  `registry/runtime_failure_policies/`, and
-  `registry/workspace_schema_epochs/`
+  `registry/runtime_failure_policies/`, and `registry/workspace_schema_epochs/`
 - `entrypoints/`
 - `skills/`
 
@@ -117,13 +156,13 @@ startup recompiles before execution continues.
 
 Workflow primitives are data-driven runtime contracts, not advisory docs.
 Their built-in assets define the work-item families Millrace can claim, the
-document adapters used to parse them, per-plane queue claim policies, legal
-terminal actions, source lifecycle mutation plans, runtime effect handlers, and
-failure/recovery policy hooks. Artifact contracts are part of that same
-authority surface: each declares an artifact id, canonical filename, accepted
-legacy filenames, parser/schema, required outcomes, and consuming runtime
-effect. Request-context rendering and runtime effects use those declarations
-instead of stage-specific hard-coded filenames.
+document adapters used to parse them, per-plane queue claim policies,
+scheduler policies, legal terminal actions, source lifecycle mutation plans,
+runtime effect handlers, and failure/recovery policy hooks. Artifact contracts
+are part of that same authority surface: each declares an artifact id,
+canonical filename, accepted legacy filenames, parser/schema, required
+outcomes, and consuming runtime effect. Request-context rendering and runtime
+effects use those declarations instead of stage-specific hard-coded filenames.
 
 The architecture rationale is recorded in
 `docs/adr/0010-compiler-validated-workflow-primitives-as-runtime-authority.md`.
@@ -132,8 +171,8 @@ The compiler loads those assets from the active asset root, includes their
 content hashes in `resolved_assets`, validates cross-references, and persists
 the selected primitive definitions into `compiled_plan.json`. Runtime modules
 then read the compiled plan instead of maintaining separate hard-coded tables
-for stage work-item ownership, queue claim policy, terminal lifecycle intent,
-or effect-handler lookup.
+for stage work-item ownership, queue claim policy, scheduler policy, terminal
+lifecycle intent, runtime-operation lookup, or effect-handler lookup.
 
 Invalid primitive graphs fail at compile time. Examples include a queue claim
 policy that references an unknown work-item family, a terminal action that

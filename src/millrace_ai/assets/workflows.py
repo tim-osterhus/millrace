@@ -23,7 +23,9 @@ from millrace_ai.architecture import (
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
     RuntimeFailurePolicyDefinition,
+    RuntimeOperationDefinition,
     TerminalActionDefinition,
+    WorkflowPlaneSchedulerPolicyDefinition,
     WorkflowRecoveryPolicyDefinition,
     WorkItemDocumentAdapterDefinition,
     WorkItemFamilyDefinition,
@@ -35,6 +37,7 @@ from .effect_operations import (
     discover_effect_store_definitions,
     discover_effect_validator_definitions,
     discover_runtime_effect_operation_definitions,
+    discover_runtime_operation_definitions,
 )
 
 ASSETS_ROOT = Path(__file__).resolve().parent
@@ -52,6 +55,7 @@ RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT = Path("registry/runtime_effect_runners")
 RUNTIME_EFFECT_RULE_REGISTRY_ROOT = Path("registry/runtime_effect_rules")
 RECOVERY_POLICY_REGISTRY_ROOT = Path("registry/recovery_policies")
 RUNTIME_FAILURE_POLICY_REGISTRY_ROOT = Path("registry/runtime_failure_policies")
+SCHEDULER_POLICY_REGISTRY_ROOT = Path("registry/scheduler_policies")
 WORKSPACE_SCHEMA_EPOCH_REGISTRY_ROOT = Path("registry/workspace_schema_epochs")
 
 BUILTIN_WORK_ITEM_FAMILY_PATHS: dict[str, Path] = {
@@ -88,8 +92,10 @@ class WorkflowPrimitiveBundle:
     effect_stores: tuple[RuntimeEffectStoreDefinition, ...]
     effect_validators: tuple[RuntimeEffectValidatorDefinition, ...]
     runtime_effect_operations: tuple[RuntimeEffectOperationDefinition, ...]
+    runtime_operations: tuple[RuntimeOperationDefinition, ...]
     recovery_policies: tuple[WorkflowRecoveryPolicyDefinition, ...]
     runtime_failure_policies: tuple[RuntimeFailurePolicyDefinition, ...]
+    scheduler_policies: tuple[WorkflowPlaneSchedulerPolicyDefinition, ...]
     workspace_schema_epoch: WorkspaceSchemaEpochDefinition | None = None
 
 
@@ -113,8 +119,10 @@ def load_builtin_workflow_primitives(
         effect_stores=discover_effect_store_definitions(assets_root=assets_root),
         effect_validators=discover_effect_validator_definitions(assets_root=assets_root),
         runtime_effect_operations=discover_runtime_effect_operation_definitions(assets_root=assets_root),
+        runtime_operations=discover_runtime_operation_definitions(assets_root=assets_root),
         recovery_policies=discover_workflow_recovery_policy_definitions(assets_root=assets_root),
         runtime_failure_policies=discover_runtime_failure_policy_definitions(assets_root=assets_root),
+        scheduler_policies=discover_scheduler_policy_definitions(assets_root=assets_root),
         workspace_schema_epoch=load_workspace_schema_epoch_definition(assets_root=assets_root),
     )
 
@@ -324,6 +332,19 @@ def discover_workflow_recovery_policy_definitions(
     )
 
 
+def discover_scheduler_policy_definitions(
+    *,
+    assets_root: Path | None = None,
+) -> tuple[WorkflowPlaneSchedulerPolicyDefinition, ...]:
+    return _discover_definitions(
+        assets_root=assets_root,
+        registry_root=SCHEDULER_POLICY_REGISTRY_ROOT,
+        model=WorkflowPlaneSchedulerPolicyDefinition,
+        id_attr="policy_id",
+        asset_kind="scheduler policy",
+    )
+
+
 def discover_runtime_failure_policy_definitions(
     *,
     assets_root: Path | None = None,
@@ -468,6 +489,7 @@ __all__ = [
     "RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT",
     "RUNTIME_EFFECT_RULE_REGISTRY_ROOT",
     "RUNTIME_FAILURE_POLICY_REGISTRY_ROOT",
+    "SCHEDULER_POLICY_REGISTRY_ROOT",
     "SHIPPED_WORK_ITEM_FAMILY_IDS",
     "TERMINAL_ACTION_REGISTRY_ROOT",
     "WORK_ITEM_FAMILY_REGISTRY_ROOT",
@@ -487,6 +509,7 @@ __all__ = [
     "discover_runtime_effect_operation_definitions",
     "discover_runtime_effect_rule_definitions",
     "discover_runtime_failure_policy_definitions",
+    "discover_scheduler_policy_definitions",
     "discover_terminal_action_definitions",
     "discover_work_item_document_adapter_definitions",
     "discover_work_item_family_definitions",

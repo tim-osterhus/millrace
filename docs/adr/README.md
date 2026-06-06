@@ -23,6 +23,10 @@ directory, in filename order.
 | `0009-stage-metadata-single-source-of-truth.md` | Accepted | Use typed stage metadata as the shipped-stage legality registry. |
 | `0010-compiler-validated-workflow-primitives-as-runtime-authority.md` | Accepted | Extend compiled authority to workflow primitives, lanes, request context, effects, and schema epoch. |
 | `0011-declarative-runtime-effect-operations.md` | Accepted | Validate runtime effect operation/store/validator catalogs before dispatch migration. |
+| `0012-core-kernel-boundary.md` | Accepted | Forbid kernel ownership of workflow semantics; boundary belongs in graph assets, extension packages, or primitive contracts. |
+| `0013-generic-stage-and-plane-registry.md` | Accepted | Treat `stage_metadata.py` as shipped registry instance, not universal runtime authority. |
+| `0014-runtime-operation-step-interpreter.md` | Accepted | Extend ADR-0011 runtime-effect model to a unified step interpreter for all runtime operation steps. |
+| `0015-extension-package-manifests.md` | Accepted | Allow extension packages to expand runtime vocabulary without owning graph topology, route policy, or scheduling order. |
 
 ## Reading Notes
 

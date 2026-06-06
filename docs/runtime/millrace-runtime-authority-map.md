@@ -22,6 +22,28 @@ to move queue documents or rewrite authoritative runtime state directly.
 Owner names below refer to implementation homes under `src/millrace_ai/`.
 Public compatibility facades may re-export the same behavior.
 
+## Kernel Boundary
+
+The runtime kernel (`src/millrace_ai/runtime/`, `src/millrace_ai/workspace/`)
+owns orchestration, lifecycle, and durable state. Workflow-semantic decisions
+(routing, terminal actions, claim policies, recovery policies) are resolved
+from the compiled plan, not from kernel-level plane-enum or stage-enum
+branches (see ADR-0012 through ADR-0015).
+
+The compiled-plan router path uses:
+
+- `runtime/graph_authority/generic_router.py` — active compiled-graph routing
+  logic (`route_generic_stage_result_from_graph`) shared by all planes.
+- `runtime/graph_authority/routing.py` — identity-checking dispatch facade
+  (`route_stage_result_from_graph`) that validates stage-result identity
+  before delegating to the generic router.
+- `runtime/graph_authority/execution.py` and `planning.py` — compatibility
+  wrappers that forward to the generic router.
+- `runtime/graph_authority/learning.py` — standalone compatibility surface
+  (learning has no threshold/resume policies yet).
+- `millrace_ai.router` — stable compatibility facade; active dispatch does
+  not use its legacy plane-specific functions.
+
 ## Shared Authority Layers
 
 ### Compile-time authority
@@ -46,7 +68,10 @@ Public compatibility facades may re-export the same behavior.
 - `runtime/watcher_intake.py` owns watcher/poll intake and idea normalization.
 - `runtime/learning_triggers.py`, `runtime/handoff_incidents.py`, and
   `runtime/closure_transitions.py` own runtime-generated follow-up work.
-- `runtime/activation.py` decides which work can be claimed for a plane.
+- `runtime/activation.py` decides which work can be claimed for a plane, using
+  `runtime/scheduler_policy.py` for the compiled foreground order,
+  closure-target inversion, and learning eligibility shared with tick and
+  supervisor.
 - `workspace/queue_store.py` and `workspace/queue_selection.py` move queue
   artifacts into active state. Planning queue ordering is driven by the
   compiled per-plane queue claim policy when one is present.
@@ -87,6 +112,88 @@ Public compatibility facades may re-export the same behavior.
   events, `runtime_snapshot.json`, status markdown files, `run_trace.json`,
   runtime events, and run artifacts expose read-only inspection surfaces.
 
+### Runtime-operation registry authority
+
+- Runtime-operation definitions are discovered from packaged registry assets
+  under `src/millrace_ai/assets/registry/runtime_operations/` and compiled
+  into `CompiledRunPlan.runtime_operations_by_id`.
+- Each operation declares an `operation_id`, `allowed_contexts`
+  (`terminal_action` or `runtime_effect`), `required_capabilities`,
+  `mutation_phase`, and `idempotency` policy.
+- Shipped operations cover the four Recon terminal routes
+  (`recon.enqueue_task`, `recon.enqueue_spec`, `recon.noop`,
+  `recon.block_work_item`) and two generic lifecycle operations
+  (`lifecycle.complete_work_item`, `lifecycle.block_work_item`).
+- `compilation/validation/lifecycle.py` validates that every compiled terminal
+  action's `runtime_operation_id` exists in `runtime_operations_by_id`,
+  declares `terminal_action` in its allowed contexts, and satisfies its
+  required capabilities. Unknown operations, wrong-context operations, and
+  missing capabilities all fail compile.
+- At dispatch, `graph_authority/terminal_actions.py` resolves the operation id
+  from the compiled terminal action and attaches it to every
+  `RouterDecision`. Recon routing in `recon_transitions.py` maps that id to
+  the correct Recon behavior through the `_RECON_ROUTE_BY_RUNTIME_OPERATION`
+  table. The fixed `_TERMINAL_ACTION_RUNTIME_OPERATION_IDS` whitelist has been
+  removed from active source.
+- Runtime-effect dispatch (`effect_execution.py`) uses a separate
+  runtime-effect operation catalog; the `allowed_contexts` field keeps the two
+  contexts distinct.
+
+### Scheduler-policy authority
+
+- Scheduler-policy definitions are discovered from packaged registry assets
+  under `src/millrace_ai/assets/registry/scheduler_policies/` and compiled
+  into `CompiledRunPlan.scheduler_policy`.
+- Modes select a policy explicitly via `scheduler_policy_id`, or the compiler
+  auto-selects `default.three_plane` (for learning-enabled modes) or
+  `default.two_plane` (for two-plane modes). The auto-selected policy must
+  match the mode's plane set exactly.
+- Each policy declares `plane_order`, lane membership with
+  `allowed_family_ids` per lane, `claim_policy_id` references, family order,
+  `foreground_order`, `closure_priority`, `predicates`, `rules`,
+  `learning_dispatch` (`"inline"`, `"deferred"`, or reserved
+  `"interleaved"`), lane conflict policies, and multi-lane guardrails
+  (`experimental_multi_lane`).
+- `runtime/scheduler_policy.py` provides a shared compiled-policy interpreter
+  used by `activation.py`, `tick_cycle.py`, and `supervisor.py`. It evaluates
+  matching predicate-backed rules before falling back to the scalar
+  `foreground_order`/`closure_priority` compatibility path, inverts execution
+  before planning when the closure path still uses closure priority, and gates
+  separate learning dispatch behind `learning_dispatch != "deferred"`.
+- Four residual-surface interpreter helpers give scheduler policy
+  authority over runtime behavior that was previously split across compiled
+  graph, mode, work-item-family, queue-claim, completion, and recovery-policy
+  surfaces:
+  - `fallback_entry_selection(policy)` returns `"recon_on_idle"`, `"skip"`,
+    or `"pause"` from the compiled `fallback_entry_policy` field. Used by
+    `activation.py` in `claim_next_work_item()` before resolving concrete
+    entries through compiled graph/work-item-family data.
+  - `learning_target_stage_routing(policy)` returns the
+    `learning_target_stage_kind_id` from compiled scheduler-policy. Used by
+    `activation.py` in `_activation_for_claim()` before delegating to
+    `learning_stage_activation_for_graph()`. When `target_stage` is `None`,
+    the existing safety check skips directly to compiled graph activation.
+  - `recovery_fallback_selection(policy)` returns the
+    `recovery_fallback_node_id` from compiled scheduler-policy. Used by
+    `repair_routes.py` after runtime-effect-specific failure policy routes
+    are exhausted and before falling through to
+    `graph.runtime_failure_recovery`. Matched runtime-effect-specific
+    recovery policies remain higher-priority narrow overrides.
+  - `backpressure_outcome(policy, *, has_open_closure_target)` returns
+    `"block"`, `"defer"`, or `"allow"` from the compiled
+    `backpressure_policy` field. Used by `activation.py` in
+    `activate_claim_for_plane()` and `completion_behavior.py` in
+    `_prepare_closure_target_for_spec()`. QueueStore remains the filesystem
+    mutation adapter.
+- Compile validation (`compilation/validation/scheduler_policies.py`) rejects
+  policies with unknown planes, invalid claim policy references, invalid
+  family references, rules that reference unknown predicates or target planes,
+  rules whose `order_override` escapes `plane_order`, or multi-active lane
+  settings outside the supported state model.
+- `lanes.py` and `lane_conflicts.py` read lane membership and lane conflict
+  policies from the compiled scheduler policy instead of maintaining
+  hard-coded plane-lane tables.
+
 ## Authority Traces
 
 ### Standard Execution Task
@@ -98,7 +205,10 @@ runtime-owned generated-task path.
 
 **Queue selection owner:** `runtime/activation.py` asks
 `QueueStore.claim_next_execution_task()`, which delegates to
-`workspace/queue_selection.py`. When a closure target is open, activation
+`workspace/queue_selection.py`. The foreground claim order (planning before
+execution normally, execution before planning for an open closure target) and
+learning eligibility come from the compiled scheduler-policy interpreter
+(`runtime/scheduler_policy.py`). When a closure target is open, activation
 restricts execution claims to the open root lineage before unrelated work.
 
 **Compiled plan authority:** `compiled_plan.json` selects the Execution graph
@@ -119,6 +229,14 @@ stage-authored reports. The stage must not move task queue files directly.
 **Result normalization owner:** `runners/normalization/` extracts the legal
 terminal marker and metadata into `StageResultEnvelope`; runtime stage-result
 persistence writes the normalized JSON and status marker.
+
+**Compiled-plan router path:** `runtime/graph_authority/routing.py`'s
+`route_stage_result_from_graph` validates the normalized result identity
+(run id, work item id, stage, node id, stage kind id, work item family id),
+then delegates to `generic_router.py`'s
+`route_generic_stage_result_from_graph`, which resolves the compiled graph
+plan (threshold policies, transitions, terminal actions) and returns a
+`RouterDecision` with terminal-action/lifecycle/runtime-operation metadata.
 
 **Runtime mutation owner:** `runtime/result_application.py` applies the
 compiled router decision through execution-specific helpers. Runtime-owned
@@ -148,9 +266,10 @@ runtime-generated child specs, and Recon-generated specs.
 **Queue selection owner:** `runtime/activation.py` asks
 `QueueStore.claim_next_planning_item()` with the compiled Planning queue claim
 policy. `workspace/queue_selection.py` claims the next eligible planning
-family. In shipped policy, incidents and Blueprint drafts can take precedence
-over probes/specs; while a closure target is open, claims are restricted to
-same-lineage Planning work.
+family. The foreground claim order and closure-target inversion come from the
+compiled scheduler-policy interpreter. In shipped policy, incidents and
+Blueprint drafts can take precedence over probes/specs; while a closure target
+is open, claims are restricted to same-lineage Planning work.
 
 **Compiled plan authority:** `compiled_plan.json` selects
 `planning.standard` or `planning.blueprint`, maps probe work to Recon, maps
@@ -209,9 +328,12 @@ stage result, including the shipped Planner-to-Librarian trigger.
 
 **Queue selection owner:** in learning-enabled modes, `runtime/supervisor.py`
 and `runtime/tick_cycle.py` dispatch the Learning lane through
-`claim_next_work_item_for_plane(Plane.LEARNING)`. `workspace/queue_selection.py`
-claims the oldest queued learning request when no learning request is already
-active.
+`claim_next_work_item_for_plane(Plane.LEARNING)` after the shared compiled
+scheduler-policy interpreter (`scheduler_policy.py`) allows a separate
+learning claim. When `learning_dispatch` is `"deferred"`, learning is never
+claimed through foreground channels.
+`workspace/queue_selection.py` claims the oldest queued learning request when
+no learning request is already active.
 
 **Compiled plan authority:** `compiled_plan.json` must include
 `learning.standard`, the Learning graph, scheduler/concurrency policy, lane
@@ -504,10 +626,15 @@ consistent.
 
 ## Ambiguities To Keep Visible
 
-- "Queue selection owner" is split deliberately: compiled workflow primitives
-  own the policy, while runtime/workspace helpers own the atomic file movement.
+- "Queue selection owner" is split deliberately: compiled scheduler policy
+  owns the foreground order and closure priority, while runtime/workspace
+  helpers own the atomic file movement.
 - "Compiled plan authority" does not mean stages can infer authority from
   prompts. The runtime reads the persisted plan and validates stage/work-item
   ownership before runner invocation.
+- "Runtime-operation id" resolves through the compiled runtime operation
+  registry; dispatch reads `RouterDecision.runtime_operation_id` from the
+  compiled terminal action and maps it through an operation-id-keyed route
+  table. The old fixed whitelist is no longer active authority.
 - "Root source" identifies recoverable closure evidence; it is not a storage
   key for Blueprint manifests or a license to search arbitrary local files.

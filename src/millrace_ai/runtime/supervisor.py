@@ -50,6 +50,7 @@ from .learning_triggers import enqueue_learning_requests_for_stage_result
 from .monitoring import runtime_effect_monitor_payload
 from .result_application import compiled_plan_for_active_run
 from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
+from .scheduler_policy import foreground_claim_order, learning_claim_allowed
 from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
@@ -57,8 +58,7 @@ if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 
-_FOREGROUND_PLANES: tuple[Plane, ...] = (Plane.PLANNING, Plane.EXECUTION)
-_DISPATCH_ORDER: tuple[Plane, ...] = (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING)
+
 
 
 class StageWorkerOutcome(ContractModel):
@@ -157,8 +157,9 @@ class RuntimeDaemonSupervisor:
         foreground_dispatched = await self._dispatch_foreground_lane()
         dispatched += foreground_dispatched
 
-        learning_dispatched = await self._dispatch_claim_for_plane(Plane.LEARNING)
-        dispatched += learning_dispatched
+        if learning_claim_allowed(self.engine.compiled_plan.scheduler_policy if self.engine.compiled_plan else None):
+            learning_dispatched = await self._dispatch_claim_for_plane(Plane.LEARNING)
+            dispatched += learning_dispatched
         return dispatched
 
     async def drain_completed(self, *, wait: bool = False) -> tuple[StageCompletionOutcome, ...]:
@@ -203,7 +204,15 @@ class RuntimeDaemonSupervisor:
         await asyncio.sleep(timeout_seconds)
 
     async def _dispatch_foreground_lane(self) -> int:
-        for plane in _FOREGROUND_PLANES:
+        """Claim and dispatch work for the next eligible foreground plane."""
+
+        assert self.engine.compiled_plan is not None
+        try:
+            open_target = self.engine._active_closure_target()
+        except Exception:
+            open_target = None
+        policy = self.engine.compiled_plan.scheduler_policy
+        for plane in foreground_claim_order(policy, has_open_closure_target=open_target is not None):
             dispatched = await self._dispatch_claim_for_plane(plane)
             if dispatched:
                 return dispatched

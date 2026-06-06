@@ -169,6 +169,7 @@ class ModeDefinition(ContractModel):
     )
     concurrency_policy: PlaneConcurrencyPolicyDefinition | None = None
     lane_conflict_policies: tuple[dict[str, object], ...] | None = None
+    scheduler_policy_id: str | None = None
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
     execution_capability_requests: tuple[CapabilityRequest, ...] = ()
     execution_capability_policies: tuple[CapabilityPolicyOverride, ...] = ()

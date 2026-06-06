@@ -26,7 +26,7 @@ def resolve_result_class(
     if raw_result_class is None:
         if len(allowed_result_classes) == 1:
             return allowed_result_classes[0]
-        if terminal_token == "BLOCKED" and ResultClass.BLOCKED in allowed_result_classes:
+        if ResultClass.BLOCKED in allowed_result_classes:
             return ResultClass.BLOCKED
         return None
 

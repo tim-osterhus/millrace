@@ -122,6 +122,11 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
 - `adr/0008-contract-facade-and-domain-contract-modules.md`
 - `adr/0009-stage-metadata-single-source-of-truth.md`
 - `adr/0010-compiler-validated-workflow-primitives-as-runtime-authority.md`
+- `adr/0011-declarative-runtime-effect-operations.md`
+- `adr/0012-core-kernel-boundary.md`
+- `adr/0013-generic-stage-and-plane-registry.md`
+- `adr/0014-runtime-operation-step-interpreter.md`
+- `adr/0015-extension-package-manifests.md`
 
 ## Optional Sidecar
 

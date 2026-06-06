@@ -747,3 +747,259 @@ def test_route_stage_result_from_graph_rejects_invalid_closure_target_identity(
             stage_result,
             RecoveryCounters(),
         )
+
+
+def test_route_stage_result_from_graph_rejects_wrong_run_id(tmp_path: Path) -> None:
+    """Prove stage results are rejected when run_id does not match the active run."""
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    )
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(update={"run_id": "run-999"})
+
+    with pytest.raises(ValueError, match="run_id"):
+        route_stage_result_from_graph(
+            engine.compiled_plan,
+            snapshot,
+            stage_result,
+            RecoveryCounters(),
+        )
+
+
+def test_route_stage_result_from_graph_rejects_wrong_work_item_id(tmp_path: Path) -> None:
+    """Prove stage results are rejected when work_item_id does not match the active run."""
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    )
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        work_item_id="task-999",
+    )
+
+    with pytest.raises(ValueError, match="work_item_id"):
+        route_stage_result_from_graph(
+            engine.compiled_plan,
+            snapshot,
+            stage_result,
+            RecoveryCounters(),
+        )
+
+
+def test_route_stage_result_from_graph_rejects_wrong_stage(tmp_path: Path) -> None:
+    """Prove stage results are rejected when stage does not match the active stage."""
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    )
+    stage_result = _stage_result(
+        stage=ExecutionStageName.CHECKER,
+        terminal_result=ExecutionTerminalResult.CHECKER_PASS,
+    )
+
+    with pytest.raises(ValueError, match="active_stage"):
+        route_stage_result_from_graph(
+            engine.compiled_plan,
+            snapshot,
+            stage_result,
+            RecoveryCounters(),
+        )
+
+
+def test_route_stage_result_from_graph_rejects_wrong_node_id(tmp_path: Path) -> None:
+    """Prove stage results are rejected when node_id does not match the active node."""
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    # Build snapshot where active_node_id differs from stage_result.node_id
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    )
+    # The model_validator auto-sets active_node_id from active_stage, so we
+    # build a stage_result with a different node_id to trigger the mismatch.
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(update={"node_id": "other_node"})
+
+    with pytest.raises(ValueError, match="node_id"):
+        route_stage_result_from_graph(
+            engine.compiled_plan,
+            snapshot,
+            stage_result,
+            RecoveryCounters(),
+        )
+
+
+def test_route_stage_result_from_graph_rejects_wrong_stage_kind_id(tmp_path: Path) -> None:
+    """Prove stage results are rejected when stage_kind_id does not match the active kind."""
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    )
+    # The model_validator auto-sets active_stage_kind_id from active_stage
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(update={"stage_kind_id": "other_kind"})
+
+    with pytest.raises(ValueError, match="stage_kind_id"):
+        route_stage_result_from_graph(
+            engine.compiled_plan,
+            snapshot,
+            stage_result,
+            RecoveryCounters(),
+        )
+
+
+def test_route_stage_result_from_graph_rejects_wrong_work_item_family_id(tmp_path: Path) -> None:
+    """Prove stage results are rejected when work_item_family_id does not match the active family."""
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+
+    assert engine.compiled_plan is not None
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    )
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(update={"work_item_family_id": "other_family"})
+
+    with pytest.raises(ValueError, match="work_item_family_id"):
+        route_stage_result_from_graph(
+            engine.compiled_plan,
+            snapshot,
+            stage_result,
+            RecoveryCounters(),
+        )
+
+
+def test_route_stage_result_from_graph_routes_custom_node_in_canonical_execution_plane(
+    tmp_path: Path,
+) -> None:
+    """
+    Prove the generic router handles a custom node inside an existing canonical
+    execution-plane graph, routing through the custom node to the next standard stage.
+    """
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+
+    execution_graph = outcome.active_plan.execution_graph
+    builder_node = next(
+        node for node in execution_graph.nodes if node.node_id == "builder"
+    )
+    custom_node = builder_node.model_copy(
+        update={
+            "node_id": "custom_builder",
+            "stage_kind_id": "builder",
+        }
+    )
+    updated_graph = execution_graph.model_copy(
+        update={
+            "nodes": (
+                *execution_graph.nodes,
+                custom_node,
+            ),
+            "compiled_entries": (
+                *execution_graph.compiled_entries,
+                execution_graph.compiled_entries[0].model_copy(
+                    update={
+                        "node_id": "custom_builder",
+                        "stage_kind_id": "builder",
+                    }
+                ),
+            ),
+            "transitions": (
+                *execution_graph.transitions,
+                execution_graph.transitions[0].model_copy(
+                    update={
+                        "edge_id": "builder-complete-custom-to-checker",
+                        "from_node_id": "custom_builder",
+                    }
+                ),
+            ),
+            "compiled_transitions": (
+                *execution_graph.compiled_transitions,
+                execution_graph.compiled_transitions[0].model_copy(
+                    update={
+                        "source_node_id": "custom_builder",
+                    }
+                ),
+            ),
+        }
+    )
+    plan = outcome.active_plan.model_copy(
+        update={
+            "execution_graph": updated_graph,
+            "graphs_by_plane": {
+                **outcome.active_plan.graphs_by_plane,
+                Plane.EXECUTION: updated_graph,
+            },
+        }
+    )
+
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    ).model_copy(
+        update={
+            "active_node_id": "custom_builder",
+            "active_stage_kind_id": "builder",
+        }
+    )
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(
+        update={
+            "node_id": "custom_builder",
+            "stage_kind_id": "builder",
+        }
+    )
+
+    decision = route_stage_result_from_graph(
+        plan,
+        snapshot,
+        stage_result,
+        RecoveryCounters(),
+    )
+
+    assert decision.action.value == "run_stage"
+    assert decision.next_stage is ExecutionStageName.CHECKER
+    assert decision.next_node_id == "checker"
+    assert decision.reason == "builder:BUILDER_COMPLETE"

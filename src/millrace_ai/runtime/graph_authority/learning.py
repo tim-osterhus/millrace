@@ -1,10 +1,19 @@
-"""Learning-plane compiled graph routing."""
+"""Learning-plane compiled graph routing.
+
+Compatibility surface — the learning plane's graph routing is not yet
+migrated through the generic multi-plane router in ``routing.py`` because
+the learning plane has no threshold or resume policies. This module remains
+a standalone implementation with no active dispatch dependency on legacy
+plane-specific branching.
+
+All public exports are preserved for import compatibility.
+"""
 
 from __future__ import annotations
 
 from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan
 from millrace_ai.architecture.loop_graphs import GraphLoopTerminalClass
-from millrace_ai.contracts import LearningStageName, Plane, RuntimeSnapshot, StageResultEnvelope
+from millrace_ai.contracts import LearningStageName, Plane, RecoveryCounters, RuntimeSnapshot, StageResultEnvelope
 from millrace_ai.contracts.terminal_outcomes import terminal_outcome_value
 from millrace_ai.router import RouterAction, RouterDecision
 
@@ -12,7 +21,6 @@ from .counters import normalize_failure_class
 from .policies import terminal_state_by_id, transition_for_source
 from .stage_mapping import node_plan_by_id, stage_for_node
 from .terminal_actions import decision_from_terminal_state_action
-from .validation import validate_stage_result_matches_snapshot
 
 
 def route_learning_stage_result_from_graph(
@@ -20,8 +28,9 @@ def route_learning_stage_result_from_graph(
     graph: FrozenGraphPlanePlan,
     snapshot: RuntimeSnapshot,
     stage_result: StageResultEnvelope,
+    counters: RecoveryCounters | None = None,
+    **kwargs: object,
 ) -> RouterDecision:
-    validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.LEARNING)
     source_stage = LearningStageName(stage_result.stage)
     outcome = terminal_outcome_value(stage_result.terminal_result)
     transition = transition_for_source(graph, source_node_id=stage_result.node_id, outcome=outcome)

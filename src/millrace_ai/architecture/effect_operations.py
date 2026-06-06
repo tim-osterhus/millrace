@@ -17,6 +17,48 @@ RuntimeEffectValidatorId = str
 RuntimeEffectStepId = str
 RuntimeEffectMutationPhaseValue = Literal["pre_mutation", "partial_mutation", "unknown"]
 
+RuntimeOperationDefinitionId = str
+RuntimeOperationAllowedContextValue = Literal["terminal_action", "runtime_effect"]
+RuntimeOperationMutationPhaseValue = Literal["pre_mutation", "partial_mutation", "unknown"]
+
+
+class RuntimeOperationIdempotencyDefinition(ArchitectureContractModel):
+    duplicate_policy: Literal["fail", "supersede", "idempotent"]
+    replay_policy: Literal["resume_idempotently", "fail_if_seen", "require_operator"]
+
+
+class RuntimeOperationDefinition(ArchitectureContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["runtime_operation"] = "runtime_operation"
+    operation_id: RuntimeOperationDefinitionId
+    allowed_contexts: tuple[RuntimeOperationAllowedContextValue, ...]
+    required_capabilities: tuple[str, ...] = ()
+    mutation_phase: RuntimeOperationMutationPhaseValue = "unknown"
+    idempotency: RuntimeOperationIdempotencyDefinition
+
+    @field_validator("operation_id")
+    @classmethod
+    def validate_operation_id(cls, value: str) -> str:
+        return normalize_canonical_id(value, field_label="operation_id")
+
+    @field_validator("allowed_contexts", mode="before")
+    @classmethod
+    def normalize_allowed_contexts(cls, value: object) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label="allowed_contexts",
+            allow_empty=False,
+        )
+
+    @field_validator("required_capabilities", mode="before")
+    @classmethod
+    def normalize_required_capabilities(cls, value: object) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label="required_capabilities",
+            allow_empty=True,
+        )
+
 
 class RuntimeEffectStoreDefinition(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
@@ -332,4 +374,9 @@ __all__ = [
     "RuntimeEffectStoreId",
     "RuntimeEffectValidatorDefinition",
     "RuntimeEffectValidatorId",
+    "RuntimeOperationAllowedContextValue",
+    "RuntimeOperationDefinition",
+    "RuntimeOperationDefinitionId",
+    "RuntimeOperationIdempotencyDefinition",
+    "RuntimeOperationMutationPhaseValue",
 ]

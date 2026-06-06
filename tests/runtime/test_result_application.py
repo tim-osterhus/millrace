@@ -1145,3 +1145,369 @@ def test_recon_to_planning_fails_malformed_canonical_generated_spec_before_fallb
     assert (paths.probes_active_dir / "probe-001.md").is_file()
     assert not (paths.probes_blocked_dir / "probe-001.md").exists()
     assert not (paths.specs_queue_dir / "spec-from-probe.md").exists()
+
+
+# ── minimal three-plane fixture runtime tests ───────────────────────────────
+
+
+def _minimal_three_plane_engine(paths, tmp_path: Path) -> RuntimeEngine:
+    engine = RuntimeEngine(
+        paths, stage_runner=_unused_stage_runner, mode_id="minimal_three_plane"
+    )
+    engine.startup()
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+    return engine
+
+
+def _spec_doc(spec_id: str) -> SpecDocument:
+    return SpecDocument(
+        spec_id=spec_id,
+        title=f"Spec {spec_id}",
+        summary="minimal three-plane fixture runtime test",
+        source_type="manual",
+        goals=("validate fixture graph routing",),
+        constraints=("stay deterministic",),
+        acceptance=("fixture graph completes the spec",),
+        references=("tests/runtime/test_result_application.py",),
+        created_at=NOW,
+        created_by="tests",
+    )
+
+
+def test_minimal_three_plane_fixture_execution_complete_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001"))
+    assert queue.claim_next_execution_task() is not None
+
+    engine = _minimal_three_plane_engine(paths, tmp_path)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.EXECUTION: ActiveRunState(
+                    plane=Plane.EXECUTION,
+                    stage=ExecutionStageName.BUILDER,
+                    node_id="basic_worker",
+                    stage_kind_id="basic_worker",
+                    run_id="run-mtp-exec-complete",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.TASK,
+                    work_item_id="task-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.BUILDER,
+            "active_node_id": "basic_worker",
+            "active_stage_kind_id": "basic_worker",
+            "active_run_id": "run-mtp-exec-complete",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-exec-complete",
+        plane="execution",
+        stage="builder",
+        node_id="basic_worker",
+        stage_kind_id="basic_worker",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result="BASIC_EXECUTION_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BASIC_EXECUTION_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.tasks_done_dir / "task-001.md").is_file()
+    assert not (paths.tasks_active_dir / "task-001.md").exists()
+
+
+def test_minimal_three_plane_fixture_execution_block_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001"))
+    assert queue.claim_next_execution_task() is not None
+
+    engine = _minimal_three_plane_engine(paths, tmp_path)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.EXECUTION: ActiveRunState(
+                    plane=Plane.EXECUTION,
+                    stage=ExecutionStageName.BUILDER,
+                    node_id="basic_worker",
+                    stage_kind_id="basic_worker",
+                    run_id="run-mtp-exec-block",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.TASK,
+                    work_item_id="task-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.BUILDER,
+            "active_node_id": "basic_worker",
+            "active_stage_kind_id": "basic_worker",
+            "active_run_id": "run-mtp-exec-block",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-exec-block",
+        plane="execution",
+        stage="builder",
+        node_id="basic_worker",
+        stage_kind_id="basic_worker",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result="BASIC_EXECUTION_BLOCKED",
+        result_class=ResultClass.BLOCKED,
+        summary_status_marker="### BASIC_EXECUTION_BLOCKED",
+        success=False,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.tasks_blocked_dir / "task-001.md").is_file()
+    assert not (paths.tasks_active_dir / "task-001.md").exists()
+
+
+def test_minimal_three_plane_fixture_learning_no_op_complete_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(_learning_request_doc("learn-001"))
+    assert queue.claim_next_learning_request() is not None
+
+    engine = _minimal_three_plane_engine(paths, tmp_path)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.LEARNING: ActiveRunState(
+                    plane=Plane.LEARNING,
+                    stage=LearningStageName.ANALYST,
+                    node_id="basic_learner",
+                    stage_kind_id="basic_learner",
+                    run_id="run-mtp-learn-noop",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="learning_request",
+                    work_item_kind=WorkItemKind.LEARNING_REQUEST,
+                    work_item_id="learn-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.LEARNING,
+            "active_stage": LearningStageName.ANALYST,
+            "active_node_id": "basic_learner",
+            "active_stage_kind_id": "basic_learner",
+            "active_run_id": "run-mtp-learn-noop",
+            "active_work_item_kind": WorkItemKind.LEARNING_REQUEST,
+            "active_work_item_id": "learn-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-learn-noop",
+        plane="learning",
+        stage="analyst",
+        node_id="basic_learner",
+        stage_kind_id="basic_learner",
+        work_item_kind=WorkItemKind.LEARNING_REQUEST,
+        work_item_id="learn-001",
+        terminal_result="BASIC_LEARNING_NOOP",
+        result_class=ResultClass.NO_OP,
+        summary_status_marker="### BASIC_LEARNING_NOOP",
+        success=False,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    assert decision.terminal_action_id == "no_op_complete_work_item"
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.learning_requests_done_dir / "learn-001.md").is_file()
+    assert not (paths.learning_requests_active_dir / "learn-001.md").exists()
+
+
+def test_minimal_three_plane_fixture_learning_complete_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(_learning_request_doc("learn-001"))
+    assert queue.claim_next_learning_request() is not None
+
+    engine = _minimal_three_plane_engine(paths, tmp_path)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.LEARNING: ActiveRunState(
+                    plane=Plane.LEARNING,
+                    stage=LearningStageName.ANALYST,
+                    node_id="basic_learner",
+                    stage_kind_id="basic_learner",
+                    run_id="run-mtp-learn-complete",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="learning_request",
+                    work_item_kind=WorkItemKind.LEARNING_REQUEST,
+                    work_item_id="learn-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.LEARNING,
+            "active_stage": LearningStageName.ANALYST,
+            "active_node_id": "basic_learner",
+            "active_stage_kind_id": "basic_learner",
+            "active_run_id": "run-mtp-learn-complete",
+            "active_work_item_kind": WorkItemKind.LEARNING_REQUEST,
+            "active_work_item_id": "learn-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-learn-complete",
+        plane="learning",
+        stage="analyst",
+        node_id="basic_learner",
+        stage_kind_id="basic_learner",
+        work_item_kind=WorkItemKind.LEARNING_REQUEST,
+        work_item_id="learn-001",
+        terminal_result="BASIC_LEARNING_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BASIC_LEARNING_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    assert decision.terminal_action_id == "complete_work_item"
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.learning_requests_done_dir / "learn-001.md").is_file()
+    assert not (paths.learning_requests_active_dir / "learn-001.md").exists()
+
+
+def test_minimal_three_plane_fixture_learning_block_work_item(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_learning_request(_learning_request_doc("learn-001"))
+    assert queue.claim_next_learning_request() is not None
+
+    engine = _minimal_three_plane_engine(paths, tmp_path)
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.LEARNING: ActiveRunState(
+                    plane=Plane.LEARNING,
+                    stage=LearningStageName.ANALYST,
+                    node_id="basic_learner",
+                    stage_kind_id="basic_learner",
+                    run_id="run-mtp-learn-block",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(
+                        engine.compiled_plan
+                    ),
+                    request_kind="learning_request",
+                    work_item_kind=WorkItemKind.LEARNING_REQUEST,
+                    work_item_id="learn-001",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.LEARNING,
+            "active_stage": LearningStageName.ANALYST,
+            "active_node_id": "basic_learner",
+            "active_stage_kind_id": "basic_learner",
+            "active_run_id": "run-mtp-learn-block",
+            "active_work_item_kind": WorkItemKind.LEARNING_REQUEST,
+            "active_work_item_id": "learn-001",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-mtp-learn-block",
+        plane="learning",
+        stage="analyst",
+        node_id="basic_learner",
+        stage_kind_id="basic_learner",
+        work_item_kind=WorkItemKind.LEARNING_REQUEST,
+        work_item_id="learn-001",
+        terminal_result="BASIC_LEARNING_BLOCKED",
+        result_class=ResultClass.BLOCKED,
+        summary_status_marker="### BASIC_LEARNING_BLOCKED",
+        success=False,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    assert decision.terminal_action_id == "block_work_item"
+    apply_router_decision(engine, decision, stage_result)
+
+    assert (paths.learning_requests_blocked_dir / "learn-001.md").is_file()
+    assert not (paths.learning_requests_active_dir / "learn-001.md").exists()

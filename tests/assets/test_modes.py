@@ -551,6 +551,24 @@ def test_efficient_learning_mixed_compiles_with_mode_stage_aliases(tmp_path: Pat
     }
 
 
+def test_minimal_three_plane_mode_loads_through_asset_discovery() -> None:
+    mode = load_builtin_mode_definition("minimal_three_plane")
+
+    assert mode.mode_id == "minimal_three_plane"
+    assert "minimal_three_plane" not in SHIPPED_MODE_IDS
+    assert mode.loop_ids_by_plane == {
+        Plane.EXECUTION: "execution.minimal_three_plane",
+        Plane.PLANNING: "planning.minimal_three_plane",
+        Plane.LEARNING: "learning.minimal_three_plane",
+    }
+    assert mode.learning_enabled is True
+    assert mode.stage_runner_bindings == {
+        "basic_worker": "pi_rpc",
+        "basic_planner": "pi_rpc",
+        "basic_learner": "pi_rpc",
+    }
+
+
 def test_learning_codex_integrated_compiles_with_learning_plane(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)

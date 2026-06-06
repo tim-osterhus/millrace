@@ -42,6 +42,7 @@ The authoritative sources are:
 - `src/millrace_ai/assets/registry/request_context_providers/`
 - `src/millrace_ai/assets/registry/request_context_render_plans/`
 - `src/millrace_ai/assets/registry/queue_claim_policies/`
+- `src/millrace_ai/assets/registry/scheduler_policies/`
 - `src/millrace_ai/assets/registry/terminal_actions/`
 - `src/millrace_ai/assets/registry/lifecycle_mutation_plans/`
 - `src/millrace_ai/assets/registry/runtime_effect_operations/`
@@ -132,6 +133,7 @@ Today the important authoring rule is scope:
 - `model_aliases`
 - `model_assignment`
 - `concurrency_policy`
+- `scheduler_policy_id`
 - `learning_trigger_rules`
 
 Topology-affecting maps must only reference planes, loops, or stages that
@@ -154,6 +156,41 @@ workspace assets.
 
 Legacy `execution_loop_id` and `planning_loop_id` fields are still accepted for
 compatibility, but new mode assets should use `loop_ids_by_plane`.
+
+`scheduler_policy_id` is an explicit compile-time selector for the scheduler
+policy registry. If omitted, the compiler auto-selects `default.three_plane`
+(for learning-enabled modes) or `default.two_plane` (for two-plane modes). The
+auto-selected policy must match the mode's plane set exactly; a mode with
+unexpected planes must declare an explicit policy.
+
+Scheduler-policy fields that a custom policy must provide:
+
+- `plane_order` — the ordered set of planes this policy governs.
+- `lanes` — one or more lane definitions, each with `lane_id`, `plane`,
+  `allowed_family_ids`, `claim_policy_id`, `max_active_runs`, and
+  `one_active_scope`. The shipped default is one lane per plane.
+- `claim_policies_by_plane` — per-plane queue claim policy references,
+  including `family_order` and `closure_lineage_policy`.
+- `foreground_order` — the default order in which planes are examined for
+  claimable work when no rule matches. Shipped: planning, then execution,
+  then learning.
+- `closure_priority` — compatibility fallback for the scalar-order path; when
+  > 0 and a closure target is open, the foreground-order positions of
+  execution and planning are swapped so execution claims are attempted first.
+- `predicates` — named predicate definitions that rules may reference. The
+  shipped defaults use `no.closure.target` and `open.closure.target`.
+- `rules` — predicate-backed claim rules evaluated by the shared scheduler
+  interpreter. The shipped defaults use `default.planning.first` and
+  `closure.execution.first` to encode the no-closure and open-closure
+  foreground orders.
+- `learning_dispatch` — `"inline"` (learning dispatched after the foreground
+  claim loop, shipped default), `"deferred"` (learning never claimed through
+  foreground channels), or reserved `"interleaved"`.
+- `lane_conflict_policies` — conflict declarations for concurrent plane pairs;
+  each declares which lanes may run together, conflict scopes, lock
+  acquisition order, and missing-lock policy.
+- `experimental_multi_lane` — must be `false` in shipped policies; a true
+  value requires compiler-validated multi-active lane guardrails.
 
 ## Stage-Kind And Graph-Loop Rules
 
@@ -206,11 +243,25 @@ For the shipped foundation slice, primitives define:
   context behavior by compiled node authority
 - plane queue claim policies that decide which families a plane may claim and
   in what order
+- scheduler policies that declare lane membership, plane order, claim-policy
+  references, family order, and concurrency/priority behavior
 - terminal actions and lifecycle mutation plans that explain how terminal
   outcomes become source lifecycle intents
 - runtime effect operations, runners, stores, validators, and effect rules
   that let terminal results request additional runtime-owned effects without
   mutating queues directly from stage code
+- runtime operations that declare terminal-action and runtime-effect operation
+  identity, allowed contexts, required capabilities, mutation phase policy,
+  and idempotency policy. Each operation has an `operation_id`, one or more
+  `allowed_contexts` (`terminal_action` or `runtime_effect`),
+  `required_capabilities`, `mutation_phase` (`unknown`, `atomic`, or
+  `partial_mutation`), and `idempotency` (`duplicate_policy` and
+  `replay_policy`). Terminal actions reference operations by id; the compiler
+  validates that the referenced operation exists and permits terminal-action
+  context. The shipped Recon terminal operations (`recon.enqueue_task`,
+  `recon.enqueue_spec`, `recon.noop`, `recon.block_work_item`) and lifecycle
+  operations (`lifecycle.complete_work_item`, `lifecycle.block_work_item`) are
+  seeded in `registry/runtime_operations/default_runtime_operations.json`.
 - legacy runtime effect handler aliases only as compatibility metadata/facades
   over the operation-id model
 - recovery and failure policies used by compiler validation and future runtime
@@ -241,6 +292,34 @@ The compiler validates primitive cross-references before any runtime start. A
 mode or graph is invalid if an entry, stage kind, terminal action, lifecycle
 plan, queue policy, runtime effect rule, or schema epoch reference cannot be
 resolved coherently.
+
+## Fixture Authoring And Discovery-Only Assets
+
+Millrace ships one architecture proof fixture (`minimal_three_plane`) that
+illustrates custom graph-loop, stage-kind, and mode authoring without
+changing the default product surface.
+
+Fixture assets are:
+
+- discoverable through normal asset discovery (stage-kind, graph-loop, and
+  mode loaders find them alongside shipped assets)
+- **not** listed in `SHIPPED_MODE_IDS`
+- compiled and run by referencing `mode_id = "minimal_three_plane"`
+  explicitly, not by selecting a default mode
+
+The fixture uses custom stage kinds (`basic_worker`, `basic_planner`,
+`basic_learner`) that declare canonical `runtime_stage` values (`builder`,
+`planner`, `analyst`). It intentionally limits itself to the current
+canonical plane IDs and canonical runtime stages.
+
+**Arbitrary plane IDs and arbitrary runtime stages are deferred** to the
+generic stage and plane registry work tracked in ADR-0013. Every stage kind
+in the fixture resolves to a known canonical runtime stage through its
+`runtime_stage` field, and every graph loop uses the current shipped plane
+IDs (`execution`, `planning`, `learning`).
+
+The fixture is an architecture proof asset, not a user-facing product mode
+unless docs explicitly label it as a test fixture.
 
 ## Entrypoint Override Rules
 

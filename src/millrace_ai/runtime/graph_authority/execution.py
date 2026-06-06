@@ -1,35 +1,34 @@
-"""Execution-plane compiled graph routing."""
+"""Execution-plane compiled graph routing compatibility wrapper.
+
+This module is a compatibility surface over the generic compiled-graph router
+in `routing.py`. The active dispatch authority lives in
+`route_generic_stage_result_from_graph`; this module forwards to it with
+plane-specific terminal-reason and failure-class formatters.
+
+All public exports are preserved for import compatibility.
+"""
 
 from __future__ import annotations
 
 from millrace_ai.architecture import (
-    CompiledGraphThresholdPolicyPlan,
-    CompiledGraphTransitionPlan,
     CompiledRunPlan,
     FrozenGraphPlanePlan,
 )
 from millrace_ai.contracts import (
     ExecutionStageName,
-    Plane,
     RecoveryCounters,
     RuntimeSnapshot,
     StageResultEnvelope,
 )
-from millrace_ai.contracts.terminal_outcomes import terminal_outcome_value
-from millrace_ai.router import RouterAction, RouterDecision
+from millrace_ai.router import RouterDecision
 
-from .counters import counter_attempts_for_name, counter_key_from_snapshot, resolve_failure_class
-from .policies import (
-    decision_from_resume_policy,
-    decision_from_threshold_resolution,
-    resume_policy_for_source,
-    terminal_state_by_id,
-    threshold_policy_for_transition,
-    transition_for_source,
+from .generic_router import (
+    _threshold_failure_class_default,
+    _threshold_reason,
+    execution_terminal_failure_class,
+    execution_terminal_reason,
+    route_generic_stage_result_from_graph,
 )
-from .stage_mapping import node_plan_by_id, stage_for_node
-from .terminal_actions import decision_from_terminal_state_action
-from .validation import validate_stage_result_matches_snapshot
 
 
 def route_execution_stage_result_from_graph(
@@ -41,77 +40,31 @@ def route_execution_stage_result_from_graph(
     *,
     max_fix_cycles: int,
     max_troubleshoot_attempts_before_consult: int,
+    **kwargs: object,
 ) -> RouterDecision:
-    validate_stage_result_matches_snapshot(snapshot, stage_result, expected_plane=Plane.EXECUTION)
-    source_stage = ExecutionStageName(stage_result.stage)
-    outcome = terminal_outcome_value(stage_result.terminal_result)
-    source_node_id = stage_result.node_id
+    """
+    Route an execution-plane stage result through the compiled graph.
 
-    threshold_policy = threshold_policy_for_transition(
-        graph,
-        source_node_id=source_node_id,
-        outcome=outcome,
-    )
-    if threshold_policy is not None:
-        failure_class = resolve_failure_class(
-            snapshot,
-            stage_result,
-            default=_threshold_failure_class_default(
-                source_stage,
-                threshold_policy,
-                exhausted=False,
-            ),
-        )
-        attempts = counter_attempts_for_name(
-            snapshot,
-            counters,
-            failure_class,
-            counter_name=threshold_policy.counter_name,
-        )
-        if attempts >= threshold_policy.threshold:
-            return decision_from_threshold_resolution(
-                graph_plan.graphs_by_plane,
-                graph,
-                snapshot,
-                source_stage=source_stage,
-                policy=threshold_policy,
-                terminal_actions_by_id=graph_plan.terminal_actions_by_id,
-                lifecycle_mutation_plans_by_id=graph_plan.lifecycle_mutation_plans_by_id,
-                failure_class=resolve_failure_class(
-                    snapshot,
-                    stage_result,
-                    default=_threshold_failure_class_default(
-                        source_stage,
-                        threshold_policy,
-                        exhausted=True,
-                    ),
-                ),
-                reason=_threshold_reason(source_stage, threshold_policy, exhausted=True),
-            )
-
-    resume_policy = resume_policy_for_source(
-        graph,
-        source_node_id=source_node_id,
-        outcome=outcome,
-    )
-    if resume_policy is not None:
-        return decision_from_resume_policy(
-            graph,
-            source_stage=source_stage,
-            stage_result=stage_result,
-            policy=resume_policy,
-        )
-
-    transition = transition_for_source(graph, source_node_id=source_node_id, outcome=outcome)
-    return decision_from_execution_transition(
+    Compatibility wrapper — delegates to the generic compiled-graph router.
+    """
+    return route_generic_stage_result_from_graph(
         graph_plan,
         graph,
         snapshot,
-        source_stage=source_stage,
-        stage_result=stage_result,
-        transition=transition,
-        threshold_policy=threshold_policy,
+        stage_result,
+        counters,
+        source_stage=ExecutionStageName(stage_result.stage),
+        terminal_failure_class_fn=execution_terminal_failure_class,
+        terminal_reason_fn=execution_terminal_reason,
+        default_threshold_failure_class_fn=_threshold_failure_class_default,
+        threshold_reason_fn=_threshold_reason,
+        max_fix_cycles=max_fix_cycles,
+        max_troubleshoot_attempts_before_consult=max_troubleshoot_attempts_before_consult,
+        **kwargs,
     )
+
+
+
 
 
 def decision_from_execution_transition(
@@ -121,109 +74,23 @@ def decision_from_execution_transition(
     *,
     source_stage: ExecutionStageName,
     stage_result: StageResultEnvelope,
-    transition: CompiledGraphTransitionPlan,
-    threshold_policy: CompiledGraphThresholdPolicyPlan | None = None,
+    transition: object,
+    threshold_policy: object = None,
 ) -> RouterDecision:
-    terminal_result = terminal_outcome_value(stage_result.terminal_result)
+    """
+    Compatibility shim — legacy export preserved for import compatibility.
 
-    if transition.target_node_id is not None:
-        if threshold_policy is not None:
-            failure_class = resolve_failure_class(
-                snapshot,
-                stage_result,
-                default=_threshold_failure_class_default(
-                    source_stage,
-                    threshold_policy,
-                    exhausted=False,
-                ),
-            )
-            counter_mutation_name = _threshold_counter_mutation_name(threshold_policy)
-            return RouterDecision(
-                action=RouterAction.RUN_STAGE,
-                next_plane=graph.plane,
-                next_stage=stage_for_node(graph, transition.target_node_id),
-                next_node_id=transition.target_node_id,
-                next_stage_kind_id=node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
-                reason=_threshold_reason(source_stage, threshold_policy, exhausted=False),
-                failure_class=failure_class,
-                counter_key=counter_key_from_snapshot(snapshot, failure_class),
-                counter_mutation_name=counter_mutation_name,
-                recovery_counter_name=counter_mutation_name,
-            )
-        return RouterDecision(
-            action=RouterAction.RUN_STAGE,
-            next_plane=graph.plane,
-            next_stage=stage_for_node(graph, transition.target_node_id),
-            next_node_id=transition.target_node_id,
-            next_stage_kind_id=node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
-            reason=f"{source_stage.value}:{terminal_result}",
-        )
-
-    terminal_state_id = transition.terminal_state_id
-    assert terminal_state_id is not None
-    terminal_state = terminal_state_by_id(graph, terminal_state_id)
-
-    return decision_from_terminal_state_action(
-        graph_plan.graphs_by_plane,
-        graph=graph,
-        terminal_state=terminal_state,
-        terminal_actions_by_id=graph_plan.terminal_actions_by_id,
-        lifecycle_mutation_plans_by_id=graph_plan.lifecycle_mutation_plans_by_id,
-        reason=_terminal_reason(
-            source_stage,
-            terminal_result,
-            terminal_state.writes_status,
-            terminal_state.router_reason,
-        ),
-        failure_class=terminal_state.failure_class_template,
+    Active routing does not depend on this path. The generic router in
+    routing.py owns active dispatch. This function is retained only so
+    that existing imports from ``.execution import decision_from_execution_transition``
+    continue to work.
+    """
+    raise NotImplementedError(
+        "decision_from_execution_transition is a legacy compatibility export. "
+        "Active routing uses route_generic_stage_result_from_graph in routing.py. "
+        "If you need the logic previously provided by this function, import "
+        "the generic router directly."
     )
-
-
-def _terminal_reason(
-    source_stage: ExecutionStageName,
-    terminal_result: str,
-    writes_status: str,
-    router_reason: str | None,
-) -> str:
-    if router_reason is not None and terminal_result == writes_status:
-        return router_reason
-    return f"{source_stage.value}:{terminal_result}"
-
-
-def _threshold_failure_class_default(
-    source_stage: ExecutionStageName,
-    threshold_policy: CompiledGraphThresholdPolicyPlan,
-    *,
-    exhausted: bool,
-) -> str:
-    policy_default = (
-        threshold_policy.exhausted_failure_class_template
-        if exhausted
-        else threshold_policy.default_failure_class_template
-    )
-    if policy_default is not None:
-        return policy_default
-    return f"{source_stage.value}_{threshold_policy.on_outcome.lower()}"
-
-
-def _threshold_reason(
-    source_stage: ExecutionStageName,
-    threshold_policy: CompiledGraphThresholdPolicyPlan,
-    *,
-    exhausted: bool,
-) -> str:
-    policy_reason = (
-        threshold_policy.exhausted_route_reason
-        if exhausted
-        else threshold_policy.route_reason
-    )
-    if policy_reason is not None:
-        return policy_reason
-    return f"{source_stage.value}_{threshold_policy.on_outcome.lower()}"
-
-
-def _threshold_counter_mutation_name(policy: CompiledGraphThresholdPolicyPlan) -> str:
-    return (policy.recovery_counter_mutation_name or policy.counter_name).value
 
 
 __all__ = [

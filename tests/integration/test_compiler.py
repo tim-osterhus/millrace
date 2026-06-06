@@ -20,6 +20,7 @@ from millrace_ai.compiler import (
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import CompileDiagnostics, Plane, ResultClass
 from millrace_ai.errors import ConfigurationError, MillraceError
+from millrace_ai.modes import SHIPPED_MODE_IDS
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 
 
@@ -1573,3 +1574,122 @@ def test_compile_refuses_stale_last_known_good_when_requested(tmp_path: Path) ->
     assert failed.diagnostics.ok is False
     assert failed.active_plan is None
     assert failed.used_last_known_good is False
+
+
+def test_compile_minimal_three_plane_fixture_succeeds_with_three_planes(
+    tmp_path: Path,
+) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root, assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="minimal_three_plane",
+        assets_root=workspace_root / "millrace-agents",
+    )
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+
+    # ── mode identity ──────────────────────────────────────────────────────
+    assert plan.mode_id == "minimal_three_plane"
+    assert "minimal_three_plane" not in SHIPPED_MODE_IDS
+
+    # ── three-plane resolution ─────────────────────────────────────────────
+    assert plan.loop_ids_by_plane == {
+        Plane.EXECUTION: "execution.minimal_three_plane",
+        Plane.PLANNING: "planning.minimal_three_plane",
+        Plane.LEARNING: "learning.minimal_three_plane",
+    }
+    assert plan.execution_loop_id == "execution.minimal_three_plane"
+    assert plan.planning_loop_id == "planning.minimal_three_plane"
+    assert plan.learning_loop_id == "learning.minimal_three_plane"
+    assert plan.learning_graph is not None
+    assert set(plan.graphs_by_plane) == {Plane.EXECUTION, Plane.PLANNING, Plane.LEARNING}
+
+    # ── execution graph ────────────────────────────────────────────────────
+    exec_nodes = {node.node_id: node for node in plan.execution_graph.nodes}
+    worker = exec_nodes["basic_worker"]
+    assert worker.stage_kind_id == "basic_worker"
+    assert worker.runtime_stage == "builder"
+    assert worker.plane is Plane.EXECUTION
+    assert worker.runner_name == "pi_rpc"
+    assert worker.request_context_profile_id == "builder.default"
+    assert worker.context_render_plan_id == "stage_request.default.v1"
+    assert worker.entrypoint_path == "entrypoints/execution/builder.md"
+    assert worker.required_skill_paths == ("skills/stage/execution/builder-core/SKILL.md",)
+    assert worker.allowed_work_item_families == ("task",)
+    assert worker.running_status_marker == "BASIC_EXECUTION_RUNNING"
+    assert worker.allowed_result_classes_by_outcome == {
+        "BASIC_EXECUTION_COMPLETE": (ResultClass.SUCCESS,),
+        "BASIC_EXECUTION_BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
+    }
+
+    exec_entry_map = {entry.entry_key.value: entry.node_id for entry in plan.execution_graph.compiled_entries}
+    assert exec_entry_map == {"task": "basic_worker"}
+
+    exec_terminal_ids = {state.terminal_state_id for state in plan.execution_graph.terminal_states}
+    assert exec_terminal_ids == {"worker_complete", "blocked"}
+
+    # ── planning graph ─────────────────────────────────────────────────────
+    plan_nodes = {node.node_id: node for node in plan.planning_graph.nodes}
+    planner = plan_nodes["basic_planner"]
+    assert planner.stage_kind_id == "basic_planner"
+    assert planner.runtime_stage == "planner"
+    assert planner.plane is Plane.PLANNING
+    assert planner.runner_name == "pi_rpc"
+    assert planner.request_context_profile_id == "planner.default"
+    assert planner.context_render_plan_id == "stage_request.default.v1"
+    assert planner.entrypoint_path == "entrypoints/planning/planner.md"
+    assert planner.required_skill_paths == ("skills/stage/planning/planner-core/SKILL.md",)
+    assert planner.allowed_work_item_families == ("spec",)
+    assert planner.running_status_marker == "BASIC_PLANNING_RUNNING"
+    assert planner.allowed_result_classes_by_outcome == {
+        "BASIC_PLANNING_COMPLETE": (ResultClass.SUCCESS,),
+        "BASIC_PLANNING_BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
+    }
+
+    plan_entry_map = {entry.entry_key.value: entry.node_id for entry in plan.planning_graph.compiled_entries}
+    assert plan_entry_map == {"spec": "basic_planner"}
+
+    plan_terminal_ids = {state.terminal_state_id for state in plan.planning_graph.terminal_states}
+    assert plan_terminal_ids == {"planner_complete", "blocked"}
+
+    # ── learning graph ─────────────────────────────────────────────────────
+    learn_nodes = {node.node_id: node for node in plan.learning_graph.nodes}
+    learner = learn_nodes["basic_learner"]
+    assert learner.stage_kind_id == "basic_learner"
+    assert learner.runtime_stage == "analyst"
+    assert learner.plane is Plane.LEARNING
+    assert learner.runner_name == "pi_rpc"
+    assert learner.request_context_profile_id == "analyst.default"
+    assert learner.context_render_plan_id == "stage_request.default.v1"
+    assert learner.entrypoint_path == "entrypoints/learning/analyst.md"
+    assert learner.required_skill_paths == ("skills/stage/learning/analyst-core/SKILL.md",)
+    assert learner.allowed_work_item_families == ("learning_request",)
+    assert learner.running_status_marker == "BASIC_LEARNING_RUNNING"
+    assert learner.allowed_result_classes_by_outcome == {
+        "BASIC_LEARNING_COMPLETE": (ResultClass.SUCCESS,),
+        "BASIC_LEARNING_NOOP": (ResultClass.NO_OP,),
+        "BASIC_LEARNING_BLOCKED": (ResultClass.BLOCKED, ResultClass.RECOVERABLE_FAILURE),
+    }
+
+    learn_entry_map = {entry.entry_key.value: entry.node_id for entry in plan.learning_graph.compiled_entries}
+    assert learn_entry_map == {"learning_request": "basic_learner"}
+
+    learn_terminal_ids = {state.terminal_state_id for state in plan.learning_graph.terminal_states}
+    assert learn_terminal_ids == {"learner_complete", "learner_noop", "blocked"}
+
+    # ── resolved assets cover the fixture ─────────────────────────────────
+    resolved_ids = {ref.logical_id for ref in plan.resolved_assets}
+    assert "mode:minimal_three_plane" in resolved_ids
+    assert "graph_loop:execution.minimal_three_plane" in resolved_ids
+    assert "graph_loop:planning.minimal_three_plane" in resolved_ids
+    assert "graph_loop:learning.minimal_three_plane" in resolved_ids
+    assert "stage_kind:basic_worker" in resolved_ids
+    assert "stage_kind:basic_planner" in resolved_ids
+    assert "stage_kind:basic_learner" in resolved_ids

@@ -23,6 +23,7 @@ EXPECTED_PUBLIC_SYMBOLS: dict[str, tuple[str, ...]] = {
     "millrace_ai.compilation.validation": (
         "validate_lane_conflict_coverage",
         "validate_mode_stage_maps",
+        "validate_scheduler_policy",
         "validate_workflow_primitives",
     ),
     "millrace_ai.architecture.workflow_primitives": (
@@ -53,6 +54,8 @@ EXPECTED_PUBLIC_SYMBOLS: dict[str, tuple[str, ...]] = {
         "RuntimeEffectRuleId",
         "RuntimeFailurePolicyDefinition",
         "RuntimeFailurePolicyRepairClosureMappingDefinition",
+        "SchedulerPolicyPredicateDefinition",
+        "SchedulerPolicyRuleDefinition",
         "TerminalActionDefinition",
         "TerminalActionId",
         "WorkItemDocumentAdapterDefinition",
@@ -137,6 +140,13 @@ EXPECTED_PUBLIC_SYMBOLS: dict[str, tuple[str, ...]] = {
         "RuntimeEffectValidatorId",
         "RuntimeFailurePolicyDefinition",
         "RuntimeFailurePolicyRepairClosureMappingDefinition",
+        "RuntimeOperationAllowedContextValue",
+        "RuntimeOperationDefinition",
+        "RuntimeOperationDefinitionId",
+        "RuntimeOperationIdempotencyDefinition",
+        "RuntimeOperationMutationPhaseValue",
+        "SchedulerPolicyPredicateDefinition",
+        "SchedulerPolicyRuleDefinition",
         "StageIdempotencePolicy",
         "TerminalActionDefinition",
         "TerminalActionId",
@@ -190,11 +200,13 @@ def test_validation_public_symbols_support_direct_import() -> None:
     from millrace_ai.compilation.validation import (
         validate_lane_conflict_coverage,
         validate_mode_stage_maps,
+        validate_scheduler_policy,
         validate_workflow_primitives,
     )
 
     assert callable(validate_lane_conflict_coverage)
     assert callable(validate_mode_stage_maps)
+    assert callable(validate_scheduler_policy)
     assert callable(validate_workflow_primitives)
 
 

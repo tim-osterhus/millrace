@@ -70,6 +70,17 @@ They also ship these learning triggers:
 - `PLANNER_COMPLETE` from `planning.planner` requests targeted Librarian
   optional-skill preparation.
 
+## Discovery-Only Fixture Configurations
+
+Millrace ships one minimal architecture proof fixture that is discoverable
+through asset discovery but is **not** a shipped product mode. It is not
+listed in `SHIPPED_MODE_IDS` and does not appear in the shipped
+configurations table above.
+
+| Fixture | Runner Family | Plane Graphs | Summary |
+| --- | --- | --- | --- |
+| `minimal_three_plane` | Pi | `execution.minimal_three_plane`, `planning.minimal_three_plane`, `learning.minimal_three_plane` | Three-plane architecture proof fixture using one custom stage kind per plane (`basic_worker`/`basic_planner`/`basic_learner` bound to canonical `runtime_stage` values `builder`/`planner`/`analyst`) and only generic lifecycle terminal actions. Contains no domain-specific workflow identifiers (no Recon, Blueprint, closure, Arbiter, Manager, Mechanic, planner disposition, candidate evaluation, or learning promotion). Proves custom graph-defined workflows can compile and execute against the current canonical plane infrastructure. Arbitrary plane IDs and arbitrary runtime stages are deferred to later registry work. |
+
 ## Related References
 
 - `../runtime/millrace-modes-and-loops.md`

@@ -92,3 +92,35 @@ def test_runtime_snapshot_backfills_active_run_from_legacy_active_fields(tmp_pat
     assert active_run.compiled_plan_fingerprint == "plan-legacy"
     assert active_run.work_item_family_id == "task"
     assert active_run.work_item_kind is WorkItemKind.TASK
+
+
+def test_runtime_snapshot_backfills_plan_identity_for_legacy_plane_indexed_active_run(
+    tmp_path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    payload = load_snapshot(paths).model_dump(mode="json")
+    payload.update(
+        {
+            "compiled_plan_id": "plan-legacy-active-map",
+            "compiled_plan_fingerprint": "",
+            "active_runs_by_plane": {
+                "execution": {
+                    "plane": "execution",
+                    "stage": "builder",
+                    "node_id": "builder",
+                    "stage_kind_id": "builder",
+                    "run_id": "run-legacy-active-map",
+                    "request_kind": "active_work_item",
+                    "work_item_kind": "task",
+                    "work_item_id": "task-legacy-active-map",
+                    "active_since": NOW.isoformat(),
+                }
+            },
+        }
+    )
+
+    snapshot = RuntimeSnapshot.model_validate(payload)
+
+    active_run = snapshot.active_runs_by_plane[Plane.EXECUTION]
+    assert active_run.compiled_plan_id == "plan-legacy-active-map"
+    assert active_run.compiled_plan_fingerprint == "plan-legacy-active-map"

@@ -216,3 +216,138 @@ def test_invalid_effect_store_error_includes_path(tmp_path: Path) -> None:
         match=r"Invalid runtime effect store definition in asset: .*default_effect_stores\.json",
     ):
         discover_effect_store_definitions(assets_root=assets_root)
+
+
+# ---------------------------------------------------------------------------
+# Runtime operation registry - asset discovery and round-trip tests
+# ---------------------------------------------------------------------------
+
+
+def _runtime_operation_def() -> dict:
+    return {
+        "schema_version": "1.0",
+        "kind": "runtime_operation",
+        "operation_id": "test.discovered_op",
+        "allowed_contexts": ["terminal_action"],
+        "required_capabilities": ["test.discovered_op"],
+        "mutation_phase": "unknown",
+        "idempotency": {
+            "duplicate_policy": "idempotent",
+            "replay_policy": "resume_idempotently",
+        },
+    }
+
+
+def test_discover_runtime_operation_definitions_loads_builtin_assets() -> None:
+    """The builtin runtime operation definitions are discovered from the
+    packaged assets directory."""
+    from millrace_ai.assets import discover_runtime_operation_definitions
+
+    operations = discover_runtime_operation_definitions()
+    by_id = {op.operation_id: op for op in operations}
+
+    assert set(by_id) >= {
+        "recon.enqueue_task",
+        "recon.enqueue_spec",
+        "recon.noop",
+        "recon.block_work_item",
+        "lifecycle.complete_work_item",
+        "lifecycle.block_work_item",
+    }
+    assert by_id["recon.enqueue_task"].allowed_contexts == ("terminal_action",)
+    assert by_id["recon.noop"].idempotency.duplicate_policy == "idempotent"
+
+
+def test_runtime_operation_definition_round_trip() -> None:
+    """RuntimeOperationDefinition payloads survive a model validate -> dump -> validate
+    round trip."""
+    from millrace_ai.architecture.effect_operations import RuntimeOperationDefinition
+
+    payload = _runtime_operation_def()
+    parsed = RuntimeOperationDefinition.model_validate(payload)
+    reparsed = RuntimeOperationDefinition.model_validate(parsed.model_dump())
+    assert reparsed == parsed
+    assert reparsed.operation_id == "test.discovered_op"
+
+
+def test_discover_runtime_operation_definitions_rejects_duplicate_ids(
+    tmp_path: Path,
+) -> None:
+    """Duplicate runtime operation IDs across discovered files are rejected."""
+    assets_root = _copy_builtin_assets(tmp_path)
+    ops_dir = assets_root / "registry" / "runtime_operations"
+    duplicate_path = ops_dir / "duplicate_recon.json"
+    duplicate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "runtime_operation",
+                "operation_id": "recon.enqueue_task",
+                "allowed_contexts": ["terminal_action"],
+                "required_capabilities": ["recon.enqueue_task"],
+                "mutation_phase": "unknown",
+                "idempotency": {
+                    "duplicate_policy": "fail",
+                    "replay_policy": "fail_if_seen",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    from millrace_ai.assets import discover_runtime_operation_definitions
+
+    with pytest.raises(
+        AssetValidationError,
+        match=r"Duplicate discovered runtime operation id: recon\.enqueue_task",
+    ):
+        discover_runtime_operation_definitions(assets_root=assets_root)
+
+
+def test_runtime_operations_in_workflow_primitive_bundle() -> None:
+    """The workflow primitive bundle includes runtime_operations."""
+    bundle = load_builtin_workflow_primitives()
+
+    assert bundle.runtime_operations is not None
+    op_ids = {op.operation_id for op in bundle.runtime_operations}
+    assert "recon.enqueue_task" in op_ids
+    assert "recon.noop" in op_ids
+    assert "lifecycle.complete_work_item" in op_ids
+
+
+def test_discover_custom_runtime_operation_from_asset(tmp_path: Path) -> None:
+    """A custom runtime operation placed in the assets tree is discovered."""
+    assets_root = _copy_builtin_assets(tmp_path)
+    ops_dir = assets_root / "registry" / "runtime_operations"
+    (ops_dir / "custom_op.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "runtime_operation",
+                "operation_id": "custom.terminal_op",
+                "allowed_contexts": ["terminal_action", "runtime_effect"],
+                "required_capabilities": ["custom.cap"],
+                "mutation_phase": "partial_mutation",
+                "idempotency": {
+                    "duplicate_policy": "idempotent",
+                    "replay_policy": "resume_idempotently",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    from millrace_ai.assets import discover_runtime_operation_definitions
+
+    operations = discover_runtime_operation_definitions(assets_root=assets_root)
+    by_id = {op.operation_id: op for op in operations}
+
+    assert "custom.terminal_op" in by_id
+    op = by_id["custom.terminal_op"]
+    assert op.allowed_contexts == ("terminal_action", "runtime_effect")
+    assert "custom.cap" in op.required_capabilities
+    assert op.mutation_phase == "partial_mutation"

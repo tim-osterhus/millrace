@@ -26,6 +26,8 @@ from millrace_ai.assets import (
     RUNTIME_EFFECT_RULE_REGISTRY_ROOT,
     RUNTIME_EFFECT_RUNNER_REGISTRY_ROOT,
     RUNTIME_FAILURE_POLICY_REGISTRY_ROOT,
+    RUNTIME_OPERATION_REGISTRY_ROOT,
+    SCHEDULER_POLICY_REGISTRY_ROOT,
     TERMINAL_ACTION_REGISTRY_ROOT,
     WORK_ITEM_FAMILY_REGISTRY_ROOT,
     WORKSPACE_SCHEMA_EPOCH_REGISTRY_ROOT,
@@ -56,8 +58,10 @@ _WORKFLOW_PRIMITIVE_REF_SPECS = (
     ("runtime_effect_store", EFFECT_STORE_REGISTRY_ROOT, "store_id"),
     ("runtime_effect_validator", EFFECT_VALIDATOR_REGISTRY_ROOT, "validator_id"),
     ("runtime_effect_operation", RUNTIME_EFFECT_OPERATION_REGISTRY_ROOT, "operation_id"),
+    ("runtime_operation", RUNTIME_OPERATION_REGISTRY_ROOT, "operation_id"),
     ("workflow_recovery_policy", RECOVERY_POLICY_REGISTRY_ROOT, "policy_id"),
     ("runtime_failure_policy", RUNTIME_FAILURE_POLICY_REGISTRY_ROOT, "policy_id"),
+    ("scheduler_policy", SCHEDULER_POLICY_REGISTRY_ROOT, "policy_id"),
     ("workspace_schema_epoch", WORKSPACE_SCHEMA_EPOCH_REGISTRY_ROOT, "epoch_id"),
 )
 

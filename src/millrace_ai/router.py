@@ -1,4 +1,32 @@
-"""Deterministic stage routing for execution and planning planes."""
+"""
+Compatibility facade for deterministic stage routing.
+
+This module is a **stable compatibility surface** preserved for import
+compatibility. The active runtime dispatch authority now lives in
+``millrace_ai.runtime.graph_authority.routing`` and delegates through
+``route_generic_stage_result_from_graph``.
+
+All public exports (`RouterAction`, `RouterDecision`, `next_execution_step`,
+etc.) remain importable and functional. However, **active routing does not
+call these legacy plane-specific entrypoints**. The runtime calls
+``route_stage_result_from_graph`` in
+``millrace_ai.runtime.graph_authority.routing``, which resolves the
+compiled graph plan and dispatches through the generic router.
+
+**Intentionally deferred legacy behavior:**
+- ``next_execution_step``, ``next_planning_step``,
+  ``route_execution_recovery``, ``route_planning_recovery``, and
+  ``build_consultant_escalation`` are retained for test and characterization
+  coverage. They are not wired into the active tick cycle.
+- ``counter_key_for_failure_class`` and ``_normalize_failure_class`` are
+  shared helpers that the graph-authority counters module also depends on.
+  They remain here and in counters.py to avoid a hidden import restructuring.
+- Legacy plane-enum branching in ``next_execution_step`` vs
+  ``next_planning_step`` is avoided in the compatibility path itself — these
+  are separate functions, not a dispatcher.
+
+See ``millrace_ai.runtime.graph_authority.routing`` for active routing.
+"""
 
 from __future__ import annotations
 

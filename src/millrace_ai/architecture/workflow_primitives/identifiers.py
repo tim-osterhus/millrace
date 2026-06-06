@@ -15,6 +15,7 @@ TerminalActionId = str
 LifecycleMutationPlanId = str
 RuntimeEffectHandlerId = str
 TerminalActionRuntimeOperationId = str
+RuntimeOperationDefinitionId = str
 RuntimeEffectOperationRunnerId = str
 RuntimeEffectRuleId = str
 RequestContextProfileId = str

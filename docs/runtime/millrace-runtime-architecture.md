@@ -188,6 +188,13 @@ workspace.
 - `src/millrace_ai/runtime/tick_cycle.py`: serial one-tick orchestration used by
   bounded daemon execution and compatibility tests.
 - `src/millrace_ai/runtime/supervisor.py`: daemon-mode lane scheduler, lane-keyed worker registry, and serialized completion-application owner.
+- `src/millrace_ai/runtime/scheduler_policy.py`: shared compiled scheduler-policy
+  interpreter for foreground order, closure-target inversion, learning
+  dispatch, and four residual-surface helpers (fallback entry behavior,
+  targeted Learning routing, recovery fallback routing, and claim
+  deferral/backpressure policy) used by `tick_cycle.py`, `supervisor.py`,
+  `activation.py`, `lanes.py`, `repair_routes.py`, and
+  `completion_behavior.py`.
 - `src/millrace_ai/runtime/blocked_recovery.py`: compatibility facade for
   blocked-recovery helpers backed by `src/millrace_ai/runtime/recovery/`.
 - `src/millrace_ai/runtime/recovery/`: focused recovery package for blocked
@@ -200,10 +207,10 @@ workspace.
   recovery exhaustion.
 - `src/millrace_ai/runtime/mailbox_intake.py`: mailbox drain, reload, and mailbox-applied intake paths.
 - `src/millrace_ai/runtime/watcher_intake.py`: watcher session lifecycle and idea-file normalization.
-- `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation.
+- `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation, backed by the shared compiled scheduler-policy interpreter.
 - `src/millrace_ai/runtime/pause_state.py`: pause-source mutation helpers for operator and usage-governance pauses.
 - `src/millrace_ai/runtime/usage_governance/`: opt-in usage-governance authority package, with state/ledger models, durable state persistence, runtime-token window evaluation, subscription-quota telemetry, monitor event emission, and engine-facing pause-source application split behind the stable package facade.
-- `src/millrace_ai/runtime/graph_authority/`: compiled-graph activation and routing authority package, with activation decisions, validation, policy lookup, counter resolution, stage mapping, terminal-state/action and runtime-operation resolution, and execution/planning/learning routing split behind the stable package facade.
+- `src/millrace_ai/runtime/graph_authority/`: compiled-graph activation and routing authority package — the **generic-router home** for all planes. Contains `generic_router.py`'s active compiled-graph routing logic (`route_generic_stage_result_from_graph`), `routing.py`'s identity-checking dispatch facade (`route_stage_result_from_graph`), `execution.py`/`planning.py` compatibility wrappers that forward to the generic router, `learning.py`'s standalone compatibility surface (learning has no threshold/resume policies yet), upfront stage-result identity validation, and shared terminal-state/action and runtime-operation resolution behind the stable package facade.
 - `src/millrace_ai/runtime/graph_authority/counters.py`: recovery-counter entry mutation helpers that apply declared counter mutation intent from compiled graph policy metadata instead of inferring mutation from destination stage names.
 - `src/millrace_ai/runtime/graph_authority/terminal_actions.py`: shared terminal-state/action and runtime-operation resolver for terminal transitions, threshold exhaustion, and runtime-failure recovery exhaustion, including explicit non-mutating terminal-action authority and lifecycle-action validation.
 - `src/millrace_ai/runtime/completion_behavior.py`: closure-target activation, lineage readiness checks, and compiler-driven backlog-drain dispatch.
@@ -212,7 +219,7 @@ workspace.
 - `src/millrace_ai/runtime/result_counters.py`: recovery-counter entry mutation, normalized terminal-outcome comparisons, and snapshot counter increments.
 - `src/millrace_ai/runtime/work_item_transitions.py`: non-closure work-item completion, blocked transitions, terminal-action-driven source lifecycle application, explicit non-mutating terminal-action clearing, and active-snapshot clearing.
 - `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and arbiter-gap incident materialization, including source work-item lineage inheritance and terminal-action failure-class defaults for runtime-created handoff incidents.
-- `src/millrace_ai/runtime/recon_transitions.py`: Recon packet persistence and runtime-operation-driven probe-to-task/spec/no-op/blocked mutation.
+- `src/millrace_ai/runtime/recon_transitions.py`: Recon packet persistence and runtime-operation-driven probe-to-task/spec/no-op/blocked mutation. Recon route selection resolves the registered `runtime_operation_id` from the compiled terminal action against the compiled runtime operation registry; the fixed `_TERMINAL_ACTION_RUNTIME_OPERATION_IDS` whitelist has been removed from active source.
 - `src/millrace_ai/runtime/stage_result_persistence.py`: persisted stage-result JSON writes and plane status-marker updates.
 - `src/millrace_ai/runtime/learning_triggers.py`: compiler-frozen learning-trigger evaluation and learning-request enqueueing.
 - `src/millrace_ai/runtime/skill_evidence.py`: per-request skill revision evidence snapshots for learning-enabled runs.
@@ -249,10 +256,59 @@ Per stage execution:
 3. `StageRunnerDispatcher` resolves adapter by runner name precedence.
 4. Adapter executes (`codex_cli` by default, `pi_rpc` in Pi modes) and returns `RunnerRawResult`.
 5. Runtime normalizes into `StageResultEnvelope`, persists the stage result,
-   upserts the run-trace node, applies the authoritative router decision, and
-   records the run-trace edge.
+   upserts the run-trace node, applies the authoritative router decision via
+   `runtime/graph_authority/routing.py`'s `route_stage_result_from_graph`
+   (which delegates to `generic_router.py`'s compiled-plan-driven
+   `route_generic_stage_result_from_graph`), and records the run-trace edge.
 
 The runtime boundary stays `StageRunRequest -> RunnerRawResult` so additional adapters can be added without changing orchestration flow.
+
+## Kernel Boundary
+
+The runtime kernel (`src/millrace_ai/runtime/`, `src/millrace_ai/workspace/`) owns
+orchestration, lifecycle, and durable state — not workflow semantics.
+Workflow routing, terminal-action lifecycle plans, queue claim policies,
+and recovery/failure policies are resolved from the compiled plan, not from
+kernel-level plane-enum or stage-enum branches (see ADR-0012 through
+ADR-0015).
+
+Key boundary:
+
+- `runtime/graph_authority/generic_router.py` owns the active compiled-graph
+  routing logic shared by all planes.
+- `runtime/graph_authority/routing.py` is the identity-checking dispatch
+  facade that validates stage-result identity before delegating to the
+  generic router.
+- `runtime/graph_authority/execution.py` and `planning.py` are compatibility
+  wrappers that forward to the generic router with plane-specific terminal
+  formatters.
+- `runtime/graph_authority/learning.py` remains a standalone compatibility
+  surface — the learning plane has no threshold or resume policies, so it
+  has not been folded into the generic pattern yet.
+- `router.py` at the package root is a stable compatibility surface for
+  legacy imports; active dispatch does not call its plane-specific functions.
+
+This boundary keeps workflow-authority changes (new graphs, terminals, or
+recovery policies) in graph assets and compiled plans without requiring
+runtime-kernel edits.
+
+### Runtime-Operation Registry Authority
+
+Terminal actions declare a `runtime_operation_id` that must resolve to a
+registered operation in the compiled runtime operation registry. The compiler
+validates that the operation exists in `runtime_operations_by_id`, declares
+`terminal_action` in its `allowed_contexts`, and satisfies its required
+capabilities. At dispatch, `graph_authority/terminal_actions.py` resolves the
+operation id from the terminal action for every router decision, and
+`recon_transitions.py` maps that id to the Recon route through an
+operation-id-keyed table.
+
+The old `_TERMINAL_ACTION_RUNTIME_OPERATION_IDS` fixed whitelist has been
+removed from active source. Operation discovery, validation, and dispatch all
+read compiled registry assets. Runtime-effect dispatch (`effect_execution.py`)
+uses a separate runtime-effect operation catalog; the runtime-operation
+registry's `allowed_contexts` field distinguishes terminal-action operations
+from runtime-effect operations.
 
 ## Tick Lifecycle
 
@@ -274,9 +330,23 @@ Per daemon scheduler cycle:
 5. Evaluate opt-in usage governance and respect pause gates.
 6. Run stale-state reconciliation and recovery routing.
 7. Refresh queue depths again.
-8. Claim planning, execution, or learning work item. When a closure target is
-   already open, the runtime claims only same-lineage execution/planning work
-   and leaves unrelated queued root specs behind the closure target.
+8. Claim planning, execution, or learning work item according to the compiled
+   scheduler policy's foreground order. `runtime/scheduler_policy.py` provides
+   a shared interpreter that `activation.py`, `tick_cycle.py`, and
+   `supervisor.py` all use — there is no duplicate hard-coded claim order.
+   When compiled predicate-backed rules are present, the interpreter evaluates
+   them first and can override the scalar `foreground_order`/
+   `closure_priority` compatibility path. When a closure target is already
+   open and no matching rule overrides it, the policy's `closure_priority`
+   inverts execution before planning so execution claims are attempted first.
+   Learning dispatch is gated by `learning_dispatch`: `"inline"` preserves
+   existing post-foreground behavior, `"deferred"` suppresses separate
+   learning claims, and `"interleaved"` is reserved. Fallback entry behavior
+   (`recon_on_idle`, `skip`, or `pause`), targeted Learning routing,
+   and claim deferral/backpressure (block, defer, allow) are all interpreted
+   through the shared scheduler-policy helpers. Unrelated queued root
+   specs remain behind the closure target unless the scheduler-policy
+   backpressure field explicitly allows concurrent closure targets.
 9. If no same-lineage work remains, check closure lineage integrity before
    Arbiter activation. Same-root work with a mismatched effective root spec
    blocks as `closure_lineage_drift` instead of letting Arbiter re-enter a

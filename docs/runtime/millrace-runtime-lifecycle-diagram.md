@@ -229,8 +229,11 @@ Key invariants preserved by this chart:
 - compile happens at startup and again only on explicit config reload
 - planning and execution are separate foreground claim domains and remain
   mutually exclusive in shipped modes
+- foreground claim order and closure-target priority inversion are driven by
+  the compiled scheduler policy, not by hard-coded plane-enum branches
 - learning-enabled modes add learning requests and status markers, and may run
-  one Learning lane beside the permitted foreground lane
+  one Learning lane beside the permitted foreground lane, gated by the
+  compiled scheduler policy's `learning_dispatch` and lane conflict policies
 - runtime-owned mutation remains single-writer and serialized even when daemon
   workers run concurrently
 - the runtime applies stage results and mutates authoritative state after each

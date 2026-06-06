@@ -43,6 +43,7 @@ from .learning_triggers import enqueue_learning_requests_for_stage_result
 from .monitoring import runtime_effect_monitor_payload
 from .result_application import compiled_plan_for_stage_result
 from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
+from .scheduler_policy import foreground_claim_order
 from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
@@ -526,12 +527,8 @@ def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | 
             closure_target_root_spec_id=None,
         )
 
-    planes = (
-        (Plane.EXECUTION, Plane.PLANNING)
-        if open_target is not None
-        else (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING)
-    )
-    for plane in planes:
+    policy = engine.compiled_plan.scheduler_policy if engine.compiled_plan is not None else None
+    for plane in foreground_claim_order(policy, has_open_closure_target=open_target is not None):
         try:
             claim = claim_next_work_item_for_plane(engine, plane)
         except Exception as exc:

@@ -33,6 +33,12 @@ from .graph_authority import (
     work_item_activation_for_graph,
 )
 from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
+from .scheduler_policy import (
+    backpressure_outcome,
+    fallback_entry_selection,
+    foreground_claim_order,
+    learning_target_stage_routing,
+)
 
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
@@ -42,22 +48,15 @@ def claim_next_work_item(engine: RuntimeEngine) -> None:
         _claim_next_open_closure_lineage_work(engine, queue, root_spec_id=open_target.root_spec_id)
         return
 
-    claim = queue.claim_next_planning_item(
-        queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
-        work_item_families=_work_item_families_for_engine(engine),
-    )
-    if claim is not None:
-        activate_claim(engine, claim)
-        return
-
-    claim = queue.claim_next_execution_task()
-    if claim is not None:
-        activate_claim(engine, claim)
-        return
-
-    claim = queue.claim_next_learning_request()
-    if claim is not None:
-        activate_claim(engine, claim)
+    policy = engine.compiled_plan.scheduler_policy if engine.compiled_plan is not None else None
+    for plane in foreground_claim_order(policy):
+        entry_behavior = fallback_entry_selection(policy)
+        if entry_behavior == "pause":
+            return
+        claim = claim_next_work_item_for_plane(engine, plane)
+        if claim is not None:
+            activate_claim(engine, claim)
+            return
 
 
 def claim_next_work_item_for_plane(engine: RuntimeEngine, plane: Plane) -> QueueClaim | None:
@@ -71,14 +70,7 @@ def claim_next_work_item_for_plane(engine: RuntimeEngine, plane: Plane) -> Queue
             activate=False,
             plane=plane,
         )
-    if plane is Plane.PLANNING:
-        return queue.claim_next_planning_item(
-            queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
-            work_item_families=_work_item_families_for_engine(engine),
-        )
-    if plane is Plane.EXECUTION:
-        return queue.claim_next_execution_task()
-    return queue.claim_next_learning_request()
+    return _claim_for_plane_no_closure(engine, queue, plane)
 
 
 def activate_claim(engine: RuntimeEngine, claim: QueueClaim) -> None:
@@ -101,8 +93,18 @@ def activate_claim_for_plane(
         raise ValueError("claim activation plane does not match requested plane")
     closure_preparation = completion_behavior.prepare_closure_target_for_claim(engine, claim)
     if not closure_preparation.allowed:
-        _backpressure_claim(engine, claim, open_root_spec_id=closure_preparation.open_root_spec_id)
-        raise RuntimeError("claim blocked by open closure target backpressure")
+        outcome = backpressure_outcome(
+            engine.compiled_plan.scheduler_policy,
+            has_open_closure_target=closure_preparation.open_root_spec_id is not None,
+        )
+        if outcome == "allow":
+            pass  # skip backpressure gate entirely
+        elif outcome == "defer":
+            _backpressure_claim(engine, claim, open_root_spec_id=closure_preparation.open_root_spec_id)
+            raise RuntimeError("claim deferred by scheduler-policy backpressure")
+        else:
+            _backpressure_claim(engine, claim, open_root_spec_id=closure_preparation.open_root_spec_id)
+            raise RuntimeError("claim blocked by scheduler-policy backpressure")
 
     active_run = active_run_from_claim(
         activation=activation,
@@ -147,6 +149,25 @@ def entry_stage_for_family_id(family_id: str) -> StageName:
     raise ValueError(f"compiled activation is required for custom family `{family_id}`")
 
 
+def _claim_for_plane_no_closure(
+    engine: RuntimeEngine,
+    queue: QueueStore,
+    plane: Plane,
+) -> QueueClaim | None:
+    """Claim work for *plane* when no open closure target is active."""
+
+    if plane is Plane.PLANNING:
+        return queue.claim_next_planning_item(
+            queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
+            work_item_families=_work_item_families_for_engine(engine),
+        )
+    if plane is Plane.EXECUTION:
+        return queue.claim_next_execution_task()
+    if plane is Plane.LEARNING:
+        return queue.claim_next_learning_request()
+    return None
+
+
 def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActivationDecision:
     assert engine.compiled_plan is not None
     family_id = _claim_family_id(claim)
@@ -155,7 +176,19 @@ def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActi
 
     document = read_work_document_as(claim.path, model=LearningRequestDocument)
     if document.target_stage is None:
+        # Preserve safety check: skip to compiled graph when target_stage is None.
         return work_item_activation_for_graph(engine.compiled_plan, family_id)
+
+    # Consult scheduler-policy learning routing before delegating to compiled graph.
+    policy_target = learning_target_stage_routing(
+        engine.compiled_plan.scheduler_policy
+    )
+    if policy_target is not None:
+        from millrace_ai.contracts import LearningStageName
+
+        return learning_stage_activation_for_graph(
+            engine.compiled_plan, LearningStageName(policy_target)
+        )
     return learning_stage_activation_for_graph(engine.compiled_plan, document.target_stage)
 
 
