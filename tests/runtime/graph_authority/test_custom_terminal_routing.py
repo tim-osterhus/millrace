@@ -146,7 +146,6 @@ def test_threshold_exhaustion_uses_terminal_action_metadata(tmp_path: Path) -> N
             metadata={"failure_class": "mechanic_blocked"},
         ),
         counters,
-        max_mechanic_attempts=2,
     )
 
     assert decision.action.value == "blocked"
@@ -192,7 +191,6 @@ def test_execution_blocked_threshold_exhaustion_uses_exhausted_counter_mutation(
             metadata={"failure_class": "builder_blocked"},
         ),
         counters,
-        max_troubleshoot_attempts_before_consult=2,
     )
 
     assert decision.action.value == "run_stage"

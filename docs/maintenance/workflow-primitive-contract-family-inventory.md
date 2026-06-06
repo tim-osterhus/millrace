@@ -36,6 +36,9 @@ primitive architecture models. Public imports remain stable from both:
   `workflow_primitives/runtime_effects.py`.
 - `workflow_primitives/__init__.py` remains the compatibility facade with the
   same public `__all__` contract.
+- Runtime-effect operation, store, validator, and primitive models live in
+  `src/millrace_ai/architecture/effect_operations.py`, outside this
+  workflow-primitive family facade.
 
 ## Coverage Notes
 

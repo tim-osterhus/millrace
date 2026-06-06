@@ -88,6 +88,10 @@ def validate_workflow_primitives(
         operation.operation_id: operation
         for operation in workflow_primitives.runtime_effect_operations
     }
+    runtime_effect_primitives_by_id = {
+        primitive.primitive_id: primitive
+        for primitive in workflow_primitives.runtime_effect_primitives
+    }
     request_context_profiles_by_id = {
         profile.profile_id: profile
         for profile in workflow_primitives.request_context_profiles
@@ -193,6 +197,7 @@ def validate_workflow_primitives(
     )
     validate_runtime_effect_operations(
         artifact_contracts_by_id=artifact_contracts_by_id,
+        runtime_effect_primitives_by_id=runtime_effect_primitives_by_id,
         runtime_effect_rules_by_id=runtime_effect_rules_by_id,
         effect_stores_by_id=effect_stores_by_id,
         effect_validators_by_id=effect_validators_by_id,

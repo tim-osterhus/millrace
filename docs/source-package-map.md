@@ -52,8 +52,8 @@ future migration.
 The current `src/millrace_ai/` package tree is intentionally split by ownership:
 
 - `architecture/` owns typed architecture contracts for graph loops, stage
-  kinds, materialized plans, workflow primitives, and shared architecture
-  contract helpers.
+  kinds, materialized plans, workflow primitives, runtime-effect operation and
+  primitive models, and shared architecture contract helpers.
 - `assets/` owns packaged runtime assets and public asset-loading helpers,
   including modes, loops, graphs, registries, entrypoint markdown, and bundled
   skills.
@@ -175,6 +175,16 @@ families:
 - `src/millrace_ai/architecture/stage_kinds.py` defines typed stage-kind contracts
 - `src/millrace_ai/architecture/loop_graphs.py` defines typed graph-loop contracts
 - `src/millrace_ai/architecture/materialization.py` defines the graph-plan materialization contracts, including normalized compiled entry/transition indexes, runtime-authority flags, and legacy-equivalence compatibility reporting
+- `src/millrace_ai/architecture/effect_operations.py` defines runtime
+  operation and runtime-effect operation/store/validator/primitive contracts,
+  including `RuntimeEffectPrimitiveDefinition` (with
+  `non_interpreted_compatibility` marker and `required_capabilities`),
+  `RuntimeEffectOperationStepDefinition` (with `input_bindings`,
+  `params`, `output_context_key`, `context_read_key`, and binding grammar
+  validation for `$artifact.<id>`, `$context.<key>`, `$store.<id>` syntax),
+  and `RuntimeEffectOperationRunnerDefinition` (with `operation_ids`,
+  `required_runtime_capabilities_by_operation_id`, and
+  `legacy_handler_ids`)
 - `src/millrace_ai/architecture/workflow_primitives/__init__.py` is the public
   facade for workflow primitive contracts. Family modules now live in
   `workflow_primitives/work_families.py`,
@@ -189,8 +199,8 @@ families:
 - `src/millrace_ai/assets/loop_graphs.py` loads graph-loop assets
 - `src/millrace_ai/assets/workflows.py` loads workflow primitive registry
   assets, including queue claim policies and scheduler policies
-- `src/millrace_ai/assets/effect_operations.py` loads runtime-operation
-  registry assets
+- `src/millrace_ai/assets/effect_operations.py` loads runtime-operation and
+  runtime-effect operation/store/validator/primitive registry assets
 - `src/millrace_ai/assets/registry/stage_kinds/` ships the stage-kind registry JSON
 - `src/millrace_ai/assets/registry/work_item_families/` ships claimable work
   family definitions, including Blueprint drafts
@@ -206,10 +216,11 @@ families:
   `runtime_effect_handlers/`, and `runtime_effect_rules/` ship compiled
   post-stage mutation authority and runtime-operation definitions
 - `src/millrace_ai/assets/registry/runtime_effect_operations/`,
-  `runtime_effect_runners/`, `effect_stores/`, and `effect_validators/` ship
-  compiler-validated declarative runtime-effect operation catalogs and runner
-  ownership used as the runtime dispatch identity during the legacy-handler
-  migration; this catalog remains distinct from `registry/runtime_operations/`
+  `runtime_effect_runners/`, `runtime_effect_primitives/`, `effect_stores/`,
+  and `effect_validators/` ship compiler-validated declarative runtime-effect
+  operation catalogs, primitive metadata, and runner ownership used as the
+  runtime dispatch identity during the legacy-handler migration; this catalog
+  remains distinct from `registry/runtime_operations/`
 - `src/millrace_ai/assets/registry/recovery_policies/` and
   `runtime_failure_policies/` ship compiler-validated recovery/failure policy
   hooks
@@ -276,7 +287,9 @@ Additional thin compatibility or public API facades also exist at the root:
 The current cleanup sequence preserves public imports while reducing ownership
 cycles:
 
-- `workspace/paths.py` now owns only the workspace path model and resolution.
+- `workspace/paths.py` now owns only the workspace path model and resolution,
+  including the `runtime_effect_journal_dir` property that resolves to
+  `millrace-agents/state/runtime-effect-journal/`.
 - `workspace/bootstrap_files.py` owns default state/status/config payload
   construction for newly initialized workspaces.
 - `workspace/asset_deployment.py` owns packaged runtime asset source resolution
@@ -345,16 +358,40 @@ cycles:
   and handoff mutation. Runtime-effect rules now also declare source
   completion/blocking lifecycle consequence metadata for
   `REQUEST_COMPLETE_SOURCE` and `REQUEST_BLOCK_SOURCE`.
-  `runtime/effects/registry.py` provides the
-  operation-indexed handler registry seam, and `runtime/effects/legacy.py` is
-  the temporary registry for legacy Python effect handlers while declarative
-  operation migration proceeds.
+  Runtime-effect operations are dispatched through one of two paths:
+  interpreted (`runner_id = "interpreted_runtime_effect"`) or legacy
+  handler-backed (`runner_id = "legacy_python_handler"`). All shipped
+  operations use the legacy path; the interpreted path is activated only by
+  test fixture operations.
+  `runtime/effects/interpreter.py` provides the constrained step interpreter
+  that walks compiled operation step lists, resolves `$artifact.<id>` /
+  `$context.<key>` / `$store.<id>` bindings, dispatches each step's
+  `primitive_id` to `primitives.py`, enforces idempotent resume via
+  `journal.py`, and returns a `RuntimeEffectResult`.
+  `runtime/effects/primitives.py` provides the `PrimitiveExecutorRegistry`
+  with five built-in interpreted executors: `artifact_presence`,
+  `artifact_model_parse`, `persist_record`, `enqueue_work_items`, and
+  `emit_event`. Executors receive the `InterpreterContext` and return a
+  result dict with `decision`, optional `failure_class`, and
+  `created_paths`.
+  `runtime/effects/journal.py` provides durable JSONL journal helpers:
+  `write_started_record` (before mutation), `write_completed_record` (after
+  mutation with SHA-256 idempotency hash), `write_failed_record` (mutating
+  primitive failure records with failure class/message), and
+  `completed_hashes_by_step` (authoritative completed hashes for resume).
+  Journal records carry runner/source/run/request/step/primitive context and
+  explicit status. Journal files live at
+  `millrace-agents/state/runtime-effect-journal/<operation_id>.jsonl`.
+  `runtime/effects/registry.py` provides the operation-indexed handler
+  registry seam, and `runtime/effects/legacy.py` is the temporary registry for
+  legacy Python effect handlers while declarative operation migration proceeds.
   `runtime/effects/operation_runners/` owns focused runtime-effect operation
-  modules for artifact workflow, candidate packet/evaluation, decomposition,
-  repair application, and shared result helpers. Blueprint planning modes select
-  those generic operations through compiled runtime-effect rule assets; no
-  runtime module is a dedicated Blueprint loop dispatcher. Stage results and runtime events carry
-  operation id and runner id as authority metadata; legacy handler id is
+  modules for handler-backed artifact workflow, candidate packet/evaluation,
+  decomposition, repair application, and shared result helpers. Blueprint
+  planning modes select those generic operations through compiled runtime-effect
+  rule assets; no runtime module is a dedicated Blueprint loop dispatcher.
+  Stage results and runtime events carry operation id and runner id as
+  authority metadata; legacy handler id is
   optional compatibility metadata. `runtime/effect_execution.py` also
   routes default runtime-effect repair exhaustion through shared terminal-action
   resolution when the active graph declares an exhausted terminal state.
@@ -394,12 +431,15 @@ cycles:
   runtime-operation resolution live in named modules.
   `runtime/graph_authority/generic_router.py` owns the active compiled-graph
   routing logic (`route_generic_stage_result_from_graph`);
-  `runtime/graph_authority/routing.py` is the identity-checking dispatch
-  facade (`route_stage_result_from_graph`), `execution.py` and `planning.py`
-  are thin compatibility wrappers over the generic router (no plane-enum
-  routing branches remain in active dispatch), and `learning.py` remains
-  standalone compatibility-only (learning has no threshold/resume policies
-  yet). `runtime/graph_authority/counters.py`
+  `runtime/graph_authority/routing.py` is the single active dispatch entrypoint
+  (`route_stage_result_from_graph`) that validates stage-result identity and
+  routes every plane directly through the generic router with plane-agnostic
+  formatter callbacks. Fallback route reasons and failure classes derive from
+  compiled ``node_id`` rather than runtime stage-name strings. `execution.py`,
+  `planning.py`, and `learning.py` are thin compatibility wrappers over the
+  generic router (no plane-enum routing branches, per-plane wrapper dispatch,
+  or route-time max-cycle recovery knobs remain in active dispatch).
+  `runtime/graph_authority/counters.py`
   applies declared recovery-counter mutation intent from compiled policy
   metadata instead of inferring it from destination stage names.
 - `runtime/graph_authority/terminal_actions.py` resolves terminal-state/action

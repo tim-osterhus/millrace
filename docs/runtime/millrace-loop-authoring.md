@@ -46,6 +46,7 @@ The authoritative sources are:
 - `src/millrace_ai/assets/registry/terminal_actions/`
 - `src/millrace_ai/assets/registry/lifecycle_mutation_plans/`
 - `src/millrace_ai/assets/registry/runtime_effect_operations/`
+- `src/millrace_ai/assets/registry/runtime_effect_primitives/`
 - `src/millrace_ai/assets/registry/runtime_effect_runners/`
 - `src/millrace_ai/assets/registry/runtime_effect_rules/`
 - `src/millrace_ai/assets/registry/runtime_effect_handlers/`
@@ -231,6 +232,8 @@ Blueprint graph authoring has two additional invariants:
 Workflow primitive assets must validate against the primitive definition models
 in
 `src/millrace_ai/architecture/workflow_primitives/`.
+Runtime-effect operation, store, validator, and primitive assets additionally
+validate against `src/millrace_ai/architecture/effect_operations.py`.
 
 For the shipped foundation slice, primitives define:
 
@@ -247,7 +250,7 @@ For the shipped foundation slice, primitives define:
   references, family order, and concurrency/priority behavior
 - terminal actions and lifecycle mutation plans that explain how terminal
   outcomes become source lifecycle intents
-- runtime effect operations, runners, stores, validators, and effect rules
+- runtime effect operations, primitives, runners, stores, validators, and effect rules
   that let terminal results request additional runtime-owned effects without
   mutating queues directly from stage code
 - runtime operations that declare terminal-action and runtime-effect operation

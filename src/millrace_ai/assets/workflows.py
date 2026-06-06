@@ -19,6 +19,7 @@ from millrace_ai.architecture import (
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationDefinition,
     RuntimeEffectOperationRunnerDefinition,
+    RuntimeEffectPrimitiveDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
@@ -37,6 +38,7 @@ from .effect_operations import (
     discover_effect_store_definitions,
     discover_effect_validator_definitions,
     discover_runtime_effect_operation_definitions,
+    discover_runtime_effect_primitive_definitions,
     discover_runtime_operation_definitions,
 )
 
@@ -93,6 +95,7 @@ class WorkflowPrimitiveBundle:
     effect_validators: tuple[RuntimeEffectValidatorDefinition, ...]
     runtime_effect_operations: tuple[RuntimeEffectOperationDefinition, ...]
     runtime_operations: tuple[RuntimeOperationDefinition, ...]
+    runtime_effect_primitives: tuple[RuntimeEffectPrimitiveDefinition, ...]
     recovery_policies: tuple[WorkflowRecoveryPolicyDefinition, ...]
     runtime_failure_policies: tuple[RuntimeFailurePolicyDefinition, ...]
     scheduler_policies: tuple[WorkflowPlaneSchedulerPolicyDefinition, ...]
@@ -120,6 +123,7 @@ def load_builtin_workflow_primitives(
         effect_validators=discover_effect_validator_definitions(assets_root=assets_root),
         runtime_effect_operations=discover_runtime_effect_operation_definitions(assets_root=assets_root),
         runtime_operations=discover_runtime_operation_definitions(assets_root=assets_root),
+        runtime_effect_primitives=discover_runtime_effect_primitive_definitions(assets_root=assets_root),
         recovery_policies=discover_workflow_recovery_policy_definitions(assets_root=assets_root),
         runtime_failure_policies=discover_runtime_failure_policy_definitions(assets_root=assets_root),
         scheduler_policies=discover_scheduler_policy_definitions(assets_root=assets_root),
@@ -507,6 +511,7 @@ __all__ = [
     "discover_runtime_effect_handler_definitions",
     "discover_runtime_effect_runner_definitions",
     "discover_runtime_effect_operation_definitions",
+    "discover_runtime_effect_primitive_definitions",
     "discover_runtime_effect_rule_definitions",
     "discover_runtime_failure_policy_definitions",
     "discover_scheduler_policy_definitions",

@@ -159,8 +159,6 @@ def test_custom_noncanonical_stage_kind_routes_with_compiled_runtime_stage(
         snapshot,
         stage_result,
         RecoveryCounters(),
-        max_fix_cycles=2,
-        max_troubleshoot_attempts_before_consult=2,
     )
 
     assert decision.action.value == "run_stage"
@@ -579,9 +577,6 @@ def test_route_stage_result_from_graph_matches_shipped_default_semantics(
         snapshot,
         stage_result,
         counters,
-        max_fix_cycles=2,
-        max_troubleshoot_attempts_before_consult=2,
-        max_mechanic_attempts=2,
     )
 
     assert decision.action.value == expected_action
@@ -654,8 +649,6 @@ def test_integrated_graph_routes_integrator_to_checker_or_recovery(
         snapshot,
         stage_result,
         RecoveryCounters(),
-        max_fix_cycles=2,
-        max_troubleshoot_attempts_before_consult=2,
     )
 
     assert decision.action.value == "run_stage"
@@ -1002,4 +995,92 @@ def test_route_stage_result_from_graph_routes_custom_node_in_canonical_execution
     assert decision.action.value == "run_stage"
     assert decision.next_stage is ExecutionStageName.CHECKER
     assert decision.next_node_id == "checker"
-    assert decision.reason == "builder:BUILDER_COMPLETE"
+    assert decision.reason == "custom_builder:BUILDER_COMPLETE"
+
+
+def test_custom_node_id_survives_in_terminal_reason_fallback(
+    tmp_path: Path,
+) -> None:
+    """
+    Prove that when a node has a compiled ``node_id`` distinct from its
+    canonical ``runtime_stage``, the fallback terminal reason uses the
+    compiled node identity rather than the runtime stage-name string.
+
+    Uses the simplest successful transition (BUILDER_COMPLETE → IDLE)
+    so the reason is the bare ``node_id:terminal_result`` fallback.
+    """
+    paths = _workspace(tmp_path)
+    outcome = compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.active_plan is not None
+
+    execution_graph = outcome.active_plan.execution_graph
+    builder_node = next(
+        node for node in execution_graph.nodes if node.node_id == "builder"
+    )
+    # Custom node with distinct node_id but canonical runtime_stage
+    custom_node = builder_node.model_copy(
+        update={
+            "node_id": "builder_v2",
+            "stage_kind_id": "builder",
+        }
+    )
+    updated_graph = execution_graph.model_copy(
+        update={
+            "nodes": (
+                *execution_graph.nodes,
+                custom_node,
+            ),
+            "compiled_transitions": (
+                *execution_graph.compiled_transitions,
+                next(
+                    t for t in execution_graph.compiled_transitions
+                    if t.source_node_id == "builder"
+                    and t.outcome == ExecutionTerminalResult.BUILDER_COMPLETE.value
+                ).model_copy(update={"source_node_id": "builder_v2"}),
+            ),
+        }
+    )
+    plan = outcome.active_plan.model_copy(
+        update={
+            "execution_graph": updated_graph,
+            "graphs_by_plane": {
+                **outcome.active_plan.graphs_by_plane,
+                Plane.EXECUTION: updated_graph,
+            },
+        }
+    )
+
+    snapshot = _snapshot(
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+    ).model_copy(
+        update={
+            "active_node_id": "builder_v2",
+            "active_stage_kind_id": "builder",
+        }
+    )
+    stage_result = _stage_result(
+        stage=ExecutionStageName.BUILDER,
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+    ).model_copy(
+        update={
+            "node_id": "builder_v2",
+            "stage_kind_id": "builder",
+        }
+    )
+
+    decision = route_stage_result_from_graph(
+        plan,
+        snapshot,
+        stage_result,
+        RecoveryCounters(),
+    )
+
+    # Runtime stage stays canonical (BUILDER), but the route reason uses
+    # the compiled node_id ("builder_v2") as fallback authority.
+    assert decision.action.value == "run_stage"
+    assert decision.reason == "builder_v2:BUILDER_COMPLETE"

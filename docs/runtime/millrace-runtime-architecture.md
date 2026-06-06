@@ -147,11 +147,36 @@ workspace.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
 - `src/millrace_ai/runtime/effects/`: runtime effect result contracts,
   source lifecycle intent creation from effect-rule metadata,
-  destination-existence checks, and effect-result application, plus the
-  operation-indexed handler registry seam that keeps legacy Python handler ids
-  as compatibility aliases during the operation-id migration.
+  destination-existence checks, and effect-result application.
+- `src/millrace_ai/runtime/effects/models.py`: `RuntimeEffectResult`,
+  `RuntimeEffectDecision`, `RuntimeEffectMutationPhase`,
+  `SourceLifecycleIntent`, and the post-effect result application helper.
+- `src/millrace_ai/runtime/effects/registry.py`: operation-indexed handler
+  registry seam that keeps legacy Python handler ids as compatibility aliases
+  during the operation-id migration. Maps operation IDs to handler callables
+  and runner IDs.
+- `src/millrace_ai/runtime/effects/legacy.py`: temporary registry for legacy
+  Python runtime-effect handler registrations (`LEGACY_PYTHON_EFFECT_RUNNER_ID`).
+  Provides backward-compatible handler lookup until declarative operations fully
+  replace handler-backed mutation code.
+- `src/millrace_ai/runtime/effects/primitives.py`: primitive executor registry
+  for the interpreted runtime-effect runner path. Maps primitive IDs
+  (`artifact_presence`, `artifact_model_parse`, `persist_record`,
+  `enqueue_work_items`, `emit_event`) to executor callables.
+- `src/millrace_ai/runtime/effects/interpreter.py`: constrained step
+  interpreter that walks compiled operation steps, resolves bindings,
+  dispatches to the primitive executor registry, enforces idempotent resume
+  via the durable journal, and returns a `RuntimeEffectResult`. Activated
+  when `effect_execution.py` detects `runner_id == "interpreted_runtime_effect"`.
+- `src/millrace_ai/runtime/effects/journal.py`: durable JSONL journal helpers
+  for interpreted operation mutations. Writes `started` records before,
+  `completed` records after, and `failed` records for mutating primitive
+  failure paths; records carry runner/source/run/request/step/primitive
+  context, explicit status, and SHA-256 idempotency hashes. Also provides
+  `completed_hashes_by_step()` for resume.
 - `src/millrace_ai/runtime/effect_execution.py`: compiled runtime-effect
-  operation-id-first dispatch, operation/runner/legacy-handler identity annotation,
+  operation-id-first dispatch, interpreted-runner dispatch by runner identity,
+  operation/runner/legacy-handler identity annotation,
   failure-policy interpretation, matched-policy metadata,
   effect-rule-declared source-lifecycle application for
   `REQUEST_COMPLETE_SOURCE` and `REQUEST_BLOCK_SOURCE`, and shared
@@ -162,9 +187,9 @@ workspace.
   with legacy handler-id fallback only for compatibility policies, including
   conservative Blueprint blocks and recoverable Mechanic Blueprint routes.
 - `src/millrace_ai/runtime/effects/operation_runners/`: focused runtime-effect
-  Python executors for operations that still need file mutation code. Operation
-  selection comes from compiled runtime-effect operation/rule/runner metadata,
-  not from loop-mode branches.
+  Python executors for handler-backed operations that still need file mutation
+  code. Operation selection comes from compiled runtime-effect
+  operation/rule/runner metadata, not from loop-mode branches.
 - `src/millrace_ai/runtime/runtime_effect_status.py`: generic status metadata
   extraction for latest runtime-effect stage results used by status output.
 - `src/millrace_ai/runtime/planner_effects.py`: Planner disposition handling
@@ -210,7 +235,7 @@ workspace.
 - `src/millrace_ai/runtime/activation.py`: claim ordering and active work-item activation, backed by the shared compiled scheduler-policy interpreter.
 - `src/millrace_ai/runtime/pause_state.py`: pause-source mutation helpers for operator and usage-governance pauses.
 - `src/millrace_ai/runtime/usage_governance/`: opt-in usage-governance authority package, with state/ledger models, durable state persistence, runtime-token window evaluation, subscription-quota telemetry, monitor event emission, and engine-facing pause-source application split behind the stable package facade.
-- `src/millrace_ai/runtime/graph_authority/`: compiled-graph activation and routing authority package — the **generic-router home** for all planes. Contains `generic_router.py`'s active compiled-graph routing logic (`route_generic_stage_result_from_graph`), `routing.py`'s identity-checking dispatch facade (`route_stage_result_from_graph`), `execution.py`/`planning.py` compatibility wrappers that forward to the generic router, `learning.py`'s standalone compatibility surface (learning has no threshold/resume policies yet), upfront stage-result identity validation, and shared terminal-state/action and runtime-operation resolution behind the stable package facade.
+- `src/millrace_ai/runtime/graph_authority/`: compiled-graph activation and routing authority package — the **generic-router home** for all planes. Contains `routing.py`'s single active dispatch entrypoint (`route_stage_result_from_graph`), which performs upfront stage-result identity validation and routes every plane directly through `generic_router.py`'s active compiled-graph routing logic (`route_generic_stage_result_from_graph`). `execution.py`, `planning.py`, and `learning.py` are compatibility wrappers that forward to the generic router; active routing no longer dispatches through those wrappers or accepts route-time max-cycle recovery knobs. Shared terminal-state/action and runtime-operation resolution remains behind the stable package facade.
 - `src/millrace_ai/runtime/graph_authority/counters.py`: recovery-counter entry mutation helpers that apply declared counter mutation intent from compiled graph policy metadata instead of inferring mutation from destination stage names.
 - `src/millrace_ai/runtime/graph_authority/terminal_actions.py`: shared terminal-state/action and runtime-operation resolver for terminal transitions, threshold exhaustion, and runtime-failure recovery exhaustion, including explicit non-mutating terminal-action authority and lifecycle-action validation.
 - `src/millrace_ai/runtime/completion_behavior.py`: closure-target activation, lineage readiness checks, and compiler-driven backlog-drain dispatch.
@@ -247,6 +272,131 @@ workspace.
 - `src/millrace_ai/cli/formatting.py`: pure rendering helpers for already-collected run/control values.
 - `src/millrace_ai/cli/`: namespaced operator surface split into package assembly, shared resolution, command-specific views, monitor formatting, and command groups.
 
+## Runtime-Effect Operation Dispatch: Interpreted vs Legacy Handler-Backed
+
+Runtime-effect operations are dispatched through one of two paths depending on
+their compiled runner identity:
+
+### Interpreted Runner Path (`interpreted_runtime_effect`)
+
+The interpreted runner walks a compiled step list declared in the operation's
+asset definition. Each step declares a `primitive_id`; the interpreter resolves
+bindings, dispatches to the primitive executor registry
+(`runtime/effects/primitives.py`), and returns a `RuntimeEffectResult`.
+
+**Current scope:** the interpreted runner is activated only by test fixture
+operations. No shipped mode or graph selects an interpreted-runner operation
+for a production runtime-effect rule.
+
+### Legacy Handler-Backed Path (`legacy_python_handler`)
+
+All shipped runtime-effect operations use the legacy handler-backed runner.
+Handler callables are registered in `runtime/effects/legacy.py` and resolved
+through `_handler_for_operation()` in `effect_execution.py`. These are
+Python functions that perform file mutation directly, typically via the
+operation runner modules in `runtime/effects/operation_runners/`.
+
+### Primitive Vocabulary
+
+The following primitives have interpreted executors in
+`runtime/effects/primitives.py`:
+
+| Primitive ID | Description |
+| --- | --- |
+| `artifact_presence` | Verify referenced artifact files exist in the run directory. |
+| `artifact_model_parse` | Parse an artifact through its compiled contract or a safe JSON/text fallback. |
+| `persist_record` | Persist a record to a compiled store directory. |
+| `enqueue_work_items` | Enqueue child work-item documents to a queue directory. |
+| `emit_event` | Emit a best-effort runtime event. |
+
+Primitives that exist as compiled definitions but have no interpreted executor
+are **compatibility-only**: they are declared in
+`assets/registry/runtime_effect_primitives/` with `non_interpreted_compatibility:
+true` and are used only by legacy handler-backed operations (e.g.
+`blueprint_critique_packet_validation`, `legacy_python_handler`,
+`store_equivalence_check`). The interpreter rejects any step whose
+`primitive_id` has no registered executor.
+
+### Runner Ownership Model
+
+Operations are assigned to runners via the compiled
+`RuntimeEffectOperationRunnerDefinition.operation_ids` list — each runner
+declares which operation IDs it owns. The runtime resolves a runner for an
+operation by scanning `compiled_plan.runtime_effect_runners_by_id` for the
+runner whose `operation_ids` contains the operation ID. Operations do not
+carry their own `runner_id` field. This model is enforced at compile time:
+interpreted-runner operations may reference only primitives marked
+`non_interpreted_compatibility: false` that also have registered executors,
+and legacy-runner operations are checked against primitive-required
+capabilities declared by their runner instead of a blanket interpreted-only
+primitive ban.
+
+### Binding Grammar
+
+Interpreted operation steps resolve input values through a binding grammar
+implemented in `interpreter.py:_resolve_binding()`:
+
+| Prefix | Syntax | Resolution |
+| --- | --- | --- |
+| `$artifact.<id>` | `$artifact.planner_disposition` | Passes through the artifact ID string; the executor resolves it to a file path. |
+| `$context.<key>` | `$context.source_run_id` | Looks up `key` in the interpreter's step context dict. |
+| `$store.<id>` | `$store.blueprint_manifests` | Passes through the store ID string; the executor resolves it to a directory. |
+| Plain string | `"literal_value"` | Treated as a JSON literal value. |
+
+Path traversal (`..`) and absolute paths are rejected at compile time by the
+step-binding model validator in `architecture/effect_operations.py`. Context
+forward-references (reading a key before a prior step writes it) are also
+rejected at compile time.
+
+### Journal Semantics
+
+Mutating interpreted primitives (`persist_record`, `enqueue_work_items`) write
+durable JSONL journal records to enable idempotent resume after interruption:
+
+- **Location:** `millrace-agents/state/runtime-effect-journal/<operation_id>.jsonl`
+- **Started record:** written before each mutating primitive executes.
+  Contains `operation_id`, `runner_id`, source work-item family/id, `run_id`,
+  `request_id` when available, `step_id`, `primitive_id`, `status` set to
+  `"started"`, `timestamp`, SHA-256 `idempotency_hash`, canonicalized
+  `params`, and sorted `reads_artifact_ids`.
+- **Completed record:** written after successful mutation. Contains the
+  same operation/runner/source/run/request/step/primitive context, `status`
+  set to `"completed"`, `timestamp`, and the SHA-256 idempotency hash computed
+  from `operation_id`, `step_id`, canonicalized params, and sorted artifact
+  IDs.
+- **Failed record:** written for mutating primitive exceptions,
+  executor-returned `pre_mutation_failure` decisions, and idempotency conflicts
+  when an uncompleted started record exists. Contains the same context and hash
+  fields plus `status: "failed"`, `failure_class`, and `failure_message`,
+  without repeating queue or store side effects.
+- **Idempotent resume:** on each invocation, the interpreter loads all
+  completed hashes via `completed_hashes_by_step()`. A completed step with a
+  matching hash is skipped. A completed step with a different hash triggers
+  `interpreted_idempotency_conflict`, which is routed through the operation's
+  `failure_mappings`.
+- **Ordering guarantee:** started before mutation, completed after success,
+  failed before returning a blocking runtime-effect result for mutating
+  primitive failures. The journal is append-only JSONL; ordering within each
+  operation file reflects the execution sequence.
+
+### Remaining Legacy Compatibility Surfaces
+
+- `src/millrace_ai/runtime/effects/legacy.py` — temporary handler registry;
+  `LEGACY_PYTHON_EFFECT_RUNNER_ID` is the runner identity for all shipped operations.
+- `src/millrace_ai/runtime/effects/operation_runners/` — handler-backed
+  Python executors for Blueprint and Planner operations.
+- `effect_execution.py:_handler_for_operation()` — still resolves handlers
+  through the legacy registry for non-interpreted operations.
+- `effect_execution.py:_legacy_handler_id_for_operation()` — maps operation
+  IDs to legacy handler IDs for result annotation and failure-policy matching.
+- `runtime_effect_primitives/` asset — 13 of 18 shipped primitive definitions
+  are marked `non_interpreted_compatibility: true`. The five interpreted
+  primitives (`artifact_presence`, `artifact_model_parse`, `persist_record`,
+  `enqueue_work_items`, and `emit_event`) have the marker set to `false` and
+  have registered interpreted executors.
+- `default_effect_runners.json` — all six shipped operations are assigned to
+  `legacy_python_handler`; no shipped operation uses the interpreted runner.
+
 ## Stage Runner Stack
 
 Per stage execution:
@@ -277,14 +427,15 @@ Key boundary:
 - `runtime/graph_authority/generic_router.py` owns the active compiled-graph
   routing logic shared by all planes.
 - `runtime/graph_authority/routing.py` is the identity-checking dispatch
-  facade that validates stage-result identity before delegating to the
-  generic router.
-- `runtime/graph_authority/execution.py` and `planning.py` are compatibility
-  wrappers that forward to the generic router with plane-specific terminal
-  formatters.
-- `runtime/graph_authority/learning.py` remains a standalone compatibility
-  surface — the learning plane has no threshold or resume policies, so it
-  has not been folded into the generic pattern yet.
+  entrypoint that validates stage-result identity and routes every plane
+  directly through the generic router with plane-agnostic formatter callbacks.
+  It does not dispatch through per-plane wrappers or accept route-time
+  max-cycle recovery knobs. Generic formatters derive fallback route reasons
+  and failure classes from ``stage_result.node_id`` (compiled node identity)
+  rather than ``source_stage.value`` (runtime stage-name string).
+- `runtime/graph_authority/execution.py`, `planning.py`, and `learning.py` are
+  compatibility wrappers that forward to the generic router with plane-specific
+  terminal formatters where needed.
 - `router.py` at the package root is a stable compatibility surface for
   legacy imports; active dispatch does not call its plane-specific functions.
 

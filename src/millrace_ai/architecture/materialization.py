@@ -19,6 +19,7 @@ from millrace_ai.contracts.stage_metadata import stage_plane
 
 from .effect_operations import (
     RuntimeEffectOperationDefinition,
+    RuntimeEffectPrimitiveDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
     RuntimeOperationDefinition,
@@ -263,6 +264,7 @@ class CompiledRunPlan(ArchitectureContractModel):
     runtime_operations_by_id: dict[str, RuntimeOperationDefinition] = Field(default_factory=dict)
     effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition] = Field(default_factory=dict)
     effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition] = Field(default_factory=dict)
+    runtime_effect_primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition] = Field(default_factory=dict)
     workflow_recovery_policies_by_id: dict[str, WorkflowRecoveryPolicyDefinition] = Field(default_factory=dict)
     runtime_failure_policies_by_id: dict[str, RuntimeFailurePolicyDefinition] = Field(default_factory=dict)
     runtime_effect_rules: tuple[RuntimeEffectRuleDefinition, ...] = ()

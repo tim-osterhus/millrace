@@ -641,6 +641,149 @@ def test_compile_rejects_legacy_handler_alias_mapped_to_multiple_runners(
     ) in _diagnostic_text(outcome)
 
 
+# ---------------------------------------------------------------------------
+# RuntimeEffectOperationStepDefinition - binding and context compile tests
+# ---------------------------------------------------------------------------
+
+
+def test_compile_accepts_operation_with_valid_bindings(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["input_bindings"] = {
+        "source_manifest": "$artifact.blueprint_manifest",
+        "target_store": "$store.mutation_journal",
+    }
+    operation["steps"][0]["output_context_key"] = "validated_output"
+    operation["steps"][1]["context_read_key"] = "validated_output"
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+
+def test_compile_rejects_binding_unknown_artifact(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["input_bindings"] = {
+        "missing": "$artifact.nonexistent_artifact",
+    }
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "binding missing references unknown artifact nonexistent_artifact"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_binding_unknown_store(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["input_bindings"] = {
+        "bad_store": "$store.missing_store",
+    }
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "binding bad_store references unknown store missing_store"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_context_forward_reference(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["context_read_key"] = "not_yet_written"
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "reads context key not_yet_written before any prior step writes it"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_rejects_binding_context_forward_reference(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["input_bindings"] = {
+        "dep": "$context.not_yet_written",
+    }
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "binding dep reads context key not_yet_written before any prior step writes it"
+    ) in _diagnostic_text(outcome)
+
+
+def test_compile_accepts_context_read_after_write(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["output_context_key"] = "shared_key"
+    operation["steps"][1]["context_read_key"] = "shared_key"
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+
+def test_compile_rejects_interpreted_primitive_in_legacy_runner(tmp_path: Path) -> None:
+    assets_root = _copy_builtin_assets(tmp_path)
+    primitives_dir = assets_root / "registry" / "runtime_effect_primitives"
+    primitives_path = primitives_dir / "default_runtime_effect_primitives.json"
+    primitives_payload = _load_json(primitives_path)
+    interpreted_only = {
+        "schema_version": "1.0",
+        "kind": "runtime_effect_primitive",
+        "primitive_id": "interpreted_only_op",
+        "non_interpreted_compatibility": False,
+        "required_capabilities": ["interpreted_cap"],
+    }
+    primitives_payload["definitions"].append(interpreted_only)
+    _write_json(primitives_path, primitives_payload)
+
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["primitive_id"] = "interpreted_only_op"
+    _write_json(operations_path, payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "requires runner capability interpreted_cap"
+    ) in _diagnostic_text(outcome)
+
+
 def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
     workspace_root = tmp_path / "workspace"
@@ -719,3 +862,197 @@ def test_compile_if_needed_refreshes_plan_missing_effect_operation_authority(tmp
         ref.asset_family == "runtime_effect_runner"
         for ref in refreshed.active_plan.resolved_assets
     )
+
+
+def test_compile_if_needed_refreshes_plan_missing_runtime_effect_primitive_authority(
+    tmp_path: Path,
+) -> None:
+    """Regression: a persisted plan stripped of runtime_effect_primitive
+    resolved-asset refs and primitive definitions is stale, even after
+    recomputing the stripped fingerprint.  compile_if_needed=True then
+    recompiles a fresh plan with non-empty primitives."""
+    assets_root = _copy_builtin_assets(tmp_path)
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+    paths = workspace_paths(workspace_root)
+    config = RuntimeConfig()
+
+    compiled = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=config,
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+    assert compiled.active_plan is not None
+    plan = compiled.active_plan
+
+    # Strip runtime_effect_primitive resolved-asset refs and definitions.
+    stripped_resolved_assets = tuple(
+        ref
+        for ref in plan.resolved_assets
+        if ref.asset_family != "runtime_effect_primitive"
+    )
+    stripped_plan = plan.model_copy(
+        update={
+            "resolved_assets": stripped_resolved_assets,
+            "runtime_effect_primitives_by_id": {},
+        }
+    )
+    # Recompute the fingerprint from the stripped plan so the test does not
+    # merely exercise fingerprint staleness (per the Arbiter-reported gap).
+    stripped_fingerprint = build_existing_plan_input_fingerprint(
+        config=config,
+        mode_id="standard_plain",
+        plan=stripped_plan,
+        paths=paths,
+        assets_root=assets_root,
+    )
+    stripped_plan = stripped_plan.model_copy(
+        update={"compile_input_fingerprint": stripped_fingerprint}
+    )
+
+    (paths.state_dir / "compiled_plan.json").write_text(
+        stripped_plan.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    # Currentness must be stale even though the fingerprint matches.
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=config,
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+    )
+    assert currentness.state == "stale"
+
+    # compile_if_needed=True must recompile rather than reuse.
+    refreshed = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=config,
+        requested_mode_id="standard_plain",
+        assets_root=assets_root,
+        compile_if_needed=True,
+    )
+
+    assert refreshed.diagnostics.ok is True
+    assert refreshed.active_plan is not None
+    assert refreshed.active_plan.runtime_effect_primitives_by_id
+    assert any(
+        ref.asset_family == "runtime_effect_primitive"
+        for ref in refreshed.active_plan.resolved_assets
+    )
+
+
+# ---------------------------------------------------------------------------
+# Interpreted operation cross-validation compile tests
+# ---------------------------------------------------------------------------
+
+INTERPRETED_FIXTURE_ASSETS_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "runtime_effect_interpreter"
+    / "assets"
+)
+
+
+def _copy_builtin_with_interpreted_fixture_assets(tmp_path: Path) -> Path:
+    copied_root = _copy_builtin_assets(tmp_path)
+    if INTERPRETED_FIXTURE_ASSETS_ROOT.exists():
+        shutil.copytree(
+            INTERPRETED_FIXTURE_ASSETS_ROOT, copied_root, dirs_exist_ok=True,
+        )
+    return copied_root
+
+
+def _interpreted_operation_path(assets_root: Path) -> Path:
+    return (
+        assets_root
+        / "registry"
+        / "runtime_effect_operations"
+        / "test_interpreted_artifact_to_child_operation.json"
+    )
+
+
+def test_compile_accepts_interpreted_operation_with_valid_primitives(
+    tmp_path: Path,
+) -> None:
+    """Interpreted operation referencing primitives with executors compiles."""
+    assets_root = _copy_builtin_with_interpreted_fixture_assets(tmp_path)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert (
+        "test_interpreted_artifact_to_child"
+        in outcome.active_plan.runtime_effect_operations_by_id
+    )
+    assert (
+        "interpreted_runtime_effect"
+        in outcome.active_plan.runtime_effect_runners_by_id
+    )
+
+
+def test_compile_rejects_interpreted_operation_with_legacy_only_primitive(
+    tmp_path: Path,
+) -> None:
+    """Interpreted operation referencing a legacy-only primitive (no executor)
+    must be rejected at compile time."""
+    assets_root = _copy_builtin_with_interpreted_fixture_assets(tmp_path)
+    operations_path = _interpreted_operation_path(assets_root)
+    payload = _load_json(operations_path)
+
+    # Replace a step's primitive with a legacy-only one.
+    op = next(
+        d for d in payload["definitions"]
+        if d["operation_id"] == "test_interpreted_artifact_to_child"
+    )
+    op["steps"][0]["primitive_id"] = "copy_artifact"  # legacy-only, no executor
+    _write_json(operations_path, payload)
+
+    outcome = _compile_default_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "references non-interpreted primitive copy_artifact "
+        "that has no interpreted executor"
+    ) in "\n".join(outcome.diagnostics.errors)
+
+
+def test_compile_rejects_missing_primitive_definition_for_executor(
+    tmp_path: Path,
+) -> None:
+    """When an executor primitive definition is missing and a runtime effect
+    operation references it, the compiler must reject."""
+    assets_root = _copy_builtin_assets(tmp_path)
+
+    # Make an operation reference emit_event so the missing definition
+    # is caught through normal primitive resolution.
+    operations_path = _runtime_effect_operations_path(assets_root)
+    payload = _load_json(operations_path)
+    operation = _manager_operation(payload)
+    operation["steps"][0]["primitive_id"] = "emit_event"
+    _write_json(operations_path, payload)
+
+    primitives_path = (
+        assets_root
+        / "registry"
+        / "runtime_effect_primitives"
+        / "default_runtime_effect_primitives.json"
+    )
+    primitives_payload = _load_json(primitives_path)
+    # Remove emit_event, which has an executor but now lacks a definition.
+    primitives_payload["definitions"] = [
+        d for d in primitives_payload["definitions"]
+        if d["primitive_id"] != "emit_event"
+    ]
+    _write_json(primitives_path, primitives_payload)
+
+    outcome = _compile_blueprint_with_assets(tmp_path, assets_root)
+
+    assert outcome.diagnostics.ok is False
+    assert outcome.active_plan is None
+    assert (
+        "references unknown primitive emit_event"
+    ) in "\n".join(outcome.diagnostics.errors)

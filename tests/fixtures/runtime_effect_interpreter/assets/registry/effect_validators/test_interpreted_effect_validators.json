@@ -1,0 +1,20 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "test_interpreted_artifact_to_child.required_artifacts",
+      "primitive_id": "artifact_presence",
+      "input_artifact_ids": ["test_interpreted_input"],
+      "failure_class": "required_artifact_missing"
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_validator",
+      "validator_id": "test_interpreted_artifact_to_child.input_schema",
+      "primitive_id": "artifact_model_parse",
+      "input_artifact_ids": ["test_interpreted_input"],
+      "failure_class": "artifact_parse_artifact_missing"
+    }
+  ]
+}

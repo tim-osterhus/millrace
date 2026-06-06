@@ -8,6 +8,7 @@ _REQUIRED_WORKFLOW_AUTHORITY_ASSET_FAMILIES = frozenset(
     {
         "artifact_contract",
         "runtime_effect_operation",
+        "runtime_effect_primitive",
         "runtime_effect_runner",
         "runtime_effect_store",
         "runtime_effect_validator",
@@ -26,6 +27,7 @@ def has_required_workflow_authority(plan: CompiledRunPlan) -> bool:
         or not plan.artifact_contracts
         or not plan.runtime_effect_runners_by_id
         or not plan.runtime_effect_operations_by_id
+        or not plan.runtime_effect_primitives_by_id
         or not plan.effect_stores_by_id
         or not plan.effect_validators_by_id
         or not plan.request_context_profiles_by_id

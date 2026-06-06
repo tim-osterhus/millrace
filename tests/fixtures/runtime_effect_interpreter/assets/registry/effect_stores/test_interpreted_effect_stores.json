@@ -1,0 +1,13 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_store",
+      "store_id": "test_interpreted_records",
+      "store_type": "mutation_journal",
+      "runtime_relative_root": "test-interpreted-records",
+      "owner": "runtime",
+      "write_policy": "append_only"
+    }
+  ]
+}

@@ -36,6 +36,18 @@ from millrace_ai.runtime.effects import (
     apply_runtime_effect_result,
     lifecycle_intent_for_terminal_result,
 )
+from millrace_ai.runtime.effects.interpreter import (
+    INTERPRETED_RUNNER_ID,
+    interpret_operation,
+)
+from millrace_ai.runtime.effects.journal import (
+    completed_hashes_by_step,
+    compute_idempotency_hash,
+    has_started_record,
+    read_journal_records,
+    write_completed_record,
+    write_started_record,
+)
 from millrace_ai.runtime.engine import RuntimeEngine
 
 NOW = datetime(2026, 5, 19, tzinfo=timezone.utc)
@@ -1391,3 +1403,1084 @@ def test_stage_effect_application_reports_only_destination_queue_paths_as_spawne
         str(queue_path.relative_to(paths.root)),
         str(side_path.relative_to(paths.root)),
     }
+
+
+# ---------------------------------------------------------------------------
+# Runtime effect journal unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_journal_write_started_and_read_records(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    write_started_record(
+        journal_dir,
+        operation_id="op-001",
+        step_id="step-a",
+        params={"store_id": "s1", "mode": "test"},
+        reads_artifact_ids=("artifact-1",),
+    )
+    records = read_journal_records(journal_dir, "op-001")
+    assert len(records) == 1
+    assert records[0]["record_type"] == "started"
+    assert records[0]["operation_id"] == "op-001"
+    assert records[0]["step_id"] == "step-a"
+    assert records[0]["params"] == {"mode": "test", "store_id": "s1"}
+    assert records[0]["reads_artifact_ids"] == ["artifact-1"]
+
+
+def test_journal_write_completed_and_read_records(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    idem = write_completed_record(
+        journal_dir,
+        operation_id="op-001",
+        step_id="step-a",
+        params={"store_id": "s1"},
+        reads_artifact_ids=("artifact-1",),
+    )
+    assert idem
+    records = read_journal_records(journal_dir, "op-001")
+    assert len(records) == 1
+    assert records[0]["record_type"] == "completed"
+    assert records[0]["idempotency_hash"] == idem
+
+
+def test_journal_read_returns_empty_for_missing_operation(tmp_path: Path) -> None:
+    assert read_journal_records(tmp_path / "nonexistent", "op-xyz") == []
+
+
+def test_journal_multiple_records_appended_in_order(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    write_started_record(
+        journal_dir, "op-001", "step-a", {"n": 1}, ("a",)
+    )
+    write_completed_record(
+        journal_dir, "op-001", "step-a", {"n": 1}, ("a",)
+    )
+    write_started_record(
+        journal_dir, "op-001", "step-b", {"n": 2}, ("b",)
+    )
+    write_completed_record(
+        journal_dir, "op-001", "step-b", {"n": 2}, ("b",)
+    )
+    records = read_journal_records(journal_dir, "op-001")
+    assert len(records) == 4
+    assert [r["record_type"] for r in records] == [
+        "started", "completed", "started", "completed"
+    ]
+    assert [r["step_id"] for r in records] == [
+        "step-a", "step-a", "step-b", "step-b"
+    ]
+
+
+def test_journal_completed_hashes_by_step_groups_correctly(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    h1 = write_completed_record(
+        journal_dir, "op-001", "step-a", {"n": 1}, ("a",)
+    )
+    h2 = write_completed_record(
+        journal_dir, "op-001", "step-b", {"n": 2}, ("b",)
+    )
+    by_step = completed_hashes_by_step(journal_dir, "op-001")
+    assert by_step == {"step-a": {h1}, "step-b": {h2}}
+
+
+def test_journal_has_started_record_detects_interrupted_step(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    write_started_record(journal_dir, "op-001", "step-a", {}, ())
+    # started but not completed -> True
+    assert has_started_record(journal_dir, "op-001", "step-a") is True
+
+
+def test_journal_has_started_record_returns_false_after_completion(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    write_started_record(journal_dir, "op-001", "step-a", {}, ())
+    write_completed_record(journal_dir, "op-001", "step-a", {}, ())
+    # started then completed -> False
+    assert has_started_record(journal_dir, "op-001", "step-a") is False
+
+
+def test_journal_has_started_record_unknown_step(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "journal"
+    assert has_started_record(journal_dir, "op-001", "step-missing") is False
+
+
+# ---------------------------------------------------------------------------
+# Idempotency hash unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_idempotency_hash_stable_for_same_inputs() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {"store_id": "s1"}, ("a-1", "a-2")
+    )
+    h2 = compute_idempotency_hash(
+        "op-001", "step-a", {"store_id": "s1"}, ("a-1", "a-2")
+    )
+    assert h1 == h2
+
+
+def test_idempotency_hash_differs_for_different_operation_id() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {}, ()
+    )
+    h2 = compute_idempotency_hash(
+        "op-002", "step-a", {}, ()
+    )
+    assert h1 != h2
+
+
+def test_idempotency_hash_differs_for_different_step_id() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {}, ()
+    )
+    h2 = compute_idempotency_hash(
+        "op-001", "step-b", {}, ()
+    )
+    assert h1 != h2
+
+
+def test_idempotency_hash_differs_for_different_params() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {"key": "v1"}, ()
+    )
+    h2 = compute_idempotency_hash(
+        "op-001", "step-a", {"key": "v2"}, ()
+    )
+    assert h1 != h2
+
+
+def test_idempotency_hash_differs_for_different_artifact_ids() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {}, ("a-1",)
+    )
+    h2 = compute_idempotency_hash(
+        "op-001", "step-a", {}, ("a-2",)
+    )
+    assert h1 != h2
+
+
+def test_idempotency_hash_ordering_stable_for_artifact_ids() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {}, ("a-2", "a-1")
+    )
+    h2 = compute_idempotency_hash(
+        "op-001", "step-a", {}, ("a-1", "a-2")
+    )
+    assert h1 == h2
+
+
+def test_idempotency_hash_ordering_stable_for_params() -> None:
+    h1 = compute_idempotency_hash(
+        "op-001", "step-a", {"z": 1, "a": 2}, ()
+    )
+    h2 = compute_idempotency_hash(
+        "op-001", "step-a", {"a": 2, "z": 1}, ()
+    )
+    assert h1 == h2
+
+
+# ---------------------------------------------------------------------------
+# Interpreter journal integration tests
+# ---------------------------------------------------------------------------
+
+
+def _stage_result_for_interpreter_test(
+    run_id: str = "run-journal-test",
+) -> StageResultEnvelope:
+    return StageResultEnvelope(
+        run_id=run_id,
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-journal-test",
+        terminal_result="BUILDER_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+
+def _make_mutating_step(
+    step_id: str,
+    primitive_id: str,
+    store_id: str | None = None,
+    writes_store: bool = True,
+    reads_artifact_ids: tuple[str, ...] = (),
+    params: dict | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        step_id=step_id,
+        primitive_id=primitive_id,
+        mutation_phase="partial_mutation",
+        reads_artifact_ids=reads_artifact_ids,
+        store_id=store_id,
+        writes_store=writes_store,
+        input_bindings={},
+        params=params or {},
+    )
+
+
+def _make_non_mutating_step(
+    step_id: str,
+    primitive_id: str,
+    reads_artifact_ids: tuple[str, ...] = (),
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        step_id=step_id,
+        primitive_id=primitive_id,
+        mutation_phase="pre_mutation",
+        reads_artifact_ids=reads_artifact_ids,
+        store_id=None,
+        writes_store=False,
+        input_bindings={},
+        params={},
+    )
+
+
+def _interpreter_journal_workspace(tmp_path: Path):
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    # Create a dummy artifact so artifact_presence passes
+    (run_dir / "input.json").write_text('{"msg": "hello"}\n', encoding="utf-8")
+    return paths, run_dir
+
+
+def test_interpreter_writes_journal_records_for_mutating_steps(
+    tmp_path: Path,
+) -> None:
+    """Interpreter writes started + completed journal records for
+    persist_record and enqueue_work_items primitives."""
+    paths, run_dir = _interpreter_journal_workspace(tmp_path)
+    stage_result = _stage_result_for_interpreter_test()
+
+    steps = (
+        _make_non_mutating_step("presence", "artifact_presence", ("input",)),
+        _make_mutating_step(
+            "persist", "persist_record",
+            store_id="test_store",
+            reads_artifact_ids=("input",),
+        ),
+        _make_mutating_step(
+            "enqueue", "enqueue_work_items",
+            reads_artifact_ids=("input",),
+            params={"family_id": "task", "work_item_prefix": "child"},
+        ),
+    )
+
+    operation_def = SimpleNamespace(
+        operation_id="op-journal-001",
+        steps=steps,
+        failure_mappings=(),
+        mutation_journal=None,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_operations_by_id={"op-journal-001": operation_def},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={
+            "test_store": SimpleNamespace(
+                runtime_relative_root="test-records"
+            )
+        },
+        work_item_families_by_id={
+            "task": SimpleNamespace(
+                queue_dirs=SimpleNamespace(
+                    queue=str(paths.tasks_queue_dir.relative_to(paths.root))
+                )
+            )
+        },
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+
+    result = interpret_operation(
+        paths,
+        stage_result,
+        run_dir,
+        compiled_plan,
+        operation_id="op-journal-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+
+    assert result.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+
+    # Journal records should exist
+    journal_records = read_journal_records(
+        paths.runtime_effect_journal_dir, "op-journal-001"
+    )
+    assert len(journal_records) == 4  # started+completed for each of 2 mutating steps
+    types = [r["record_type"] for r in journal_records]
+    assert types == ["started", "completed", "started", "completed"]
+    assert journal_records[0]["step_id"] == "persist"
+    assert journal_records[1]["step_id"] == "persist"
+    assert "idempotency_hash" in journal_records[1]
+    assert journal_records[2]["step_id"] == "enqueue"
+    assert journal_records[3]["step_id"] == "enqueue"
+    assert "idempotency_hash" in journal_records[3]
+
+
+def test_interpreter_journal_records_are_jsonl_format(
+    tmp_path: Path,
+) -> None:
+    """Journal file is valid JSONL with one JSON object per line."""
+    paths, run_dir = _interpreter_journal_workspace(tmp_path)
+    stage_result = _stage_result_for_interpreter_test()
+
+    steps = (
+        _make_mutating_step(
+            "persist", "persist_record",
+            store_id="test_store",
+            reads_artifact_ids=("input",),
+        ),
+    )
+    operation_def = SimpleNamespace(
+        operation_id="op-jsonl-001",
+        steps=steps,
+        failure_mappings=(),
+        mutation_journal=None,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_operations_by_id={"op-jsonl-001": operation_def},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={
+            "test_store": SimpleNamespace(
+                runtime_relative_root="test-records"
+            )
+        },
+        work_item_families_by_id={},
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+
+    interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-jsonl-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+
+    journal_path = paths.runtime_effect_journal_dir / "op-jsonl-001.jsonl"
+    assert journal_path.exists()
+    lines = journal_path.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 2
+    for line in lines:
+        obj = json.loads(line)
+        assert "record_type" in obj
+
+
+# ---------------------------------------------------------------------------
+# Idempotent resume tests
+# ---------------------------------------------------------------------------
+
+
+def _build_idempotent_resume_context(
+    tmp_path: Path,
+    operation_id: str = "op-resume-001",
+):
+    """Build a workspace, run_dir, stage_result, compiled_plan, and paths
+    for idempotent resume tests with one persist and one enqueue step."""
+    paths, run_dir = _interpreter_journal_workspace(tmp_path)
+    stage_result = _stage_result_for_interpreter_test()
+
+    steps = (
+        _make_non_mutating_step("presence", "artifact_presence", ("input",)),
+        _make_mutating_step(
+            "persist", "persist_record",
+            store_id="test_store",
+            reads_artifact_ids=("input",),
+        ),
+        _make_mutating_step(
+            "enqueue", "enqueue_work_items",
+            reads_artifact_ids=("input",),
+            params={"family_id": "task", "work_item_prefix": "child"},
+        ),
+    )
+    operation_def = SimpleNamespace(
+        operation_id=operation_id,
+        steps=steps,
+        failure_mappings=(),
+        mutation_journal=None,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_operations_by_id={operation_id: operation_def},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={
+            "test_store": SimpleNamespace(
+                runtime_relative_root="test-records"
+            )
+        },
+        work_item_families_by_id={
+            "task": SimpleNamespace(
+                queue_dirs=SimpleNamespace(
+                    queue=str(paths.tasks_queue_dir.relative_to(paths.root))
+                )
+            )
+        },
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+    return paths, run_dir, stage_result, compiled_plan
+
+
+def test_interpreter_idempotent_resume_skips_completed_steps(
+    tmp_path: Path,
+) -> None:
+    """Second execution with same params should skip already-completed
+    mutating steps."""
+    paths, run_dir, stage_result, compiled_plan = (
+        _build_idempotent_resume_context(tmp_path)
+    )
+
+    # First run: executes everything
+    result1 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-resume-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result1.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+    assert len(result1.created_paths) == 2  # one persist + one enqueue
+
+    # Second run: should skip both mutating steps
+    # Remove artifacts created by first run so we can detect if
+    # the steps re-ran.
+    for p in result1.created_paths:
+        Path(p).unlink(missing_ok=True)
+
+    result2 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-resume-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result2.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+    # Since both mutating steps were skipped, no new paths should be created.
+    assert len(result2.created_paths) == 0
+
+
+def test_interpreter_idempotent_resume_still_runs_non_mutating_steps(
+    tmp_path: Path,
+) -> None:
+    """Non-mutating steps (artifact_presence, artifact_model_parse) always
+    re-run even when journal has completed records."""
+    paths, run_dir, stage_result, compiled_plan = (
+        _build_idempotent_resume_context(tmp_path, operation_id="op-resume-002")
+    )
+
+    # First run
+    result1 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-resume-002",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result1.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+
+    # Remove the input artifact so artifact_presence fails
+    (run_dir / "input.json").unlink()
+
+    # Second run: artifact_presence should fail even though journal exists
+    result2 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-resume-002",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result2.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert result2.failure_class == "required_artifact_missing"
+
+
+def test_interpreter_idempotency_conflict_on_different_params(
+    tmp_path: Path,
+) -> None:
+    """When a completed journal record exists for a step with a different
+    idempotency hash, the interpreter must fail with
+    interpreted_idempotency_conflict."""
+    paths, run_dir, stage_result, compiled_plan = (
+        _build_idempotent_resume_context(tmp_path, operation_id="op-conflict-001")
+    )
+
+    # First run with original params
+    result1 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-conflict-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result1.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+
+    # Build a new compiled plan with different params for the persist step
+    steps2 = (
+        _make_non_mutating_step("presence", "artifact_presence", ("input",)),
+        _make_mutating_step(
+            "persist", "persist_record",
+            store_id="test_store",  # same store, same step_id
+            reads_artifact_ids=("input",),
+            params={"extra_key": "different"},  # different params!
+        ),
+        _make_mutating_step(
+            "enqueue", "enqueue_work_items",
+            reads_artifact_ids=("input",),
+            params={"family_id": "task", "work_item_prefix": "child"},
+        ),
+    )
+    operation_def2 = SimpleNamespace(
+        operation_id="op-conflict-001",
+        steps=steps2,
+        failure_mappings=(),
+        mutation_journal=None,
+    )
+    compiled_plan2 = SimpleNamespace(
+        runtime_effect_operations_by_id={"op-conflict-001": operation_def2},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={
+            "test_store": SimpleNamespace(
+                runtime_relative_root="test-records"
+            )
+        },
+        work_item_families_by_id={
+            "task": SimpleNamespace(
+                queue_dirs=SimpleNamespace(
+                    queue=str(paths.tasks_queue_dir.relative_to(paths.root))
+                )
+            )
+        },
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+
+    # Restore input artifact
+    (run_dir / "input.json").write_text('{"msg": "hello"}\n', encoding="utf-8")
+
+    result2 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan2,
+        operation_id="op-conflict-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result2.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert result2.failure_class == "interpreted_idempotency_conflict"
+
+
+def test_interpreter_idempotency_conflict_routed_through_failure_mappings(
+    tmp_path: Path,
+) -> None:
+    """When failure_mappings remap interpreted_idempotency_conflict, the
+    mapped class flows through."""
+    paths, run_dir, stage_result, compiled_plan = (
+        _build_idempotent_resume_context(tmp_path)
+    )
+
+    # First run
+    result1 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-resume-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result1.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+
+    # Build new plan with different params AND failure_mappings
+    steps2 = (
+        _make_mutating_step(
+            "persist", "persist_record",
+            store_id="test_store",
+            reads_artifact_ids=("input",),
+            params={"extra": "changed"},
+        ),
+    )
+    operation_def2 = SimpleNamespace(
+        operation_id="op-resume-001",
+        steps=steps2,
+        failure_mappings=(
+            SimpleNamespace(
+                failure_class="interpreted_idempotency_conflict",
+                mutation_phase="partial_mutation",
+            ),
+        ),
+        mutation_journal=None,
+    )
+    compiled_plan2 = SimpleNamespace(
+        runtime_effect_operations_by_id={"op-resume-001": operation_def2},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={
+            "test_store": SimpleNamespace(
+                runtime_relative_root="test-records"
+            )
+        },
+        work_item_families_by_id={},
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+
+    (run_dir / "input.json").write_text('{"msg": "hello"}\n', encoding="utf-8")
+    result2 = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan2,
+        operation_id="op-resume-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result2.decision is RuntimeEffectDecision.REQUEST_BLOCK_SOURCE
+    assert result2.failure_class == "interpreted_idempotency_conflict"
+
+
+def test_interpreter_resume_with_matching_hash_skips_only_that_step(
+    tmp_path: Path,
+) -> None:
+    """When only one of two mutating steps has a completed journal record,
+    the completed one is skipped and the other runs."""
+    paths, run_dir, stage_result, compiled_plan = (
+        _build_idempotent_resume_context(tmp_path)
+    )
+
+    # Pre-populate a completed record for only the persist step.
+    # The params must match what _resolve_step_params produces (only
+    # store_id, no record_key — the executor defaults record_key to
+    # step_id at runtime).
+    journal_dir = paths.runtime_effect_journal_dir
+    write_completed_record(
+        journal_dir, "op-partial-001", "persist",
+        params={"store_id": "test_store"},
+        reads_artifact_ids=("input",),
+    )
+
+    # Custom plan with only one op
+    steps = (
+        _make_non_mutating_step("presence", "artifact_presence", ("input",)),
+        _make_mutating_step(
+            "persist", "persist_record",
+            store_id="test_store",
+            reads_artifact_ids=("input",),
+        ),
+        _make_mutating_step(
+            "enqueue", "enqueue_work_items",
+            reads_artifact_ids=("input",),
+            params={"family_id": "task", "work_item_prefix": "child"},
+        ),
+    )
+    operation_def = SimpleNamespace(
+        operation_id="op-partial-001",
+        steps=steps,
+        failure_mappings=(),
+        mutation_journal=None,
+    )
+    compiled_plan_partial = SimpleNamespace(
+        runtime_effect_operations_by_id={"op-partial-001": operation_def},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={
+            "test_store": SimpleNamespace(
+                runtime_relative_root="test-records"
+            )
+        },
+        work_item_families_by_id={
+            "task": SimpleNamespace(
+                queue_dirs=SimpleNamespace(
+                    queue=str(paths.tasks_queue_dir.relative_to(paths.root))
+                )
+            )
+        },
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+
+    result = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan_partial,
+        operation_id="op-partial-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+
+    assert result.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+    # persist was skipped; only enqueue created a path
+    assert len(result.created_paths) == 1
+
+    # Journal now has 3 entries: the pre-populated completed, plus
+    # started+completed for enqueue
+    records = read_journal_records(journal_dir, "op-partial-001")
+    assert len(records) == 3
+
+
+def test_interpreter_non_mutating_primitives_do_not_create_journal_entries(
+    tmp_path: Path,
+) -> None:
+    """artifact_presence and artifact_model_parse should not produce
+    journal entries."""
+    paths, run_dir = _interpreter_journal_workspace(tmp_path)
+    stage_result = _stage_result_for_interpreter_test()
+
+    steps = (
+        _make_non_mutating_step("presence", "artifact_presence", ("input",)),
+        _make_non_mutating_step("parse", "artifact_model_parse", ("input",)),
+    )
+    operation_def = SimpleNamespace(
+        operation_id="op-nonmut-001",
+        steps=steps,
+        failure_mappings=(),
+        mutation_journal=None,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_operations_by_id={"op-nonmut-001": operation_def},
+        artifact_contracts_by_id={
+            "input": SimpleNamespace(
+                canonical_filename="input.json", accepted_filenames=()
+            )
+        },
+        effect_stores_by_id={},
+        work_item_families_by_id={},
+        runtime_effect_runners_by_id={},
+        runtime_effect_rules=(),
+        runtime_failure_policies_by_id={},
+    )
+
+    result = interpret_operation(
+        paths, stage_result, run_dir, compiled_plan,
+        operation_id="op-nonmut-001",
+        runner_id=INTERPRETED_RUNNER_ID,
+    )
+    assert result.decision is RuntimeEffectDecision.CONTINUE_ROUTE
+
+    records = read_journal_records(
+        paths.runtime_effect_journal_dir, "op-nonmut-001"
+    )
+    assert records == []
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: test_interpreted_artifact_to_child fixture operation
+# ---------------------------------------------------------------------------
+
+
+def _fixture_interpreted_artifact_to_child_operation():
+    """Return the compiled operation definition matching
+    test_interpreted_artifact_to_child."""
+    return SimpleNamespace(
+        operation_id="test_interpreted_artifact_to_child",
+        steps=(
+            SimpleNamespace(
+                step_id="validate_required_artifacts",
+                primitive_id="artifact_presence",
+                mutation_phase="pre_mutation",
+                reads_artifact_ids=("test_interpreted_input",),
+                validator_ids=(
+                    "test_interpreted_artifact_to_child.required_artifacts",
+                ),
+                store_id=None,
+                writes_store=False,
+                input_bindings={},
+                params={},
+                output_context_key=None,
+                context_read_key=None,
+            ),
+            SimpleNamespace(
+                step_id="parse_input_artifact",
+                primitive_id="artifact_model_parse",
+                mutation_phase="pre_mutation",
+                reads_artifact_ids=("test_interpreted_input",),
+                validator_ids=(
+                    "test_interpreted_artifact_to_child.input_schema",
+                ),
+                store_id=None,
+                writes_store=False,
+                input_bindings={},
+                params={"contract_id": "test_interpreted_input"},
+                output_context_key=None,
+                context_read_key=None,
+            ),
+            SimpleNamespace(
+                step_id="persist_interpreted_record",
+                primitive_id="persist_record",
+                mutation_phase="partial_mutation",
+                reads_artifact_ids=("test_interpreted_input",),
+                validator_ids=(),
+                store_id="test_interpreted_records",
+                writes_store=True,
+                input_bindings={},
+                params={
+                    "store_id": "test_interpreted_records",
+                    "record_key": "persist_interpreted_record",
+                },
+                output_context_key=None,
+                context_read_key=None,
+            ),
+            SimpleNamespace(
+                step_id="enqueue_child_work_item",
+                primitive_id="enqueue_work_items",
+                mutation_phase="partial_mutation",
+                reads_artifact_ids=("test_interpreted_input",),
+                validator_ids=(),
+                store_id="task_queue",
+                writes_store=True,
+                input_bindings={},
+                params={
+                    "family_id": "task",
+                    "item_count": 1,
+                    "work_item_prefix": "interpreted_child",
+                },
+                output_context_key=None,
+                context_read_key=None,
+            ),
+        ),
+        failure_mappings=(
+            SimpleNamespace(
+                failure_class="required_artifact_missing",
+                mutation_phase="pre_mutation",
+                validator_id=(
+                    "test_interpreted_artifact_to_child.required_artifacts"
+                ),
+            ),
+            SimpleNamespace(
+                failure_class="artifact_parse_artifact_missing",
+                mutation_phase="pre_mutation",
+                validator_id=None,
+            ),
+            SimpleNamespace(
+                failure_class="interpreted_step_failure",
+                mutation_phase="pre_mutation",
+                validator_id=None,
+            ),
+            SimpleNamespace(
+                failure_class="interpreted_primitive_unknown",
+                mutation_phase="pre_mutation",
+                validator_id=None,
+            ),
+            SimpleNamespace(
+                failure_class="interpreted_primitive_error",
+                mutation_phase="partial_mutation",
+                validator_id=None,
+            ),
+        ),
+        mutation_journal=SimpleNamespace(
+            record_step_ids=(
+                "persist_interpreted_record",
+                "enqueue_child_work_item",
+            ),
+        ),
+    )
+
+
+def _fixture_interpreted_compiled_plan(paths):
+    """Return a compiled_plan SimpleNamespace wired for
+    test_interpreted_artifact_to_child."""
+    return SimpleNamespace(
+        runtime_effect_operations_by_id={
+            "test_interpreted_artifact_to_child": (
+                _fixture_interpreted_artifact_to_child_operation()
+            ),
+        },
+        runtime_effect_runners_by_id={
+            "interpreted_runtime_effect": RuntimeEffectOperationRunnerDefinition(
+                runner_id=INTERPRETED_RUNNER_ID,
+                operation_ids=("test_interpreted_artifact_to_child",),
+                legacy_handler_ids=(),
+                legacy_handler_operation_ids={},
+                result_display_aliases={},
+            ),
+        },
+        runtime_effect_rules=(
+            SimpleNamespace(
+                rule_id="test_interpreted_artifact_to_child_on_builder_complete",
+                effect_operation_id=(
+                    "test_interpreted_artifact_to_child"
+                ),
+                source_node_id="builder",
+                on_outcomes=("BUILDER_COMPLETE",),
+                handler_id=None,
+                destination_family_id=None,
+                required_run_artifacts=("test_interpreted_input",),
+                duplicate_policy="fail",
+                replay_policy="resume_idempotently",
+                partial_commit_policy="block_source",
+                lifecycle_mutation_plan_id=None,
+                source_completion_lifecycle_mutation_plan_id=None,
+                source_blocking_lifecycle_mutation_plan_id=None,
+                required_handler_capabilities=(),
+            ),
+        ),
+        artifact_contracts_by_id={
+            "test_interpreted_input": SimpleNamespace(
+                canonical_filename="test_interpreted_input.json",
+                accepted_filenames=(),
+            ),
+        },
+        effect_stores_by_id={
+            "test_interpreted_records": SimpleNamespace(
+                runtime_relative_root="test-interpreted-records",
+            ),
+        },
+        work_item_families_by_id={
+            "task": SimpleNamespace(
+                queue_dirs=SimpleNamespace(
+                    queue=str(paths.tasks_queue_dir.relative_to(paths.root))
+                ),
+            ),
+        },
+        runtime_failure_policies_by_id={},
+    )
+
+
+def _fixture_stage_result() -> StageResultEnvelope:
+    return StageResultEnvelope(
+        run_id="run-interpreted-e2e",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-interpreted-e2e",
+        terminal_result="BUILDER_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+
+def test_interpreted_artifact_to_child_end_to_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: execute the test_interpreted_artifact_to_child operation
+    through the full dispatch path, verify journal records, idempotent
+    resume, and handler bypass."""
+    paths = _workspace(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create the input artifact.
+    input_path = run_dir / "test_interpreted_input.json"
+    input_path.write_text(
+        json.dumps({"msg": "hello-interpreted", "n": 42}),
+        encoding="utf-8",
+    )
+
+    stage_result = _fixture_stage_result()
+    compiled_plan = _fixture_interpreted_compiled_plan(paths)
+
+    # --- Run 1: full execution ---
+    application = apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert application.router_decision.action is RouterAction.IDLE
+    assert stage_result.metadata["runtime_effect_operation_id"] == (
+        "test_interpreted_artifact_to_child"
+    )
+    assert stage_result.metadata["runtime_effect_runner_id"] == INTERPRETED_RUNNER_ID
+    assert stage_result.metadata["runtime_effect_legacy_handler_id"] is None
+    assert stage_result.metadata["runtime_effect_decision"] == "continue_route"
+
+    # Verify child work item was enqueued.
+    child_files = sorted(paths.tasks_queue_dir.glob("interpreted_child_*.md"))
+    assert len(child_files) >= 1
+
+    # Verify journal records exist.
+    journal_records = read_journal_records(
+        paths.runtime_effect_journal_dir,
+        "test_interpreted_artifact_to_child",
+    )
+    assert len(journal_records) == 4  # started+completed × 2 mutating steps
+    record_types = [r["record_type"] for r in journal_records]
+    assert record_types == ["started", "completed", "started", "completed"]
+
+    # --- Run 2: idempotent resume (same params, should skip mutating steps) ---
+    # Remove child artifacts created in run 1 so we can detect re-creation.
+    for child in child_files:
+        child.unlink()
+
+    stage_result2 = _fixture_stage_result().model_copy(
+        update={"run_id": "run-interpreted-e2e-resume"}
+    )
+
+    application2 = apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result2,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert application2.router_decision.action is RouterAction.IDLE
+    # Mutating steps were already completed; should not create new children.
+    child_files_after_resume = sorted(
+        paths.tasks_queue_dir.glob("interpreted_child_*.md")
+    )
+    assert len(child_files_after_resume) == 0
+
+    # --- Run 3: handler bypass proof ---
+    # Monkeypatch _handler_for_operation to raise; interpreted dispatch
+    # must bypass it entirely.
+    def _handler_guard(*args, **kwargs):
+        raise AssertionError(
+            "_handler_for_operation was called but interpreted dispatch "
+            "must bypass it"
+        )
+
+    monkeypatch.setattr(
+        effect_execution,
+        "_handler_for_operation",
+        _handler_guard,
+    )
+
+    stage_result3 = _fixture_stage_result().model_copy(
+        update={"run_id": "run-interpreted-e2e-bypass"}
+    )
+
+    application3 = apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result3,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert application3.router_decision.action is RouterAction.IDLE
+    assert stage_result3.metadata["runtime_effect_operation_id"] == (
+        "test_interpreted_artifact_to_child"
+    )
+    assert stage_result3.metadata["runtime_effect_runner_id"] == INTERPRETED_RUNNER_ID
+    # Still no legacy handler calls — bypass intact.
+    assert stage_result3.metadata["runtime_effect_legacy_handler_id"] is None

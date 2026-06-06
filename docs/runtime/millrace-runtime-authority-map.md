@@ -34,13 +34,17 @@ The compiled-plan router path uses:
 
 - `runtime/graph_authority/generic_router.py` — active compiled-graph routing
   logic (`route_generic_stage_result_from_graph`) shared by all planes.
-- `runtime/graph_authority/routing.py` — identity-checking dispatch facade
-  (`route_stage_result_from_graph`) that validates stage-result identity
-  before delegating to the generic router.
-- `runtime/graph_authority/execution.py` and `planning.py` — compatibility
-  wrappers that forward to the generic router.
-- `runtime/graph_authority/learning.py` — standalone compatibility surface
-  (learning has no threshold/resume policies yet).
+- `runtime/graph_authority/routing.py` — single active dispatch entrypoint
+  (`route_stage_result_from_graph`) that validates stage-result identity and
+  routes every plane directly through the generic router with plane-agnostic
+  formatter callbacks. It does not dispatch through per-plane wrappers or
+  accept route-time max-cycle recovery knobs. Generic formatters derive
+  fallback route reasons and failure classes from ``stage_result.node_id``
+  (compiled node identity) rather than ``source_stage.value`` (runtime
+  stage-name string).
+- `runtime/graph_authority/execution.py`, `planning.py`, and `learning.py` —
+  compatibility wrappers that forward to the generic router for import
+  compatibility.
 - `millrace_ai.router` — stable compatibility facade; active dispatch does
   not use its legacy plane-specific functions.
 
@@ -138,6 +142,70 @@ The compiled-plan router path uses:
 - Runtime-effect dispatch (`effect_execution.py`) uses a separate
   runtime-effect operation catalog; the `allowed_contexts` field keeps the two
   contexts distinct.
+
+### Runtime-effect operation interpretation authority
+
+Runtime-effect operations execute through one of two dispatch paths
+based on compiled runner identity:
+
+**Interpreted runner path** (`runner_id = "interpreted_runtime_effect"`):
+- Operations are defined in `assets/registry/runtime_effect_operations/`
+  and declare a step list. Each step references a `primitive_id` and optional
+  `input_bindings`, `params`, `reads_artifact_ids`, and `mutation_phase`.
+- The runtime resolves the runner through
+  `compiled_plan.runtime_effect_runners_by_id` by finding the runner whose
+  `operation_ids` includes the operation. Operations do not carry their own
+  `runner_id`; runner ownership is declared on the runner definition via
+  `RuntimeEffectOperationRunnerDefinition.operation_ids`.
+- `effect_execution.py:_operation_selection_for_rule()` detects
+  `runner_id == INTERPRETED_RUNNER_ID` and constructs an inline handler that
+  delegates to `interpret_operation()` in `runtime/effects/interpreter.py`.
+  It does not call `_handler_for_operation()` for interpreted runners.
+- The interpreter walks compiled steps, resolves `$artifact.<id>`,
+  `$context.<key>`, and `$store.<id>` bindings, dispatches each step's
+  `primitive_id` to the `PrimitiveExecutorRegistry` in
+  `runtime/effects/primitives.py`, and accumulates results into a
+  `RuntimeEffectResult`.
+- Five primitives have interpreted executors: `artifact_presence`,
+  `artifact_model_parse`, `persist_record`, `enqueue_work_items`,
+  `emit_event`. The other 13 primitives in the shipped asset
+  (`default_runtime_effect_primitives.json`) are marked
+  `non_interpreted_compatibility: true` and have no executor.
+- Mutating primitives (`persist_record`, `enqueue_work_items`) write durable
+  JSONL journal records to `millrace-agents/state/runtime-effect-journal/
+  <operation_id>.jsonl` (`runtime/effects/journal.py`). Started, completed,
+  and failed records carry operation, runner, source work-item, run/request,
+  step, primitive, status, timestamp, and idempotency-hash context. The
+  interpreter loads completed idempotency hashes on each invocation and skips
+  steps whose hash matches a completed record. Mutating primitive exceptions,
+  executor-returned `pre_mutation_failure` decisions, and started-record
+  idempotency conflicts append failed records before blocking; non-equivalent
+  duplicates fail with `interpreted_idempotency_conflict`.
+- Compile validation (`compilation/validation/runtime_effects.py`)
+  derives interpreted primitive authority from compiled definitions whose
+  `non_interpreted_compatibility` marker is `false`, rejects interpreted-runner
+  operations whose primitives have no interpreted executor, rejects
+  interpreted executor ids without matching compiled primitive definitions,
+  and checks primitive-required runner capabilities for both interpreted and
+  legacy runners.
+- **Current scope:** all shipped operations use the legacy handler-backed
+  runner (`legacy_python_handler`). The interpreted runner is activated only
+  by test fixture operations. Documentation claims must not imply shipped
+  operation migration beyond fixture coverage.
+
+**Legacy handler-backed path** (`runner_id = "legacy_python_handler"`):
+- All six shipped runtime-effect operations (Planner disposition, five
+  Blueprint operations) use this runner.
+- Handler callables are registered in `runtime/effects/legacy.py` and
+  executed directly. The handler registry in `runtime/effects/registry.py`
+  provides operation-id-to-handler lookup.
+- `effect_execution.py:_handler_for_operation()` resolves handlers for
+  legacy-runner operations through the registry; `_legacy_handler_id_for_
+  operation()` maps operation IDs to legacy handler IDs for result
+  annotation and failure-policy matching.
+- `runtime/effects/operation_runners/` contains the Python mutation code
+  for these handler-backed operations (Blueprint candidate evaluation,
+  Mechanic repair, etc.).
 
 ### Scheduler-policy authority
 
@@ -237,6 +305,8 @@ then delegates to `generic_router.py`'s
 `route_generic_stage_result_from_graph`, which resolves the compiled graph
 plan (threshold policies, transitions, terminal actions) and returns a
 `RouterDecision` with terminal-action/lifecycle/runtime-operation metadata.
+Fallback route reasons and failure classes derive from compiled ``node_id``
+rather than runtime stage-name strings.
 
 **Runtime mutation owner:** `runtime/result_application.py` applies the
 compiled router decision through execution-specific helpers. Runtime-owned
@@ -638,3 +708,17 @@ consistent.
   table. The old fixed whitelist is no longer active authority.
 - "Root source" identifies recoverable closure evidence; it is not a storage
   key for Blueprint manifests or a license to search arbitrary local files.
+- Runtime-effect operation dispatch splits into interpreted and legacy
+  handler-backed paths based on compiled runner identity. The interpreted
+  path walks compiled steps through a primitive executor registry; the
+  legacy path calls registered Python handler functions. All shipped
+  operations use the legacy path; the interpreted path is fixture-only.
+- Primitive definitions in `runtime_effect_primitives/` assets carry a
+  `non_interpreted_compatibility` marker. Primitives marked `true` have no
+  interpreted executor and are rejected at compile time when referenced by
+  interpreted-runner operations. Primitives marked `false` must have a
+  registered executor and a matching compiled definition.
+- Operation runner ownership flows from `RuntimeEffectOperationRunnerDefinition.
+  operation_ids`, not from an operation-local `runner_id` field. The runtime
+  resolves runners by scanning the compiled runner map for the runner whose
+  `operation_ids` includes the target operation.

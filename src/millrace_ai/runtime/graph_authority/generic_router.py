@@ -70,10 +70,10 @@ def route_generic_stage_result_from_graph(
         str,
     ],
     default_threshold_failure_class_fn: Callable[
-        [StageName, CompiledGraphThresholdPolicyPlan, bool], str
+        [StageResultEnvelope, StageName, CompiledGraphThresholdPolicyPlan, bool], str
     ],
     threshold_reason_fn: Callable[
-        [StageName, CompiledGraphThresholdPolicyPlan, bool], str
+        [StageResultEnvelope, StageName, CompiledGraphThresholdPolicyPlan, bool], str
     ],
     **kwargs: object,
 ) -> RouterDecision:
@@ -107,7 +107,7 @@ def route_generic_stage_result_from_graph(
             snapshot,
             stage_result,
             default=default_threshold_failure_class_fn(
-                source_stage, threshold_policy, exhausted=False
+                stage_result, source_stage, threshold_policy, exhausted=False
             ),
         )
         attempts = counter_attempts_for_name(
@@ -129,10 +129,10 @@ def route_generic_stage_result_from_graph(
                     snapshot,
                     stage_result,
                     default=default_threshold_failure_class_fn(
-                        source_stage, threshold_policy, exhausted=True
+                        stage_result, source_stage, threshold_policy, exhausted=True
                     ),
                 ),
-                reason=threshold_reason_fn(source_stage, threshold_policy, exhausted=True),
+                reason=threshold_reason_fn(stage_result, source_stage, threshold_policy, exhausted=True),
             )
 
     # 2. Resume policy check
@@ -161,6 +161,8 @@ def route_generic_stage_result_from_graph(
         threshold_policy=threshold_policy,
         terminal_failure_class_fn=terminal_failure_class_fn,
         terminal_reason_fn=terminal_reason_fn,
+        default_threshold_failure_class_fn=default_threshold_failure_class_fn,
+        threshold_reason_fn=threshold_reason_fn,
     )
 
 
@@ -181,6 +183,12 @@ def _decision_from_transition(
         [StageResultEnvelope, StageName, str, str, str | None],
         str,
     ],
+    default_threshold_failure_class_fn: Callable[
+        [StageResultEnvelope, StageName, CompiledGraphThresholdPolicyPlan, bool], str
+    ] | None = None,
+    threshold_reason_fn: Callable[
+        [StageResultEnvelope, StageName, CompiledGraphThresholdPolicyPlan, bool], str
+    ] | None = None,
 ) -> RouterDecision:
     terminal_result = terminal_outcome_value(stage_result.terminal_result)
 
@@ -189,10 +197,14 @@ def _decision_from_transition(
             failure_class = resolve_failure_class(
                 snapshot,
                 stage_result,
-                default=_threshold_failure_class_default(
-                    source_stage,
-                    threshold_policy,
-                    exhausted=False,
+                default=(
+                    default_threshold_failure_class_fn(
+                        stage_result, source_stage, threshold_policy, exhausted=False
+                    )
+                    if default_threshold_failure_class_fn is not None
+                    else _threshold_failure_class_default(
+                        stage_result, source_stage, threshold_policy, exhausted=False
+                    )
                 ),
             )
             counter_mutation = _threshold_counter_mutation_name(threshold_policy)
@@ -202,7 +214,15 @@ def _decision_from_transition(
                 next_stage=stage_for_node(graph, transition.target_node_id),
                 next_node_id=transition.target_node_id,
                 next_stage_kind_id=node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
-                reason=_threshold_reason(source_stage, threshold_policy, exhausted=False),
+                reason=(
+                    threshold_reason_fn(
+                        stage_result, source_stage, threshold_policy, exhausted=False
+                    )
+                    if threshold_reason_fn is not None
+                    else _threshold_reason(
+                        stage_result, source_stage, threshold_policy, exhausted=False
+                    )
+                ),
                 failure_class=failure_class,
                 counter_key=counter_key_from_snapshot(snapshot, failure_class),
                 counter_mutation_name=counter_mutation,
@@ -214,7 +234,7 @@ def _decision_from_transition(
             next_stage=stage_for_node(graph, transition.target_node_id),
             next_node_id=transition.target_node_id,
             next_stage_kind_id=node_plan_by_id(graph, transition.target_node_id).stage_kind_id,
-            reason=f"{source_stage.value}:{terminal_result}",
+            reason=f"{stage_result.node_id}:{terminal_result}",
         )
 
     terminal_state_id = transition.terminal_state_id
@@ -257,10 +277,15 @@ def execution_terminal_reason(
     writes_status: str,
     router_reason: str | None,
 ) -> str:
-    """Execution-plane terminal reason formatter."""
+    """Execution-plane terminal reason formatter.
+
+    Falls back to ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string) when no compiled
+    ``router_reason`` overrides.
+    """
     if router_reason is not None and terminal_result == writes_status:
         return router_reason
-    return f"{source_stage.value}:{terminal_result}"
+    return f"{stage_result.node_id}:{terminal_result}"
 
 
 def planning_terminal_reason(
@@ -285,12 +310,17 @@ def learning_terminal_reason(
     writes_status: str,
     router_reason: str | None,
 ) -> str:
-    """Learning-plane terminal reason formatter."""
+    """Learning-plane terminal reason formatter.
+
+    Falls back to ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string) for non-success and
+    success-based fallback formatting.
+    """
     if router_reason is not None and terminal_result == writes_status:
         return router_reason
     if not stage_result.success:
-        return f"{source_stage.value}_blocked"
-    return f"{source_stage.value}:{terminal_result}"
+        return f"{stage_result.node_id}_blocked"
+    return f"{stage_result.node_id}:{terminal_result}"
 
 
 def execution_terminal_failure_class(
@@ -311,13 +341,18 @@ def planning_terminal_failure_class(
     terminal_class: GraphLoopTerminalClass,
     failure_class_template: str | None,
 ) -> str | None:
-    """Planning-plane terminal failure class formatter."""
+    """Planning-plane terminal failure class formatter.
+
+    Falls back to ``failure_class_template`` from compiled terminal state,
+    then to ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string).
+    """
     if terminal_class is not GraphLoopTerminalClass.BLOCKED:
         return None
     metadata_failure_class = stage_result.metadata.get("failure_class")
     if isinstance(metadata_failure_class, str) and metadata_failure_class.strip():
         return normalize_failure_class(metadata_failure_class)
-    return normalize_failure_class(failure_class_template or f"{source_stage.value}_blocked")
+    return normalize_failure_class(failure_class_template or f"{stage_result.node_id}_blocked")
 
 
 def learning_terminal_failure_class(
@@ -327,13 +362,18 @@ def learning_terminal_failure_class(
     terminal_class: GraphLoopTerminalClass,
     failure_class_template: str | None,
 ) -> str | None:
-    """Learning-plane terminal failure class formatter."""
+    """Learning-plane terminal failure class formatter.
+
+    Falls back to ``failure_class_template`` from compiled terminal state,
+    then to ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string).
+    """
     if terminal_class is not GraphLoopTerminalClass.BLOCKED:
         return None
     metadata_failure_class = stage_result.metadata.get("failure_class")
     if isinstance(metadata_failure_class, str) and metadata_failure_class.strip():
         return normalize_failure_class(metadata_failure_class)
-    return normalize_failure_class(failure_class_template or f"{source_stage.value}_blocked")
+    return normalize_failure_class(failure_class_template or f"{stage_result.node_id}_blocked")
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +382,7 @@ def learning_terminal_failure_class(
 
 
 def _threshold_failure_class_default(
+    stage_result: StageResultEnvelope,
     source_stage: StageName,
     threshold_policy: CompiledGraphThresholdPolicyPlan,
     *,
@@ -354,10 +395,11 @@ def _threshold_failure_class_default(
     )
     if policy_default is not None:
         return policy_default
-    return f"{source_stage.value}_{threshold_policy.on_outcome.lower()}"
+    return f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
 
 
 def _threshold_reason(
+    stage_result: StageResultEnvelope,
     source_stage: StageName,
     threshold_policy: CompiledGraphThresholdPolicyPlan,
     *,
@@ -370,10 +412,11 @@ def _threshold_reason(
     )
     if policy_reason is not None:
         return policy_reason
-    return f"{source_stage.value}_{threshold_policy.on_outcome.lower()}"
+    return f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
 
 
 def planning_threshold_reason(
+    stage_result: StageResultEnvelope,
     source_stage: StageName,
     threshold_policy: CompiledGraphThresholdPolicyPlan,
     *,
@@ -382,7 +425,8 @@ def planning_threshold_reason(
     """
     Planning-plane threshold reason formatter.
 
-    Preserves the legacy ``:mechanic_attempts_exhausted`` suffix appended
+    Derives fallback reason from ``stage_result.node_id`` (compiled node identity)
+    and preserves the legacy ``:mechanic_attempts_exhausted`` suffix appended
     when the mechanic-attempt counter has been exhausted.
     """
     policy_reason = (
@@ -392,7 +436,7 @@ def planning_threshold_reason(
     )
     if policy_reason is not None:
         return policy_reason
-    reason = f"{source_stage.value}_{threshold_policy.on_outcome.lower()}"
+    reason = f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
     if exhausted and threshold_policy.counter_name.value == "mechanic_attempt_count":
         return f"{reason}:mechanic_attempts_exhausted"
     return reason

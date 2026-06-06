@@ -6,9 +6,12 @@ from millrace_ai.architecture import (
     ArtifactContractDefinition,
     LifecycleMutationPlanDefinition,
     RegisteredStageKindDefinition,
+    RuntimeEffectFailureMappingDefinition,
     RuntimeEffectHandlerDefinition,
     RuntimeEffectOperationDefinition,
     RuntimeEffectOperationRunnerDefinition,
+    RuntimeEffectOperationStepDefinition,
+    RuntimeEffectPrimitiveDefinition,
     RuntimeEffectRuleDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
@@ -19,28 +22,6 @@ from ..outcomes import CompilerValidationError
 from .operation_runners import (
     operation_ids_for_legacy_handler,
     validate_runtime_effect_runner_registry,
-)
-
-_SUPPORTED_EFFECT_PRIMITIVE_IDS = frozenset(
-    {
-        "artifact_presence",
-        "artifact_model_parse",
-        "active_work_item_lookup",
-        "blueprint_critique_packet_validation",
-        "blueprint_evaluation_packet_validation",
-        "blueprint_generated_task_validation",
-        "blueprint_manifest_sequence_validation",
-        "blueprint_packet_draft_validation",
-        "copy_artifact",
-        "enqueue_work_items",
-        "legacy_python_handler",
-        "move_record",
-        "mutation_journal_append",
-        "persist_record",
-        "source_lifecycle",
-        "store_equivalence_check",
-        "work_item_patch",
-    }
 )
 
 
@@ -176,6 +157,7 @@ def validate_runtime_effect_rules(
 def validate_runtime_effect_operations(
     *,
     artifact_contracts_by_id: dict[str, ArtifactContractDefinition],
+    runtime_effect_primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition],
     runtime_effect_rules_by_id: dict[str, RuntimeEffectRuleDefinition],
     effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition],
     effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition],
@@ -206,6 +188,7 @@ def validate_runtime_effect_operations(
         _validate_primitive_id(
             validator.primitive_id,
             source_label=f"runtime effect validator {validator.validator_id}",
+            primitives_by_id=runtime_effect_primitives_by_id,
         )
         for artifact_id in validator.input_artifact_ids:
             if artifact_id not in artifact_contracts_by_id:
@@ -226,6 +209,8 @@ def validate_runtime_effect_operations(
             artifact_contracts_by_id=artifact_contracts_by_id,
             effect_stores_by_id=effect_stores_by_id,
             effect_validators_by_id=effect_validators_by_id,
+            primitives_by_id=runtime_effect_primitives_by_id,
+            runners_by_operation_id=runners_by_operation_id,
         )
 
 
@@ -235,6 +220,8 @@ def _validate_runtime_effect_operation(
     artifact_contracts_by_id: dict[str, ArtifactContractDefinition],
     effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition],
     effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition],
+    primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition],
+    runners_by_operation_id: dict[str, RuntimeEffectOperationRunnerDefinition],
 ) -> None:
     known_operation_artifacts = set(operation.required_artifacts) | set(operation.produced_artifacts)
     for artifact_id in known_operation_artifacts:
@@ -245,22 +232,38 @@ def _validate_runtime_effect_operation(
             )
 
     write_step_count = 0
+    operation_primitive_ids: set[str] = set()
+    written_context_keys: set[str] = set()
     for step in operation.steps:
-        _validate_primitive_id(
+        primitive = _validate_primitive_id(
             step.primitive_id,
             source_label=f"runtime effect operation {operation.operation_id} step {step.step_id}",
+            primitives_by_id=primitives_by_id,
         )
+        operation_primitive_ids.add(step.primitive_id)
         for artifact_id in step.reads_artifact_ids:
             if artifact_id not in known_operation_artifacts:
                 raise CompilerValidationError(
                     f"runtime effect operation {operation.operation_id} step {step.step_id} "
                     f"references artifact {artifact_id} not declared by the operation"
                 )
-        if step.store_id is not None and step.store_id not in effect_stores_by_id:
-            raise CompilerValidationError(
-                f"runtime effect operation {operation.operation_id} step {step.step_id} "
-                f"references unknown store {step.store_id}"
+        if step.store_id is not None:
+            if step.store_id not in effect_stores_by_id:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation.operation_id} step {step.step_id} "
+                    f"references unknown store {step.store_id}"
+                )
+            _validate_primitive_store_type(
+                operation.operation_id,
+                step,
+                primitive,
+                effect_stores_by_id=effect_stores_by_id,
             )
+        _validate_primitive_mutation_phase(
+            operation.operation_id,
+            step,
+            primitive,
+        )
         for validator_id in step.validator_ids:
             validator = effect_validators_by_id.get(validator_id)
             if validator is None:
@@ -271,6 +274,20 @@ def _validate_runtime_effect_operation(
             _validate_operation_validator_binding(operation, validator)
         if step.writes_store:
             write_step_count += 1
+            if primitive.idempotency_required and not operation.idempotency.equivalence_validator_ids:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation.operation_id} step {step.step_id} "
+                    f"uses write primitive {step.primitive_id} that requires idempotency metadata"
+                )
+        _validate_step_bindings(
+            operation.operation_id,
+            step,
+            artifact_contracts_by_id=artifact_contracts_by_id,
+            effect_stores_by_id=effect_stores_by_id,
+            written_context_keys=written_context_keys,
+        )
+        if step.output_context_key is not None:
+            written_context_keys.add(step.output_context_key)
 
     for mapping in operation.failure_mappings:
         if mapping.validator_id is not None and mapping.validator_id not in effect_validators_by_id:
@@ -278,6 +295,12 @@ def _validate_runtime_effect_operation(
                 f"runtime effect operation {operation.operation_id} failure mapping "
                 f"{mapping.failure_class} references unknown validator {mapping.validator_id}"
             )
+        _validate_failure_class_mapped_by_primitive(
+            operation.operation_id,
+            mapping,
+            primitives_by_id=primitives_by_id,
+            effect_validators_by_id=effect_validators_by_id,
+        )
     for validator_id in operation.idempotency.equivalence_validator_ids:
         validator = effect_validators_by_id.get(validator_id)
         if validator is None:
@@ -292,6 +315,12 @@ def _validate_runtime_effect_operation(
             f"runtime effect operation {operation.operation_id} has multiple write steps "
             "without partial_commit_policy"
         )
+
+    _validate_runner_primitive_capabilities(
+        operation,
+        primitives_by_id=primitives_by_id,
+        runners_by_operation_id=runners_by_operation_id,
+    )
 
 
 def _validate_rule_operation_compatibility(
@@ -359,12 +388,183 @@ def _validate_operation_validator_binding(
         )
 
 
-def _validate_primitive_id(primitive_id: str, *, source_label: str) -> None:
-    if primitive_id in _SUPPORTED_EFFECT_PRIMITIVE_IDS:
-        return
+def _validate_primitive_id(
+    primitive_id: str,
+    *,
+    source_label: str,
+    primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition],
+) -> RuntimeEffectPrimitiveDefinition:
+    primitive = primitives_by_id.get(primitive_id)
+    if primitive is not None:
+        return primitive
     raise CompilerValidationError(
         f"{source_label} references unknown primitive {primitive_id}"
     )
+
+
+def _validate_primitive_store_type(
+    operation_id: str,
+    step: RuntimeEffectOperationStepDefinition,
+    primitive: RuntimeEffectPrimitiveDefinition,
+    *,
+    effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition],
+) -> None:
+    if step.store_id is None:
+        return
+    store = effect_stores_by_id.get(step.store_id)
+    if store is None:
+        return
+    if primitive.non_interpreted_compatibility:
+        return
+    if store.store_type not in primitive.allowed_store_types:
+        raise CompilerValidationError(
+            f"runtime effect operation {operation_id} step {step.step_id} "
+            f"primitive {step.primitive_id} does not allow store type {store.store_type}"
+        )
+
+
+def _validate_primitive_mutation_phase(
+    operation_id: str,
+    step: RuntimeEffectOperationStepDefinition,
+    primitive: RuntimeEffectPrimitiveDefinition,
+) -> None:
+    if primitive.non_interpreted_compatibility:
+        return
+    if step.mutation_phase not in primitive.allowed_mutation_phases:
+        raise CompilerValidationError(
+            f"runtime effect operation {operation_id} step {step.step_id} "
+            f"primitive {step.primitive_id} does not allow mutation phase "
+            f"{step.mutation_phase}"
+        )
+
+
+def _validate_failure_class_mapped_by_primitive(
+    operation_id: str,
+    mapping: RuntimeEffectFailureMappingDefinition,
+    *,
+    primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition],
+    effect_validators_by_id: dict[str, RuntimeEffectValidatorDefinition],
+) -> None:
+    validator = effect_validators_by_id.get(mapping.validator_id) if mapping.validator_id else None
+    if validator is None:
+        return
+    primitive = primitives_by_id.get(validator.primitive_id)
+    if primitive is None or primitive.non_interpreted_compatibility:
+        return
+    if mapping.mutation_phase not in ("pre_mutation", "unknown"):
+        if mapping.failure_class not in primitive.failure_classes:
+            raise CompilerValidationError(
+                f"runtime effect operation {operation_id} failure mapping "
+                f"{mapping.failure_class} references primitive {validator.primitive_id} "
+                f"that does not declare that failure class"
+            )
+
+
+def _interpreted_primitive_ids(
+    primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition],
+) -> frozenset[str]:
+    return frozenset(
+        pid
+        for pid, p in primitives_by_id.items()
+        if not p.non_interpreted_compatibility
+    )
+
+
+def _validate_runner_primitive_capabilities(
+    operation: RuntimeEffectOperationDefinition,
+    *,
+    primitives_by_id: dict[str, RuntimeEffectPrimitiveDefinition],
+    runners_by_operation_id: dict[str, RuntimeEffectOperationRunnerDefinition],
+) -> None:
+    runner = runners_by_operation_id.get(operation.operation_id)
+    if runner is None:
+        return
+    is_legacy = runner.runner_id == "legacy_python_handler"
+    if is_legacy:
+        for step in operation.steps:
+            primitive = primitives_by_id.get(step.primitive_id)
+            if primitive is None:
+                continue
+            missing_capabilities = set(primitive.required_capabilities) - set(
+                runner.runtime_capabilities_for_operation(operation.operation_id)
+            )
+            if missing_capabilities:
+                missing = sorted(missing_capabilities)[0]
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation.operation_id} step {step.step_id} "
+                    f"primitive {step.primitive_id} requires runner capability {missing} "
+                    f"not declared by runner {runner.runner_id}"
+                )
+        return
+    is_interpreted = runner.runner_id == "interpreted_runtime_effect"
+    interpreted_ids = _interpreted_primitive_ids(primitives_by_id)
+    runner_capabilities = set(runner.runtime_capabilities_for_operation(operation.operation_id))
+    for step in operation.steps:
+        primitive = primitives_by_id.get(step.primitive_id)
+        if primitive is None:
+            continue
+        if is_interpreted and step.primitive_id not in interpreted_ids:
+            raise CompilerValidationError(
+                f"runtime effect operation {operation.operation_id} step {step.step_id} "
+                f"references non-interpreted primitive {step.primitive_id} "
+                f"that has no interpreted executor"
+            )
+        if primitive.non_interpreted_compatibility:
+            continue
+        missing_capabilities = set(primitive.required_capabilities) - runner_capabilities
+        if missing_capabilities:
+            missing = sorted(missing_capabilities)[0]
+            raise CompilerValidationError(
+                f"runtime effect operation {operation.operation_id} step {step.step_id} "
+                f"primitive {step.primitive_id} requires runner capability {missing} "
+                f"not declared by runner {runner.runner_id}"
+            )
+
+
+_BINDING_ARTIFACT_PREFIX = "$artifact."
+_BINDING_CONTEXT_PREFIX = "$context."
+_BINDING_STORE_PREFIX = "$store."
+
+
+def _validate_step_bindings(
+    operation_id: str,
+    step: RuntimeEffectOperationStepDefinition,
+    *,
+    artifact_contracts_by_id: dict[str, ArtifactContractDefinition],
+    effect_stores_by_id: dict[str, RuntimeEffectStoreDefinition],
+    written_context_keys: set[str],
+) -> None:
+    for binding_key, binding_value in step.input_bindings.items():
+        if not binding_value.startswith("$"):
+            continue
+        if binding_value.startswith(_BINDING_ARTIFACT_PREFIX):
+            artifact_id = binding_value[len(_BINDING_ARTIFACT_PREFIX):]
+            if artifact_id not in artifact_contracts_by_id:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation_id} step {step.step_id} "
+                    f"binding {binding_key} references unknown artifact {artifact_id}"
+                )
+        elif binding_value.startswith(_BINDING_STORE_PREFIX):
+            store_id = binding_value[len(_BINDING_STORE_PREFIX):]
+            if store_id not in effect_stores_by_id:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation_id} step {step.step_id} "
+                    f"binding {binding_key} references unknown store {store_id}"
+                )
+        elif binding_value.startswith(_BINDING_CONTEXT_PREFIX):
+            context_key = binding_value[len(_BINDING_CONTEXT_PREFIX):]
+            if context_key not in written_context_keys:
+                raise CompilerValidationError(
+                    f"runtime effect operation {operation_id} step {step.step_id} "
+                    f"binding {binding_key} reads context key {context_key} before any prior "
+                    f"step writes it"
+                )
+    if step.context_read_key is not None:
+        if step.context_read_key not in written_context_keys:
+            raise CompilerValidationError(
+                f"runtime effect operation {operation_id} step {step.step_id} "
+                f"reads context key {step.context_read_key} before any prior step writes it"
+            )
 
 
 def _stage_kind_for_node_or_kind(

@@ -54,9 +54,10 @@ That compiled plan freezes:
   priority
 - workflow primitives: work-item families, document adapters, queue claim
   policies, scheduler policies, terminal actions, lifecycle mutation plans,
-  runtime effect handlers, runtime operation registry assets, recovery
-  policies, runtime failure policies, runtime effect rules, and the active
-  workspace schema epoch
+  runtime effect handlers, runtime effect operations, runtime effect runners,
+  runtime effect stores, runtime effect validators, runtime effect
+  primitives, runtime operation registry assets, recovery policies, runtime
+  failure policies, runtime effect rules, and the active workspace schema epoch
 - resolved asset references and content hashes
 
 The compiler validates terminal-action `runtime_operation_id` references
@@ -113,8 +114,11 @@ Current compile authority comes from:
   `registry/document_adapters/`, `registry/queue_claim_policies/`,
   `registry/terminal_actions/`,
   `registry/lifecycle_mutation_plans/`,
-  `registry/runtime_effect_handlers/`, `registry/recovery_policies/`,
-  `registry/runtime_failure_policies/`, and `registry/workspace_schema_epochs/`
+  `registry/runtime_effect_handlers/`, `registry/runtime_effect_operations/`,
+  `registry/runtime_effect_runners/`, `registry/runtime_effect_primitives/`,
+  `registry/effect_stores/`, `registry/effect_validators/`,
+  `registry/recovery_policies/`, `registry/runtime_failure_policies/`, and
+  `registry/workspace_schema_epochs/`
 - `entrypoints/`
 - `skills/`
 
@@ -149,8 +153,9 @@ are treated as recompile boundaries.
 
 At runtime startup, Millrace invokes the same compiler path used by explicit
 compile commands with `compile_if_needed=True`. If the persisted compiled plan
-still matches current compile inputs, startup reuses it. If inputs changed,
-startup recompiles before execution continues.
+still matches current compile inputs and still carries required workflow
+authority, startup reuses it. If inputs changed or required workflow authority
+is missing, startup recompiles before execution continues.
 
 ## Workflow Primitive Authority
 
@@ -158,11 +163,13 @@ Workflow primitives are data-driven runtime contracts, not advisory docs.
 Their built-in assets define the work-item families Millrace can claim, the
 document adapters used to parse them, per-plane queue claim policies,
 scheduler policies, legal terminal actions, source lifecycle mutation plans,
-runtime effect handlers, and failure/recovery policy hooks. Artifact contracts
-are part of that same authority surface: each declares an artifact id,
-canonical filename, accepted legacy filenames, parser/schema, required
-outcomes, and consuming runtime effect. Request-context rendering and runtime
-effects use those declarations instead of stage-specific hard-coded filenames.
+runtime effect handlers, runtime effect operations, runtime effect runners,
+runtime effect stores, runtime effect validators, runtime effect primitives,
+and failure/recovery policy hooks. Artifact contracts are part of that same
+authority surface: each declares an artifact id, canonical filename, accepted
+legacy filenames, parser/schema, required outcomes, and consuming runtime
+effect. Request-context rendering and runtime effects use those
+declarations instead of stage-specific hard-coded filenames.
 
 The architecture rationale is recorded in
 `docs/adr/0010-compiler-validated-workflow-primitives-as-runtime-authority.md`.
@@ -174,13 +181,48 @@ then read the compiled plan instead of maintaining separate hard-coded tables
 for stage work-item ownership, queue claim policy, scheduler policy, terminal
 lifecycle intent, runtime-operation lookup, or effect-handler lookup.
 
+Runtime-effect operation step validation resolves each `primitive_id` through
+compiled `RuntimeEffectPrimitiveDefinition` records in
+`runtime_effect_primitives_by_id`, not through a source-code allowlist. For
+non-compatibility primitives, compile validation also checks store type,
+mutation phase, idempotency metadata for write primitives, post-mutation
+failure-class declarations, and runner capabilities. Shipped legacy handler
+operations continue to compile through `non_interpreted_compatibility`
+primitive metadata.
+
+For operations routed to `interpreted_runtime_effect`, compile validation
+derives the interpreted primitive set from compiled definitions whose
+`non_interpreted_compatibility` marker is `false`, requires every step
+primitive to have a registered interpreted executor, and requires every
+interpreted executor id to have a matching compiled primitive definition.
+Legacy-runner operations are checked against primitive-required capabilities
+declared by their runner instead of a separate hard-coded interpreted primitive
+set.
+
+Runtime-effect operation steps also carry the interpreted-runner binding model:
+`input_bindings`, JSON-compatible `params`, `output_context_key`, and
+`context_read_key`. Binding values that start with `$` are limited to
+`$artifact.<id>`, `$store.<id>`, or `$context.<key>` references. Model
+validation rejects malformed binding grammar and path-like literals with
+absolute paths or traversal, while compile validation rejects unknown
+artifact/store references and context reads before a prior step has written the
+key.
+
+At runtime, `effect_execution.py` dispatches operations whose selected runner
+id is `interpreted_runtime_effect` to `runtime/effects/interpreter.py`. The
+interpreter walks the compiled steps and resolves primitive ids through the
+runtime primitive executor registry in `runtime/effects/primitives.py`; legacy
+handler-backed operations continue through the operation-indexed handler
+registry.
+
 Invalid primitive graphs fail at compile time. Examples include a queue claim
 policy that references an unknown work-item family, a terminal action that
-names a missing lifecycle plan or effect handler, a runtime effect rule that
-targets a missing handler, an artifact contract referenced by an effect handler
-but not declared, a runtime-effect failure policy that targets a node outside
-the source plane, or a graph entry whose stage kind cannot own the declared
-work-item family.
+names a missing lifecycle plan or runtime-effect rule, a runtime-effect rule
+that references an unknown operation or incompatible handler-backed metadata,
+a runtime-effect operation step that references an unknown primitive, an
+artifact contract referenced by an effect operation but not declared, a
+runtime-effect failure policy that targets a node outside the source plane, or
+a graph entry whose stage kind cannot own the declared work-item family.
 
 The compiler validates structure and cross-references. The runtime still owns
 dynamic checks that require actual run artifacts or mutable queue state, such
@@ -227,11 +269,15 @@ inspection output.
 
 - a persisted `compiled_plan.json` exists
 - the plan's stored `compile_input_fingerprint` matches current expected inputs
+- the plan still carries required workflow authority, including the required
+  workflow-authority asset families in `resolved_assets` and non-empty compiled
+  maps such as `runtime_effect_primitives_by_id`
 
 `stale` means:
 
 - a persisted plan exists
-- current compile inputs no longer match that plan
+- current compile inputs no longer match that plan, or the plan is missing
+  required workflow authority even when the fingerprint matches
 
 `missing` means:
 
@@ -325,9 +371,11 @@ compile inputs drift.
 The runtime rule is:
 
 - if recompile fails and the persisted last-known-good plan still matches the
-  current compile fingerprint, Millrace may keep using it
-- if recompile fails and the persisted plan is stale, startup and config reload
-  refuse to continue on that stale plan
+  current compile fingerprint and carries required workflow authority, Millrace
+  may keep using it
+- if recompile fails and the persisted plan is stale by fingerprint or missing
+  required workflow authority, startup and config reload refuse to continue on
+  that stale plan
 
 That refusal is what preserves long-horizon stability without pretending that a
 mismatched plan is still authoritative.

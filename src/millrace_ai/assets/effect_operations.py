@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from millrace_ai.architecture import (
     RuntimeEffectOperationDefinition,
+    RuntimeEffectPrimitiveDefinition,
     RuntimeEffectStoreDefinition,
     RuntimeEffectValidatorDefinition,
     RuntimeOperationDefinition,
@@ -20,6 +21,7 @@ ASSETS_ROOT = Path(__file__).resolve().parent
 EFFECT_STORE_REGISTRY_ROOT = Path("registry/effect_stores")
 EFFECT_VALIDATOR_REGISTRY_ROOT = Path("registry/effect_validators")
 RUNTIME_EFFECT_OPERATION_REGISTRY_ROOT = Path("registry/runtime_effect_operations")
+RUNTIME_EFFECT_PRIMITIVE_REGISTRY_ROOT = Path("registry/runtime_effect_primitives")
 RUNTIME_OPERATION_REGISTRY_ROOT = Path("registry/runtime_operations")
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -65,6 +67,19 @@ def discover_runtime_effect_operation_definitions(
         model=RuntimeEffectOperationDefinition,
         id_attr="operation_id",
         asset_kind="runtime effect operation",
+    )
+
+
+def discover_runtime_effect_primitive_definitions(
+    *,
+    assets_root: Path | None = None,
+) -> tuple[RuntimeEffectPrimitiveDefinition, ...]:
+    return _discover_definitions(
+        assets_root=assets_root,
+        registry_root=RUNTIME_EFFECT_PRIMITIVE_REGISTRY_ROOT,
+        model=RuntimeEffectPrimitiveDefinition,
+        id_attr="primitive_id",
+        asset_kind="runtime effect primitive",
     )
 
 
@@ -177,9 +192,11 @@ __all__ = [
     "EFFECT_VALIDATOR_REGISTRY_ROOT",
     "EffectOperationAssetError",
     "RUNTIME_EFFECT_OPERATION_REGISTRY_ROOT",
+    "RUNTIME_EFFECT_PRIMITIVE_REGISTRY_ROOT",
     "RUNTIME_OPERATION_REGISTRY_ROOT",
     "discover_effect_store_definitions",
     "discover_effect_validator_definitions",
     "discover_runtime_effect_operation_definitions",
+    "discover_runtime_effect_primitive_definitions",
     "discover_runtime_operation_definitions",
 ]

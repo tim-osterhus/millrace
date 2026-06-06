@@ -1,0 +1,115 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "active_work_item_lookup",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "artifact_model_parse",
+      "non_interpreted_compatibility": false
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "artifact_presence",
+      "non_interpreted_compatibility": false
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "blueprint_critique_packet_validation",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "blueprint_evaluation_packet_validation",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "blueprint_generated_task_validation",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "blueprint_manifest_sequence_validation",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "blueprint_packet_draft_validation",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "copy_artifact",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "enqueue_work_items",
+      "non_interpreted_compatibility": false
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "legacy_python_handler",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "move_record",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "mutation_journal_append",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "persist_record",
+      "non_interpreted_compatibility": false
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "source_lifecycle",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "store_equivalence_check",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "work_item_patch",
+      "non_interpreted_compatibility": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_primitive",
+      "primitive_id": "emit_event",
+      "non_interpreted_compatibility": false,
+      "required_capabilities": ["emit_runtime_event"],
+      "allowed_mutation_phases": ["partial_mutation"],
+      "allowed_store_types": []
+    }
+  ]
+}

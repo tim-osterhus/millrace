@@ -2,25 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from millrace_ai.architecture import CompiledRunPlan
+from millrace_ai.architecture import CompiledGraphThresholdPolicyPlan, CompiledRunPlan
+from millrace_ai.architecture.loop_graphs import GraphLoopTerminalClass
 from millrace_ai.contracts import (
-    Plane,
     RecoveryCounters,
     RuntimeSnapshot,
+    StageName,
     StageResultEnvelope,
 )
 from millrace_ai.router import RouterDecision
 
-from .execution import route_execution_stage_result_from_graph
+from .counters import normalize_failure_class
 from .generic_router import route_generic_stage_result_from_graph  # noqa: F401 — re-export
-from .learning import route_learning_stage_result_from_graph
-from .planning import route_planning_stage_result_from_graph
 from .validation import validate_stage_result_matches_snapshot
-
-# Re-export the generic router for callers that import from ``routing``.
-# The active dispatch authority lives in ``generic_router.py``.
 
 
 def route_stage_result_from_graph(
@@ -28,60 +22,138 @@ def route_stage_result_from_graph(
     snapshot: RuntimeSnapshot,
     stage_result: StageResultEnvelope,
     counters: RecoveryCounters,
-    *,
-    max_fix_cycles: int = 2,
-    max_troubleshoot_attempts_before_consult: int = 2,
-    max_mechanic_attempts: int = 2,
 ) -> RouterDecision:
     """
     Resolve a stage result through the compiled graph for the result's plane.
 
-    This is the public dispatch entrypoint. It validates identity, resolves
-    the per-plane graph, and delegates to the per-plane router wrapper.
-    The active dispatch authority lives in ``generic_router.py``.
+    This is the single active dispatch entrypoint. All planes route through
+    ``route_generic_stage_result_from_graph`` with metadata-derived formatter
+    callbacks. No per-plane wrapper dispatch or max-cycle recovery knobs.
+
+    Recovery thresholds are read from compiled graph threshold policies;
+    recovery config values are materialized at compile time.
     """
-    # Validate stage-result identity against active run before any mutable
-    # routing consequence — no durable state mutation without identity check.
     validate_stage_result_matches_snapshot(
         snapshot, stage_result, expected_plane=stage_result.plane
     )
 
-    if max_fix_cycles < 1:
-        raise ValueError("max_fix_cycles must be >= 1")
-    if max_troubleshoot_attempts_before_consult < 1:
-        raise ValueError("max_troubleshoot_attempts_before_consult must be >= 1")
-    if max_mechanic_attempts < 1:
-        raise ValueError("max_mechanic_attempts must be >= 1")
-
-    # Resolve the compiled graph plane plan from compiled-plan metadata using
-    # stage-result identity — routing decisions use compiled graph metadata
-    # plus stage-result identity, not plane-enum branching in the active path.
     graph = graph_plan.graphs_by_plane.get(stage_result.plane)
     if graph is None:
         raise ValueError(f"compiled plan has no graph for plane {stage_result.plane.value}")
 
-    # Per-plane internal helpers remain, but the active dispatch authority is
-    # the compiled-plan-resolved graph, not a plane-enum branch.
-    router = _PLANE_ROUTERS.get(stage_result.plane)
-    if router is None:
-        raise ValueError(f"no router registered for plane {stage_result.plane.value}")
-    return router(
+    source_stage = _source_stage_from_result(stage_result)
+    return route_generic_stage_result_from_graph(
         graph_plan,
         graph,
         snapshot,
         stage_result,
         counters,
-        max_fix_cycles=max_fix_cycles,
-        max_troubleshoot_attempts_before_consult=max_troubleshoot_attempts_before_consult,
-        max_mechanic_attempts=max_mechanic_attempts,
+        source_stage=source_stage,
+        terminal_failure_class_fn=_generic_terminal_failure_class,
+        terminal_reason_fn=_generic_terminal_reason,
+        default_threshold_failure_class_fn=_generic_threshold_failure_class_default,
+        threshold_reason_fn=_generic_threshold_reason,
     )
 
 
-_PLANE_ROUTERS: dict[Plane, Callable[..., RouterDecision]] = {
-    Plane.EXECUTION: route_execution_stage_result_from_graph,
-    Plane.LEARNING: route_learning_stage_result_from_graph,
-    Plane.PLANNING: route_planning_stage_result_from_graph,
-}
+# ---------------------------------------------------------------------------
+# Generic formatter callbacks (plane-agnostic, metadata-derived)
+# ---------------------------------------------------------------------------
+
+
+def _source_stage_from_result(stage_result: StageResultEnvelope) -> StageName:
+    """Derive the canonical stage identity from the stage result."""
+    return stage_result.stage
+
+
+def _generic_terminal_reason(
+    stage_result: StageResultEnvelope,
+    source_stage: StageName,
+    terminal_result: str,
+    writes_status: str,
+    router_reason: str | None,
+) -> str:
+    """Generic terminal reason derived from compiled node identity.
+
+    Prefers compiled ``router_reason`` when it matches the status being written;
+    otherwise falls back to ``stage_result.node_id`` (compiled node identity)
+    rather than ``source_stage.value`` (runtime stage-name string).
+    """
+    if router_reason is not None and terminal_result == writes_status:
+        return router_reason
+    if not stage_result.success:
+        return f"{stage_result.node_id}_blocked"
+    return f"{stage_result.node_id}:{terminal_result}"
+
+
+def _generic_terminal_failure_class(
+    stage_result: StageResultEnvelope,
+    source_stage: StageName,
+    terminal_result: str,
+    terminal_class: GraphLoopTerminalClass,
+    failure_class_template: str | None,
+) -> str | None:
+    """Generic terminal failure class derived from compiled node identity.
+
+    Falls back to ``failure_class_template`` from compiled terminal state,
+    then to ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string).
+    """
+    if terminal_class is not GraphLoopTerminalClass.BLOCKED:
+        return None
+    metadata_failure_class = stage_result.metadata.get("failure_class")
+    if isinstance(metadata_failure_class, str) and metadata_failure_class.strip():
+        return normalize_failure_class(metadata_failure_class)
+    return normalize_failure_class(failure_class_template or f"{stage_result.node_id}_blocked")
+
+
+def _generic_threshold_failure_class_default(
+    stage_result: StageResultEnvelope,
+    source_stage: StageName,
+    threshold_policy: CompiledGraphThresholdPolicyPlan,
+    *,
+    exhausted: bool,
+) -> str:
+    """Generic threshold failure class default derived from compiled node identity.
+
+    Prefers compiled policy templates; falls back to
+    ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string).
+    """
+    template = (
+        threshold_policy.exhausted_failure_class_template
+        if exhausted
+        else threshold_policy.default_failure_class_template
+    )
+    if template is not None:
+        return template
+    return f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
+
+
+def _generic_threshold_reason(
+    stage_result: StageResultEnvelope,
+    source_stage: StageName,
+    threshold_policy: CompiledGraphThresholdPolicyPlan,
+    *,
+    exhausted: bool,
+) -> str:
+    """Generic threshold reason derived from compiled node identity.
+
+    Prefers compiled policy route reasons; falls back to
+    ``stage_result.node_id`` (compiled node identity) rather than
+    ``source_stage.value`` (runtime stage-name string).
+    """
+    policy_reason = (
+        threshold_policy.exhausted_route_reason
+        if exhausted
+        else threshold_policy.route_reason
+    )
+    if policy_reason is not None:
+        return policy_reason
+    reason = f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
+    if exhausted and threshold_policy.counter_name.value == "mechanic_attempt_count":
+        return f"{reason}:mechanic_attempts_exhausted"
+    return reason
 
 
 __all__ = [

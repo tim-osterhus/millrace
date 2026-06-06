@@ -1,0 +1,88 @@
+{
+  "definitions": [
+    {
+      "schema_version": "1.0",
+      "kind": "runtime_effect_operation",
+      "operation_id": "test_interpreted_artifact_to_child",
+      "display_name": "Test interpreted runtime effect: artifact to child work item",
+      "legacy_handler_ids": [],
+      "required_artifacts": ["test_interpreted_input"],
+      "produced_artifacts": [],
+      "steps": [
+        {
+          "step_id": "validate_required_artifacts",
+          "primitive_id": "artifact_presence",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["test_interpreted_input"],
+          "validator_ids": ["test_interpreted_artifact_to_child.required_artifacts"]
+        },
+        {
+          "step_id": "parse_input_artifact",
+          "primitive_id": "artifact_model_parse",
+          "mutation_phase": "pre_mutation",
+          "reads_artifact_ids": ["test_interpreted_input"],
+          "validator_ids": ["test_interpreted_artifact_to_child.input_schema"],
+          "params": {
+            "contract_id": "test_interpreted_input"
+          }
+        },
+        {
+          "step_id": "persist_interpreted_record",
+          "primitive_id": "persist_record",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["test_interpreted_input"],
+          "store_id": "test_interpreted_records",
+          "writes_store": true,
+          "journal_event_type": "persist_interpreted_record"
+        },
+        {
+          "step_id": "enqueue_child_work_item",
+          "primitive_id": "enqueue_work_items",
+          "mutation_phase": "partial_mutation",
+          "reads_artifact_ids": ["test_interpreted_input"],
+          "store_id": "task_queue",
+          "writes_store": true,
+          "journal_event_type": "enqueue_child_work_item",
+          "params": {
+            "family_id": "task",
+            "item_count": 1,
+            "work_item_prefix": "interpreted_child"
+          }
+        }
+      ],
+      "idempotency": {
+        "duplicate_policy": "fail",
+        "replay_policy": "resume_idempotently"
+      },
+      "failure_mappings": [
+        {
+          "failure_class": "required_artifact_missing",
+          "mutation_phase": "pre_mutation",
+          "validator_id": "test_interpreted_artifact_to_child.required_artifacts"
+        },
+        {
+          "failure_class": "artifact_parse_artifact_missing",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "interpreted_step_failure",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "interpreted_primitive_unknown",
+          "mutation_phase": "pre_mutation"
+        },
+        {
+          "failure_class": "interpreted_primitive_error",
+          "mutation_phase": "partial_mutation"
+        }
+      ],
+      "mutation_journal": {
+        "entry_id_template": "{operation_id}:{run_id}:{step_id}",
+        "required_fields": ["operation_id", "rule_id", "run_id", "step_id", "mutation_phase"],
+        "record_step_ids": ["persist_interpreted_record", "enqueue_child_work_item"]
+      },
+      "partial_commit_policy": "block_source"
+    }
+  ]
+}

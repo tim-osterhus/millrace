@@ -64,9 +64,10 @@ per-run `run_trace.json` artifacts. The compiled stage graph remains authority;
 the run trace is inspection evidence.
 Workflow primitives now cover built-in work-item families, document adapters,
 queue claim policies, terminal actions, lifecycle mutation plans, runtime
-effect handlers, recovery/failure policy hooks, and workspace schema epoch
-compatibility. Scheduler lanes now give the runtime durable per-lane state,
-lane conflict validation, launch-plan authority, and request-context evidence.
+effect handlers, operations, runners, stores, validators, primitives,
+recovery/failure policy hooks, and workspace schema epoch compatibility.
+Scheduler lanes now give the runtime durable per-lane state, lane conflict
+validation, launch-plan authority, and request-context evidence.
 Blueprint Planning now exercises that foundation through opt-in Blueprint modes
 with custom Planning stage kinds and runtime-owned effects for draft, packet,
 evaluation, critique, promotion, and generated-task lifecycle. Runtime

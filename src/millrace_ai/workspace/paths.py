@@ -107,6 +107,8 @@ class WorkspacePaths:
     usage_governance_ledger_file: Path
     runtime_lock_file: Path
 
+    runtime_effect_journal_dir: Path
+
     def directories(self) -> tuple[Path, ...]:
         """Return all directories that must exist for a canonical workspace."""
 
@@ -179,6 +181,7 @@ class WorkspacePaths:
             self.logs_dir,
             self.entrypoints_dir,
             self.skills_dir,
+            self.runtime_effect_journal_dir,
         )
 
 
@@ -287,6 +290,7 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         usage_governance_state_file=state_dir / "usage_governance_state.json",
         usage_governance_ledger_file=state_dir / "usage_governance_ledger.jsonl",
         runtime_lock_file=state_dir / "runtime_daemon.lock.json",
+        runtime_effect_journal_dir=state_dir / "runtime-effect-journal",
     )
 
 

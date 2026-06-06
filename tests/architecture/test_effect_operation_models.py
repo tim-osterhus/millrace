@@ -262,3 +262,173 @@ def test_runtime_effect_validator_rejects_duplicate_inputs() -> None:
             input_artifact_ids=("blueprint_manifest", "blueprint_manifest"),
             failure_class="blueprint_manifest_missing",
         )
+
+
+# ---------------------------------------------------------------------------
+# RuntimeEffectOperationStepDefinition - binding and context model tests
+# ---------------------------------------------------------------------------
+
+
+def test_step_accepts_optional_binding_and_context_fields() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="interpret_bindings",
+        primitive_id="blueprint_critique_packet_validation",
+        input_bindings={
+            "manifest": "$artifact.blueprint_manifest",
+            "store_target": "$store.mutation_journal",
+            "parent_context": "$context.prev_result",
+        },
+        params={"threshold": 0.95, "enabled": True},
+        output_context_key="interpreted_output",
+        context_read_key="prev_result",
+    )
+    assert step.input_bindings == {
+        "manifest": "$artifact.blueprint_manifest",
+        "store_target": "$store.mutation_journal",
+        "parent_context": "$context.prev_result",
+    }
+    assert step.params == {"threshold": 0.95, "enabled": True}
+    assert step.output_context_key == "interpreted_output"
+    assert step.context_read_key == "prev_result"
+
+
+def test_step_defaults_empty_bindings_and_params() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="minimal",
+        primitive_id="artifact_presence",
+    )
+    assert step.input_bindings == {}
+    assert step.params == {}
+    assert step.output_context_key is None
+    assert step.context_read_key is None
+
+
+def test_step_round_trips_with_bindings() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="bound_step",
+        primitive_id="artifact_presence",
+        input_bindings={"a": "$artifact.blueprint_manifest"},
+        params={"flag": True},
+        output_context_key="result_key",
+    )
+    payload = step.model_dump(mode="json")
+    assert payload["input_bindings"] == {"a": "$artifact.blueprint_manifest"}
+    assert payload["params"] == {"flag": True}
+    assert payload["output_context_key"] == "result_key"
+    reparsed = RuntimeEffectOperationStepDefinition.model_validate(payload)
+    assert reparsed == step
+
+
+def test_binding_rejects_invalid_dollar_prefix() -> None:
+    with pytest.raises(ValidationError, match="binding value"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "$unknown.thing"},
+        )
+
+
+def test_binding_rejects_bare_dollar() -> None:
+    with pytest.raises(ValidationError, match="binding value"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "$"},
+        )
+
+
+def test_binding_rejects_dollar_artifact_with_spaces() -> None:
+    with pytest.raises(ValidationError, match="binding value"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "$artifact. bad id"},
+        )
+
+
+def test_binding_rejects_dollar_store_with_special_chars() -> None:
+    with pytest.raises(ValidationError, match="binding value"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "$store.bad/id"},
+        )
+
+
+def test_binding_rejects_path_traversal_in_literal() -> None:
+    with pytest.raises(ValidationError, match="path traversal"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "../etc/passwd"},
+        )
+
+
+def test_binding_rejects_absolute_path_in_literal() -> None:
+    with pytest.raises(ValidationError, match="path traversal"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "/etc/passwd"},
+        )
+
+
+def test_binding_rejects_windows_absolute_path_in_literal() -> None:
+    with pytest.raises(ValidationError, match="path traversal"):
+        RuntimeEffectOperationStepDefinition(
+            step_id="bad_binding",
+            primitive_id="artifact_presence",
+            input_bindings={"x": "\\server\\share"},
+        )
+
+
+def test_binding_accepts_json_literal_scalars() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="literal_bindings",
+        primitive_id="artifact_presence",
+        input_bindings={
+            "count": "42",
+            "label": "hello world",
+            "flag": "true",
+        },
+    )
+    assert step.input_bindings["count"] == "42"
+    assert step.input_bindings["label"] == "hello world"
+
+
+def test_binding_accepts_valid_artifact_reference() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="valid_artifact",
+        primitive_id="artifact_presence",
+        input_bindings={"ref": "$artifact.blueprint_manifest"},
+    )
+    assert step.input_bindings["ref"] == "$artifact.blueprint_manifest"
+
+
+def test_binding_accepts_valid_store_reference() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="valid_store",
+        primitive_id="artifact_presence",
+        input_bindings={"ref": "$store.mutation_journal"},
+    )
+    assert step.input_bindings["ref"] == "$store.mutation_journal"
+
+
+def test_binding_accepts_valid_context_reference() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="valid_context",
+        primitive_id="artifact_presence",
+        input_bindings={"ref": "$context.my_key"},
+    )
+    assert step.input_bindings["ref"] == "$context.my_key"
+
+
+def test_context_key_fields_are_normalized() -> None:
+    step = RuntimeEffectOperationStepDefinition(
+        step_id="ctx_step",
+        primitive_id="artifact_presence",
+        output_context_key="  My_Output  ",
+        context_read_key="  my_read_key  ",
+    )
+    assert step.output_context_key == "my_output"
+    assert step.context_read_key == "my_read_key"

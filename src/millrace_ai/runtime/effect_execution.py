@@ -27,6 +27,10 @@ from .effects import (
     SourceLifecycleIntent,
     apply_runtime_effect_result,
 )
+from .effects.interpreter import (
+    INTERPRETED_RUNNER_ID,
+    interpret_operation,
+)
 from .effects.legacy import default_legacy_runtime_effect_handler_registry
 from .error_recovery import (
     record_post_stage_exception_context,
@@ -288,6 +292,31 @@ def _operation_selection_for_rule(
         operation_id,
         rule_handler_id=effect_rule.handler_id,
     )
+    if runner_id == INTERPRETED_RUNNER_ID:
+        # Interpreted runners are dispatched through the step interpreter
+        # without going through the legacy Python handler registry.
+        def _interpreted_handler(
+            paths: WorkspacePaths,
+            stage_result: StageResultEnvelope,
+            run_dir: Path,
+            compiled_plan: CompiledRunPlan | None,
+        ) -> RuntimeEffectResult:
+            assert compiled_plan is not None
+            return interpret_operation(
+                paths,
+                stage_result,
+                run_dir,
+                compiled_plan,
+                operation_id=operation_id,
+                runner_id=runner_id,
+            )
+
+        return _RuntimeEffectOperationSelection(
+            operation_id=operation_id,
+            runner_id=runner_id,
+            legacy_handler_id=None,
+            handler=_interpreted_handler,
+        )
     handler = _handler_for_operation(operation_id, legacy_handler_id=legacy_handler_id)
     if handler is None:
         raise RuntimeError(

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 
-from pydantic import Field, ValidationInfo, field_validator, model_validator
+from pydantic import Field, JsonValue, ValidationInfo, field_validator, model_validator
 
 from .common import normalize_canonical_id, normalize_nonempty_text, normalize_status
 from .stage_kinds import ArchitectureContractModel
@@ -97,6 +98,52 @@ class RuntimeEffectStoreDefinition(ArchitectureContractModel):
         )
 
 
+class RuntimeEffectPrimitiveDefinition(ArchitectureContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["runtime_effect_primitive"] = "runtime_effect_primitive"
+    primitive_id: RuntimeEffectPrimitiveId
+    input_contract_ids: tuple[str, ...] = ()
+    output_contract_ids: tuple[str, ...] = ()
+    allowed_mutation_phases: tuple[RuntimeEffectMutationPhaseValue, ...] = (
+        "pre_mutation",
+        "partial_mutation",
+        "unknown",
+    )
+    required_capabilities: tuple[str, ...] = ()
+    allowed_store_types: tuple[str, ...] = (
+        "run_artifacts",
+        "workspace_state",
+        "queue_family",
+        "blueprint_state",
+        "runtime_state",
+        "mutation_journal",
+    )
+    idempotency_required: bool = False
+    failure_classes: tuple[str, ...] = ()
+    non_interpreted_compatibility: bool = False
+
+    @field_validator("primitive_id")
+    @classmethod
+    def validate_primitive_id(cls, value: str) -> str:
+        return normalize_canonical_id(value, field_label="primitive_id")
+
+    @field_validator(
+        "input_contract_ids",
+        "output_contract_ids",
+        "required_capabilities",
+        "allowed_store_types",
+        "failure_classes",
+        mode="before",
+    )
+    @classmethod
+    def normalize_id_tuples(cls, value: object, info: ValidationInfo) -> tuple[str, ...]:
+        return _normalize_unique_id_tuple(
+            value,
+            field_label=info.field_name or "primitive reference",
+            allow_empty=True,
+        )
+
+
 class RuntimeEffectValidatorDefinition(ArchitectureContractModel):
     schema_version: Literal["1.0"] = "1.0"
     kind: Literal["runtime_effect_validator"] = "runtime_effect_validator"
@@ -131,8 +178,12 @@ class RuntimeEffectOperationStepDefinition(ArchitectureContractModel):
     validator_ids: tuple[RuntimeEffectValidatorId, ...] = ()
     writes_store: bool = False
     journal_event_type: str | None = None
+    input_bindings: dict[str, str] = Field(default_factory=dict)
+    params: dict[str, JsonValue] = Field(default_factory=dict)
+    output_context_key: str | None = None
+    context_read_key: str | None = None
 
-    @field_validator("step_id", "primitive_id", "store_id", "journal_event_type")
+    @field_validator("step_id", "primitive_id", "store_id", "journal_event_type", "output_context_key", "context_read_key")
     @classmethod
     def validate_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
@@ -147,6 +198,16 @@ class RuntimeEffectOperationStepDefinition(ArchitectureContractModel):
             field_label=info.field_name or "operation step references",
             allow_empty=True,
         )
+
+    @field_validator("input_bindings")
+    @classmethod
+    def validate_input_bindings(cls, value: dict[str, str], info: ValidationInfo) -> dict[str, str]:
+        field_label = info.field_name or "input_bindings"
+        for binding_key, binding_value in value.items():
+            if not binding_key.strip():
+                raise ValueError(f"{field_label} key may not be empty")
+            _validate_binding_value(binding_value, field_label=f"{field_label}.{binding_key}")
+        return value
 
     @model_validator(mode="after")
     def validate_write_store(self) -> "RuntimeEffectOperationStepDefinition":
@@ -344,6 +405,30 @@ def _normalize_unique_id_tuple(
     return tuple(deduped)
 
 
+_BINDING_GRAMMAR_RE = re.compile(
+    r"^\$"
+    r"(?:"
+    r"artifact\.[a-z0-9]+(?:[._-][a-z0-9]+)*|"
+    r"context\.[a-z0-9]+(?:[._-][a-z0-9]+)*|"
+    r"store\.[a-z0-9]+(?:[._-][a-z0-9]+)*"
+    r")$"
+)
+
+
+def _validate_binding_value(value: str, *, field_label: str) -> None:
+    if value.startswith("$"):
+        if not _BINDING_GRAMMAR_RE.fullmatch(value):
+            raise ValueError(
+                f"{field_label} binding value {value!r} must match "
+                f"$artifact.<id>, $context.<key>, or $store.<id> with canonical id tokens"
+            )
+        return
+    if ".." in value or value.startswith("/") or value.startswith("\\"):
+        raise ValueError(
+            f"{field_label} binding value must not contain path traversal or absolute paths"
+        )
+
+
 def _normalize_runtime_path_template(value: str, *, field_label: str) -> str:
     normalized = value.strip().replace("\\", "/")
     if not normalized:
@@ -366,9 +451,10 @@ __all__ = [
     "RuntimeEffectMutationPhaseValue",
     "RuntimeEffectOperationDefinition",
     "RuntimeEffectOperationId",
+    "RuntimeEffectPrimitiveDefinition",
+    "RuntimeEffectPrimitiveId",
     "RuntimeEffectRepairClosureContractDefinition",
     "RuntimeEffectOperationStepDefinition",
-    "RuntimeEffectPrimitiveId",
     "RuntimeEffectStepId",
     "RuntimeEffectStoreDefinition",
     "RuntimeEffectStoreId",

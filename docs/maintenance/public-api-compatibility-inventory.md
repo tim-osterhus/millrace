@@ -90,8 +90,8 @@ Both public names must remain importable, but they are different models.
 ## Architecture Package Facade
 
 `millrace_ai.architecture` is the broader public architecture facade. It
-re-exports graph, materialization, stage-kind, runtime-effect operation, and
-workflow primitive contracts. Expected post-package `__all__`:
+re-exports graph, materialization, stage-kind, runtime-effect operation and
+primitive, and workflow primitive contracts. Expected post-package `__all__`:
 
 - `ArchitectureContractModel`
 - `ArtifactContractDefinition`
@@ -151,6 +151,7 @@ workflow primitive contracts. Expected post-package `__all__`:
 - `RuntimeEffectOperationRunnerDefinition`
 - `RuntimeEffectOperationRunnerId`
 - `RuntimeEffectOperationStepDefinition`
+- `RuntimeEffectPrimitiveDefinition`
 - `RuntimeEffectPrimitiveId`
 - `RuntimeEffectRepairClosureContractDefinition`
 - `RuntimeEffectRuleDefinition`

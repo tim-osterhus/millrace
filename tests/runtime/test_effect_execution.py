@@ -18,6 +18,9 @@ from millrace_ai.runtime.effects import (
     RuntimeEffectHandlerRegistry,
     RuntimeEffectResult,
 )
+from millrace_ai.runtime.effects.interpreter import (
+    INTERPRETED_RUNNER_ID,
+)
 from millrace_ai.runtime.effects.legacy import (
     LEGACY_PYTHON_EFFECT_RUNNER_ID,
     default_legacy_runtime_effect_handler_registry,
@@ -451,3 +454,218 @@ def test_runtime_effect_dispatch_resolves_source_lifecycle_from_rule_metadata(
     assert stage_result.metadata["runtime_effect_source_lifecycle_plan_id"] == (
         "complete_source_after_effect"
     )
+
+
+def test_interpreted_runner_bypasses_legacy_handler_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a runner declares runner_id == INTERPRETED_RUNNER_ID, the
+    effect execution dispatch layer must route through interpret_operation
+    without calling _handler_for_operation or _handler_for_operation_id."""
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    seen_interpreted: list[str] = []
+
+    def _fake_interpret(
+        workspace_paths, stage_result, run_dir, compiled_plan,
+        *, operation_id, runner_id, registry=None,
+    ):
+        seen_interpreted.append(operation_id)
+        return RuntimeEffectResult(
+            operation_id=operation_id,
+            runner_id=runner_id,
+            decision=RuntimeEffectDecision.CONTINUE_ROUTE,
+        )
+
+    monkeypatch.setattr(effect_execution, "interpret_operation", _fake_interpret)
+
+    # Also guard against stale legacy handler dispatch
+    legacy_called: list[str] = []
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_ID,
+        "legacy_stale_handler",
+        lambda *a, **kw: legacy_called.append("legacy"),
+    )
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_OPERATION_ID,
+        "test_interpreted_op",
+        lambda *a, **kw: legacy_called.append("legacy_op"),
+    )
+
+    stage_result = StageResultEnvelope(
+        run_id="run-interpreted-dispatch",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_rules=(
+            SimpleNamespace(
+                rule_id="interpreted_dispatch_rule",
+                effect_operation_id="test_interpreted_op",
+                source_node_id="builder",
+                on_outcomes=("BUILDER_COMPLETE",),
+                handler_id=None,
+                destination_family_id=None,
+            ),
+        ),
+        runtime_effect_runners_by_id={
+            "interpreted_test_runner": RuntimeEffectOperationRunnerDefinition(
+                runner_id=INTERPRETED_RUNNER_ID,
+                operation_ids=("test_interpreted_op",),
+                legacy_handler_ids=("legacy_stale_handler",),
+                legacy_handler_operation_ids={
+                    "legacy_stale_handler": "test_interpreted_op",
+                },
+            )
+        },
+        runtime_failure_policies_by_id={},
+        work_item_families_by_id={},
+    )
+
+    application = apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert seen_interpreted == ["test_interpreted_op"]
+    assert legacy_called == []
+    assert application.router_decision.action is RouterAction.IDLE
+    assert stage_result.metadata["runtime_effect_operation_id"] == "test_interpreted_op"
+    assert stage_result.metadata["runtime_effect_runner_id"] == INTERPRETED_RUNNER_ID
+    assert stage_result.metadata["runtime_effect_legacy_handler_id"] is None
+
+
+def test_handler_for_operation_raises_and_interpreted_dispatch_still_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interpreted-runner dispatch must bypass _handler_for_operation.
+
+    Monkeypatch _handler_for_operation to raise unconditionally, then prove
+    that an interpreted-runner operation completes successfully without
+    triggering the patched guard."""
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    def _handler_for_operation_guard(*args, **kwargs):
+        raise AssertionError(
+            "_handler_for_operation was called but interpreted dispatch "
+            "must bypass it completely"
+        )
+
+    monkeypatch.setattr(
+        effect_execution,
+        "_handler_for_operation",
+        _handler_for_operation_guard,
+    )
+    # Also guard the registry-level lookup to catch any indirect path.
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_ID,
+        "stale_handler",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("stale handler called for interpreted dispatch")
+        ),
+    )
+    monkeypatch.setitem(
+        effect_execution._HANDLERS_BY_OPERATION_ID,
+        "interpreted_direct_op",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("stale operation handler called for interpreted dispatch")
+        ),
+    )
+
+    seen_interpreted: list[str] = []
+
+    def _fake_interpret(
+        workspace_paths, stage_result, run_dir, compiled_plan,
+        *, operation_id, runner_id, registry=None,
+    ):
+        seen_interpreted.append(operation_id)
+        return RuntimeEffectResult(
+            operation_id=operation_id,
+            runner_id=runner_id,
+            decision=RuntimeEffectDecision.CONTINUE_ROUTE,
+        )
+
+    monkeypatch.setattr(effect_execution, "interpret_operation", _fake_interpret)
+
+    stage_result = StageResultEnvelope(
+        run_id="run-handler-bypass",
+        plane="execution",
+        stage="builder",
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    compiled_plan = SimpleNamespace(
+        runtime_effect_rules=(
+            SimpleNamespace(
+                rule_id="handler_bypass_rule",
+                effect_operation_id="interpreted_direct_op",
+                source_node_id="builder",
+                on_outcomes=("BUILDER_COMPLETE",),
+                handler_id=None,
+                destination_family_id=None,
+            ),
+        ),
+        runtime_effect_runners_by_id={
+            "handler_bypass_runner": RuntimeEffectOperationRunnerDefinition(
+                runner_id=INTERPRETED_RUNNER_ID,
+                operation_ids=("interpreted_direct_op",),
+                legacy_handler_ids=("stale_handler",),
+                legacy_handler_operation_ids={
+                    "stale_handler": "interpreted_direct_op",
+                },
+            )
+        },
+        runtime_failure_policies_by_id={},
+        work_item_families_by_id={},
+    )
+
+    application = apply_runtime_effect_for_stage_result(
+        SimpleNamespace(paths=paths, compiled_plan=compiled_plan),
+        request=SimpleNamespace(run_dir=str(run_dir)),
+        stage_result=stage_result,
+        router_decision=RouterDecision(
+            action=RouterAction.IDLE,
+            next_plane=None,
+            next_stage=None,
+            reason="builder_complete",
+        ),
+        compiled_plan=compiled_plan,
+    )
+
+    assert seen_interpreted == ["interpreted_direct_op"]
+    assert application.router_decision.action is RouterAction.IDLE
+    assert stage_result.metadata["runtime_effect_operation_id"] == "interpreted_direct_op"
+    assert stage_result.metadata["runtime_effect_runner_id"] == INTERPRETED_RUNNER_ID
+    assert stage_result.metadata["runtime_effect_legacy_handler_id"] is None

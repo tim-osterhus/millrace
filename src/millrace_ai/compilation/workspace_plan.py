@@ -399,6 +399,10 @@ def compile_compiled_run_plan(
             workflow_primitives.effect_validators,
             "validator_id",
         ),
+        runtime_effect_primitives_by_id=_map_by_attr(
+            workflow_primitives.runtime_effect_primitives,
+            "primitive_id",
+        ),
         runtime_effect_rules=workflow_primitives.runtime_effect_rules,
         workflow_recovery_policies_by_id=_map_by_attr(
             workflow_primitives.recovery_policies,

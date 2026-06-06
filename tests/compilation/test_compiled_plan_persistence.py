@@ -9,6 +9,7 @@ from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_workspace_plan_currentness
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
+from millrace_ai.runtime.effects.primitives import default_primitive_executor_registry
 
 
 def test_load_existing_plan_rejects_plan_missing_runtime_stage(tmp_path: Path) -> None:
@@ -100,6 +101,10 @@ def _compile_with_assets(
         requested_mode_id=mode_id,
         assets_root=assets_root,
     )
+
+
+def _diagnostic_text(outcome) -> str:
+    return "\n".join(outcome.diagnostics.errors)
 
 
 def test_runtime_operations_survive_persistence_round_trip(tmp_path: Path) -> None:
@@ -428,3 +433,199 @@ def test_shipped_modes_compile_with_both_registries(tmp_path: Path) -> None:
         assert outcome.active_plan.scheduler_policy is not None, (
             f"mode {mode_id} missing scheduler_policy"
         )
+        assert outcome.active_plan.runtime_effect_primitives_by_id, (
+            f"mode {mode_id} missing runtime_effect_primitives_by_id"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Persistence round-trip tests for runtime_effect_primitives_by_id
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_effect_primitives_survive_persistence_round_trip(
+    tmp_path: Path,
+) -> None:
+    """runtime_effect_primitives_by_id is present after compile and survives a
+    serialize-deserialize round-trip through CompiledRunPlan."""
+    outcome = _compile_with_assets(tmp_path)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    original_primitives = outcome.active_plan.runtime_effect_primitives_by_id
+    assert len(original_primitives) >= 17
+    assert "legacy_python_handler" in original_primitives
+    assert "artifact_presence" in original_primitives
+    assert "mutation_journal_append" in original_primitives
+    assert "source_lifecycle" in original_primitives
+
+    interpreted_ids: set[str] = set()
+    non_interpreted_ids: set[str] = set()
+    for primitive_id, primitive in original_primitives.items():
+        assert primitive.primitive_id == primitive_id
+        if primitive.non_interpreted_compatibility:
+            non_interpreted_ids.add(primitive_id)
+        else:
+            interpreted_ids.add(primitive_id)
+
+    # Shipped interpreted primitives must match their registered executors.
+    assert "artifact_presence" in interpreted_ids
+    assert "artifact_model_parse" in interpreted_ids
+    assert "persist_record" in interpreted_ids
+    assert "enqueue_work_items" in interpreted_ids
+    assert "emit_event" in interpreted_ids
+
+    # Non-interpreted primitives remain the bulk of shipped definitions.
+    assert "legacy_python_handler" in non_interpreted_ids
+    assert "mutation_journal_append" in non_interpreted_ids
+    assert "source_lifecycle" in non_interpreted_ids
+    assert "copy_artifact" in non_interpreted_ids
+    assert len(non_interpreted_ids) >= 12
+
+    # Round-trip through JSON serialization.
+    dumped = outcome.active_plan.model_dump(mode="json")
+    loaded = CompiledRunPlan.model_validate(dumped)
+
+    assert loaded.runtime_effect_primitives_by_id == original_primitives
+
+
+def test_runtime_effect_primitives_survive_disk_persistence(
+    tmp_path: Path,
+) -> None:
+    """runtime_effect_primitives_by_id survives writing to compiled_plan.json and
+    loading back."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    loaded = load_existing_plan(compiled_plan_path)
+    assert loaded is not None
+
+    assert (
+        loaded.runtime_effect_primitives_by_id
+        == outcome.active_plan.runtime_effect_primitives_by_id
+    )
+
+
+def test_plan_without_runtime_effect_primitives_loads_with_empty_default(
+    tmp_path: Path,
+) -> None:
+    """A compiled plan serialized without runtime_effect_primitives_by_id loads
+    with an empty dict default (backward compatibility)."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
+    assert outcome.diagnostics.ok is True
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("runtime_effect_primitives_by_id", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = load_existing_plan(compiled_plan_path)
+    assert loaded is not None
+    assert loaded.runtime_effect_primitives_by_id == {}
+
+
+def test_runtime_effect_primitive_assets_are_in_resolved_assets(
+    tmp_path: Path,
+) -> None:
+    """Runtime effect primitive registry assets appear in the compiled plan's
+    resolved_assets list."""
+    outcome = _compile_with_assets(tmp_path)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    resolved_logical_ids = {ref.logical_id for ref in outcome.active_plan.resolved_assets}
+    assert "runtime_effect_primitive:artifact_presence" in resolved_logical_ids
+    assert "runtime_effect_primitive:legacy_python_handler" in resolved_logical_ids
+    assert "runtime_effect_primitive:mutation_journal_append" in resolved_logical_ids
+    assert "runtime_effect_primitive:source_lifecycle" in resolved_logical_ids
+
+
+def test_fingerprint_changes_when_runtime_effect_primitives_asset_changes(
+    tmp_path: Path,
+) -> None:
+    """Changing a runtime effect primitive asset changes the compile input
+    fingerprint."""
+    assets_root = _copy_builtin_assets(tmp_path / "assets")
+
+    baseline = _compile_with_assets(tmp_path, assets_root=assets_root)
+    assert baseline.diagnostics.ok is True
+    assert baseline.active_plan is not None
+
+    # Mutate the runtime effect primitives asset.
+    primitives_path = (
+        assets_root
+        / "registry"
+        / "runtime_effect_primitives"
+        / "default_runtime_effect_primitives.json"
+    )
+    payload = json.loads(primitives_path.read_text(encoding="utf-8"))
+    payload["definitions"][0]["primitive_id"] = "artifact_presence_v2"
+    primitives_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    mutated = _compile_with_assets(tmp_path, assets_root=assets_root)
+    assert mutated.diagnostics.ok is False  # unknown primitive referenced
+    assert "references unknown primitive" in _diagnostic_text(mutated)
+
+    assert (
+        baseline.active_plan.compile_input_fingerprint.assets_fingerprint
+        != mutated.compile_input_fingerprint.assets_fingerprint
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cross-validation: executor registry ↔ primitive definitions
+# ---------------------------------------------------------------------------
+
+
+def test_executor_registry_consistent_with_primitive_definitions(
+    tmp_path: Path,
+) -> None:
+    """Every registered interpreted executor has a matching primitive definition
+    with non_interpreted_compatibility=False, and every definition marked
+    interpreted has a registered executor."""
+    outcome = _compile_with_assets(tmp_path)
+
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    primitives_by_id = outcome.active_plan.runtime_effect_primitives_by_id
+    registry = default_primitive_executor_registry()
+
+    executor_ids = set(registry.executors_by_id.keys())
+    interpreted_def_ids = {
+        pid
+        for pid, p in primitives_by_id.items()
+        if not p.non_interpreted_compatibility
+    }
+
+    # Every primitive with a registered executor must be declared interpreted.
+    extra_in_registry = executor_ids - interpreted_def_ids
+    assert not extra_in_registry, (
+        f"executor registry contains primitives not declared interpreted: "
+        f"{sorted(extra_in_registry)}"
+    )
+
+    # Every interpreted primitive must have a registered executor.
+    extra_in_definitions = interpreted_def_ids - executor_ids
+    assert not extra_in_definitions, (
+        f"interpreted primitive definitions without registered executors: "
+        f"{sorted(extra_in_definitions)}"
+    )

@@ -70,11 +70,6 @@ def route_stage_result_with_plan(
         projected_snapshot,
         stage_result,
         engine.counters,
-        max_fix_cycles=engine.config.recovery.max_fix_cycles if engine.config else 2,
-        max_troubleshoot_attempts_before_consult=(
-            engine.config.recovery.max_troubleshoot_attempts_before_consult if engine.config else 2
-        ),
-        max_mechanic_attempts=engine.config.recovery.max_mechanic_attempts if engine.config else 2,
     )
     return decision
 
