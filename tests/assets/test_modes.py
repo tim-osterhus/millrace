@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, ModeDefinition, Plane, PlanningStageName
@@ -585,3 +586,317 @@ def test_learning_codex_integrated_compiles_with_learning_plane(tmp_path: Path) 
     assert outcome.active_plan.execution_loop_id == "execution.with_integrator"
     assert outcome.active_plan.learning_loop_id == "learning.standard"
     assert outcome.active_plan.learning_graph is not None
+
+
+# ── config-swap tests ──────────────────────────────────────────────────────
+
+
+def _compile_mode(tmp_path: Path, mode_id: str, **config_kwargs) -> "CompiledRunPlan":
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(**config_kwargs),
+        requested_mode_id=mode_id,
+    )
+
+    assert outcome.diagnostics.ok is True, (
+        f"Config-swap compilation failed for mode `{mode_id}`: {outcome.diagnostics.errors}"
+    )
+    assert outcome.active_plan is not None, (
+        f"Config-swap compilation produced no plan for mode `{mode_id}`"
+    )
+    return outcome.active_plan
+
+
+def _stage_kind_ids(plan: "CompiledRunPlan") -> set[str]:
+    return {
+        node.stage_kind_id
+        for graph in plan.graphs_by_plane.values()
+        for node in graph.nodes
+    }
+
+
+def test_config_swap_minimal_three_plane_compiles_without_blueprint_recon_closure_or_learning(
+    tmp_path: Path,
+) -> None:
+    """The same kernel compiles minimal_three_plane without importing Blueprint,
+    Recon, closure, or Learning domain code."""
+    plan = _compile_mode(tmp_path, "minimal_three_plane")
+
+    assert plan.mode_id == "minimal_three_plane"
+    assert plan.learning_graph is not None
+    assert Plane.LEARNING in plan.loop_ids_by_plane
+
+    stage_ids = _stage_kind_ids(plan)
+
+    # No blueprint stages
+    assert not any("blueprint" in sid for sid in stage_ids), (
+        f"minimal_three_plane contains blueprint stage kinds: {sorted(stage_ids)}"
+    )
+
+    # No standard execution stages (builder, checker, fixer, etc.)
+    domain_execution_stages = {
+        "builder", "checker", "fixer", "doublechecker",
+        "updater", "troubleshooter", "consultant", "integrator",
+    }
+    assert stage_ids.isdisjoint(domain_execution_stages), (
+        f"minimal_three_plane contains domain execution stages: "
+        f"{sorted(stage_ids & domain_execution_stages)}"
+    )
+
+    # No standard planning stages (recon, planner, manager, etc.)
+    domain_planning_stages = {
+        "recon", "planner", "manager", "mechanic", "auditor", "arbiter",
+        "manager_blueprint", "contractor_blueprint", "evaluator_blueprint",
+        "mechanic_blueprint",
+    }
+    assert stage_ids.isdisjoint(domain_planning_stages), (
+        f"minimal_three_plane contains domain planning stages: "
+        f"{sorted(stage_ids & domain_planning_stages)}"
+    )
+
+    # No learning domain stages (analyst, professor, curator, librarian)
+    domain_learning_stages = {"analyst", "professor", "curator", "librarian"}
+    assert stage_ids.isdisjoint(domain_learning_stages), (
+        f"minimal_three_plane contains domain learning stages: "
+        f"{sorted(stage_ids & domain_learning_stages)}"
+    )
+
+    # Only basic_* stages
+    assert stage_ids == {"basic_worker", "basic_planner", "basic_learner"}, (
+        f"minimal_three_plane has unexpected stage kinds: {sorted(stage_ids)}"
+    )
+
+
+def test_config_swap_standard_millrace_compiles_with_generic_recon_closure(
+    tmp_path: Path,
+) -> None:
+    """The same kernel compiles standard_millrace with generic, Recon, and
+    closure extensions."""
+    plan = _compile_mode(tmp_path, "standard_millrace")
+
+    assert plan.mode_id == "default_pi"
+    assert plan.learning_graph is None
+    assert Plane.LEARNING not in plan.loop_ids_by_plane
+
+    stage_ids = _stage_kind_ids(plan)
+
+    # Standard execution stages
+    assert "builder" in stage_ids
+    assert "checker" in stage_ids
+    assert "fixer" in stage_ids
+    assert "troubleshooter" in stage_ids
+
+    # Recon and closure are reflected in planning stages
+    assert "recon" in stage_ids
+    assert "auditor" in stage_ids
+    assert "arbiter" in stage_ids
+
+    # pi_rpc runner bound everywhere
+    assert all(
+        node.runner_name == "pi_rpc"
+        for graph in plan.graphs_by_plane.values()
+        for node in graph.nodes
+    )
+
+
+def test_config_swap_learning_enabled_millrace_has_learning_triggers(
+    tmp_path: Path,
+) -> None:
+    """The same kernel compiles learning_enabled_millrace with Learning
+    extension enabled and Learning triggers defined."""
+    plan = _compile_mode(tmp_path, "learning_enabled_millrace")
+
+    assert plan.mode_id == "learning_pi"
+    assert plan.learning_graph is not None
+    assert Plane.LEARNING in plan.loop_ids_by_plane
+
+    # Learning plane graph is populated
+    learning_stage_ids = {node.stage_kind_id for node in plan.learning_graph.nodes}
+    assert learning_stage_ids == {"analyst", "professor", "curator", "librarian"}
+
+    # Learning triggers are present
+    trigger_ids = {rule.rule_id for rule in plan.learning_trigger_rules}
+    assert "execution.doublechecker.success-to-analyst" in trigger_ids
+    assert "execution.troubleshooter.recovery-to-analyst" in trigger_ids
+    assert "execution.consultant.recovery-to-analyst" in trigger_ids
+    assert "planning.planner.complete-to-librarian" in trigger_ids
+
+    # pip_rpc runner bound everywhere including learning stages
+    assert all(
+        node.runner_name == "pi_rpc"
+        for graph in plan.graphs_by_plane.values()
+        for node in graph.nodes
+    )
+    assert all(
+        node.runner_name == "pi_rpc" for node in plan.learning_graph.nodes
+    )
+
+
+def test_config_swap_recovery_heavy_millrace_has_different_recovery_thresholds(
+    tmp_path: Path,
+) -> None:
+    """recovery_heavy_millrace compiles with different recovery-policy
+    thresholds than standard configs, driven by mode-declared policy selection."""
+    recovery_heavy = _compile_mode(
+        tmp_path,
+        "recovery_heavy_millrace",
+    )
+
+    assert recovery_heavy.mode_id == "recovery_heavy_millrace"
+
+    heavy_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in recovery_heavy.graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+
+    # Compile standard_millrace with default thresholds
+    standard_tmp = tmp_path / "standard_ws"
+    standard = _compile_mode(standard_tmp, "standard_millrace")
+
+    standard_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in standard.graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+
+    assert recovery_heavy.mode_id != standard.mode_id
+
+    # Recovery-heavy thresholds must differ from standard defaults
+    assert heavy_thresholds != standard_thresholds, (
+        f"recovery_heavy thresholds ({heavy_thresholds}) "
+        f"should differ from standard thresholds ({standard_thresholds})"
+    )
+
+    # Recovery-heavy mode selects recovery_heavy_policies.json which
+    # lowers blocked-recovery thresholds to 1.
+    assert ("execution.blocked.recovery", 1) in heavy_thresholds
+    assert ("planning.blocked.recovery", 1) in heavy_thresholds
+
+
+def test_config_swap_generic_two_plane_fixture_compiles_without_domain_vocabulary(
+    tmp_path: Path,
+) -> None:
+    """generic_two_plane_fixture compiles without execution, planning,
+    or learning vocabulary. Uses two planes (execution + planning) with only
+    basic_worker / basic_planner stage kinds and millrace.generic; the
+    basic_worker → builder and basic_planner → planner runtime-stage
+    bindings are a runner-contract compatibility layer, not arbitrary
+    stage support."""
+    plan = _compile_mode(tmp_path, "generic_two_plane_fixture")
+
+    assert plan.mode_id == "generic_two_plane_fixture"
+    assert plan.learning_graph is None
+    assert Plane.LEARNING not in plan.loop_ids_by_plane
+
+    stage_ids = _stage_kind_ids(plan)
+
+    # No standard execution stages
+    assert "builder" not in stage_ids
+    assert "checker" not in stage_ids
+    assert "fixer" not in stage_ids
+    assert "updater" not in stage_ids
+    assert "troubleshooter" not in stage_ids
+    assert "consultant" not in stage_ids
+
+    # No standard planning stages
+    assert "recon" not in stage_ids
+    assert "planner" not in stage_ids
+    assert "manager" not in stage_ids
+    assert "auditor" not in stage_ids
+    assert "arbiter" not in stage_ids
+
+    # No learning stages
+    assert "analyst" not in stage_ids
+    assert "professor" not in stage_ids
+    assert "curator" not in stage_ids
+    assert "librarian" not in stage_ids
+
+    # Only minimal stage kinds
+    assert stage_ids == {"basic_worker", "basic_planner"}, (
+        f"generic_two_plane_fixture has unexpected stage kinds: {sorted(stage_ids)}"
+    )
+
+
+def test_config_swap_all_five_configs_compile_from_same_kernel(
+    tmp_path: Path,
+) -> None:
+    """All five config-swap configs compile successfully from the same kernel
+    without any source-code changes. Reports which config failed."""
+    configs_and_runtime = [
+        ("minimal_three_plane", RuntimeConfig()),
+        ("standard_millrace", RuntimeConfig()),
+        ("learning_enabled_millrace", RuntimeConfig()),
+        ("recovery_heavy_millrace", RuntimeConfig()),
+        ("generic_two_plane_fixture", RuntimeConfig()),
+    ]
+
+    results: dict[str, "CompiledRunPlan"] = {}
+
+    for mode_id, rt_config in configs_and_runtime:
+        workspace_root = tmp_path / mode_id
+        bootstrap_workspace(workspace_root)
+
+        outcome = compile_and_persist_workspace_plan(
+            workspace_root,
+            config=rt_config,
+            requested_mode_id=mode_id,
+        )
+
+        assert outcome.diagnostics.ok is True, (
+            f"Config-swap failed for `{mode_id}`: {outcome.diagnostics.errors}"
+        )
+        assert outcome.active_plan is not None, (
+            f"Config-swap produced no plan for `{mode_id}`"
+        )
+        results[mode_id] = outcome.active_plan
+
+    # Prove behavior differs across configs
+    stage_ids_by_config = {
+        mode_id: _stage_kind_ids(plan) for mode_id, plan in results.items()
+    }
+
+    # minimal_three_plane and generic_two_plane_fixture have minimal stage kinds
+    for mode_id in ("minimal_three_plane", "generic_two_plane_fixture"):
+        for forbidden in ("builder", "checker", "recon", "planner", "analyst"):
+            assert forbidden not in stage_ids_by_config[mode_id], (
+                f"{mode_id} contains forbidden stage `{forbidden}`"
+            )
+
+    # standard_millrace has full domain stages
+    assert "builder" in stage_ids_by_config["standard_millrace"]
+    assert "recon" in stage_ids_by_config["standard_millrace"]
+
+    # learning_enabled_millrace has learning triggers
+    assert len(results["learning_enabled_millrace"].learning_trigger_rules) > 0
+    assert results["standard_millrace"].learning_trigger_rules == ()
+    assert results["learning_enabled_millrace"].learning_graph is not None
+    assert results["standard_millrace"].learning_graph is None
+
+    # recovery_heavy has different thresholds
+    heavy_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in results["recovery_heavy_millrace"].graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+    standard_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in results["standard_millrace"].graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+    assert heavy_thresholds != standard_thresholds, (
+        f"recovery_heavy thresholds ({heavy_thresholds}) "
+        f"identical to standard ({standard_thresholds})"
+    )
+
+    # All plans have unique mode_ids
+    mode_ids = {plan.mode_id for plan in results.values()}
+    assert len(mode_ids) == len(results), (
+        f"Duplicate mode_ids across configs: {mode_ids}"
+    )
+
+    # No config-swap test mutated kernel source code
+    # (proven by compile_and_persist_workspace_plan working identically for all)

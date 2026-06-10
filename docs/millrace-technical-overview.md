@@ -74,7 +74,8 @@ a four-layer authority model that describes which code owns which decisions:
 
 These authority layers complement the operational layers. The operational model
 describes *what happens*; the authority model describes *who decides*. See
-ADR-0012 through ADR-0015 for the full boundary definitions.
+ADR-0012 through ADR-0016 for the full boundary definitions and active
+compatibility-facade status.
 
 In practice:
 
@@ -152,13 +153,16 @@ satisfy typed contracts and queue lifecycle rules.
 The public Python contract surface is `millrace_ai.contracts`. Internally, that
 surface is a package under `src/millrace_ai/contracts/` so foundational enums,
 stage metadata, work documents, stage results, loop/mode definitions, runtime
-snapshots, mailbox envelopes, compiler diagnostics, and recovery counters can be
-reviewed independently while preserving the root import contract.
-`contracts/stage_metadata.py` is the stage legality registry: stage plane
-membership, running markers, legal terminal markers, blocked terminal results,
-and result-class policy derive from there for contracts, runner prompts,
-normalization, graph lookup, entrypoint linting, and built-in stage-kind asset
-validation.
+snapshots, mailbox envelopes, compiler diagnostics, required-extension
+declarations, and recovery counters can be reviewed independently while
+preserving the root import contract.
+`contracts/stage_metadata.py` is the shipped Millrace stage registry instance:
+it loads plane membership, running markers, legal terminal markers, blocked
+terminal results, and result-class policy for the 18 shipped stages from the
+JSON stage-kind assets under `src/millrace_ai/assets/registry/stage_kinds/`.
+It keeps runner prompts, normalization, graph lookup, and entrypoint linting
+aligned for shipped stages without acting as universal runtime authority for
+custom stage-kind assets or compiled plans.
 
 Entrypoint assets live under `src/millrace_ai/assets/entrypoints/`, which is
 also the Python package that parses and lints those markdown manifests. Parsing,
@@ -586,15 +590,22 @@ snapshot:
 - `active_work_item_kind`
 - `active_work_item_id`
 - `active_since`
+- `active_runs_by_lane`
 - `active_runs_by_plane`
 - `lanes_by_id`
 
 The legacy foreground active fields remain a projection. Canonical in-flight
-ownership lives in `active_runs_by_plane`; lane status, active run ids, active
-work refs, and lane plan/fingerprint identity live in `lanes_by_id`. Each
-active run records the compiled-plan id and fingerprint that launched it, so
-result application can keep routing against the launch contract even when a
+active-run ownership lives in `active_runs_by_lane`; `active_runs_by_plane`
+remains the plane-keyed compatibility projection. Lane status, active run ids,
+active work refs, and lane plan/fingerprint identity live in `lanes_by_id`.
+Each active run records the compiled-plan id and fingerprint that launched it,
+so result application can keep routing against the launch contract even when a
 config reload has compiled a newer pending plan.
+
+The runtime snapshot also carries canonical family-keyed queue depths in
+`queue_depths_by_family` and canonical scope-keyed status markers in
+`status_by_scope`. The older plane-keyed queue depths and status marker fields
+are compatibility projections derived from those generic surfaces.
 
 Millrace also maintains plane status markers:
 
@@ -927,6 +938,8 @@ The most important package boundaries are:
   semantics
 - `contracts/` for the public typed contract facade and domain contract modules
 - `doctor/` for workspace health and asset-integrity checks
+- `extensions/` for extension package manifest contracts, boundary interfaces,
+  the lazy built-in boundary registry, and built-in adapter modules
 - `runners/` for adapter dispatch and normalization
 - `runtime/` for daemon lifecycle, tick orchestration, graph authority,
   request context, effects, recovery, approval checks, usage governance, and

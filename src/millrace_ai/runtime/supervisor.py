@@ -21,6 +21,7 @@ from millrace_ai.contracts import (
 from millrace_ai.contracts.base import ContractModel
 from millrace_ai.errors import StageWorkItemOwnershipError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
+from millrace_ai.extensions import builtin_extension_boundary_registry
 from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest, normalize_stage_result
 from millrace_ai.state_store import save_snapshot
@@ -42,11 +43,6 @@ from .error_recovery import (
 from .failure_policy import RuntimeFailureBoundary, classify_failure_origin
 from .lane_conflicts import can_dispatch_lane
 from .lanes import lane_dispatch_order, lane_id_for_plane
-from .learning_promotions import (
-    apply_deferred_learning_promotions_if_safe,
-    handle_learning_curator_promotion_boundary,
-)
-from .learning_triggers import enqueue_learning_requests_for_stage_result
 from .monitoring import runtime_effect_monitor_payload
 from .result_application import compiled_plan_for_active_run
 from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
@@ -55,6 +51,7 @@ from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
+    from millrace_ai.contracts import StageName
     from millrace_ai.runtime.engine import RuntimeEngine
 
 
@@ -230,7 +227,7 @@ class RuntimeDaemonSupervisor:
                 self.engine,
                 error=exc,
                 plane=plane,
-                failed_stage=_pre_dispatch_failed_stage(plane),
+                failed_stage=_pre_dispatch_failed_stage(plane, compiled_plan=self.engine.compiled_plan),
                 closure_target_root_spec_id=_closure_target_root_spec_id(self.engine),
             )
             return 0
@@ -245,7 +242,7 @@ class RuntimeDaemonSupervisor:
                 self.engine,
                 error=exc,
                 plane=plane,
-                failed_stage=_pre_dispatch_failed_stage(plane),
+                failed_stage=_pre_dispatch_failed_stage(plane, compiled_plan=self.engine.compiled_plan),
                 work_item_family_id=claim.family_id,
                 work_item_kind=claim.work_item_kind,
                 work_item_id=claim.work_item_id,
@@ -263,11 +260,12 @@ class RuntimeDaemonSupervisor:
         try:
             target = self.engine._maybe_activate_completion_stage()
         except Exception as exc:
+            completion_stage = _completion_failed_stage(self.engine.compiled_plan)
             schedule_pre_dispatch_exception_recovery(
                 self.engine,
                 error=exc,
                 plane=Plane.PLANNING,
-                failed_stage=PlanningStageName.ARBITER,
+                failed_stage=completion_stage,
                 closure_target_root_spec_id=_closure_target_root_spec_id(self.engine),
             )
             return 0
@@ -612,7 +610,7 @@ def apply_stage_completion(
     router_decision: RouterDecision | None = None
     try:
         stage_result_path = engine._write_stage_result(outcome.request, stage_result)
-        learning_request_paths = enqueue_learning_requests_for_stage_result(
+        learning_request_paths = _learning_trigger_handler().enqueue_learning_requests(
             engine,
             stage_result=stage_result,
             stage_result_path=stage_result_path,
@@ -666,8 +664,8 @@ def apply_stage_completion(
             decision=router_decision,
             spawned_work=spawned_work,
         )
-        handle_learning_curator_promotion_boundary(engine, stage_result=stage_result)
-        apply_deferred_learning_promotions_if_safe(engine)
+        _learning_promotion_handler().handle_curator_promotion(engine, stage_result=stage_result)
+        _learning_promotion_handler().apply_deferred_promotions(engine)
     except Exception as exc:
         recovery_decision = schedule_post_stage_exception_recovery(
             engine,
@@ -709,6 +707,7 @@ def apply_stage_completion(
                 Plane.PLANNING: queue_depths["queue_depth_planning"],
                 Plane.LEARNING: queue_depths["queue_depth_learning"],
             },
+            "queue_depths_by_family": engine._compute_queue_depths_by_family(),
             "updated_at": engine._now(),
         }
     )
@@ -751,12 +750,42 @@ def _validate_stage_result_matches_active_run(
         raise ValueError("stage_result work item id does not match active run")
 
 
-def _pre_dispatch_failed_stage(plane: Plane) -> ExecutionStageName | PlanningStageName | LearningStageName:
-    if plane is Plane.PLANNING:
-        return PlanningStageName.ARBITER
-    if plane is Plane.LEARNING:
-        return LearningStageName.ANALYST
-    return ExecutionStageName.BUILDER
+def _pre_dispatch_failed_stage(
+    plane: Plane,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> ExecutionStageName | PlanningStageName | LearningStageName:
+    """Resolve a descriptive fallback stage for pre-dispatch failures.
+
+    When *compiled_plan* is available derives the failed stage from the
+    compiled graph's first entry node for the plane.  Otherwise raises
+    ValueError to prevent hardwired domain fallback.
+    """
+    from .graph_authority.stage_mapping import node_plan_by_id
+
+    if compiled_plan is not None:
+        graph = compiled_plan.graphs_by_plane.get(plane)
+        if graph is not None and graph.compiled_entries:
+            try:
+                node = node_plan_by_id(graph, graph.compiled_entries[0].node_id)
+                runtime_stage = node.runtime_stage
+                if runtime_stage is not None:
+                    return runtime_stage
+            except (ValueError, IndexError):
+                pass
+        if graph is not None and graph.nodes:
+            runtime_stage = graph.nodes[0].runtime_stage
+            if runtime_stage is not None:
+                return runtime_stage
+    raise ValueError(f"compiled plan is required to resolve pre-dispatch failed stage for plane {plane.value}")
+
+
+def _completion_failed_stage(compiled_plan: CompiledRunPlan) -> StageName:
+    """Resolve the completion entry stage from the compiled plan."""
+    from .graph_authority.activation import completion_activation_for_graph
+
+    activation = completion_activation_for_graph(compiled_plan)
+    return activation.stage
 
 
 def _closure_target_root_spec_id(engine: RuntimeEngine) -> str | None:
@@ -944,6 +973,14 @@ def _sort_lanes(
     ordered = tuple(lane_id for lane_id in lane_dispatch_order(compiled_plan) if lane_id in lane_id_set)
     remaining = tuple(sorted(lane_id_set - set(ordered)))
     return (*ordered, *remaining)
+
+
+def _learning_trigger_handler():
+    return builtin_extension_boundary_registry().get_learning_trigger_handler()
+
+
+def _learning_promotion_handler():
+    return builtin_extension_boundary_registry().get_learning_promotion_handler()
 
 
 __all__ = [

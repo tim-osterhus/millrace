@@ -5,6 +5,7 @@ from __future__ import annotations
 from millrace_ai.architecture import CompiledGraphThresholdPolicyPlan, CompiledRunPlan
 from millrace_ai.architecture.loop_graphs import GraphLoopTerminalClass
 from millrace_ai.contracts import (
+    Plane,
     RecoveryCounters,
     RuntimeSnapshot,
     StageName,
@@ -78,11 +79,26 @@ def _generic_terminal_reason(
     Prefers compiled ``router_reason`` when it matches the status being written;
     otherwise falls back to ``stage_result.node_id`` (compiled node identity)
     rather than ``source_stage.value`` (runtime stage-name string).
+
+    Uses ``_blocked`` suffix only for truly blocked results (result_class BLOCKED);
+    non-success results like NO_OP are formatted as ``node_id:terminal_result``.
+
+    When ``terminal_result`` equals ``writes_status`` and the result is a
+    success, the prior planning-plane convention of returning the bare
+    ``node_id`` is preserved so ``arbiter`` resolves instead of
+    ``arbiter:ARBITER_COMPLETE``.
     """
+    from millrace_ai.contracts import ResultClass
+
     if router_reason is not None and terminal_result == writes_status:
         return router_reason
-    if not stage_result.success:
+    if stage_result.result_class is ResultClass.BLOCKED:
         return f"{stage_result.node_id}_blocked"
+    if stage_result.success and terminal_result == writes_status:
+        # Preserve prior planning-plane convention (bare node_id).
+        # Learning and execution planes keep the explicit terminal_result.
+        if stage_result.plane is Plane.PLANNING:
+            return stage_result.node_id
     return f"{stage_result.node_id}:{terminal_result}"
 
 
@@ -150,10 +166,7 @@ def _generic_threshold_reason(
     )
     if policy_reason is not None:
         return policy_reason
-    reason = f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
-    if exhausted and threshold_policy.counter_name.value == "mechanic_attempt_count":
-        return f"{reason}:mechanic_attempts_exhausted"
-    return reason
+    return f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
 
 
 __all__ = [

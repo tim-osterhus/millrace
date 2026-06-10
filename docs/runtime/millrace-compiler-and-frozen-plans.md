@@ -21,9 +21,9 @@ The stable import surface is `millrace_ai.compiler`. Internally, compiler
 ownership is split under `src/millrace_ai/compilation/`: workspace-plan
 orchestration, preview materialization, mode/path resolution, node and graph
 materialization, transition/completion/policy compilation, entrypoint override
-validation, learning-trigger validation, asset resolution, fingerprints,
-persistence, and currentness inspection live in named modules behind that
-facade.
+validation, learning-trigger validation, required-extension validation, asset
+resolution, fingerprints, persistence, and currentness inspection live in named
+modules behind that facade.
 
 ## What The Compiler Freezes
 
@@ -60,6 +60,17 @@ That compiled plan freezes:
   failure policies, runtime effect rules, and the active workspace schema epoch
 - resolved asset references and content hashes
 
+Before graph materialization, the compiler also validates the selected mode
+asset's `required_extensions` declarations against discovered extension
+package manifests. Missing package ids and unsatisfied minimum versions fail
+compilation before the graph is frozen. When graph loops and stage-kind assets
+are available, the same validation pass rejects selected stage-kind vocabulary
+owned by Recon, closure, Blueprint, or Learning domains and selected terminal
+actions owned by Recon or closure unless the selected mode declares the
+matching built-in package id. Built-in extension manifests are also checked
+against the canonical package-to-domain mapping so conflicting manifest-domain
+owners fail compilation.
+
 The compiler validates terminal-action `runtime_operation_id` references
 against the compiled runtime operation registry. Operations must exist in
 `runtime_operations_by_id` and declare `terminal_action` in their
@@ -91,6 +102,10 @@ Current compile authority comes from:
 - `modes/`
 - `graphs/`
 - `registry/stage_kinds/`
+- `registry/extensions/` — extension package manifests, including the built-in
+  `millrace.generic`, `millrace.recon`, `millrace.closure`,
+  `millrace.blueprint`, and `millrace.learning` packages used by shipped mode
+  `required_extensions` declarations.
 - `registry/runtime_operations/` — runtime-operation definitions keyed by
   operation id, with `allowed_contexts` (`terminal_action` or
   `runtime_effect`), `required_capabilities`, `mutation_phase`, and

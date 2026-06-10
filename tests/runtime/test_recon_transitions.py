@@ -47,7 +47,7 @@ def test_is_recon_stage_result_requires_recon_probe_identity() -> None:
     result = _recon_result(PlanningTerminalResult.RECON_TO_EXECUTION)
 
     assert is_recon_stage_result(result) is True
-    assert is_recon_stage_result(result.model_copy(update={"stage_kind_id": "planner"})) is False
+    assert is_recon_stage_result(result.model_copy(update={"stage": "planner"})) is False
     assert is_recon_stage_result(result.model_copy(update={"work_item_kind": "spec"})) is False
 
 

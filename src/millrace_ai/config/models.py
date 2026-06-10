@@ -257,6 +257,7 @@ class RecoverySection(ConfigModel):
     max_fix_cycles: int = Field(default=2, gt=0)
     max_troubleshoot_attempts_before_consult: int = Field(default=2, gt=0)
     max_mechanic_attempts: int = Field(default=2, gt=0)
+    max_repair_attempts: int = Field(default=2, gt=0)
     stale_state_recovery_enabled: bool = True
 
 

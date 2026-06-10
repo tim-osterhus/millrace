@@ -53,12 +53,14 @@ The shipped canonical mode ids are:
 Compatibility alias:
 
 - `standard_plain -> default_codex`
+- `standard_millrace -> default_pi`
+- `learning_enabled_millrace -> learning_pi`
 
 ## Discoverable Non-Shipped Fixtures
 
-Millrace also ships a minimal architecture proof fixture that is discoverable
-through asset discovery but is **not** a shipped default mode. It is not
-present in `SHIPPED_MODE_IDS` and does not change the default product surface.
+Millrace also ships discovery-only fixture mode assets that are discoverable
+through asset discovery but are **not** shipped default modes. They are not
+present in `SHIPPED_MODE_IDS` and do not change the default product surface.
 
 ### `minimal_three_plane`
 
@@ -89,6 +91,44 @@ This fixture intentionally limits itself to the current canonical plane IDs and
 canonical `runtime_stage` values. **Arbitrary plane IDs and arbitrary runtime
 stages are deferred** to the generic stage and plane registry work tracked in
 ADR-0013.
+
+### `recovery_heavy_millrace`
+
+`recovery_heavy_millrace` is a two-plane fixture that selects
+`execution.standard` and `planning.standard`, binds standard execution and
+planning stages to `pi_rpc`, and requires `millrace.generic`, `millrace.recon`,
+and `millrace.closure`.
+
+The recovery-heavy behavior is represented by registry asset data in
+`src/millrace_ai/assets/registry/recovery_policies/recovery_heavy_policies.json`.
+That asset defines execution and planning blocked-recovery policies with
+threshold `1`, lower than the default execution/planning blocked-recovery
+thresholds. The mode asset declares `recovery_policy_ids` selecting those
+registry policies, and compilation applies the selected lower thresholds to the
+standard graph loops before runtime threshold resolution. Config-swap coverage
+loads this fixture with `RuntimeConfig()` to prove the mode itself governs the
+recovery-policy difference.
+
+### `generic_two_plane_fixture`
+
+`generic_two_plane_fixture` is the smallest generic-only fixture the current
+framework permits. It selects `execution.minimal_three_plane` and
+`planning.minimal_three_plane`, binds `basic_worker` and `basic_planner` to
+`pi_rpc`, and declares only `millrace.generic`.
+
+The fixture intentionally avoids Recon, Blueprint, closure, Arbiter, Manager,
+Mechanic, planner-disposition, candidate-evaluation, and Learning vocabulary.
+It is a minimal generic proof fixture: two planes, one node each, no domain
+vocabulary.
+
+The `basic_worker` → `builder` and `basic_planner` → `planner` runtime-stage
+bindings are a runner-contract and workspace-contract compatibility layer
+required by the current canonical `StageName` and `WorkItemKind`
+infrastructure. They do not imply arbitrary stage or family support.
+
+True single-plane mode support is intentionally deferred; the fixture name
+accurately describes the actual two-plane requirement imposed by the current
+`ModeDefinition` validator.
 
 ## What A Legacy Loop Defines
 
@@ -129,10 +169,12 @@ These assets validate as:
 - `RegisteredStageKindDefinition`
 - `GraphLoopDefinition`
 
-Built-in stage-kind assets are also checked against
-`src/millrace_ai/contracts/stage_metadata.py`, which owns the canonical plane,
-running-marker, legal-terminal-result, and result-class policy for shipped
-stage identities.
+`src/millrace_ai/contracts/stage_metadata.py` loads its shipped-stage facade
+from the same JSON stage-kind assets. For known public stage enum members, it
+preserves plane, running-marker, legal-terminal-result, and result-class policy
+lookups for runner normalization and entrypoint linting. Fixture or custom
+stage kinds remain registry assets, but they do not enter the shipped-stage
+facade.
 
 The graph-loop surface does two things today:
 
@@ -173,9 +215,9 @@ Workspace-local mode, graph, stage-kind, and entrypoint assets live under the
 workspace runtime asset root and are not part of the core Millrace package.
 Compile with the active workspace asset root to use custom assets.
 
-The `minimal_three_plane` fixture (see "Discoverable Non-Shipped Fixtures"
-above) is an example of custom stage kinds and graph loops that are
-package-shipped for testing but remain outside the default product surface.
+The discovery-only fixtures (see "Discoverable Non-Shipped Fixtures" above)
+are examples of package-shipped mode assets used for testing and config-swap
+proofs while remaining outside the default product surface.
 
 ## Shipped Plane Graphs
 
@@ -190,6 +232,8 @@ policies, selected modes, or runner-neutral graph behavior:
 - `docs/graphs/learning-standard.md`: `learning.standard`
 - `docs/graphs/graphs-index.md`: full shipped mode-to-plane graph
   configurations, including Codex versus Pi runner binding differences
+- `docs/graphs/config-mapping.md`: conceptual config aliases, fixture mode
+  mappings, and product-mode versus fixture distinctions
 
 This document keeps the higher-level compiler and mode model: which loop ids
 ship, how modes select plane graphs, which maps a mode can override, and what
@@ -225,6 +269,7 @@ The current mode shape is intentionally small:
 - `concurrency_policy`
 - `scheduler_policy_id`
 - `learning_trigger_rules`
+- `required_extensions`
 
 Modes may optionally set `scheduler_policy_id` to select a compiled scheduler
 policy explicitly; if omitted, the compiler chooses the shipped default that
@@ -277,6 +322,33 @@ those are explicit mode data, not prompt-only instructions.
 `model_assignment`, and `stage_runner_bindings` inside the mode asset so its
 mixed Codex/Pi stage-cost profile can travel with the mode instead of
 depending on workspace-local alias defaults.
+
+## Required Extension Declarations
+
+Mode assets declare the built-in extension packages required by their selected
+graph vocabulary before compilation freezes the plan:
+
+- `default_codex`, `default_pi`, and `default_codex_integrated` require
+  `millrace.generic`, `millrace.recon`, and `millrace.closure`.
+- `learning_codex`, `learning_pi`, `learning_codex_integrated`, and
+  `efficient_learning_mixed` require those same packages plus
+  `millrace.learning`.
+- `blueprint_codex` requires `millrace.generic`, `millrace.recon`,
+  `millrace.closure`, and `millrace.blueprint`.
+- `blueprint_learning_codex` requires the Blueprint set plus
+  `millrace.learning`.
+
+Discovery-only fixtures declare the extensions required by their selected
+graph vocabulary:
+
+- `minimal_three_plane` declares only `millrace.generic`.
+- `generic_two_plane_fixture` declares only `millrace.generic`.
+- `recovery_heavy_millrace` declares the standard two-plane set:
+  `millrace.generic`, `millrace.recon`, and `millrace.closure`.
+
+The custom minimal stage kinds used by the generic-only fixtures use generic
+lifecycle behavior and are intentionally not classified as Recon, closure,
+Blueprint, or Learning vocabulary.
 
 Specialized repository-local workflows should provide their own workspace-local
 mode, loop, graph, and entrypoint assets under their owning project area, then
@@ -477,7 +549,9 @@ Relevant examples:
 
 New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.
 Existing configs that still use `standard_plain` continue to resolve to the
-same canonical Codex-backed plan.
+same canonical Codex-backed plan. The conceptual config aliases
+`standard_millrace` and `learning_enabled_millrace` resolve to `default_pi` and
+`learning_pi`, respectively.
 
 Those are the fields that change the compiled runtime plan.
 

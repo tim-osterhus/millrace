@@ -149,6 +149,7 @@ name = "millrace-ai"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "tomlkit" },
     { name = "typer" },
@@ -166,6 +167,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8,<9" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11,<2" },
+    { name = "packaging", specifier = ">=24,<27" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11,<1" },

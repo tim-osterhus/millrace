@@ -94,20 +94,17 @@ def test_active_work_item_path_uses_family_adapter_for_blueprint_family(
     tmp_path,
 ) -> None:
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
-    calls: list[str] = []
 
     class _BlueprintAdapter:
+        adapter_id = "builtin.queue_lifecycle.blueprint_draft"
+
         def active_path(self, paths, *, work_item_id: str):
             return paths.runtime_root / "planning" / "active-blueprints" / f"{work_item_id}.json"
 
-    def fake_queue_adapter_for_family_id(family_id: str):
-        calls.append(family_id)
-        return _BlueprintAdapter() if family_id == "blueprint_draft" else None
-
     monkeypatch.setattr(
         stage_requests_module,
-        "queue_adapter_for_family_id",
-        fake_queue_adapter_for_family_id,
+        "queue_adapter_for_id",
+        lambda adapter_id: _BlueprintAdapter() if adapter_id == "builtin.queue_lifecycle.blueprint_draft" else None,
     )
 
     engine = SimpleNamespace(paths=paths, compiled_plan=None)
@@ -119,7 +116,6 @@ def test_active_work_item_path_uses_family_adapter_for_blueprint_family(
     )
 
     assert active_path == paths.runtime_root / "planning" / "active-blueprints" / "draft-001.json"
-    assert calls == ["blueprint_draft"]
 
 
 def test_active_work_item_path_uses_custom_family_adapter_id_from_compiled_plan(
@@ -139,11 +135,6 @@ def test_active_work_item_path_uses_custom_family_adapter_id_from_compiled_plan(
         return _CustomAdapter() if adapter_id == family.queue_lifecycle_adapter_id else None
 
     monkeypatch.setattr(stage_requests_module, "queue_adapter_for_id", fake_queue_adapter_for_id)
-    monkeypatch.setattr(
-        stage_requests_module,
-        "queue_adapter_for_family_id",
-        lambda family_id: None,
-    )
     engine = SimpleNamespace(
         paths=paths,
         compiled_plan=SimpleNamespace(work_item_families_by_id={family.family_id: family}),

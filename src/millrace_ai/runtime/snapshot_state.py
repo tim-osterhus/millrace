@@ -16,6 +16,7 @@ def idle_snapshot_update(
     queue_depth_execution: int,
     queue_depth_planning: int,
     queue_depth_learning: int,
+    queue_depths_by_family: dict[str, int] | None = None,
     clear_stop_requested: bool,
     clear_paused: bool,
 ) -> dict[str, object]:
@@ -32,6 +33,7 @@ def idle_snapshot_update(
         "active_work_item_kind": None,
         "active_work_item_id": None,
         "active_runs_by_plane": {},
+        "active_runs_by_lane": {},
         "active_since": None,
         "current_failure_class": None,
         "troubleshoot_attempt_count": 0,
@@ -41,6 +43,11 @@ def idle_snapshot_update(
         "execution_status_marker": IDLE_STATUS_MARKER,
         "planning_status_marker": IDLE_STATUS_MARKER,
         "learning_status_marker": IDLE_STATUS_MARKER,
+        "status_by_scope": {
+            "execution": IDLE_STATUS_MARKER,
+            "planning": IDLE_STATUS_MARKER,
+            "learning": IDLE_STATUS_MARKER,
+        },
         "queue_depth_execution": queue_depth_execution,
         "queue_depth_planning": queue_depth_planning,
         "queue_depth_learning": queue_depth_learning,
@@ -49,6 +56,7 @@ def idle_snapshot_update(
             Plane.PLANNING: queue_depth_planning,
             Plane.LEARNING: queue_depth_learning,
         },
+        "queue_depths_by_family": dict(queue_depths_by_family) if queue_depths_by_family is not None else {},
         "updated_at": now,
     }
     if clear_paused:

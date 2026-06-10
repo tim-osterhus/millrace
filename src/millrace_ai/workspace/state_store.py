@@ -139,9 +139,14 @@ def _update_counter_entries(
             and entry.work_item_family_id == work_item_family_id
             and entry.work_item_id == work_item_id
         ):
+            updated_counters = dict(entry.counters)
+            updated_counters["troubleshoot_attempt_count"] = (
+                updated_counters.get("troubleshoot_attempt_count", 0) + 1
+            )
             updated_entry = entry.model_copy(
                 update={
                     "troubleshoot_attempt_count": entry.troubleshoot_attempt_count + 1,
+                    "counters": updated_counters,
                     "last_updated_at": now,
                 }
             )

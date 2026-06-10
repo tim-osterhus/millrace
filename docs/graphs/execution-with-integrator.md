@@ -64,7 +64,7 @@ integrated output is ready for QA.
 | `updater` | `UPDATE_COMPLETE` | terminal `update_complete` |
 | `updater` | `BLOCKED` | `troubleshooter` |
 | `troubleshooter` | `TROUBLESHOOT_COMPLETE` | `builder` by default, or a valid metadata-selected resume node |
-| `troubleshooter` | `BLOCKED` | `troubleshooter`, until the blocked-recovery threshold is exhausted |
+| `troubleshooter` | `BLOCKED` | `consultant` |
 | `consultant` | `CONSULT_COMPLETE` | `troubleshooter` by default, or a valid metadata-selected resume node |
 | `consultant` | `NEEDS_PLANNING` | terminal `needs_planning` |
 | `consultant` | `BLOCKED` | terminal `blocked` |
@@ -94,8 +94,11 @@ Blocked recovery also uses threshold `2`, routing exhausted blockage to
 `consultant`. In this graph the blocked-recovery source set includes
 `integrator` in addition to the standard Execution nodes.
 
+The Troubleshooter `BLOCKED` edge also targets `consultant` directly, so a
+blocked Troubleshooter hands preserved recovery evidence to Consultant instead
+of re-entering Troubleshooter.
+
 ## Selected By
 
 - `default_codex_integrated`
 - `learning_codex_integrated`
-

@@ -151,7 +151,6 @@ def _queue_adapter_for_family(
     family: WorkItemFamilyDefinition | None,
 ) -> "WorkFamilyQueueAdapter | None":
     from .family_adapters import (
-        queue_adapter_for_family_id,
         queue_adapter_for_id,
         resolve_queue_lifecycle_adapter_id,
     )
@@ -160,12 +159,9 @@ def _queue_adapter_for_family(
         adapter_id = resolve_queue_lifecycle_adapter_id(family)
         if adapter_id is not None:
             adapter = queue_adapter_for_id(adapter_id)
-            if adapter is None:
-                raise QueueStateError(
-                    f"work item family {family.family_id} references unknown adapter {adapter_id}"
-                )
-            return adapter
-    return queue_adapter_for_family_id(family_id)
+            if adapter is not None:
+                return adapter
+    return None
 
 
 def _requeue_active_generic_family(

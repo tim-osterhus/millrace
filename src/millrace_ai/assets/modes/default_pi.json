@@ -23,5 +23,10 @@
     "mechanic": "pi_rpc",
     "auditor": "pi_rpc",
     "arbiter": "pi_rpc"
-  }
+  },
+  "required_extensions": [
+    {"extension_package_id": "millrace.generic"},
+    {"extension_package_id": "millrace.recon"},
+    {"extension_package_id": "millrace.closure"}
+  ]
 }

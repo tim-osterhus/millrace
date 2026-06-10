@@ -63,6 +63,8 @@ runtime behavior around it.
 
 - `graphs/graphs-index.md`: full shipped mode configurations and runner-family
   differences.
+- `graphs/config-mapping.md`: conceptual config aliases, fixture mappings, and
+  product-mode versus fixture distinctions.
 - `graphs/execution-standard.md`: default Execution graph.
 - `graphs/execution-with-integrator.md`: high-assurance Execution graph with
   Integrator.
@@ -127,6 +129,7 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
 - `adr/0013-generic-stage-and-plane-registry.md`
 - `adr/0014-runtime-operation-step-interpreter.md`
 - `adr/0015-extension-package-manifests.md`
+- `adr/0016-extension-boundary-compatibility-facades.md`
 
 ## Optional Sidecar
 

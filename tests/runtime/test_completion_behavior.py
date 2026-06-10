@@ -343,7 +343,6 @@ def test_open_lineage_work_ids_uses_adapters_for_blueprint_and_custom_families(
     }
 
     monkeypatch.setattr(completion_behavior, "queue_adapter_for_id", adapters.get)
-    monkeypatch.setattr(completion_behavior, "queue_adapter_for_family_id", lambda family_id: None)
 
     compiled_plan = SimpleNamespace(
         work_item_families_by_id={
@@ -871,10 +870,10 @@ def test_daemon_supervisor_reports_execution_claim_selection_with_task_identity(
         assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
         assert snapshot.execution_status_marker == "### BLOCKED"
         assert snapshot.current_failure_class == "execution_pre_dispatch_failed"
-        assert snapshot.active_work_item_family_id == "task"
+        assert snapshot.active_work_item_family_id == "execution.main"
         assert snapshot.active_work_item_id == "runtime-pre-dispatch"
         assert context["error_code"] == "execution_pre_dispatch_failed"
-        assert context["work_item_family_id"] == "task"
+        assert context["work_item_family_id"] == "execution.main"
         assert context["work_item_id"] == "runtime-pre-dispatch"
         engine.close()
 

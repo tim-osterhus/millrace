@@ -83,6 +83,11 @@ The compiled planning-loop `completion_behavior` for `planning.standard` is:
 - target selector: `active_closure_target`
 - blocked-work policy: `suppress`
 
+Active runtime callers reach this behavior through
+`runtime/closure_boundary.py`, the named kernel-facing closure boundary.
+`runtime/completion_behavior.py` remains the internal implementation for
+pre-result closure lifecycle behavior behind that boundary.
+
 Runtime behavior is:
 
 1. if no closure target is open, claim normal planning/execution/learning work

@@ -67,5 +67,11 @@
       "target_stage": "librarian",
       "requested_action": "install"
     }
+  ],
+  "required_extensions": [
+    {"extension_package_id": "millrace.generic"},
+    {"extension_package_id": "millrace.recon"},
+    {"extension_package_id": "millrace.closure"},
+    {"extension_package_id": "millrace.learning"}
   ]
 }

@@ -110,6 +110,38 @@ workspace.
 - `millrace-agents/arbiter/verdicts/*.json`
 - `millrace-agents/arbiter/reports/*.md`
 
+## Shipped Built-In Work Item Families
+
+The runtime ships six built-in work item families. Each family is a compiled
+`WorkItemFamilyDefinition` that declares the family's identity, owning plane,
+queue directory layout, file extension, document adapter, and optional queue
+lifecycle adapter. Family definitions live in
+`src/millrace_ai/assets/registry/work_item_families/` and are compiled into
+the runtime plan.
+
+| Family ID | Plane | Queue state directories |
+| --- | --- | --- |
+| `task` | Execution | `tasks/{queue,active,done,blocked}` |
+| `spec` | Planning | `specs/{queue,active,done,blocked}` |
+| `probe` | Planning | `probes/{queue,active,done,blocked}` |
+| `incident` | Planning | `incidents/{incoming,active,resolved,blocked}` |
+| `learning_request` | Learning | `learning/requests/{queue,active,done,blocked}` |
+| `blueprint_draft` | Planning | `blueprints/drafts/{queue,active,approved,blocked,canceled,superseded}` |
+
+Each family is managed by the generic `QueueFamilyInterpreter`
+(`workspace/queue_family_interpreter.py`), which enforces path confinement,
+lists queued work, validates documents, claims items, moves between states,
+and computes family-keyed depths — all without family-ID branch dispatch.
+Document parsing is routed through compiled `DocumentAdapterDefinition`
+entries that normalize raw artifact keys into typed document models.
+
+Public claim helpers for execution and learning (`claim_next_execution_task`,
+`claim_next_learning_request`) remain importable as compatibility wrappers
+over the generic `claim_next_for_family()` path. Runtime activation
+(`runtime/activation.py`) calls `claim_next_for_plane()` which iterates the
+compiled plane queue claim policy family order and delegates each family to
+the generic interpreter or its declared adapter.
+
 ## Module Topology
 
 - `src/millrace_ai/workspace/paths.py`: workspace path contract for the `millrace-agents` tree.
@@ -136,9 +168,16 @@ workspace.
 - `src/millrace_ai/workspace/runtime_lock.py`: daemon ownership lock acquire/release/inspection.
 - `src/millrace_ai/workspace/schema_epoch.py`: workspace schema epoch marker,
   daemon-owned reset refusal, archive manifest, and clean-state reset helpers.
-- `src/millrace_ai/contracts/`: public typed contract facade plus owned contract families for enums, stage metadata, work documents, stage results, loop/mode definitions, compiler diagnostics, runtime snapshots, runtime error contexts, mailbox payloads, and recovery counters. `contracts/terminal_outcomes.py` owns the string-backed terminal outcome contract shared by stage results, runtime snapshots, runtime error contexts, and runner normalization. `contracts/stage_metadata.py` is the single registry for stage plane membership, legal terminal results, running markers, prompt markers, and result-class policy.
+- `src/millrace_ai/contracts/`: public typed contract facade plus owned contract families for enums, stage metadata, work documents, stage results, loop/mode definitions, compiler diagnostics, runtime snapshots, runtime error contexts, mailbox payloads, required-extension declarations, and recovery counters. `contracts/terminal_outcomes.py` owns the string-backed terminal outcome contract shared by stage results, runtime snapshots, runtime error contexts, and runner normalization. `contracts/stage_metadata.py` is the shipped stage registry instance loaded from JSON stage-kind assets; it preserves built-in stage lookup, legal terminal results, running markers, prompt markers, and result-class policy while leaving custom stage-kind authority to JSON assets and the compiled plan.
+- `src/millrace_ai/extensions/`: extension package manifest contracts and
+  built-in extension boundary interfaces. The package owns package/domain/item
+  metadata, syntactic implementation-path validation, schema refs, dependency
+  lists, semver requirements without compile-time implementation imports,
+  generic/Recon/closure/Blueprint/Learning Protocol contracts, the lazy
+  `BuiltInExtensionBoundaryRegistry`, and thin built-in adapters under
+  `extensions/builtin/`.
 - `src/millrace_ai/compiler.py`: stable public facade for mode+graph-loop compile, graph preview, currentness inspection, and diagnostics.
-- `src/millrace_ai/compilation/`: compiler internals for workspace compile orchestration, mode/path resolution, graph and node materialization, transition/completion/policy compilation, learning-trigger validation, entrypoint override validation, asset resolution, fingerprints, persistence, and currentness inspection.
+- `src/millrace_ai/compilation/`: compiler internals for workspace compile orchestration, mode/path resolution, graph and node materialization, transition/completion/policy compilation, learning-trigger validation, required-extension validation, entrypoint override validation, asset resolution, fingerprints, persistence, and currentness inspection.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex/Pi adapters.
 - `src/millrace_ai/cli/monitoring.py`: formatting for opt-in daemon monitor output.
 - `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine`, daemon supervisor, and runtime outcome import surface.
@@ -219,7 +258,7 @@ workspace.
   targeted Learning routing, recovery fallback routing, and claim
   deferral/backpressure policy) used by `tick_cycle.py`, `supervisor.py`,
   `activation.py`, `lanes.py`, `repair_routes.py`, and
-  `completion_behavior.py`.
+  the closure boundary.
 - `src/millrace_ai/runtime/blocked_recovery.py`: compatibility facade for
   blocked-recovery helpers backed by `src/millrace_ai/runtime/recovery/`.
 - `src/millrace_ai/runtime/recovery/`: focused recovery package for blocked
@@ -238,7 +277,12 @@ workspace.
 - `src/millrace_ai/runtime/graph_authority/`: compiled-graph activation and routing authority package — the **generic-router home** for all planes. Contains `routing.py`'s single active dispatch entrypoint (`route_stage_result_from_graph`), which performs upfront stage-result identity validation and routes every plane directly through `generic_router.py`'s active compiled-graph routing logic (`route_generic_stage_result_from_graph`). `execution.py`, `planning.py`, and `learning.py` are compatibility wrappers that forward to the generic router; active routing no longer dispatches through those wrappers or accepts route-time max-cycle recovery knobs. Shared terminal-state/action and runtime-operation resolution remains behind the stable package facade.
 - `src/millrace_ai/runtime/graph_authority/counters.py`: recovery-counter entry mutation helpers that apply declared counter mutation intent from compiled graph policy metadata instead of inferring mutation from destination stage names.
 - `src/millrace_ai/runtime/graph_authority/terminal_actions.py`: shared terminal-state/action and runtime-operation resolver for terminal transitions, threshold exhaustion, and runtime-failure recovery exhaustion, including explicit non-mutating terminal-action authority and lifecycle-action validation.
-- `src/millrace_ai/runtime/completion_behavior.py`: closure-target activation, lineage readiness checks, and compiler-driven backlog-drain dispatch.
+- `src/millrace_ai/runtime/closure_boundary.py`: named kernel-facing closure
+  boundary for closure-target lifecycle, lineage gating, backpressure policy,
+  and result-normalization boundary responsibilities. It delegates lazily to
+  `completion_behavior.py` for pre-result lifecycle behavior and keeps kernel
+  callers away from direct completion-behavior imports.
+- `src/millrace_ai/runtime/completion_behavior.py`: internal closure-target activation, lineage readiness checks, and compiler-driven backlog-drain implementation behind the closure boundary.
 - `src/millrace_ai/runtime/reconciliation.py`: stale/impossible-state detection and recovery-stage activation.
 - `src/millrace_ai/runtime/result_application.py`: stable façade over routed post-stage mutation helpers and ordinary source work-item lifecycle application.
 - `src/millrace_ai/runtime/result_counters.py`: recovery-counter entry mutation, normalized terminal-outcome comparisons, and snapshot counter increments.
@@ -250,6 +294,11 @@ workspace.
 - `src/millrace_ai/runtime/skill_evidence.py`: per-request skill revision evidence snapshots for learning-enabled runs.
 - `src/millrace_ai/runtime/snapshot_state.py`: shared snapshot reset/update helpers.
 - `src/millrace_ai/runtime/closure_transitions.py`: closure-target state mutation, arbiter report canonicalization, and arbiter-specific handoff/block/close paths.
+- `src/millrace_ai/extensions/boundaries.py`: active extension boundary
+  registry used by `runtime/result_application.py` for Recon/closure behavior
+  and by `runtime/tick_cycle.py` and `runtime/supervisor.py` for Learning
+  trigger/promotion behavior. The bridged runtime modules remain compatibility
+  implementations while `extensions/builtin/` provides the interface adapters.
 - `src/millrace_ai/runtime/stage_requests.py`: request rendering, idle outcomes, queue-depth reads, and runtime clock/id helpers.
 - `src/millrace_ai/runtime/run_traces.py`: persisted run-trace graph persistence, fallback derivation, and terminal-metadata provenance labels for trace inspection.
 - `src/millrace_ai/runtime/inspection.py`: persisted run summary inspection, terminal-metadata provenance, and artifact selection helpers.
@@ -261,6 +310,7 @@ workspace.
 - `src/millrace_ai/watchers.py`: optional watcher session lifecycle and polling fallback intake.
 - `src/millrace_ai/doctor/`: workspace integrity + lock health checks.
 - `src/millrace_ai/assets/entrypoints/`: packaged entrypoint markdown assets plus the parsing/linting package that validates entrypoint and advisory skill manifests.
+- `src/millrace_ai/assets/extensions.py`: extension package manifest discovery and loading from `registry/extensions/`.
 - `src/millrace_ai/cli/errors.py`: operator error output helper used by command modules and shared workspace resolution.
 - `src/millrace_ai/cli/status_view.py`: compatibility facade for status
   output.
@@ -397,6 +447,92 @@ durable JSONL journal records to enable idempotent resume after interruption:
 - `default_effect_runners.json` — all six shipped operations are assigned to
   `legacy_python_handler`; no shipped operation uses the interpreted runner.
 
+## Generic Recovery Counter Model
+
+Recovery counters track per-work-item failure attempts and are consumed by
+compiled graph threshold policies to make exhaustion decisions
+(route-to-repair vs. escalate-to-consultant vs. terminal-block).
+
+### Canonical Storage
+
+Counter data lives in `millrace-agents/state/recovery_counters.json` as
+`RecoveryCounters` with individual `RecoveryCounterEntry` records. Each
+entry is scoped to a single failure class on one work item and stores
+arbitrary `counter_id` values in a generic `counters` dict:
+
+```json
+{
+  "failure_class": "recoverable_failure",
+  "work_item_family_id": "task",
+  "work_item_id": "task-42",
+  "counters": {
+    "troubleshoot_attempt_count": 2,
+    "custom_op_counter": 1
+  },
+  "troubleshoot_attempt_count": 2,
+  "mechanic_attempt_count": 0,
+  "fix_cycle_count": 0,
+  "consultant_invocations": 0
+}
+```
+
+The composite `(work_item_family_id, work_item_id, failure_class)` serves as
+the runtime scope key. Counter storage is generic — any stage or recovery path
+can increment arbitrary `counter_id` strings through
+`increment_counter_field()` in `runtime/result_counters.py`.
+
+### Legacy Compatibility Fields
+
+Four fixed legacy counter field names are preserved as compatibility
+projections derived from the generic `counters` dict:
+
+| Legacy field name | Counter dict key |
+| --- | --- |
+| `troubleshoot_attempt_count` | `"troubleshoot_attempt_count"` |
+| `mechanic_attempt_count` | `"mechanic_attempt_count"` |
+| `fix_cycle_count` | `"fix_cycle_count"` |
+| `consultant_invocations` | `"consultant_invocations"` |
+
+On load, `RecoveryCounterEntry` migrates non-zero legacy field values into
+the generic `counters` dict (old-state compatibility). On validation, the
+generic dict is projected back into the legacy fields so every existing
+consumer that reads `entry.troubleshoot_attempt_count` continues to work.
+New code should read and write the generic `counters` dict via
+`increment_counter_field(engine, snapshot, counters, counter_id=...)`.
+Active counter routing in `result_counters.py` and
+`graph_authority/counters.py` resolves counter mutations from compiled
+policy metadata (`counter_mutation_name` / `recovery_counter_name`) rather
+than from hard-coded fixed field-name dispatch.
+
+### Policy-Owned Thresholds
+
+Threshold policies live in graph-loop definitions under `dynamic_policies.
+threshold_policies` and tie a `counter_name` to an exhaustion threshold:
+
+```json
+{
+  "policy_id": "execution.blocked.recovery",
+  "source_node_ids": ["builder", "checker", "fixer", ...],
+  "on_outcome": "BLOCKED",
+  "counter_name": "troubleshoot_attempt_count",
+  "threshold": 2,
+  "exhausted_target_node_id": "consultant",
+  "exhausted_counter_mutation_name": "consultant_invocations"
+}
+```
+
+The generic router (`graph_authority/generic_router.py`) reads the matching
+threshold policy after a stage result, compares the current counter value
+against the threshold, and selects the exhausted target node when the
+threshold is reached. The `exhausted_counter_mutation_name` increments a
+separate counter (here `consultant_invocations`) on exhaustion, enabling
+meta-level counter chains.
+
+Runtime-failure recovery (`runtime_failure_recovery` in graph definitions)
+uses the same counter-name/threshold/exhausted-terminal model for runtime
+exception routing (e.g. route to `troubleshooter` after two exceptions,
+block the work item on the third).
+
 ## Stage Runner Stack
 
 Per stage execution:
@@ -502,7 +638,9 @@ Per daemon scheduler cycle:
    Arbiter activation. Same-root work with a mismatched effective root spec
    blocks as `closure_lineage_drift` instead of letting Arbiter re-enter a
    planning-only remediation loop.
-10. Consult compiled `completion_behavior` and activate `arbiter` when an open closure target is eligible.
+10. Consult the named closure boundary, which evaluates compiled
+    `completion_behavior`, and activate `arbiter` when an open closure target
+    is eligible.
 11. Re-evaluate usage governance before dispatching active stages.
 12. Evaluate execution capability grants and pending approvals before runner
     invocation.

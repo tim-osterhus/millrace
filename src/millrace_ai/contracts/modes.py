@@ -173,6 +173,8 @@ class ModeDefinition(ContractModel):
     learning_trigger_rules: tuple[LearningTriggerRuleDefinition, ...] = ()
     execution_capability_requests: tuple[CapabilityRequest, ...] = ()
     execution_capability_policies: tuple[CapabilityPolicyOverride, ...] = ()
+    recovery_policy_ids: tuple[str, ...] = ()
+    required_extensions: tuple[object, ...] = ()  # RequiredExtensionDeclaration dicts
 
     @model_validator(mode="before")
     @classmethod

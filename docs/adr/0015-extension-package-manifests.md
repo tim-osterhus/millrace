@@ -97,11 +97,30 @@ control flow auditable and stable. Two extensions cannot silently create a
 cycle, change a routing decision, or compete for the same lane. Those concerns
 stay in operator-controlled graph assets and runtime config.
 
-A prospective `src/millrace_ai/extensions/` package that would host manifest
-loading, validation, and item registration is not yet created. This ADR defines
-the manifest contract so that when the extension framework is built, the
-contract surface is already agreed.
+Initial implementation now exists for the manifest-contract slice:
+`src/millrace_ai/extensions/` hosts extension package and item manifest models,
+`src/millrace_ai/assets/extensions.py` discovers JSON manifests under
+`registry/extensions/`, `src/millrace_ai/contracts/extensions.py` defines
+required-extension declaration contracts, and
+`src/millrace_ai/compilation/validation/extensions.py` validates mode
+requirements against discovered manifests at compile time.
 
-Package names mentioned as prospective (such as `extensions/`,
-`extension_registry/`) are not yet created runtime modules. They are boundary
-descriptors for future implementation.
+That implementation validates manifest metadata and required-extension
+availability without importing implementation paths from config or graph data.
+The packaged registry now includes built-in manifests for `millrace.generic`,
+`millrace.recon`, `millrace.closure`, `millrace.blueprint`, and
+`millrace.learning`, plus the `example.blueprint.enhanced` test/example
+manifest. Shipped mode assets declare the built-in packages their selected
+graphs require, and compile validation rejects selected Recon, closure,
+Blueprint, or Learning stage-kind vocabulary plus Recon and closure terminal
+actions unless the matching package is declared. The compiler also
+cross-validates discovered built-in manifest domains against the canonical
+package-to-domain mapping, so conflicting per-manifest owners fail before plan
+freezing.
+
+The follow-up extension-boundary implementation now defines built-in domain
+boundary Protocols, lazy built-in interface resolution, and adapter modules for
+generic, Recon, closure, Blueprint, and Learning behavior. ADR-0016 records
+the active bridges and the remaining kernel-to-domain compatibility facades.
+Full third-party runtime item activation and any unified `extension_registry/`
+package remain future implementation work.

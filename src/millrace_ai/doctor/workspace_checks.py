@@ -411,6 +411,7 @@ def _validate_snapshot_reconciliation(
         counters=counters,
         execution_status_marker=execution_marker,
         planning_status_marker=planning_marker,
+        learning_status_marker="### IDLE",
         compiled_plan=compiled_plan,
     )
     for signal in signals:

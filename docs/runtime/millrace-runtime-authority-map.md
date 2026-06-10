@@ -28,7 +28,9 @@ The runtime kernel (`src/millrace_ai/runtime/`, `src/millrace_ai/workspace/`)
 owns orchestration, lifecycle, and durable state. Workflow-semantic decisions
 (routing, terminal actions, claim policies, recovery policies) are resolved
 from the compiled plan, not from kernel-level plane-enum or stage-enum
-branches (see ADR-0012 through ADR-0015).
+branches (see ADR-0012 through ADR-0016). ADR-0016 records the active
+extension boundary bridges and the remaining kernel-to-domain compatibility
+facades while that migration continues.
 
 The compiled-plan router path uses:
 
@@ -70,8 +72,13 @@ The compiled-plan router path uses:
   `millrace-agents/`.
 - `runtime/mailbox_intake.py` owns daemon-safe mailbox application.
 - `runtime/watcher_intake.py` owns watcher/poll intake and idea normalization.
-- `runtime/learning_triggers.py`, `runtime/handoff_incidents.py`, and
-  `runtime/closure_transitions.py` own runtime-generated follow-up work.
+- `runtime/learning_triggers.py`, `runtime/handoff_incidents.py`,
+  `runtime/closure_boundary.py`, and `runtime/closure_transitions.py` own
+  runtime-generated follow-up work.
+  Learning trigger/promotion calls from tick-cycle and supervisor paths, and
+  closure transition calls from result-application paths, resolve through the
+  built-in extension boundary registry before delegating to those compatibility
+  implementations.
 - `runtime/activation.py` decides which work can be claimed for a plane, using
   `runtime/scheduler_policy.py` for the compiled foreground order,
   closure-target inversion, and learning eligibility shared with tick and
@@ -106,14 +113,22 @@ The compiled-plan router path uses:
   for `REQUEST_COMPLETE_SOURCE` and `REQUEST_BLOCK_SOURCE`, while repair-route
   exceptions remain failure-policy-owned.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
-  `runtime/effects/operation_runners/`, `runtime/closure_transitions.py`,
-  `runtime/result_counters.py`, `runtime/stage_result_persistence.py`,
-  `runtime/run_traces.py`, `runtime/snapshot_state.py`, and
+  `runtime/effects/operation_runners/`, `runtime/closure_boundary.py`,
+  `runtime/closure_transitions.py`, `runtime/result_counters.py`,
+  `runtime/stage_result_persistence.py`, `runtime/run_traces.py`,
+  `runtime/snapshot_state.py`, and
   `workspace/*_state.py` own the durable mutations for their domains.
+  Recon and closure post-stage mutations are reached through built-in
+  extension boundary adapters from `runtime/result_application.py`; Blueprint
+  operation runners and context providers remain documented compatibility
+  facades until their implementation moves behind extension-owned interfaces.
 - `runtime/supervisor.py` serializes result application in daemon mode even
   when workers run concurrently.
 - `runtime/inspection.py`, CLI status/runs/queue views, `doctor.py`, monitor
-  events, `runtime_snapshot.json`, status markdown files, `run_trace.json`,
+  events, `runtime_snapshot.json`, status markdown files,
+  `runtime/status_projections.py` (shared family-keyed queue-depth,
+  scope-keyed status, and lane-keyed active-run projection helpers with
+  plane-keyed compatibility derivations), `run_trace.json`,
   runtime events, and run artifacts expose read-only inspection surfaces.
 
 ### Runtime-operation registry authority
@@ -250,9 +265,8 @@ based on compiled runner identity:
   - `backpressure_outcome(policy, *, has_open_closure_target)` returns
     `"block"`, `"defer"`, or `"allow"` from the compiled
     `backpressure_policy` field. Used by `activation.py` in
-    `activate_claim_for_plane()` and `completion_behavior.py` in
-    `_prepare_closure_target_for_spec()`. QueueStore remains the filesystem
-    mutation adapter.
+    `activate_claim_for_plane()` through `closure_boundary.py`; QueueStore
+    remains the filesystem mutation adapter.
 - Compile validation (`compilation/validation/scheduler_policies.py`) rejects
   policies with unknown planes, invalid claim policy references, invalid
   family references, rules that reference unknown predicates or target planes,
@@ -333,13 +347,15 @@ from the Planning source so Arbiter readiness scans can recover after restart.
 `millrace queue add-probe`, watcher-normalized ideas, mailbox-applied intake,
 runtime-generated child specs, and Recon-generated specs.
 
-**Queue selection owner:** `runtime/activation.py` asks
-`QueueStore.claim_next_planning_item()` with the compiled Planning queue claim
-policy. `workspace/queue_selection.py` claims the next eligible planning
-family. The foreground claim order and closure-target inversion come from the
-compiled scheduler-policy interpreter. In shipped policy, incidents and
-Blueprint drafts can take precedence over probes/specs; while a closure target
-is open, claims are restricted to same-lineage Planning work.
+**Queue selection owner:** `runtime/activation.py` calls
+`workspace/queue_selection.claim_next_for_plane()` with the compiled Planning
+queue claim policy and compiled work-family data. `workspace/queue_selection.py`
+claims the next eligible planning family via the declared family adapter or
+generic `QueueFamilyInterpreter` path. The foreground claim order and
+closure-target inversion come from the compiled scheduler-policy interpreter.
+In shipped policy, incidents and Blueprint drafts can take precedence over
+probes/specs; while a closure target is open, claims are restricted to
+same-lineage Planning work.
 
 **Compiled plan authority:** `compiled_plan.json` selects
 `planning.standard` or `planning.blueprint`, maps probe work to Recon, maps
@@ -372,8 +388,9 @@ compiled Planning mutations. For runtime-effect results, `effect_execution.py`
 applies effect-rule-declared source completion/blocking lifecycle intent
 before queue mutation, while repair-route exceptions stay failure-policy-
 owned.
-`runtime/completion_behavior.py` opens a closure target when a root spec is
-claimed, snapshots canonical contracts, and derives closure-blocking lineage
+`runtime/closure_boundary.py` opens a closure target when a root spec is
+claimed, snapshots canonical contracts through its internal
+`completion_behavior.py` implementation, and derives closure-blocking lineage
 through family adapter-backed lineage scans plus inventory-backed blocker refs.
 
 **Inspection/monitor visibility:** status shows Planning active stage, queue
@@ -605,9 +622,10 @@ an eligible latest root spec. Queue selection then suppresses unrelated root
 specs while the open target exists and claims only same-lineage work.
 
 **Compiled plan authority:** the selected Planning graph's compiled
-`completion_behavior` owns the backlog-drain trigger, accepted root-source
-kinds, `runtime_inventory` resolution policy, Arbiter activation entry, and
-blocked-work policy.
+`completion_behavior` owns the compiled backlog-drain trigger, accepted
+root-source kinds, `runtime_inventory` resolution policy, Arbiter activation
+entry, and blocked-work policy; active runtime callers reach that behavior
+through `runtime/closure_boundary.py`.
 
 **Runner request builder:** `runtime/stage_requests.py` builds Arbiter
 `request_kind = closure_target` requests, not fake active queue-item requests.
@@ -623,8 +641,9 @@ not close the target, enqueue incidents, or move root work directly.
 results onto `work_item_kind = spec` and `work_item_id = <root_spec_id>` while
 preserving closure root-source metadata.
 
-**Runtime mutation owner:** `runtime/completion_behavior.py` resolves and
-snapshots contracts when opening the target. `workspace/arbiter_state.py`
+**Runtime mutation owner:** `runtime/closure_boundary.py` resolves and
+snapshots contracts when opening the target through its internal
+`completion_behavior.py` implementation. `workspace/arbiter_state.py`
 writes root-source/root-spec contracts and target state.
 `runtime/closure_transitions.py` closes targets, keeps them open for
 remediation, persists latest verdict/report paths, enqueues remediation

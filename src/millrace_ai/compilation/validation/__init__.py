@@ -7,6 +7,7 @@ from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane
 
 from .artifacts import validate_artifact_contracts, validate_document_adapters
+from .extensions import validate_required_extensions
 from .failure_policies import (
     validate_recovery_policies,
     validate_runtime_failure_policies,
@@ -248,6 +249,7 @@ def validate_scheduler_policy(
 __all__ = [
     "validate_lane_conflict_coverage",
     "validate_mode_stage_maps",
+    "validate_required_extensions",
     "validate_scheduler_policy",
     "validate_workflow_primitives",
 ]

@@ -153,8 +153,7 @@ stateDiagram-v2
     Doublechecker --> Consultant: recovery budget exhausted
 
     Troubleshooter --> Builder: TROUBLESHOOT_COMPLETE resume metadata target default builder
-    Troubleshooter --> Troubleshooter: BLOCKED and troubleshoot retry remains
-    Troubleshooter --> Consultant: BLOCKED and troubleshoot budget exhausted
+    Troubleshooter --> Consultant: BLOCKED
 
     Consultant --> Troubleshooter: CONSULT_COMPLETE resume metadata target default troubleshooter
     Consultant --> NeedsPlanning: NEEDS_PLANNING

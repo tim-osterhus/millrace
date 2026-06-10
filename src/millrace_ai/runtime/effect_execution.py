@@ -16,7 +16,6 @@ from millrace_ai.workspace.paths import WorkspacePaths
 
 from .active_runs import snapshot_without_active_plane
 from .blocked_recovery import write_blocked_item_metadata
-from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
 from .effects import (
     RuntimeEffectDecision,
     RuntimeEffectHandler,
@@ -811,9 +810,16 @@ def _clear_active_source_after_effect(
     )
     engine.counters = load_recovery_counters(engine.paths)
     if decision.action is RouterAction.IDLE and stage_result.plane is Plane.PLANNING:
-        target = active_closure_target(engine)
+        from .closure_boundary import (
+            active_closure_target as _active_closure_target,
+        )
+        from .closure_boundary import (
+            block_on_closure_lineage_drift_if_present as _block_on_closure_lineage_drift_if_present,
+        )
+
+        target = _active_closure_target(engine)
         if target is not None:
-            block_on_closure_lineage_drift_if_present(engine, target)
+            _block_on_closure_lineage_drift_if_present(engine, target)
 
 
 def _spawned_paths(

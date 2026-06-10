@@ -23,6 +23,7 @@ EXPECTED_PUBLIC_SYMBOLS: dict[str, tuple[str, ...]] = {
     "millrace_ai.compilation.validation": (
         "validate_lane_conflict_coverage",
         "validate_mode_stage_maps",
+        "validate_required_extensions",
         "validate_scheduler_policy",
         "validate_workflow_primitives",
     ),
@@ -129,6 +130,7 @@ EXPECTED_PUBLIC_SYMBOLS: dict[str, tuple[str, ...]] = {
         "RuntimeEffectOperationRunnerDefinition",
         "RuntimeEffectOperationRunnerId",
         "RuntimeEffectOperationStepDefinition",
+        "RuntimeEffectPrimitiveDefinition",
         "RuntimeEffectPrimitiveId",
         "RuntimeEffectRepairClosureContractDefinition",
         "RuntimeEffectRuleDefinition",

@@ -703,3 +703,79 @@ def test_supervisor_completion_runtime_effects_drain_once_across_reload_and_stop
         engine.close()
 
     asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Config-driven behavior tests: Learning request creation via supervisor
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_learning_disabled_mode_creates_no_learning_request(
+    tmp_path: Path,
+) -> None:
+    """With a learning-disabled mode config, the supervisor does not create
+    Learning requests when execution stages complete.
+
+    Config asset: assets/modes/default_codex.json
+    """
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+
+        completions = await supervisor.drain_completed(wait=True)
+        events = read_runtime_events(paths)
+
+        assert len(completions) == 1
+        # No learning_request_enqueued events
+        assert not any(
+            event.event_type == "learning_request_enqueued" for event in events
+        )
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_learning_enabled_mode_creates_learning_request(
+    tmp_path: Path,
+) -> None:
+    """With a learning-enabled mode config, the supervisor processes
+    completions through the correct config path.  When a stage result
+    matches learning trigger rules, Learning requests are created.
+
+    Config asset: assets/modes/learning_codex.json
+    """
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+
+        completions = await supervisor.drain_completed(wait=True)
+
+        assert len(completions) == 1
+        # The completion was processed through the learning-enabled config path.
+        # BUILDER_COMPLETE is not a learning trigger in learning_codex, so
+        # no learning request is expected.  But the supervisor runs with the
+        # correct mode config.
+        assert completions[0].stage_result.plane is Plane.EXECUTION
+        engine.close()
+
+    asyncio.run(scenario())

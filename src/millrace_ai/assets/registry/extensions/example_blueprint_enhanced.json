@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "kind": "extension_package_manifest",
+  "package_id": "example.blueprint.enhanced",
+  "display_name": "Example Enhanced Blueprint Extensions",
+  "domain": "blueprint",
+  "version": "1.0.0",
+  "items": [
+    {
+      "item_kind": "terminal_action",
+      "item_id": "example.enhanced.blueprint.approve",
+      "implementation_path": "example_extensions.blueprint.actions",
+      "contract_schema_ref": "millrace_ai.architecture.workflow_primitives.TerminalActionDefinition",
+      "version": "1.0.0"
+    }
+  ],
+  "requires": []
+}

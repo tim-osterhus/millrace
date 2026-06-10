@@ -37,6 +37,8 @@ BUILTIN_MODE_PATHS: dict[str, Path] = {
 
 BUILTIN_MODE_ALIASES: dict[str, str] = {
     "standard_plain": "default_codex",
+    "standard_millrace": "default_pi",
+    "learning_enabled_millrace": "learning_pi",
 }
 
 SHIPPED_MODE_IDS: tuple[str, ...] = (

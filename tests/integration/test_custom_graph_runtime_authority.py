@@ -199,6 +199,11 @@ def _write_synthetic_mode_asset(assets_root: Path) -> None:
         "stage_model_bindings": {},
         "stage_thinking_bindings": {},
         "stage_runner_bindings": {"synthetic_worker": "codex_cli"},
+        "required_extensions": [
+            {"extension_package_id": "millrace.generic"},
+            {"extension_package_id": "millrace.recon"},
+            {"extension_package_id": "millrace.closure"},
+        ],
     }
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 

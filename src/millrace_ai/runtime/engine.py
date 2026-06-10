@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-import millrace_ai.runtime.activation as activation
-import millrace_ai.runtime.completion_behavior as completion_behavior
 import millrace_ai.runtime.lifecycle as lifecycle
 import millrace_ai.runtime.mailbox_intake as mailbox_intake
-import millrace_ai.runtime.reconciliation as reconciliation
-import millrace_ai.runtime.result_application as result_application
-import millrace_ai.runtime.stage_requests as stage_requests
-import millrace_ai.runtime.tick_cycle as tick_cycle
 import millrace_ai.runtime.usage_governance as usage_governance
 import millrace_ai.runtime.watcher_intake as watcher_intake
 from millrace_ai.architecture import CompiledRunPlan, MaterializedGraphNodePlan, WorkItemFamilyDefinition
@@ -53,6 +48,33 @@ from millrace_ai.watchers import WatcherSession, WatchEvent
 from millrace_ai.workspace.queue_lifecycle import requeue_active_work_item, requeue_all_active_work_items
 
 from .snapshot_state import IDLE_STATUS_MARKER, idle_snapshot_update
+
+
+class _LazyModule:
+    """Lazy-loading proxy that imports the real module on first attribute access."""
+
+    __slots__ = ("_module_name", "_module")
+
+    def __init__(self, module_name: str) -> None:
+        object.__setattr__(self, "_module_name", module_name)
+        object.__setattr__(self, "_module", None)
+
+    def __getattr__(self, name: str) -> object:
+        mod = object.__getattribute__(self, "_module")
+        if mod is None:
+            mod = importlib.import_module(
+                object.__getattribute__(self, "_module_name")
+            )
+            object.__setattr__(self, "_module", mod)
+        return getattr(mod, name)
+
+
+activation = _LazyModule("millrace_ai.runtime.activation")
+completion_behavior = _LazyModule("millrace_ai.runtime.closure_boundary")
+reconciliation = _LazyModule("millrace_ai.runtime.reconciliation")
+result_application = _LazyModule("millrace_ai.runtime.result_application")
+stage_requests = _LazyModule("millrace_ai.runtime.stage_requests")
+tick_cycle = _LazyModule("millrace_ai.runtime.tick_cycle")
 
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
 
@@ -265,7 +287,7 @@ class RuntimeEngine:
         work_item_family_id: str | None = None,
         work_item_kind: WorkItemKind | None = None,
         work_item_id: str,
-        field: str,
+        counter_id: str,
     ) -> RuntimeSnapshot:
         return result_application.increment_counter_field(
             self,
@@ -275,7 +297,7 @@ class RuntimeEngine:
             work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
-            field=field,
+            counter_id=counter_id,
         )
 
     def _mark_active_work_item_complete(self, stage_result: StageResultEnvelope) -> None:
@@ -350,7 +372,8 @@ class RuntimeEngine:
         return stage_requests.stage_plan_for(self, plane, stage, node_id=node_id)
 
     def _entry_stage_for_kind(self, work_item_kind: WorkItemKind) -> StageName:
-        return activation.entry_stage_for_kind(work_item_kind)
+        assert self.compiled_plan is not None
+        return activation.entry_stage_for_kind(work_item_kind, compiled_plan=self.compiled_plan)
 
     def _idle_stage_for_no_work(self) -> StageName:
         return stage_requests.idle_stage_for_no_work()
@@ -502,12 +525,14 @@ class RuntimeEngine:
         clear_paused: bool,
     ) -> None:
         assert self.snapshot is not None
+        family_depths = self._compute_queue_depths_by_family()
         update = idle_snapshot_update(
             now=self._now(),
             process_running=process_running,
             queue_depth_execution=self._execution_queue_depth(),
             queue_depth_planning=self._planning_queue_depth(),
             queue_depth_learning=self._learning_queue_depth(),
+            queue_depths_by_family=family_depths,
             clear_stop_requested=clear_stop_requested,
             clear_paused=clear_paused,
         )
@@ -581,7 +606,14 @@ class RuntimeEngine:
             )
         status_markers = dict(self.snapshot.status_markers_by_plane)
         status_markers[plane] = normalized
-        self.snapshot = self.snapshot.model_copy(update={"status_markers_by_plane": status_markers})
+        status_by_scope = dict(self.snapshot.status_by_scope)
+        status_by_scope[plane.value] = normalized
+        self.snapshot = self.snapshot.model_copy(
+            update={
+                "status_markers_by_plane": status_markers,
+                "status_by_scope": status_by_scope,
+            }
+        )
         save_snapshot(self.paths, self.snapshot)
         if previous != normalized:
             self._emit_monitor_event(
@@ -601,6 +633,16 @@ class RuntimeEngine:
     @staticmethod
     def _mailbox_retry_scope(envelope: MailboxCommandEnvelope) -> Plane | None:
         return mailbox_intake.mailbox_retry_scope(envelope)
+
+    def _compute_queue_depths_by_family(self) -> dict[str, int]:
+        """Compute canonical family-keyed queue depths via the family interpreter."""
+        families = self._work_item_families_for_lifecycle()
+        if families is None:
+            return {}
+        from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
+
+        interpreter = QueueFamilyInterpreter(self.paths, families=families)
+        return interpreter.queue_depths_by_family()
 
     def _execution_queue_depth(self) -> int:
         return stage_requests.execution_queue_depth(self)

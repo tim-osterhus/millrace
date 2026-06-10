@@ -31,7 +31,6 @@ from millrace_ai.contracts import (
     TaskDocument,
 )
 from millrace_ai.errors import QueueStateError
-from millrace_ai.recon_packets import parse_recon_packet
 from millrace_ai.workspace.work_documents import parse_work_document_as
 
 if TYPE_CHECKING:
@@ -219,7 +218,9 @@ def _parse_markdown_artifact(
         if model is TaskDocument:
             return parse_work_document_as(raw, model=TaskDocument, path=path)
         if model is ReconPacketDocument:
-            return parse_recon_packet(raw, path=path)
+            from millrace_ai.recon_packets import parse_recon_packet as _parse_recon_packet
+
+            return _parse_recon_packet(raw, path=path)
     except Exception as exc:
         raise _parse_error(contract, path, adapter, "markdown_parse", exc) from exc
 

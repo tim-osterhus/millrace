@@ -6,19 +6,27 @@
   "nodes": [
     {
       "node_id": "analyst",
-      "stage_kind_id": "analyst"
+      "stage_kind_id": "analyst",
+      "request_context_profile_id": "analyst.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "professor",
-      "stage_kind_id": "professor"
+      "stage_kind_id": "professor",
+      "request_context_profile_id": "professor.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "curator",
-      "stage_kind_id": "curator"
+      "stage_kind_id": "curator",
+      "request_context_profile_id": "curator.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "librarian",
-      "stage_kind_id": "librarian"
+      "stage_kind_id": "librarian",
+      "request_context_profile_id": "librarian.default",
+      "context_render_plan_id": "stage_request.default.v1"
     }
   ],
   "entry_nodes": [

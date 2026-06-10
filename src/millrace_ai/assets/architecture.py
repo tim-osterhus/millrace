@@ -9,18 +9,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from millrace_ai.architecture import RegisteredStageKindDefinition
-from millrace_ai.contracts.stage_metadata import STAGE_METADATA_BY_VALUE
 from millrace_ai.errors import AssetValidationError
 
 ASSETS_ROOT = Path(__file__).resolve().parent
 STAGE_KIND_REGISTRY_ROOT = Path("registry/stage_kinds")
 
-BUILTIN_STAGE_KIND_PATHS: dict[str, Path] = {
-    stage_id: Path(f"registry/stage_kinds/{metadata.plane.value}/{stage_id}.json")
-    for stage_id, metadata in STAGE_METADATA_BY_VALUE.items()
-}
+BUILTIN_STAGE_KIND_PATHS: dict[str, Path] = {}
 
-SHIPPED_STAGE_KIND_IDS: tuple[str, ...] = tuple(BUILTIN_STAGE_KIND_PATHS)
+SHIPPED_STAGE_KIND_IDS: tuple[str, ...] = ()
 
 
 class ArchitectureAssetError(AssetValidationError):
@@ -48,7 +44,6 @@ def load_builtin_stage_kind_definition(
         raise ArchitectureAssetError(
             f"Stage kind asset id mismatch: expected {stage_kind_id}, found {stage_kind.stage_kind_id}"
         )
-    _validate_builtin_stage_kind_matches_metadata(stage_kind)
 
     return stage_kind
 
@@ -179,31 +174,42 @@ def _format_validation_error(exc: ValidationError) -> str:
     return f"{loc}: {message}"
 
 
-def _validate_builtin_stage_kind_matches_metadata(
-    stage_kind: RegisteredStageKindDefinition,
-) -> None:
-    metadata = STAGE_METADATA_BY_VALUE.get(stage_kind.stage_kind_id)
-    if metadata is None:
-        return
-    if stage_kind.plane is not metadata.plane:
-        raise ArchitectureAssetError(
-            f"Stage kind {stage_kind.stage_kind_id} plane does not match stage metadata"
-        )
-    if stage_kind.running_status_marker != metadata.running_status_marker:
-        raise ArchitectureAssetError(
-            f"Stage kind {stage_kind.stage_kind_id} running marker does not match stage metadata"
-        )
-    if stage_kind.legal_outcomes != metadata.legal_terminal_results:
-        raise ArchitectureAssetError(
-            f"Stage kind {stage_kind.stage_kind_id} legal outcomes do not match stage metadata"
-        )
-    if stage_kind.allowed_result_classes_by_outcome != dict(
-        metadata.allowed_result_classes_by_outcome
-    ):
-        raise ArchitectureAssetError(
-            f"Stage kind {stage_kind.stage_kind_id} result-class policy does not match stage metadata"
-        )
+# ---------------------------------------------------------------------------
+# Module-level initialization – populates BUILTIN_STAGE_KIND_PATHS and
+# SHIPPED_STAGE_KIND_IDS from the shipped stage-kind JSON assets.
+# ---------------------------------------------------------------------------
 
+def _init_builtin_stage_kind_paths() -> None:
+    global BUILTIN_STAGE_KIND_PATHS, SHIPPED_STAGE_KIND_IDS
+    from millrace_ai.contracts.enums import ExecutionStageName, LearningStageName, PlanningStageName
+
+    _known_stage_ids: set[str] = {
+        *(s.value for s in ExecutionStageName),
+        *(s.value for s in PlanningStageName),
+        *(s.value for s in LearningStageName),
+    }
+
+    # Maintain the shipped ordering: execution enum order, then planning,
+    # then learning (same order as the old hard-coded SHIPPED_STAGE_KIND_IDS).
+    _shipped_order: list[str] = [
+        *(s.value for s in ExecutionStageName),
+        *(s.value for s in PlanningStageName),
+        *(s.value for s in LearningStageName),
+    ]
+
+    paths: dict[str, Path] = {}
+    for json_path in _discover_stage_kind_paths(ASSETS_ROOT):
+        payload = _load_json_asset(json_path, asset_kind="stage kind")
+        stage_kind_id = payload.get("stage_kind_id")
+        if isinstance(stage_kind_id, str) and stage_kind_id and stage_kind_id in _known_stage_ids:
+            paths[stage_kind_id] = json_path.relative_to(ASSETS_ROOT)
+    BUILTIN_STAGE_KIND_PATHS = paths
+    SHIPPED_STAGE_KIND_IDS = tuple(
+        sid for sid in _shipped_order if sid in paths
+    )
+
+
+_init_builtin_stage_kind_paths()
 
 __all__ = [
     "ASSETS_ROOT",

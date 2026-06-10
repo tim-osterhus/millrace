@@ -32,7 +32,7 @@ from millrace_ai.contracts.terminal_outcomes import terminal_outcome_value
 from millrace_ai.router import RouterAction, RouterDecision
 
 from .counters import (
-    counter_attempts_for_name,
+    counter_attempts_for_counter_id,
     counter_key_from_snapshot,
     normalize_failure_class,
     resolve_failure_class,
@@ -110,11 +110,11 @@ def route_generic_stage_result_from_graph(
                 stage_result, source_stage, threshold_policy, exhausted=False
             ),
         )
-        attempts = counter_attempts_for_name(
+        attempts = counter_attempts_for_counter_id(
             snapshot,
             counters,
             failure_class,
-            counter_name=threshold_policy.counter_name,
+            counter_id=threshold_policy.counter_name.value,
         )
         if attempts >= threshold_policy.threshold:
             return decision_from_threshold_resolution(
@@ -425,9 +425,9 @@ def planning_threshold_reason(
     """
     Planning-plane threshold reason formatter.
 
-    Derives fallback reason from ``stage_result.node_id`` (compiled node identity)
-    and preserves the legacy ``:mechanic_attempts_exhausted`` suffix appended
-    when the mechanic-attempt counter has been exhausted.
+    Derives fallback reason from ``stage_result.node_id`` (compiled node identity).
+    No hard-coded counter-name suffixes — policy-owned ``exhausted_route_reason``
+    is the exclusive exhausted-reason authority.
     """
     policy_reason = (
         threshold_policy.exhausted_route_reason
@@ -436,10 +436,7 @@ def planning_threshold_reason(
     )
     if policy_reason is not None:
         return policy_reason
-    reason = f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
-    if exhausted and threshold_policy.counter_name.value == "mechanic_attempt_count":
-        return f"{reason}:mechanic_attempts_exhausted"
-    return reason
+    return f"{stage_result.node_id}_{threshold_policy.on_outcome.lower()}"
 
 
 def _threshold_counter_mutation_name(policy: CompiledGraphThresholdPolicyPlan) -> str | None:

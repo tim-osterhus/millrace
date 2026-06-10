@@ -10,12 +10,15 @@ from pydantic import ValidationError
 
 from millrace_ai.architecture import (
     CompiledRunPlan,
+    GraphLoopDefinition,
+    GraphLoopThresholdPolicyDefinition,
     LaneConflictPolicyDefinition,
     PlaneQueueClaimPolicyDefinition,
     WorkflowLaneDefinition,
     WorkflowPlaneSchedulerPolicyDefinition,
 )
 from millrace_ai.assets import (
+    discover_extension_package_manifests,
     discover_stage_kind_definitions,
     load_builtin_graph_loop_definition,
     load_builtin_mode_definition,
@@ -46,6 +49,7 @@ from .plan_authority import has_required_workflow_authority
 from .validation import (
     validate_lane_conflict_coverage,
     validate_mode_stage_maps,
+    validate_required_extensions,
     validate_scheduler_policy,
     validate_workflow_primitives,
 )
@@ -186,14 +190,26 @@ def compile_compiled_run_plan(
         selected_stages_for_graph_loops(*graph_loops.values()),
     )
 
+    extension_manifests = discover_extension_package_manifests(assets_root=assets_root)
     stage_kinds = {
         stage_kind.stage_kind_id: stage_kind
         for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
     }
+    validate_required_extensions(
+        mode=mode,
+        discovered_manifests=extension_manifests,
+        graph_loops=graph_loops,
+        stage_kinds=stage_kinds,
+    )
     workflow_primitives = load_builtin_workflow_primitives(assets_root=assets_root)
     request_context_profiles_by_id = _map_by_attr(
         workflow_primitives.request_context_profiles,
         "profile_id",
+    )
+    graph_loops = _apply_mode_recovery_policy_overrides(
+        graph_loops=graph_loops,
+        mode=mode,
+        workflow_primitives=workflow_primitives,
     )
     graphs_by_plane = {
         plane: materialize_graph_plane_plan(
@@ -317,7 +333,10 @@ def compile_compiled_run_plan(
                     "validator_id",
                 ),
                 "workflow_recovery_policies_by_id": _map_by_attr(
-                    workflow_primitives.recovery_policies,
+                    _mode_selected_recovery_policies(
+                        workflow_primitives.recovery_policies,
+                        mode.recovery_policy_ids,
+                    ),
                     "policy_id",
                 ),
                 "runtime_failure_policies_by_id": _map_by_attr(
@@ -405,7 +424,10 @@ def compile_compiled_run_plan(
         ),
         runtime_effect_rules=workflow_primitives.runtime_effect_rules,
         workflow_recovery_policies_by_id=_map_by_attr(
-            workflow_primitives.recovery_policies,
+            _mode_selected_recovery_policies(
+                workflow_primitives.recovery_policies,
+                mode.recovery_policy_ids,
+            ),
             "policy_id",
         ),
         runtime_failure_policies_by_id=_map_by_attr(
@@ -592,6 +614,103 @@ def _default_lane_conflict_policies(mode: ModeDefinition) -> tuple[LaneConflictP
             )
         )
     return tuple(policies)
+
+
+def _mode_selected_recovery_policies(
+    all_policies: tuple[object, ...],
+    selected_policy_ids: tuple[str, ...],
+) -> tuple[object, ...]:
+    """Filter recovery policies to only those declared by the mode, or all if none declared."""
+    if not selected_policy_ids:
+        return all_policies
+    selected_set = set(selected_policy_ids)
+    return tuple(
+        policy for policy in all_policies
+        if getattr(policy, "policy_id", None) in selected_set
+    )
+
+
+def _apply_mode_recovery_policy_overrides(
+    *,
+    graph_loops: dict[Plane, GraphLoopDefinition],
+    mode: ModeDefinition,
+    workflow_primitives: object,
+) -> dict[Plane, GraphLoopDefinition]:
+    """Override graph-loop threshold policies with mode-declared recovery policies."""
+    if not mode.recovery_policy_ids:
+        return graph_loops
+
+    recovery_policies_by_id: dict[str, object] = {
+        policy.policy_id: policy
+        for policy in getattr(workflow_primitives, "recovery_policies", ())
+    }
+
+    # Build overrides keyed by (plane, counter_name) -> threshold
+    overrides: dict[tuple[Plane, str], int] = {}
+    for policy_id in mode.recovery_policy_ids:
+        policy = recovery_policies_by_id.get(policy_id)
+        if policy is None:
+            raise CompilerValidationError(
+                f"mode {mode.mode_id} references unknown recovery policy: {policy_id}"
+            )
+        target_plane = _plane_for_recovery_policy(policy, graph_loops)
+        counter_name = str(getattr(policy, "counter_name", ""))
+        threshold = getattr(policy, "threshold", None)
+        if not counter_name or not isinstance(threshold, int) or threshold < 1:
+            raise CompilerValidationError(
+                f"recovery policy {policy_id} has invalid counter_name or threshold"
+            )
+        overrides[(target_plane, counter_name)] = threshold
+
+    # Apply overrides to each graph loop's threshold policies
+    overridden_loops: dict[Plane, GraphLoopDefinition] = {}
+    for plane, graph_loop in graph_loops.items():
+        if (
+            graph_loop.dynamic_policies is None
+            or not graph_loop.dynamic_policies.threshold_policies
+        ):
+            overridden_loops[plane] = graph_loop
+            continue
+
+        overridden_thresholds: list[GraphLoopThresholdPolicyDefinition] = []
+        for tp in graph_loop.dynamic_policies.threshold_policies:
+            counter_str = (
+                tp.counter_name.value
+                if hasattr(tp.counter_name, "value")
+                else str(tp.counter_name)
+            )
+            override_threshold = overrides.get((plane, counter_str))
+            if override_threshold is not None:
+                overridden_thresholds.append(
+                    tp.model_copy(update={"threshold": override_threshold})
+                )
+            else:
+                overridden_thresholds.append(tp)
+
+        new_dynamic = graph_loop.dynamic_policies.model_copy(
+            update={"threshold_policies": tuple(overridden_thresholds)}
+        )
+        overridden_loops[plane] = graph_loop.model_copy(
+            update={"dynamic_policies": new_dynamic}
+        )
+
+    return overridden_loops
+
+
+def _plane_for_recovery_policy(
+    policy: object,
+    graph_loops: dict[Plane, GraphLoopDefinition],
+) -> Plane:
+    """Determine which plane a recovery policy belongs to by matching source node IDs."""
+    policy_source_ids: set[str] = set(getattr(policy, "source_node_ids", ()))
+    for plane, graph_loop in graph_loops.items():
+        graph_node_ids = {node.node_id for node in graph_loop.nodes}
+        if policy_source_ids & graph_node_ids:
+            return plane
+    raise CompilerValidationError(
+        f"recovery policy {getattr(policy, 'policy_id', 'unknown')} "
+        "source node IDs do not match any graph loop nodes"
+    )
 
 
 __all__ = ["compile_and_persist_workspace_plan", "compile_compiled_run_plan"]

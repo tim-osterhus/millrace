@@ -6,7 +6,9 @@
   "nodes": [
     {
       "node_id": "basic_learner",
-      "stage_kind_id": "basic_learner"
+      "stage_kind_id": "basic_learner",
+      "request_context_profile_id": "analyst.default",
+      "context_render_plan_id": "stage_request.default.v1"
     }
   ],
   "entry_nodes": [

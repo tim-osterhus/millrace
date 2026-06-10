@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "kind": "mode",
+  "mode_id": "recovery_heavy_millrace",
+  "loop_ids_by_plane": {
+    "execution": "execution.standard",
+    "planning": "planning.standard"
+  },
+  "stage_entrypoint_overrides": {},
+  "stage_skill_additions": {},
+  "stage_model_bindings": {},
+  "stage_runner_bindings": {
+    "builder": "pi_rpc",
+    "checker": "pi_rpc",
+    "fixer": "pi_rpc",
+    "doublechecker": "pi_rpc",
+    "updater": "pi_rpc",
+    "troubleshooter": "pi_rpc",
+    "consultant": "pi_rpc",
+    "recon": "pi_rpc",
+    "planner": "pi_rpc",
+    "manager": "pi_rpc",
+    "mechanic": "pi_rpc",
+    "auditor": "pi_rpc",
+    "arbiter": "pi_rpc"
+  },
+  "recovery_policy_ids": [
+    "execution.blocked_recovery_heavy",
+    "planning.blocked_recovery_heavy"
+  ],
+  "required_extensions": [
+    {"extension_package_id": "millrace.generic"},
+    {"extension_package_id": "millrace.recon"},
+    {"extension_package_id": "millrace.closure"}
+  ]
+}

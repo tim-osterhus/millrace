@@ -26,6 +26,12 @@ from .effect_operations import (
     discover_runtime_operation_definitions,
 )
 from .entrypoints import LintLevel, lint_asset_manifests, parse_markdown_asset
+from .extensions import (
+    EXTENSIONS_REGISTRY_ROOT,
+    ExtensionAssetError,
+    discover_extension_package_manifests,
+    load_extension_package_manifest,
+)
 from .loop_graphs import (
     BUILTIN_GRAPH_LOOP_PATHS,
     SHIPPED_GRAPH_LOOP_IDS,
@@ -109,6 +115,8 @@ __all__ = [
     "EFFECT_STORE_REGISTRY_ROOT",
     "EFFECT_VALIDATOR_REGISTRY_ROOT",
     "EffectOperationAssetError",
+    "EXTENSIONS_REGISTRY_ROOT",
+    "ExtensionAssetError",
     "GraphLoopAssetError",
     "LIFECYCLE_MUTATION_PLAN_REGISTRY_ROOT",
     "LintLevel",
@@ -141,6 +149,7 @@ __all__ = [
     "discover_artifact_contract_definitions",
     "discover_effect_store_definitions",
     "discover_effect_validator_definitions",
+    "discover_extension_package_manifests",
     "discover_plane_queue_claim_policy_definitions",
     "discover_request_context_profile_definitions",
     "discover_request_context_provider_definitions",
@@ -164,6 +173,7 @@ __all__ = [
     "load_builtin_work_item_family_definition",
     "load_builtin_work_item_family_definitions",
     "load_builtin_workflow_primitives",
+    "load_extension_package_manifest",
     "discover_workflow_recovery_policy_definitions",
     "discover_workspace_schema_epoch_definitions",
     "load_builtin_graph_loop_definition",

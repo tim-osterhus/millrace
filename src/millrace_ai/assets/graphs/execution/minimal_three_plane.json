@@ -6,7 +6,9 @@
   "nodes": [
     {
       "node_id": "basic_worker",
-      "stage_kind_id": "basic_worker"
+      "stage_kind_id": "basic_worker",
+      "request_context_profile_id": "builder.default",
+      "context_render_plan_id": "stage_request.default.v1"
     }
   ],
   "entry_nodes": [

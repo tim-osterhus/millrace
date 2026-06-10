@@ -2393,3 +2393,131 @@ def test_compile_accepts_runtime_failure_recovery_node_with_noncanonical_runtime
     assert mechanic_node.stage_kind_id == "diagnostician"
     assert mechanic_node.runtime_stage is not None
     assert mechanic_node.runtime_stage.value == "mechanic"
+
+
+# ---------------------------------------------------------------------------
+# Config-driven behavior tests: graph-only route changes
+# ---------------------------------------------------------------------------
+
+
+class TestConfigDrivenGraphRouting:
+    """A graph-only route change (different loop graph asset) alters
+    runtime dispatch without runtime code edits.
+
+    Config dependency:
+    - assets/graphs/execution/standard.json — builder→checker
+    - assets/graphs/execution/with_integrator.json — builder→integrator
+    """
+
+    def test_standard_graph_routes_builder_complete_to_checker(
+        self, tmp_path: Path
+    ) -> None:
+        """With the standard execution graph, BUILDER_COMPLETE routes to
+        checker.
+
+        Config asset: assets/graphs/execution/standard.json
+        """
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(tmp_path, assets_root)
+        assert outcome.diagnostics.ok
+        assert outcome.active_plan is not None
+
+        exec_graph = outcome.active_plan.graphs_by_plane[Plane.EXECUTION]
+
+        # Find builder→checker transition in compiled graph
+        builder_to_checker = [
+            t for t in exec_graph.compiled_transitions
+            if t.source_node_id == "builder"
+            and t.outcome == "BUILDER_COMPLETE"
+        ]
+        assert len(builder_to_checker) == 1
+        assert builder_to_checker[0].target_node_id == "checker"
+
+    def test_integrator_graph_routes_builder_complete_to_integrator(
+        self, tmp_path: Path
+    ) -> None:
+        """With the with_integrator execution graph, BUILDER_COMPLETE routes
+        to integrator instead of checker.
+
+        Config asset: assets/graphs/execution/with_integrator.json
+        """
+        assets_root = _copy_builtin_assets(tmp_path)
+
+        # Use default_codex_integrated which references execution.with_integrator
+        workspace_root = tmp_path / "workspace"
+        bootstrap_workspace(workspace_root)
+        outcome = compile_and_persist_workspace_plan(
+            workspace_root,
+            config=RuntimeConfig(),
+            requested_mode_id="default_codex_integrated",
+            assets_root=assets_root,
+        )
+        assert outcome.diagnostics.ok
+        assert outcome.active_plan is not None
+
+        exec_graph = outcome.active_plan.graphs_by_plane[Plane.EXECUTION]
+
+        # Find builder→integrator transition
+        builder_transitions = [
+            t for t in exec_graph.compiled_transitions
+            if t.source_node_id == "builder"
+            and t.outcome == "BUILDER_COMPLETE"
+        ]
+        assert len(builder_transitions) == 1
+        assert builder_transitions[0].target_node_id == "integrator"
+
+    def test_graph_only_change_alters_dispatch_without_code_edits(
+        self, tmp_path: Path
+    ) -> None:
+        """Two modes that differ only in their loop graph asset produce
+        different compiled transitions for the same stage outcome.
+        No runtime code edits are needed.
+
+        Config assets:
+        - assets/graphs/execution/standard.json
+        - assets/graphs/execution/with_integrator.json
+        """
+        assets_root = _copy_builtin_assets(tmp_path)
+
+        # Compile with standard graph
+        ws_standard = tmp_path / "ws_standard"
+        bootstrap_workspace(ws_standard)
+        outcome_standard = compile_and_persist_workspace_plan(
+            ws_standard,
+            config=RuntimeConfig(),
+            requested_mode_id="default_codex",
+            assets_root=assets_root,
+        )
+
+        # Compile with integrator graph
+        ws_integrator = tmp_path / "ws_integrator"
+        bootstrap_workspace(ws_integrator)
+        outcome_integrator = compile_and_persist_workspace_plan(
+            ws_integrator,
+            config=RuntimeConfig(),
+            requested_mode_id="default_codex_integrated",
+            assets_root=assets_root,
+        )
+
+        assert outcome_standard.diagnostics.ok
+        assert outcome_integrator.diagnostics.ok
+        assert outcome_standard.active_plan is not None
+        assert outcome_integrator.active_plan is not None
+
+        graph_std = outcome_standard.active_plan.graphs_by_plane[Plane.EXECUTION]
+        graph_int = outcome_integrator.active_plan.graphs_by_plane[Plane.EXECUTION]
+
+        # Same outcome, different routing targets
+        std_target = next(
+            t.target_node_id for t in graph_std.compiled_transitions
+            if t.source_node_id == "builder" and t.outcome == "BUILDER_COMPLETE"
+        )
+        int_target = next(
+            t.target_node_id for t in graph_int.compiled_transitions
+            if t.source_node_id == "builder" and t.outcome == "BUILDER_COMPLETE"
+        )
+
+        # The graph-only change produces different dispatch
+        assert std_target != int_target
+        assert std_target == "checker"
+        assert int_target == "integrator"

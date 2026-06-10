@@ -275,12 +275,15 @@ def collect_reconciliation_signals(
     counters: RecoveryCounters,
     execution_status_marker: str,
     planning_status_marker: str,
+    learning_status_marker: str = _IDLE_MARKER,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> tuple[ReconciliationSignal, ...]:
     execution_marker = _normalize_marker_or_invalid(execution_status_marker, label="execution status")
     planning_marker = _normalize_marker_or_invalid(planning_status_marker, label="planning status")
+    learning_marker = _normalize_marker_or_invalid(learning_status_marker, label="learning status")
     execution_allowed_markers = _allowed_markers_for_plane(Plane.EXECUTION, compiled_plan=compiled_plan)
     planning_allowed_markers = _allowed_markers_for_plane(Plane.PLANNING, compiled_plan=compiled_plan)
+    learning_allowed_markers = _allowed_markers_for_plane(Plane.LEARNING, compiled_plan=compiled_plan)
 
     signals: list[ReconciliationSignal] = []
 
@@ -288,6 +291,7 @@ def collect_reconciliation_signals(
         snapshot,
         execution_marker=execution_marker,
         planning_marker=planning_marker,
+        learning_marker=learning_marker,
         compiled_plan=compiled_plan,
     ):
         signals.append(
@@ -295,7 +299,7 @@ def collect_reconciliation_signals(
                 code="stale_active_ownership",
                 failure_class=_STALE_ACTIVE_FAILURE_CLASS,
                 plane=snapshot.active_plane,
-                recommended_stage=_stale_signal_recommended_stage(snapshot, counters),
+                recommended_stage=_stale_signal_recommended_stage(snapshot, counters, compiled_plan=compiled_plan),
                 message="runtime snapshot has active ownership while process is not running",
             )
         )
@@ -311,7 +315,7 @@ def collect_reconciliation_signals(
                     code="impossible_execution_status_marker",
                     failure_class=_IMPOSSIBLE_STATUS_FAILURE_CLASS,
                     plane=Plane.EXECUTION,
-                    recommended_stage=ExecutionStageName.TROUBLESHOOTER,
+                    recommended_stage=_stale_signal_recommended_stage_for_plane(Plane.EXECUTION, compiled_plan=compiled_plan),
                     message="execution status marker is impossible for current active stage",
                 )
             )
@@ -327,13 +331,29 @@ def collect_reconciliation_signals(
                     code="impossible_planning_status_marker",
                     failure_class=_IMPOSSIBLE_STATUS_FAILURE_CLASS,
                     plane=Plane.PLANNING,
-                    recommended_stage=PlanningStageName.MECHANIC,
+                    recommended_stage=_stale_signal_recommended_stage_for_plane(Plane.PLANNING, compiled_plan=compiled_plan),
                     message="planning status marker is impossible for current active stage",
                 )
             )
 
+    if snapshot.active_stage is not None and snapshot.active_plane == Plane.LEARNING:
+        if learning_marker not in learning_allowed_markers or _has_impossible_marker_for_active_stage(
+            snapshot,
+            learning_marker,
+            compiled_plan=compiled_plan,
+        ):
+            signals.append(
+                ReconciliationSignal(
+                    code="impossible_learning_status_marker",
+                    failure_class=_IMPOSSIBLE_STATUS_FAILURE_CLASS,
+                    plane=Plane.LEARNING,
+                    recommended_stage=_stale_signal_recommended_stage_for_plane(Plane.LEARNING, compiled_plan=compiled_plan),
+                    message="learning status marker is impossible for current active stage",
+                )
+            )
+
     if snapshot.active_stage is None:
-        orphaned = _signal_for_orphaned_counters(counters)
+        orphaned = _signal_for_orphaned_counters(counters, compiled_plan=compiled_plan)
         if orphaned is not None:
             signals.append(orphaned)
 
@@ -511,6 +531,7 @@ def _active_stage_appears_running(
     *,
     execution_marker: str,
     planning_marker: str,
+    learning_marker: str = _IDLE_MARKER,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> bool:
     if snapshot.active_stage is None or snapshot.active_plane is None:
@@ -519,7 +540,12 @@ def _active_stage_appears_running(
     if active_run is not None and active_run.running_status_marker:
         return True
 
-    marker = execution_marker if snapshot.active_plane is Plane.EXECUTION else planning_marker
+    if snapshot.active_plane is Plane.EXECUTION:
+        marker = execution_marker
+    elif snapshot.active_plane is Plane.PLANNING:
+        marker = planning_marker
+    else:
+        marker = learning_marker
     return marker == _active_stage_running_marker(snapshot, compiled_plan=compiled_plan)
 
 
@@ -543,9 +569,11 @@ def _active_stage_running_marker(
 def _stale_signal_recommended_stage(
     snapshot: RuntimeSnapshot,
     counters: RecoveryCounters,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> StageName:
     if snapshot.active_plane == Plane.PLANNING:
-        return PlanningStageName.MECHANIC
+        return _stale_signal_recommended_stage_for_plane(Plane.PLANNING, compiled_plan=compiled_plan)
 
     attempts = 0
     if snapshot.active_work_item_family_id and snapshot.active_work_item_id:
@@ -559,10 +587,39 @@ def _stale_signal_recommended_stage(
 
     if attempts >= 2:
         return ExecutionStageName.CONSULTANT
+
+    if compiled_plan is not None and snapshot.active_plane is not None:
+        graph = _graph_for_plane(compiled_plan, snapshot.active_plane)
+        if graph is not None and graph.runtime_failure_recovery is not None:
+            repair_node = _compiled_node_for_id(graph, graph.runtime_failure_recovery.default_repair_node_id)
+            if repair_node is not None and repair_node.runtime_stage is not None:
+                return repair_node.runtime_stage
+    return _stale_signal_recommended_stage_for_plane(snapshot.active_plane, compiled_plan=compiled_plan)
+
+
+def _stale_signal_recommended_stage_for_plane(
+    plane: Plane | None,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> StageName:
+    if compiled_plan is not None and plane is not None:
+        graph = _graph_for_plane(compiled_plan, plane)
+        if graph is not None and graph.runtime_failure_recovery is not None:
+            repair_node = _compiled_node_for_id(graph, graph.runtime_failure_recovery.default_repair_node_id)
+            if repair_node is not None and repair_node.runtime_stage is not None:
+                return repair_node.runtime_stage
+    if plane == Plane.PLANNING:
+        return PlanningStageName.MECHANIC
+    if plane == Plane.LEARNING:
+        return LearningStageName.ANALYST
     return ExecutionStageName.TROUBLESHOOTER
 
 
-def _signal_for_orphaned_counters(counters: RecoveryCounters) -> ReconciliationSignal | None:
+def _signal_for_orphaned_counters(
+    counters: RecoveryCounters,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> ReconciliationSignal | None:
     for entry in counters.entries:
         if (
             entry.troubleshoot_attempt_count > 0
@@ -570,12 +627,11 @@ def _signal_for_orphaned_counters(counters: RecoveryCounters) -> ReconciliationS
             or entry.fix_cycle_count > 0
             or entry.consultant_invocations > 0
         ):
-            if entry.work_item_kind == WorkItemKind.TASK:
-                plane = Plane.EXECUTION
-                stage: StageName = ExecutionStageName.TROUBLESHOOTER
-            else:
-                plane = Plane.PLANNING
-                stage = PlanningStageName.MECHANIC
+            plane, stage = _orphaned_counter_plane_and_stage(
+                entry.work_item_family_id,
+                entry.work_item_kind,
+                compiled_plan=compiled_plan,
+            )
 
             return ReconciliationSignal(
                 code="orphaned_recovery_counters",
@@ -588,6 +644,40 @@ def _signal_for_orphaned_counters(counters: RecoveryCounters) -> ReconciliationS
                 ),
             )
     return None
+
+
+def _orphaned_counter_plane_and_stage(
+    work_item_family_id: str | None,
+    work_item_kind: WorkItemKind | None,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> tuple[Plane, StageName]:
+    """Derive plane and recommended stage for orphaned recovery counters.
+
+    Uses compiled plan work-item family metadata when available.
+    Otherwise falls back to a generic kind-based mapping.
+    """
+    if compiled_plan is not None and work_item_family_id is not None:
+        family = compiled_plan.work_item_families_by_id.get(work_item_family_id)
+        if family is not None:
+            if family.plane is Plane.EXECUTION:
+                return Plane.EXECUTION, ExecutionStageName.TROUBLESHOOTER
+            if family.plane is Plane.LEARNING:
+                return Plane.LEARNING, LearningStageName.ANALYST
+            return Plane.PLANNING, PlanningStageName.MECHANIC
+    # Generic fallback: execution-plane families default to TROUBLESHOOTER,
+    # all others to MECHANIC.
+    if work_item_kind in (
+        WorkItemKind.TASK,
+        WorkItemKind.SPEC,
+        WorkItemKind.PROBE,
+        WorkItemKind.LEARNING_REQUEST,
+    ):
+        if work_item_kind is WorkItemKind.TASK:
+            return Plane.EXECUTION, ExecutionStageName.TROUBLESHOOTER
+        if work_item_kind is WorkItemKind.LEARNING_REQUEST:
+            return Plane.LEARNING, LearningStageName.ANALYST
+    return Plane.PLANNING, PlanningStageName.MECHANIC
 
 
 def _normalize_marker_or_invalid(marker: str, *, label: str) -> str:

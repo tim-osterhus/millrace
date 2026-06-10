@@ -28,6 +28,7 @@ from millrace_ai.runtime_lock import inspect_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
+from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 from millrace_ai.workspace.queue_selection import list_deferred_root_spec_ids
 from millrace_ai.workspace.work_inventory import family_counts, queue_depths_by_plane
 
@@ -62,6 +63,7 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
     lock_status = inspect_runtime_ownership_lock(paths)
     process_running = snapshot.process_running and lock_status.state == "active"
     queue_depths = _queue_depths(paths)
+    queue_depths_by_family = _queue_depths_by_family(paths)
     closure_status = _closure_target_status(paths)
     latest_runtime_error_context = _latest_runtime_error_context(paths)
     latest_operator_intervention = _latest_operator_intervention(paths)
@@ -97,6 +99,7 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
         runtime_ownership_lock=lock_status.state,
         process_running=process_running,
         queue_depths=queue_depths,
+        queue_depths_by_family=queue_depths_by_family,
         closure_status=closure_status,
         blueprint_status=_blueprint_status(paths),
         latest_runtime_error_report_path=(
@@ -199,6 +202,18 @@ def _queue_depths(paths: WorkspacePaths) -> dict[str, int]:
 
 def _load_compiled_plan_safe(paths: WorkspacePaths) -> CompiledRunPlan | None:
     return load_existing_plan(paths.state_dir / "compiled_plan.json")
+
+
+def _queue_depths_by_family(paths: WorkspacePaths) -> dict[str, int]:
+    """Compute canonical family-keyed queue depths via the family interpreter."""
+    compiled_plan = _load_compiled_plan_safe(paths)
+    families = (
+        tuple(compiled_plan.work_item_families_by_id.values())
+        if compiled_plan is not None
+        else None
+    )
+    interpreter = QueueFamilyInterpreter(paths, families=families)
+    return interpreter.queue_depths_by_family()
 
 
 def _work_item_family_status_payload(paths: WorkspacePaths) -> list[dict[str, object]]:

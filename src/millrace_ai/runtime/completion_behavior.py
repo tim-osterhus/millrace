@@ -39,7 +39,6 @@ from millrace_ai.workspace.arbiter_state import (
 )
 from millrace_ai.workspace.blueprint_state import list_open_blueprint_lineage_work_refs
 from millrace_ai.workspace.family_adapters import (
-    queue_adapter_for_family_id,
     queue_adapter_for_id,
     resolve_queue_lifecycle_adapter_id,
 )
@@ -270,7 +269,7 @@ def _queue_adapter_for_family(
         adapter = queue_adapter_for_id(adapter_id)
         if adapter is not None:
             return adapter
-    return queue_adapter_for_family_id(family.family_id)
+    return None
 
 
 def _blocking_ref_from_inventory(

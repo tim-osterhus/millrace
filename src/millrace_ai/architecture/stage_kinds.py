@@ -44,6 +44,7 @@ class RegisteredStageKindDefinition(ArchitectureContractModel):
 
     stage_kind_id: str
     plane: Plane
+    lane_id: str | None = None
     runtime_stage: StageName
     display_name: str
     default_entrypoint_path: str

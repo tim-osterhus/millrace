@@ -24,7 +24,6 @@ from millrace_ai.assets import (
 )
 from millrace_ai.runners import StageRunRequest
 
-from .blueprint import built_in_blueprint_provider_registrations
 from .generic import built_in_generic_provider_registrations
 from .models import RequestContextAuthority, RequestContextRenderPlan
 
@@ -78,6 +77,12 @@ _DEFAULT_REQUEST_CONTEXT_PROVIDER_REGISTRY: RequestContextProviderRegistry | Non
 def default_request_context_provider_registry() -> RequestContextProviderRegistry:
     global _DEFAULT_REQUEST_CONTEXT_PROVIDER_REGISTRY
     if _DEFAULT_REQUEST_CONTEXT_PROVIDER_REGISTRY is None:
+        # Blueprint context providers are loaded lazily only when the
+        # registry is first built.  The import lives inside this thunk so
+        # that generic-only runtime paths do not eagerly load Blueprint
+        # domain modules (contracts.blueprint, workspace.blueprint_state).
+        from .blueprint import built_in_blueprint_provider_registrations
+
         registrations = [
             *(
                 RequestContextProviderRegistration(

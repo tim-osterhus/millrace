@@ -25,5 +25,11 @@
     "mechanic_blueprint": "codex_cli",
     "auditor": "codex_cli",
     "arbiter": "codex_cli"
-  }
+  },
+  "required_extensions": [
+    {"extension_package_id": "millrace.generic"},
+    {"extension_package_id": "millrace.recon"},
+    {"extension_package_id": "millrace.closure"},
+    {"extension_package_id": "millrace.blueprint"}
+  ]
 }

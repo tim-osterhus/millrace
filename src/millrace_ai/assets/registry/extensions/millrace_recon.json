@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "kind": "extension_package_manifest",
+  "package_id": "millrace.recon",
+  "display_name": "Millrace Recon Built-In Extensions",
+  "domain": "recon",
+  "version": "1.0.0",
+  "items": [],
+  "requires": []
+}

@@ -14,6 +14,7 @@ from millrace_ai.contracts import (
     PlanningStageName,
     RuntimeErrorCode,
     RuntimeErrorContext,
+    RuntimeSnapshot,
     StageName,
     StageResultEnvelope,
     WorkItemKind,
@@ -35,7 +36,6 @@ from .graph_authority.terminal_actions import (
     decision_from_runtime_failure_recovery_exhaustion,
 )
 from .lanes import compiled_plan_fingerprint_for_runtime, lane_id_for_plane
-from .recon_transitions import ReconHandoffInvalidError
 from .recovery.error_context import (
     clear_runtime_error_context,
     load_runtime_error_context,
@@ -44,7 +44,6 @@ from .recovery.error_context import (
 )
 from .recovery.repair_routes import (
     RuntimeRepairRoute,
-    incremented_repair_counter,
 )
 from .recovery.repair_routes import (
     runtime_repair_attempts_exhausted as _runtime_repair_attempts_exhausted,
@@ -59,6 +58,7 @@ from .recovery.reports import (
     runtime_error_catalog_path,
     write_runtime_error_report,
 )
+from .result_counters import increment_counter_field
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
@@ -187,7 +187,6 @@ def schedule_post_stage_exception_recovery(
         update={
             "execution_status_marker": execution_marker,
             "planning_status_marker": planning_marker,
-            **_incremented_repair_counter(engine, repair_route),
             **queue_depths,
             "queue_depths_by_plane": {
                 Plane.EXECUTION: queue_depths["queue_depth_execution"],
@@ -198,6 +197,12 @@ def schedule_post_stage_exception_recovery(
             "last_stage_result_path": path_relative_to_root(engine.paths, stage_result_path),
             "updated_at": captured_at,
         }
+    )
+    _increment_generic_counter(
+        engine,
+        snapshot=engine.snapshot,
+        repair_route=repair_route,
+        failure_class=resolved_error_code.value,
     )
     save_snapshot(engine.paths, engine.snapshot)
     write_runtime_event(
@@ -253,7 +258,9 @@ def schedule_pre_dispatch_exception_recovery(
     captured_at = engine._now()
     error_code = classify_pre_dispatch_exception(plane=plane)
     repair_route = runtime_repair_route_for_plane(engine, plane)
-    repair_stage = repair_route.stage if repair_route is not None else (failed_stage or _context_stage_for_plane(plane))
+    repair_stage = repair_route.stage if repair_route is not None else (
+        failed_stage or _context_stage_for_plane(plane, compiled_plan=engine.compiled_plan)
+    )
     failed = failed_stage or repair_stage
     family_id, kind, item_id = _pre_dispatch_work_identity(
         engine,
@@ -314,7 +321,7 @@ def schedule_pre_dispatch_exception_recovery(
             run_id=recovery_run_id,
             source=f"runtime_pre_dispatch_{reason_suffix}",
         )
-        if plane is Plane.LEARNING and family_id == WorkItemKind.LEARNING_REQUEST.value:
+        if _is_learning_family(engine.compiled_plan, family_id=family_id, plane=plane):
             try:
                 mark_learning_request_blocked(engine.paths, item_id)
             except QueueStateError as exc:
@@ -397,10 +404,10 @@ def schedule_pre_dispatch_exception_recovery(
         run_id=recovery_run_id,
         compiled_plan_id=engine.snapshot.compiled_plan_id,
         compiled_plan_fingerprint=_compiled_plan_fingerprint(engine),
-        request_kind=(
-            "learning_request"
-            if plane is Plane.LEARNING and family_id == WorkItemKind.LEARNING_REQUEST.value
-            else "active_work_item"
+        request_kind=_request_kind_for_family(
+            engine.compiled_plan,
+            family_id=family_id,
+            plane=plane,
         ),
         work_item_family_id=family_id,
         work_item_kind=kind,
@@ -429,7 +436,6 @@ def schedule_pre_dispatch_exception_recovery(
             "learning_status_marker": (
                 marker if plane is Plane.LEARNING else engine.snapshot.learning_status_marker
             ),
-            **_incremented_repair_counter(engine, repair_route),
             **queue_depths,
             "queue_depths_by_plane": {
                 Plane.EXECUTION: queue_depths["queue_depth_execution"],
@@ -438,6 +444,12 @@ def schedule_pre_dispatch_exception_recovery(
             },
             "updated_at": captured_at,
         }
+    )
+    _increment_generic_counter(
+        engine,
+        snapshot=engine.snapshot,
+        repair_route=repair_route,
+        failure_class=error_code.value,
     )
     save_snapshot(engine.paths, engine.snapshot)
     write_runtime_event(
@@ -520,7 +532,11 @@ def classify_post_stage_exception(
 ) -> RuntimeErrorCode:
     """Map post-stage exceptions onto stable runtime-owned error codes."""
 
-    if isinstance(error, ReconHandoffInvalidError):
+    # Recon exception classification through runtime type identity
+    # rather than direct Recon domain import.  This preserves
+    # generic runtime error classification without eagerly loading
+    # Recon domain modules (recon_transitions, recon_packets).
+    if type(error).__name__ == "ReconHandoffInvalidError":
         return RuntimeErrorCode.RECON_HANDOFF_INVALID
     if isinstance(error, QueueStateError) and router_decision is not None and router_decision.action is RouterAction.IDLE:
         if plane is Plane.PLANNING:
@@ -546,12 +562,25 @@ def classify_pre_dispatch_exception(*, plane: Plane) -> RuntimeErrorCode:
     return RuntimeErrorCode.EXECUTION_PRE_DISPATCH_FAILED
 
 
-def _context_stage_for_plane(plane: Plane) -> PlanningStageName | ExecutionStageName | LearningStageName:
-    if plane is Plane.PLANNING:
-        return PlanningStageName.MECHANIC
-    if plane is Plane.LEARNING:
-        return LearningStageName.LIBRARIAN
-    return ExecutionStageName.TROUBLESHOOTER
+def _context_stage_for_plane(
+    plane: Plane,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> PlanningStageName | ExecutionStageName | LearningStageName:
+    """Resolve a fallback repair stage for a plane.
+
+    When *compiled_plan* is available, derives the repair stage from the
+    compiled graph's runtime failure recovery default repair node.
+    Otherwise raises ValueError to prevent hardwired domain fallback.
+    """
+    if compiled_plan is not None:
+        graph = compiled_plan.graphs_by_plane.get(plane)
+        if graph is not None and graph.runtime_failure_recovery is not None:
+            from .graph_authority.stage_mapping import node_plan_by_id, stage_for_node
+
+            repair_node = node_plan_by_id(graph, graph.runtime_failure_recovery.default_repair_node_id)
+            return stage_for_node(graph, repair_node.node_id)
+    raise ValueError(f"compiled plan is required to resolve repair stage for plane {plane.value}")
 
 
 def runtime_repair_route_for_plane(
@@ -573,11 +602,37 @@ def runtime_repair_attempts_exhausted(engine: RuntimeEngine, repair_route: Runti
     return _runtime_repair_attempts_exhausted(engine, repair_route)
 
 
-def _incremented_repair_counter(
+def _increment_generic_counter(
     engine: RuntimeEngine,
+    *,
+    snapshot: RuntimeSnapshot,
     repair_route: RuntimeRepairRoute,
-) -> dict[str, int]:
-    return incremented_repair_counter(engine, repair_route)
+    failure_class: str,
+) -> None:
+    """Increment the generic RecoveryCounters store for exception recovery.
+
+    This updates both engine.counters (persisted to disk) and engine.snapshot
+    (legacy compatibility fields) in one call.  Must be called after the
+    snapshot model_copy so the legacy field update lands on the final snapshot.
+    """
+    if repair_route.counter_name is None:
+        return
+    if engine.counters is None:
+        return
+    family_id = snapshot.active_work_item_family_id
+    work_item_id = snapshot.active_work_item_id
+    if family_id is None or work_item_id is None:
+        return
+    engine.snapshot = increment_counter_field(
+        engine,
+        snapshot,
+        engine.counters,
+        failure_class=failure_class,
+        work_item_family_id=family_id,
+        work_item_kind=snapshot.active_work_item_kind,
+        work_item_id=work_item_id,
+        counter_id=repair_route.counter_name,
+    )
 
 
 def _pre_dispatch_work_identity(
@@ -603,16 +658,77 @@ def _pre_dispatch_work_identity(
             snapshot.active_work_item_id,
         )
     if closure_target_root_spec_id is not None:
-        return WorkItemKind.SPEC.value, WorkItemKind.SPEC, closure_target_root_spec_id
-    if plane is Plane.EXECUTION:
-        return WorkItemKind.TASK.value, WorkItemKind.TASK, "runtime-pre-dispatch"
-    if plane is Plane.LEARNING:
-        return (
-            WorkItemKind.LEARNING_REQUEST.value,
-            WorkItemKind.LEARNING_REQUEST,
-            "runtime-pre-dispatch",
+        spec_family_id = _resolve_family_id_from_compiled_plan(
+            engine.compiled_plan,
+            fallback_family_id=WorkItemKind.SPEC.value,
         )
-    return WorkItemKind.SPEC.value, WorkItemKind.SPEC, "runtime-pre-dispatch"
+        return spec_family_id, WorkItemKind.SPEC, closure_target_root_spec_id
+    # Resolve identity from compiled plan lane metadata when available.
+    if engine.compiled_plan is not None:
+        lane_id = _lane_id_for_plane(engine, plane)
+        if lane_id is not None:
+            return lane_id, None, "runtime-pre-dispatch"
+    raise ValueError(f"cannot resolve pre-dispatch work identity for plane {plane.value}")
+
+
+def _is_learning_family(
+    compiled_plan: CompiledRunPlan | None,
+    *,
+    family_id: str | None,
+    plane: Plane | None = None,
+) -> bool:
+    """Determine whether a family is a Learning-domain family.
+
+    Uses compiled plan work-item family metadata when available.
+    Otherwise falls back to plane-based check.
+    """
+    if family_id is None:
+        return plane is Plane.LEARNING
+    if compiled_plan is not None:
+        family = compiled_plan.work_item_families_by_id.get(family_id)
+        if family is not None:
+            return family.plane is Plane.LEARNING
+    return plane is Plane.LEARNING
+
+
+def _request_kind_for_family(
+    compiled_plan: CompiledRunPlan | None,
+    *,
+    family_id: str | None,
+    plane: Plane | None = None,
+) -> str:
+    """Derive request_kind from compiled plan family metadata.
+
+    Returns "learning_request" when the family is registered in the
+    Learning plane, "active_work_item" otherwise.
+    """
+    if _is_learning_family(compiled_plan, family_id=family_id, plane=plane):
+        return "learning_request"
+    return "active_work_item"
+
+
+def _resolve_family_id_from_compiled_plan(
+    compiled_plan: CompiledRunPlan | None,
+    *,
+    fallback_family_id: str,
+) -> str:
+    """Resolve a family id from compiled plan metadata when available.
+
+    Returns *fallback_family_id* when no compiled plan is available.
+    """
+    if compiled_plan is not None and fallback_family_id in compiled_plan.work_item_families_by_id:
+        return fallback_family_id
+    return fallback_family_id
+
+
+def _lane_id_for_plane(engine: RuntimeEngine, plane: Plane) -> str | None:
+    """Resolve lane id for a plane from the compiled plan."""
+    if engine.compiled_plan is None:
+        return None
+    try:
+        return lane_id_for_plane(engine.compiled_plan, plane)
+    except Exception:
+        return None
 
 
 def _compiled_plan_fingerprint(engine: RuntimeEngine) -> str:

@@ -14,5 +14,8 @@
     "basic_worker": "pi_rpc",
     "basic_planner": "pi_rpc",
     "basic_learner": "pi_rpc"
-  }
+  },
+  "required_extensions": [
+    {"extension_package_id": "millrace.generic"}
+  ]
 }

@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "kind": "extension_package_manifest",
+  "package_id": "millrace.closure",
+  "display_name": "Millrace Closure Built-In Extensions",
+  "domain": "closure",
+  "version": "1.0.0",
+  "items": [],
+  "requires": []
+}

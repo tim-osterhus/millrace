@@ -6,10 +6,8 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
     ActiveRunState,
-    ExecutionStageName,
     LearningRequestDocument,
     Plane,
-    PlanningStageName,
     StageName,
     WorkItemKind,
 )
@@ -21,10 +19,12 @@ from millrace_ai.work_documents import read_work_document_as
 from millrace_ai.workspace.queue_selection import list_deferred_root_spec_ids
 
 if TYPE_CHECKING:
-    from millrace_ai.architecture import PlaneQueueClaimPolicyDefinition, WorkItemFamilyDefinition
+    from millrace_ai.architecture import (
+        CompiledRunPlan,
+        PlaneQueueClaimPolicyDefinition,
+        WorkItemFamilyDefinition,
+    )
     from millrace_ai.runtime.engine import RuntimeEngine
-
-import millrace_ai.runtime.completion_behavior as completion_behavior
 
 from .active_runs import active_run_from_claim, snapshot_with_active_run
 from .graph_authority import (
@@ -42,8 +42,10 @@ from .scheduler_policy import (
 
 
 def claim_next_work_item(engine: RuntimeEngine) -> None:
+    from millrace_ai.runtime import closure_boundary as _closure_boundary
+
     queue = QueueStore(engine.paths)
-    open_target = completion_behavior.active_closure_target(engine)
+    open_target = _closure_boundary.active_closure_target(engine)
     if open_target is not None:
         _claim_next_open_closure_lineage_work(engine, queue, root_spec_id=open_target.root_spec_id)
         return
@@ -60,8 +62,10 @@ def claim_next_work_item(engine: RuntimeEngine) -> None:
 
 
 def claim_next_work_item_for_plane(engine: RuntimeEngine, plane: Plane) -> QueueClaim | None:
+    from millrace_ai.runtime import closure_boundary as _closure_boundary
+
     queue = QueueStore(engine.paths)
-    open_target = completion_behavior.active_closure_target(engine)
+    open_target = _closure_boundary.active_closure_target(engine)
     if open_target is not None and plane in {Plane.EXECUTION, Plane.PLANNING}:
         return _claim_next_open_closure_lineage_work(
             engine,
@@ -91,7 +95,9 @@ def activate_claim_for_plane(
     activation = _activation_for_claim(engine, claim)
     if activation.plane is not plane:
         raise ValueError("claim activation plane does not match requested plane")
-    closure_preparation = completion_behavior.prepare_closure_target_for_claim(engine, claim)
+    from millrace_ai.runtime import closure_boundary as _closure_boundary
+
+    closure_preparation = _closure_boundary.prepare_closure_target_for_claim(engine, claim)
     if not closure_preparation.allowed:
         outcome = backpressure_outcome(
             engine.compiled_plan.scheduler_policy,
@@ -125,28 +131,34 @@ def activate_claim_for_plane(
     return active_run
 
 
-def entry_stage_for_kind(work_item_kind: WorkItemKind) -> StageName:
-    if work_item_kind is WorkItemKind.TASK:
-        return ExecutionStageName.BUILDER
-    if work_item_kind is WorkItemKind.PROBE:
-        return PlanningStageName.RECON
-    if work_item_kind is WorkItemKind.SPEC:
-        return PlanningStageName.PLANNER
-    if work_item_kind is WorkItemKind.LEARNING_REQUEST:
-        from millrace_ai.contracts import LearningStageName
+def entry_stage_for_kind(
+    work_item_kind: WorkItemKind,
+    *,
+    compiled_plan: CompiledRunPlan,
+) -> StageName:
+    """Return the entry stage for a work item kind.
 
-        return LearningStageName.ANALYST
-    if work_item_kind is WorkItemKind.BLUEPRINT_DRAFT:
-        return PlanningStageName.MANAGER
-    return PlanningStageName.AUDITOR
+    Derives entry selection from the compiled work-item family and graph
+    entry data.  A compiled plan is required; hardwired compatibility
+    mappings are no longer shipped.
+    """
+    activation = work_item_activation_for_graph(compiled_plan, work_item_kind)
+    return activation.stage
 
 
-def entry_stage_for_family_id(family_id: str) -> StageName:
-    legacy_plane = plane_for_work_item_family_id(family_id)
-    if legacy_plane is not None:
-        legacy_kind = WorkItemKind(family_id)
-        return entry_stage_for_kind(legacy_kind)
-    raise ValueError(f"compiled activation is required for custom family `{family_id}`")
+def entry_stage_for_family_id(
+    family_id: str,
+    *,
+    compiled_plan: CompiledRunPlan,
+) -> StageName:
+    """Return the entry stage for a work item family id.
+
+    Derives entry selection from the compiled work-item family and graph
+    entry data.  A compiled plan is required; hardwired compatibility
+    mappings are no longer shipped.
+    """
+    activation = work_item_activation_for_graph(compiled_plan, family_id)
+    return activation.stage
 
 
 def _claim_for_plane_no_closure(
@@ -155,23 +167,20 @@ def _claim_for_plane_no_closure(
     plane: Plane,
 ) -> QueueClaim | None:
     """Claim work for *plane* when no open closure target is active."""
+    from millrace_ai.workspace.queue_selection import claim_next_for_plane
 
-    if plane is Plane.PLANNING:
-        return queue.claim_next_planning_item(
-            queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
-            work_item_families=_work_item_families_for_engine(engine),
-        )
-    if plane is Plane.EXECUTION:
-        return queue.claim_next_execution_task()
-    if plane is Plane.LEARNING:
-        return queue.claim_next_learning_request()
-    return None
+    return claim_next_for_plane(
+        engine.paths,
+        plane,
+        queue_claim_policy=_claim_policy_for_plane(engine, plane),
+        work_item_families=_work_item_families_for_engine(engine),
+    )
 
 
 def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActivationDecision:
     assert engine.compiled_plan is not None
     family_id = _claim_family_id(claim)
-    if family_id != WorkItemKind.LEARNING_REQUEST.value:
+    if not _is_learning_family(engine.compiled_plan, family_id=family_id):
         return work_item_activation_for_graph(engine.compiled_plan, family_id)
 
     document = read_work_document_as(claim.path, model=LearningRequestDocument)
@@ -269,17 +278,43 @@ def _claim_family_id(claim: QueueClaim) -> str:
     return claim.family_id
 
 
+def _is_learning_family(
+    compiled_plan: CompiledRunPlan,
+    *,
+    family_id: str,
+) -> bool:
+    """Determine whether a family is a Learning-domain family.
+
+    Uses compiled plan work-item family metadata rather than
+    hardwired WorkItemKind-to-domain branches.
+    """
+    family = compiled_plan.work_item_families_by_id.get(family_id)
+    if family is not None:
+        return family.plane is Plane.LEARNING
+    return False
+
+
 def _backpressure_claim(
     engine: RuntimeEngine,
     claim: QueueClaim,
     *,
     open_root_spec_id: str | None,
 ) -> None:
-    if claim.work_item_kind is WorkItemKind.SPEC:
-        QueueStore(engine.paths).requeue_spec(
-            claim.work_item_id,
-            reason="open closure target backpressure",
-        )
+    if engine.compiled_plan is not None:
+        family = engine.compiled_plan.work_item_families_by_id.get(claim.family_id)
+        if family is not None:
+            from millrace_ai.workspace.work_item_adapters import (
+                adapter_for_family_id,
+                move_active_with_adapter,
+            )
+
+            adapter = adapter_for_family_id(claim.family_id)
+            move_active_with_adapter(
+                engine.paths,
+                adapter,
+                claim.work_item_id,
+                target_state="queue",
+            )
     if open_root_spec_id is not None:
         _emit_closure_target_backpressure(
             engine,

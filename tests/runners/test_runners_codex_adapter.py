@@ -563,6 +563,8 @@ def test_codex_adapter_prompt_includes_stage_request_context_fields(tmp_path: Pa
     assert "### TOKEN" not in prompt
     assert "legal terminal marker defined by the opened entrypoint contract" in prompt
     assert "Do not invent or rename terminal markers." in prompt
+    assert "exactly one marker on its own line" in prompt
+    assert "no surrounding backticks, label, prefix, suffix, or explanation" in prompt
 
 
 def test_codex_adapter_prompt_uses_request_legal_terminal_markers(tmp_path: Path) -> None:

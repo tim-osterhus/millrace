@@ -60,6 +60,10 @@ from .enums import (  # noqa: F401
     WatcherMode,
     WorkItemKind,
 )
+from .extensions import (
+    RequiredExtensionDeclaration,
+    RequiredExtensionsSpec,
+)
 from .graph_exports import (
     CompiledStageGraphExport,
     GraphExportEdge,
@@ -146,6 +150,8 @@ __all__ = [
     "ClosureTargetState",
     "CompileDiagnostics",
     "CompiledStageGraphExport",
+    "RequiredExtensionDeclaration",
+    "RequiredExtensionsSpec",
     "CompletionBehaviorDefinition",
     "ContractModel",
     "ActiveRunRequestKind",

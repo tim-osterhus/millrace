@@ -5,7 +5,6 @@ from __future__ import annotations
 from millrace_ai.architecture import (
     CompiledGraphResumePolicyPlan,
     CompiledGraphThresholdPolicyPlan,
-    GraphLoopCounterName,
     GraphLoopResumePolicyDefinition,
     GraphLoopThresholdPolicyDefinition,
 )
@@ -54,18 +53,45 @@ def compile_graph_threshold_policies(
     )
 
 
+# Counter-id to config-attribute mapping for operator overrides.
+# GraphLoopCounterName enum values are used only as lookup keys;
+# the active runtime authority is the generic counter_id string.
+_CONFIG_OVERRIDES_BY_COUNTER_ID: dict[str, str] = {
+    "fix_cycle_count": "max_fix_cycles",
+    "troubleshoot_attempt_count": "max_troubleshoot_attempts_before_consult",
+    "mechanic_attempt_count": "max_mechanic_attempts",
+}
+
+
 def resolved_threshold_for_policy(
     policy: GraphLoopThresholdPolicyDefinition,
     *,
     config: RuntimeConfig,
 ) -> int:
-    if policy.counter_name is GraphLoopCounterName.FIX_CYCLE_COUNT:
-        return config.recovery.max_fix_cycles
-    if policy.counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT:
-        return config.recovery.max_troubleshoot_attempts_before_consult
-    if policy.counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT:
-        return config.recovery.max_mechanic_attempts
-    return policy.threshold
+    """Resolve the recovery threshold for a threshold policy.
+
+    Takes the tighter (minimum) of the graph-loop policy threshold and
+    any operator-configured RuntimeConfig override.  Falls back to the
+    generic config default when neither declares a positive threshold.
+
+    Semantics: the threshold is a ceiling on recovery attempts; the lower
+    value is always the binding constraint.
+    """
+    candidates: list[int] = []
+
+    if policy.threshold is not None and policy.threshold > 0:
+        candidates.append(policy.threshold)
+
+    counter_id = policy.counter_name.value
+    config_attr = _CONFIG_OVERRIDES_BY_COUNTER_ID.get(counter_id)
+    if config_attr is not None:
+        config_value = getattr(config.recovery, config_attr, None)
+        if isinstance(config_value, int) and config_value > 0:
+            candidates.append(config_value)
+
+    if candidates:
+        return min(candidates)
+    return config.recovery.max_repair_attempts
 
 
 __all__ = [

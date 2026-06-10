@@ -69,9 +69,36 @@ Current shipped modes include standard Codex and Pi modes, learning-enabled mode
 Millrace supports custom graph nodes and custom stage kinds over canonical
 runtime stages. Workspace-local assets for modes, graphs, stage kinds, and
 entrypoints can declare new node types without altering the core package.
-Arbitrary runtime stages (stage kinds without a declared `runtime_stage`) are
-not yet supported. See `docs/runtime/millrace-modes-and-loops.md` for the
-authoritative stage-kind and graph-node contract.
+
+Extension-backed domains (Recon, closure, Blueprint, and Learning) ship with
+the base runtime but are activated only when the selected mode declares their
+required extensions. The minimal and generic fixture configs prove the kernel
+runs without those domains. Active-kernel code dispatches domain behavior
+through compiled extension boundary interfaces; it does not branch on domain
+string literals or family-ID enums.
+
+Compatibility surface:
+
+- Package-root modules (`router.py`, `compiler.py`, `queue_store.py`,
+  `runner.py`, `paths.py`, `state_store.py`, `stage_kinds.py`,
+  `loop_graphs.py`) remain importable as compatibility facades but derive
+  active runtime authority from the compiled plan.
+- `standard_plain`, `standard_millrace`, and `learning_enabled_millrace` are
+  compatibility aliases for `default_codex`, `default_pi`, and `learning_pi`.
+
+Unsupported topologies:
+
+- Arbitrary plane IDs and arbitrary runtime stages (stage kinds without a
+  declared canonical `runtime_stage`) are not yet supported.
+- True single-plane mode configurations are deferred; the current mode
+  validator requires at least two planes.
+- The fixture-only `minimal_three_plane`, `recovery_heavy_millrace`, and
+  `generic_two_plane_fixture` modes are discoverable proof assets that are
+  not listed as shipped product mode IDs.
+
+See `docs/runtime/millrace-modes-and-loops.md` and
+`docs/graphs/graphs-index.md` for the authoritative stage-kind, graph-node,
+and config-mapping contracts.
 
 ## First Useful Run
 

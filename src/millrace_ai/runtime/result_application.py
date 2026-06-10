@@ -1,4 +1,9 @@
-"""Stable façade over routed post-stage mutation helpers."""
+"""Stable façade over routed post-stage mutation helpers.
+
+Domain-specific routing (Recon, closure) is resolved through the
+BuiltInExtensionBoundaryRegistry by extension interface ID rather than
+through direct domain-module imports.  See ADR-0012 and ADR-0015.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
 )
 from millrace_ai.contracts.stage_metadata import stage_plane
+from millrace_ai.extensions import builtin_extension_boundary_registry
 from millrace_ai.router import RouterAction, RouterDecision
 
 from .active_runs import (
@@ -21,15 +27,10 @@ from .active_runs import (
     snapshot_projected_to_plane,
     snapshot_with_next_stage_for_plane,
 )
-from .closure_transitions import apply_closure_target_router_decision
 from .compiled_plans import CompiledPlanAuthorityError, load_compiled_plan_by_id
-from .completion_behavior import active_closure_target, block_on_closure_lineage_drift_if_present
 from .error_recovery import clear_runtime_error_context
-from .graph_authority import route_stage_result_from_graph
-from .graph_authority.stage_mapping import node_plan_by_id
 from .handoff_incidents import enqueue_handoff_incident
 from .lanes import compiled_plan_fingerprint_for_runtime
-from .recon_transitions import apply_recon_router_decision, is_recon_stage_result
 from .result_counters import increment_counter_field, increment_route_counters
 from .stage_result_persistence import write_plane_status, write_stage_result
 from .work_item_transitions import (
@@ -64,8 +65,10 @@ def route_stage_result_with_plan(
     assert engine.snapshot is not None
     assert engine.counters is not None
 
+    from .graph_authority import route_stage_result_from_graph as _route_stage_result_from_graph
+
     projected_snapshot = snapshot_projected_to_plane(engine.snapshot, stage_result.plane)
-    decision = route_stage_result_from_graph(
+    decision = _route_stage_result_from_graph(
         compiled_plan,
         projected_snapshot,
         stage_result,
@@ -134,12 +137,12 @@ def apply_router_decision(
         clear_runtime_error_context(engine.paths)
 
     if _is_closure_target_result(stage_result):
-        apply_closure_target_router_decision(engine, decision, stage_result)
+        _closure_handler().apply_router_decision(engine, decision, stage_result)
         return ()
 
-    if is_recon_stage_result(stage_result):
+    if _is_recon_result(stage_result):
         effective_plan = compiled_plan or compiled_plan_for_stage_result(engine, stage_result)
-        return apply_recon_router_decision(
+        return _recon_handler().apply_router_decision(
             engine,
             decision,
             stage_result,
@@ -171,9 +174,16 @@ def apply_router_decision(
     if decision.action is RouterAction.IDLE:
         apply_idle_router_decision(engine, stage_result, decision=decision)
         if stage_result.stage is PlanningStageName.MANAGER:
-            target = active_closure_target(engine)
+            from .closure_boundary import (
+                active_closure_target as _active_closure_target,
+            )
+            from .closure_boundary import (
+                block_on_closure_lineage_drift_if_present as _block_on_closure_lineage_drift_if_present,
+            )
+
+            target = _active_closure_target(engine)
             if target is not None:
-                block_on_closure_lineage_drift_if_present(engine, target)
+                _block_on_closure_lineage_drift_if_present(engine, target)
         return ()
 
     if decision.action is RouterAction.HANDOFF:
@@ -197,7 +207,19 @@ def apply_router_decision(
 
 
 def _is_closure_target_result(stage_result: StageResultEnvelope) -> bool:
-    return stage_result.metadata.get("request_kind") == "closure_target"
+    return _closure_handler().is_closure_target_result(stage_result)
+
+
+def _is_recon_result(stage_result: StageResultEnvelope) -> bool:
+    return _recon_handler().is_recon_stage_result(stage_result)
+
+
+def _closure_handler():
+    return builtin_extension_boundary_registry().get_closure_transition_handler()
+
+
+def _recon_handler():
+    return builtin_extension_boundary_registry().get_recon_transition_handler()
 
 
 def _plane_for_stage(stage: StageName) -> Plane:
@@ -217,8 +239,10 @@ def _write_next_stage_running_status(
     graph = effective_plan.graphs_by_plane.get(stage_result.plane)
     if graph is None:
         return
+    from .graph_authority.stage_mapping import node_plan_by_id as _node_plan_by_id
+
     try:
-        next_node = node_plan_by_id(graph, decision.next_node_id)
+        next_node = _node_plan_by_id(graph, decision.next_node_id)
     except ValueError:
         return
     marker = next_node.running_status_marker

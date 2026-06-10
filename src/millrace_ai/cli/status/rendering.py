@@ -70,6 +70,7 @@ def render_status_lines(view_model: StatusViewModel) -> tuple[str, ...]:
     ]
     lines.extend(_render_lane_lines(snapshot.lanes_by_id))
     lines.extend(_render_active_run_lines(snapshot.active_runs_by_plane))
+    lines.extend(_render_queue_depths_by_family_lines(view_model.queue_depths_by_family))
     lines.extend(_render_baseline_manifest_lines(view_model.baseline_manifest))
     lines.extend(_render_compile_currentness_lines(view_model))
     lines.extend(_render_latest_runtime_effect_lines(view_model.latest_runtime_effect))
@@ -98,6 +99,7 @@ def status_payload(view_model: StatusViewModel) -> dict[str, Any]:
         "workspace": str(view_model.paths.root),
         "runtime_mode": snapshot.runtime_mode.value,
         "process_running": view_model.process_running,
+        "queue_depths_by_family": view_model.queue_depths_by_family,
         "runtime_ownership_lock": view_model.runtime_ownership_lock,
         "paused": snapshot.paused,
         "pause_sources": pause_sources_label(snapshot),
@@ -296,6 +298,17 @@ def _render_usage_governance_status_lines(
             f"threshold={blocker.threshold:g}"
         )
     return tuple(lines)
+
+
+def _render_queue_depths_by_family_lines(
+    depths: dict[str, int],
+) -> tuple[str, ...]:
+    if not depths:
+        return ()
+    return tuple(
+        f"queue_depth_{family_id}: {depth}"
+        for family_id, depth in sorted(depths.items())
+    )
 
 
 def _render_work_item_family_status_lines(

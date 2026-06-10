@@ -39,6 +39,8 @@ runtime configurations.
 Compatibility alias:
 
 - `standard_plain -> default_codex`
+- `standard_millrace -> default_pi`
+- `learning_enabled_millrace -> learning_pi`
 
 ## Runner-Level Differences
 
@@ -72,14 +74,15 @@ They also ship these learning triggers:
 
 ## Discovery-Only Fixture Configurations
 
-Millrace ships one minimal architecture proof fixture that is discoverable
-through asset discovery but is **not** a shipped product mode. It is not
-listed in `SHIPPED_MODE_IDS` and does not appear in the shipped
-configurations table above.
+Millrace ships discovery-only fixture mode assets that are discoverable through
+asset discovery but are **not** shipped product modes. They are not listed in
+`SHIPPED_MODE_IDS` and do not appear in the shipped configurations table above.
 
 | Fixture | Runner Family | Plane Graphs | Summary |
 | --- | --- | --- | --- |
-| `minimal_three_plane` | Pi | `execution.minimal_three_plane`, `planning.minimal_three_plane`, `learning.minimal_three_plane` | Three-plane architecture proof fixture using one custom stage kind per plane (`basic_worker`/`basic_planner`/`basic_learner` bound to canonical `runtime_stage` values `builder`/`planner`/`analyst`) and only generic lifecycle terminal actions. Contains no domain-specific workflow identifiers (no Recon, Blueprint, closure, Arbiter, Manager, Mechanic, planner disposition, candidate evaluation, or learning promotion). Proves custom graph-defined workflows can compile and execute against the current canonical plane infrastructure. Arbitrary plane IDs and arbitrary runtime stages are deferred to later registry work. |
+| `minimal_three_plane` | Pi | `execution.minimal_three_plane`, `planning.minimal_three_plane`, `learning.minimal_three_plane` | Three-plane architecture proof fixture using one custom stage kind per plane (`basic_worker`/`basic_planner`/`basic_learner` bound to canonical `runtime_stage` values `builder`/`planner`/`analyst`) and only generic lifecycle terminal actions. Contains no domain-specific workflow identifiers (no Recon, Blueprint, closure, Arbiter, Manager, Mechanic, planner disposition, candidate evaluation, or learning promotion). Proves custom graph-defined workflows can compile and execute against the current canonical plane infrastructure. Arbitrary plane IDs and arbitrary runtime stages remain deferred future work. |
+| `recovery_heavy_millrace` | Pi | `execution.standard`, `planning.standard` | Fixture using the standard two-plane topology and standard extensions with Pi runner bindings. Its mode asset declares `recovery_policy_ids` selecting `src/millrace_ai/assets/registry/recovery_policies/recovery_heavy_policies.json`, whose execution and planning blocked-recovery thresholds are lower than the default policies. Compilation applies those mode-selected recovery-heavy policy thresholds before runtime threshold resolution. |
+| `generic_two_plane_fixture` | Pi | `execution.minimal_three_plane`, `planning.minimal_three_plane` | Minimal generic proof fixture using two planes (execution + planning) with `basic_worker` / `basic_planner` stage kinds. The `basic_worker` → `builder` and `basic_planner` → `planner` runtime-stage bindings are a runner-contract and workspace-contract compatibility layer, not arbitrary stage support. Declares only `millrace.generic` and avoids Recon, Blueprint, closure, Arbiter, Manager, Mechanic, planner-disposition, and Learning vocabulary. It is the smallest config the current framework permits. True single-plane mode validation remains intentionally deferred. |
 
 ## Related References
 
@@ -87,3 +90,4 @@ configurations table above.
 - `../runtime/millrace-compiler-and-frozen-plans.md`
 - `../runtime/millrace-compiled-stage-graphs-and-run-traces.md`
 - `../runtime/millrace-blueprint-planning.md`
+- `config-mapping.md`

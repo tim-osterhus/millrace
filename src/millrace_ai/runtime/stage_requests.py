@@ -27,13 +27,13 @@ from millrace_ai.runners.requests import RequestKind
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot
 from millrace_ai.workspace.family_adapters import (
-    queue_adapter_for_family_id,
     queue_adapter_for_id,
     resolve_queue_lifecycle_adapter_id,
 )
 from millrace_ai.workspace.work_inventory import queue_depths_by_plane
 
 if TYPE_CHECKING:
+    from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
     from millrace_ai.workspace.family_adapters import WorkFamilyQueueAdapter
 
@@ -67,7 +67,10 @@ def build_stage_run_request(
     request_kind = (
         active_run.request_kind
         if active_run is not None
-        else _request_kind_for_active_family(engine.snapshot.active_work_item_family_id)
+        else _request_kind_for_active_family(
+            engine.snapshot.active_work_item_family_id,
+            compiled_plan=engine.compiled_plan,
+        )
     )
     active_path = active_work_item_path(
         engine,
@@ -388,9 +391,16 @@ def active_work_item_path(
         return None
     family = (
         engine.compiled_plan.work_item_families_by_id.get(family_id)
-        if engine.compiled_plan is not None
+        if engine.compiled_plan is not None and engine.compiled_plan.work_item_families_by_id
         else None
     )
+    if family is None:
+        from millrace_ai.assets import load_builtin_workflow_primitives
+
+        builtin_families = {
+            f.family_id: f for f in load_builtin_workflow_primitives().work_item_families
+        }
+        family = builtin_families.get(family_id)
     adapter = _queue_adapter_for_family(family_id=family_id, family=family)
     if adapter is not None:
         return adapter.active_path(engine.paths, work_item_id=work_item_id)
@@ -414,7 +424,7 @@ def _queue_adapter_for_family(
             adapter = queue_adapter_for_id(adapter_id)
             if adapter is not None:
                 return adapter
-    return queue_adapter_for_family_id(family_id)
+    return None
 
 
 def execution_queue_depth(engine: RuntimeEngine) -> int:
@@ -523,7 +533,23 @@ def _write_skill_revision_evidence_if_enabled(
     )
 
 
-def _request_kind_for_active_family(work_item_family_id: str | None) -> RequestKind:
+def _request_kind_for_active_family(
+    work_item_family_id: str | None,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> RequestKind:
+    """Derive request_kind from compiled plan family metadata.
+
+    Uses compiled plan work-item family metadata when available to
+    determine if a family is Learning-domain.  Otherwise falls back
+    to a generic family-id-based check.
+    """
+    if work_item_family_id is None:
+        return "active_work_item"
+    if compiled_plan is not None:
+        family = compiled_plan.work_item_families_by_id.get(work_item_family_id)
+        if family is not None:
+            return "learning_request" if family.plane is Plane.LEARNING else "active_work_item"
     if work_item_family_id == WorkItemKind.LEARNING_REQUEST.value:
         return "learning_request"
     return "active_work_item"

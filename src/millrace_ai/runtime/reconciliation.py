@@ -7,8 +7,14 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName, RecoveryCounters, RuntimeSnapshot, StageName
 from millrace_ai.state_store import ReconciliationSignal, collect_reconciliation_signals, load_recovery_counters, save_snapshot
+from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 
 from .active_runs import active_run_for_plane, snapshot_with_active_run
+from .status_projections import (
+    build_active_run_projections,
+    build_queue_projections,
+    families_by_plane_from_interpreter,
+)
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -18,15 +24,31 @@ _INVALID_RECONCILIATION_MARKER = "### INVALID_STATUS_MARKER"
 
 def refresh_runtime_queue_depths(engine: RuntimeEngine, *, process_running: bool | None = None) -> None:
     assert engine.snapshot is not None
+
+    # Build canonical family-keyed depths via the family interpreter.
+    families = engine._work_item_families_for_lifecycle()
+    family_interpreter = QueueFamilyInterpreter(
+        engine.paths,
+        families=families,
+    )
+    families_fp = families_by_plane_from_interpreter(family_interpreter)
+    queue_proj = build_queue_projections(
+        family_interpreter=family_interpreter,
+        families_by_plane=families_fp,
+    )
+
+    # Derive lane-keyed active runs from the current active_runs_by_plane.
+    ar_proj = build_active_run_projections(
+        active_runs_by_plane=engine.snapshot.active_runs_by_plane,
+    )
+
     update: dict[str, object] = {
-        "queue_depth_execution": engine._execution_queue_depth(),
-        "queue_depth_planning": engine._planning_queue_depth(),
-        "queue_depth_learning": engine._learning_queue_depth(),
-        "queue_depths_by_plane": {
-            Plane.EXECUTION: engine._execution_queue_depth(),
-            Plane.PLANNING: engine._planning_queue_depth(),
-            Plane.LEARNING: engine._learning_queue_depth(),
-        },
+        "queue_depth_execution": queue_proj.queue_depths_by_plane.get(Plane.EXECUTION, 0),
+        "queue_depth_planning": queue_proj.queue_depths_by_plane.get(Plane.PLANNING, 0),
+        "queue_depth_learning": queue_proj.queue_depths_by_plane.get(Plane.LEARNING, 0),
+        "queue_depths_by_plane": dict(queue_proj.queue_depths_by_plane),
+        "queue_depths_by_family": dict(queue_proj.queue_depths_by_family),
+        "active_runs_by_lane": ar_proj.active_runs_by_lane,
         "updated_at": engine._now(),
     }
     if process_running is not None:
@@ -43,6 +65,7 @@ def run_reconciliation_if_needed(engine: RuntimeEngine) -> tuple[ReconciliationS
         counters=engine.counters,
         execution_status_marker=status_marker_for_reconciliation(engine.paths.execution_status_file),
         planning_status_marker=status_marker_for_reconciliation(engine.paths.planning_status_file),
+        learning_status_marker=status_marker_for_reconciliation(engine.paths.learning_status_file),
         compiled_plan=engine.compiled_plan,
     )
     if not signals:
@@ -133,7 +156,7 @@ def set_recovery_counters(
             work_item_family_id=snapshot.active_work_item_family_id,
             work_item_kind=snapshot.active_work_item_kind,
             work_item_id=snapshot.active_work_item_id,
-            field="troubleshoot_attempt_count",
+            counter_id="troubleshoot_attempt_count",
         )
     if isinstance(stage, PlanningStageName) and stage is PlanningStageName.MECHANIC:
         return engine._increment_counter_field(
@@ -143,7 +166,7 @@ def set_recovery_counters(
             work_item_family_id=snapshot.active_work_item_family_id,
             work_item_kind=snapshot.active_work_item_kind,
             work_item_id=snapshot.active_work_item_id,
-            field="mechanic_attempt_count",
+            counter_id="mechanic_attempt_count",
         )
     return snapshot
 

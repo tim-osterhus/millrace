@@ -13,6 +13,64 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added conceptual config mappings (`config-mapping.md`) documenting the five
+  tested configuration profiles and their resolution to shipped mode IDs,
+  aliases, or fixture packages.
+- Added config-swap behavior tests proving graph-only, recovery-policy-only,
+  and required-extension declarations change runtime behavior without Python
+  source edits.
+- Added absence and maintenance guardrail tests proving minimal fixture configs
+  do not load undeclared Recon, Blueprint, closure, or Learning domain behavior.
+- Added structural AST guardrails that forbid family-ID branch tables, forbidden
+  domain string literals as active-kernel control flow, and kernel-direct domain
+  imports outside documented compatibility facades.
+
+### Changed
+
+- Cleaned up legacy graph-authority authority paths: per-plane routing wrappers
+  are now compatibility-only facades, route-time max-cycle recovery knobs are
+  removed, and fallback route reasons/classes derive from compiled `node_id`
+  rather than `source_stage.value`.
+- Removed the fixed Recon terminal-operation whitelist; Recon routing now
+  resolves through compiled terminal-action `runtime_operation_id` metadata.
+- Reworked `stage_metadata.py` to derive shipped stage legality from JSON
+  stage-kind registry assets instead of hard-coded enums; fixture stage kinds
+  remain discoverable without entering the shipped-stage facade.
+- Route caller-level family-ID branching in active-kernel claim, lifecycle,
+  status, and counter code through compiled policy and the genreic
+  `QueueFamilyInterpreter`.
+- Updated shipped mode `required_extensions` declarations to list only the
+  built-in extensions each mode actually uses; compile validation rejects
+  undeclared domain vocabulary.
+
+### Fixed
+
+- Fixed installed-wheel smoke failures by declaring `packaging>=24,<27` as a
+  runtime dependency for extension validation's `packaging.version` import.
+- Fixed runtime recovery-counter reads so generic `counter_id` records are
+  authoritative (including explicit `0` values) and legacy fixed-field
+  snapshots are fallback-only compatibility projections.
+
+### Documentation
+
+- Updated `README.md`, `ROADMAP.md`, graph docs, runtime docs, source package
+  map, and maintenance registers to accurately describe the generic engine
+  boundary, extension-backed domains, compatibility-only surfaces, fixture
+  mode limitations, and unsupported topologies (arbitrary plane IDs and
+  arbitrary runtime stages remain deferred).
+
+### Compatibility Notes
+
+- Package-root compatibility facades (`router.py`, `compiler.py`,
+  `queue_store.py`, `runner.py`, `paths.py`, `state_store.py`,
+  `stage_kinds.py`, `loop_graphs.py`) remain importable; active runtime
+  authority derives from the compiled plan and compiled workflow primitives.
+- `standard_plain`, `standard_millrace`, and `learning_enabled_millrace` remain
+  compatibility aliases that resolve to `default_codex`, `default_pi`, and
+  `learning_pi` respectively.
+
 ## [0.20.3] - 2026-05-28
 
 ### Added

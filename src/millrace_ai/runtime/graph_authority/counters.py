@@ -16,6 +16,12 @@ def counter_attempts(
     *,
     plane: Plane,
 ) -> int:
+    """Read a counter value from the generic counter store.
+
+    The active runtime path should prefer *counter_attempts_for_counter_id*
+    with a policy-supplied counter_id. This function is retained as a
+    compatibility projection for code that still dispatches by plane.
+    """
     entry = matching_counter_entry(snapshot, counters, failure_class)
     if entry is None:
         return 0
@@ -31,18 +37,39 @@ def counter_attempts_for_name(
     *,
     counter_name: GraphLoopCounterName,
 ) -> int:
-    if counter_name is GraphLoopCounterName.FIX_CYCLE_COUNT:
-        return snapshot.fix_cycle_count
+    """Read a counter by GraphLoopCounterName from the generic counter store.
+
+    ``GraphLoopCounterName`` is used only as a compatibility/compiler migration
+    input; the active runtime authority is the generic ``counter_id`` string.
+    """
+    return counter_attempts_for_counter_id(
+        snapshot, counters, failure_class, counter_id=counter_name.value
+    )
+
+
+def counter_attempts_for_counter_id(
+    snapshot: RuntimeSnapshot,
+    counters: RecoveryCounters,
+    failure_class: str,
+    *,
+    counter_id: str,
+) -> int:
+    """Read a counter value from the generic counter store by *counter_id*.
+
+    This is the canonical active runtime path for reading recovery counter
+    values.  It does not dispatch on plane, family, stage, or enum.
+
+    When the generic counter store has no value for *counter_id*, falls back
+    to the snapshot's legacy compatibility field to avoid silently altering
+    recovery routing during migration from legacy counter state.
+    """
     entry = matching_counter_entry(snapshot, counters, failure_class)
-    if entry is None:
-        return 0
-    if counter_name is GraphLoopCounterName.TROUBLESHOOT_ATTEMPT_COUNT:
-        return entry.troubleshoot_attempt_count
-    if counter_name is GraphLoopCounterName.MECHANIC_ATTEMPT_COUNT:
-        return entry.mechanic_attempt_count
-    if counter_name is GraphLoopCounterName.CONSULTANT_INVOCATIONS:
-        return entry.consultant_invocations
-    raise ValueError(f"unsupported recovery counter name: {counter_name.value}")
+    if entry is not None and counter_id in entry.counters:
+        # Treat any explicit value (including zero) as authoritative.
+        return entry.counters[counter_id]
+    # Fall back to snapshot legacy field only when the generic store has no
+    # matching entry or the entry lacks the requested counter ID.
+    return int(getattr(snapshot, counter_id, 0))
 
 
 def matching_counter_entry(
@@ -99,6 +126,7 @@ def normalize_failure_class(failure_class: str) -> str:
 
 __all__ = [
     "counter_attempts",
+    "counter_attempts_for_counter_id",
     "counter_attempts_for_name",
     "counter_key_from_snapshot",
     "matching_counter_entry",

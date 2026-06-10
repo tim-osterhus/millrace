@@ -149,7 +149,7 @@ def test_threshold_exhaustion_uses_terminal_action_metadata(tmp_path: Path) -> N
     )
 
     assert decision.action.value == "blocked"
-    assert decision.reason == "mechanic_blocked:mechanic_attempts_exhausted"
+    assert decision.reason == "mechanic_blocked"
     assert decision.failure_class == "mechanic_blocked"
     assert decision.terminal_state_id == "blocked"
     assert decision.terminal_action_id == "block_work_item"

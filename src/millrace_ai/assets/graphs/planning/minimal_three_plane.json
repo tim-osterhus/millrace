@@ -6,7 +6,9 @@
   "nodes": [
     {
       "node_id": "basic_planner",
-      "stage_kind_id": "basic_planner"
+      "stage_kind_id": "basic_planner",
+      "request_context_profile_id": "planner.default",
+      "context_render_plan_id": "stage_request.default.v1"
     }
   ],
   "entry_nodes": [

@@ -1,11 +1,25 @@
-"""Stage ownership and terminal-result metadata."""
+"""Shipped stage registry instance loaded from JSON stage-kind assets.
+
+This module is the shipped Millrace stage registry instance.
+It loads stage legality data from the canonical JSON stage-kind assets
+under ``assets/registry/stage_kinds/`` and exposes typed lookups for
+runner normalization, entrypoint linting, graph validation, and
+compiled plan materialization.
+
+This module is NOT universal runtime authority for custom or future
+stage configurations (see ADR-0013). Custom graphs and compiled plans
+derive their authority from graph-loop JSON assets and stage-kind
+registry assets, not from this shipped-stage module.
+"""
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
 
 from .enums import (
     ExecutionStageName,
@@ -22,365 +36,122 @@ from .terminal_outcomes import TerminalOutcome
 
 SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+# ---------------------------------------------------------------------------
+# Shipped stage-kind asset root (relative to this module)
+# ---------------------------------------------------------------------------
+_STAGE_KIND_REGISTRY_ROOT = Path(__file__).resolve().parent.parent / "assets" / "registry" / "stage_kinds"
+
 
 @dataclass(frozen=True, slots=True)
 class StageMetadata:
+    """Metadata for one shipped built-in stage."""
+
     stage: StageName
     plane: Plane
     legal_terminal_results: tuple[str, ...]
     allowed_result_classes_by_outcome: Mapping[str, tuple[ResultClass, ...]]
-
-    @property
-    def running_status_marker(self) -> str:
-        return f"{self.stage.value.upper()}_RUNNING"
+    running_status_marker: str
 
     @property
     def legal_terminal_markers(self) -> tuple[str, ...]:
         return tuple(f"### {outcome}" for outcome in self.legal_terminal_results)
 
 
-def _allowed(
-    values: dict[str, tuple[ResultClass, ...]],
-) -> Mapping[str, tuple[ResultClass, ...]]:
-    return MappingProxyType(values)
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _load_stage_kind_payloads() -> list[dict[str, Any]]:
+    """Load all JSON stage-kind assets from the shipped registry root."""
+    payloads: list[dict[str, Any]] = []
+    if not _STAGE_KIND_REGISTRY_ROOT.is_dir():
+        return payloads
+    for json_path in sorted(_STAGE_KIND_REGISTRY_ROOT.rglob("*.json")):
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and payload.get("kind") == "registered_stage_kind":
+            payloads.append(payload)
+    return payloads
 
 
-STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(
-    {
-        ExecutionStageName.BUILDER.value: StageMetadata(
-            stage=ExecutionStageName.BUILDER,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.BUILDER_COMPLETE.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.BUILDER_COMPLETE.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.INTEGRATOR.value: StageMetadata(
-            stage=ExecutionStageName.INTEGRATOR,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.INTEGRATION_COMPLETE.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.INTEGRATION_COMPLETE.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.CHECKER.value: StageMetadata(
-            stage=ExecutionStageName.CHECKER,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.CHECKER_PASS.value,
-                ExecutionTerminalResult.FIX_NEEDED.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.CHECKER_PASS.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.FIX_NEEDED.value: (ResultClass.FOLLOWUP_NEEDED,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.FIXER.value: StageMetadata(
-            stage=ExecutionStageName.FIXER,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.FIXER_COMPLETE.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.FIXER_COMPLETE.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.DOUBLECHECKER.value: StageMetadata(
-            stage=ExecutionStageName.DOUBLECHECKER,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.DOUBLECHECK_PASS.value,
-                ExecutionTerminalResult.FIX_NEEDED.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.DOUBLECHECK_PASS.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.FIX_NEEDED.value: (ResultClass.FOLLOWUP_NEEDED,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.UPDATER.value: StageMetadata(
-            stage=ExecutionStageName.UPDATER,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.UPDATE_COMPLETE.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.UPDATE_COMPLETE.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.TROUBLESHOOTER.value: StageMetadata(
-            stage=ExecutionStageName.TROUBLESHOOTER,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.TROUBLESHOOT_COMPLETE.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        ExecutionStageName.CONSULTANT.value: StageMetadata(
-            stage=ExecutionStageName.CONSULTANT,
-            plane=Plane.EXECUTION,
-            legal_terminal_results=(
-                ExecutionTerminalResult.CONSULT_COMPLETE.value,
-                ExecutionTerminalResult.NEEDS_PLANNING.value,
-                ExecutionTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    ExecutionTerminalResult.CONSULT_COMPLETE.value: (ResultClass.SUCCESS,),
-                    ExecutionTerminalResult.NEEDS_PLANNING.value: (
-                        ResultClass.ESCALATE_PLANNING,
-                    ),
-                    ExecutionTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        PlanningStageName.RECON.value: StageMetadata(
-            stage=PlanningStageName.RECON,
-            plane=Plane.PLANNING,
-            legal_terminal_results=(
-                PlanningTerminalResult.RECON_TO_EXECUTION.value,
-                PlanningTerminalResult.RECON_TO_PLANNING.value,
-                PlanningTerminalResult.RECON_NOOP.value,
-                PlanningTerminalResult.RECON_BLOCKED.value,
-                PlanningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    PlanningTerminalResult.RECON_TO_EXECUTION.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.RECON_TO_PLANNING.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.RECON_NOOP.value: (ResultClass.NO_OP,),
-                    PlanningTerminalResult.RECON_BLOCKED.value: (ResultClass.BLOCKED,),
-                    PlanningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        PlanningStageName.PLANNER.value: StageMetadata(
-            stage=PlanningStageName.PLANNER,
-            plane=Plane.PLANNING,
-            legal_terminal_results=(
-                PlanningTerminalResult.PLANNER_COMPLETE.value,
-                PlanningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    PlanningTerminalResult.PLANNER_COMPLETE.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        PlanningStageName.MANAGER.value: StageMetadata(
-            stage=PlanningStageName.MANAGER,
-            plane=Plane.PLANNING,
-            legal_terminal_results=(
-                PlanningTerminalResult.MANAGER_COMPLETE.value,
-                PlanningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    PlanningTerminalResult.MANAGER_COMPLETE.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        PlanningStageName.MECHANIC.value: StageMetadata(
-            stage=PlanningStageName.MECHANIC,
-            plane=Plane.PLANNING,
-            legal_terminal_results=(
-                PlanningTerminalResult.MECHANIC_COMPLETE.value,
-                PlanningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    PlanningTerminalResult.MECHANIC_COMPLETE.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        PlanningStageName.AUDITOR.value: StageMetadata(
-            stage=PlanningStageName.AUDITOR,
-            plane=Plane.PLANNING,
-            legal_terminal_results=(
-                PlanningTerminalResult.AUDITOR_COMPLETE.value,
-                PlanningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    PlanningTerminalResult.AUDITOR_COMPLETE.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        PlanningStageName.ARBITER.value: StageMetadata(
-            stage=PlanningStageName.ARBITER,
-            plane=Plane.PLANNING,
-            legal_terminal_results=(
-                PlanningTerminalResult.ARBITER_COMPLETE.value,
-                PlanningTerminalResult.REMEDIATION_NEEDED.value,
-                PlanningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    PlanningTerminalResult.ARBITER_COMPLETE.value: (ResultClass.SUCCESS,),
-                    PlanningTerminalResult.REMEDIATION_NEEDED.value: (
-                        ResultClass.FOLLOWUP_NEEDED,
-                    ),
-                    PlanningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        LearningStageName.ANALYST.value: StageMetadata(
-            stage=LearningStageName.ANALYST,
-            plane=Plane.LEARNING,
-            legal_terminal_results=(
-                LearningTerminalResult.ANALYST_COMPLETE.value,
-                LearningTerminalResult.ANALYST_NOOP.value,
-                LearningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    LearningTerminalResult.ANALYST_COMPLETE.value: (ResultClass.SUCCESS,),
-                    LearningTerminalResult.ANALYST_NOOP.value: (ResultClass.NO_OP,),
-                    LearningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        LearningStageName.PROFESSOR.value: StageMetadata(
-            stage=LearningStageName.PROFESSOR,
-            plane=Plane.LEARNING,
-            legal_terminal_results=(
-                LearningTerminalResult.PROFESSOR_COMPLETE.value,
-                LearningTerminalResult.PROFESSOR_NOOP.value,
-                LearningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    LearningTerminalResult.PROFESSOR_COMPLETE.value: (ResultClass.SUCCESS,),
-                    LearningTerminalResult.PROFESSOR_NOOP.value: (ResultClass.NO_OP,),
-                    LearningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        LearningStageName.CURATOR.value: StageMetadata(
-            stage=LearningStageName.CURATOR,
-            plane=Plane.LEARNING,
-            legal_terminal_results=(
-                LearningTerminalResult.CURATOR_COMPLETE.value,
-                LearningTerminalResult.CURATOR_NOOP.value,
-                LearningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    LearningTerminalResult.CURATOR_COMPLETE.value: (ResultClass.SUCCESS,),
-                    LearningTerminalResult.CURATOR_NOOP.value: (ResultClass.NO_OP,),
-                    LearningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-        LearningStageName.LIBRARIAN.value: StageMetadata(
-            stage=LearningStageName.LIBRARIAN,
-            plane=Plane.LEARNING,
-            legal_terminal_results=(
-                LearningTerminalResult.LIBRARIAN_COMPLETE.value,
-                LearningTerminalResult.LIBRARIAN_NOOP.value,
-                LearningTerminalResult.BLOCKED.value,
-            ),
-            allowed_result_classes_by_outcome=_allowed(
-                {
-                    LearningTerminalResult.LIBRARIAN_COMPLETE.value: (ResultClass.SUCCESS,),
-                    LearningTerminalResult.LIBRARIAN_NOOP.value: (ResultClass.NO_OP,),
-                    LearningTerminalResult.BLOCKED.value: (
-                        ResultClass.BLOCKED,
-                        ResultClass.RECOVERABLE_FAILURE,
-                    ),
-                }
-            ),
-        ),
-    }
-)
+def _plane_from_value(plane_value: str) -> Plane:
+    plane_value = plane_value.strip()
+    try:
+        return Plane(plane_value)
+    except ValueError as exc:
+        raise ValueError(f"unknown plane in stage kind asset: {plane_value}") from exc
+
+
+def _result_class_from_value(value: str) -> ResultClass:
+    value = value.strip()
+    try:
+        return ResultClass(value)
+    except ValueError as exc:
+        raise ValueError(f"unknown result class in stage kind asset: {value}") from exc
+
+
+def _resolve_stage_enum(stage_value: str) -> StageName:
+    """Resolve a stage value string to its enum member without using the registry."""
+    for enum_cls in (ExecutionStageName, PlanningStageName, LearningStageName):
+        try:
+            return enum_cls(stage_value)
+        except ValueError:
+            continue
+    raise ValueError(f"unknown stage value: {stage_value}")
+
+
+def _build_stage_metadata_from_payload(payload: dict[str, Any]) -> StageMetadata:
+    stage_value = payload["stage_kind_id"]
+    plane = _plane_from_value(payload["plane"])
+    running_status_marker = str(payload.get("running_status_marker", f"{stage_value.upper()}_RUNNING"))
+
+    legal_outcomes = tuple(
+        str(outcome) for outcome in payload.get("legal_outcomes", [])
+    )
+
+    raw_result_classes: dict[str, list[str]] = payload.get(
+        "allowed_result_classes_by_outcome", {}
+    )
+    allowed_result_classes: dict[str, tuple[ResultClass, ...]] = {}
+    for outcome, classes in raw_result_classes.items():
+        allowed_result_classes[str(outcome)] = tuple(
+            _result_class_from_value(str(rc)) for rc in classes
+        )
+
+    stage_enum = _resolve_stage_enum(stage_value)
+
+    return StageMetadata(
+        stage=stage_enum,
+        plane=plane,
+        legal_terminal_results=legal_outcomes,
+        allowed_result_classes_by_outcome=MappingProxyType(allowed_result_classes),
+        running_status_marker=running_status_marker,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Registry instance – loaded once at module import
+# ---------------------------------------------------------------------------
+
+def _build_registry() -> dict[str, StageMetadata]:
+    payloads = _load_stage_kind_payloads()
+    registry: dict[str, StageMetadata] = {}
+    for payload in payloads:
+        stage_value = payload.get("stage_kind_id", "")
+        # Only register stages that correspond to known shipped enum members.
+        # Fixture/custom stage kinds (basic_worker, etc.) are not shipped stages.
+        try:
+            _resolve_stage_enum(stage_value)
+        except ValueError:
+            continue
+        metadata = _build_stage_metadata_from_payload(payload)
+        registry[metadata.stage.value] = metadata
+    return registry
+
+
+STAGE_METADATA_BY_VALUE: Mapping[str, StageMetadata] = MappingProxyType(_build_registry())
 
 STAGE_NAME_BY_VALUE: Mapping[str, StageName] = MappingProxyType(
     {metadata.stage.value: metadata.stage for metadata in STAGE_METADATA_BY_VALUE.values()}
@@ -395,6 +166,10 @@ STAGE_LEGAL_TERMINAL_RESULTS: Mapping[str, set[str]] = MappingProxyType(
     }
 )
 
+
+# ---------------------------------------------------------------------------
+# Public lookup functions (unchanged signatures)
+# ---------------------------------------------------------------------------
 
 def stage_metadata(stage: StageName | str) -> StageMetadata:
     stage_value = stage.value if not isinstance(stage, str) else stage

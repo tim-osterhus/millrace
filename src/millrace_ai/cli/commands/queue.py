@@ -35,6 +35,7 @@ from millrace_ai.workspace.lineage_integrity import (
     build_lineage_repair_plan,
     write_lineage_repair_report,
 )
+from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 from millrace_ai.workspace.work_inventory import active_counts_by_plane, family_counts, queue_depths_by_plane
 
 queue_app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -123,6 +124,16 @@ def queue_ls(workspace: WorkspaceOption = Path(".")) -> None:
     typer.echo(f"superseded_task_count: {superseded_task_count}")
     typer.echo(f"cancelled_incident_count: {cancelled_incident_count}")
     typer.echo(f"operator_resolved_incident_count: {operator_resolved_incident_count}")
+
+    # Emit canonical family-keyed depths via the shared interpreter.
+    families = (
+        tuple(compiled_plan.work_item_families_by_id.values())
+        if compiled_plan is not None
+        else None
+    )
+    family_interpreter = QueueFamilyInterpreter(paths, families=families)
+    for family_id, depth in sorted(family_interpreter.queue_depths_by_family().items()):
+        typer.echo(f"{family_id}_queue_depth: {depth}")
 
 
 @queue_app.command("show")
@@ -491,12 +502,20 @@ def queue_repair_lineage(
         repaired_count = apply_lineage_repair_plan(paths, plan)
         compiled_plan = load_existing_plan(paths.state_dir / "compiled_plan.json")
         queue_depths = queue_depths_by_plane(paths, compiled_plan=compiled_plan)
+        families = (
+            tuple(compiled_plan.work_item_families_by_id.values())
+            if compiled_plan is not None
+            else None
+        )
+        family_interpreter = QueueFamilyInterpreter(paths, families=families)
+        queue_depths_by_family = family_interpreter.queue_depths_by_family()
         snapshot = load_snapshot(paths).model_copy(
             update={
                 "queue_depth_execution": queue_depths[Plane.EXECUTION],
                 "queue_depth_planning": queue_depths[Plane.PLANNING],
                 "queue_depth_learning": queue_depths[Plane.LEARNING],
                 "queue_depths_by_plane": queue_depths,
+                "queue_depths_by_family": queue_depths_by_family,
             }
         )
         save_snapshot(paths, snapshot)

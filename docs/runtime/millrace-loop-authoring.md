@@ -9,6 +9,7 @@ Use it when you need to change:
 - graph-loop JSON under `src/millrace_ai/assets/graphs/`
 - stage-kind JSON under `src/millrace_ai/assets/registry/stage_kinds/`
 - workflow primitive JSON under `src/millrace_ai/assets/registry/`
+- extension package manifest JSON under `src/millrace_ai/assets/registry/extensions/`
 - mode JSON under `src/millrace_ai/assets/modes/`
 - stage entrypoint selection behavior
 - per-stage model or runner bindings that should be frozen by compile
@@ -20,12 +21,14 @@ Do not author loops from memory or from prompt prose.
 The authoritative sources are:
 
 - `src/millrace_ai/contracts/`
+- `src/millrace_ai/contracts/extensions.py`
 - `src/millrace_ai/architecture/stage_kinds.py`
 - `src/millrace_ai/architecture/loop_graphs.py`
 - `src/millrace_ai/architecture/workflow_primitives/`
 - `src/millrace_ai/architecture/materialization.py`
 - `src/millrace_ai/compiler.py`
 - `src/millrace_ai/assets/modes.py`
+- `src/millrace_ai/assets/extensions.py`
 - `src/millrace_ai/assets/loops/execution/default.json`
 - `src/millrace_ai/assets/loops/execution/with_integrator.json`
 - `src/millrace_ai/assets/loops/planning/default.json`
@@ -52,6 +55,7 @@ The authoritative sources are:
 - `src/millrace_ai/assets/registry/runtime_effect_handlers/`
 - `src/millrace_ai/assets/registry/recovery_policies/`
 - `src/millrace_ai/assets/registry/runtime_failure_policies/`
+- `src/millrace_ai/assets/registry/extensions/`
 - `src/millrace_ai/assets/registry/workspace_schema_epochs/`
 - `src/millrace_ai/assets/modes/default_codex.json`
 - `src/millrace_ai/assets/modes/default_pi.json`
@@ -75,7 +79,8 @@ Millrace currently ships three authoring layers that must not drift apart:
 2. graph-loop and stage-kind assets under
    `src/millrace_ai/assets/graphs/` and
    `src/millrace_ai/assets/registry/stage_kinds/`
-3. workflow primitive assets under the registry folders listed above
+3. workflow primitive assets and extension package manifests under the
+   registry folders listed above
 
 Today the runtime executes request binding and control flow from
 `compiled_plan.json`, which is built from graph loops, stage kinds, and
@@ -298,31 +303,44 @@ resolved coherently.
 
 ## Fixture Authoring And Discovery-Only Assets
 
-Millrace ships one architecture proof fixture (`minimal_three_plane`) that
-illustrates custom graph-loop, stage-kind, and mode authoring without
-changing the default product surface.
+Millrace ships discovery-only fixture mode assets that illustrate graph-loop,
+stage-kind, mode, and registry-data authoring without changing the default
+product surface.
 
 Fixture assets are:
 
 - discoverable through normal asset discovery (stage-kind, graph-loop, and
   mode loaders find them alongside shipped assets)
 - **not** listed in `SHIPPED_MODE_IDS`
-- compiled and run by referencing `mode_id = "minimal_three_plane"`
-  explicitly, not by selecting a default mode
+- compiled and run by referencing their fixture mode IDs explicitly, not by
+  selecting a default mode
 
-The fixture uses custom stage kinds (`basic_worker`, `basic_planner`,
-`basic_learner`) that declare canonical `runtime_stage` values (`builder`,
-`planner`, `analyst`). It intentionally limits itself to the current
-canonical plane IDs and canonical runtime stages.
+Current fixture mode IDs:
 
-**Arbitrary plane IDs and arbitrary runtime stages are deferred** to the
-generic stage and plane registry work tracked in ADR-0013. Every stage kind
-in the fixture resolves to a known canonical runtime stage through its
-`runtime_stage` field, and every graph loop uses the current shipped plane
-IDs (`execution`, `planning`, `learning`).
+- `minimal_three_plane`: three-plane architecture proof fixture using
+  `basic_worker`, `basic_planner`, and `basic_learner`.
+- `recovery_heavy_millrace`: standard two-plane topology plus mode-selected
+  companion recovery-policy registry data with lower blocked-recovery
+  thresholds.
+- `generic_two_plane_fixture`: generic-only minimal fixture using the
+  execution and planning minimal graph loops. The `basic_worker` → `builder`
+  and `basic_planner` → `planner` runtime-stage bindings are a
+  runner-contract compatibility layer. True single-plane validation is
+  deferred because the current mode validator requires both planes.
 
-The fixture is an architecture proof asset, not a user-facing product mode
-unless docs explicitly label it as a test fixture.
+The minimal graph fixtures use custom stage kinds (`basic_worker`,
+`basic_planner`, `basic_learner`) that declare canonical `runtime_stage` values
+(`builder`, `planner`, `analyst`). They intentionally limit themselves to the
+current canonical plane IDs and canonical runtime stages.
+
+**Arbitrary plane IDs and arbitrary runtime stages remain deferred future
+work** beyond the ADR-0013 shipped-registry boundary. Every minimal fixture
+stage kind resolves to a known canonical runtime stage through its
+`runtime_stage` field, and fixture graph loops use the current shipped plane
+IDs selected by each fixture.
+
+These fixtures are architecture proof assets, not user-facing product modes
+unless docs explicitly label them as test fixtures.
 
 ## Entrypoint Override Rules
 

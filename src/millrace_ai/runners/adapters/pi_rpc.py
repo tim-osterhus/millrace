@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,11 @@ from millrace_ai.runners.contracts import (
 )
 from millrace_ai.runners.errors import RunnerBinaryNotFoundError
 from millrace_ai.runners.requests import RunnerRawResult, StageRunRequest
+
+_PI_THINKING_LEVEL_ALIASES = {
+    "max": "xhigh",
+}
+_TERMINAL_TOKEN_PATTERN = re.compile(r"^###\s+([A-Z0-9_]+)\s*$")
 
 
 class PiRpcRunnerAdapter:
@@ -198,8 +204,28 @@ class PiRpcRunnerAdapter:
                 "\n".join(persisted_event_lines) + "\n",
                 encoding="utf-8",
             )
-        if session_result.assistant_text is not None:
-            stdout_path.write_text(session_result.assistant_text, encoding="utf-8")
+        assistant_text = session_result.assistant_text
+        exit_kind = session_result.exit_kind
+        exit_code = session_result.exit_code
+        failure_class = session_result.failure_class
+        notes = session_result.notes
+
+        recovered_stdout = _recovered_terminal_stdout_from_empty_text(
+            request=request,
+            session_result=session_result,
+        )
+        if recovered_stdout is not None:
+            assistant_text = recovered_stdout
+            exit_kind = "completed"
+            exit_code = 0
+            failure_class = None
+            notes = (
+                *notes,
+                "recovered legal terminal marker from final pi assistant event content",
+            )
+
+        if assistant_text is not None:
+            stdout_path.write_text(assistant_text, encoding="utf-8")
         stderr_path.write_text(session_result.stderr_text, encoding="utf-8")
 
         result = RunnerRawResult(
@@ -210,8 +236,8 @@ class PiRpcRunnerAdapter:
             model_name=request.model_name,
             thinking_level=request.thinking_level,
             model_reasoning_effort=request.model_reasoning_effort,
-            exit_kind=session_result.exit_kind,
-            exit_code=session_result.exit_code,
+            exit_kind=exit_kind,
+            exit_code=exit_code,
             observed_exit_kind=session_result.observed_exit_kind,
             observed_exit_code=session_result.observed_exit_code,
             stdout_path=str(stdout_path) if stdout_path.exists() else None,
@@ -231,8 +257,8 @@ class PiRpcRunnerAdapter:
                 raw_result=result,
                 command=command,
                 emitted_at=datetime.now(timezone.utc),
-                failure_class=session_result.failure_class,
-                notes=session_result.notes,
+                failure_class=failure_class,
+                notes=notes,
             ),
         )
         return result
@@ -247,7 +273,7 @@ class PiRpcRunnerAdapter:
             command.extend(["--model", request.model_name])
         thinking_level = request.thinking_level if request.thinking_level is not None else pi.thinking
         if thinking_level is not None:
-            command.extend(["--thinking", thinking_level])
+            command.extend(["--thinking", _normalize_pi_thinking_level(thinking_level)])
         if pi.disable_context_files:
             command.append("--no-context-files")
         if pi.disable_skills:
@@ -271,6 +297,106 @@ class PiRpcRunnerAdapter:
 
     def _persistable_event_lines(self, event_lines: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(line for line in event_lines if not _is_message_update_event(line))
+
+
+def _normalize_pi_thinking_level(thinking_level: str) -> str:
+    return _PI_THINKING_LEVEL_ALIASES.get(thinking_level, thinking_level)
+
+
+def _recovered_terminal_stdout_from_empty_text(
+    *,
+    request: StageRunRequest,
+    session_result: PiRpcSessionResult,
+) -> str | None:
+    if session_result.failure_class != "runner_empty_assistant_text":
+        return None
+    if _has_nonempty_text(session_result.assistant_text):
+        return None
+
+    marker = _terminal_marker_from_final_assistant_event(
+        session_result.event_lines,
+        legal_markers=frozenset(request.legal_terminal_markers),
+    )
+    if marker is None:
+        return None
+    return f"{marker}\n"
+
+
+def _terminal_marker_from_final_assistant_event(
+    event_lines: tuple[str, ...],
+    *,
+    legal_markers: frozenset[str],
+) -> str | None:
+    for raw_line in reversed(event_lines):
+        content = _assistant_event_content(raw_line)
+        if not _has_content(content):
+            continue
+
+        markers = _terminal_markers_from_content(content)
+        unique_markers = set(markers)
+        if len(unique_markers) != 1:
+            return None
+
+        marker = unique_markers.pop()
+        if marker not in legal_markers:
+            return None
+        return marker
+    return None
+
+
+def _assistant_event_content(raw_line: str) -> object | None:
+    try:
+        payload = json.loads(raw_line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    message = payload.get("message")
+    if isinstance(message, dict) and message.get("role") == "assistant":
+        return message.get("content")
+
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for item in reversed(messages):
+            if isinstance(item, dict) and item.get("role") == "assistant":
+                return item.get("content")
+    return None
+
+
+def _terminal_markers_from_content(content: object) -> tuple[str, ...]:
+    markers: list[str] = []
+    for text in _assistant_content_text_chunks(content):
+        for line in text.splitlines():
+            match = _TERMINAL_TOKEN_PATTERN.match(line.strip())
+            if match is not None:
+                markers.append(f"### {match.group(1)}")
+    return tuple(markers)
+
+
+def _assistant_content_text_chunks(content: object) -> tuple[str, ...]:
+    if isinstance(content, str):
+        return (content,)
+    if not isinstance(content, list):
+        return ()
+
+    chunks: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        for key in ("text", "thinking"):
+            value = item.get(key)
+            if isinstance(value, str):
+                chunks.append(value)
+    return tuple(chunks)
+
+
+def _has_content(content: object | None) -> bool:
+    return any(chunk.strip() for chunk in _assistant_content_text_chunks(content))
+
+
+def _has_nonempty_text(value: str | None) -> bool:
+    return value is not None and bool(value.strip())
 
 
 def _is_message_update_event(raw_line: str) -> bool:

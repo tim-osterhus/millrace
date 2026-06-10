@@ -6,35 +6,51 @@
   "nodes": [
     {
       "node_id": "builder",
-      "stage_kind_id": "builder"
+      "stage_kind_id": "builder",
+      "request_context_profile_id": "builder.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "integrator",
-      "stage_kind_id": "integrator"
+      "stage_kind_id": "integrator",
+      "request_context_profile_id": "integrator.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "checker",
-      "stage_kind_id": "checker"
+      "stage_kind_id": "checker",
+      "request_context_profile_id": "checker.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "fixer",
-      "stage_kind_id": "fixer"
+      "stage_kind_id": "fixer",
+      "request_context_profile_id": "fixer.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "doublechecker",
-      "stage_kind_id": "doublechecker"
+      "stage_kind_id": "doublechecker",
+      "request_context_profile_id": "doublechecker.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "updater",
-      "stage_kind_id": "updater"
+      "stage_kind_id": "updater",
+      "request_context_profile_id": "updater.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "troubleshooter",
-      "stage_kind_id": "troubleshooter"
+      "stage_kind_id": "troubleshooter",
+      "request_context_profile_id": "troubleshooter.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "consultant",
-      "stage_kind_id": "consultant"
+      "stage_kind_id": "consultant",
+      "request_context_profile_id": "consultant.default",
+      "context_render_plan_id": "stage_request.default.v1"
     }
   ],
   "entry_nodes": [
@@ -166,9 +182,9 @@
       ]
     },
     {
-      "edge_id": "troubleshooter-blocked-to-troubleshooter",
+      "edge_id": "troubleshooter-blocked-to-consultant",
       "from_node_id": "troubleshooter",
-      "to_node_id": "troubleshooter",
+      "to_node_id": "consultant",
       "on_outcomes": [
         "BLOCKED"
       ]

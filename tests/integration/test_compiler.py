@@ -157,6 +157,11 @@ def _write_workspace_local_graph_mode_assets(assets_root: Path) -> None:
                     "auditor": "codex_cli",
                     "arbiter": "codex_cli",
                 },
+                "required_extensions": [
+                    {"extension_package_id": "millrace.generic"},
+                    {"extension_package_id": "millrace.recon"},
+                    {"extension_package_id": "millrace.closure"}
+                ],
             },
             indent=2,
         )
@@ -759,9 +764,9 @@ def test_compile_materializes_configured_recovery_thresholds_into_compiled_plan(
         workspace_root,
         config=RuntimeConfig(
             recovery={
-                "max_fix_cycles": 5,
-                "max_troubleshoot_attempts_before_consult": 4,
-                "max_mechanic_attempts": 3,
+                "max_fix_cycles": 1,
+                "max_troubleshoot_attempts_before_consult": 1,
+                "max_mechanic_attempts": 1,
             }
         ),
         requested_mode_id="standard_plain",
@@ -769,18 +774,19 @@ def test_compile_materializes_configured_recovery_thresholds_into_compiled_plan(
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
+    # Operator config can only lower thresholds (the tighter constraint wins).
     assert {
         (policy.policy_id, policy.threshold)
         for policy in outcome.active_plan.execution_graph.compiled_threshold_policies
     } == {
-        ("execution.fix-needed.exhaustion", 5),
-        ("execution.blocked.recovery", 4),
+        ("execution.fix-needed.exhaustion", 1),
+        ("execution.blocked.recovery", 1),
     }
     assert {
         (policy.policy_id, policy.threshold)
         for policy in outcome.active_plan.planning_graph.compiled_threshold_policies
     } == {
-        ("planning.blocked.recovery", 3),
+        ("planning.blocked.recovery", 1),
     }
 
 
@@ -816,7 +822,10 @@ def test_compile_materializes_workspace_local_mode_contract(tmp_path: Path) -> N
     assert execution_nodes["checker"].model_name == "gpt-5.4"
     assert execution_nodes["checker"].thinking_level == "high"
     assert execution_nodes["checker"].model_reasoning_effort == "high"
-    assert fix_threshold.threshold == 5
+    # Operator config can only lower; policy threshold is the binding floor.
+    # With config max_fix_cycles=5 and policy threshold=2 (from graph loop),
+    # min(2, 5) = 2.
+    assert fix_threshold.threshold == 2
     assert {
         (asset.asset_family, asset.logical_id, asset.compile_time_path)
         for asset in outcome.active_plan.resolved_assets
@@ -1693,3 +1702,279 @@ def test_compile_minimal_three_plane_fixture_succeeds_with_three_planes(
     assert "stage_kind:basic_worker" in resolved_ids
     assert "stage_kind:basic_planner" in resolved_ids
     assert "stage_kind:basic_learner" in resolved_ids
+
+
+# ── config-swap compilation tests ──────────────────────────────────────────
+
+
+def test_config_swap_standard_millrace_compiles_with_standard_stages(
+    tmp_path: Path,
+) -> None:
+    """standard_millrace compiles with all standard execution and planning
+    stages."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_millrace",
+    )
+
+    assert outcome.diagnostics.ok is True, (
+        f"standard_millrace compilation failed: {outcome.diagnostics.errors}"
+    )
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+    assert plan.mode_id == "default_pi"
+    assert plan.execution_loop_id == "execution.standard"
+    assert plan.planning_loop_id == "planning.standard"
+
+    exec_nodes = {node.stage_kind_id for node in plan.execution_graph.nodes}
+    assert "builder" in exec_nodes
+    assert "checker" in exec_nodes
+    assert "fixer" in exec_nodes
+    assert "troubleshooter" in exec_nodes
+
+    plan_nodes = {node.stage_kind_id for node in plan.planning_graph.nodes}
+    assert "recon" in plan_nodes
+    assert "planner" in plan_nodes
+    assert "manager" in plan_nodes
+    assert "arbiter" in plan_nodes
+
+    # All nodes use pi_rpc
+    assert {node.runner_name for node in plan.execution_graph.nodes} == {"pi_rpc"}
+    assert {node.runner_name for node in plan.planning_graph.nodes} == {"pi_rpc"}
+
+
+def test_config_swap_learning_enabled_millrace_compiles_with_learning_plane(
+    tmp_path: Path,
+) -> None:
+    """learning_enabled_millrace compiles with Learning plane and triggers."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="learning_enabled_millrace",
+    )
+
+    assert outcome.diagnostics.ok is True, (
+        f"learning_enabled_millrace compilation failed: {outcome.diagnostics.errors}"
+    )
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+    assert plan.mode_id == "learning_pi"
+    assert plan.learning_graph is not None
+    assert Plane.LEARNING in plan.loop_ids_by_plane
+    assert plan.learning_loop_id == "learning.standard"
+
+    # Learning graph stages
+    learn_nodes = {node.stage_kind_id for node in plan.learning_graph.nodes}
+    assert learn_nodes == {"analyst", "professor", "curator", "librarian"}
+
+    # Learning triggers fire from execution and planning into learning
+    trigger_rules = {
+        (rule.source_stage.value, rule.target_stage.value, rule.requested_action.value)
+        for rule in plan.learning_trigger_rules
+    }
+    assert ("doublechecker", "analyst", "improve") in trigger_rules
+    assert ("troubleshooter", "analyst", "improve") in trigger_rules
+    assert ("consultant", "analyst", "improve") in trigger_rules
+    assert ("planner", "librarian", "install") in trigger_rules
+
+
+def test_config_swap_recovery_heavy_millrace_compiles_elevated_thresholds(
+    tmp_path: Path,
+) -> None:
+    """recovery_heavy_millrace compiles with different recovery thresholds than
+    standard configs, driven by mode-declared policy selection."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="recovery_heavy_millrace",
+    )
+
+    assert outcome.diagnostics.ok is True, (
+        f"recovery_heavy_millrace compilation failed: {outcome.diagnostics.errors}"
+    )
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+    assert plan.mode_id == "recovery_heavy_millrace"
+
+    # Recovery-heavy mode selects recovery_heavy_policies.json which
+    # lowers blocked-recovery thresholds to 1.
+    thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in plan.graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+    assert ("execution.blocked.recovery", 1) in thresholds
+    assert ("planning.blocked.recovery", 1) in thresholds
+
+    # Compare with standard thresholds
+    standard_ws = tmp_path / "standard_ws"
+    bootstrap_workspace(standard_ws)
+    standard_outcome = compile_and_persist_workspace_plan(
+        standard_ws,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_millrace",
+    )
+    assert standard_outcome.active_plan is not None
+
+    standard_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in standard_outcome.active_plan.graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+
+    assert thresholds != standard_thresholds, (
+        f"recovery_heavy thresholds {thresholds} should differ from "
+        f"standard thresholds {standard_thresholds}"
+    )
+
+
+def test_config_swap_generic_two_plane_fixture_compiles_minimal_planes(
+    tmp_path: Path,
+) -> None:
+    """generic_two_plane_fixture compiles two planes with only basic
+    stage kinds."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="generic_two_plane_fixture",
+    )
+
+    assert outcome.diagnostics.ok is True, (
+        f"generic_two_plane_fixture compilation failed: {outcome.diagnostics.errors}"
+    )
+    assert outcome.active_plan is not None
+
+    plan = outcome.active_plan
+    assert plan.mode_id == "generic_two_plane_fixture"
+    assert plan.learning_graph is None
+    assert Plane.LEARNING not in plan.loop_ids_by_plane
+
+    # Only two planes
+    assert set(plan.graphs_by_plane) == {Plane.EXECUTION, Plane.PLANNING}
+
+    # Only basic stage kinds
+    all_stages = {
+        node.stage_kind_id
+        for graph in plan.graphs_by_plane.values()
+        for node in graph.nodes
+    }
+    assert all_stages == {"basic_worker", "basic_planner"}
+
+    # No threshold policies (minimal graph)
+    for graph in plan.graphs_by_plane.values():
+        assert graph.compiled_threshold_policies == ()
+
+    # Entry points use basic stages
+    exec_entry_map = {
+        entry.entry_key.value: entry.node_id
+        for entry in plan.execution_graph.compiled_entries
+    }
+    assert exec_entry_map == {"task": "basic_worker"}
+
+    plan_entry_map = {
+        entry.entry_key.value: entry.node_id
+        for entry in plan.planning_graph.compiled_entries
+    }
+    assert plan_entry_map == {"spec": "basic_planner"}
+
+
+def test_config_swap_same_kernel_different_compiled_plans(
+    tmp_path: Path,
+) -> None:
+    """The same kernel produces materially different compiled plans when
+    config-swapping across all five configs."""
+    config_specs = [
+        ("minimal_three_plane", RuntimeConfig()),
+        ("standard_millrace", RuntimeConfig()),
+        ("learning_enabled_millrace", RuntimeConfig()),
+        ("recovery_heavy_millrace", RuntimeConfig()),
+        ("generic_two_plane_fixture", RuntimeConfig()),
+    ]
+
+    plans: dict[str, "CompiledRunPlan"] = {}
+
+    for mode_id, rt_config in config_specs:
+        workspace_root = tmp_path / mode_id
+        bootstrap_workspace(workspace_root)
+
+        outcome = compile_and_persist_workspace_plan(
+            workspace_root,
+            config=rt_config,
+            requested_mode_id=mode_id,
+        )
+
+        assert outcome.diagnostics.ok is True, (
+            f"Config-swap `{mode_id}` compilation failed: {outcome.diagnostics.errors}"
+        )
+        assert outcome.active_plan is not None
+        plans[mode_id] = outcome.active_plan
+
+    # ── every plan has a unique compiled_plan_id ───────────────────────────
+    plan_ids = {plan.compiled_plan_id for plan in plans.values()}
+    assert len(plan_ids) == len(plans), (
+        f"Config-swap produced duplicate compiled_plan_ids: {plan_ids}"
+    )
+
+    # ── stage-kinds differ across configs ──────────────────────────────────
+    stages_by_config = {
+        mode_id: {
+            node.stage_kind_id
+            for graph in plan.graphs_by_plane.values()
+            for node in graph.nodes
+        }
+        for mode_id, plan in plans.items()
+    }
+
+    # minimal_three_plane and generic_two_plane_fixture are distinct from
+    # standard/learning/recovery
+    minimal_kinds = stages_by_config["minimal_three_plane"]
+    generic_kinds = stages_by_config["generic_two_plane_fixture"]
+
+    assert minimal_kinds != generic_kinds, (
+        f"minimal_three_plane and generic_two_plane_fixture should differ: "
+        f"{minimal_kinds} vs {generic_kinds}"
+    )
+
+    for mode_id in ("standard_millrace", "learning_enabled_millrace",
+                     "recovery_heavy_millrace"):
+        assert stages_by_config[mode_id] != minimal_kinds, (
+            f"{mode_id} should differ from minimal_three_plane"
+        )
+
+    # ── learning_enabled has triggers; standard does not ───────────────────
+    assert len(plans["learning_enabled_millrace"].learning_trigger_rules) > 0
+    assert plans["standard_millrace"].learning_trigger_rules == ()
+    assert plans["learning_enabled_millrace"].learning_graph is not None
+    assert plans["standard_millrace"].learning_graph is None
+
+    # ── recovery_heavy thresholds differ from standard ─────────────────────
+    heavy_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in plans["recovery_heavy_millrace"].graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+    standard_thresholds = {
+        (p.policy_id, p.threshold)
+        for graph in plans["standard_millrace"].graphs_by_plane.values()
+        for p in graph.compiled_threshold_policies
+    }
+    assert heavy_thresholds != standard_thresholds
+
+    # ── no config-swap test mutated kernel source code ────────────────────
+    # All plans were produced by the same compile function without code edits.

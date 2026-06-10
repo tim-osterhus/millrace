@@ -37,14 +37,14 @@ def route_planning_stage_result_from_graph(
     snapshot: RuntimeSnapshot,
     stage_result: StageResultEnvelope,
     counters: RecoveryCounters,
-    *,
-    max_mechanic_attempts: int,
     **kwargs: object,
 ) -> RouterDecision:
     """
     Route a planning-plane stage result through the compiled graph.
 
     Compatibility wrapper — delegates to the generic compiled-graph router.
+    Recovery thresholds are read from compiled graph threshold policies;
+    no route-time recovery knobs are accepted.
     """
     return route_generic_stage_result_from_graph(
         graph_plan,
@@ -57,7 +57,6 @@ def route_planning_stage_result_from_graph(
         terminal_reason_fn=planning_terminal_reason,
         default_threshold_failure_class_fn=_threshold_failure_class_default,
         threshold_reason_fn=planning_threshold_reason,
-        max_mechanic_attempts=max_mechanic_attempts,
         **kwargs,
     )
 

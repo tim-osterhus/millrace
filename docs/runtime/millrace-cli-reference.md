@@ -186,6 +186,8 @@ currently running stage marker while a stage is executing, then fall back to
 the latest terminal marker or `### IDLE` when no stage is active on that plane.
 When a learning-enabled mode is active, status also includes
 `learning_status_marker` and `learning_queue_depth`.
+Status also prints family-specific queue-depth lines, such as
+`queue_depth_task`, from the shared family-depth projection.
 Status now also surfaces compiled-plan and managed-baseline identity:
 
 - `compiled_plan_id`
@@ -253,6 +255,7 @@ machine-readable status payload with the same key state, including:
 - `active_run_count`
 - `lanes_by_id`
 - `active_runs_by_plane`
+- `queue_depths_by_family`
 - `execution_queue_depth`
 - `planning_queue_depth`
 - `learning_queue_depth`
@@ -415,9 +418,9 @@ including the probe/spec/incident breakdown inside Planning. It also includes
 terminal intervention counters such as `cancelled_task_count`,
 `superseded_task_count`, `cancelled_incident_count`, and
 `operator_resolved_incident_count`.
-For compiled graph-owned work-item families beyond the built-in task/spec/probe
-surfaces, `queue ls` also prints family-specific queue/active/blocked counters,
-for example `blueprint_draft_queue_depth` and
+For every compiled work-item family, including built-ins and graph-owned
+families, `queue ls` also prints family-specific queue/active/blocked
+counters, for example `task_queue_depth`, `blueprint_draft_queue_depth`, and
 `active_blueprint_draft_count`.
 
 ### `millrace queue show <WORK_ITEM_ID>`

@@ -9,10 +9,7 @@ from typing import TYPE_CHECKING, cast
 from pydantic import JsonValue
 
 from millrace_ai.contracts import (
-    ExecutionStageName,
-    LearningStageName,
     Plane,
-    PlanningStageName,
     StageName,
 )
 from millrace_ai.errors import StageWorkItemOwnershipError, WorkspaceStateError
@@ -35,11 +32,7 @@ from .error_recovery import (
     schedule_pre_dispatch_exception_recovery,
 )
 from .failure_policy import RuntimeFailureBoundary, classify_failure_origin
-from .learning_promotions import (
-    apply_deferred_learning_promotions_if_safe,
-    handle_learning_curator_promotion_boundary,
-)
-from .learning_triggers import enqueue_learning_requests_for_stage_result
+from .graph_authority.stage_mapping import node_plan_by_id
 from .monitoring import runtime_effect_monitor_payload
 from .result_application import compiled_plan_for_stage_result
 from .run_traces import record_router_decision_trace, spawned_work_ref_from_path
@@ -47,6 +40,7 @@ from .scheduler_policy import foreground_claim_order
 from .stage_requests import handle_stage_work_item_ownership_error
 
 if TYPE_CHECKING:
+    from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
 
 
@@ -107,7 +101,7 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
                 engine,
                 error=exc,
                 plane=Plane.PLANNING,
-                failed_stage=PlanningStageName.ARBITER,
+                failed_stage=_completion_entry_stage(engine),
                 closure_target_root_spec_id=_closure_target_root_spec_id(engine),
             )
             return engine._idle_tick_outcome(reason=recovery_decision.reason)
@@ -262,7 +256,8 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
     router_decision: RouterDecision | None = None
     try:
         stage_result_path = engine._write_stage_result(request, stage_result)
-        learning_request_paths = enqueue_learning_requests_for_stage_result(
+        learning_trigger_handler = _resolve_learning_trigger_handler()
+        learning_request_paths = learning_trigger_handler.enqueue_learning_requests(
             engine,
             stage_result=stage_result,
             stage_result_path=stage_result_path,
@@ -316,8 +311,9 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
             decision=router_decision,
             spawned_work=spawned_work,
         )
-        handle_learning_curator_promotion_boundary(engine, stage_result=stage_result)
-        apply_deferred_learning_promotions_if_safe(engine)
+        learning_promotion_handler = _resolve_learning_promotion_handler()
+        learning_promotion_handler.handle_curator_promotion(engine, stage_result=stage_result)
+        learning_promotion_handler.apply_deferred_promotions(engine)
     except Exception as exc:
         recovery_decision = schedule_post_stage_exception_recovery(
             engine,
@@ -360,6 +356,7 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
                 Plane.PLANNING: queue_depths["queue_depth_planning"],
                 Plane.LEARNING: queue_depths["queue_depth_learning"],
             },
+            "queue_depths_by_family": engine._compute_queue_depths_by_family(),
             "updated_at": engine._now(),
         }
     )
@@ -505,14 +502,46 @@ def _closure_target_root_spec_id(engine: RuntimeEngine) -> str | None:
     return target.root_spec_id if target is not None else None
 
 
-def _pre_dispatch_failed_stage(plane: Plane, active_stage: StageName | None) -> StageName:
+def _completion_entry_stage(engine: RuntimeEngine) -> StageName:
+    """Resolve the completion entry stage from the compiled plan."""
+    from .graph_authority.activation import completion_activation_for_graph
+
+    if engine.compiled_plan is None:
+        raise ValueError("compiled plan is required to resolve completion entry stage")
+    activation = completion_activation_for_graph(engine.compiled_plan)
+    return activation.stage
+
+
+def _pre_dispatch_failed_stage(
+    plane: Plane,
+    active_stage: StageName | None,
+    *,
+    compiled_plan: CompiledRunPlan | None = None,
+) -> StageName:
+    """Resolve a descriptive fallback stage for pre-dispatch failures.
+
+    When *compiled_plan* is available derives the failed stage from the
+    compiled graph's first entry node for the plane.  Otherwise raises
+    ValueError to prevent hardwired domain fallback.
+    """
     if active_stage is not None:
         return active_stage
-    if plane is Plane.PLANNING:
-        return PlanningStageName.ARBITER
-    if plane is Plane.LEARNING:
-        return LearningStageName.ANALYST
-    return ExecutionStageName.BUILDER
+    if compiled_plan is not None:
+        graph = compiled_plan.graphs_by_plane.get(plane)
+        if graph is not None and graph.compiled_entries:
+            try:
+                node = node_plan_by_id(graph, graph.compiled_entries[0].node_id)
+                runtime_stage = node.runtime_stage
+                if runtime_stage is not None:
+                    return runtime_stage
+            except (ValueError, IndexError):
+                pass
+        # Fall back to the first node in the graph.
+        if graph is not None and graph.nodes:
+            runtime_stage = graph.nodes[0].runtime_stage
+            if runtime_stage is not None:
+                return runtime_stage
+    raise ValueError(f"compiled plan is required to resolve pre-dispatch failed stage for plane {plane.value}")
 
 
 def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | None:
@@ -523,7 +552,7 @@ def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | 
             engine,
             error=exc,
             plane=Plane.PLANNING,
-            failed_stage=PlanningStageName.ARBITER,
+            failed_stage=_completion_entry_stage(engine),
             closure_target_root_spec_id=None,
         )
 
@@ -536,7 +565,7 @@ def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | 
                 engine,
                 error=exc,
                 plane=plane,
-                failed_stage=_pre_dispatch_failed_stage(plane, None),
+                failed_stage=_pre_dispatch_failed_stage(plane, None, compiled_plan=engine.compiled_plan),
                 closure_target_root_spec_id=(
                     open_target.root_spec_id if open_target is not None else None
                 ),
@@ -552,7 +581,7 @@ def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | 
                 engine,
                 error=exc,
                 plane=plane,
-                failed_stage=_pre_dispatch_failed_stage(plane, None),
+                failed_stage=_pre_dispatch_failed_stage(plane, None, compiled_plan=engine.compiled_plan),
                 work_item_family_id=claim.family_id,
                 work_item_kind=claim.work_item_kind,
                 work_item_id=claim.work_item_id,
@@ -562,6 +591,20 @@ def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | 
             )
         return None
     return None
+
+
+def _resolve_learning_trigger_handler():
+    """Resolve the Learning trigger handler through the extension boundary."""
+    from millrace_ai.extensions import builtin_extension_boundary_registry
+
+    return builtin_extension_boundary_registry().get_learning_trigger_handler()
+
+
+def _resolve_learning_promotion_handler():
+    """Resolve the Learning promotion handler through the extension boundary."""
+    from millrace_ai.extensions import builtin_extension_boundary_registry
+
+    return builtin_extension_boundary_registry().get_learning_promotion_handler()
 
 
 __all__ = ["run_tick"]

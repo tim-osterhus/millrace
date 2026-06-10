@@ -171,17 +171,20 @@ class RuntimeSnapshot(ContractModel):
     active_work_item_kind: WorkItemKind | None = None
     active_work_item_id: str | None = None
     active_runs_by_plane: dict[Plane, ActiveRunState] = Field(default_factory=dict)
+    active_runs_by_lane: dict[str, ActiveRunState] = Field(default_factory=dict)
     lanes_by_id: dict[str, LaneRuntimeState] = Field(default_factory=dict)
 
     execution_status_marker: str
     planning_status_marker: str
     learning_status_marker: str = "### IDLE"
     status_markers_by_plane: dict[Plane, str] = Field(default_factory=dict)
+    status_by_scope: dict[str, str] = Field(default_factory=dict)
 
     queue_depth_execution: int = 0
     queue_depth_planning: int = 0
     queue_depth_learning: int = 0
     queue_depths_by_plane: dict[Plane, int] = Field(default_factory=dict)
+    queue_depths_by_family: dict[str, int] = Field(default_factory=dict)
 
     last_terminal_result: TerminalOutcome | None = None
     last_stage_result_path: str | None = None
@@ -229,21 +232,21 @@ class RuntimeSnapshot(ContractModel):
 
         status_markers = dict(payload.get("status_markers_by_plane") or {})
         if "execution_status_marker" in payload:
-            status_markers.setdefault(Plane.EXECUTION.value, payload["execution_status_marker"])
+            _set_status_for_plane(status_markers, Plane.EXECUTION, payload["execution_status_marker"])
         if "planning_status_marker" in payload:
-            status_markers.setdefault(Plane.PLANNING.value, payload["planning_status_marker"])
+            _set_status_for_plane(status_markers, Plane.PLANNING, payload["planning_status_marker"])
         if "learning_status_marker" in payload:
-            status_markers.setdefault(Plane.LEARNING.value, payload["learning_status_marker"])
+            _set_status_for_plane(status_markers, Plane.LEARNING, payload["learning_status_marker"])
         if status_markers:
             payload["status_markers_by_plane"] = status_markers
 
         queue_depths = dict(payload.get("queue_depths_by_plane") or {})
         if "queue_depth_execution" in payload:
-            queue_depths.setdefault(Plane.EXECUTION.value, payload["queue_depth_execution"])
+            _set_depth_for_plane(queue_depths, Plane.EXECUTION, payload["queue_depth_execution"])
         if "queue_depth_planning" in payload:
-            queue_depths.setdefault(Plane.PLANNING.value, payload["queue_depth_planning"])
+            _set_depth_for_plane(queue_depths, Plane.PLANNING, payload["queue_depth_planning"])
         if "queue_depth_learning" in payload:
-            queue_depths.setdefault(Plane.LEARNING.value, payload["queue_depth_learning"])
+            _set_depth_for_plane(queue_depths, Plane.LEARNING, payload["queue_depth_learning"])
         if queue_depths:
             payload["queue_depths_by_plane"] = queue_depths
 
@@ -309,6 +312,29 @@ class RuntimeSnapshot(ContractModel):
         if not payload.get("compiled_plan_fingerprint"):
             payload["compiled_plan_fingerprint"] = snapshot_plan_fingerprint
 
+        # ---- canonical surfaces: derive from legacy compat after backfill ----
+        status_by_scope = dict(payload.get("status_by_scope") or {})
+        if not status_by_scope:
+            for plane_key, marker in dict(payload.get("status_markers_by_plane") or {}).items():
+                scope_key = plane_key.value if isinstance(plane_key, Plane) else str(plane_key)
+                status_by_scope[scope_key] = marker
+        if status_by_scope:
+            payload["status_by_scope"] = status_by_scope
+
+        active_runs_by_lane = dict(payload.get("active_runs_by_lane") or {})
+        if not active_runs_by_lane:
+            for plane_key, active_run in dict(active_runs or {}).items():
+                if isinstance(active_run, dict):
+                    lane_id = active_run.get("lane_id")
+                else:
+                    lane_id = getattr(active_run, "lane_id", None)
+                if not lane_id:
+                    plane_str = plane_key.value if isinstance(plane_key, Plane) else str(plane_key)
+                    lane_id = f"{plane_str}.main"
+                active_runs_by_lane[lane_id] = active_run
+        if active_runs_by_lane:
+            payload["active_runs_by_lane"] = active_runs_by_lane
+
         if payload.get("active_stage") is None:
             payload["active_node_id"] = None
             payload["active_stage_kind_id"] = None
@@ -321,6 +347,12 @@ class RuntimeSnapshot(ContractModel):
     @model_validator(mode="after")
     def validate_active_state(self) -> "RuntimeSnapshot":
         self._project_active_runs_into_legacy_fields()
+
+        # Derive legacy plane-keyed compat from canonical surfaces when
+        # the canonical surface is populated.  This keeps older consumers
+        # (monitor, web dashboard, CLI) correct while the runtime writes
+        # only canonical surfaces going forward.
+        self._project_canonical_into_legacy_compat()
 
         for plane, active_run in self.active_runs_by_plane.items():
             if plane is not active_run.plane:
@@ -398,6 +430,50 @@ class RuntimeSnapshot(ContractModel):
     def serialize_last_terminal_result(self, value: TerminalOutcome | None) -> str | None:
         return terminal_outcome_value(value) if value is not None else None
 
+    def _project_canonical_into_legacy_compat(self) -> None:
+        """Derive legacy plane-keyed compat from canonical family/scope/lane surfaces."""
+        # Status: per-plane scalars are the authoritative legacy signal and
+        # always win (the engine sets them first via model_copy).  Build the
+        # plane-keyed map from them, then fold in canonical status_by_scope
+        # entries for planes that weren't set explicitly.  Preserve non-plane
+        # scope entries (e.g. lane-level keys) so status_by_scope stays a true
+        # scope-keyed surface rather than degrading to a plane-only mirror.
+        sm = dict(self.status_markers_by_plane)
+        sm[Plane.EXECUTION] = self.execution_status_marker
+        sm[Plane.PLANNING] = self.planning_status_marker
+        sm[Plane.LEARNING] = self.learning_status_marker
+
+        # Fold canonical status_by_scope into plane-keyed map (gap-fill only)
+        if self.status_by_scope:
+            for scope_key, marker in self.status_by_scope.items():
+                try:
+                    plane = Plane(scope_key)
+                except ValueError:
+                    continue
+                sm.setdefault(plane, marker)
+        self.status_markers_by_plane = sm
+
+        # status_by_scope: per-plane scalars are authoritative for plane-scope
+        # entries.  Overwrite those while preserving non-plane scope keys
+        # (e.g. lane-level entries) that have no corresponding per-plane scalar.
+        scope = dict(self.status_by_scope)
+        for plane, marker in sm.items():
+            scope[plane.value] = marker
+        self.status_by_scope = scope
+
+        # Active runs: derive plane-keyed from lane-keyed only when
+        # active_runs_by_plane is empty.  Do NOT reconstruct plane-keyed
+        # from lane-keyed when the caller explicitly set active_runs_by_plane
+        # (e.g. snapshot_without_active_plane clears it to {}).  This
+        # preserves validation (e.g. plane-key mismatch) and correct
+        # clearing behavior.
+        if self.active_runs_by_lane and not self.active_runs_by_plane:
+            derived = _derive_active_runs_by_plane_from_lane(
+                self.active_runs_by_lane
+            )
+            if derived:
+                self.active_runs_by_plane = derived
+
     def _project_active_runs_into_legacy_fields(self) -> None:
         if not self.active_runs_by_plane:
             return
@@ -414,12 +490,60 @@ class RuntimeSnapshot(ContractModel):
         self.active_since = active_run.active_since
 
 
+def _derive_active_runs_by_plane_from_lane(
+    active_runs_by_lane: dict[str, ActiveRunState],
+) -> dict[Plane, ActiveRunState]:
+    """Pick one foreground active run per plane from lane-keyed runs.
+
+    Self-contained in the contracts layer to avoid importing runtime modules.
+    """
+    by_plane: dict[Plane, list[ActiveRunState]] = {}
+    for active_run in active_runs_by_lane.values():
+        by_plane.setdefault(active_run.plane, []).append(active_run)
+
+    result: dict[Plane, ActiveRunState] = {}
+    for plane in (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING):
+        runs = by_plane.get(plane)
+        if runs:
+            result[plane] = runs[0]
+    return result
+
+
 def _foreground_active_run(active_runs_by_plane: dict[Plane, ActiveRunState]) -> ActiveRunState:
     for plane in (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING):
         active_run = active_runs_by_plane.get(plane)
         if active_run is not None:
             return active_run
     raise ValueError("active_runs_by_plane cannot be empty")
+
+
+def _set_depth_for_plane(
+    queue_depths: dict[object, int],
+    plane: Plane,
+    depth: int,
+) -> None:
+    """Set a queue depth for a plane, handling both enum and string keys."""
+    if plane in queue_depths:
+        queue_depths[plane] = depth
+    elif plane.value in queue_depths:
+        queue_depths[plane.value] = depth
+    else:
+        queue_depths[plane.value] = depth
+
+
+def _set_status_for_plane(
+    status_markers: dict[object, str],
+    plane: Plane,
+    marker: str,
+) -> None:
+    """Set a status marker for a plane, handling both enum and string keys."""
+    # Try enum key first, then string key
+    if plane in status_markers:
+        status_markers[plane] = marker
+    elif plane.value in status_markers:
+        status_markers[plane.value] = marker
+    else:
+        status_markers[plane.value] = marker
 
 
 def _backfill_active_run_plan_identity(

@@ -46,7 +46,7 @@ def decision_from_resume_policy(
         next_stage=stage_for_node(graph, target_node_id),
         next_node_id=target_node_id,
         next_stage_kind_id=node_plan_by_id(graph, target_node_id).stage_kind_id,
-        reason=policy.route_reason or f"{source_stage.value}:{policy.on_outcome}",
+        reason=policy.route_reason or f"{stage_result.node_id}:{policy.on_outcome}",
     )
 
 

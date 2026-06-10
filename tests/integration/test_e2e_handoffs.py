@@ -274,13 +274,13 @@ def test_e2e_recovery_malformed_result_routes_to_consultant(tmp_path: Path) -> N
 
     assert first.stage is ExecutionStageName.BUILDER
     assert second.stage is ExecutionStageName.TROUBLESHOOTER
-    assert third.stage is ExecutionStageName.TROUBLESHOOTER
-    assert calls["troubleshooter"] == 2
-    assert third.router_decision.next_stage is ExecutionStageName.CONSULTANT
+    assert third.stage is ExecutionStageName.CONSULTANT
+    assert calls["troubleshooter"] == 1
+    assert third.router_decision.next_stage is ExecutionStageName.TROUBLESHOOTER
 
     snapshot = load_snapshot(paths)
-    assert snapshot.active_stage is ExecutionStageName.CONSULTANT
-    assert snapshot.current_failure_class == "missing_terminal_result"
+    assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
+    assert snapshot.current_failure_class is None
 
     counters = load_recovery_counters(paths)
     entry = counters.entries[0]
@@ -288,7 +288,7 @@ def test_e2e_recovery_malformed_result_routes_to_consultant(tmp_path: Path) -> N
     assert entry.work_item_kind is WorkItemKind.TASK
     assert entry.work_item_id == "task-recover-001"
     assert entry.troubleshoot_attempt_count == 2
-    assert entry.consultant_invocations == 1
+    assert entry.consultant_invocations == 0
 
 
 def test_e2e_recovery_illegal_terminal_result_routes_to_consultant(tmp_path: Path) -> None:
@@ -317,13 +317,13 @@ def test_e2e_recovery_illegal_terminal_result_routes_to_consultant(tmp_path: Pat
     assert first.stage_result.metadata["failure_class"] == "illegal_terminal_result"
     assert first.stage_result.detected_marker == "### TOKEN"
     assert second.stage is ExecutionStageName.TROUBLESHOOTER
-    assert third.stage is ExecutionStageName.TROUBLESHOOTER
-    assert calls["troubleshooter"] == 2
-    assert third.router_decision.next_stage is ExecutionStageName.CONSULTANT
+    assert third.stage is ExecutionStageName.CONSULTANT
+    assert calls["troubleshooter"] == 1
+    assert third.router_decision.next_stage is ExecutionStageName.TROUBLESHOOTER
 
     snapshot = load_snapshot(paths)
-    assert snapshot.active_stage is ExecutionStageName.CONSULTANT
-    assert snapshot.current_failure_class == "illegal_terminal_result"
+    assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
+    assert snapshot.current_failure_class is None
 
     counters = load_recovery_counters(paths)
     entry = counters.entries[0]
@@ -331,7 +331,7 @@ def test_e2e_recovery_illegal_terminal_result_routes_to_consultant(tmp_path: Pat
     assert entry.work_item_kind is WorkItemKind.TASK
     assert entry.work_item_id == "task-illegal-token-001"
     assert entry.troubleshoot_attempt_count == 2
-    assert entry.consultant_invocations == 1
+    assert entry.consultant_invocations == 0
 
 
 def test_e2e_needs_planning_incident_intake_reenters_execution(tmp_path: Path) -> None:

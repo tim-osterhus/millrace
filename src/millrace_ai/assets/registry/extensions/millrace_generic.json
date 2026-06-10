@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "kind": "extension_package_manifest",
+  "package_id": "millrace.generic",
+  "display_name": "Millrace Generic Built-In Extensions",
+  "domain": "generic",
+  "version": "1.0.0",
+  "items": [],
+  "requires": []
+}

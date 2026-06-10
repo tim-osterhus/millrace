@@ -187,7 +187,7 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
     assert execution_entry_nodes == {"task": "builder"}
     assert [node.stage_kind_id for node in execution.nodes][:3] == ["builder", "checker", "fixer"]
     assert execution_edges["troubleshooter-complete-to-builder"].to_node_id == "builder"
-    assert execution_edges["troubleshooter-blocked-to-troubleshooter"].to_node_id == "troubleshooter"
+    assert execution_edges["troubleshooter-blocked-to-consultant"].to_node_id == "consultant"
     assert execution_dynamic is not None
     assert {policy.policy_id for policy in execution_dynamic.resume_policies} == {
         "execution.troubleshooter.resume",

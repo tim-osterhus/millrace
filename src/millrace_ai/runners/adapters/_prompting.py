@@ -31,6 +31,10 @@ def build_stage_prompt(request: StageRunRequest) -> str:
             f"Legal markers for this stage: {legal_markers}.",
             "Do not invent or rename terminal markers.",
             "Do not print multiple terminal markers.",
+            (
+                "The final response must be exactly one marker on its own line, with no "
+                "surrounding backticks, label, prefix, suffix, or explanation."
+            ),
         )
     )
 

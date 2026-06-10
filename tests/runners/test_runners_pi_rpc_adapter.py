@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import ExecutionStageName, Plane, TokenUsage, WorkItemKind
-from millrace_ai.runner import StageRunRequest
+from millrace_ai.runner import StageRunRequest, normalize_stage_result
 from millrace_ai.runners.adapters.pi_rpc import PiRpcRunnerAdapter, PiRpcSessionResult
 
 
@@ -149,6 +150,35 @@ def test_pi_adapter_prefers_request_thinking_level_over_global_default(
     assert command[thinking_index + 1] == "high"
 
 
+def test_pi_adapter_translates_max_thinking_for_pi_cli(tmp_path: Path) -> None:
+    request = _request(tmp_path).model_copy(update={"thinking_level": "max"})
+    observed_command: list[tuple[str, ...]] = []
+
+    def fake_client_factory(*, command, cwd, env):
+        del cwd, env
+        observed_command.append(command)
+
+        class _FakeClient:
+            def run_prompt(self, *, prompt, timeout_seconds):
+                del prompt, timeout_seconds
+                return _completed_session_result(event_lines=())
+
+        return _FakeClient()
+
+    adapter = PiRpcRunnerAdapter(
+        config=RuntimeConfig(),
+        workspace_root=tmp_path,
+        client_factory=fake_client_factory,
+    )
+
+    result = adapter.run(request)
+
+    assert result.thinking_level == "max"
+    command = observed_command[0]
+    thinking_index = command.index("--thinking")
+    assert command[thinking_index + 1] == "xhigh"
+
+
 def test_pi_adapter_uses_global_thinking_when_request_is_default(
     tmp_path: Path,
 ) -> None:
@@ -272,6 +302,67 @@ def test_pi_adapter_persists_event_log_for_failures_by_default(
         '{"type":"agent_start"}',
         '{"type":"agent_end","stopReason":"error"}',
     ]
+
+
+def test_pi_adapter_recovers_final_thinking_terminal_marker_when_assistant_text_is_empty(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path)
+
+    final_event = json.dumps(
+        {
+            "type": "turn_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Done. Emitting the terminal marker.\n\n### BUILDER_COMPLETE",
+                    }
+                ],
+                "stopReason": "stop",
+            },
+        }
+    )
+
+    def fake_client_factory(*, command, cwd, env):
+        del command, cwd, env
+
+        class _FakeClient:
+            def run_prompt(self, *, prompt, timeout_seconds):
+                del prompt, timeout_seconds
+                now = datetime.now(timezone.utc)
+                return PiRpcSessionResult(
+                    exit_kind="runner_error",
+                    exit_code=1,
+                    started_at=now,
+                    ended_at=now,
+                    event_lines=(final_event, '{"type":"agent_end"}'),
+                    assistant_text="",
+                    token_usage=None,
+                    failure_class="runner_empty_assistant_text",
+                    notes=(),
+                    stderr_text="",
+                )
+
+        return _FakeClient()
+
+    adapter = PiRpcRunnerAdapter(
+        config=RuntimeConfig(),
+        workspace_root=tmp_path,
+        client_factory=fake_client_factory,
+    )
+
+    result = adapter.run(request)
+
+    assert result.exit_kind == "completed"
+    assert result.exit_code == 0
+    assert result.stdout_path is not None
+    assert Path(result.stdout_path).read_text(encoding="utf-8") == "### BUILDER_COMPLETE\n"
+
+    envelope = normalize_stage_result(request, result)
+    assert envelope.terminal_result.value == "BUILDER_COMPLETE"
+    assert envelope.metadata["valid_terminal_result"] is True
 
 
 def test_pi_adapter_omits_event_log_when_only_message_updates_would_remain(

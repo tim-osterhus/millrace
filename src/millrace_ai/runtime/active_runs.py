@@ -186,8 +186,15 @@ def snapshot_without_active_plane(
     active_run = active_run_for_plane(snapshot, plane)
     active_runs = dict(snapshot.active_runs_by_plane)
     active_runs.pop(plane, None)
+    # Clear the corresponding lane-keyed entry so the canonical projection
+    # in _project_canonical_into_legacy_compat does not reconstruct the
+    # plane-keyed entry from stale lane data.
+    active_runs_by_lane = dict(snapshot.active_runs_by_lane)
+    if active_run is not None and active_run.lane_id:
+        active_runs_by_lane.pop(active_run.lane_id, None)
     update: dict[str, object] = {
         "active_runs_by_plane": active_runs,
+        "active_runs_by_lane": active_runs_by_lane,
         "current_failure_class": current_failure_class,
         "updated_at": now,
     }
@@ -206,6 +213,7 @@ def snapshot_without_active_runs(
 ) -> RuntimeSnapshot:
     update: dict[str, object] = {
         "active_runs_by_plane": {},
+        "active_runs_by_lane": {},
         "current_failure_class": current_failure_class,
         "updated_at": now,
     }

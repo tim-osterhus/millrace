@@ -20,13 +20,14 @@ directory, in filename order.
 | `0006-explicit-workspace-baselines-and-managed-upgrades.md` | Accepted | Require explicit workspace baselines and managed upgrade classification. |
 | `0007-runtime-internal-authority-packages.md` | Accepted | Use stable facades with internal authority packages for high-risk runtime domains. |
 | `0008-contract-facade-and-domain-contract-modules.md` | Accepted | Keep `millrace_ai.contracts` as a facade over domain contract modules. |
-| `0009-stage-metadata-single-source-of-truth.md` | Accepted | Use typed stage metadata as the shipped-stage legality registry. |
+| `0009-stage-metadata-single-source-of-truth.md` | Accepted, amended by ADR-0013 | Keep one shipped-stage legality facade, now loaded from stage-kind JSON assets. |
 | `0010-compiler-validated-workflow-primitives-as-runtime-authority.md` | Accepted | Extend compiled authority to workflow primitives, lanes, request context, effects, and schema epoch. |
 | `0011-declarative-runtime-effect-operations.md` | Accepted | Validate runtime effect operation/store/validator catalogs before dispatch migration. |
 | `0012-core-kernel-boundary.md` | Accepted | Forbid kernel ownership of workflow semantics; boundary belongs in graph assets, extension packages, or primitive contracts. |
 | `0013-generic-stage-and-plane-registry.md` | Accepted | Treat `stage_metadata.py` as shipped registry instance, not universal runtime authority. |
 | `0014-runtime-operation-step-interpreter.md` | Accepted | Extend ADR-0011 runtime-effect model to a unified step interpreter for all runtime operation steps. |
 | `0015-extension-package-manifests.md` | Accepted | Allow extension packages to expand runtime vocabulary without owning graph topology, route policy, or scheduling order. |
+| `0016-extension-boundary-compatibility-facades.md` | Accepted | Record active extension boundary bridges and remaining kernel-to-domain compatibility facades. |
 
 ## Reading Notes
 
@@ -34,7 +35,8 @@ ADR-0005 remains the foundation for compiled runtime authority. ADR-0010 does
 not replace it; it extends the same authority model beyond graph topology into
 compiler-validated workflow primitives and their runtime consumers.
 
-ADR-0009 remains current for shipped stage legality. It does not claim that
-stage metadata alone defines all custom workflow behavior. Stage metadata,
-stage-kind assets, graph-loop assets, and workflow primitive assets together
-feed the compiled plan.
+ADR-0009 remains current for shipped stage legality as amended by ADR-0013. It
+does not claim that stage metadata alone defines all custom workflow behavior.
+The shipped `stage_metadata.py` facade loads from stage-kind assets; stage-kind
+assets, graph-loop assets, and workflow primitive assets together feed the
+compiled plan.

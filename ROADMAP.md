@@ -53,32 +53,46 @@ contracts:
 
 ### Compiler And Runtime Authority
 
-The compiler is being hardened as the source of runtime structure. The goal is
-for activation, request binding, recovery policy, completion behavior, and
-post-stage routing to come from one compiled graph plan plus compiled workflow
-primitive authority instead of scattered runtime tables or prompt prose.
+**Status: Generic engine migration is substantially complete.**
 
-The current implementation direction exposes that topology through
-`millrace compile graph` and records concrete execution evidence through
-per-run `run_trace.json` artifacts. The compiled stage graph remains authority;
-the run trace is inspection evidence.
-Workflow primitives now cover built-in work-item families, document adapters,
-queue claim policies, terminal actions, lifecycle mutation plans, runtime
-effect handlers, operations, runners, stores, validators, primitives,
-recovery/failure policy hooks, and workspace schema epoch compatibility.
-Scheduler lanes now give the runtime durable per-lane state, lane conflict
-validation, launch-plan authority, and request-context evidence.
-Blueprint Planning now exercises that foundation through opt-in Blueprint modes
-with custom Planning stage kinds and runtime-owned effects for draft, packet,
-evaluation, critique, promotion, and generated-task lifecycle. Runtime
-artifacts and operator surfaces follow the same authority model: artifact
-contracts declare canonical and legacy outputs, runtime-effect failure policy
-can route recoverable pre-mutation failures, queue inventory is family-aware,
-and `doctor`/`runs` distinguish parse-valid artifacts from blocked route/effect
-outcomes.
-Model assignment aliases now sit on the same compile/reload authority path:
-alias changes recompile the frozen plan, active runs keep their launch plan,
-and invalid selected aliases warn and fall back instead of crashing startup.
+The compiler now owns activation, request binding, recovery policy, completion
+behavior, and post-stage routing through one compiled graph plan plus compiled
+workflow primitive authority. Active-kernel dispatch resolves through the
+generic compiled-plan router.
+
+Shipped compiler/runtime authority now includes:
+
+- compiled workflow primitive authority for work-item families, document
+  adapters, queue claim policies, terminal actions, lifecycle mutation plans,
+  runtime effect handlers/operations/runners/stores/validators/primitives,
+  recovery/failure policy hooks, and workspace schema epoch compatibility
+- scheduler lanes with durable per-lane state, lane conflict validation,
+  launch-plan authority, and request-context evidence
+- Blueprint Planning with opt-in modes, custom Planning stage kinds, and
+  runtime-owned effects for draft, packet, evaluation, critique, promotion,
+  and generated-task lifecycle
+- extension-backed domain behavior: Recon, closure, Blueprint, and Learning
+  domain code dispatches through compiled extension boundary interfaces;
+  active-kernel code does not branch on family-ID enums or domain string
+  literals
+- model assignment aliases on the compile/reload authority path
+- stage-kind registry-backed shipped stage metadata; custom fixture stage kinds
+  remain discoverable without entering the shipped-stage facade
+- mode-selected recovery-policy data through `ModeDefinition.recovery_policy_ids`
+  for config-swap fixtures such as `recovery_heavy_millrace`
+
+Deferred items at the generic engine boundary:
+
+- arbitrary plane IDs and arbitrary runtime stages are not yet supported
+- true single-plane mode validation remains deferred (the validator still
+  requires at least two planes)
+- the interpreted runtime-effect operation path is fixture-only; all shipped
+  operations use the legacy Python handler path
+
+The current compiler surface exposes topology through `millrace compile graph`
+and records concrete execution evidence through per-run `run_trace.json`
+artifacts. The compiled stage graph remains authority; the run trace is
+inspection evidence.
 
 Expected user impact:
 
@@ -122,8 +136,10 @@ Expected user impact:
 
 ### Public Release Documentation
 
-The public repo documentation is being kept in lockstep with packaged behavior.
-That includes the README, runtime reference docs, changelog, and this roadmap.
+**Status: Active.** The public repo documentation is being kept in lockstep
+with packaged behavior. That includes the README, runtime reference docs,
+changelog, graph docs, config mapping, source package map, maintenance
+registers, and this roadmap.
 
 Expected user impact:
 
@@ -271,17 +287,24 @@ Expected user impact:
 
 ### v1.0.0 Shape Finalization
 
-Millrace's public runtime shape needs to be cemented before `v1.0.0`. That
-means deciding which CLI surfaces, workspace contracts, package assets, runner
-contracts, compiler outputs, and documentation promises are stable enough to
-carry forward.
+**Status: Active.** Millrace's public runtime shape needs to be cemented before
+`v1.0.0`. That means deciding which CLI surfaces, workspace contracts, package
+assets, runner contracts, compiler outputs, and documentation promises are
+stable enough to carry forward.
 
-After `0.20.1`, the main validation work is to prove the workflow primitive,
-lane, request-context, schema-epoch, and Blueprint Planning surfaces across
-longer real workspaces before declaring them stable. The release is allowed to
-break pre-1.0 compatibility, but v1.0.0 should only keep surfaces that have
-survived source tests, packaged-install smoke tests, and operator-facing E2E
-evidence without special state surgery.
+After the post-0.20.3 generic-engine cleanup, the main validation work is to
+prove the workflow primitive, lane, request-context, schema-epoch, Blueprint
+Planning, extension-boundary, and generic-router surfaces across longer real
+workspaces before declaring them stable. The release is allowed to break
+pre-1.0 compatibility, but v1.0.0 should only keep surfaces that have survived
+source tests, packaged-install smoke tests, and operator-facing E2E evidence
+without special state surgery.
+
+Remaining deferred gaps that could affect the v1.0 surface:
+
+- arbitrary plane IDs and arbitrary runtime stages are not yet supported
+- true single-plane mode validation remains deferred
+- the interpreted runtime-effect operation path is fixture-only
 
 Expected user impact:
 

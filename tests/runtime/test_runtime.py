@@ -38,6 +38,7 @@ from millrace_ai.contracts import (
     RuntimeMode,
     RuntimeSnapshot,
     SpecDocument,
+    StageResultEnvelope,
     TaskDocument,
     WorkItemKind,
     terminal_outcome_value,
@@ -79,6 +80,10 @@ NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 def _workspace(tmp_path: Path):
     return bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+
+
+def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
+    raise AssertionError("stage runner should not be called")
 
 
 def _write_runtime_error_catalog(root: Path) -> Path:
@@ -576,7 +581,7 @@ def test_runtime_tick_routes_missing_compiled_planning_queue_claim_policy_to_rec
     assert snapshot.planning_status_marker == "### BLOCKED"
     assert snapshot.current_failure_class == "planning_pre_dispatch_failed"
     assert context["error_code"] == "planning_pre_dispatch_failed"
-    assert context["work_item_family_id"] == "spec"
+    assert context["work_item_family_id"] == "planning.main"
     assert context["work_item_id"] == "runtime-pre-dispatch"
     assert "compiled plan missing planning queue claim policy" in context["exception_message"]
     assert any(
@@ -2065,7 +2070,7 @@ def test_runtime_blocked_planning_item_is_moved_to_blocked_without_snapshot_cras
     assert load_recovery_counters(paths).entries == ()
     assert seen_stages == ["planner", "mechanic"]
     assert second.router_decision.action is RouterAction.BLOCKED
-    assert second.router_decision.reason == "mechanic_blocked:mechanic_attempts_exhausted"
+    assert second.router_decision.reason == "mechanic_blocked"
 
 
 def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: Path) -> None:
@@ -4956,3 +4961,189 @@ def test_runtime_tick_and_supervisor_no_residual_helper_duplication(
 
     # completion_behavior.py consumes backpressure_outcome.
     assert completion_module.backpressure_outcome is backpressure_outcome
+
+
+# ---------------------------------------------------------------------------
+# Config-driven behavior tests: Learning request creation
+# ---------------------------------------------------------------------------
+
+
+class TestConfigDrivenLearningRequestCreation:
+    """Equivalent inputs produce different Learning request outcomes based on
+    mode config data alone.
+
+    Config dependency:
+    - assets/modes/default_codex.json — no learning plane, no learning triggers
+    - assets/modes/learning_codex.json — learning plane with trigger rules
+    """
+
+    def test_learning_disabled_mode_compiles_without_learning_plane(self, tmp_path: Path) -> None:
+        """The default_codex mode compiles without a learning graph and without
+        learning trigger rules.  No Learning requests can be created.
+
+        Config asset: assets/modes/default_codex.json
+        """
+        paths = _workspace(tmp_path)
+        outcome = compile_and_persist_workspace_plan(
+            paths,
+            config=RuntimeConfig(),
+            requested_mode_id="default_codex",
+        )
+        assert outcome.diagnostics.ok
+        assert outcome.active_plan is not None
+        plan = outcome.active_plan
+
+        # Learning-disabled mode: no learning graph, no learning trigger rules
+        assert plan.learning_graph is None
+        assert len(plan.learning_trigger_rules) == 0
+
+    def test_learning_enabled_mode_compiles_with_learning_triggers(self, tmp_path: Path) -> None:
+        """The learning_codex mode compiles with a learning graph and
+        learning trigger rules.  Learning requests can be created when
+        trigger conditions are met.
+
+        Config asset: assets/modes/learning_codex.json
+        """
+        paths = _workspace(tmp_path)
+        outcome = compile_and_persist_workspace_plan(
+            paths,
+            config=RuntimeConfig(),
+            requested_mode_id="learning_codex",
+        )
+        assert outcome.diagnostics.ok
+        assert outcome.active_plan is not None
+        plan = outcome.active_plan
+
+        # Learning-enabled mode: has learning graph and trigger rules
+        assert plan.learning_graph is not None
+        assert len(plan.learning_trigger_rules) > 0
+
+        # At least one trigger rule targets the analyst stage from
+        # execution-plane doublechecker DOUBLECHECK_PASS
+        doublecheck_rules = [
+            rule
+            for rule in plan.learning_trigger_rules
+            if rule.source_stage == ExecutionStageName.DOUBLECHECKER
+            and "DOUBLECHECK_PASS" in rule.on_terminal_results
+        ]
+        assert len(doublecheck_rules) > 0, (
+            "learning_codex must have a learning trigger from doublechecker DOUBLECHECK_PASS"
+        )
+
+    def test_learning_disabled_mode_engine_creates_no_learning_request(
+        self, tmp_path: Path
+    ) -> None:
+        """With learning_disabled config, running a stage that would normally
+        trigger a Learning request produces no such request.
+
+        Config asset: assets/modes/default_codex.json
+        """
+        paths = _workspace(tmp_path)
+        outcome = compile_and_persist_workspace_plan(
+            paths,
+            config=RuntimeConfig(),
+            requested_mode_id="default_codex",
+        )
+        assert outcome.active_plan is not None
+
+        engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+        engine.startup()
+        engine.compiled_plan = outcome.active_plan
+
+        from millrace_ai.runtime.learning_triggers import (
+            enqueue_learning_requests_for_stage_result,
+        )
+
+        # A stage result that would trigger a learning request in
+        # learning-enabled mode
+        result = StageResultEnvelope(
+            run_id="run-001",
+            plane=Plane.EXECUTION,
+            stage=ExecutionStageName.DOUBLECHECKER,
+            work_item_family_id="task",
+            work_item_kind=WorkItemKind.TASK,
+            work_item_id="task-001",
+            terminal_result=ExecutionTerminalResult("DOUBLECHECK_PASS"),
+            result_class=ResultClass.SUCCESS,
+            summary_status_marker="### DOUBLECHECK_PASS",
+            success=True,
+            started_at=NOW,
+            completed_at=NOW,
+            node_id="doublechecker",
+            stage_kind_id="doublechecker",
+            metadata={},
+        )
+
+        result_path = tmp_path / "stage_result.json"
+        result_path.write_text(result.model_dump_json(), encoding="utf-8")
+
+        queued = enqueue_learning_requests_for_stage_result(
+            engine,
+            stage_result=result,
+            stage_result_path=result_path,
+        )
+        # Learning-disabled: no learning graph → no learning requests
+        assert queued == ()
+        engine.close()
+
+    def test_learning_enabled_mode_engine_creates_learning_request(
+        self, tmp_path: Path
+    ) -> None:
+        """With learning_enabled config, running a stage that matches a
+        learning trigger rule creates a Learning request.
+
+        Config asset: assets/modes/learning_codex.json
+        """
+        paths = _workspace(tmp_path)
+        outcome = compile_and_persist_workspace_plan(
+            paths,
+            config=RuntimeConfig(),
+            requested_mode_id="learning_codex",
+        )
+        assert outcome.active_plan is not None
+
+        engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+        engine.startup()
+        engine.compiled_plan = outcome.active_plan
+
+        from millrace_ai.runtime.learning_triggers import (
+            enqueue_learning_requests_for_stage_result,
+        )
+
+        # A doublechecker DOUBLECHECK_PASS triggers a learning request
+        result = StageResultEnvelope(
+            run_id="run-001",
+            plane=Plane.EXECUTION,
+            stage=ExecutionStageName.DOUBLECHECKER,
+            work_item_family_id="task",
+            work_item_kind=WorkItemKind.TASK,
+            work_item_id="task-001",
+            terminal_result=ExecutionTerminalResult("DOUBLECHECK_PASS"),
+            result_class=ResultClass.SUCCESS,
+            summary_status_marker="### DOUBLECHECK_PASS",
+            success=True,
+            started_at=NOW,
+            completed_at=NOW,
+            node_id="doublechecker",
+            stage_kind_id="doublechecker",
+            metadata={},
+        )
+
+        result_path = tmp_path / "stage_result.json"
+        result_path.write_text(result.model_dump_json(), encoding="utf-8")
+
+        queued = enqueue_learning_requests_for_stage_result(
+            engine,
+            stage_result=result,
+            stage_result_path=result_path,
+        )
+        # Learning-enabled: learning trigger rules should fire
+        assert len(queued) > 0
+
+        # Verify the learning request document was written
+        from millrace_ai.work_documents import read_work_document_as
+
+        doc = read_work_document_as(queued[0], model=LearningRequestDocument)
+        assert doc.learning_request_id.startswith("learn-")
+        assert doc.requested_action in ("improve", "install")
+        engine.close()

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
+    PlanningStageName,
     ReconDecision,
     ReconPacketDocument,
     RootIntakeKind,
@@ -15,7 +16,6 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.recon_packets import render_recon_packet
 from millrace_ai.router import RouterAction, RouterDecision
 
 from .artifact_contracts import (
@@ -36,7 +36,7 @@ class ReconHandoffInvalidError(RuntimeError):
 def is_recon_stage_result(stage_result: StageResultEnvelope) -> bool:
     """Return whether a stage result belongs to Recon probe intake."""
 
-    return stage_result.stage_kind_id == "recon" and stage_result.work_item_kind is WorkItemKind.PROBE
+    return stage_result.work_item_kind is WorkItemKind.PROBE and stage_result.stage == PlanningStageName.RECON
 
 
 def apply_recon_router_decision(
@@ -111,7 +111,9 @@ def _read_and_persist_packet(
     destination = engine.paths.recon_packets_dir / f"{packet.recon_packet_id}.md"
     if destination.exists():
         raise ValueError(f"recon packet already exists: {destination}")
-    destination.write_text(render_recon_packet(packet), encoding="utf-8")
+    from millrace_ai.recon_packets import render_recon_packet as _render_recon_packet
+
+    destination.write_text(_render_recon_packet(packet), encoding="utf-8")
     return packet
 
 

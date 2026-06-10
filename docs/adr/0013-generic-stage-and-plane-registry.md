@@ -6,14 +6,12 @@ Date: 2026-06-04
 
 ## Context
 
-`src/millrace_ai/contracts/stage_metadata.py` currently serves as the shipped
-stage legality registry. It defines which planes exist (`plane_id`), which stages belong to
-which planes (`stage_kind_id` per `plane_id`), which terminal markers each
-stage can emit (`terminal_outcome_id`), which terminal results map to which
-result classes (`result_class_id`), and what the running/blocked markers
-(`runtime_role_id`) are for each stage and graph node (`node_id`). Runner prompts, result normalization, entrypoint linting,
-graph stage-kind validation, and built-in stage-kind asset validation all
-derive authority from that module.
+`src/millrace_ai/contracts/stage_metadata.py` serves as the shipped stage
+registry instance. It defines which shipped stages belong to which planes,
+which terminal markers each shipped stage can emit, which terminal results map
+to which result classes, and what the running/blocked markers are for shipped
+stages. Runner prompts, result normalization, entrypoint linting, and graph
+stage lookup use that facade for shipped-stage defaults.
 
 This works for the shipped stages because the shipped set is fixed and
 well-known. However, the module's role has been drifting toward universal
@@ -21,18 +19,18 @@ runtime authority: some readers treat `stage_metadata.py` as the source of
 truth for all stage definitions, all plane membership, and all terminal
 result policy.
 
-Custom graphs and stage-kind assets already declare their own `runtime_stage`,
-terminal states, and legal outcomes through JSON assets and the compiled plan.
-The compiled plan, not the metadata module, is the runtime-authoritative
-execution contract (see ADR-0005 and ADR-0010). This ADR clarifies
-`stage_metadata.py`'s actual role: it is the shipped registry instance for
-built-in stages, not universal runtime authority for future or custom stage
-configurations.
+Custom graphs and stage-kind assets already declare `stage_kind_id`,
+`runtime_stage`, legal outcomes, and result-class policy through JSON assets
+and the compiled plan. The compiled plan, not the metadata module, is the
+runtime-authoritative execution contract (see ADR-0005 and ADR-0010). This ADR
+clarifies `stage_metadata.py`'s actual role: it is the shipped registry
+instance for built-in stages, not universal runtime authority for future or
+custom stage configurations.
 
 ## Decision
 
-`stage_metadata.py` is the shipped registry instance. It is the canonical
-metadata source for:
+`stage_metadata.py` is the shipped registry instance loaded from the canonical
+JSON stage-kind assets. It is the canonical metadata facade for:
 
 - The shipped built-in stages and their plane membership (execution, planning,
   learning)
@@ -47,7 +45,7 @@ treated as:
 - The exclusive source of plane membership for custom or future graph nodes
 - The owner of terminal-outcome policy for non-built-in terminal states
 - The definition of what constitutes a legal stage kind (stage-kind assets
-  define that through `runtime_stage`, `legal_terminal_states`, and
+  define that through `runtime_stage`, `legal_outcomes`, and
   `required_skill_paths`)
 - The arbiter of which stages may appear in a compiled graph (graph-loop
   assets and stage-kind assets declare that through compiled transitions)
@@ -61,13 +59,11 @@ from:
 3. The compiled plan produced by the compiler from those assets, which is the
    runtime-authoritative execution contract
 
-When a custom graph node declares a `runtime_stage` that corresponds to a
-shipped stage, the shipped stage metadata from `stage_metadata.py` provides the
-default terminal markers, result classes, and entrypoint contract. When a
-custom graph node declares a `runtime_stage` that does not correspond to a
-shipped stage, the stage-kind asset provides the legal terminal states and
-required skills; terminal markers and result classes are resolved from the
-graph's terminal-state/action metadata and the compiled plan.
+Current runtime support still requires every stage kind to declare a
+`runtime_stage` that corresponds to a known shipped runtime stage. Custom stage
+kind IDs can provide their own legal outcomes, result-class policy, entrypoint
+contract, and required skills while binding to that canonical runtime stage.
+Arbitrary runtime stages and arbitrary plane IDs remain deferred future work.
 
 The identity fields that the shipped registry establishes for built-in
 stages are `plane_id`, `lane_id`, `node_id`, `stage_kind_id`,
@@ -88,8 +84,9 @@ topology, not patch `stage_metadata.py`.
 
 The runtime already ships enough authority surfaces for custom graphs
 (stage-kind assets, graph-loop assets, terminal actions, lifecycle plans,
-runtime-effect rules) without requiring registry changes. No new package is
-needed to support custom stage kinds.
+runtime-effect rules) without requiring shipped-stage facade changes. No new
+package is needed to support custom stage kinds that bind to known canonical
+runtime stages.
 
 A prospective `registry/` package that would unify stage-kind, graph-loop, and
 workflow-primitive asset loading under one seam is not yet created. This ADR

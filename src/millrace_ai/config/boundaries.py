@@ -45,6 +45,7 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "recovery.max_fix_cycles": ApplyBoundary.NEXT_TICK,
     "recovery.max_troubleshoot_attempts_before_consult": ApplyBoundary.NEXT_TICK,
     "recovery.max_mechanic_attempts": ApplyBoundary.NEXT_TICK,
+    "recovery.max_repair_attempts": ApplyBoundary.NEXT_TICK,
     "recovery.stale_state_recovery_enabled": ApplyBoundary.NEXT_TICK,
     "auto_recovery.enabled": ApplyBoundary.NEXT_TICK,
     "auto_recovery.blocked_dependency_retry_enabled": ApplyBoundary.NEXT_TICK,

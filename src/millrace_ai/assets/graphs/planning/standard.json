@@ -6,27 +6,39 @@
   "nodes": [
     {
       "node_id": "recon",
-      "stage_kind_id": "recon"
+      "stage_kind_id": "recon",
+      "request_context_profile_id": "recon.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "planner",
-      "stage_kind_id": "planner"
+      "stage_kind_id": "planner",
+      "request_context_profile_id": "planner.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "manager",
-      "stage_kind_id": "manager"
+      "stage_kind_id": "manager",
+      "request_context_profile_id": "manager.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "mechanic",
-      "stage_kind_id": "mechanic"
+      "stage_kind_id": "mechanic",
+      "request_context_profile_id": "mechanic.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "auditor",
-      "stage_kind_id": "auditor"
+      "stage_kind_id": "auditor",
+      "request_context_profile_id": "auditor.default",
+      "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "arbiter",
-      "stage_kind_id": "arbiter"
+      "stage_kind_id": "arbiter",
+      "request_context_profile_id": "arbiter.default",
+      "context_render_plan_id": "closure_target.default.v1"
     }
   ],
   "entry_nodes": [

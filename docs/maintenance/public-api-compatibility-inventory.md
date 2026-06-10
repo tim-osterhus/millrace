@@ -23,6 +23,58 @@ The following module imports are compatibility contracts for this refactor wave:
 
 `tests/test_public_import_surfaces.py` protects these imports.
 
+## Package Root Compatibility Facades
+
+These package-root facades remain importable for older integrations while
+active runtime authority lives in focused packages and compiled graph/workflow
+metadata:
+
+- `millrace_ai.router`
+- `millrace_ai.compiler`
+- `millrace_ai.queue_store`
+- `millrace_ai.runner`
+- `millrace_ai.paths`
+- `millrace_ai.state_store`
+- `millrace_ai.stage_kinds`
+- `millrace_ai.loop_graphs`
+
+The run-14759-24 legacy graph-authority cleanup revalidated all eight imports.
+The cleanup did not move or retire these facades; it only removed remaining
+legacy active-authority paths from graph-authority formatting, Recon result
+detection, and per-plane graph-authority compatibility wrappers.
+
+## Runtime Package Facade
+
+`millrace_ai.runtime` is the stable public runtime package facade. It exports:
+
+- `RuntimeEngine`
+- `RuntimeDaemonSupervisor`
+- `NullRuntimeMonitorSink`
+- `RuntimeMonitorEvent`
+- `RuntimeMonitorSink`
+- `RuntimeTickOutcome`
+- `StageWorkerOutcome`
+
+Run-14759-75 revalidated that `import millrace_ai.runtime` and
+`from millrace_ai.runtime import RuntimeEngine` keep these symbols importable
+without eagerly loading the seven forbidden domain/startup prefixes:
+`millrace_ai.recon_packets`, `millrace_ai.runtime.completion_behavior`,
+`millrace_ai.runtime.graph_authority.validation`,
+`millrace_ai.runtime.learning_promotions`,
+`millrace_ai.runtime.learning_triggers`,
+`millrace_ai.workspace.arbiter_state`, and
+`millrace_ai.workspace.blueprint_state`.
+
+Run-14759-76 preserved that guarantee while routing closure lifecycle callers
+through `millrace_ai.runtime.closure_boundary`; `completion_behavior` remains
+the forbidden startup prefix and the boundary's lazy internal implementation,
+not a public runtime import dependency.
+
+Run-14759-77 preserved the same forbidden-prefix guarantee while routing
+Learning trigger/promotion callers through extension-boundary handlers in both
+`runtime/tick_cycle.py` and `runtime/supervisor.py`, and while removing the
+direct Recon-domain recovery import from `runtime/error_recovery.py`.
+
 ## Compiler Validation
 
 `millrace_ai.compilation.validation` currently exposes three deliberate public
@@ -213,3 +265,33 @@ metadata and implemented, where Python mutation code is still required, under
 The Blueprint effect compatibility facade has been retired. Operation behavior
 is selected by compiled runtime-effect metadata and implemented in focused
 operation-runner modules.
+
+## Extension Boundary Compatibility Surface
+
+`millrace_ai.extensions` is the public extension boundary package facade
+(`extensions/__init__.py`). It exports:
+
+- `ExtensionDomain`, `ExtensionItemKind`, `ExtensionItemManifest`,
+  `ExtensionPackageManifest` — manifest data models for extension packages
+- `BuiltInExtensionBoundaryRegistry`, `builtin_extension_boundary_registry` —
+  lazy singleton registry that resolves built-in domain implementations by
+  interface ID without importing domain modules directly
+- `ArtifactAdapter`, `ContextProvider`, `ReconTransitionHandler`,
+  `ClosureTransitionHandler`, `BlueprintValidator`,
+  `BlueprintContextProvider`, `LearningTriggerHandler`,
+  `LearningPromotionHandler` — built-in domain boundary Protocols defined in
+  `extensions/interfaces.py`
+- `BUILTIN_INTERFACE_IDS` — canonical interface ID constants
+
+The registry resolves implementations lazily. Calling
+`builtin_extension_boundary_registry().get_recon_transition_handler()` only
+imports Recon domain code when requested, preserving the kernel boundary for
+minimal fixture configs.
+
+Built-in adapters under `extensions/builtin/` bridge the existing legacy domain
+modules to the Protocol interfaces. These adapters are the *only* place
+kernel-to-domain imports should occur outside the documented compatibility
+facades recorded in `docs/adr/0016-extension-boundary-compatibility-facades.md`.
+
+Import guardrail tests in `tests/maintenance/test_kernel_import_guardrails.py`
+protect this boundary.

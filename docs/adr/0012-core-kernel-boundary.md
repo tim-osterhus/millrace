@@ -107,6 +107,9 @@ Prospective boundary packages such as `millrace_ai.kernel` or
 `millrace_ai.engine` are not yet created. This ADR names the conceptual
 boundary only.
 
-Package names mentioned as prospective (such as `kernel/`, `engine/`,
-`extensions/`) are not yet created runtime modules. They are boundary
-descriptors for future migration.
+Package names mentioned as prospective, such as `kernel/` and `engine/`, are
+boundary descriptors for future migration. `src/millrace_ai/extensions/` now
+exists for extension manifest contracts, built-in domain boundary Protocols,
+the lazy boundary registry, and built-in adapter modules. Extension package
+manifest validation remains governed by ADR-0015, and the active
+compatibility-facade bridge status is recorded in ADR-0016.
