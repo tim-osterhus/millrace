@@ -5,6 +5,61 @@
   "display_name": "Millrace Recon Built-In Extensions",
   "domain": "recon",
   "version": "1.0.0",
-  "items": [],
+  "items": [
+    {
+      "item_id": "recon",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.recon",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon_enqueue_task",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.recon_enqueue_task",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon_enqueue_spec",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.recon_enqueue_spec",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon_noop",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.recon_noop",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon_block_work_item",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.recon_block_work_item",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon.enqueue_task",
+      "item_kind": "runtime_operation",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.enqueue_task",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon.enqueue_spec",
+      "item_kind": "runtime_operation",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.enqueue_spec",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon.noop",
+      "item_kind": "runtime_operation",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.noop",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon.block_work_item",
+      "item_kind": "runtime_operation",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.block_work_item",
+      "version": "1.0.0"
+    }
+  ],
   "requires": []
 }

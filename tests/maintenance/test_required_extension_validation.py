@@ -353,6 +353,267 @@ def test_generic_two_plane_fixture_has_no_domain_vocabulary(tmp_path: Path) -> N
     )
 
 
+def test_generic_mode_with_blueprint_provider_fails_without_blueprint_declared(
+    tmp_path: Path,
+) -> None:
+    """A mode that uses a blueprint request-context profile must declare
+    millrace.blueprint or else compilation fails.
+
+    Arbiter-demonstrated gap: using manager_blueprint.default profile
+    (which resolves to blueprint.manager provider) without declaring
+    millrace.blueprint should produce a clear diagnostic.
+
+    This test uses a planning-plane node where blueprint.manager is
+    plane-compatible, ensuring the compile failure is caused by extension
+    ownership validation rather than plane mismatch.
+    """
+    assets_root = _copy_assets(tmp_path)
+
+    # Write a synthetic graph loop on the planning plane that uses
+    # a Blueprint manager profile — plane-compatible so the failure
+    # comes from extension ownership validation, not plane mismatch.
+    loop_path = assets_root / "graphs" / "planning" / "planning_with_blueprint_profile.json"
+    loop_payload = {
+        "schema_version": "1.0",
+        "kind": "graph_loop",
+        "loop_id": "planning.planning_with_blueprint_profile",
+        "plane": "planning",
+        "nodes": [
+            {
+                "node_id": "basic_planner",
+                "stage_kind_id": "basic_planner",
+                "request_context_profile_id": "manager_blueprint.default",
+                "context_render_plan_id": "blueprint.manager.default.v1",
+            }
+        ],
+        "entry_nodes": [
+            {
+                "entry_key": "task",
+                "node_id": "basic_planner",
+            }
+        ],
+        "edges": [
+            {
+                "edge_id": "planner-complete",
+                "from_node_id": "basic_planner",
+                "terminal_state_id": "planner_complete",
+                "on_outcomes": ["BASIC_PLANNING_COMPLETE"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "planner-blocked",
+                "from_node_id": "basic_planner",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BASIC_PLANNING_BLOCKED"],
+                "kind": "terminal",
+            },
+        ],
+        "terminal_states": [
+            {
+                "terminal_state_id": "planner_complete",
+                "terminal_class": "success",
+                "terminal_action_id": "complete_work_item",
+                "writes_status": "BASIC_PLANNING_COMPLETE",
+                "emits_artifacts": ["stage_result", "report"],
+            },
+            {
+                "terminal_state_id": "blocked",
+                "terminal_class": "blocked",
+                "terminal_action_id": "block_work_item",
+                "writes_status": "BASIC_PLANNING_BLOCKED",
+                "emits_artifacts": ["stage_result", "report"],
+            },
+        ],
+    }
+    loop_path.parent.mkdir(parents=True, exist_ok=True)
+    loop_path.write_text(json.dumps(loop_payload, indent=2) + "\n", encoding="utf-8")
+
+    # Write a mode that uses this loop with only millrace.generic
+    mode_path = assets_root / "modes" / "generic_blueprint_profile_codex.json"
+    mode_payload = {
+        "schema_version": "1.0",
+        "kind": "mode",
+        "mode_id": "generic_blueprint_profile_codex",
+        "loop_ids_by_plane": {
+            "execution": "execution.minimal_three_plane",
+            "planning": "planning.planning_with_blueprint_profile",
+        },
+        "stage_entrypoint_overrides": {},
+        "stage_skill_additions": {},
+        "stage_model_bindings": {},
+        "stage_thinking_bindings": {},
+        "stage_runner_bindings": {
+            "basic_worker": "pi_rpc",
+            "basic_planner": "pi_rpc",
+        },
+        "required_extensions": [
+            {"extension_package_id": "millrace.generic"},
+        ],
+    }
+    mode_path.write_text(json.dumps(mode_payload, indent=2) + "\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    _write_default_config(workspace)
+    paths = bootstrap_workspace(workspace_paths(workspace), assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=load_runtime_config(_config_path(workspace)),
+        requested_mode_id="generic_blueprint_profile_codex",
+        assets_root=assets_root,
+        compile_if_needed=True,
+        refuse_stale_last_known_good=False,
+    )
+
+    assert outcome.active_plan is None, (
+        "Compile should fail when using blueprint request-context profile "
+        "without declaring millrace.blueprint"
+    )
+    assert not outcome.diagnostics.ok
+
+    # The diagnostic should mention the missing blueprint extension
+    # from extension ownership validation, not from plane mismatch.
+    error_text = " ".join(outcome.diagnostics.errors).lower()
+    assert "blueprint" in error_text or "millrace.blueprint" in error_text, (
+        f"Expected diagnostic to mention missing blueprint extension, "
+        f"got: {outcome.diagnostics.errors}"
+    )
+
+
+def test_generic_mode_with_recon_runtime_operation_fails_without_recon_declared(
+    tmp_path: Path,
+) -> None:
+    """A mode that references a recon runtime operation via a terminal action
+    must declare millrace.recon or else compilation fails.
+
+    Arbiter-demonstrated gap: a generic-named terminal action referencing
+    recon.enqueue_task runtime operation with only millrace.generic declared
+    should produce a clear diagnostic.
+    """
+    assets_root = _copy_assets(tmp_path)
+
+    # Add a synthetic generic-named terminal action that references recon.enqueue_task
+    ta_path = assets_root / "registry" / "terminal_actions" / "default_terminal_actions.json"
+    ta_data = json.loads(ta_path.read_text(encoding="utf-8"))
+    ta_data["definitions"].append({
+        "schema_version": "1.0",
+        "kind": "terminal_action",
+        "terminal_action_id": "generic_finish_with_recon",
+        "terminal_class": "success",
+        "lifecycle_mutation_plan_id": "complete_work_item",
+        "runtime_operation_id": "recon.enqueue_task",
+        "router_consequence": "idle",
+    })
+    ta_path.write_text(json.dumps(ta_data, indent=2) + "\n", encoding="utf-8")
+
+    # Write a synthetic graph loop that uses this terminal action
+    loop_path = assets_root / "graphs" / "execution" / "generic_with_recon_op.json"
+    loop_payload = {
+        "schema_version": "1.0",
+        "kind": "graph_loop",
+        "loop_id": "execution.generic_with_recon_op",
+        "plane": "execution",
+        "nodes": [
+            {
+                "node_id": "basic_worker",
+                "stage_kind_id": "basic_worker",
+                "request_context_profile_id": "builder.default",
+                "context_render_plan_id": "stage_request.default.v1",
+            }
+        ],
+        "entry_nodes": [
+            {
+                "entry_key": "task",
+                "node_id": "basic_worker",
+            }
+        ],
+        "edges": [
+            {
+                "edge_id": "worker-complete",
+                "from_node_id": "basic_worker",
+                "terminal_state_id": "worker_complete",
+                "on_outcomes": ["BASIC_EXECUTION_COMPLETE"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "worker-blocked",
+                "from_node_id": "basic_worker",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BASIC_EXECUTION_BLOCKED"],
+                "kind": "terminal",
+            },
+        ],
+        "terminal_states": [
+            {
+                "terminal_state_id": "worker_complete",
+                "terminal_class": "success",
+                "terminal_action_id": "generic_finish_with_recon",
+                "writes_status": "BASIC_EXECUTION_COMPLETE",
+                "emits_artifacts": ["stage_result", "report"],
+            },
+            {
+                "terminal_state_id": "blocked",
+                "terminal_class": "blocked",
+                "terminal_action_id": "block_work_item",
+                "writes_status": "BASIC_EXECUTION_BLOCKED",
+                "emits_artifacts": ["stage_result", "report"],
+            },
+        ],
+    }
+    loop_path.parent.mkdir(parents=True, exist_ok=True)
+    loop_path.write_text(json.dumps(loop_payload, indent=2) + "\n", encoding="utf-8")
+
+    # Write a mode that uses this loop with only millrace.generic
+    mode_path = assets_root / "modes" / "generic_recon_op_codex.json"
+    mode_payload = {
+        "schema_version": "1.0",
+        "kind": "mode",
+        "mode_id": "generic_recon_op_codex",
+        "loop_ids_by_plane": {
+            "execution": "execution.generic_with_recon_op",
+            "planning": "planning.minimal_three_plane",
+        },
+        "stage_entrypoint_overrides": {},
+        "stage_skill_additions": {},
+        "stage_model_bindings": {},
+        "stage_thinking_bindings": {},
+        "stage_runner_bindings": {
+            "basic_worker": "pi_rpc",
+            "basic_planner": "pi_rpc",
+        },
+        "required_extensions": [
+            {"extension_package_id": "millrace.generic"},
+        ],
+    }
+    mode_path.write_text(json.dumps(mode_payload, indent=2) + "\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    _write_default_config(workspace)
+    paths = bootstrap_workspace(workspace_paths(workspace), assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=load_runtime_config(_config_path(workspace)),
+        requested_mode_id="generic_recon_op_codex",
+        assets_root=assets_root,
+        compile_if_needed=True,
+        refuse_stale_last_known_good=False,
+    )
+
+    assert outcome.active_plan is None, (
+        "Compile should fail when using recon runtime operation "
+        "without declaring millrace.recon"
+    )
+    assert not outcome.diagnostics.ok
+
+    # The diagnostic should mention the missing recon extension or the recon operation
+    error_text = " ".join(outcome.diagnostics.errors).lower()
+    assert "recon" in error_text or "millrace.recon" in error_text, (
+        f"Expected diagnostic to mention missing recon extension, "
+        f"got: {outcome.diagnostics.errors}"
+    )
+
+
 def _copy_assets(tmp_path: Path) -> Path:
     assets_root = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"

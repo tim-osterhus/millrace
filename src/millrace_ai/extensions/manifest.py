@@ -45,6 +45,8 @@ class ExtensionItemKind(str, Enum):
     TERMINAL_ACTION = "terminal_action"
     CONTEXT_PROVIDER = "request_context_provider"
     DOCUMENT_ADAPTER = "work_item_document_adapter"
+    STAGE_KIND = "stage_kind"
+    RUNTIME_OPERATION = "runtime_operation"
     QUEUE_CLAIM_POLICY = "queue_claim_policy"
     RECOVERY_POLICY = "recovery_policy"
     FAILURE_POLICY = "failure_policy"

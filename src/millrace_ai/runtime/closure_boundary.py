@@ -29,7 +29,10 @@ compatibility-facades).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from millrace_ai.contracts import Plane
 
 if TYPE_CHECKING:
     from millrace_ai.contracts import ClosureTargetState
@@ -120,11 +123,182 @@ def block_on_closure_lineage_drift_if_present(
     return _impl(engine, target)
 
 
+# ---------------------------------------------------------------------------
+# Closure-lineage work claiming — moved from activation.py behind the
+# named closure boundary so generic activation paths route through
+# boundary services instead of calling queue methods directly.
+# ---------------------------------------------------------------------------
+
+
+def claim_next_closure_lineage_work(
+    engine: RuntimeEngine,
+    *,
+    root_spec_id: str,
+    activate: bool = True,
+    plane: Plane | None = None,
+) -> QueueClaim | None:
+    """Claim the next work item within an open closure lineage.
+
+    Emits backpressure events when deferred root-spec ids are present,
+    then claims the next execution task (``root_spec_id``-scoped) and/or
+    next planning item within the closure lineage.
+
+    This is a closure-target-lifecycle and backpressure-policy
+    responsibility.  Callers outside the closure boundary should
+    use this function instead of calling queue methods directly.
+    """
+    from millrace_ai.events import write_runtime_event
+    from millrace_ai.queue_store import QueueStore
+    from millrace_ai.workspace.queue_selection import (
+        claim_next_execution_task,
+        list_deferred_root_spec_ids,
+    )
+
+    queue = QueueStore(engine.paths)
+
+    deferred_root_spec_ids = list_deferred_root_spec_ids(
+        engine.paths,
+        open_root_spec_id=root_spec_id,
+    )
+    if deferred_root_spec_ids:
+        write_runtime_event(
+            engine.paths,
+            event_type="closure_target_backpressure",
+            data={
+                "open_root_spec_id": root_spec_id,
+                "deferred_root_spec_ids": list(deferred_root_spec_ids),
+                "reason": "open_closure_target",
+            },
+        )
+
+    if plane in {None, Plane.EXECUTION}:
+        claim = claim_next_execution_task(engine.paths, root_spec_id=root_spec_id)
+        if claim is not None:
+            if activate:
+                from .activation import activate_claim
+
+                activate_claim(engine, claim)
+            return claim
+
+    if plane in {None, Plane.PLANNING}:
+        claim = queue.claim_next_planning_item(
+            root_spec_id=root_spec_id,
+            queue_claim_policy=_claim_policy_for_engine(engine),
+            work_item_families=_work_item_families_for_engine(engine),
+        )
+        if claim is not None:
+            if activate:
+                from .activation import activate_claim
+
+                activate_claim(engine, claim)
+            return claim
+    return None
+
+
+def _claim_policy_for_engine(engine: RuntimeEngine) -> object | None:
+    """Resolve queue-claim policy for the engine's compiled plan."""
+    if engine.compiled_plan is None:
+        return None
+    return engine.compiled_plan.queue_claim_policies_by_plane.get(Plane.PLANNING)
+
+
+def _work_item_families_for_engine(engine: RuntimeEngine) -> object | None:
+    """Resolve work item families for the engine's compiled plan."""
+    if engine.compiled_plan is None:
+        return None
+    return tuple(engine.compiled_plan.work_item_families_by_id.values())
+
+
+# ---------------------------------------------------------------------------
+# Closure-target result validation — moved from generic graph-authority
+# validation behind the named closure boundary.  Generic graph validation
+# paths delegate to this function instead of containing inline closure-
+# target special-case branches.
+# ---------------------------------------------------------------------------
+
+
+def validate_closure_target_result(stage_result: object) -> None:
+    """Validate a closure-target stage result identity and metadata.
+
+    Closure-target result normalization is outside generic graph
+    validation authority.  This function exists as a documented
+    compatibility facade with guardrails proving generic-only paths
+    do not depend on it.
+
+    Raises ``ValueError`` when the result does not conform to expected
+    closure-target identity constraints (WorkItemKind.SPEC identity,
+    closure_target_root_spec_id metadata must match work_item_id).
+    """
+    from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
+
+    assert isinstance(stage_result, StageResultEnvelope)
+    if stage_result.metadata.get("request_kind") != "closure_target":
+        return
+    if (
+        stage_result.work_item_family_id is None
+        or stage_result.work_item_kind is None
+        or stage_result.work_item_family_id != WorkItemKind.SPEC.value
+        or stage_result.work_item_kind is not WorkItemKind.SPEC
+    ):
+        raise ValueError(
+            "closure_target stage_result must normalize onto a spec identity"
+        )
+    closure_target_root_spec_id = stage_result.metadata.get("closure_target_root_spec_id")
+    if not isinstance(closure_target_root_spec_id, str) or not closure_target_root_spec_id:
+        raise ValueError(
+            "closure_target stage_result requires closure_target_root_spec_id metadata"
+        )
+    if closure_target_root_spec_id != stage_result.work_item_id:
+        raise ValueError(
+            "closure_target_root_spec_id must match stage_result work_item_id"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Closure-target Arbiter request fields — moved from stage_requests.py
+# behind the named closure boundary.  Generic stage-request construction
+# routes closure Arbiter request-field construction through this boundary
+# rather than constructing ``ClosureTargetState`` fields directly.
+# ---------------------------------------------------------------------------
+
+
+def closure_target_request_fields(
+    engine: RuntimeEngine,
+    *,
+    run_dir: Path,
+    target_state: ClosureTargetState,
+) -> dict[str, object]:
+    """Return closure-specific StageRunRequest fields from target state.
+
+    Generic stage-request callers use this function instead of
+    constructing ClosureTargetState Arbiter request fields directly.
+    """
+    return {
+        "closure_target_path": str(
+            engine.paths.arbiter_targets_dir / f"{target_state.root_spec_id}.json"
+        ),
+        "closure_target_root_spec_id": target_state.root_spec_id,
+        "closure_target_root_source_kind": target_state.root_source.kind,
+        "closure_target_root_source_id": target_state.root_source.id,
+        "closure_target_root_source_path": target_state.root_source.path,
+        "closure_target_root_idea_id": target_state.root_idea_id,
+        "canonical_root_spec_path": target_state.root_spec_path,
+        "canonical_seed_idea_path": target_state.root_idea_path,
+        "preferred_rubric_path": target_state.rubric_path,
+        "preferred_verdict_path": target_state.latest_verdict_path
+        or str(engine.paths.arbiter_verdicts_dir / f"{target_state.root_spec_id}.json"),
+        "preferred_report_path": str(run_dir / "arbiter_report.md"),
+    }
+
+
 __all__ = [
     "active_closure_target",
     "block_on_closure_lineage_drift_if_present",
+    "claim_next_closure_lineage_work",
+    "closure_target_request_fields",
     "maybe_activate_completion_stage",
     "maybe_open_closure_target_for_claim",
     "prepare_closure_target_for_claim",
     "refresh_closure_target_readiness",
+    "validate_closure_target_result",
 ]

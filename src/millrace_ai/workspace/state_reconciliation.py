@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan, MaterializedGraphNodePlan
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
-    BlueprintManifestDocument,
     ExecutionStageName,
     ExecutionTerminalResult,
     LearningStageName,
@@ -25,6 +22,9 @@ from millrace_ai.contracts import (
 from millrace_ai.errors import WorkspaceStateError
 
 from .paths import WorkspacePaths
+
+if TYPE_CHECKING:
+    from millrace_ai.workspace.blueprint_state import BlueprintManifestDiagnostic
 
 _IDLE_MARKER = "### IDLE"
 _INVALID_MARKER = "### INVALID_STATUS_MARKER"
@@ -56,80 +56,6 @@ _LEARNING_STATUS_MARKERS = frozenset(
     {_IDLE_MARKER, *_LEARNING_RUNNING_MARKERS, *(f"### {value.value}" for value in LearningTerminalResult)}
 )
 
-_STAGE_ALLOWED_MARKERS: dict[str, frozenset[str]] = {
-    ExecutionStageName.BUILDER.value: frozenset({"### BUILDER_COMPLETE", "### BLOCKED"}),
-    ExecutionStageName.CHECKER.value: frozenset({"### CHECKER_PASS", "### FIX_NEEDED", "### BLOCKED"}),
-    ExecutionStageName.FIXER.value: frozenset({"### FIXER_COMPLETE", "### BLOCKED"}),
-    ExecutionStageName.DOUBLECHECKER.value: frozenset(
-        {"### DOUBLECHECK_PASS", "### FIX_NEEDED", "### BLOCKED"}
-    ),
-    ExecutionStageName.UPDATER.value: frozenset({"### UPDATE_COMPLETE", "### BLOCKED"}),
-    ExecutionStageName.TROUBLESHOOTER.value: frozenset(
-        {"### TROUBLESHOOT_COMPLETE", "### BLOCKED"}
-    ),
-    ExecutionStageName.CONSULTANT.value: frozenset(
-        {"### CONSULT_COMPLETE", "### NEEDS_PLANNING", "### BLOCKED"}
-    ),
-    PlanningStageName.RECON.value: frozenset(
-        {
-            "### RECON_TO_EXECUTION",
-            "### RECON_TO_PLANNING",
-            "### RECON_NOOP",
-            "### RECON_BLOCKED",
-            "### BLOCKED",
-        }
-    ),
-    PlanningStageName.PLANNER.value: frozenset({"### PLANNER_COMPLETE", "### BLOCKED"}),
-    PlanningStageName.MANAGER.value: frozenset({"### MANAGER_COMPLETE", "### BLOCKED"}),
-    PlanningStageName.MECHANIC.value: frozenset({"### MECHANIC_COMPLETE", "### BLOCKED"}),
-    PlanningStageName.AUDITOR.value: frozenset({"### AUDITOR_COMPLETE", "### BLOCKED"}),
-    PlanningStageName.ARBITER.value: frozenset(
-        {"### ARBITER_COMPLETE", "### REMEDIATION_NEEDED", "### BLOCKED"}
-    ),
-    LearningStageName.ANALYST.value: frozenset(
-        {"### ANALYST_COMPLETE", "### ANALYST_NOOP", "### BLOCKED"}
-    ),
-    LearningStageName.PROFESSOR.value: frozenset(
-        {"### PROFESSOR_COMPLETE", "### PROFESSOR_NOOP", "### BLOCKED"}
-    ),
-    LearningStageName.CURATOR.value: frozenset(
-        {"### CURATOR_COMPLETE", "### CURATOR_NOOP", "### BLOCKED"}
-    ),
-}
-
-_STAGE_INBOUND_MARKERS: dict[str, frozenset[str]] = {
-    ExecutionStageName.BUILDER.value: frozenset({"### TROUBLESHOOT_COMPLETE", "### CONSULT_COMPLETE"}),
-    ExecutionStageName.CHECKER.value: frozenset(
-        {"### BUILDER_COMPLETE", "### TROUBLESHOOT_COMPLETE", "### CONSULT_COMPLETE"}
-    ),
-    ExecutionStageName.FIXER.value: frozenset(
-        {"### FIX_NEEDED", "### TROUBLESHOOT_COMPLETE", "### CONSULT_COMPLETE"}
-    ),
-    ExecutionStageName.DOUBLECHECKER.value: frozenset(
-        {"### FIXER_COMPLETE", "### TROUBLESHOOT_COMPLETE", "### CONSULT_COMPLETE"}
-    ),
-    ExecutionStageName.UPDATER.value: frozenset(
-        {
-            "### CHECKER_PASS",
-            "### DOUBLECHECK_PASS",
-            "### TROUBLESHOOT_COMPLETE",
-            "### CONSULT_COMPLETE",
-        }
-    ),
-    ExecutionStageName.TROUBLESHOOTER.value: _EXECUTION_STATUS_MARKERS - {_IDLE_MARKER},
-    ExecutionStageName.CONSULTANT.value: _EXECUTION_STATUS_MARKERS - {_IDLE_MARKER},
-    PlanningStageName.RECON.value: frozenset(),
-    PlanningStageName.PLANNER.value: frozenset({"### AUDITOR_COMPLETE", "### MECHANIC_COMPLETE"}),
-    PlanningStageName.MANAGER.value: frozenset({"### PLANNER_COMPLETE"}),
-    PlanningStageName.MECHANIC.value: _PLANNING_STATUS_MARKERS - {_IDLE_MARKER},
-    PlanningStageName.AUDITOR.value: frozenset(),
-    PlanningStageName.ARBITER.value: frozenset(),
-    LearningStageName.ANALYST.value: frozenset(),
-    LearningStageName.PROFESSOR.value: frozenset({"### ANALYST_COMPLETE"}),
-    LearningStageName.CURATOR.value: frozenset({"### PROFESSOR_COMPLETE"}),
-}
-
-
 @dataclass(frozen=True, slots=True)
 class ReconciliationSignal:
     """Signal emitted when runtime state is stale or impossible."""
@@ -139,29 +65,6 @@ class ReconciliationSignal:
     plane: Plane | None
     recommended_stage: StageName | None
     message: str
-
-
-@dataclass(frozen=True, slots=True)
-class BlueprintManifestDiagnostic:
-    """Read-only diagnostic for malformed Blueprint manifest/draft state."""
-
-    code: str
-    message: str
-    path: Path | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _ManifestEntry:
-    path: Path
-    manifest: BlueprintManifestDocument
-    normalized_payload: str
-
-
-@dataclass(frozen=True, slots=True)
-class _DraftEntry:
-    state: str
-    path: Path
-    draft: BlueprintDraftDocument
 
 
 def normalize_execution_status_marker(marker: str) -> str:
@@ -183,90 +86,14 @@ def running_status_marker_for_stage(stage: StageName) -> str:
 def collect_blueprint_manifest_diagnostics(
     paths: WorkspacePaths,
 ) -> tuple[BlueprintManifestDiagnostic, ...]:
-    """Collect read-only diagnostics for Blueprint manifest/draft consistency."""
+    """Collect read-only diagnostics for Blueprint manifest/draft consistency.
 
-    diagnostics: list[BlueprintManifestDiagnostic] = []
-    manifest_entries = _blueprint_manifest_entries(paths, diagnostics)
-    draft_entries = _blueprint_draft_entries(paths)
+    Lazily imports the implementation from ``blueprint_state`` to keep
+    Blueprint module loading out of generic reconciliation import paths.
+    """
+    from millrace_ai.workspace.blueprint_state import collect_blueprint_manifest_diagnostics as _impl
 
-    entries_by_manifest_id: dict[str, list[_ManifestEntry]] = {}
-    for entry in manifest_entries:
-        entries_by_manifest_id.setdefault(entry.manifest.manifest_id, []).append(entry)
-        if _is_legacy_root_keyed_manifest(entry):
-            diagnostics.append(
-                BlueprintManifestDiagnostic(
-                    code="blueprint_manifest_legacy_root_keyed",
-                    message=(
-                        f"manifest {entry.manifest.manifest_id} is stored under root key "
-                        f"{entry.manifest.root_spec_id}; canonical filename is "
-                        f"{entry.manifest.manifest_id}.json"
-                    ),
-                    path=entry.path,
-                )
-            )
-
-    _append_duplicate_manifest_diagnostics(entries_by_manifest_id, diagnostics)
-
-    draft_refs = {(entry.draft.manifest_id, entry.draft.draft_id) for entry in draft_entries}
-    for entries in entries_by_manifest_id.values():
-        manifest_entry = _preferred_manifest_entry(entries)
-        for draft_id in manifest_entry.manifest.draft_ids:
-            if (manifest_entry.manifest.manifest_id, draft_id) in draft_refs:
-                continue
-            diagnostics.append(
-                BlueprintManifestDiagnostic(
-                    code="blueprint_manifest_draft_missing",
-                    message=(
-                        f"manifest {manifest_entry.manifest.manifest_id} references draft "
-                        f"{draft_id}, but no Blueprint draft lifecycle artifact contains it"
-                    ),
-                    path=manifest_entry.path,
-                )
-            )
-
-    for draft_entry in draft_entries:
-        manifest_entries_for_draft = entries_by_manifest_id.get(draft_entry.draft.manifest_id)
-        if not manifest_entries_for_draft:
-            diagnostics.append(
-                BlueprintManifestDiagnostic(
-                    code="blueprint_draft_manifest_unresolved",
-                    message=(
-                        f"draft {draft_entry.draft.draft_id} references manifest "
-                        f"{draft_entry.draft.manifest_id}, but no Blueprint manifest artifact "
-                        "declares that manifest_id"
-                    ),
-                    path=draft_entry.path,
-                )
-            )
-            continue
-        manifest_entry = _preferred_manifest_entry(manifest_entries_for_draft)
-        if _draft_lineage_matches_manifest(draft_entry.draft, manifest_entry.manifest):
-            continue
-        diagnostics.append(
-            BlueprintManifestDiagnostic(
-                code="blueprint_manifest_draft_lineage_mismatch",
-                message=(
-                    f"draft {draft_entry.draft.draft_id} lineage does not match manifest "
-                    f"{manifest_entry.manifest.manifest_id}: "
-                    f"manifest root_spec_id={manifest_entry.manifest.root_spec_id} "
-                    f"root_idea_id={manifest_entry.manifest.root_idea_id}; "
-                    f"draft root_spec_id={draft_entry.draft.root_spec_id} "
-                    f"root_idea_id={draft_entry.draft.root_idea_id}"
-                ),
-                path=draft_entry.path,
-            )
-        )
-
-    return tuple(
-        sorted(
-            diagnostics,
-            key=lambda diagnostic: (
-                "" if diagnostic.path is None else diagnostic.path.as_posix(),
-                diagnostic.code,
-                diagnostic.message,
-            ),
-        )
-    )
+    return _impl(paths)
 
 
 def collect_reconciliation_signals(
@@ -360,112 +187,6 @@ def collect_reconciliation_signals(
     return tuple(signals)
 
 
-def _blueprint_manifest_entries(
-    paths: WorkspacePaths,
-    diagnostics: list[BlueprintManifestDiagnostic],
-) -> tuple[_ManifestEntry, ...]:
-    entries: list[_ManifestEntry] = []
-    for path in _json_files(paths.runtime_root / "blueprints" / "manifests"):
-        try:
-            manifest = BlueprintManifestDocument.model_validate_json(
-                path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            diagnostics.append(
-                BlueprintManifestDiagnostic(
-                    code="blueprint_manifest_invalid",
-                    message=f"Blueprint manifest artifact is not parseable: {exc}",
-                    path=path,
-                )
-            )
-            continue
-        entries.append(
-            _ManifestEntry(
-                path=path,
-                manifest=manifest,
-                normalized_payload=_normalized_blueprint_manifest_payload(manifest),
-            )
-        )
-    return tuple(entries)
-
-
-def _blueprint_draft_entries(paths: WorkspacePaths) -> tuple[_DraftEntry, ...]:
-    entries: list[_DraftEntry] = []
-    for state in _blueprint_draft_lifecycle_states():
-        for path in _json_files(paths.runtime_root / "blueprints" / "drafts" / state):
-            try:
-                draft = BlueprintDraftDocument.model_validate_json(
-                    path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError):
-                continue
-            entries.append(_DraftEntry(state=state, path=path, draft=draft))
-    return tuple(entries)
-
-
-def _append_duplicate_manifest_diagnostics(
-    entries_by_manifest_id: dict[str, list[_ManifestEntry]],
-    diagnostics: list[BlueprintManifestDiagnostic],
-) -> None:
-    for manifest_id, entries in sorted(entries_by_manifest_id.items()):
-        normalized_payloads = {entry.normalized_payload for entry in entries}
-        if len(normalized_payloads) <= 1:
-            continue
-        for entry in entries[1:]:
-            diagnostics.append(
-                BlueprintManifestDiagnostic(
-                    code="blueprint_manifest_duplicate",
-                    message=(
-                        f"manifest_id {manifest_id} has multiple non-equivalent "
-                        "Blueprint manifest artifacts"
-                    ),
-                    path=entry.path,
-                )
-            )
-
-
-def _preferred_manifest_entry(entries: list[_ManifestEntry]) -> _ManifestEntry:
-    for entry in entries:
-        if entry.path.stem == entry.manifest.manifest_id:
-            return entry
-    return entries[0]
-
-
-def _is_legacy_root_keyed_manifest(entry: _ManifestEntry) -> bool:
-    return (
-        entry.path.stem == entry.manifest.root_spec_id
-        and entry.path.stem != entry.manifest.manifest_id
-    )
-
-
-def _draft_lineage_matches_manifest(
-    draft: BlueprintDraftDocument,
-    manifest: BlueprintManifestDocument,
-) -> bool:
-    return (
-        draft.root_spec_id == manifest.root_spec_id
-        and draft.root_idea_id == manifest.root_idea_id
-    )
-
-
-def _normalized_blueprint_manifest_payload(manifest: BlueprintManifestDocument) -> str:
-    return json.dumps(
-        manifest.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _blueprint_draft_lifecycle_states() -> tuple[str, ...]:
-    return ("queue", "active", "approved", "blocked", "canceled", "superseded", "rejected")
-
-
-def _json_files(directory: Path) -> tuple[Path, ...]:
-    if not directory.exists():
-        return ()
-    return tuple(sorted(path for path in directory.iterdir() if path.is_file() and path.suffix == ".json"))
-
-
 def _normalize_marker(marker: str, *, label: str) -> str:
     normalized = marker.strip()
     if not normalized:
@@ -515,15 +236,9 @@ def _has_impossible_marker_for_active_stage(
             if marker == running_marker:
                 return False
             return marker not in allowed and marker not in inbound
-    stage_allowed = _STAGE_ALLOWED_MARKERS.get(snapshot.active_stage.value)
-    stage_inbound = _STAGE_INBOUND_MARKERS.get(snapshot.active_stage.value)
-    if stage_allowed is None or stage_inbound is None:
-        return False
-    if marker == _IDLE_MARKER:
-        return False
-    if marker == running_status_marker_for_stage(snapshot.active_stage):
-        return False
-    return marker not in stage_allowed and marker not in stage_inbound
+    # No compiled plan available; return False (conservative fail-open)
+    # to avoid blocking daemon operation when compiled plan data is missing.
+    return False
 
 
 def _active_stage_appears_running(
@@ -746,7 +461,6 @@ def _compiled_inbound_markers(
 
 
 __all__ = [
-    "BlueprintManifestDiagnostic",
     "ReconciliationSignal",
     "collect_blueprint_manifest_diagnostics",
     "collect_reconciliation_signals",

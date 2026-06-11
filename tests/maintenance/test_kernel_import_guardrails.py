@@ -134,6 +134,11 @@ ALLOWED_DIRECT_IMPORTS: dict[str, frozenset[str]] = {
         "millrace_ai.workspace.blueprint_state",
         "millrace_ai.contracts.blueprint",
     }),
+    # State reconciliation — lazy-imports Blueprint diagnostics from
+    # blueprint_state.py (ADR-0016, C4 remediation)
+    "workspace/state_reconciliation.py": frozenset({
+        "millrace_ai.workspace.blueprint_state",
+    }),
     # Result application — bridges through extension boundary; closure lineage
     # check routes through closure_boundary (the named boundary).
     "runtime/result_application.py": frozenset({
@@ -343,7 +348,7 @@ DOMAIN_STRING_CONTROL_FLOW_ALLOWED: dict[str, frozenset[int]] = {
     # compilation/validation/extensions.py maps stage kind name substrings
     # to extension domains during compile-time validation.  This is a
     # static domain-derivation heuristic, not runtime control flow.
-    "compilation/validation/extensions.py": frozenset({86}),
+    "compilation/validation/extensions.py": frozenset({87}),
 }
 
 

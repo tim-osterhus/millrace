@@ -189,14 +189,14 @@ def _activation_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> GraphActi
         return work_item_activation_for_graph(engine.compiled_plan, family_id)
 
     # Consult scheduler-policy learning routing before delegating to compiled graph.
+    # The scheduler policy returns a typed LearningStageName, so no inline import
+    # of LearningStageName is needed here.
     policy_target = learning_target_stage_routing(
         engine.compiled_plan.scheduler_policy
     )
     if policy_target is not None:
-        from millrace_ai.contracts import LearningStageName
-
         return learning_stage_activation_for_graph(
-            engine.compiled_plan, LearningStageName(policy_target)
+            engine.compiled_plan, policy_target
         )
     return learning_stage_activation_for_graph(engine.compiled_plan, document.target_stage)
 
@@ -209,35 +209,19 @@ def _claim_next_open_closure_lineage_work(
     activate: bool = True,
     plane: Plane | None = None,
 ) -> QueueClaim | None:
-    deferred_root_spec_ids = list_deferred_root_spec_ids(
-        engine.paths,
-        open_root_spec_id=root_spec_id,
+    # Route closure-lineage claiming through the named closure boundary
+    # instead of calling queue methods directly.  Closure-lineage claiming
+    # uses compiled scheduler/backpressure policy, queue-family metadata,
+    # or named closure-boundary services.
+    del queue
+    from millrace_ai.runtime import closure_boundary as _closure_boundary
+
+    return _closure_boundary.claim_next_closure_lineage_work(
+        engine,
+        root_spec_id=root_spec_id,
+        activate=activate,
+        plane=plane,
     )
-    if deferred_root_spec_ids:
-        _emit_closure_target_backpressure(
-            engine,
-            open_root_spec_id=root_spec_id,
-            deferred_root_spec_ids=deferred_root_spec_ids,
-        )
-
-    if plane in {None, Plane.EXECUTION}:
-        claim = queue.claim_next_execution_task(root_spec_id=root_spec_id)
-        if claim is not None:
-            if activate:
-                activate_claim(engine, claim)
-            return claim
-
-    if plane in {None, Plane.PLANNING}:
-        claim = queue.claim_next_planning_item(
-            root_spec_id=root_spec_id,
-            queue_claim_policy=_claim_policy_for_plane(engine, Plane.PLANNING),
-            work_item_families=_work_item_families_for_engine(engine),
-        )
-        if claim is not None:
-            if activate:
-                activate_claim(engine, claim)
-            return claim
-    return None
 
 
 def _plane_for_claim(engine: RuntimeEngine, claim: QueueClaim) -> Plane:

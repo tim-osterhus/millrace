@@ -195,13 +195,18 @@ def compile_compiled_run_plan(
         stage_kind.stage_kind_id: stage_kind
         for stage_kind in discover_stage_kind_definitions(assets_root=assets_root)
     }
+    workflow_primitives = load_builtin_workflow_primitives(assets_root=assets_root)
+    terminal_actions_by_id = {
+        ta.terminal_action_id: ta
+        for ta in workflow_primitives.terminal_actions
+    }
     validate_required_extensions(
         mode=mode,
         discovered_manifests=extension_manifests,
         graph_loops=graph_loops,
         stage_kinds=stage_kinds,
+        terminal_actions_by_id=terminal_actions_by_id,
     )
-    workflow_primitives = load_builtin_workflow_primitives(assets_root=assets_root)
     request_context_profiles_by_id = _map_by_attr(
         workflow_primitives.request_context_profiles,
         "profile_id",

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from millrace_ai.contracts import Plane
+from millrace_ai.contracts import LearningStageName, Plane
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import (
@@ -282,17 +282,20 @@ def fallback_entry_selection(
 
 def learning_target_stage_routing(
     scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition | None,
-) -> str | None:
-    """Return the targeted learning stage kind id from compiled scheduler-policy.
+) -> LearningStageName | None:
+    """Return the targeted learning stage from compiled scheduler-policy.
 
-    When ``None`` the compiled graph's entry-key-based activation is used
-    directly.  When a non-``None`` stage kind id is returned it should be
-    resolved through the compiled learning graph by the caller.
+    Returns a typed ``LearningStageName`` so callers do not need to
+    import and construct the enum value themselves.  When ``None`` the
+    compiled graph's entry-key-based activation is used directly.
     """
 
     if scheduler_policy is None:
         return None
-    return scheduler_policy.learning_target_stage_kind_id
+    kind_id = scheduler_policy.learning_target_stage_kind_id
+    if kind_id is None:
+        return None
+    return LearningStageName(kind_id)
 
 
 def recovery_fallback_selection(

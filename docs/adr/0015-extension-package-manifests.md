@@ -16,9 +16,13 @@ extension packages will need a way to contribute new runtime vocabulary without
 modifying the kernel. "Runtime vocabulary" includes:
 
 - New runtime-effect operation runners
+- New runtime-effect operations and handlers
+- New runtime operations
 - New terminal actions
 - New request-context providers
 - New work-family document adapters
+- New artifact contracts
+- New stage kinds
 - New claim policies
 - New recovery policies
 - New failure policies
@@ -67,12 +71,20 @@ Extension packages may, however, declare new:
 
 - **Operation runners**: Python implementations that the runtime dispatches
   when a compiled plan references their operation id (see ADR-0014).
+- **Runtime-effect operations and handlers**: Declarative operation metadata
+  and handler contracts that runtime-effect rules can select after compile
+  validation.
+- **Runtime operations**: Terminal-action-safe operation descriptors selected
+  by compiled terminal actions.
 - **Terminal actions**: Lifecycle mutation plan entries that describe how a
   terminal outcome mutates source work items.
 - **Context providers**: Request-context implementations that render prompt
   context for specific runtime stages.
 - **Work-family document adapters**: Loaders and renderers for queue documents
   of a specific work family.
+- **Artifact contracts**: Typed run-output and source-output artifact
+  declarations consumed by request context and runtime effects.
+- **Stage kinds**: Node-type metadata bound to canonical runtime stages.
 - **Claim policies**: Eligibility and ordering rules for claiming work from the
   queue, subject to compiled plan authority.
 - **Recovery policies**: Retry-budget, repair-route, and exhausted-state rules
@@ -111,12 +123,20 @@ The packaged registry now includes built-in manifests for `millrace.generic`,
 `millrace.recon`, `millrace.closure`, `millrace.blueprint`, and
 `millrace.learning`, plus the `example.blueprint.enhanced` test/example
 manifest. Shipped mode assets declare the built-in packages their selected
-graphs require, and compile validation rejects selected Recon, closure,
-Blueprint, or Learning stage-kind vocabulary plus Recon and closure terminal
-actions unless the matching package is declared. The compiler also
-cross-validates discovered built-in manifest domains against the canonical
-package-to-domain mapping, so conflicting per-manifest owners fail before plan
-freezing.
+graphs require. Built-in manifest `items` arrays currently claim the
+domain-owned stage-kind, terminal-action, and runtime-operation vocabulary used
+by required-extension ownership checks where applicable. `millrace.generic`
+intentionally carries an empty `items` array because it owns no
+domain-specific vocabulary.
+
+Compile validation rejects selected graph-loop vocabulary owned by undeclared
+built-in extension domains, including stage kinds, terminal actions, and
+terminal-action runtime operations. The compiler also cross-validates
+discovered built-in manifest domains against the canonical package-to-domain
+mapping, so conflicting per-manifest owners fail before plan freezing. The
+manifest model supports additional item kinds, but broad bidirectional
+manifest/registry ownership checks for those kinds are not part of the current
+compiled-plan gate.
 
 The follow-up extension-boundary implementation now defines built-in domain
 boundary Protocols, lazy built-in interface resolution, and adapter modules for
@@ -124,3 +144,38 @@ generic, Recon, closure, Blueprint, and Learning behavior. ADR-0016 records
 the active bridges and the remaining kernel-to-domain compatibility facades.
 Full third-party runtime item activation and any unified `extension_registry/`
 package remain future implementation work.
+
+### Extension Ownership Validation Coverage
+
+Compile-time extension ownership validation currently covers manifest-derived
+domain checks for selected graph-loop vocabulary:
+
+**Covered — manifest-derived undeclared-extension detection:**
+- Stage kinds referenced by selected graph-loop nodes without a matching
+  extension declaration produce a compile diagnostic
+- Terminal actions referenced by graph-loop terminal states without a matching
+  extension declaration produce a compile diagnostic
+- Runtime operations referenced by terminal actions without a matching
+  extension declaration produce a compile diagnostic
+
+**Validated separately, but not through extension manifest ownership:**
+- Request-context provider/profile existence, plane support, and render-plan
+  compatibility
+- Artifact contracts, work-item document adapters, runtime-effect handlers,
+  runtime-effect operations, and runtime-effect operation runners
+
+**Deferred — no compile-time manifest ownership gate:**
+- Request-context providers
+- Work-item document adapters
+- Artifact contracts
+- Runtime-effect handlers and operations
+- Runtime-effect operation runners
+- Claim policies: validated as compiled policy metadata but not
+  cross-referenced against extension manifest claims
+- Recovery policies: validated as compiled policy metadata but not
+  cross-referenced against extension manifest claims
+- Failure policies: validated as compiled policy metadata but not
+  cross-referenced against extension manifest claims
+
+These deferred categories require additional compiler wiring before extension
+manifest ownership can verify manifest claims against ownership declarations.

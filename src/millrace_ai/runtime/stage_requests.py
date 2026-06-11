@@ -254,6 +254,16 @@ def build_closure_target_stage_run_request(
         run_id=run_id,
         skill_paths=(*required_skill_paths, *attached_skill_paths),
     )
+    from millrace_ai.runtime import closure_boundary as _closure_boundary
+
+    # Route closure Arbiter request-field construction through the named
+    # closure boundary rather than constructing ClosureTargetState fields
+    # directly inside generic stage-request construction.
+    closure_fields = _closure_boundary.closure_target_request_fields(
+        engine,
+        run_dir=run_dir,
+        target_state=target_state,
+    )
     request = StageRunRequest(
         request_id=request_id,
         run_id=run_id,
@@ -273,18 +283,7 @@ def build_closure_target_stage_run_request(
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
         attached_skill_paths=attached_skill_paths,
-        closure_target_path=str(engine.paths.arbiter_targets_dir / f"{target_state.root_spec_id}.json"),
-        closure_target_root_spec_id=target_state.root_spec_id,
-        closure_target_root_source_kind=target_state.root_source.kind,
-        closure_target_root_source_id=target_state.root_source.id,
-        closure_target_root_source_path=target_state.root_source.path,
-        closure_target_root_idea_id=target_state.root_idea_id,
-        canonical_root_spec_path=target_state.root_spec_path,
-        canonical_seed_idea_path=target_state.root_idea_path,
-        preferred_rubric_path=target_state.rubric_path,
-        preferred_verdict_path=target_state.latest_verdict_path
-        or str(engine.paths.arbiter_verdicts_dir / f"{target_state.root_spec_id}.json"),
-        preferred_report_path=str(run_dir / "arbiter_report.md"),
+        **closure_fields,  # type: ignore[arg-type]
         run_dir=str(run_dir),
         summary_status_path=str(engine.paths.planning_status_file),
         runtime_snapshot_path=str(engine.paths.runtime_snapshot_file),

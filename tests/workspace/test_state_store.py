@@ -323,7 +323,11 @@ def test_collect_reconciliation_signals_flags_impossible_execution_marker(
     signals = collect_reconciliation_signals(
         snapshot=snapshot,
         counters=RecoveryCounters(),
-        execution_status_marker="### CHECKER_PASS",
+        # Use a marker that is outside _EXECUTION_STATUS_MARKERS so the
+        # first guard (``execution_marker not in execution_allowed_markers``)
+        # triggers the signal even without compiled-plan data for the
+        # stage-specific marker check.
+        execution_status_marker="### UNKNOWN_TERMINAL",
         planning_status_marker="### IDLE",
     )
 

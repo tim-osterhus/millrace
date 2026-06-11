@@ -5,6 +5,31 @@
   "display_name": "Millrace Learning Built-In Extensions",
   "domain": "learning",
   "version": "1.0.0",
-  "items": [],
+  "items": [
+    {
+      "item_id": "analyst",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.analyst",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "professor",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.professor",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "curator",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.curator",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "librarian",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.librarian",
+      "version": "1.0.0"
+    }
+  ],
   "requires": []
 }

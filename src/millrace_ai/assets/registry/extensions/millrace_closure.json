@@ -5,6 +5,31 @@
   "display_name": "Millrace Closure Built-In Extensions",
   "domain": "closure",
   "version": "1.0.0",
-  "items": [],
+  "items": [
+    {
+      "item_id": "arbiter",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.arbiter",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "closure_pass",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.closure_pass",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "closure_gap",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.closure_gap",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "closure_blocked",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.closure_blocked",
+      "version": "1.0.0"
+    }
+  ],
   "requires": []
 }

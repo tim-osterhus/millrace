@@ -658,11 +658,16 @@ def _pre_dispatch_work_identity(
             snapshot.active_work_item_id,
         )
     if closure_target_root_spec_id is not None:
-        spec_family_id = _resolve_family_id_from_compiled_plan(
-            engine.compiled_plan,
-            fallback_family_id=WorkItemKind.SPEC.value,
+        # Resolve closure-target family from compiled plan metadata.
+        # The "spec" family is the canonical family for closure-target
+        # work items; verify it exists in the compiled plan rather than
+        # falling back to a hardwired WorkItemKind enum branch.
+        if engine.compiled_plan is not None and "spec" in engine.compiled_plan.work_item_families_by_id:
+            return "spec", None, closure_target_root_spec_id
+        raise ValueError(
+            f"cannot resolve closure-target family for "
+            f"{closure_target_root_spec_id}: compiled plan missing spec family"
         )
-        return spec_family_id, WorkItemKind.SPEC, closure_target_root_spec_id
     # Resolve identity from compiled plan lane metadata when available.
     if engine.compiled_plan is not None:
         lane_id = _lane_id_for_plane(engine, plane)

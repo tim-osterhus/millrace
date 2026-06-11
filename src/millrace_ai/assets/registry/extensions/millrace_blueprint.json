@@ -5,6 +5,31 @@
   "display_name": "Millrace Blueprint Built-In Extensions",
   "domain": "blueprint",
   "version": "1.0.0",
-  "items": [],
+  "items": [
+    {
+      "item_id": "manager_blueprint",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.manager_blueprint",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.contractor_blueprint",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.evaluator_blueprint",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.mechanic_blueprint",
+      "version": "1.0.0"
+    }
+  ],
   "requires": []
 }

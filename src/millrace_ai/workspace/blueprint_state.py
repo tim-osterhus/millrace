@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -687,7 +688,218 @@ def _blueprints_dir(paths: WorkspacePaths) -> Path:
     return paths.runtime_root / "blueprints"
 
 
+@dataclass(frozen=True, slots=True)
+class BlueprintManifestDiagnostic:
+    """Read-only diagnostic for malformed Blueprint manifest/draft state."""
+
+    code: str
+    message: str
+    path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ManifestEntry:
+    path: Path
+    manifest: BlueprintManifestDocument
+    normalized_payload: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DraftEntry:
+    state: str
+    path: Path
+    draft: BlueprintDraftDocument
+
+
+def collect_blueprint_manifest_diagnostics(
+    paths: WorkspacePaths,
+) -> tuple[BlueprintManifestDiagnostic, ...]:
+    """Collect read-only diagnostics for Blueprint manifest/draft consistency."""
+
+    diagnostics: list[BlueprintManifestDiagnostic] = []
+    manifest_entries = _blueprint_manifest_entries(paths, diagnostics)
+    draft_entries = _blueprint_draft_entries(paths)
+
+    entries_by_manifest_id: dict[str, list[_ManifestEntry]] = {}
+    for entry in manifest_entries:
+        entries_by_manifest_id.setdefault(entry.manifest.manifest_id, []).append(entry)
+        if _is_legacy_root_keyed_manifest(entry):
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_legacy_root_keyed",
+                    message=(
+                        f"manifest {entry.manifest.manifest_id} is stored under root key "
+                        f"{entry.manifest.root_spec_id}; canonical filename is "
+                        f"{entry.manifest.manifest_id}.json"
+                    ),
+                    path=entry.path,
+                )
+            )
+
+    _append_duplicate_manifest_diagnostics(entries_by_manifest_id, diagnostics)
+
+    draft_refs = {(entry.draft.manifest_id, entry.draft.draft_id) for entry in draft_entries}
+    for entries in entries_by_manifest_id.values():
+        manifest_entry = _preferred_manifest_entry(entries)
+        for draft_id in manifest_entry.manifest.draft_ids:
+            if (manifest_entry.manifest.manifest_id, draft_id) in draft_refs:
+                continue
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_draft_missing",
+                    message=(
+                        f"manifest {manifest_entry.manifest.manifest_id} references draft "
+                        f"{draft_id}, but no Blueprint draft lifecycle artifact contains it"
+                    ),
+                    path=manifest_entry.path,
+                )
+            )
+
+    for draft_entry in draft_entries:
+        manifest_entries_for_draft = entries_by_manifest_id.get(draft_entry.draft.manifest_id)
+        if not manifest_entries_for_draft:
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_draft_manifest_unresolved",
+                    message=(
+                        f"draft {draft_entry.draft.draft_id} references manifest "
+                        f"{draft_entry.draft.manifest_id}, but no Blueprint manifest artifact "
+                        "declares that manifest_id"
+                    ),
+                    path=draft_entry.path,
+                )
+            )
+            continue
+        manifest_entry = _preferred_manifest_entry(manifest_entries_for_draft)
+        if _draft_lineage_matches_manifest(draft_entry.draft, manifest_entry.manifest):
+            continue
+        diagnostics.append(
+            BlueprintManifestDiagnostic(
+                code="blueprint_manifest_draft_lineage_mismatch",
+                message=(
+                    f"draft {draft_entry.draft.draft_id} lineage does not match manifest "
+                    f"{manifest_entry.manifest.manifest_id}: "
+                    f"manifest root_spec_id={manifest_entry.manifest.root_spec_id} "
+                    f"root_idea_id={manifest_entry.manifest.root_idea_id}; "
+                    f"draft root_spec_id={draft_entry.draft.root_spec_id} "
+                    f"root_idea_id={draft_entry.draft.root_idea_id}"
+                ),
+                path=draft_entry.path,
+            )
+        )
+
+    return tuple(
+        sorted(
+            diagnostics,
+            key=lambda diagnostic: (
+                "" if diagnostic.path is None else diagnostic.path.as_posix(),
+                diagnostic.code,
+                diagnostic.message,
+            ),
+        )
+    )
+
+
+def _blueprint_manifest_entries(
+    paths: WorkspacePaths,
+    diagnostics: list[BlueprintManifestDiagnostic],
+) -> tuple[_ManifestEntry, ...]:
+    entries: list[_ManifestEntry] = []
+    for path in _json_files(paths.runtime_root / "blueprints" / "manifests"):
+        try:
+            manifest = BlueprintManifestDocument.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_invalid",
+                    message=f"Blueprint manifest artifact is not parseable: {exc}",
+                    path=path,
+                )
+            )
+            continue
+        entries.append(
+            _ManifestEntry(
+                path=path,
+                manifest=manifest,
+                normalized_payload=_normalized_blueprint_manifest_payload(manifest),
+            )
+        )
+    return tuple(entries)
+
+
+def _blueprint_draft_entries(paths: WorkspacePaths) -> tuple[_DraftEntry, ...]:
+    entries: list[_DraftEntry] = []
+    for state in _blueprint_draft_lifecycle_states():
+        for path in _json_files(paths.runtime_root / "blueprints" / "drafts" / state):
+            try:
+                draft = BlueprintDraftDocument.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            entries.append(_DraftEntry(state=state, path=path, draft=draft))
+    return tuple(entries)
+
+
+def _append_duplicate_manifest_diagnostics(
+    entries_by_manifest_id: dict[str, list[_ManifestEntry]],
+    diagnostics: list[BlueprintManifestDiagnostic],
+) -> None:
+    for manifest_id, entries in sorted(entries_by_manifest_id.items()):
+        normalized_payloads = {entry.normalized_payload for entry in entries}
+        if len(normalized_payloads) <= 1:
+            continue
+        for entry in entries[1:]:
+            diagnostics.append(
+                BlueprintManifestDiagnostic(
+                    code="blueprint_manifest_duplicate",
+                    message=(
+                        f"manifest_id {manifest_id} has multiple non-equivalent "
+                        "Blueprint manifest artifacts"
+                    ),
+                    path=entry.path,
+                )
+            )
+
+
+def _preferred_manifest_entry(entries: list[_ManifestEntry]) -> _ManifestEntry:
+    for entry in entries:
+        if entry.path.stem == entry.manifest.manifest_id:
+            return entry
+    return entries[0]
+
+
+def _is_legacy_root_keyed_manifest(entry: _ManifestEntry) -> bool:
+    return (
+        entry.path.stem == entry.manifest.root_spec_id
+        and entry.path.stem != entry.manifest.manifest_id
+    )
+
+
+def _draft_lineage_matches_manifest(
+    draft: BlueprintDraftDocument,
+    manifest: BlueprintManifestDocument,
+) -> bool:
+    return (
+        draft.root_spec_id == manifest.root_spec_id
+        and draft.root_idea_id == manifest.root_idea_id
+    )
+
+
+def _blueprint_draft_lifecycle_states() -> tuple[str, ...]:
+    return ("queue", "active", "approved", "blocked", "canceled", "superseded", "rejected")
+
+
+def _json_files(directory: Path) -> tuple[Path, ...]:
+    if not directory.exists():
+        return ()
+    return tuple(sorted(path for path in directory.iterdir() if path.is_file() and path.suffix == ".json"))
+
+
 __all__ = [
+    "BlueprintManifestDiagnostic",
     "approve_active_blueprint_draft",
     "block_active_blueprint_draft",
     "blueprint_artifact_ref",
@@ -695,6 +907,7 @@ __all__ = [
     "blueprint_packet_path",
     "cancel_blueprint_draft",
     "claim_next_blueprint_draft",
+    "collect_blueprint_manifest_diagnostics",
     "enqueue_blueprint_draft",
     "list_blueprint_manifests",
     "list_blueprint_manifests_for_root",

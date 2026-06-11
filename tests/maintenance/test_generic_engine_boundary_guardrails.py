@@ -6,6 +6,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "millrace_ai"
 
@@ -951,6 +953,76 @@ def test_subprocess_generic_only_runtime_startup_does_not_load_forbidden_prefixe
     )
 
 
+# -- state_reconciliation C4 hardwired-pattern guardrails --------------------
+
+# Path to state_reconciliation.py for C4 guardrail scans
+_STATE_RECONCILIATION_PATH = SRC_ROOT / "workspace" / "state_reconciliation.py"
+
+
+def test_state_reconciliation_no_stage_allowed_markers() -> None:
+    """Guardrail: state_reconciliation.py must not define _STAGE_ALLOWED_MARKERS.
+
+    This hardwired shipped-stage marker map must be removed in favor of
+    compiled-plan metadata.  Fail if the assignment target is found in the
+    AST.
+    """
+    path = _STATE_RECONCILIATION_PATH
+    tree = _tree(path)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_STAGE_ALLOWED_MARKERS":
+                    pytest.fail(
+                        f"{_relative(path)} line {node.lineno}: "
+                        "_STAGE_ALLOWED_MARKERS assignment found; must be removed "
+                        "in favor of compiled-plan metadata (C4)"
+                    )
+
+
+def test_state_reconciliation_no_stage_inbound_markers() -> None:
+    """Guardrail: state_reconciliation.py must not define _STAGE_INBOUND_MARKERS.
+
+    This hardwired shipped-stage inbound marker map must be removed in favor
+    of compiled-plan metadata.  Fail if the assignment target is found in the
+    AST.
+    """
+    path = _STATE_RECONCILIATION_PATH
+    tree = _tree(path)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_STAGE_INBOUND_MARKERS":
+                    pytest.fail(
+                        f"{_relative(path)} line {node.lineno}: "
+                        "_STAGE_INBOUND_MARKERS assignment found; must be removed "
+                        "in favor of compiled-plan metadata (C4)"
+                    )
+
+
+def test_state_reconciliation_no_module_level_blueprint_imports() -> None:
+    """Guardrail: state_reconciliation.py must not have module-level imports
+    of BlueprintManifestDocument or BlueprintDraftDocument.
+
+    These domain-specific imports must be lazy (behind function-scope imports)
+    or routed through blueprint_state.py's public API (C4).
+    """
+    path = _STATE_RECONCILIATION_PATH
+    tree = _tree(path)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in ("BlueprintManifestDocument", "BlueprintDraftDocument"):
+                    # Only flag module-level imports (indent level 0)
+                    pytest.fail(
+                        f"{_relative(path)} line {node.lineno}: "
+                        f"module-level import of {alias.name} found; must use lazy "
+                        "function-scope import (C4)"
+                    )
+
+
 # -- shipped-stage hardwiring guardrail ------------------------------------
 
 # Shipped stage kind IDs that must not appear as hard-coded string
@@ -1102,6 +1174,7 @@ _WORK_ITEM_KIND_ALLOWED_FILES = frozenset({
 _WORK_ITEM_KIND_SCAN_ROOTS = (
     SRC_ROOT / "runtime" / "graph_authority",
     SRC_ROOT / "runtime" / "activation.py",
+    SRC_ROOT / "runtime" / "error_recovery.py",
     SRC_ROOT / "runtime" / "lifecycle.py",
     SRC_ROOT / "runtime" / "lifecycle_interpreter.py",
     SRC_ROOT / "runtime" / "supervisor.py",

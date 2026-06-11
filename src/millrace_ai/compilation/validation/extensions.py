@@ -18,7 +18,7 @@ from packaging.version import InvalidVersion, Version
 from millrace_ai.architecture import GraphLoopDefinition, RegisteredStageKindDefinition
 from millrace_ai.contracts import ModeDefinition, Plane
 from millrace_ai.contracts.extensions import RequiredExtensionDeclaration
-from millrace_ai.extensions import ExtensionDomain, ExtensionPackageManifest
+from millrace_ai.extensions import ExtensionDomain, ExtensionItemKind, ExtensionPackageManifest
 
 from ..outcomes import CompilerValidationError
 
@@ -36,50 +36,51 @@ _BUILTIN_DOMAIN_PACKAGE_IDS: dict[ExtensionDomain, str] = {
 }
 
 
-# Known built-in stage-kind ids that belong to specific extension domains.
-# Custom stage kinds (basic_worker, basic_planner, basic_learner) are NOT
-# listed here because they reuse generic lifecycle outcomes and skills.
-_BUILTIN_DOMAIN_STAGE_KINDS: dict[str, ExtensionDomain] = {
-    "recon": ExtensionDomain.RECON,
-    "arbiter": ExtensionDomain.CLOSURE,
-    "manager_blueprint": ExtensionDomain.BLUEPRINT,
-    "contractor_blueprint": ExtensionDomain.BLUEPRINT,
-    "evaluator_blueprint": ExtensionDomain.BLUEPRINT,
-    "mechanic_blueprint": ExtensionDomain.BLUEPRINT,
-    "analyst": ExtensionDomain.LEARNING,
-    "professor": ExtensionDomain.LEARNING,
-    "curator": ExtensionDomain.LEARNING,
-    "librarian": ExtensionDomain.LEARNING,
-}
+def _build_domain_lookups_from_manifests(
+    manifests_by_id: dict[str, ExtensionPackageManifest],
+) -> tuple[
+    dict[str, ExtensionDomain],  # stage_kind_id → domain
+    dict[str, ExtensionDomain],  # terminal_action_id → domain
+    dict[str, ExtensionDomain],  # runtime_operation_id → domain
+]:
+    """Build domain ownership lookups from extension manifest items.
 
-# Known terminal action ids that belong to specific extension domains.
-# Generic terminal actions (complete_work_item, block_work_item, etc.) are
-# NOT listed here because they are runtime-owned.
-_BUILTIN_DOMAIN_TERMINAL_ACTIONS: dict[str, ExtensionDomain] = {
-    "recon_enqueue_task": ExtensionDomain.RECON,
-    "recon_enqueue_spec": ExtensionDomain.RECON,
-    "recon_noop": ExtensionDomain.RECON,
-    "recon_block_work_item": ExtensionDomain.RECON,
-    "closure_pass": ExtensionDomain.CLOSURE,
-    "closure_gap": ExtensionDomain.CLOSURE,
-    "closure_blocked": ExtensionDomain.CLOSURE,
-}
+    The manifest items arrays are the source of truth for domain-owned
+    vocabulary.  Returns three maps (stage kinds, terminal actions,
+    runtime operations) keyed by item_id with their owning domain.
+    """
+    stage_kind_map: dict[str, ExtensionDomain] = {}
+    terminal_action_map: dict[str, ExtensionDomain] = {}
+    runtime_op_map: dict[str, ExtensionDomain] = {}
+
+    for manifest in manifests_by_id.values():
+        domain = manifest.domain
+        for item in manifest.items:
+            if item.item_kind == ExtensionItemKind.STAGE_KIND:
+                stage_kind_map[item.item_id.lower()] = domain
+            elif item.item_kind == ExtensionItemKind.TERMINAL_ACTION:
+                terminal_action_map[item.item_id.lower()] = domain
+            elif item.item_kind == ExtensionItemKind.RUNTIME_OPERATION:
+                runtime_op_map[item.item_id.lower()] = domain
+
+    return stage_kind_map, terminal_action_map, runtime_op_map
 
 
 def _derive_stage_kind_domain(
     stage_kind_id: str,
     stage_kind: RegisteredStageKindDefinition | None,
+    stage_kind_domain_map: dict[str, ExtensionDomain],
 ) -> ExtensionDomain | None:
     """Return the extension domain a stage kind belongs to, or None.
 
-    Only well-known built-in domain-specific stage kinds are mapped.
+    Looks up the stage kind id in the manifest-derived domain map.
     Custom or fixture stage kinds that reuse generic lifecycle outcomes
     and entrypoints (e.g. basic_worker, basic_planner, basic_learner)
     are NOT assigned to a domain-specific extension.
     """
     kid = stage_kind_id.lower()
-    if kid in _BUILTIN_DOMAIN_STAGE_KINDS:
-        return _BUILTIN_DOMAIN_STAGE_KINDS[kid]
+    if kid in stage_kind_domain_map:
+        return stage_kind_domain_map[kid]
 
     # Fallback for anything with blueprint in the id that isn't in the
     # explicit map (robustness for any future blueprint-like stage kinds).
@@ -91,46 +92,91 @@ def _derive_stage_kind_domain(
 
 def _derive_terminal_action_domain(
     terminal_action_id: str,
+    terminal_action_domain_map: dict[str, ExtensionDomain],
 ) -> ExtensionDomain | None:
     """Return the extension domain a terminal action belongs to, or None.
 
-    Only well-known domain-specific terminal actions are mapped.
+    Looks up the terminal action id in the manifest-derived domain map.
     Generic terminal actions (complete_work_item, block_work_item, etc.)
     are NOT assigned to a domain-specific extension.
     """
     tid = terminal_action_id.lower()
-    if tid in _BUILTIN_DOMAIN_TERMINAL_ACTIONS:
-        return _BUILTIN_DOMAIN_TERMINAL_ACTIONS[tid]
+    if tid in terminal_action_domain_map:
+        return terminal_action_domain_map[tid]
+    return None
+
+
+def _derive_runtime_operation_domain(
+    runtime_operation_id: str,
+    runtime_op_domain_map: dict[str, ExtensionDomain],
+) -> ExtensionDomain | None:
+    """Return the extension domain a runtime operation belongs to, or None.
+
+    Looks up the runtime operation id in the manifest-derived domain map.
+    Generic runtime operations (lifecycle.*) are NOT assigned to
+    a domain-specific extension.
+    """
+    roid = runtime_operation_id.lower()
+    if roid in runtime_op_domain_map:
+        return runtime_op_domain_map[roid]
     return None
 
 
 def _derive_graph_domains(
     graph_loop: GraphLoopDefinition,
     stage_kinds: dict[str, RegisteredStageKindDefinition],
+    stage_kind_domain_map: dict[str, ExtensionDomain],
+    terminal_action_domain_map: dict[str, ExtensionDomain],
+    runtime_op_domain_map: dict[str, ExtensionDomain],
+    terminal_actions_by_id: dict[str, object] | None = None,
 ) -> set[ExtensionDomain]:
     """Return the set of extension domains referenced by a single graph loop."""
     domains: set[ExtensionDomain] = set()
     for node in graph_loop.nodes:
         sk = stage_kinds.get(node.stage_kind_id)
-        domain = _derive_stage_kind_domain(node.stage_kind_id, sk)
+        domain = _derive_stage_kind_domain(node.stage_kind_id, sk, stage_kind_domain_map)
         if domain is not None:
             domains.add(domain)
-    # Also check terminal action domains
+    # Also check terminal action domains — first by terminal action ID,
+    # then by the runtime_operation_id the terminal action references.
     for ts in graph_loop.terminal_states:
-        domain = _derive_terminal_action_domain(ts.terminal_action_id)
+        domain = _derive_terminal_action_domain(ts.terminal_action_id, terminal_action_domain_map)
         if domain is not None:
             domains.add(domain)
+        # If terminal_actions_by_id is available, check the referenced
+        # runtime operation for domain ownership as well.
+        if terminal_actions_by_id is not None:
+            ta = terminal_actions_by_id.get(ts.terminal_action_id)
+            if ta is not None:
+                roid = getattr(ta, "runtime_operation_id", None)
+                if roid is not None:
+                    ro_domain = _derive_runtime_operation_domain(roid, runtime_op_domain_map)
+                    if ro_domain is not None:
+                        domains.add(ro_domain)
     return domains
 
 
 def _collect_used_domains(
     graph_loops: dict[Plane, GraphLoopDefinition],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
+    stage_kind_domain_map: dict[str, ExtensionDomain],
+    terminal_action_domain_map: dict[str, ExtensionDomain],
+    runtime_op_domain_map: dict[str, ExtensionDomain],
+    terminal_actions_by_id: dict[str, object] | None = None,
 ) -> set[ExtensionDomain]:
     """Return the set of extension domains referenced across all graph loops."""
     used: set[ExtensionDomain] = set()
     for graph_loop in graph_loops.values():
-        used.update(_derive_graph_domains(graph_loop, stage_kinds))
+        used.update(
+            _derive_graph_domains(
+                graph_loop,
+                stage_kinds,
+                stage_kind_domain_map,
+                terminal_action_domain_map,
+                runtime_op_domain_map,
+                terminal_actions_by_id=terminal_actions_by_id,
+            )
+        )
     return used
 
 
@@ -167,6 +213,7 @@ def validate_required_extensions(
     discovered_manifests: tuple[ExtensionPackageManifest, ...],
     graph_loops: dict[Plane, GraphLoopDefinition] | None = None,
     stage_kinds: dict[str, RegisteredStageKindDefinition] | None = None,
+    terminal_actions_by_id: dict[str, object] | None = None,
 ) -> None:
     """Validate that every required extension declared by a mode is available.
 
@@ -251,7 +298,20 @@ def validate_required_extensions(
 
     # --- Undeclared domain vocabulary check ---
     if graph_loops is not None and stage_kinds is not None:
-        used_domains = _collect_used_domains(graph_loops, stage_kinds)
+        (
+            stage_kind_domain_map,
+            terminal_action_domain_map,
+            runtime_op_domain_map,
+        ) = _build_domain_lookups_from_manifests(manifests_by_id)
+
+        used_domains = _collect_used_domains(
+            graph_loops,
+            stage_kinds,
+            stage_kind_domain_map,
+            terminal_action_domain_map,
+            runtime_op_domain_map,
+            terminal_actions_by_id=terminal_actions_by_id,
+        )
         declared_domains = _declared_extension_domains(
             manifests_by_id, declared_extension_ids
         )

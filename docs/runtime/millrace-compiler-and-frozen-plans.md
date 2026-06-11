@@ -64,12 +64,16 @@ Before graph materialization, the compiler also validates the selected mode
 asset's `required_extensions` declarations against discovered extension
 package manifests. Missing package ids and unsatisfied minimum versions fail
 compilation before the graph is frozen. When graph loops and stage-kind assets
-are available, the same validation pass rejects selected stage-kind vocabulary
-owned by Recon, closure, Blueprint, or Learning domains and selected terminal
-actions owned by Recon or closure unless the selected mode declares the
-matching built-in package id. Built-in extension manifests are also checked
-against the canonical package-to-domain mapping so conflicting manifest-domain
-owners fail compilation.
+are available, the same validation pass rejects selected graph-loop vocabulary
+owned by undeclared built-in extension domains. That usage check covers stage
+kinds, terminal actions, and terminal-action runtime operations, with
+ownership derived from built-in extension manifest `items` arrays. Built-in
+extension manifests are also checked against the canonical package-to-domain
+mapping. Conflicting manifest-domain owners and missing required extensions
+fail compilation. Broader manifest/registry ownership checks for request
+context providers, document adapters, artifact contracts, and runtime-effect
+assets remain separate future compiler wiring; those assets are still
+validated by their own registry-specific validators.
 
 The compiler validates terminal-action `runtime_operation_id` references
 against the compiled runtime operation registry. Operations must exist in
